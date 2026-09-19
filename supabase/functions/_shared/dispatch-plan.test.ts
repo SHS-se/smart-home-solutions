@@ -1,6 +1,9 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
+  dispatchAuctionSteps,
+  type DispatchCheckpoint,
   type DispatchLimits,
+  type DispatchResult,
   type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
@@ -1349,6 +1352,58 @@ Deno.test("joint transfers do not bypass discrete hardware or intermediate utili
     const result = planDispatch(slots, [battery], LIMITS);
     assert(result.allocations.flat().every((part) => !part.energy_transfers));
   }
+});
+
+Deno.test("a transfer stage paused between transfers resumes to the same schedule", () => {
+  // Two days of solar feeding dear evenings, priced with peak shaping so the
+  // bisected transfer level is exercised as well. The paused run crosses a
+  // JSON boundary after every transfer, as the planning worker's does.
+  const slots: DispatchSlot[] = [...solarDay(6_000), ...solarDay(3_000)].map(
+    (pv_w, index) => ({
+      pv_w,
+      fixed_load_w: index % SLOTS_PER_DAY >= 68 && index % SLOTS_PER_DAY < 88
+        ? 2_500
+        : 600,
+      import_price_sek_per_kwh: 1.2 + 0.8 * Math.sin(index * 0.13),
+      export_price_sek_per_kwh: 0.35,
+    }),
+  );
+  const limits = {
+    ...LIMITS,
+    grid_import_shaping_w: 1_000,
+    peak_shaping_sek_per_kwh_per_kw: 0.05,
+  };
+  const battery = batteryStore(slots.length, 3, 0.6);
+  const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+  const uninterrupted = dispatchAuctionSteps(slots, [battery], limits);
+  let step = uninterrupted.next();
+  while (!step.done) step = uninterrupted.next();
+  const expected: DispatchResult = step.value;
+
+  let checkpoint: DispatchCheckpoint | undefined;
+  let pauses = 0;
+  for (let request = 0; request < 256; request += 1) {
+    const next = dispatchAuctionSteps(
+      slots,
+      [battery],
+      limits,
+      {},
+      checkpoint,
+      () => true,
+    ).next();
+    if (next.done === true) {
+      assertEquals(wire(next.value), wire(expected));
+      assert(pauses > 10, `paused ${pauses} times`);
+      return;
+    }
+    checkpoint = wire(next.value);
+    if (checkpoint.transferred) {
+      pauses += 1;
+      assertEquals(checkpoint.next, "transfers");
+      assertEquals(checkpoint.transferred, ["battery"]);
+    }
+  }
+  throw new Error("The paused dispatch did not finish");
 });
 
 function discreteSolarCar() {

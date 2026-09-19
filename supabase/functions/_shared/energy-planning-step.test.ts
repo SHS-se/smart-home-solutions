@@ -27,7 +27,11 @@ const inputFor = (snapshot: OptimisationSnapshot): EnergyPlanningInput => ({
   price_archive: [],
 });
 
-function assertStagesMatch(input: EnergyPlanningInput) {
+/** Returns how many times the transfer stage paused between two transfers. */
+function assertStagesMatch(
+  input: EnergyPlanningInput,
+  budgetSpent?: () => boolean,
+): number {
   const original = wire(input);
   const expected = generateOptimisationPlan(
     input.snapshot,
@@ -38,32 +42,44 @@ function assertStagesMatch(input: EnergyPlanningInput) {
   );
   let continuation: EnergyPlanningContinuation | undefined;
   const seen = new Set<string>();
-  for (let i = 0; i < 32; i++) {
-    const step = energyPlanningStep(wire(input), continuation);
+  let paused = 0;
+  for (let i = 0; i < 512; i++) {
+    const step = energyPlanningStep(wire(input), continuation, budgetSpent);
     if (step.done === true) {
       assertEquals(wire(step.plan), wire(expected));
       assertEquals(input, original);
       assert(seen.has("transfers") && seen.has("refinement"));
-      return;
+      return paused;
     }
     continuation = wire(step.continuation);
     if (continuation.checkpoint) seen.add(continuation.checkpoint.next);
+    if (continuation.checkpoint?.transferred) paused++;
   }
   throw new Error("Planning did not finish");
 }
 
+const seasonInput = (season: "sunny" | "dark") => {
+  const input = inputFor(snapshot());
+  if (season === "dark") {
+    input.snapshot.slots = input.snapshot.slots.map((slot, i) => ({
+      ...slot,
+      pv_forecast_w: 0,
+      import_price_sek_per_kwh: 1.5 + Math.sin(i * .15) * .7,
+      export_price_sek_per_kwh: .2,
+    }));
+  }
+  return input;
+};
+
 for (const season of ["sunny", "dark"] as const) {
   Deno.test(`distributed 288-quarter ${season} plan preserves every command and diagnostic`, () => {
-    const input = inputFor(snapshot());
-    if (season === "dark") {
-      input.snapshot.slots = input.snapshot.slots.map((slot, i) => ({
-        ...slot,
-        pv_forecast_w: 0,
-        import_price_sek_per_kwh: 1.5 + Math.sin(i * .15) * .7,
-        export_price_sek_per_kwh: .2,
-      }));
-    }
-    assertStagesMatch(input);
+    assertEquals(assertStagesMatch(seasonInput(season)), 0);
+  });
+
+  Deno.test(`distributed ${season} plan survives a transfer stage paused after every transfer`, () => {
+    // A worker whose CPU budget is spent checkpoints between transfers; the
+    // resumed stage must reach exactly the plan an uninterrupted one does.
+    assert(assertStagesMatch(seasonInput(season), () => true) > 1);
   });
 }
 

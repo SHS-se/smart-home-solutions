@@ -14,10 +14,13 @@ import type {
  * Rebuilding the deterministic planner's inputs is cheap. Completed auctions
  * are reused while rebuilding, so no search is repeated and no functions need
  * serializing. There is no stored job or partial plan to race with a newer push.
+ * `budgetSpent` lets the transfer stage stop between two transfers instead of
+ * finishing within this call; the next call resumes it from the checkpoint.
  */
 export function energyPlanningStep(
   input: EnergyPlanningInput,
   continuation: EnergyPlanningContinuation = { completed: [] },
+  budgetSpent?: () => boolean,
 ): EnergyPlanningStep {
   let index = 0;
   let completed = continuation.completed;
@@ -56,6 +59,7 @@ export function energyPlanningStep(
     limits,
     options,
     continuation.checkpoint,
+    budgetSpent,
   ).next();
   if (step.done === true) {
     completed = [...completed, step.value];

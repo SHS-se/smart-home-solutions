@@ -8,6 +8,14 @@ import {
 import { describeThrown } from "./ha-api-contract.ts";
 
 const MAX_BODY_BYTES = 16_000_000;
+/**
+ * Supabase ends a request after 2 s of CPU (546 WORKER_RESOURCE_LIMIT). The
+ * transfer stage pauses between two transfers once this much has gone. What
+ * the budget cannot interrupt — boot, reading the body, the transfer in
+ * progress, serializing the checkpoint — fits in the remainder. The auction
+ * and refinement stages cannot pause and still have to fit on their own.
+ */
+const STAGE_BUDGET_MS = 1_200;
 
 /** Internal endpoint: requires a dedicated secret, never a device token or user JWT. */
 export async function handleEnergyPlanningStep(
@@ -36,6 +44,7 @@ export async function handleEnergyPlanningStep(
     if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
       return json({ error: "request_too_large" }, 413);
     }
+    const received = performance.now();
     const body = JSON.parse(raw) as {
       protocol: number;
       input: EnergyPlanningInput;
@@ -48,6 +57,7 @@ export async function handleEnergyPlanningStep(
     const result: EnergyPlanningStep = energyPlanningStep(
       body.input,
       body.continuation,
+      () => performance.now() - received > STAGE_BUDGET_MS,
     );
     console.info("[ENERGY-PLANNING-STEP] completed", {
       request_id: requestId,
@@ -55,6 +65,9 @@ export async function handleEnergyPlanningStep(
       stage: body.continuation?.checkpoint?.next ?? "auction_or_assembly",
       elapsed_ms: Math.round(performance.now() - started),
       done: result.done,
+      next: result.done === true
+        ? null
+        : result.continuation.checkpoint?.next ?? "auction",
     });
     return json(result);
   } catch (error) {

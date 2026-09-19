@@ -281,6 +281,43 @@ function transferRoom(
 }
 
 /**
+ * Midpoint of the bracket a 24-probe bisection of `saving` over
+ * [0, `maximumW`] ends with: the power where the marginal saving reaches zero.
+ *
+ * When `nonIncreasing`, one evaluation often settles every probe. Each term of
+ * a transfer's marginal saving moves one way with the transferred power, and
+ * correctly rounded arithmetic preserves that order, so the computed saving
+ * cannot rise between two probes. A positive saving at the top of the bracket
+ * is then positive at every probe, and one that is not positive at the lowest
+ * probe is not positive at any: both walks below reproduce the probe sequence
+ * exactly. The transfer scan bisects every charge/discharge pair on every
+ * transfer, so this was the largest single cost in a stage that outran a
+ * planning worker's CPU limit.
+ */
+function bisectedLevel(
+  maximumW: number,
+  saving: (outW: number) => number,
+  nonIncreasing: boolean,
+): number {
+  let low = 0, high = maximumW;
+  if (nonIncreasing) {
+    if (saving(high) > 0) {
+      for (let step = 0; step < 24; step += 1) low = (low + high) / 2;
+      return (low + high) / 2;
+    }
+    let lowest = high;
+    for (let step = 0; step < 24; step += 1) lowest = (low + lowest) / 2;
+    if (saving(lowest) <= 0) return (low + lowest) / 2;
+  }
+  for (let step = 0; step < 24; step += 1) {
+    const middle = (low + high) / 2;
+    if (saving(middle) > 0) low = middle;
+    else high = middle;
+  }
+  return (low + high) / 2;
+}
+
+/**
  * How much of a unit delivered at `index` survives to when it is wanted.
  *
  * Precomputed per store, and the whole of the lookahead. A store whose usage
@@ -1160,6 +1197,9 @@ export interface DispatchCheckpoint {
   allocations: DispatchAllocationDiagnostic[][];
   iterations: number;
   stopped: DispatchResult["stopped_because"];
+  /** Stores the transfer stage has already moved energy through, when it
+   * checkpointed between two transfers rather than at its start. */
+  transferred?: string[];
 }
 
 export function planDispatch(
@@ -1373,13 +1413,18 @@ function dispatchAuction(
   return step.value;
 }
 
-/** The synchronous and distributed planners execute these same three stages. */
+/**
+ * The synchronous and distributed planners execute these same three stages.
+ * `budgetSpent` lets a distributed caller also checkpoint the transfer stage
+ * between two transfers; the synchronous planner never pauses.
+ */
 export function* dispatchAuctionSteps(
   slots: DispatchSlot[],
   stores: DispatchStore[],
   limits: DispatchLimits,
   { maxIterations = 20_000 }: { maxIterations?: number } = {},
   checkpoint?: DispatchCheckpoint,
+  budgetSpent?: () => boolean,
 ): Generator<DispatchCheckpoint, DispatchResult> {
   const count = slots.length;
   const sellPrices = publishedSellPrices(slots);
@@ -2862,8 +2907,30 @@ export function* dispatchAuctionSteps(
       saving: number;
       score: number;
     };
-    const transferredStores = new Set<string>();
+    const transferredStores = new Set<string>(checkpoint?.transferred);
+    const rate = limits.peak_shaping_sek_per_kwh_per_kw;
+    let transfersThisCall = 0;
     while (iterations < maxIterations) {
+      // Every transfer rescans every charge/discharge pair, and a long horizon
+      // can accept a hundred of them: on 2026-09-19 this stage alone outran a
+      // planning worker's CPU limit (546). Between two transfers the stage is
+      // exactly its checkpoint, so a caller whose budget is spent resumes it
+      // in its next request. One transfer per call guarantees progress.
+      if (transfersThisCall > 0 && budgetSpent?.()) {
+        yield {
+          next: "transfers",
+          powerW,
+          dischargeW,
+          stateByKey,
+          occupiedW,
+          returnedW,
+          allocations,
+          iterations,
+          stopped,
+          transferred: [...transferredStores],
+        };
+        transfersThisCall = 0;
+      }
       let best: EnergyTransfer | null = null;
       for (const store of stores) {
         if (!supportsEnergyTransfers(store)) continue;
@@ -2871,6 +2938,29 @@ export function* dispatchAuctionSteps(
         const discharge = dischargeW[store.key];
         const state = stateByKey[store.key];
         const flowWear = store.wear_sek_per_kwh ?? 0;
+        const cycling = store.discharge!.cycling_cost_sek_per_unit ?? 0;
+        // A destination quarter's side of a pair is the same for every charge
+        // quarter in this scan, so it is worked out once per quarter rather
+        // than once per pair. The expressions and their order are unchanged.
+        const hours = new Array<number>(count);
+        const importAt = new Array<number>(count);
+        const spentAt = new Array<number>(count);
+        const deliverableAt = new Array<number>(count);
+        for (let load = 0; load < count; load += 1) {
+          hours[load] = hoursAt(store, load);
+          if (schedule[load] > 0) continue;
+          importAt[load] = gridImportW(
+            slots[load],
+            occupiedW[load],
+            returnedW[load],
+          );
+          spentAt[load] = store.discharge!.state_per_kwh_out(state[load], load);
+          deliverableAt[load] = Math.min(
+            importAt[load],
+            store.discharge!.max_power_w - discharge[load],
+          ) /
+            1_000 * hours[load] * spentAt[load];
+        }
         for (let charge = 0; charge < count; charge += 1) {
           if (discharge[charge] > 0) continue;
           const availableW = Math.min(
@@ -2890,51 +2980,52 @@ export function* dispatchAuctionSteps(
             store.min_state ?? -Infinity,
             store.max_state ?? Infinity,
           );
+          const chargeSlot = slots[charge];
+          const chargeHours = hours[charge];
+          const chargeable = availableW / 1_000 * chargeHours * units;
+          const solarW = Math.max(
+            0,
+            chargeSlot.pv_w - chargeSlot.fixed_load_w - occupiedW[charge],
+          );
+          const netSource = chargeSlot.fixed_load_w + occupiedW[charge] -
+            chargeSlot.pv_w - returnedW[charge];
+          // Buying here costs at least what selling here earns, so the
+          // marginal saving below cannot rise with the power transferred.
+          const buyingCostsMore = chargeSlot.import_price_sek_per_kwh >=
+            chargeSlot.export_price_sek_per_kwh;
           for (let load = 0; load < count; load += 1) {
             if (load === charge || schedule[load] > 0) continue;
-            const importW = gridImportW(
-              slots[load],
-              occupiedW[load],
-              returnedW[load],
-            );
-            const spent = store.discharge!.state_per_kwh_out(state[load], load);
+            const importW = importAt[load];
+            const spent = spentAt[load];
             if (spent <= 0) continue;
+            const loadHours = hours[load];
             const stored = Math.min(
               room[load],
-              availableW / 1_000 * hoursAt(store, charge) * units,
-              Math.min(
-                importW,
-                store.discharge!.max_power_w - discharge[load],
-              ) /
-                1_000 * hoursAt(store, load) * spent,
+              chargeable,
+              deliverableAt[load],
             );
             if (stored <= 1e-9) continue;
-            let maximumW = stored / spent / hoursAt(store, load) * 1_000;
-            const solarW = Math.max(
-              0,
-              slots[charge].pv_w -
-                slots[charge].fixed_load_w - occupiedW[charge],
-            );
+            let maximumW = stored / spent / loadHours * 1_000;
             // Committed grid purchases need a quoted sell opportunity, never a
             // speculative tail price. Solar keeps its opportunity-cost economics.
-            if (slots[charge].binding && !slots[load].published_price) {
-              maximumW = Math.min(maximumW, solarW * units / spent * hoursAt(store, charge) / hoursAt(store, load));
+            if (chargeSlot.binding && !slots[load].published_price) {
+              maximumW = Math.min(maximumW, solarW * units / spent * chargeHours / loadHours);
             }
             if (maximumW <= GRID_NOISE_W) continue;
             const economics = (outW: number) => {
-              const inW = outW * spent / units * hoursAt(store, load) / hoursAt(store, charge);
-              const inKwh = inW / 1_000 * hoursAt(store, charge);
-              const outKwh = outW / 1_000 * hoursAt(store, load);
+              const inW = outW * spent / units * loadHours / chargeHours;
+              const inKwh = inW / 1_000 * chargeHours;
+              const outKwh = outW / 1_000 * loadHours;
               const cost = inKwh *
                 energyCostSekPerKwh(
-                  slots[charge],
+                  chargeSlot,
                   occupiedW[charge],
                   inW,
                   limits,
                   returnedW[charge],
                 );
               const wear = (inKwh + outKwh) * flowWear + outKwh * spent *
-                  (store.discharge!.cycling_cost_sek_per_unit ?? 0);
+                  cycling;
               const benefit = outKwh * (slots[load].import_price_sek_per_kwh +
                 peakReliefSekPerKwh(limits, importW, outW));
               return {
@@ -2948,40 +3039,33 @@ export function* dispatchAuctionSteps(
               };
             };
             if (
-              slots[charge].import_price_sek_per_kwh >=
-                slots[charge].export_price_sek_per_kwh &&
+              buyingCostsMore &&
               economics(Math.min(maximumW, 0.01)).saving <= 1e-12
             ) continue;
             const levels = [
               maximumW,
-              Math.min(maximumW, solarW * units / spent * hoursAt(store, charge) / hoursAt(store, load)),
+              Math.min(maximumW, solarW * units / spent * chargeHours / loadHours),
             ];
             // Equal marginal source and destination costs give the convex optimum.
-            const rate = limits.peak_shaping_sek_per_kwh_per_kw;
             if (rate > 0) {
               const ratio = spent / units;
-              const netSource = slots[charge].fixed_load_w + occupiedW[charge] -
-                slots[charge].pv_w - returnedW[charge];
+              const flowWearCost = (ratio + 1) * flowWear;
+              const cyclingCost = spent * cycling;
               const marginalSaving = (out: number) => {
-                const source = netSource + out * ratio * hoursAt(store, load) / hoursAt(store, charge);
+                const source = netSource + out * ratio * loadHours / chargeHours;
                 const buy = source > 0
-                  ? slots[charge].import_price_sek_per_kwh
-                  : slots[charge].export_price_sek_per_kwh;
+                  ? chargeSlot.import_price_sek_per_kwh
+                  : chargeSlot.export_price_sek_per_kwh;
                 return slots[load].import_price_sek_per_kwh +
                   rate * overThresholdKw(limits, importW - out) -
                   ratio *
                     (buy +
                       rate * overThresholdKw(limits, Math.max(0, source))) -
-                  (ratio + 1) * flowWear - spent *
-                    (store.discharge!.cycling_cost_sek_per_unit ?? 0);
+                  flowWearCost - cyclingCost;
               };
-              let low = 0, high = maximumW;
-              for (let step = 0; step < 24; step += 1) {
-                const middle = (low + high) / 2;
-                if (marginalSaving(middle) > 0) low = middle;
-                else high = middle;
-              }
-              levels.push((low + high) / 2);
+              levels.push(
+                bisectedLevel(maximumW, marginalSaving, buyingCostsMore),
+              );
             }
             for (const outW of levels) {
               if (outW <= 1e-6) continue;
@@ -3036,6 +3120,7 @@ export function* dispatchAuctionSteps(
       }
       if (!best) break;
       iterations += 1;
+      transfersThisCall += 1;
       const {
         store,
         charge,
