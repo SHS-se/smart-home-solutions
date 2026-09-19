@@ -1,3 +1,4 @@
+import { resolveValueCurves } from "../_shared/value-curves.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -101,11 +102,11 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
           "store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier",
         ).eq("home_id", body.home_id);
       if (curveError) throw new Error(curveError.message);
+      const saved = resolveValueCurves(curves ?? []).curves;
       const resolved: OptimisationSnapshot = {
         ...snapshot,
         value_curves: {
-          ...snapshot.value_curves,
-          ...Object.fromEntries((curves ?? []).map((c) => [c.store_key, c])),
+          ...Object.fromEntries(Object.entries(saved).map(([key, value]) => [key, value.curve])),
         },
       };
       const bench = dispatchWorkbench(resolved, [], source.price_outlook, new Date(source.issued_at));

@@ -1773,7 +1773,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v37");
+  assertEquals(plan.model_version, "marginal-value-planner-v38");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -2787,7 +2787,8 @@ Deno.test("every planned quarter records decision evidence and exact grid arithm
   assertEquals(plan.decision_diagnostics_version, 2);
   const batteryCurve = plan.battery_value_curve;
   assert(batteryCurve !== null, "the derived battery curve must be published");
-  assertEquals(batteryCurve.schema_version, 1);
+  assertEquals(batteryCurve.schema_version, 2);
+  assertEquals(batteryCurve.source, "automatic");
   assertEquals(batteryCurve.state_basis, "usable_kwh_above_min_soc");
   assertEquals(batteryCurve.curve.unit, "kwh");
   assert(

@@ -922,6 +922,7 @@ async function prepareThermalPlanning(
 
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
+  const ingestStarted = performance.now();
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
@@ -1692,25 +1693,24 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // The home's own curves, if it has edited any. Resolved here rather than
       // inside the planner so a malformed row degrades to the shipped default
       // with a warning instead of failing the plan.
-      const { data: curveRows } = await supabase
-        .from("energy_optimisation_value_curves")
-        .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier")
-        .eq("home_id", auth.homeId);
-      const resolved = resolveValueCurves(curveRows ?? []);
-      for (const warning of resolved.warnings) {
-        console.warn("[ENERGY-OPTIMISATION] value curve", warning);
-      }
-      // The scalar prices come from the same place and for the same reason.
-      const { data: settingsRow } = await supabase
-        .from("energy_optimisation_value_settings")
-        .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
-        .eq("home_id", auth.homeId)
-        .maybeSingle();
+      const [curveResult, settingsResult] = await Promise.all([
+        supabase.from("energy_optimisation_value_curves")
+          .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier")
+          .eq("home_id", auth.homeId),
+        supabase.from("energy_optimisation_value_settings")
+          .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
+          .eq("home_id", auth.homeId).maybeSingle(),
+      ]);
+      if (curveResult.error) throw new Error(curveResult.error.message);
+      const resolved = resolveValueCurves(curveResult.data ?? []);
+      for (const warning of resolved.warnings) console.warn("[ENERGY-OPTIMISATION] value curve", warning);
+      const settingsRow = settingsResult.data;
       snapshot = {
         ...snapshot,
         value_curves: {
           pool: resolved.curves.pool.curve,
           ev: resolved.curves.ev.curve,
+          ...(resolved.curves.battery ? { battery: resolved.curves.battery.curve } : {}),
         },
         value_settings: resolveValueSettings(settingsRow),
       };
@@ -1771,6 +1771,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         const planningNow = new Date();
         snapshot = { ...snapshot, replan_reference: replanReference(fixedState?.previous_plan as ReplanPreviousPlan | null, snapshot, planningNow) };
         const planningStarted = performance.now();
+        console.info("[ENERGY-OPTIMISATION] inputs ready", { request_id: requestId, replan_request_id: portalReplanId,
+          elapsed_ms: Math.round(planningStarted - ingestStarted) });
         console.info("[ENERGY-OPTIMISATION] planning started", {
           request_id: requestId,
           slot_count: snapshot.slots.length,
@@ -1908,6 +1910,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           p_request_id: portalReplanId,
         },
       );
+      console.info("[ENERGY-OPTIMISATION] publication finished", { request_id: requestId, replan_request_id: portalReplanId,
+        elapsed_ms: Math.round(performance.now() - ingestStarted), completed: !completionError });
       if (completionError) {
         console.error(
           "[ENERGY-OPTIMISATION] replan completion failed",

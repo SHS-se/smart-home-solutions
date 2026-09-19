@@ -1,3 +1,4 @@
+import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
 import { projectExecutionSnapshot, validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
@@ -121,7 +122,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v37";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v38";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 export const SLOT_MINUTES = 15;
@@ -471,9 +472,11 @@ export interface OptimisationSnapshot {
   thermal_zones?: ThermalZonePlanningInput[];
 }
 
-/** The read-only curve the planner derived for usable home-battery energy. */
+/** Exact active battery valuation and the evidence for its automatic alternative. */
 export interface BatteryValueCurveDiagnostic {
-  schema_version: 1;
+  schema_version: 2;
+  source: "automatic" | "customer";
+  automatic_curve: UtilityCurve;
   curve: UtilityCurve;
   state_basis: "usable_kwh_above_min_soc";
   initial_state_kwh: number;
@@ -2400,17 +2403,25 @@ function deriveBatteryValueCurve(
         battery.discharge_efficiency - curveInput.degradationSekPerKwh,
   );
   const generated = batteryValueCurve(curveInput);
-  const curve = {
+  const automaticCurve = {
     ...generated,
     points: generated.points.map((point) => ({
       ...point,
       sek_per_unit: Math.min(point.sek_per_unit, terminalReplacement),
     })),
   };
+  const custom = snapshot.value_curves?.battery;
+  if (custom) {
+    const invalid = validateBatteryCurve(custom);
+    if (invalid) throw new Error(`Battery curve: ${invalid}`);
+  }
+  const curve = custom ?? automaticCurve;
   return {
     curve,
     diagnostic: {
-      schema_version: 1,
+      schema_version: 2,
+      source: custom ? "customer" : "automatic",
+      automatic_curve: automaticCurve,
       curve,
       state_basis: "usable_kwh_above_min_soc",
       initial_state_kwh: Math.max(

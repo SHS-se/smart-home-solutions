@@ -20,19 +20,19 @@ export function energyPlanningStep(
   continuation: EnergyPlanningContinuation = { completed: [] },
 ): EnergyPlanningStep {
   let index = 0;
+  let completed = continuation.completed;
   const pending = new Error("dispatch_stage_pending");
   let problem: Parameters<DispatchAuctionSolver> | undefined;
   const solveAuction: DispatchAuctionSolver = (...args) => {
-    if (index < continuation.completed.length) {
+    if (index < completed.length) {
       // planDispatch adds alternative EV profiles to auction results. Keep the
       // saved stage result pristine for subsequent deterministic reconstruction.
-      return structuredClone(continuation.completed[index++]);
+      return structuredClone(completed[index++]);
     }
     problem = args;
     throw pending;
   };
-  try {
-    const result = generateOptimisationPlanWithBatteryProjection(
+  const assemble = () => generateOptimisationPlanWithBatteryProjection(
       input.snapshot,
       new Date(input.now),
       input.price_archive,
@@ -40,6 +40,8 @@ export function energyPlanningStep(
       input.fixed_plan,
       solveAuction,
     );
+  try {
+    const result = assemble();
     if (index !== continuation.completed.length || continuation.checkpoint) {
       throw new Error("Planning continuation does not match the input");
     }
@@ -55,10 +57,18 @@ export function energyPlanningStep(
     options,
     continuation.checkpoint,
   ).next();
-  return {
-    done: false,
-    continuation: step.done === true
-      ? { completed: [...continuation.completed, step.value] }
-      : { completed: continuation.completed, checkpoint: step.value },
-  };
+  if (step.done === true) {
+    completed = [...completed, step.value];
+    index = 0;
+    try {
+      // Assembly is cheap: avoid another full request just to return the plan.
+      const result = assemble();
+      return { done: true, ...result };
+    } catch (error) {
+      if (error !== pending) throw error;
+      // Another auction needs its own CPU stage; never start it here.
+      return { done: false, continuation: { completed } };
+    }
+  }
+  return { done: false, continuation: { completed, checkpoint: step.value } };
 }

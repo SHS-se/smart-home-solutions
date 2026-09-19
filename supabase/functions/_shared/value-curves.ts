@@ -16,7 +16,8 @@
 
 import { type UtilityCurve, validateCurve } from "./store-value.ts";
 
-export type ValueStoreKey = "pool" | "ev" | "hot_water";
+export type DefaultValueStoreKey = "pool" | "ev" | "hot_water";
+export type ValueStoreKey = DefaultValueStoreKey | "battery";
 
 export interface ValueSettings {
   /**
@@ -164,7 +165,7 @@ export const DEFAULT_HOT_WATER_CURVE: UtilityCurve = {
   ],
 };
 
-export const DEFAULT_VALUE_CURVES: Record<ValueStoreKey, UtilityCurve> = {
+export const DEFAULT_VALUE_CURVES: Record<DefaultValueStoreKey, UtilityCurve> = {
   pool: DEFAULT_POOL_CURVE,
   ev: DEFAULT_EV_CURVE,
   hot_water: DEFAULT_HOT_WATER_CURVE,
@@ -184,8 +185,6 @@ export interface ResolvedCurve {
   source: "customer" | "default";
 }
 
-const MAX_POINTS = 12;
-
 /**
  * Accept one stored curve, or explain why it cannot be used.
  *
@@ -197,9 +196,6 @@ const MAX_POINTS = 12;
 export function parseStoredCurve(row: StoredCurveRow): UtilityCurve | string {
   if (!Array.isArray(row.points)) return "points must be an array";
   if (row.points.length === 0) return "a curve needs at least one point";
-  if (row.points.length > MAX_POINTS) {
-    return `a curve may not exceed ${MAX_POINTS} points`;
-  }
   const points: { at: number; sek_per_unit: number }[] = [];
   for (const raw of row.points) {
     if (typeof raw !== "object" || raw === null) {
@@ -219,7 +215,7 @@ export function parseStoredCurve(row: StoredCurveRow): UtilityCurve | string {
 }
 
 /**
- * Resolve every store's curve, preferring the customer's and falling back.
+ * Resolve the fixed defaults and an optional, strictly validated battery override.
  *
  * A rejected override falls back to the default rather than failing the plan,
  * and reports why. Refusing to plan the whole home because one curve was
@@ -229,13 +225,13 @@ export function parseStoredCurve(row: StoredCurveRow): UtilityCurve | string {
 export function resolveValueCurves(
   rows: StoredCurveRow[],
 ): {
-  curves: Record<ValueStoreKey, ResolvedCurve>;
+  curves: Record<DefaultValueStoreKey, ResolvedCurve> & Partial<Record<"battery", ResolvedCurve>>;
   warnings: string[];
 } {
   const warnings: string[] = [];
   const byKey = new Map(rows.map((row) => [row.store_key, row]));
-  const curves = {} as Record<ValueStoreKey, ResolvedCurve>;
-  for (const key of Object.keys(DEFAULT_VALUE_CURVES) as ValueStoreKey[]) {
+  const curves = {} as Record<DefaultValueStoreKey, ResolvedCurve> & Partial<Record<"battery", ResolvedCurve>>;
+  for (const key of Object.keys(DEFAULT_VALUE_CURVES) as DefaultValueStoreKey[]) {
     const row = byKey.get(key);
     if (!row) {
       curves[key] = { curve: DEFAULT_VALUE_CURVES[key], source: "default" };
@@ -248,6 +244,14 @@ export function resolveValueCurves(
       continue;
     }
     curves[key] = { curve: parsed, source: "customer" };
+  }
+  const battery = byKey.get("battery");
+  if (battery) {
+    const parsed = parseStoredCurve(battery);
+    if (typeof parsed === "string") throw new Error(`Battery curve: ${parsed}`);
+    const error = validateBatteryCurve(parsed);
+    if (error) throw new Error(`Battery curve: ${error}`);
+    curves.battery = { curve: parsed, source: "customer" };
   }
   return { curves, warnings };
 }
@@ -269,4 +273,15 @@ export function resolveValueSettings(
         ? fallback
         : null,
   };
+}
+
+/** A custom battery curve is absolute and must never be silently replaced. */
+export function validateBatteryCurve(curve: UtilityCurve): string | null {
+  if (curve.unit !== "kwh") return "use stored kWh above minimum SOC";
+  if (curve.max_value_sek_per_kwh != null || curve.urgent_price_multiplier != null)
+    return "battery points use absolute values, without a price multiplier";
+  const invalid = validateCurve(curve);
+  if (invalid) return invalid.detail + " (" + invalid.reason + ")";
+  if (curve.points.some(point => point.at < 0)) return "stored energy cannot be negative";
+  return null;
 }

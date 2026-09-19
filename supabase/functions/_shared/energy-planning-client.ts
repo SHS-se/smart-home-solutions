@@ -30,6 +30,7 @@ export async function generateRemoteOptimisationPlan(
   ) {
     throw new EnergyPlanningError("Planning worker is not configured");
   }
+  const started = performance.now();
   const signal = AbortSignal.timeout(20_000);
   let continuation: EnergyPlanningContinuation | undefined;
   for (let index = 0; index < MAX_STEPS; index += 1) {
@@ -107,6 +108,8 @@ export async function generateRemoteOptimisationPlan(
            body.battery_projection.provenance?.issued_at !== body.plan.issued_at)) {
         throw new EnergyPlanningError("Planning worker returned a missing or mismatched battery projection");
       }
+      console.info("[ENERGY-PLANNING] request completed", { request_id: connection.requestId,
+        stages: index + 1, elapsed_ms: Math.round(performance.now() - started) });
       return { plan: body.plan, battery_projection: body.battery_projection };
     }
     if (body.done !== false || !Array.isArray(body.continuation?.completed)) {

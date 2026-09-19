@@ -1,3 +1,4 @@
+import { replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
@@ -207,18 +208,19 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   }, [actuals, homeId, load, loading, prices]);
 
   useEffect(() => { void load(false); }, [load]);
+  const pendingReplan = replanState(current).status === 'waiting';
   useEffect(() => {
     // Poll small metadata and content deltas. Hidden tabs resume on visibility.
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void load(true);
-    }, 30_000);
+    }, pendingReplan ? 1_000 : 30_000);
     const resume = () => { if (document.visibilityState === 'visible') void load(true); };
     document.addEventListener('visibilitychange', resume);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', resume);
     };
-  }, [load]);
+  }, [load, pendingReplan]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
@@ -920,6 +922,7 @@ const PlanView: React.FC<{
           )}
           {section === 'economics' && (
             <ValueCurvesTab
+              key={`${customerId}:${homeId}`}
               customerId={customerId}
               homeId={homeId}
               planSnapshotId={plan.snapshot_id}

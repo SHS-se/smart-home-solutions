@@ -59,7 +59,7 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string }, plan = PLAN, planSnapshot = snapshot()) {
+async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN }, plan = PLAN, planSnapshot = snapshot()) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -115,6 +115,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
   await context.route('**/storage/v1/**', route => route.fulfill({ json: [] }));
 
   await context.route('**/rest/v1/**', async route => {
+    const shown = replan.publishedPlan ?? plan;
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/rpc/get_energy_portal_delta')) {
       await route.fulfill({ json: portalDelta(route.request().postDataJSON().p_known, {
@@ -122,13 +123,13 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           home_id: HOME_ID,
           captured_at: CAPTURED_AT,
           updated_at: CAPTURED_AT,
-          plan_id: plan.plan_id,
+          plan_id: shown.plan_id,
           generation_request_id: REQUEST_ID,
-          plan_schema_version: plan.schema_version,
+          plan_schema_version: shown.schema_version,
           ha_runtime: replan.reportedPlanId ? {
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
-            reason: 'A validated plan is available', binding_until: plan.binding_until,
-            valid_until: plan.valid_until, recovering: false, retry_at: null, last_error: null,
+            reason: 'A validated plan is available', binding_until: shown.binding_until,
+            valid_until: shown.valid_until, recovering: false, retry_at: null, last_error: null,
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: 'accepted',
@@ -138,7 +139,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           ha_ack_error: null,
           ...replan.row,
         },
-        plan,
+        plan: shown,
       }) });
       return;
     }
@@ -158,7 +159,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
       // The economics editor loads its snapshot on demand, separately from sync.
-      ? [{ snapshot: planSnapshot, plan }]
+      ? [{ snapshot: planSnapshot, plan: shown }]
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -172,7 +173,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
 const replanButton = /Planera om nu|Replan now/;
 
 test.describe('requesting a replan', () => {
-  let replan: { row: ReplanColumns; reportedPlanId?: string };
+  let replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN };
 
   test.beforeEach(async ({ context, page }) => {
     replan = { row: { ...idle } };
@@ -205,6 +206,64 @@ test.describe('requesting a replan', () => {
       await expect(page.getByText(/Nästa omplanering|Next replan/)).toHaveCount(0);
     });
   }
+
+  test('battery points save exactly and blue changes only when a new plan is published', async ({ context, page }) => {
+    let saved: Record<string, unknown> | null = null;
+    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
+      if (route.request().method() === 'POST') saved = route.request().postDataJSON();
+      if (route.request().method() === 'DELETE') saved = null;
+      await route.fulfill({ json: saved ? [saved] : [] });
+    });
+    await page.goto('/portal/energy-modeling?tab=economics');
+    const card = page.getByTestId('battery-curve-card');
+    const blue = card.getByTestId('battery-current-curve');
+    const before = await blue.getAttribute('data-values');
+    await card.getByRole('spinbutton', { name: /Antal punkter|Number of points/ }).fill('4');
+    await card.getByRole('button', { name: /Använd punktantal|Apply point count/ }).click();
+    await expect(card.locator('circle')).toHaveCount(4);
+    await card.getByRole('spinbutton', { name: /Punktens värde|Point value/ }).fill('10');
+    const first = card.locator('circle').first();
+    await first.focus(); await page.keyboard.press('ArrowUp');
+    const bounds = await first.boundingBox();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds!.x + bounds!.width / 2 + 12, bounds!.y + bounds!.height / 2 - 10, { steps: 4 });
+    await page.mouse.up();
+    await card.getByRole('button', { name: /^(Spara|Save)$/ }).click();
+    await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeDisabled();
+    expect(saved!.store_key).toBe('battery');
+    const points = saved!.points as { at: number; sek_per_unit: number }[];
+    expect(points).toHaveLength(4);
+    expect(points[0].sek_per_unit).toBeGreaterThan(10);
+    expect(points[0].at).toBeGreaterThan(0);
+    await expect(blue).toHaveAttribute('data-values', before!);
+    await card.screenshot({path: test.info().outputPath('battery-curve.png')});
+    await card.getByRole('spinbutton', { name: /Punktens värde|Point value/ }).fill('20');
+    await page.getByRole('button', { name: replanButton }).click();
+    await expect(page.getByText(/Omplanering beställd|Replan requested/)).toBeVisible();
+    replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      battery_value_curve: { ...PLAN.battery_value_curve!, source: 'customer', curve: { unit: 'kwh', points } } };
+    replan.row.replan_completed_request_id = REQUEST_ID;
+    await expect(blue).toHaveAttribute('data-values', JSON.stringify(points), { timeout: 4500 });
+    // A plan refresh must preserve an unsaved edit made after Save.
+    await expect(card.getByRole('spinbutton', { name: /Punktens värde|Point value/ })).toHaveValue('20');
+    await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeEnabled();
+    await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+  });
+
+  test('an invalid stored battery curve has a direct explicit correction', async ({ context, page }) => {
+    let invalid = true;
+    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
+      if (route.request().method() === 'DELETE') invalid = false;
+      await route.fulfill({ json: invalid ? [{ store_key: 'battery', unit: 'kwh', points: [{ at: 0, sek_per_unit: -1 }] }] : [] });
+    });
+    await page.goto('/portal/energy-modeling?tab=economics');
+    await expect(page.getByText(/Batterikurvan kan inte användas|The battery curve cannot be used/)).toBeVisible();
+    await expect(page.getByTestId('battery-curve-card')).toHaveCount(0);
+    await page.getByRole('button', { name: /Ta bort ogiltig kurva|Remove invalid curve/ }).click();
+    await expect(page.getByTestId('battery-curve-card')).toBeVisible();
+    await expect(page.getByText(/Batterikurvan kan inte användas|The battery curve cannot be used/)).toHaveCount(0);
+  });
 
   test('pressing it records a request and says the house is answering', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=economics');

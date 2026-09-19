@@ -1,3 +1,4 @@
+import { waitForReplan } from "../_shared/replan-wait.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Lightweight status endpoint for the SHS Home Assistant integration.
 // Device-token authenticated. The integration polls this to know whether the
@@ -5,8 +6,8 @@ import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Reads only the webhook-synced customers columns — no Stripe round-trip.
 //
 // It is also where a replan the household asked for is handed to the device,
-// and where the device reports that it could not produce one. Both belong on
-// the poll the integration already makes rather than on a channel of their own.
+// and where the device reports that it could not produce one. A bounded wait
+// bridges private request notifications to the device without sharing cloud credentials.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -121,6 +122,34 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       return json({ error: "storage_failed" }, 500);
     }
 
+    let pending = pendingReplanRequestId(current);
+    const params = new URL(req.url).searchParams;
+    if (req.method === "GET" && params.get("wait_for_replan") === "true") {
+      const after = params.get("after");
+      if (after && !HA_UUID.test(after)) return json({ error: "invalid_replan_request_id" }, 400);
+      await supabase.realtime.setAuth(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      pending = await waitForReplan({
+        after, signal: req.signal,
+        read: async () => {
+          const { data, error } = await supabase.from("energy_optimisation_current")
+            .select("replan_request_id, replan_completed_request_id, replan_error")
+            .eq("home_id", auth.homeId).maybeSingle();
+          if (error) throw error;
+          return pendingReplanRequestId(data);
+        },
+        subscribe: changed => {
+          const channel = supabase.channel(`shs-replan:${auth.homeId}`, { config: { private: true } });
+          const ready = new Promise<void>((resolve, reject) => {
+            channel.on("broadcast", { event: "requested" }, changed).subscribe(status => {
+              if (status === "SUBSCRIBED") resolve();
+              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED")
+                reject(new Error(`Replan notification connection: ${status}`));
+            });
+          });
+          return { ready, close: () => supabase.removeChannel(channel) };
+        },
+      });
+    }
     return json({
       api_version: HA_API_VERSION,
       runtime_received: runtimeReceived,
@@ -129,7 +158,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       minimum_snapshot_schema_version: HA_MINIMUM_SNAPSHOT_SCHEMA_VERSION,
       minimum_plan_schema_version: HA_MINIMUM_PLAN_SCHEMA_VERSION,
       latest_plan_request_id: current?.generation_request_id ?? null,
-      pending_replan_request_id: pendingReplanRequestId(current),
+      pending_replan_request_id: pending,
       subscription_active: auth.subscriptionActive,
       subscription_expires_at: auth.subscriptionExpiresAt,
       customer_name: auth.customerName,
