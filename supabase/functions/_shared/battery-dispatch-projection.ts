@@ -136,6 +136,12 @@ export function projectBatteryDispatch(
     (discharge.export_min_state ?? 0) !== 0
   ) reject("positive_export_reserve");
   if (reasons.length) return { status: "unsupported", reasons };
+  // The objective check above already pins the floor at zero. A pack with no
+  // ceiling has no capacity to model, and its bounds cannot be probed below.
+  const { min_state: minState, max_state: maxState } = store;
+  if (minState === undefined || maxState === undefined) {
+    return { status: "unsupported", reasons: ["unbounded_battery_state"] };
+  }
 
   const etaCharge = store.units_per_kwh(store.initial_state, 0);
   const statePerKwh = discharge!.state_per_kwh_out(store.initial_state, 0);
@@ -143,7 +149,7 @@ export function projectBatteryDispatch(
   // Probe bounds as well as initial state to reject other resolved store families.
   if (
     rows.some((_, i) =>
-      [store.min_state, store.initial_state, store.max_state].some((state) =>
+      [minState, store.initial_state, maxState].some((state) =>
         store.units_per_kwh(state, i) !== etaCharge ||
         discharge!.state_per_kwh_out(state, i) !== statePerKwh ||
         store.drift(state, i) !== state
@@ -183,8 +189,8 @@ export function projectBatteryDispatch(
           available: rows.map(() => true),
           state_kwh: {
             initial: store.initial_state,
-            min: store.min_state,
-            max: store.max_state,
+            min: minState,
+            max: maxState,
             provenance: "selected_dispatch_store:usable_kwh_above_min_soc",
           },
           charge_max_w: store.max_power_w,

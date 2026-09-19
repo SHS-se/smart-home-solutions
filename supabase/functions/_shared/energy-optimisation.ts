@@ -4596,40 +4596,59 @@ export function plannerValueStores(
   return stores;
 }
 
+/** What both workbench views derive before the priority auction runs. */
+function workbenchSetup(
+  snapshot: OptimisationSnapshot,
+  priceArchive: StoredPriceRow[],
+  resolvedPriceOutlook: OptimisationPlan["price_outlook"] | undefined,
+  now: Date,
+) {
+  const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
+  // Stored plan outlooks are already aligned to the remaining horizon.
+  const remaining = remainingSnapshot(snapshot, effectiveAt);
+  const { slots } = preparedSlots(remaining, priceArchive, resolvedPriceOutlook, effectiveAt);
+  const { reservedW, protectedSoc } = batteryReservation(slots, remaining);
+  const derivedBatteryValue = remaining.schema_version >= 6
+    ? deriveBatteryValueCurve(slots, remaining)
+    : null;
+  return {
+    snapshot: remaining,
+    slots,
+    buildPriority: (
+      dispatchCache: Map<string, DispatchBundle | null>,
+      solveAuction?: DispatchAuctionSolver,
+    ) =>
+      buildPriorityPlan(slots, remaining, reservedW, protectedSoc, dispatchCache,
+                        derivedBatteryValue, now, undefined, solveAuction),
+  };
+}
+
 export function dispatchWorkbench(
   snapshot: OptimisationSnapshot,
   priceArchive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
 ): DispatchWorkbench | null {
-  const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
-  // Stored plan outlooks are already aligned to the remaining horizon.
-  snapshot = remainingSnapshot(snapshot, effectiveAt);
-  const { slots } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook, effectiveAt);
-  const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
-  const derivedBatteryValue = snapshot.schema_version >= 6
-    ? deriveBatteryValueCurve(slots, snapshot)
-    : null;
+  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now);
   const dispatchCache = new Map<string, DispatchBundle | null>();
-  buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
-                    derivedBatteryValue, now);
+  setup.buildPriority(dispatchCache);
   const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
   if (!bundle) return null;
-  const peakShaping = derivePeakShaping(snapshot);
+  const peakShaping = derivePeakShaping(setup.snapshot);
   return {
-    snapshot_id: snapshot.snapshot_id,
-    captured_at: snapshot.captured_at,
+    snapshot_id: setup.snapshot.snapshot_id,
+    captured_at: setup.snapshot.captured_at,
     slots: bundle.slots,
     stores: bundle.stores,
     limits: {
-      grid_import_limit_w: snapshot.grid.import_limit_w,
-      grid_export_limit_w: snapshot.grid.export_limit_w,
+      grid_import_limit_w: setup.snapshot.grid.import_limit_w,
+      grid_export_limit_w: setup.snapshot.grid.export_limit_w,
       grid_import_shaping_w: peakShaping.threshold_w,
       peak_shaping_sek_per_kwh_per_kw: peakShaping.sek_per_kwh_per_kw,
       grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
       load_start_preference_sek: peakShaping.load_start_preference_sek,
     },
-    slot_start_ms: slots.map((slot) => slot.epoch_ms),
+    slot_start_ms: setup.slots.map((slot) => slot.epoch_ms),
     planned: {
       power_w: bundle.result.power_w,
       discharge_w: bundle.result.discharge_w,
@@ -4638,6 +4657,49 @@ export function dispatchWorkbench(
     iterations: bundle.result.iterations,
     allocations: bundle.result.allocations,
     battery: bundle.result.battery,
+  };
+}
+
+/** What a hand-built schedule is checked and scored against. */
+export type DispatchWorkbenchInputs = Pick<
+  DispatchWorkbench,
+  "snapshot_id" | "captured_at" | "slots" | "stores" | "limits" | "slot_start_ms"
+>;
+
+/**
+ * `dispatchWorkbench` without solving: the inputs its auction is handed, and
+ * nothing it answers. Solving the priority scenario, its EV alternative and
+ * any continuity candidates takes seconds of CPU on a 288-quarter home, more
+ * than a Supabase request is allowed, and checking a hand-built schedule needs
+ * none of it. The inputs are captured from the same `buildPriorityPlan` call
+ * at the moment they reach the first auction, so they cannot drift from it.
+ */
+export function dispatchWorkbenchInputs(
+  snapshot: OptimisationSnapshot,
+  priceArchive: StoredPriceRow[] = [],
+  resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
+  now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
+): DispatchWorkbenchInputs | null {
+  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now);
+  const captured = new Error("dispatch_inputs_captured");
+  let problem: Parameters<DispatchAuctionSolver> | undefined;
+  try {
+    setup.buildPriority(new Map(), (...args) => {
+      problem = args;
+      throw captured;
+    });
+  } catch (error) {
+    if (error !== captured) throw error;
+  }
+  if (!problem) return null;
+  const [slots, stores, limits] = problem;
+  return {
+    snapshot_id: setup.snapshot.snapshot_id,
+    captured_at: setup.snapshot.captured_at,
+    slots,
+    stores,
+    limits,
+    slot_start_ms: setup.slots.map((slot) => slot.epoch_ms),
   };
 }
 

@@ -3,13 +3,17 @@ import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import {
-  dispatchWorkbench,
-  generateOptimisationPlan,
+  dispatchWorkbenchInputs,
   type OptimisationPlan,
   type OptimisationSnapshot,
 } from "../_shared/energy-optimisation.ts";
 import {
+  EnergyPlanningError,
+  generateRemoteOptimisationPlan,
+} from "../_shared/energy-planning-client.ts";
+import {
   type FixedEnergyPlan,
+  fixedPlanPreflightInput,
   QUARTER_MS,
   validateFixedSchedule,
 } from "../_shared/fixed-energy-plan.ts";
@@ -28,6 +32,17 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...cors, "Content-Type": "application/json" },
   });
+
+/** The current-plan columns activation reads, as ingest stored them. */
+interface CurrentPlanRow {
+  snapshot: OptimisationSnapshot;
+  price_outlook: OptimisationPlan["price_outlook"];
+  issued_at: string;
+  priority_slots: OptimisationPlan["plans"]["priority"]["slots"];
+  snapshot_id: string;
+  fixed_plan: FixedEnergyPlan | null;
+  fixed_plan_revision: number;
+}
 
 serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traffic) => {
   if (request.method === "OPTIONS") {
@@ -62,7 +77,7 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       .select(
         "snapshot, price_outlook:plan->price_outlook, issued_at:plan->>issued_at, priority_slots:plan->plans->priority->slots, snapshot_id, fixed_plan, fixed_plan_revision",
       )
-      .eq("home_id", body.home_id).maybeSingle();
+      .eq("home_id", body.home_id).maybeSingle<CurrentPlanRow>();
     if (error) throw new Error(error.message);
     if (!row) return json({ error: "not_found" }, 404);
     if (body.revision !== row.fixed_plan_revision) {
@@ -84,16 +99,24 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
         }, 409);
       }
       const source = {
-        price_outlook: row.price_outlook as OptimisationPlan["price_outlook"],
-        issued_at: row.issued_at as string,
-        slots: row.priority_slots as OptimisationPlan["plans"]["priority"]["slots"],
+        price_outlook: row.price_outlook,
+        issued_at: row.issued_at,
+        slots: row.priority_slots,
       };
-      const snapshot = row.snapshot as OptimisationSnapshot;
+      const snapshot = row.snapshot;
       if (snapshot.schema_version < 6) {
         return json(
           { error: "Fixed plans require the store-based planner." },
           400,
         );
+      }
+      // The planner refuses any fixed plan alongside an operating scope
+      // (mixed-mode-execution.md): say so before doing any work for it.
+      if (snapshot.schema_version === 9) {
+        return json({
+          error:
+            "Fixed plans are not available for operating-scope plans (snapshot schema 9).",
+        }, 400);
       }
       const { data: curves, error: curveError } = await caller.from(
         "energy_optimisation_value_curves",
@@ -109,7 +132,9 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
           ...Object.fromEntries(Object.entries(saved).map(([key, value]) => [key, value.curve])),
         },
       };
-      const bench = dispatchWorkbench(resolved, [], source.price_outlook, new Date(source.issued_at));
+      // Checking a hand-built schedule needs the auction's inputs, not its
+      // answer: solving the workbench took seconds of CPU on a 288-quarter home.
+      const bench = dispatchWorkbenchInputs(resolved, [], source.price_outlook, new Date(source.issued_at));
       if (!bench) {
         return json(
           { error: "This home has no editable dispatch schedule." },
@@ -185,20 +210,32 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       }
       // Preserve the remainder of the current quarter on replacement as well.
       const currentAt = start - QUARTER_MS;
-      const previous = (row.fixed_plan as FixedEnergyPlan | null)?.slots.find(
+      const previous = row.fixed_plan?.slots.find(
         (s) => Date.parse(s.start) === currentAt,
       );
       if (previous) fixed.slots.unshift(previous);
-      // Materialise commands using the same simulator used for ordinary plans.
-      // Historical validation time is intentional here: this is preflight only;
-      // HA receives a later generation based on fresh measurements through ingest.
-      const candidate = generateOptimisationPlan(
-        resolved,
-        new Date(snapshot.captured_at),
-        [],
-        source.price_outlook,
-        fixed,
-      );
+      // Materialise commands using the same simulator used for ordinary plans,
+      // solved by the planning worker in CPU-bounded calls as ingest's are: a
+      // whole plan does not fit in one request's CPU budget.
+      let candidate: OptimisationPlan;
+      try {
+        candidate = (await generateRemoteOptimisationPlan(
+          fixedPlanPreflightInput(resolved, source.price_outlook, fixed),
+          {
+            url,
+            planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
+            requestId: crypto.randomUUID(),
+          },
+          traffic.fetch,
+        )).plan;
+      } catch (error) {
+        // The planner rejecting the schedule is the household's to correct
+        // (400 below); the worker failing is not, and a retry may succeed.
+        if (error instanceof EnergyPlanningError && error.status === 502) {
+          return json({ error: error.message, retryable: true }, 502);
+        }
+        throw error;
+      }
       if (candidate.status !== "ready") {
         return json({ error: candidate.validation_errors.join("; ") }, 422);
       }

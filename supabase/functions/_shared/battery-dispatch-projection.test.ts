@@ -192,6 +192,8 @@ Deno.test("resolved projection rejects unsupported constraints instead of approx
       "nonconstant_battery_physics",
       (s) => s.store.units_per_kwh = (state) => state > 8 ? .8 : .93,
     ],
+    // No capacity to model; its missing ceiling is not probed as a state.
+    ["unbounded_battery_state", (s) => delete s.store.max_state],
   ];
   for (const [reason, change] of cases) {
     const s = source();

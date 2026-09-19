@@ -8,7 +8,12 @@ import {
   planDispatch,
   scoreDispatch,
 } from "./dispatch-plan.ts";
-import type { PlannedSlot } from "./energy-optimisation.ts";
+import type {
+  OptimisationPlan,
+  OptimisationSnapshot,
+  PlannedSlot,
+} from "./energy-optimisation.ts";
+import type { EnergyPlanningInput } from "./energy-planning-protocol.ts";
 
 export const QUARTER_MS = 15 * 60_000;
 export interface FixedEnergyPlan {
@@ -24,6 +29,25 @@ export interface FixedEnergyPlan {
     targets: PlannedSlot;
     allow_export: boolean;
   }[];
+}
+
+/**
+ * What activation asks the planner to materialise. Preflight is judged at the
+ * reviewed snapshot's own capture time and against the prices the household
+ * reviewed; HA receives a later generation from fresh measurements.
+ */
+export function fixedPlanPreflightInput(
+  snapshot: OptimisationSnapshot,
+  priceOutlook: OptimisationPlan["price_outlook"],
+  fixed: FixedEnergyPlan,
+): EnergyPlanningInput {
+  return {
+    snapshot,
+    now: snapshot.captured_at,
+    price_archive: [],
+    resolved_price_outlook: priceOutlook,
+    fixed_plan: fixed,
+  };
 }
 
 export function validateFixedSchedule(

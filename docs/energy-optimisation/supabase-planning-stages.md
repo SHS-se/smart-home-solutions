@@ -19,6 +19,12 @@ Assembly never searches: an auction missing from the continuation is a planning
 failure. The multi-megabyte plan therefore never crosses the worker boundary,
 and each auction result crosses it once.
 
+`energy-optimisation-fixed-plan` materialises a household's fixed schedule
+through the same chain before activating it. It checks the schedule against
+the auction's inputs captured unsolved (`dispatchWorkbenchInputs`), because
+solving the workbench alone took seconds of CPU on a 288-quarter home. A schema
+9 snapshot cannot carry a fixed plan, so activation refuses it before planning.
+
 The stages use the same generator as the synchronous planner. A continuation
 contains numeric schedules, trajectories, allocations and completed auction
 results. Store callbacks are rebuilt from the unchanged input snapshot. Completed
