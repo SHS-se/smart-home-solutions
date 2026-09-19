@@ -14,8 +14,8 @@ import type {
  * Rebuilding the deterministic planner's inputs is cheap. Completed auctions
  * are reused while rebuilding, so no search is repeated and no functions need
  * serializing. There is no stored job or partial plan to race with a newer push.
- * `budgetSpent` lets the transfer stage stop between two transfers instead of
- * finishing within this call; the next call resumes it from the checkpoint.
+ * `budgetSpent` lets the transfer and refinement stages stop part-way instead
+ * of finishing within this call; the next call resumes from the checkpoint.
  */
 export function energyPlanningStep(
   input: EnergyPlanningInput,

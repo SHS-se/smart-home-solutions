@@ -5,8 +5,9 @@ calls the internal `energy-optimisation-plan-step` endpoint sequentially. Each
 call executes one auction stage: bidding and settlement, paired energy transfers,
 or cost refinement and diagnostics. A final call assembles all three scenarios.
 Each invocation has its own CPU budget; network waits do not consume ingest CPU.
-The transfer stage can also stop between two transfers once its call has spent
-1.2 s (`STAGE_BUDGET_MS` in the worker); the next call resumes it from the
+The transfer and refinement stages can also stop part-way once their call has
+spent 1.2 s (`STAGE_BUDGET_MS` in the worker): transfers between two transfers,
+refinement between two source quarters. The next call resumes from the
 checkpoint, and the plan is identical either way.
 
 The stages use the same generator as the synchronous planner. A continuation
@@ -39,9 +40,9 @@ the local deploy script run this first. Existing secrets are preserved across
 deployments. Both functions use the same Supabase project; there is no new paid
 service or database migration. Deploy both whenever their
 shared planning code changes. Incompatible checkpoint/wire changes require a
-bump to `ENERGY_PLANNING_PROTOCOL`; a mismatch fails explicitly. A paused
-transfer stage only adds an optional `transferred` list to its checkpoint, and a
-checkpoint without one resumes as before, so it did not need a bump.
+bump to `ENERGY_PLANNING_PROTOCOL`; a mismatch fails explicitly. Paused stages
+only add optional fields to a checkpoint (`transferred`, `refinement`), and a
+checkpoint without them resumes as before, so they did not need a bump.
 
 Run `deno task test` for the full suite. The staged tests serialize every
 continuation and compare complete output against the synchronous planner for
@@ -60,7 +61,10 @@ verification auction of a 288-quarter plan accepted about 90 transfers, each
 rescanning every charge/discharge pair, and that stage alone ran 2.1 s on the
 worker before Supabase terminated it (546, relayed by ingest as 502). It now
 pauses between transfers, and its scan does the same arithmetic in about half
-the time. The auction and refinement stages cannot pause. On that home's input
-they peak at about 0.25 s and 0.55 s on a local M-series machine, and the worker
-runs roughly twice as slow, so refinement is the next candidate for a finer
-checkpoint.
+the time. Refinement, the next largest at about 0.55 s on a local M-series
+machine (the worker runs roughly twice as slow), pauses between source
+quarters. Its checkpoint carries the cost the search last accepted instead of
+rescoring it on resume: the incremental scorer counts a run that starts in the
+first quarter from a different noise floor than a full rescore, and a resumed
+search must compare trials against the same bar. The auction stage, bidding and
+settlement, cannot pause; on that home's input it peaks at about 0.25 s locally.

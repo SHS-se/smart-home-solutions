@@ -1044,6 +1044,27 @@ function scoreDispatchWithReuse(
   };
 }
 
+/** What refinement's search compares every trial against. */
+type RefinementCost = Pick<
+  DispatchScore,
+  "billable_sek" | "wear_sek" | "start_sek" | "peak_sek" | "continuity_sek"
+>;
+
+/** Where a paused cost refinement resumes: the next source quarter to try. */
+export interface RefinementCursor {
+  sweep: number;
+  /** Index into the auction's stores. */
+  store: number;
+  from: number;
+  /** Whether this sweep has already accepted an exchange. */
+  improved: boolean;
+  changed: string[];
+  /** Each store's service value before refinement; no exchange may lower it. */
+  service_floor: number[];
+  /** Cost of the schedule as refined so far. */
+  cost: RefinementCost;
+}
+
 /** Improve real operating cost without selling away the service the auction chose.
  * Neighbouring charge exchanges keep delivered energy, enforce every physical
  * bound through the independent scorer, and may not lower any store's utility.
@@ -1056,17 +1077,55 @@ export function refineDispatchCosts(
   limits: DispatchLimits,
   schedule: DispatchSchedule,
 ): Set<string> {
-  const changed = new Set<string>();
+  const search = refineDispatchCostSteps(slots, stores, limits, schedule);
+  let step = search.next();
+  while (!step.done) step = search.next();
+  return step.value;
+}
+
+/**
+ * `refineDispatchCosts`, able to stop before any source quarter once
+ * `budgetSpent` says so, and to resume from the cursor it yielded then. The
+ * schedule it has refined so far is `schedule` itself, which the caller
+ * carries alongside the cursor.
+ */
+export function* refineDispatchCostSteps(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  schedule: DispatchSchedule,
+  cursor?: RefinementCursor,
+  budgetSpent?: () => boolean,
+): Generator<RefinementCursor, Set<string>> {
+  const changed = new Set<string>(cursor?.changed);
   let current = scoreDispatch(slots, stores, limits, schedule);
-  if (current.infeasibilities.length) return changed;
-  const serviceFloor = current.stores.map((store) => store.service_value_sek);
+  if (cursor) {
+    // Rescoring reproduces the refined schedule's trajectories, imports and
+    // store accounts exactly, but not always the cost the search last
+    // accepted: the incremental scorer counts a run starting in the first
+    // quarter from a different noise floor. That cost is the bar each trial
+    // must clear, so it is carried rather than recomputed.
+    current = { ...current, ...cursor.cost };
+  } else if (current.infeasibilities.length) {
+    return changed;
+  }
+  const serviceFloor = cursor?.service_floor ??
+    current.stores.map((store) => store.service_value_sek);
   const sellPrices = publishedSellPrices(slots);
   const cost = (score: DispatchScore) =>
     score.billable_sek + score.wear_sek +
     score.start_sek + score.peak_sek + score.continuity_sek;
-  for (let sweep = 0; sweep < 8; sweep += 1) {
-    let improved = false;
-    for (const store of stores) {
+  let firstStore = cursor?.store ?? 0;
+  let firstFrom = cursor?.from ?? 0;
+  let improved = cursor?.improved ?? false;
+  let searched = false;
+  for (let sweep = cursor?.sweep ?? 0; sweep < 8; sweep += 1) {
+    const startStore = firstStore;
+    firstStore = 0;
+    for (let storeIndex = startStore; storeIndex < stores.length; storeIndex += 1) {
+      const store = stores[storeIndex];
+      const startFrom = firstFrom;
+      firstFrom = 0;
       const power = schedule.power_w[store.key];
       if (!power) continue;
       const executable = (power: number) => {
@@ -1078,7 +1137,27 @@ export function refineDispatchCosts(
                   Math.round((power - minimum) / step),
               ) <= 1e-6));
       };
-      for (let from = 0; from < slots.length; from += 1) {
+      for (let from = startFrom; from < slots.length; from += 1) {
+        // One source quarter per call guarantees progress.
+        if (searched && budgetSpent?.()) {
+          yield {
+            sweep,
+            store: storeIndex,
+            from,
+            improved,
+            changed: [...changed],
+            service_floor: serviceFloor,
+            cost: {
+              billable_sek: current.billable_sek,
+              wear_sek: current.wear_sek,
+              start_sek: current.start_sek,
+              peak_sek: current.peak_sek,
+              continuity_sek: current.continuity_sek,
+            },
+          };
+          searched = false;
+        }
+        searched = true;
         if (power[from] <= GRID_NOISE_W) continue;
         for (
           let to = Math.max(0, from - 4);
@@ -1174,6 +1253,7 @@ export function refineDispatchCosts(
       }
     }
     if (!improved) break;
+    improved = false;
   }
   return changed;
 }
@@ -1200,6 +1280,8 @@ export interface DispatchCheckpoint {
   /** Stores the transfer stage has already moved energy through, when it
    * checkpointed between two transfers rather than at its start. */
   transferred?: string[];
+  /** Where cost refinement resumes, when it checkpointed part-way through. */
+  refinement?: RefinementCursor;
 }
 
 export function planDispatch(
@@ -1415,8 +1497,8 @@ function dispatchAuction(
 
 /**
  * The synchronous and distributed planners execute these same three stages.
- * `budgetSpent` lets a distributed caller also checkpoint the transfer stage
- * between two transfers; the synchronous planner never pauses.
+ * `budgetSpent` lets a distributed caller also checkpoint the transfer and
+ * refinement stages part-way through; the synchronous planner never pauses.
  */
 export function* dispatchAuctionSteps(
   slots: DispatchSlot[],
@@ -3235,10 +3317,38 @@ export function* dispatchAuctionSteps(
     (limits.grid_ramp_sek_per_kw ?? 0) > 0 ||
     (limits.load_start_preference_sek ?? 0) > 0
   ) {
-    const changed = refineDispatchCosts(slots, stores, limits, {
-      power_w: powerW,
-      discharge_w: dischargeW,
-    });
+    // Refinement rescores the whole schedule for every trial exchange, which
+    // makes it the costliest stage after transfers. It too stops between two
+    // source quarters when a caller's budget is spent; the schedule refined so
+    // far is `powerW`, already in the checkpoint.
+    const search = refineDispatchCostSteps(
+      slots,
+      stores,
+      limits,
+      { power_w: powerW, discharge_w: dischargeW },
+      checkpoint?.refinement,
+      budgetSpent,
+    );
+    let changed: Set<string>;
+    for (;;) {
+      const searched = search.next();
+      if (searched.done === true) {
+        changed = searched.value;
+        break;
+      }
+      yield {
+        next: "refinement",
+        powerW,
+        dischargeW,
+        stateByKey,
+        occupiedW,
+        returnedW,
+        allocations,
+        iterations,
+        stopped,
+        refinement: searched.value,
+      };
+    }
     if (changed.size > 0) {
       for (let index = 0; index < count; index += 1) {
         occupiedW[index] = stores.reduce(

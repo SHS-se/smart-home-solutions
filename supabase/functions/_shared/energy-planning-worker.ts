@@ -10,10 +10,10 @@ import { describeThrown } from "./ha-api-contract.ts";
 const MAX_BODY_BYTES = 16_000_000;
 /**
  * Supabase ends a request after 2 s of CPU (546 WORKER_RESOURCE_LIMIT). The
- * transfer stage pauses between two transfers once this much has gone. What
- * the budget cannot interrupt — boot, reading the body, the transfer in
- * progress, serializing the checkpoint — fits in the remainder. The auction
- * and refinement stages cannot pause and still have to fit on their own.
+ * transfer and refinement stages pause part-way once this much has gone. What
+ * the budget cannot interrupt — boot, reading the body, the transfer or trial
+ * in progress, serializing the checkpoint — fits in the remainder. The auction
+ * stage cannot pause and still has to fit on its own.
  */
 const STAGE_BUDGET_MS = 1_200;
 

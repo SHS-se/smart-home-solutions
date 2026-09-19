@@ -9,6 +9,8 @@ import {
   type DispatchStore,
   planDispatch,
   refineDispatchCosts,
+  refineDispatchCostSteps,
+  type RefinementCursor,
   scoreDispatch,
   SLOT_HOURS,
 } from "./dispatch-plan.ts";
@@ -1833,6 +1835,165 @@ Deno.test("refinement rechecks export restrictions on an unchanged discharging b
     scoreDispatch(slots, [ev, battery], limits, schedule).infeasibilities,
     [],
   );
+});
+
+/** Refines through JSON, pausing before every source quarter, as a worker would. */
+function refineWithPauses(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  schedule: DispatchSchedule,
+  onPause: (cursor: RefinementCursor, schedule: DispatchSchedule) => void =
+    () => {},
+) {
+  const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+  let cursor: RefinementCursor | undefined;
+  for (let request = 0; request < 2_000; request += 1) {
+    const step = refineDispatchCostSteps(
+      slots,
+      stores,
+      limits,
+      schedule,
+      cursor,
+      () => true,
+    ).next();
+    if (step.done === true) {
+      return { schedule, changed: [...step.value].sort(), pauses: request };
+    }
+    cursor = wire(step.value);
+    schedule = wire(schedule);
+    onPause(cursor, schedule);
+  }
+  throw new Error("The paused refinement did not finish");
+}
+
+Deno.test("cost refinement paused before every source quarter resumes to the same schedule", () => {
+  const count = 24;
+  const slots: DispatchSlot[] = Array.from({ length: count }, (_, index) => ({
+    pv_w: 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: 1.2 + 0.3 * Math.sin(index / 3),
+    export_price_sek_per_kwh: 0.35,
+  }));
+  const ev: DispatchStore = {
+    ...evStore(count, 100, count - 1),
+    min_power_w: 1_380,
+    power_step_w: 690,
+    start_cost_sek: 0.2,
+  };
+  const pool: DispatchStore = {
+    ...poolStore(count, 26),
+    usage_weight: Array.from(
+      { length: count },
+      (_, index) => index >= 16 ? 1 / 8 : 0,
+    ),
+  };
+  const limits = {
+    ...LIMITS,
+    grid_import_shaping_w: 2_000,
+    peak_shaping_sek_per_kwh_per_kw: 0.1,
+    grid_ramp_sek_per_kw: 0.05,
+    load_start_preference_sek: 0.25,
+  };
+  const schedule = (): DispatchSchedule => ({
+    power_w: {
+      ev: Array.from({ length: count }, (_, index) => index % 3 ? 0 : 4_140),
+      pool: Array.from(
+        { length: count },
+        (_, index) => [0, 3_000, 1_500, 0][index % 4],
+      ),
+    },
+    discharge_w: {},
+  });
+  const expected = schedule();
+  const changed = [...refineDispatchCosts(slots, [ev, pool], limits, expected)]
+    .sort();
+  assertEquals(changed, ["ev", "pool"], "the scenario refines both stores");
+  const paused = refineWithPauses(slots, [ev, pool], limits, schedule());
+  assertEquals(paused.schedule, expected);
+  assertEquals(paused.changed, changed);
+  assert(paused.pauses > 100, `paused ${paused.pauses} times`);
+});
+
+Deno.test("a resumed refinement keeps the cost it last accepted", () => {
+  // Rescoring counts a run that starts in the first quarter from a different
+  // noise floor than the incremental scorer does: here a charging car's
+  // sub-microwatt first quarter is one continuation start to one and a new
+  // start to the other. After the first merge, only the carried cost lets the
+  // small second exchange clear the same bar it clears uninterrupted.
+  const count = 12;
+  const slots: DispatchSlot[] = Array.from({ length: count }, (_, index) => ({
+    pv_w: 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: 1 + 0.004 * index,
+    export_price_sek_per_kwh: 0.2,
+  }));
+  const atEnd = Array.from(
+    { length: count },
+    (_, index) => index === count - 1 ? 1 : 0,
+  );
+  const ev: DispatchStore = {
+    key: "ev",
+    curve: {
+      unit: "km",
+      points: [{ at: 0, sek_per_unit: 0.1 }, { at: 400, sek_per_unit: 0.1 }],
+    },
+    initial_state: 100,
+    max_state: 480,
+    max_power_w: 11_000,
+    start_cost_sek: 0.2,
+    initially_charging: true,
+    retention_per_slot: 1,
+    usage_weight: atEnd,
+    units_per_kwh: () => 6,
+    drift: (state) => state,
+  };
+  const pool: DispatchStore = {
+    key: "pool",
+    curve: {
+      unit: "celsius",
+      points: [{ at: 25, sek_per_unit: 60 }, { at: 31, sek_per_unit: 0 }],
+    },
+    initial_state: 26,
+    max_state: 34,
+    max_power_w: 3_000,
+    min_power_w: 3_000,
+    start_cost_sek: 0.1,
+    retention_per_slot: 1,
+    usage_weight: atEnd,
+    units_per_kwh: () => 0.03,
+    drift: (state) => state,
+  };
+  const limits = {
+    ...LIMITS,
+    grid_ramp_sek_per_kw: 0.05,
+    load_start_preference_sek: 0.25,
+  };
+  const schedule = (): DispatchSchedule => ({
+    power_w: {
+      ev: [5e-7, ...new Array(count - 1).fill(0)],
+      pool: [3_000, 0, 3_000, ...new Array(count - 3).fill(0)],
+    },
+    discharge_w: {},
+  });
+  const expected = schedule();
+  refineDispatchCosts(slots, [ev, pool], limits, expected);
+  assertEquals(expected.power_w.pool.slice(0, 3), [3_000, 3_000, 0]);
+  let rescoredDiffers = false;
+  const paused = refineWithPauses(
+    slots,
+    [ev, pool],
+    limits,
+    schedule(),
+    (cursor, refined) => {
+      const rescored = scoreDispatch(slots, [ev, pool], limits, refined);
+      if (rescored.continuity_sek !== cursor.cost.continuity_sek) {
+        rescoredDiffers = true;
+      }
+    },
+  );
+  assert(rescoredDiffers, "the scenario exercises the carried cost");
+  assertEquals(paused.schedule, expected);
 });
 
 /** A quarter earns 0.25 SEK before a 0.50 SEK start: a run can pay when no isolated bid can. */

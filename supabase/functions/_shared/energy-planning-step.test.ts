@@ -27,11 +27,11 @@ const inputFor = (snapshot: OptimisationSnapshot): EnergyPlanningInput => ({
   price_archive: [],
 });
 
-/** Returns how many times the transfer stage paused between two transfers. */
+/** Returns how many times the transfer and refinement stages paused part-way. */
 function assertStagesMatch(
   input: EnergyPlanningInput,
   budgetSpent?: () => boolean,
-): number {
+): { transfers: number; refinement: number } {
   const original = wire(input);
   const expected = generateOptimisationPlan(
     input.snapshot,
@@ -42,7 +42,7 @@ function assertStagesMatch(
   );
   let continuation: EnergyPlanningContinuation | undefined;
   const seen = new Set<string>();
-  let paused = 0;
+  const paused = { transfers: 0, refinement: 0 };
   for (let i = 0; i < 512; i++) {
     const step = energyPlanningStep(wire(input), continuation, budgetSpent);
     if (step.done === true) {
@@ -53,7 +53,8 @@ function assertStagesMatch(
     }
     continuation = wire(step.continuation);
     if (continuation.checkpoint) seen.add(continuation.checkpoint.next);
-    if (continuation.checkpoint?.transferred) paused++;
+    if (continuation.checkpoint?.transferred) paused.transfers++;
+    if (continuation.checkpoint?.refinement) paused.refinement++;
   }
   throw new Error("Planning did not finish");
 }
@@ -73,13 +74,22 @@ const seasonInput = (season: "sunny" | "dark") => {
 
 for (const season of ["sunny", "dark"] as const) {
   Deno.test(`distributed 288-quarter ${season} plan preserves every command and diagnostic`, () => {
-    assertEquals(assertStagesMatch(seasonInput(season)), 0);
+    assertEquals(assertStagesMatch(seasonInput(season)), {
+      transfers: 0,
+      refinement: 0,
+    });
   });
 
-  Deno.test(`distributed ${season} plan survives a transfer stage paused after every transfer`, () => {
-    // A worker whose CPU budget is spent checkpoints between transfers; the
-    // resumed stage must reach exactly the plan an uninterrupted one does.
-    assert(assertStagesMatch(seasonInput(season), () => true) > 1);
+  Deno.test(`distributed ${season} plan survives transfer and refinement stages paused part-way`, () => {
+    // A worker whose CPU budget is spent checkpoints between two transfers or
+    // two refinement trials; the resumed stages must reach exactly the plan an
+    // uninterrupted solve does.
+    let checks = 0;
+    const paused = assertStagesMatch(
+      seasonInput(season),
+      () => ++checks % 25 === 0,
+    );
+    assert(paused.transfers > 0 && paused.refinement > 0, JSON.stringify(paused));
   });
 }
 
