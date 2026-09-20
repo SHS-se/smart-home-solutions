@@ -1,3 +1,4 @@
+import { powerEnvelope, type PowerEnvelope } from "./power-envelope.ts";
 import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
@@ -284,6 +285,19 @@ interface DispatchableServiceInputBase extends ServiceWindowInput {
 export interface FixedPowerControl {
   type: "fixed_power";
   power_w: number;
+  /**
+   * The lowest non-zero power the hardware can actually hold, when it can hold
+   * more than one. Omitted means the device is a relay: one power and off.
+   *
+   * The absence is the contract. An integration that learns to modulate can add
+   * these two keys and an older planner, which reads only `power_w`, keeps
+   * planning the home as a relay; an older integration stays silent and a newer
+   * planner reaches the same envelope it does today. Neither side negotiates a
+   * schema version to say a heat pump gained a power dial.
+   */
+  min_power_w?: number;
+  /** The executable increment above `min_power_w`. Requires it. */
+  power_step_w?: number;
 }
 
 export interface DiscreteCurrentControl {
@@ -2529,16 +2543,25 @@ function buildDispatchStores(
    * that the device has one power and no other, which is what makes the store's
    * minimum equal to its maximum below.
    */
-  const declaredFixedPowerW = (
+  /**
+   * The executable band the installation declared for one service.
+   *
+   * Falls back to a relay at `fallbackW` when nothing was declared, which is
+   * what an integration that predates the envelope sends and what the seeded
+   * heat pump is. §8.13 lives in `powerEnvelope`, not here.
+   */
+  const declaredPowerEnvelope = (
     device: ServiceInput["device"],
-  ): number | undefined => {
+    fallbackW: number,
+  ): PowerEnvelope => {
     for (const service of snapshot.services) {
       if (service.device !== device) continue;
       if (service.control?.type !== "fixed_power") continue;
-      const declared = service.control.power_w;
-      if (typeof declared === "number" && declared > 0) return declared;
+      if (typeof service.control.power_w === "number" && service.control.power_w > 0) {
+        return powerEnvelope(service.control);
+      }
     }
-    return undefined;
+    return powerEnvelope({ type: "fixed_power", power_w: fallbackW });
   };
 
   if (snapshot.schema_version < 6) return null;
@@ -2570,8 +2593,6 @@ function buildDispatchStores(
     };
     const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
     const airAt = (index: number) => outdoor?.[index] ?? 15;
-    const poolPowerW = declaredFixedPowerW("pool") ??
-      SEEDED_POOL_HEAT_PUMP.rated_power_w;
     // The COP at the pool's current state is what converts a price into a value
     // per degree, and it is the same conversion the editor showed.
     const poolUnitsPerKwh =
@@ -2582,14 +2603,10 @@ function buildDispatchStores(
       curve: anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
       initial_state: pool.water_temperature_c,
       max_state: poolStopTemperature(curves.pool) ?? undefined,
-      max_power_w: poolPowerW,
-      // A `fixed_power` heat pump has one power and off, so the auction may
-      // only bid that. Without a floor `executablePowerLevels` treats zero as
-      // the minimum and bids any fraction of it: while the pool's curve outbids
-      // every price the winner is always full power and nothing shows, but the
-      // moment it stops dominating the plan schedules 38 W, 59 W and 340 W
-      // tracking PV — a modulation the relay does not have (§8.13).
-      min_power_w: poolPowerW,
+      // One power and off for a relay; the declared band for a heat pump that
+      // can hold more than one. §8.13 is enforced inside `powerEnvelope`, for
+      // every store that has a band, rather than restated beside each one.
+      ...declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w),
       start_cost_sek: 0.5,
       initially_charging: pool.heating_running === true,
       // Heat is valued as state carried to the horizon edge, discounted by
@@ -2652,9 +2669,7 @@ function buildDispatchStores(
         // July, which is why this is recomputed every solve.
         stores.push({
           ...vehicleValueState(vehicle, curves.ev, reference),
-          max_power_w: wattsPerAmp(control) * control.max_current_a,
-          min_power_w: wattsPerAmp(control) * control.min_current_a,
-          power_step_w: wattsPerAmp(control) * control.current_step_a,
+          ...powerEnvelope(control),
           usage_weight: usage,
           retention_per_slot: 1,
           drift: (state) => state,
