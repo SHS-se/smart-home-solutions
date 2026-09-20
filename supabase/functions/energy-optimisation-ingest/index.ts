@@ -403,28 +403,55 @@ async function refitPoolModel(
   const from = new Date(
     poolTrainingWindowStartMs(now, epochStart, TRAINING_WINDOW_DAYS),
   ).toISOString();
-  const [{ data: waterRows }, { data: outdoorRows }, { data: deviceRows }] =
-    await Promise.all([
-      supabase.from("energy_optimisation_pool_slots")
-        .select("start_ts, water_temperature_c")
-        .eq("home_id", homeId).gte("start_ts", from).order("start_ts"),
-      supabase.from("energy_optimisation_outdoor_slots")
-        .select("start_ts, outdoor_temperature_c")
-        .eq("home_id", homeId).gte("start_ts", from),
-      supabase.from("energy_optimisation_device_slots")
-        .select("start_ts, device_key, energy_kwh")
-        .eq("home_id", homeId).gte("start_ts", from),
-    ]);
+  // The heater's energy is stored against `device_id`, so the pool's device
+  // keys have to be resolved to ids before the slots can be filtered by them.
+  // Without any, there is no heated quarter to find and no fit to attempt.
+  const { data: poolDevices, error: poolDeviceError } = await supabase
+    .from("energy_optimisation_devices")
+    .select("id")
+    .eq("home_id", homeId)
+    .in("device_key", poolDeviceKeys);
+  if (poolDeviceError) {
+    console.error("[ENERGY-OPTIMISATION] pool device read failed", poolDeviceError);
+    return;
+  }
+  const poolDeviceIds = (poolDevices ?? []).map((row: Record<string, unknown>) =>
+    String(row.id)
+  );
+  if (poolDeviceIds.length === 0) return;
+
+  const [water_, outdoor_, device_] = await Promise.all([
+    supabase.from("energy_optimisation_pool_slots")
+      .select("start_ts, water_temperature_c")
+      .eq("home_id", homeId).gte("start_ts", from).order("start_ts"),
+    supabase.from("energy_optimisation_outdoor_slots")
+      .select("start_ts, temperature_c")
+      .eq("home_id", homeId).gte("start_ts", from),
+    supabase.from("energy_optimisation_device_slots")
+      .select("start_ts, energy_kwh")
+      .eq("home_id", homeId).gte("start_ts", from)
+      .in("device_id", poolDeviceIds),
+  ]);
+  // A failed read is not a refusal to fit. Treating it as one would write a
+  // rejection that reads like a Swedish summer, stamp `fitted_at` with it, and
+  // then sit on that answer for the whole refit interval.
+  const readError = water_.error ?? outdoor_.error ?? device_.error;
+  if (readError) {
+    console.error("[ENERGY-OPTIMISATION] pool training read failed", readError);
+    return;
+  }
+  const waterRows = water_.data;
+  const outdoorRows = outdoor_.data;
+  const deviceRows = device_.data;
 
   const outdoorByStart = new Map<number, number>(
     (outdoorRows ?? []).map((row: Record<string, unknown>) => [
       Date.parse(String(row.start_ts)),
-      Number(row.outdoor_temperature_c),
+      Number(row.temperature_c),
     ]),
   );
   const heaterByStart = new Map<number, number>();
   for (const row of deviceRows ?? []) {
-    if (!poolDeviceKeys.includes(String(row.device_key))) continue;
     const at = Date.parse(String(row.start_ts));
     heaterByStart.set(
       at,
