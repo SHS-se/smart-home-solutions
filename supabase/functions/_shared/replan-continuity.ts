@@ -94,7 +94,7 @@ export function replanReference(
   const batteryDispatched = previous.plans.priority.dispatched_devices.includes("battery");
   const command = slot.battery_command;
   // Forecast watts alone cannot preserve which source or destination was authorized.
-  if (batteryDispatched && (!command || command.schema_version !== 2 || command.operation === "self_consumption")) return null;
+  if (batteryDispatched && (!command || command.schema_version !== 3 || command.operation === "self_consumption")) return null;
   const reference: ReplanReference = {
     version: 2,
     source_plan_id: previous.plan_id,
@@ -157,6 +157,7 @@ function batteryOperationMatchesPower(battery: NonNullable<ReplanReference["batt
     case "export":
       return battery.discharge_w > 0 && battery.charge_w === 0;
     case "hold":
+    case "idle":
       return battery.charge_w === 0 && battery.discharge_w === 0;
     default:
       return false;

@@ -253,13 +253,19 @@ Deno.test("the schema-8 battery fixture is emitted by the real planner", async (
   for (const [key, scenario] of Object.entries(stored.plan.plans) as [string, any][]) {
     assertEquals(scenario.status, "ready", JSON.stringify(scenario.validation_errors));
     for (const slot of scenario.slots) {
-      assertEquals(slot.battery_command.schema_version, 2);
+      assertEquals(slot.battery_command.schema_version, 3);
       assertEquals(slot.battery_command.allow_battery_export, false);
       if (key === "baseline") {
         assertEquals(slot.battery_command.operation, "self_consumption");
         assertEquals(slot.battery_command.charge_limit_w, 8800);
         assertEquals(slot.battery_command.discharge_limit_w, 9600);
       }
+      // Surplus capture is forgone only where the planner chose the grid over
+      // the pack; every other quarter keeps the rated charge permission.
+      assertEquals(
+        slot.battery_command.charge_limit_w === 0,
+        slot.battery_command.operation === "idle",
+      );
     }
   }
   assertEquals(validatePlanningNegotiation({api_version: 1, integration_version: "0.7.0-beta.56",

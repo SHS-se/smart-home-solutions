@@ -470,7 +470,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -542,7 +542,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -614,7 +614,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -686,7 +686,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -758,7 +758,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -830,7 +830,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -902,7 +902,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -974,7 +974,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1046,7 +1046,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1141,7 +1141,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1236,7 +1236,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1331,7 +1331,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1426,7 +1426,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1521,7 +1521,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1616,7 +1616,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1688,7 +1688,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1760,7 +1760,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1832,7 +1832,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1904,7 +1904,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -1976,7 +1976,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2048,7 +2048,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2120,7 +2120,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2192,7 +2192,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2264,7 +2264,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2336,7 +2336,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2408,7 +2408,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2480,7 +2480,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2552,7 +2552,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2624,7 +2624,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2696,7 +2696,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2768,7 +2768,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2840,7 +2840,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -2912,7 +2912,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3007,7 +3007,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3102,7 +3102,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3197,7 +3197,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3292,7 +3292,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3387,7 +3387,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3482,7 +3482,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3577,7 +3577,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3672,7 +3672,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3767,7 +3767,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3862,7 +3862,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -3957,7 +3957,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4052,7 +4052,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4147,7 +4147,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4242,7 +4242,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4337,7 +4337,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4432,7 +4432,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4527,7 +4527,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4622,7 +4622,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4717,7 +4717,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4812,7 +4812,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -4907,7 +4907,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5002,7 +5002,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5097,7 +5097,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5192,7 +5192,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5287,7 +5287,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5382,7 +5382,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5477,7 +5477,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5572,7 +5572,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5667,7 +5667,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5762,7 +5762,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -5857,7 +5857,7 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "self_consumption",
               "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
@@ -6000,9 +6000,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6072,9 +6072,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6144,9 +6144,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6216,9 +6216,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6288,9 +6288,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6360,9 +6360,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6432,9 +6432,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6504,9 +6504,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -6576,7 +6576,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -6671,7 +6671,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -6766,7 +6766,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -6861,7 +6861,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -6956,7 +6956,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -7051,7 +7051,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -7146,8 +7146,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7218,8 +7218,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7290,8 +7290,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7362,8 +7362,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7434,8 +7434,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7506,8 +7506,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7578,8 +7578,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7650,8 +7650,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7722,8 +7722,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7794,8 +7794,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7866,8 +7866,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -7938,8 +7938,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8010,8 +8010,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8082,8 +8082,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8154,8 +8154,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8226,8 +8226,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8298,8 +8298,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8370,8 +8370,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -8442,9 +8442,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8537,9 +8537,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8632,9 +8632,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8727,9 +8727,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8822,9 +8822,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8917,9 +8917,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9012,9 +9012,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9107,9 +9107,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9202,9 +9202,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9297,9 +9297,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9392,9 +9392,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9487,9 +9487,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9582,9 +9582,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9677,9 +9677,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9772,9 +9772,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9867,9 +9867,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -9962,9 +9962,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10057,9 +10057,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10152,9 +10152,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10247,9 +10247,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10342,9 +10342,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10437,9 +10437,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10532,9 +10532,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10627,9 +10627,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10722,9 +10722,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10817,9 +10817,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -10912,9 +10912,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11007,9 +11007,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11102,9 +11102,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11197,9 +11197,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11292,9 +11292,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11387,9 +11387,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11530,9 +11530,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11602,9 +11602,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11674,9 +11674,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11746,9 +11746,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11818,9 +11818,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11890,9 +11890,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -11962,9 +11962,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -12034,9 +12034,9 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "hold",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -12106,7 +12106,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12201,7 +12201,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12296,7 +12296,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12391,7 +12391,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12486,7 +12486,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12581,7 +12581,7 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "solar_charge",
               "charge_limit_w": 8800,
               "discharge_limit_w": 0,
@@ -12676,8 +12676,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -12748,8 +12748,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -12820,8 +12820,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -12892,8 +12892,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -12964,8 +12964,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13036,8 +13036,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13108,8 +13108,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13180,8 +13180,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13252,8 +13252,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13324,8 +13324,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13396,8 +13396,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13468,8 +13468,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13540,8 +13540,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13612,8 +13612,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13684,8 +13684,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13756,8 +13756,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13828,8 +13828,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13900,8 +13900,8 @@
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
-              "operation": "hold",
+              "schema_version": 3,
+              "operation": "idle",
               "charge_limit_w": 0,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
@@ -13972,9 +13972,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14067,9 +14067,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14162,9 +14162,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14257,9 +14257,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14352,9 +14352,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14447,9 +14447,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14542,9 +14542,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14637,9 +14637,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14732,9 +14732,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14827,9 +14827,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -14922,9 +14922,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15017,9 +15017,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15112,9 +15112,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15207,9 +15207,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15302,9 +15302,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15397,9 +15397,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15492,9 +15492,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15587,9 +15587,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15682,9 +15682,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15777,9 +15777,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15872,9 +15872,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -15967,9 +15967,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16062,9 +16062,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16157,9 +16157,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16252,9 +16252,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16347,9 +16347,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16442,9 +16442,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16537,9 +16537,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16632,9 +16632,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16727,9 +16727,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16822,9 +16822,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -16917,9 +16917,9 @@
             "battery_discharge_w": 700,
             "battery_export_w": 0,
             "battery_command": {
-              "schema_version": 2,
+              "schema_version": 3,
               "operation": "supply_house",
-              "charge_limit_w": 0,
+              "charge_limit_w": 8800,
               "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false

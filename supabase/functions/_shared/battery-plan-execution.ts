@@ -27,7 +27,13 @@ export interface ReferenceInterval {
   end_ms: number;
   stored_start_mwh: number;
   stored_end_mwh: number;
-  operation: "hold" | "grid_charge" | "solar_charge" | "supply_house" | "export";
+  operation:
+    | "hold"
+    | "idle"
+    | "grid_charge"
+    | "solar_charge"
+    | "supply_house"
+    | "export";
   target_kind: "stored_energy" | "demand_following" | "permission";
   grid_charge_allowed: boolean;
   export_allowed: boolean;

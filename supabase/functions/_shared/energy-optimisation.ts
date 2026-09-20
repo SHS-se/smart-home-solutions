@@ -3814,7 +3814,7 @@ function simulate(
     if (locked && Object.keys(locked.room_heating_w).sort().join('|') !== Object.keys(roomHeating).sort().join('|')) throw new Error('Fixed plan room configuration changed; rescind the plan.');
     if (locked && (Math.abs(locked.boiler_expected_w - boilerW) > 0.01 || locked.boiler_permitted !== schedule.boilerPermitted[slot.index])) throw new Error('Fixed plan hot-water service changed; rescind the plan.');
     if (locked && Math.abs(locked.ev_w - evW) < 0.01 && locked.ev_target_current_a !== schedule.evTargetCurrentA[slot.index]) throw new Error('Fixed plan charger configuration changed; rescind the plan.');
-    if (locked && snapshot.schema_version >= 8 && snapshot.battery && locked.battery_command?.schema_version !== 2) throw new Error('Fixed plan battery command schema changed; rescind the plan.');
+    if (locked && snapshot.schema_version >= 8 && snapshot.battery && locked.battery_command?.schema_version !== 3) throw new Error('Fixed plan battery command schema changed; rescind the plan.');
     if (locked && snapshot.schema_version >= 7 && !locked.device_commands) throw new Error('Fixed plan device command schema changed; rescind the plan.');
     const roomHeatingW = Object.values(roomHeating).reduce(
       (sum, watts) => sum + watts,
@@ -4138,6 +4138,10 @@ function simulate(
         baseline: key === "baseline", chargeW: round(batteryChargeW, 2), dischargeW: round(batteryDischargeW, 2),
         loadW, pvW: slot.pv_w, chargeMaxW: battery.charge_max_w, dischargeMaxW: battery.discharge_max_w,
         exportEnabled: snapshot.policy.battery_export_enabled,
+        // The dispatcher publishes why it left the battery alone. Only a
+        // completed comparison against the export price forgoes the surplus;
+        // a full pack or an unaffordable discharge says nothing about charging.
+        forgoSurplus: batteryDecision?.reason === "charge_value_below_export",
       })) : null } : {}),
       battery_soc: round(soc, 6),
       grid_import_w: round(gridImportW, 2),

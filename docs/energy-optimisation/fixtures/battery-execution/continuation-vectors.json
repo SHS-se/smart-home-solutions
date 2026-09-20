@@ -73,7 +73,7 @@
       {
         "id": "hold",
         "operation": "hold",
-        "charge_limit_w": 0,
+        "charge_limit_w": 4000,
         "discharge_limit_w": 0
       },
       {
@@ -91,7 +91,7 @@
       {
         "id": "house",
         "operation": "supply_house",
-        "charge_limit_w": 0,
+        "charge_limit_w": 4000,
         "discharge_limit_w": 3000
       },
       {
@@ -1434,8 +1434,8 @@
       "assurance": "exact-scoring-within-published-family",
       "scorer_revision": "offline-household-v2",
       "compiler_revision": "execution-v2",
-      "family_id": "family-f27548bf52f56998a7740467",
-      "source_hash": "sha256:f27548bf52f56998a77404678b39c432badac9dea6986264de4b4dc45749cbc2",
+      "family_id": "family-04728b7bc90a4f228341acec",
+      "source_hash": "sha256:04728b7bc90a4f228341acece3f07e47bf822e78cd9584a8a22ef0e87f532ae9",
       "numeric_tolerance_sek": 1e-7,
       "search_exhaustive_in_declared_graph": true,
       "search_pruned_prefixes": 0,

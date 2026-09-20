@@ -129,7 +129,7 @@ export function executionFixtureRequest(
       {
         id: "hold",
         operation: "hold",
-        charge_limit_w: 0,
+        charge_limit_w: 4000,
         discharge_limit_w: 0,
       },
       {
@@ -147,7 +147,7 @@ export function executionFixtureRequest(
       {
         id: "house",
         operation: "supply_house",
-        charge_limit_w: 0,
+        charge_limit_w: 4000,
         discharge_limit_w: 3000,
       },
       {

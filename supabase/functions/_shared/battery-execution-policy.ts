@@ -91,6 +91,16 @@ const permissionsSchema = z.object({
   minimum_export_price_sek_per_kwh: price,
   price_revision: id,
 }).strict();
+/** Per operation: must the charge and discharge ceilings be open (true) or closed?
+ * Only `idle` closes the charge permission; holding stored energy does not. */
+const SEMANTIC_CEILINGS: Record<string, readonly [boolean, boolean]> = {
+  solar_charge: [true, false],
+  grid_charge: [true, false],
+  hold: [true, false],
+  supply_house: [true, true],
+  export: [false, true],
+  idle: [false, false],
+};
 export const executionOperationSchema = z.object({
   id,
   operation: z.enum([
@@ -100,22 +110,16 @@ export const executionOperationSchema = z.object({
     "grid_charge",
     "export",
     "hold",
+    "idle",
   ]),
   charge_limit_w: physical,
   discharge_limit_w: physical,
 }).strict().refine((op) => {
-  if (
-    ["hold", "supply_house", "export"].includes(op.operation) &&
-    op.charge_limit_w !== 0
-  ) return false;
-  if (
-    ["hold", "solar_charge", "grid_charge"].includes(op.operation) &&
-    op.discharge_limit_w !== 0
-  ) return false;
-  return (!["solar_charge", "grid_charge"].includes(op.operation) ||
-    op.charge_limit_w > 0) &&
-    (!["supply_house", "export"].includes(op.operation) ||
-      op.discharge_limit_w > 0);
+  const required = SEMANTIC_CEILINGS[op.operation];
+  return !required ||
+    [op.charge_limit_w, op.discharge_limit_w].every((limit, i) =>
+      limit > 0 === required[i]
+    );
 }, "incompatible semantic ceilings");
 const absoluteSchema = z.object({
   weight: nonnegative,
@@ -428,7 +432,7 @@ export function evaluateExecutionCurrent(
           o.charge_limit_w === operation.charge_limit_w &&
           o.discharge_limit_w === operation.discharge_limit_w ||
         !!policy.plant.conversion &&
-          !["hold", "self_consumption"].includes(o.operation) &&
+          !["hold", "idle", "self_consumption"].includes(o.operation) &&
           operation.id ===
             `${
               o.id.slice(0, 70)
@@ -452,7 +456,7 @@ export function evaluateExecutionCurrent(
       c[k] < policy.domain[k][0] || c[k] > policy.domain[k][1]
     )
   ) return reject("outside_domain");
-  if (!perm.available && op !== "hold") return reject("battery_unavailable");
+  if (!perm.available && op !== "idle") return reject("battery_unavailable");
   if (op === "grid_charge" && !perm.grid_charge_allowed) {
     return reject("grid_charge_not_allowed");
   }

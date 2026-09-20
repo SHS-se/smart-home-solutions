@@ -41,7 +41,7 @@ Deno.test("solar capture permits rated charging while grid replenishment retains
   const input = {baseline: false, loadW: 2712.6, pvW: 3236.54,
     chargeW: 523.94, dischargeW: 0, chargeMaxW: 8800, dischargeMaxW: 9600,
     exportEnabled: false};
-  assertEquals(batteryCommand(input), {schema_version: 2, operation: "solar_charge",
+  assertEquals(batteryCommand(input), {schema_version: 3, operation: "solar_charge",
     charge_limit_w: 8800, discharge_limit_w: 0,
     allow_grid_charge: false, allow_battery_export: false});
   const grid = batteryCommand({...input, pvW: 0});
@@ -51,7 +51,9 @@ Deno.test("solar capture permits rated charging while grid replenishment retains
   const supply = batteryCommand({...input, pvW: 0, chargeW: 0, dischargeW: 2712});
   assertEquals(supply.operation, "supply_house");
   assertEquals(supply.discharge_limit_w, 2712);
-  assertEquals(supply.charge_limit_w, 0);
+  // Supplying the house caps what leaves the pack, never what a sunny minute
+  // inside the quarter may put back into it.
+  assertEquals(supply.charge_limit_w, 8800);
 });
 
 
@@ -62,8 +64,8 @@ Deno.test("full household supply follows actual deficit while partial allocation
     chargeW: 0, dischargeW: 405.6, chargeMaxW: 8800, dischargeMaxW: 9600,
     exportEnabled: false};
   const command = batteryCommand(input);
-  assertEquals(command, {schema_version: 2, operation: "supply_house",
-    charge_limit_w: 0, discharge_limit_w: 9600,
+  assertEquals(command, {schema_version: 3, operation: "supply_house",
+    charge_limit_w: 8800, discharge_limit_w: 9600,
     allow_grid_charge: false, allow_battery_export: false});
   // Serialization rounds the allocation to 0.01 W, but inputs may be unrounded.
   assertEquals(batteryCommand({...input, loadW: 833.164}).discharge_limit_w, 9600);
@@ -79,4 +81,45 @@ Deno.test("full household supply follows actual deficit while partial allocation
   const exported = batteryCommand({...input, dischargeW: 1000, exportEnabled: true});
   assertEquals(exported.operation, "export");
   assertEquals(exported.discharge_limit_w, 1000);
+});
+
+
+Deno.test("only a completed export comparison closes the charge permission", () => {
+  // The dispatcher answers two questions per quarter. Declining to spend stored
+  // energy is not a decision to send this quarter's surplus to the grid.
+  const base = {
+    baseline: false,
+    chargeW: 0,
+    dischargeW: 0,
+    loadW: 800,
+    pvW: 1250,
+    chargeMaxW: 8800,
+    dischargeMaxW: 9600,
+    exportEnabled: false,
+  };
+  const held = batteryCommand(base);
+  assertEquals(held.operation, "hold");
+  assertEquals(held.charge_limit_w, 8800);
+  assertEquals(held.discharge_limit_w, 0);
+  const forgone = batteryCommand({ ...base, forgoSurplus: true });
+  assertEquals(forgone.operation, "idle");
+  assertEquals(forgone.charge_limit_w, 0);
+  assertEquals(forgone.discharge_limit_w, 0);
+  assertEquals(forgone.allow_grid_charge, false);
+  assertEquals(forgone.allow_battery_export, false);
+  // A sized purchase or sale keeps the ceiling the planner chose.
+  assertEquals(
+    batteryCommand({ ...base, pvW: 0, chargeW: 2000, forgoSurplus: true })
+      .charge_limit_w,
+    2000,
+  );
+  assertEquals(
+    batteryCommand({
+      ...base,
+      dischargeW: 5000,
+      exportEnabled: true,
+      forgoSurplus: true,
+    }).charge_limit_w,
+    0,
+  );
 });

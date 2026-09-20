@@ -88,7 +88,7 @@
       {
         "id": "hold",
         "operation": "hold",
-        "charge_limit_w": 0,
+        "charge_limit_w": 4000,
         "discharge_limit_w": 0
       },
       {
@@ -106,7 +106,7 @@
       {
         "id": "house",
         "operation": "supply_house",
-        "charge_limit_w": 0,
+        "charge_limit_w": 4000,
         "discharge_limit_w": 3000
       },
       {
@@ -4607,8 +4607,8 @@
       "assurance": "exact-scoring-within-published-family",
       "scorer_revision": "offline-household-v2",
       "compiler_revision": "execution-v2",
-      "family_id": "family-b334592431b1db40e8150f93",
-      "source_hash": "sha256:b334592431b1db40e8150f9352a7f4e00fe7d130953342ab09f035857df05d58",
+      "family_id": "family-9885528c64d99bf8a65ad51e",
+      "source_hash": "sha256:9885528c64d99bf8a65ad51e44391669d5eca88ff16a9cbfc1623c38dc3fa97f",
       "numeric_tolerance_sek": 1e-7,
       "search_exhaustive_in_declared_graph": false,
       "search_pruned_prefixes": 3,
@@ -4619,8 +4619,8 @@
   },
   "outlook": {
     "schema": "battery-execution-outlook-v1",
-    "source_hash": "sha256:b334592431b1db40e8150f9352a7f4e00fe7d130953342ab09f035857df05d58",
-    "family_id": "family-b334592431b1db40e8150f93",
+    "source_hash": "sha256:9885528c64d99bf8a65ad51e44391669d5eca88ff16a9cbfc1623c38dc3fa97f",
+    "family_id": "family-9885528c64d99bf8a65ad51e",
     "battery_power_basis": "dc",
     "horizon_end_ms": 1789462800000,
     "bridge": {
