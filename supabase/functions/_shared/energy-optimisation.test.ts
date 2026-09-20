@@ -2335,7 +2335,12 @@ Deno.test("every allocation is priced where it lands, and none of them loses", (
       // A continuous heat-pump run repays its startup cost together. A mildly
       // losing quarter can be worth keeping when removing it adds a restart;
       // this is an economic trade-off, not a minimum runtime.
-      if (part.run_net_value_sek < -1e-6) {
+      //
+      // Rounding a sized request onto the battery's floor happens after
+      // settlement and is chosen on the whole objective, so such a quarter can
+      // fall a few öre short on its own: the household's price for commanding
+      // no trickles.
+      if (part.run_net_value_sek < -1e-6 && !part.minimum_adjusted) {
         losing.push(
           `${part.store_key} ${part.direction} run from ${part.run_start_index}: ${
             part.run_net_value_sek.toFixed(4)

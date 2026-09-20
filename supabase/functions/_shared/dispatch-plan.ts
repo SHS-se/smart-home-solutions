@@ -76,6 +76,19 @@ export interface DispatchStore {
   min_power_w?: number;
   /** Executable power increment above `min_power_w`. */
   power_step_w?: number;
+  /**
+   * Smallest power a two-sided store may be *asked* for, in watts.
+   *
+   * Not an executable limit like `min_power_w`: the pack runs at any power the
+   * house or the sun produces. It bounds what the plan commands as a size —
+   * a grid charge, or a discharge that deliberately leaves some import — so
+   * neither reaches the inverter as a trickle limit (user requirement,
+   * 19 September 2026). Taking surplus solar and covering the whole residual
+   * load are permissions rather than sizes: the command sends the pack's own
+   * limit and it follows the sun or the house, at any power. Enforced once the
+   * search is done, so energy transfers still price every pair continuously.
+   */
+  min_sized_power_w?: number;
   /** Cost of starting a run: cycling wear, and lost efficiency on restart. */
   start_cost_sek?: number;
   /** Confirmed charging at the horizon boundary; unknown telemetry does not waive a start. */
@@ -180,6 +193,8 @@ export interface DispatchAllocationDiagnostic {
   allocation_order: number;
   /** Power/state were changed by the service-preserving cost refinement. */
   cost_refined?: boolean;
+  /** Power was rounded onto the store's minimum active power, or to rest. */
+  minimum_adjusted?: boolean;
   run_start_index: number;
   run_slots: number;
   power_w: number;
@@ -258,6 +273,77 @@ function supportsEnergyTransfers(store: DispatchStore): boolean {
     (store.min_power_w ?? 0) === 0 && (store.power_step_w ?? 0) === 0 &&
     (store.start_cost_sek ?? 0) === 0;
 }
+
+/** A two-sided store's smallest commandable size one way, never above what it can do. */
+export function sizedMinimumW(
+  store: DispatchStore,
+  direction: "charge" | "discharge",
+): number {
+  const minimum = store.min_sized_power_w ?? 0;
+  if (!(minimum > 0) || !store.discharge) return 0;
+  return Math.min(
+    minimum,
+    direction === "charge" ? store.max_power_w : store.discharge.max_power_w,
+  );
+}
+
+/**
+ * The surplus a quarter can charge from before it buys anything.
+ *
+ * `otherChargeW` is every other store's draw in the quarter; what is left of
+ * the sun after the house and them is what a charge can take as a permission.
+ */
+function surplusChargeW(
+  slot: DispatchSlot,
+  otherChargeW: number,
+): number {
+  return Math.max(0, slot.pv_w - slot.fixed_load_w - otherChargeW);
+}
+
+/** What the house still needs once the sun and any other store have spoken. */
+function residualLoadW(
+  slot: DispatchSlot,
+  otherChargeW: number,
+  otherReturnedW: number,
+): number {
+  return Math.max(
+    0,
+    slot.fixed_load_w + otherChargeW - Math.max(0, slot.pv_w) - otherReturnedW,
+  );
+}
+
+/**
+ * Whether a flow is commanded at its own size, rather than as a permission.
+ *
+ * `batteryCommand` sends solar capture as the pack's whole charge limit and
+ * full house supply as "follow demand"; only a grid charge, a partial
+ * discharge and an export carry a size. The floor applies to those alone, so
+ * the sun still fills the pack a hundred watts at a time and the pack still
+ * covers a small house on its own.
+ */
+function sizedFlow(
+  watts: number,
+  charging: boolean,
+  permittedW: number,
+): boolean {
+  if (watts <= GRID_NOISE_W) return false;
+  return charging
+    ? watts > permittedW + COMMAND_EPSILON_W
+    : Math.abs(watts - permittedW) > COMMAND_EPSILON_W;
+}
+
+/** Sized, and below the floor the household set for a sized request. */
+function belowSizedMinimum(
+  watts: number,
+  floorW: number,
+  charging: boolean,
+  permittedW: number,
+): boolean {
+  return watts + 1e-6 < floorW && sizedFlow(watts, charging, permittedW);
+}
+
+/** The tolerance `batteryCommand` classifies an operation within. */
+const COMMAND_EPSILON_W = 0.01;
 
 /** Room for adding state at one quarter and removing it at another. */
 function transferRoom(
@@ -875,6 +961,54 @@ function scoreDispatchWithReuse(
     }
   }
 
+  // A sized request under the store's floor, which needs the quarter's whole
+  // balance to recognise: what the sun leaves over, and what the house still
+  // wants, decide whether a flow carries a size at all.
+  for (const store of stores) {
+    const chargeFloor = sizedMinimumW(store, "charge");
+    const dischargeFloor = sizedMinimumW(store, "discharge");
+    if (chargeFloor <= 0 && dischargeFloor <= 0) continue;
+    if (reuse && store.key !== reuse.changedKey) continue;
+    const power = powerByKey[store.key];
+    const discharge = dischargeByKey[store.key];
+    for (let index = 0; index < count; index += 1) {
+      const slot = slots[index];
+      const otherChargeW = occupiedW[index] - power[index];
+      if (
+        belowSizedMinimum(
+          power[index],
+          chargeFloor,
+          true,
+          surplusChargeW(slot, otherChargeW),
+        )
+      ) {
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} draws ${
+            Math.round(power[index])
+          } W from the grid, below its ${Math.round(chargeFloor)} W minimum`,
+        });
+      }
+      if (
+        belowSizedMinimum(
+          discharge[index],
+          dischargeFloor,
+          false,
+          residualLoadW(slot, otherChargeW, returnedW[index] - discharge[index]),
+        )
+      ) {
+        infeasibilities.push({
+          slot: index,
+          store_key: store.key,
+          message: `${store.key} returns ${
+            Math.round(discharge[index])
+          } W, below its ${Math.round(dischargeFloor)} W minimum`,
+        });
+      }
+    }
+  }
+
   const importW = zeros();
   const exportW = zeros();
   for (let index = 0; index < count; index += 1) {
@@ -1128,9 +1262,26 @@ export function* refineDispatchCostSteps(
       firstFrom = 0;
       const power = schedule.power_w[store.key];
       if (!power) continue;
-      const executable = (power: number) => {
+      const sizedFloor = sizedMinimumW(store, "charge");
+      const executable = (power: number, index: number) => {
         const minimum = store.min_power_w ?? 0;
         const step = store.power_step_w ?? 0;
+        if (sizedFloor > 0) {
+          const otherChargeW = stores.reduce(
+            (sum, other) =>
+              sum +
+              (other === store ? 0 : schedule.power_w[other.key]?.[index] ?? 0),
+            0,
+          );
+          if (
+            belowSizedMinimum(
+              power,
+              sizedFloor,
+              true,
+              surplusChargeW(slots[index], otherChargeW),
+            )
+          ) return false;
+        }
         return power <= 1e-9 || (power + 1e-6 >= minimum &&
           (step <= 0 || Math.abs(
                 (power - minimum) / step -
@@ -1216,7 +1367,8 @@ export function* refineDispatchCostSteps(
               ) continue;
             }
             if (
-              !executable(beforeFrom - watts) || !executable(beforeTo + watts * ratio)
+              !executable(beforeFrom - watts, from) ||
+              !executable(beforeTo + watts * ratio, to)
             ) continue;
             power[from] = beforeFrom - watts;
             power[to] = beforeTo + watts * ratio;
@@ -1256,6 +1408,264 @@ export function* refineDispatchCostSteps(
     improved = false;
   }
   return changed;
+}
+
+/** Quarters either side of a rounded flow searched for an offsetting change. */
+const MINIMUM_OFFSET_WINDOW = 16;
+
+/**
+ * Round every flow a two-sided store makes below its minimum active power to
+ * rest or to that minimum, whichever the objective prefers.
+ *
+ * The search prices power continuously, so it leaves trickles wherever a
+ * saving ran out part-way through a quarter: the tail of an evening discharge,
+ * a top-up that holds night import flat. Each is worth a few öre. The energy a
+ * rounding adds or removes may be offset in a nearby quarter, or in any active
+ * quarter before the state bound the rounding alone would break, so the
+ * trajectory stays inside the pack; every candidate is judged by the same
+ * scorer a finished plan is.
+ *
+ * An offset only ever lands on rest or at least the minimum, so no step creates
+ * a trickle, and each step settles one, smallest first. A flow that nothing can
+ * settle without breaking a physical bound is left for the scorer to report,
+ * rather than breaking the bound to honour a preference.
+ *
+ * Mutates `schedule`; returns the quarters it changed, per store.
+ */
+export function enforceMinimumSizedPower(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  schedule: DispatchSchedule,
+): Map<string, Set<number>> {
+  const adjusted = new Map<string, Set<number>>();
+  if (
+    !stores.some((store) =>
+      sizedMinimumW(store, "charge") > 0 ||
+      sizedMinimumW(store, "discharge") > 0
+    )
+  ) return adjusted;
+  const count = slots.length;
+  // Candidates answer to physical feasibility alone: the rule being enforced
+  // would otherwise refuse every intermediate schedule of its own repair.
+  const physical = stores.map((store) =>
+    (store.min_sized_power_w ?? 0) > 0
+      ? { ...store, min_sized_power_w: 0 }
+      : store
+  );
+  const sellPrices = publishedSellPrices(slots);
+  let current = scoreDispatch(slots, physical, limits, schedule);
+  for (const store of stores) {
+    const chargeFloor = sizedMinimumW(store, "charge");
+    const dischargeFloor = sizedMinimumW(store, "discharge");
+    const power = schedule.power_w[store.key];
+    const out = schedule.discharge_w[store.key];
+    const release = store.discharge;
+    if (
+      (chargeFloor <= 0 && dischargeFloor <= 0) || !power || !out || !release
+    ) continue;
+    const blocking = (score: DispatchScore) =>
+      score.infeasibilities.filter((entry) =>
+        entry.store_key === store.key || entry.store_key === null
+      ).length;
+    const tolerated = blocking(current);
+
+    type Edit = { index: number; charging: boolean; watts: number };
+    const evaluate = (edits: Edit[]): DispatchScore => {
+      const before = edits.map((edit) => {
+        const series = edit.charging ? power : out;
+        const was = series[edit.index];
+        series[edit.index] = edit.watts;
+        return was;
+      });
+      const score = scoreDispatchWithReuse(
+        slots,
+        physical,
+        limits,
+        schedule,
+        undefined,
+        { previous: current, changedKey: store.key },
+      );
+      edits.forEach((edit, k) => {
+        (edit.charging ? power : out)[edit.index] = before[k];
+      });
+      return score;
+    };
+    const stateAt = (index: number) => current.state[store.key][index];
+    const inUnits = (index: number) =>
+      store.units_per_kwh(stateAt(index), index);
+    const outUnits = (index: number) =>
+      release.state_per_kwh_out(stateAt(index), index);
+    // What this quarter lets the store have without naming a size: the sun's
+    // surplus to charge from, the house's residual to cover.
+    const permittedW = (index: number, charging: boolean): number => {
+      const otherChargeW = stores.reduce(
+        (sum, other) =>
+          sum +
+          (other === store ? 0 : schedule.power_w[other.key]?.[index] ?? 0),
+        0,
+      );
+      if (charging) return surplusChargeW(slots[index], otherChargeW);
+      const otherReturnedW = stores.reduce(
+        (sum, other) =>
+          sum +
+          (other === store ? 0 : schedule.discharge_w[other.key]?.[index] ?? 0),
+        0,
+      );
+      return residualLoadW(slots[index], otherChargeW, otherReturnedW);
+    };
+    // Where a changed flow may land: rest, the floor, what the quarter permits
+    // without a size, or as wanted when that already clears the floor.
+    const landings = (
+      watts: number,
+      floor: number,
+      ceiling: number,
+      index: number,
+      charging: boolean,
+    ) => {
+      if (watts <= GRID_NOISE_W) return [0];
+      if (watts + 1e-6 >= floor) return [Math.min(watts, ceiling)];
+      return sizedFlow(watts, charging, permittedW(index, charging))
+        ? [0, floor]
+        : [watts];
+    };
+    // The committed-window rule the auction and refinement already hold: a
+    // binding quarter buys grid energy only against a quoted sell price.
+    const gridBarred = (index: number, addedW: number): boolean => {
+      if (!slots[index].binding || addedW <= GRID_NOISE_W) return false;
+      const chargingW = stores.reduce(
+        (sum, other) => sum + (schedule.power_w[other.key]?.[index] ?? 0),
+        0,
+      );
+      const spareW = Math.max(
+        0,
+        slots[index].pv_w - slots[index].fixed_load_w - chargingW,
+      );
+      const roundTrip = inUnits(index) / Math.max(1e-9, outUnits(index));
+      return addedW > spareW + GRID_NOISE_W &&
+        !(sellPrices[index] >
+          slots[index].import_price_sek_per_kwh / Math.max(1e-9, roundTrip));
+    };
+
+    const changed = new Set<number>();
+    const unsettled = new Set<string>();
+    for (;;) {
+      let target: Edit | null = null;
+      for (let index = 0; index < count; index += 1) {
+        for (const charging of [true, false]) {
+          const watts = (charging ? power : out)[index];
+          if (
+            !belowSizedMinimum(
+              watts,
+              charging ? chargeFloor : dischargeFloor,
+              charging,
+              permittedW(index, charging),
+            ) || unsettled.has(`${index}:${charging}`)
+          ) continue;
+          if (!target || watts < target.watts - 1e-9) {
+            target = { index, charging, watts };
+          }
+        }
+      }
+      if (!target) break;
+      const { index: at, charging, watts: from } = target;
+      const floor = charging ? chargeFloor : dischargeFloor;
+      let best: { edits: Edit[]; score: DispatchScore } | null = null;
+      const consider = (edits: Edit[]): DispatchScore => {
+        const score = evaluate(edits);
+        if (
+          blocking(score) <= tolerated && Number.isFinite(score.total_sek) &&
+          (!best || score.total_sek < best.score.total_sek - 1e-9)
+        ) best = { edits, score };
+        return score;
+      };
+      // Rest, the floor, or the size this quarter does not have to name: a
+      // charge inside the surplus, a discharge that covers the house exactly.
+      const permitted = permittedW(at, charging);
+      const targets = permitted > GRID_NOISE_W && permitted + 1e-6 < floor
+        ? [0, floor, permitted]
+        : [0, floor];
+      for (const to of targets) {
+        if (to > from && charging && gridBarred(at, to - from)) continue;
+        const base: Edit = { index: at, charging, watts: to };
+        const alone = consider([base]);
+        // State the rounding adds from `at` onward; negative when it removes.
+        const delta = (to - from) / 1_000 * hoursAt(store, at) *
+          (charging ? inUnits(at) : -outUnits(at));
+        const offsets = new Set<number>();
+        for (
+          let j = Math.max(0, at - MINIMUM_OFFSET_WINDOW);
+          j <= Math.min(count - 1, at + MINIMUM_OFFSET_WINDOW);
+          j += 1
+        ) offsets.add(j);
+        // A bound the rounding alone breaks can lie hours away, where a full
+        // pack meets energy that was meant to be spent tonight. Any active
+        // quarter before it can absorb the difference.
+        const broken = alone.infeasibilities.find((entry) =>
+          entry.store_key === store.key && entry.slot > at
+        );
+        if (broken) {
+          for (let j = at + 1; j < Math.min(count, broken.slot); j += 1) {
+            if (power[j] > GRID_NOISE_W || out[j] > GRID_NOISE_W) {
+              offsets.add(j);
+            }
+          }
+        }
+        offsets.delete(at);
+        for (const j of offsets) {
+          if (out[j] <= GRID_NOISE_W && inUnits(j) > 0) {
+            const wanted = power[j] -
+              delta / inUnits(j) / hoursAt(store, j) * 1_000;
+            for (
+              const watts of landings(
+                wanted,
+                chargeFloor,
+                store.max_power_w,
+                j,
+                true,
+              )
+            ) {
+              const added = watts - power[j];
+              if (Math.abs(added) <= GRID_NOISE_W) continue;
+              if (
+                added > 0 &&
+                (gridBarred(j, added) || (slots[j].binding && !slots[at].binding))
+              ) continue;
+              consider([base, { index: j, charging: true, watts }]);
+            }
+          }
+          if (power[j] <= GRID_NOISE_W && outUnits(j) > 0) {
+            const wanted = out[j] +
+              delta / outUnits(j) / hoursAt(store, j) * 1_000;
+            for (
+              const watts of landings(
+                wanted,
+                dischargeFloor,
+                release.max_power_w,
+                j,
+                false,
+              )
+            ) {
+              if (Math.abs(watts - out[j]) <= GRID_NOISE_W) continue;
+              consider([base, { index: j, charging: false, watts }]);
+            }
+          }
+        }
+      }
+      const settled = best as { edits: Edit[]; score: DispatchScore } | null;
+      if (!settled) {
+        unsettled.add(`${at}:${charging}`);
+        continue;
+      }
+      for (const edit of settled.edits) {
+        (edit.charging ? power : out)[edit.index] = edit.watts;
+        changed.add(edit.index);
+      }
+      current = settled.score;
+    }
+    if (changed.size > 0) adjusted.set(store.key, changed);
+  }
+  return adjusted;
 }
 
 /** A solver can execute each auction in a separate CPU budget. */
@@ -1873,6 +2283,112 @@ export function* dispatchAuctionSteps(
 
   const partAt = (store: DispatchStore, index: number) =>
     allocations[index].find((part) => part.store_key === store.key);
+
+  /** A charge the search did not bid for, priced where the schedule put it. */
+  const bookedCharge = (
+    store: DispatchStore,
+    index: number,
+    adjustment: "cost_refined" | "minimum_adjusted",
+  ): DispatchAllocationDiagnostic => {
+    const watts = powerW[store.key][index];
+    const kwh = watts / 1_000 * hoursAt(store, index);
+    const { value } = movedValue(store, index, watts, 0);
+    const cost = energyCostSekPerKwh(
+      slots[index],
+      occupiedW[index] - watts,
+      watts,
+      limits,
+      returnedW[index],
+    );
+    const start = !(index === 0 && store.initially_charging) &&
+        (powerW[store.key][index - 1] ?? 0) <= GRID_NOISE_W
+      ? store.start_cost_sek ?? 0
+      : 0;
+    const wear = store.wear_sek_per_kwh ?? 0;
+    const solar = Math.min(
+      watts,
+      Math.max(
+        0,
+        slots[index].pv_w - slots[index].fixed_load_w - occupiedW[index] +
+          watts,
+      ),
+    );
+    return {
+      store_key: store.key,
+      direction: "charge",
+      trigger: "economic_winner",
+      allocation_order: iterations,
+      ...(adjustment === "cost_refined"
+        ? { cost_refined: true }
+        : { minimum_adjusted: true }),
+      run_start_index: index,
+      run_slots: 1,
+      power_w: watts,
+      state_before: stateByKey[store.key][index],
+      state_after: stateByKey[store.key][index + 1],
+      state_unit: store.curve.unit,
+      retention_factor: retentionByKey[store.key][index],
+      average_value_sek_per_kwh: value / kwh,
+      energy_cost_sek_per_kwh: cost,
+      wear_cost_sek_per_kwh: wear,
+      start_cost_sek: start,
+      net_value_sek: value - (cost + wear) * kwh - start,
+      run_net_value_sek: value - (cost + wear) * kwh - start,
+      solar_w: solar,
+      grid_w: watts - solar,
+      discharge_destination: null,
+    };
+  };
+
+  /** A discharge the search did not bid for, priced as a discharge bid is. */
+  const bookedDischarge = (
+    store: DispatchStore,
+    index: number,
+  ): DispatchAllocationDiagnostic => {
+    const slot = slots[index];
+    const watts = dischargeW[store.key][index];
+    const kwh = watts / 1_000 * hoursAt(store, index);
+    const { value } = movedValue(store, index, 0, watts);
+    const importBeforeW = gridImportW(
+      slot,
+      occupiedW[index],
+      returnedW[index] - watts,
+    );
+    const loadW = Math.min(watts, importBeforeW);
+    const price = (loadW * slot.import_price_sek_per_kwh +
+          (watts - loadW) * slot.export_price_sek_per_kwh) / watts +
+      peakReliefSekPerKwh(limits, importBeforeW, loadW);
+    const givenUp = -value / kwh;
+    const wear = store.wear_sek_per_kwh ?? 0;
+    const net = (price - wear - givenUp) * kwh;
+    return {
+      store_key: store.key,
+      direction: "discharge",
+      trigger: "economic_winner",
+      allocation_order: iterations,
+      minimum_adjusted: true,
+      run_start_index: index,
+      run_slots: 1,
+      power_w: watts,
+      state_before: stateByKey[store.key][index],
+      state_after: stateByKey[store.key][index + 1],
+      state_unit: store.curve.unit,
+      retention_factor: retentionByKey[store.key][index],
+      average_value_sek_per_kwh: price,
+      energy_cost_sek_per_kwh: givenUp,
+      wear_cost_sek_per_kwh: wear,
+      start_cost_sek: 0,
+      net_value_sek: net,
+      run_net_value_sek: net,
+      solar_w: 0,
+      grid_w: 0,
+      discharge_destination: loadW >= watts - 1e-9
+        ? "load"
+        : loadW <= 1e-9
+        ? "export"
+        : "mixed",
+    };
+  };
 
   type ChargeExchange = {
     store: DispatchStore;
@@ -3313,6 +3829,59 @@ export function* dispatchAuctionSteps(
     };
   }
 
+  // ---------------------------------------------------------------------
+  // Nothing the plan asks for by size is smaller than the store's floor.
+  //
+  // Between transfers and refinement: transfers need continuous power to price
+  // a pair, and refinement only exchanges charge between executable levels,
+  // which include this floor. A refinement resumed part-way already started
+  // from the rounded schedule, so the rounding never runs twice.
+  // ---------------------------------------------------------------------
+  if (!checkpoint?.refinement) {
+    const adjusted = enforceMinimumSizedPower(slots, stores, limits, {
+      power_w: powerW,
+      discharge_w: dischargeW,
+    });
+    for (const [key, indices] of adjusted) {
+      const store = stores.find((candidate) => candidate.key === key)!;
+      for (const index of indices) {
+        occupiedW[index] = stores.reduce(
+          (sum, other) => sum + powerW[other.key][index],
+          0,
+        );
+        returnedW[index] = stores.reduce(
+          (sum, other) => sum + dischargeW[other.key][index],
+          0,
+        );
+      }
+      project(store, powerW[key], dischargeW[key], 0, stateByKey[key]);
+      for (const index of indices) {
+        const old = partAt(store, index);
+        if (old) allocations[index].splice(allocations[index].indexOf(old), 1);
+        if (powerW[key][index] > GRID_NOISE_W) {
+          allocations[index].push(
+            bookedCharge(store, index, "minimum_adjusted"),
+          );
+        } else if (dischargeW[key][index] > GRID_NOISE_W) {
+          allocations[index].push(bookedDischarge(store, index));
+        }
+      }
+      for (let index = 0; index < count; index += 1) {
+        const part = partAt(store, index);
+        if (!part) continue;
+        part.state_before = stateByKey[key][index];
+        part.state_after = stateByKey[key][index + 1];
+        // A pair whose leg was rounded no longer describes the schedule.
+        const pairs = part.energy_transfers?.filter((pair) =>
+          !indices.has(pair.charge_index) && !indices.has(pair.discharge_index)
+        );
+        if (pairs?.length) part.energy_transfers = pairs;
+        else delete part.energy_transfers;
+      }
+      for (const index of indices) recostSlot(index);
+    }
+  }
+
   if (
     (limits.grid_ramp_sek_per_kw ?? 0) > 0 ||
     (limits.load_start_preference_sek ?? 0) > 0
@@ -3380,53 +3949,8 @@ export function* dispatchAuctionSteps(
           if (old) {
             allocations[index].splice(allocations[index].indexOf(old), 1);
           }
-          const watts = powerW[store.key][index];
-          if (watts <= GRID_NOISE_W) continue;
-          const kwh = watts / 1_000 * hoursAt(store, index);
-          const { value } = movedValue(store, index, watts, 0);
-          const cost = energyCostSekPerKwh(
-            slots[index],
-            occupiedW[index] - watts,
-            watts,
-            limits,
-            returnedW[index],
-          );
-          const start = !(index === 0 && store.initially_charging) &&
-              (powerW[store.key][index - 1] ?? 0) <= GRID_NOISE_W
-            ? store.start_cost_sek ?? 0
-            : 0;
-          const wear = store.wear_sek_per_kwh ?? 0;
-          const solar = Math.min(
-            watts,
-            Math.max(
-              0,
-              slots[index].pv_w - slots[index].fixed_load_w - occupiedW[index] +
-                watts,
-            ),
-          );
-          allocations[index].push({
-            store_key: store.key,
-            direction: "charge",
-            trigger: "economic_winner",
-            allocation_order: iterations,
-            cost_refined: true,
-            run_start_index: index,
-            run_slots: 1,
-            power_w: watts,
-            state_before: stateByKey[store.key][index],
-            state_after: stateByKey[store.key][index + 1],
-            state_unit: store.curve.unit,
-            retention_factor: retentionByKey[store.key][index],
-            average_value_sek_per_kwh: value / kwh,
-            energy_cost_sek_per_kwh: cost,
-            wear_cost_sek_per_kwh: wear,
-            start_cost_sek: start,
-            net_value_sek: value - (cost + wear) * kwh - start,
-            run_net_value_sek: value - (cost + wear) * kwh - start,
-            solar_w: solar,
-            grid_w: watts - solar,
-            discharge_destination: null,
-          });
+          if (powerW[store.key][index] <= GRID_NOISE_W) continue;
+          allocations[index].push(bookedCharge(store, index, "cost_refined"));
         }
       }
       for (let index = 0; index < count; index += 1) recostSlot(index);

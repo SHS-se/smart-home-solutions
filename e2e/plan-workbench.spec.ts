@@ -294,6 +294,7 @@ test.describe('plan workbench', () => {
     expect(pack.curve.length).toBeGreaterThan(0);
     expect(pack.units_per_kwh_by_slot).toHaveLength(288);
     expect(pack.terminal_weight).toBeGreaterThan(0);
+    expect(pack.min_sized_power_w).toBe(500);
     expect(payload.quarters[0]).toHaveProperty('published_price');
     expect(payload.quarters[0]).toHaveProperty('planner_allocations');
     expect(payload.quarters).toHaveLength(288);

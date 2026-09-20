@@ -125,6 +125,17 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v38";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
+/**
+ * Smallest power the plan asks the battery for by size (user requirement,
+ * 19 September 2026): a grid charge, or a discharge that deliberately leaves
+ * the house importing. Below that the inverter is handed a limit that spends a
+ * quarter's fixed conversion overhead on a few öre of energy.
+ *
+ * Taking surplus solar and covering the house outright are permissions rather
+ * than sizes — the command sends the pack's own limit and it follows the sun
+ * or the load — so neither is held to this floor at any power.
+ */
+export const BATTERY_MIN_SIZED_POWER_W = 500;
 export const SLOT_MINUTES = 15;
 export const SLOT_HOURS = SLOT_MINUTES / 60;
 export const MAX_FORECAST_SLOTS = 72 * 4;
@@ -2659,6 +2670,7 @@ function buildDispatchStores(
         min_state: 0,
         max_state: derivedBatteryValue.diagnostic.usable_capacity_kwh,
         max_power_w: battery.charge_max_w,
+        min_sized_power_w: BATTERY_MIN_SIZED_POWER_W,
         // No `wear_sek_per_kwh` here: `batteryValueCurve` already subtracts
         // degradation from what stored energy is worth. Charging it a second
         // time as a flow cost made charging unprofitable at any price the curve
@@ -3899,6 +3911,20 @@ function simulate(
         schedule.batteryDischargeW[slot.index],
         maxDischargeW,
       );
+      // A cap the dispatch did not know about — a hard solar target's floor, a
+      // pack already full — can cut a flow down to a trickle. What the sun
+      // covers and what the house takes outright remain permissions; a size
+      // left under the floor is not commanded at all.
+      if (
+        batteryChargeW > Math.max(0, netW) + 0.01 &&
+        batteryChargeW <
+          Math.min(BATTERY_MIN_SIZED_POWER_W, battery.charge_max_w) - 1e-6
+      ) batteryChargeW = Math.min(batteryChargeW, Math.max(0, netW));
+      if (
+        Math.abs(batteryDischargeW - Math.max(0, -netW)) > 0.01 &&
+        batteryDischargeW <
+          Math.min(BATTERY_MIN_SIZED_POWER_W, battery.discharge_max_w) - 1e-6
+      ) batteryDischargeW = 0;
       if (locked && (Math.abs(batteryChargeW - schedule.batteryChargeW[slot.index]) > 0.01 || Math.abs(batteryDischargeW - schedule.batteryDischargeW[slot.index]) > 0.01)) {
         errors.push(`${slot.start}: fixed battery allocation exceeds physical limits`);
       }

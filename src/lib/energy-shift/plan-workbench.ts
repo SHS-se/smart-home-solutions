@@ -563,6 +563,8 @@ export interface WorkbenchExport {
     max_state: number | null;
     max_power_w: number;
     min_power_w: number;
+    /** Smallest power a two-sided store is asked for by size; 0 when unbounded. */
+    min_sized_power_w: number;
     power_step_w: number;
     discharge_max_power_w: number | null;
     export_allowed: boolean | null;
@@ -738,6 +740,7 @@ export function buildWorkbenchExport(
         max_state: store.max_state ?? null,
         max_power_w: store.max_power_w,
         min_power_w: store.min_power_w ?? 0,
+        min_sized_power_w: store.min_sized_power_w ?? 0,
         power_step_w: store.power_step_w ?? 0,
         discharge_max_power_w: discharge?.max_power_w ?? null,
         export_allowed: discharge?.export_allowed ?? null,
