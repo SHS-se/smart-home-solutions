@@ -2844,11 +2844,21 @@ Deno.test("below the cut-out no price makes pool heat schedulable", () => {
   const base = input();
   // As cold a pool as the curve values at all, so willingness to pay is at its
   // maximum and only the physics can refuse.
+  // The cut-out is a recorded property of this machine, not a default: the
+  // planner applies none unless one is on record, so an air-source unit has to
+  // say so. The other three terms repeat what the planner seeds, leaving the
+  // cut-out as the only thing this test varies.
   const cold = (airC: number) =>
     input({
       schema_version: 6,
       pool: { water_temperature_c: 23, volume_m3: 55 },
       outdoor_temperature_c: base.slots.map(() => airC),
+      pool_model: {
+        loss_kw_per_k: 0.35,
+        rated_cop: 4.5,
+        cop_per_air_c: 0.045,
+        cutout_air_c: 8,
+      },
     });
 
   const warmDay = generateOptimisationPlan(cold(22), new Date(NOW));
@@ -2884,6 +2894,32 @@ Deno.test("below the cut-out no price makes pool heat schedulable", () => {
   assert(
     pool.reason !== "scheduled",
     `a pool that bought nothing must not report scheduled, got ${pool.reason}`,
+  );
+});
+
+Deno.test("with no cut-out on record a cold day does not stop pool heating", () => {
+  // The same 4 °C day as above, with nothing recorded about the machine. A
+  // ground-source unit has no cut-out, and neither does a home whose fit has
+  // not converged: in both cases the honest model is the absence of one, so
+  // price and physics decide rather than an assumed air-source refusal.
+  const base = input();
+  const frozenDay = generateOptimisationPlan(
+    input({
+      schema_version: 6,
+      pool: { water_temperature_c: 23, volume_m3: 55 },
+      outdoor_temperature_c: base.slots.map(() => 4),
+    }),
+    new Date(NOW),
+  );
+
+  assertEquals(frozenDay.status, "ready");
+  const poolKwh = frozenDay.plans.priority.slots.reduce(
+    (total, slot) => total + slot.pool_w / 1_000 * 0.25,
+    0,
+  );
+  assert(
+    poolKwh > 0,
+    `a pool with no recorded cut-out must still be schedulable at 4 °C, got ${poolKwh}`,
   );
 });
 

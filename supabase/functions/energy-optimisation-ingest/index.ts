@@ -1519,8 +1519,18 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const observations = thermal.zone_observations;
       if (
         !observations || typeof observations !== "object" ||
-        Array.isArray(observations) || Object.keys(observations).length === 0
+        Array.isArray(observations)
       ) {
+        return json({
+          error: "invalid_zone_observations",
+          detail: `thermal_slots[${index}].zone_observations`,
+        }, 400);
+      }
+      // Outdoor temperature belongs to the home, not to a zone, and the pool's
+      // fit is a consumer of it that needs no zone at all. A quarter carrying
+      // only the outdoor reading is therefore a complete observation rather
+      // than a malformed one; a quarter carrying neither is still rejected.
+      if (Object.keys(observations).length === 0 && outdoor === null) {
         return json({
           error: "invalid_zone_observations",
           detail: `thermal_slots[${index}].zone_observations`,
@@ -1764,7 +1774,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
         const { data: poolModel } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c")
           .eq("home_id", auth.homeId)
           .maybeSingle();
         if (poolModel?.loss_kw_per_k && poolModel?.rated_cop) {
@@ -1774,6 +1784,12 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
               loss_kw_per_k: Number(poolModel.loss_kw_per_k),
               rated_cop: Number(poolModel.rated_cop),
               cop_per_air_c: Number(poolModel.cop_per_air_c ?? 0),
+              // Null stays null: the planner reads it as "no cut-out on
+              // record" and applies none, which is not the same as zero.
+              cutout_air_c: poolModel.cutout_air_c === null ||
+                  poolModel.cutout_air_c === undefined
+                ? null
+                : Number(poolModel.cutout_air_c),
             },
           };
         }

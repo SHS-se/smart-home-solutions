@@ -448,6 +448,11 @@ export interface OptimisationSnapshot {
     loss_kw_per_k: number;
     rated_cop: number;
     cop_per_air_c: number;
+    /**
+     * Air temperature below which the unit cannot run, when one is on record.
+     * Null — the default — means no cut-out is known, not that it is zero.
+     */
+    cutout_air_c?: number | null;
   } | null;
   grid: {
     import_limit_w: number;
@@ -2197,13 +2202,27 @@ function applyDutyCycleServices(
 
 /** Seeded until the fit converges; see store-models.ts for why not asked for. */
 const SEEDED_POOL_LOSS_KW_PER_K = 0.35;
+/**
+ * The cut-out for a machine with none on record.
+ *
+ * A cut-out is a hard refusal: below it `poolCop` returns zero, the pool's
+ * value per kWh is zero, and no price makes heating schedulable. Seeding one at
+ * 8 °C asserted air-source hardware for every home, and asserted it in the one
+ * direction that fails silently — a ground-source unit, which has no cut-out at
+ * all, simply stops being planned for most of a Swedish year and reports
+ * nothing, because a store that never bids looks exactly like a store that was
+ * outbid. So the default is the absence of a cut-out, and a real one arrives
+ * from a fit or from a commissioning fact, never from a guess about the class
+ * of machine.
+ */
+const POOL_NO_AIR_CUTOUT_C = -273.15;
 const SEEDED_POOL_HEAT_PUMP = {
   rated_cop: 4.5,
   rated_air_c: 20,
   rated_water_c: 27,
   cop_per_air_c: 0.045,
   cop_per_water_c: -0.02,
-  cutout_air_c: 8,
+  cutout_air_c: POOL_NO_AIR_CUTOUT_C,
   rated_power_w: 3_500,
 };
 /** Until a fitted kWh/km exists, a mid-size EV at a mild temperature. */
@@ -2546,6 +2565,7 @@ function buildDispatchStores(
         rated_cop: fitted?.rated_cop ?? SEEDED_POOL_HEAT_PUMP.rated_cop,
         cop_per_air_c: fitted?.cop_per_air_c ??
           SEEDED_POOL_HEAT_PUMP.cop_per_air_c,
+        cutout_air_c: fitted?.cutout_air_c ?? POOL_NO_AIR_CUTOUT_C,
       },
     };
     const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
