@@ -1490,7 +1490,12 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
     // for a modulating pool. Only the band itself needs checking, and a bad
     // band is reported rather than thrown: `powerEnvelope` clamps it to
     // something plannable so one mis-reviewed number cannot unplan the home.
-    for (const [index, service] of services.entries()) {
+    // Indexed over the whole services array, not the pool subset, so the
+    // position in the message matches every other services[i] error above.
+    for (const [index, service] of snapshot.services.entries()) {
+      if (service.device !== "pool" || service.control?.type !== "fixed_power") {
+        continue;
+      }
       const problem = powerEnvelopeError(service.control);
       if (problem) {
         errors.push(`services[${index}] has an invalid fixed_power control: ${problem}`);
