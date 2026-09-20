@@ -1,4 +1,8 @@
-import { powerEnvelope, type PowerEnvelope } from "./power-envelope.ts";
+import {
+  powerEnvelope,
+  powerEnvelopeError,
+  type PowerEnvelope,
+} from "./power-envelope.ts";
 import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
@@ -1472,13 +1476,26 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
     const totalW = poolModels.reduce((sum, model) => sum + (model.active_power_w ?? 0), 0);
     if (poolModels.some(model =>
       model.category !== "pool_heating" || !finite(model.active_power_w) || model.active_power_w! <= 0 ||
-      !["setpoint", "switch_schedule"].includes(model.control_type) ||
+      // `variable_power` joined this list when the pool gained a power dial. A
+      // heat pump that modulates is still routed here by `planning_path`; what
+      // makes it a pool device is the service it is bound to, never its method.
+      !["setpoint", "switch_schedule", "variable_power"].includes(model.control_type) ||
       (snapshot.thermal_zones ?? []).some(zone => zone.device_keys.includes(model.key))
     )) errors.push("pool device ownership or running power is invalid");
     const services = snapshot.services.filter(service => service.device === "pool");
     if (snapshot.capabilities.pool && (!services.length || services.some(service =>
       service.control.type !== "fixed_power" || Math.abs(service.control.power_w - totalW) > 0.01
     ))) errors.push("pool service power must equal its devices' running power");
+    // `power_w` is the ceiling in both cases, so the sum test above still holds
+    // for a modulating pool. Only the band itself needs checking, and a bad
+    // band is reported rather than thrown: `powerEnvelope` clamps it to
+    // something plannable so one mis-reviewed number cannot unplan the home.
+    for (const [index, service] of services.entries()) {
+      const problem = powerEnvelopeError(service.control);
+      if (problem) {
+        errors.push(`services[${index}] has an invalid fixed_power control: ${problem}`);
+      }
+    }
   }
 
   const requiredSources = [

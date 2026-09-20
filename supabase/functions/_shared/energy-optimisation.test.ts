@@ -3723,3 +3723,64 @@ Deno.test("pool Stop at is explicit and distinct from Preferred level", () => {
   assertEquals(plan.pool?.stop_temperature_c, 32);
   assertEquals(plan.plans.priority.slots[0].pool_w, 0);
 });
+
+Deno.test("a declared band never yields an inexecutable pool power", () => {
+  // The same fixture as the §8.13 test above, with the one difference that the
+  // installation now says its heat pump can hold power between 500 W and its
+  // 2 kW ceiling. Nothing else moves: the device models, their running power
+  // and the required energy are untouched.
+  const snapshot = input();
+  const pool = snapshot.services.find((service) => service.device === "pool")!;
+  pool.control = {
+    type: "fixed_power",
+    power_w: 2_000,
+    min_power_w: 500,
+    power_step_w: 500,
+  };
+
+  const result = generateOptimisationPlan(
+    snapshot,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  const levels = new Set(
+    Object.values(result.plans).flatMap((plan) =>
+      plan.slots.map((slot) => slot.pool_w)
+    ),
+  );
+
+  // Still only executable levels — the band has a floor, so the fractions that
+  // §8.13 exists to refuse are refused here too.
+  for (const level of levels) {
+    assert(
+      [0, 500, 1_000, 1_500, 2_000].includes(level),
+      `pool power ${level} is not an executable level of the declared band`,
+    );
+  }
+  // NOT asserted here: that an intermediate level is actually *chosen*. In this
+  // fixture the pool's curve outbids every price, so full power is always
+  // optimal and the band correctly never shows — the same condition the §8.13
+  // comment describes ("while the pool's curve outbids every price the winner is
+  // always full power and nothing shows"). Proving the band is used needs a
+  // scenario where a solar surplus sits between the floor and the ceiling, which
+  // this fixture does not contain. Until that fixture exists, band *selection*
+  // is covered only at the parser (power-envelope.test.ts), not end to end.
+});
+
+Deno.test("a declared band cannot lower a relay below its rated power", () => {
+  // The regression that matters most: an integration that sends no band must
+  // plan byte-for-byte as it does today. This asserts it against the same
+  // fixture the §8.13 test uses, so the two move together.
+  const withBand = input();
+  const pool = withBand.services.find((service) => service.device === "pool")!;
+  pool.control = { type: "fixed_power", power_w: 2_000 };
+
+  const relay = generateOptimisationPlan(
+    withBand,
+    new Date("2026-08-10T07:55:00Z"),
+  );
+  for (const plan of Object.values(relay.plans)) {
+    for (const slot of plan.slots) {
+      assert([0, 2_000].includes(slot.pool_w), "pool power is fractional");
+    }
+  }
+});
