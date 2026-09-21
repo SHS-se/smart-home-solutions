@@ -41,6 +41,26 @@ Deno.test("all controlling preserves the unscoped electrical plan", () => {
   assertEquals(p.execution_plan?.plans.priority.slots, original.plans.priority.slots);
 });
 
+Deno.test("a pool pump owned by $pool runs with the pool and sizes it with the heater", () => {
+  // The integration sends every Planned pool member under $pool. A pump owning
+  // itself left its power outside the controlled pool, or was refused alone.
+  for (const pool of ["control_verification", "controlling"] as const) {
+    const s = mixedModeSnapshot();
+    s.operating_scope.device_owners.pool_pump = "$pool";
+    delete s.operating_scope.modes.pool_pump;
+    s.operating_scope.modes.$pool = pool;
+    if (pool === "controlling") s.operating_scope.external_demands = {};
+    const projected = projectExecutionSnapshot(s);
+    assertEquals(projected.device_models.map(m => m.key), pool === "controlling" ? ["pool_heater", "pool_pump"] : []);
+    assertEquals(projected.services.map(service => service.control),
+      pool === "controlling" ? [{type: "fixed_power", power_w: 2100}] : []);
+  }
+  const alone = mixedModeSnapshot();
+  alone.operating_scope.modes.pool_pump = "controlling";
+  delete alone.operating_scope.external_demands.pool_pump;
+  assertThrows(() => projectExecutionSnapshot(alone), Error, "physical controller in Controlling mode");
+});
+
 Deno.test("external forecasts survive hypothetical thermal enrichment", () => {
   const s: OptimisationSnapshot = {...commandSnapshot(), schema_version: 9};
   s.operating_scope = {modes: {$battery: 'monitoring', $pool: 'monitoring', $ev: 'monitoring', relay: 'planning', thermostat: 'planning'},
