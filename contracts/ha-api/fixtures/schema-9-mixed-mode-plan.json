@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "marginal-value-planner-v38",
+    "model_version": "marginal-value-planner-v39",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -268,6 +268,135 @@
         "worst_import_sek_per_kwh": 3,
         "degradation_sek_per_kwh": 0.05,
         "expected_draw_kwh": 0
+      },
+      "optimisation": {
+        "version": 1,
+        "configuration": "{\"battery\":{\"capacity_kwh\":18.08,\"min_soc\":0.05,\"max_soc\":1,\"charge_max_w\":8800,\"discharge_max_w\":9600,\"charge_efficiency\":0.95,\"discharge_efficiency\":0.95},\"grid\":{\"import_limit_w\":15000,\"export_limit_w\":15000},\"policy\":{\"battery_end_of_solar_target_soc\":0.8,\"battery_target_is_hard\":false,\"terminal_soc_min\":0.2,\"terminal_energy_value_sek_per_kwh\":0,\"battery_export_enabled\":false,\"battery_export_reserve_soc\":0.8,\"battery_export_min_price_sek_per_kwh\":0},\"capabilities\":{\"pv\":true,\"battery\":true,\"pool\":true,\"boiler\":false,\"ev\":false},\"pool_volume\":55,\"devices\":[{\"key\":\"pool_heater\",\"role\":\"controllable\",\"service\":\"pool\",\"control_type\":\"setpoint\",\"load_type\":\"fixed_full_load\"},{\"key\":\"pool_pump\",\"role\":\"controllable\",\"service\":\"pool\",\"control_type\":\"switch_schedule\",\"load_type\":\"fixed_full_load\"}],\"services\":[\"{\\\"device\\\":\\\"pool\\\",\\\"control\\\":{\\\"type\\\":\\\"fixed_power\\\",\\\"power_w\\\":2100}}\"]}",
+        "published_prices": [
+          [
+            "2026-08-20T09:00:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T09:15:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T09:30:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T09:45:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T10:00:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T10:15:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T10:30:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T10:45:00.000Z",
+            0.1,
+            0.1
+          ],
+          [
+            "2026-08-20T11:00:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T11:15:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T11:30:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T11:45:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T12:00:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T12:15:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T12:30:00.000Z",
+            3,
+            0.1
+          ],
+          [
+            "2026-08-20T12:45:00.000Z",
+            3,
+            0.1
+          ]
+        ],
+        "generated_from": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
+        "curve": {
+          "unit": "kwh",
+          "points": [
+            {
+              "at": 2.712,
+              "sek_per_unit": 2.8
+            },
+            {
+              "at": 2.722,
+              "sek_per_unit": 0.045
+            },
+            {
+              "at": 17.176,
+              "sek_per_unit": 0.045
+            }
+          ]
+        },
+        "reference_curve": {
+          "unit": "kwh",
+          "points": [
+            {
+              "at": 2.712,
+              "sek_per_unit": 2.8
+            },
+            {
+              "at": 2.722,
+              "sek_per_unit": 0.045
+            },
+            {
+              "at": 17.176,
+              "sek_per_unit": 0.045
+            }
+          ]
+        },
+        "scope": "published_prices",
+        "optimality": "best_tested",
+        "candidates": 13,
+        "objective_before_sek": -12.216757774434715,
+        "objective_after_sek": -12.216757774434715,
+        "published_bill_before_sek": -0.7962802132998835,
+        "published_bill_after_sek": -0.7962802132998835,
+        "published_until": "2026-08-20T13:00:00.000Z"
       }
     },
     "policy": {
@@ -6436,7 +6565,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "marginal-value-planner-v38",
+      "model_version": "marginal-value-planner-v39",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -6692,6 +6821,135 @@
           "worst_import_sek_per_kwh": 3,
           "degradation_sek_per_kwh": 0.05,
           "expected_draw_kwh": 0
+        },
+        "optimisation": {
+          "version": 1,
+          "configuration": "{\"battery\":{\"capacity_kwh\":18.08,\"min_soc\":0.05,\"max_soc\":1,\"charge_max_w\":8800,\"discharge_max_w\":9600,\"charge_efficiency\":0.95,\"discharge_efficiency\":0.95},\"grid\":{\"import_limit_w\":15000,\"export_limit_w\":15000},\"policy\":{\"battery_end_of_solar_target_soc\":0.8,\"battery_target_is_hard\":false,\"terminal_soc_min\":0.2,\"terminal_energy_value_sek_per_kwh\":0,\"battery_export_enabled\":false,\"battery_export_reserve_soc\":0.8,\"battery_export_min_price_sek_per_kwh\":0},\"capabilities\":{\"pv\":true,\"battery\":true,\"pool\":false,\"boiler\":false,\"ev\":false},\"devices\":[],\"services\":[]}",
+          "published_prices": [
+            [
+              "2026-08-20T09:00:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T09:15:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T09:30:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T09:45:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T10:00:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T10:15:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T10:30:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T10:45:00.000Z",
+              0.1,
+              0.1
+            ],
+            [
+              "2026-08-20T11:00:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T11:15:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T11:30:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T11:45:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T12:00:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T12:15:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T12:30:00.000Z",
+              3,
+              0.1
+            ],
+            [
+              "2026-08-20T12:45:00.000Z",
+              3,
+              0.1
+            ]
+          ],
+          "generated_from": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
+          "curve": {
+            "unit": "kwh",
+            "points": [
+              {
+                "at": 2.712,
+                "sek_per_unit": 2.8
+              },
+              {
+                "at": 2.722,
+                "sek_per_unit": 0.045
+              },
+              {
+                "at": 17.176,
+                "sek_per_unit": 0.045
+              }
+            ]
+          },
+          "reference_curve": {
+            "unit": "kwh",
+            "points": [
+              {
+                "at": 2.712,
+                "sek_per_unit": 2.8
+              },
+              {
+                "at": 2.722,
+                "sek_per_unit": 0.045
+              },
+              {
+                "at": 17.176,
+                "sek_per_unit": 0.045
+              }
+            ]
+          },
+          "scope": "published_prices",
+          "optimality": "best_tested",
+          "candidates": 13,
+          "objective_before_sek": -0.5996666666666667,
+          "objective_after_sek": -0.5996666666666667,
+          "published_bill_before_sek": -1.008,
+          "published_bill_after_sek": -1.008,
+          "published_until": "2026-08-20T13:00:00.000Z"
         }
       },
       "policy": {

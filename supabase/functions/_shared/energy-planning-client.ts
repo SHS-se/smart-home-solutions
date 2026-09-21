@@ -8,7 +8,7 @@ import {
 import { assembleOptimisationPlan } from "./energy-planning-step.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 
-const MAX_STEPS = 64;
+const MAX_STEPS = 512;
 
 export class EnergyPlanningError extends Error {
   constructor(message: string, readonly status: 400 | 502 = 502) {
@@ -38,7 +38,9 @@ export async function generateRemoteOptimisationPlan(
     throw new EnergyPlanningError("Planning worker is not configured");
   }
   const started = performance.now();
-  const signal = AbortSignal.timeout(20_000);
+  // A price arrival also runs the bounded daily curve search. Individual
+  // worker calls retain their existing CPU budget.
+  const signal = AbortSignal.timeout(120_000);
   // The worker plans from the input as JSON delivers it, so the plan is
   // assembled from that same form. Each part is serialized once, not per call.
   const inputJson = JSON.stringify(input);
@@ -68,7 +70,7 @@ export async function generateRemoteOptimisationPlan(
     } catch {
       throw new EnergyPlanningError(
         signal.aborted
-          ? "Planning stages exceeded the 20-second request deadline"
+          ? "Planning stages exceeded the 120-second request deadline"
           : "Planning worker could not be reached",
       );
     }

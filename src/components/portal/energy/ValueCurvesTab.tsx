@@ -545,12 +545,12 @@ const ValueCurvesTab: React.FC<Props> = ({
                 <Button disabled={refreshing || replanning || waitingForReplan || !batteryDraft.edited || saving === 'battery' || !!(batteryDraft.curve && validateBatteryCurve(batteryDraft.curve))} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
               </div>
             </div>
-            <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve ?? batteryValueCurve.automatic_curve}
+            <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve ?? (typeof preview === "object" ? preview?.after.batteryCurve : undefined) ?? batteryValueCurve.automatic_curve}
               capacity={batteryValueCurve.usable_capacity_kwh} state={batteryValueCurve.initial_state_kwh}
               onChange={curve => { setBatteryDraft({ curve, edited: true }); setPreview(null); }} />
             {batteryDraft.curve && validateBatteryCurve(batteryDraft.curve) && <p role="alert" className="text-sm text-destructive">{validateBatteryCurve(batteryDraft.curve)}</p>}
             <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">{t('Om automatisk och egen kurva', 'About automatic and custom curves')}</summary>
-              <p className="mt-2">{t('Den automatiska kurvan räknas om från prognoser för behov, sol, priser, verkningsgrad och slitage. Kvartarnas energibehov ger brytpunkter, så antalet ändras. Ett tak baserat på återanskaffningspriset kan platta ut kurvan. Dina sparade punkter ändras aldrig automatiskt och får inget sådant pristak. Antal punkter ändras endast när du väljer det; ett nytt antal fördelar om punkterna jämnt. Spara och planera om för att använda ändringarna.', 'The automatic curve is recalculated from demand, solar and price forecasts, efficiency and wear. Quarter-hour energy needs create breakpoints, so their number changes. A replacement-price cap can flatten the curve. Your saved points are never automatically changed or capped. Only you change their count; applying a new count redistributes points evenly. Save and replan to apply changes.')}</p>
+              <p className="mt-2">{t('Den automatiska kurvan väljs genom att jämföra flera former enbart över timmar med publicerade priser. Behov, sol, verkningsgrad, slitage och kvarvarande energi värderas lika i jämförelsen. Bästa prövade kurva används sedan i hela 72-timmarsplanen och omprövas när nya priser kommer. Sökningen garanterar inte ett globalt optimum. Dina sparade punkter ändras aldrig automatiskt och får inget sådant pristak. Antal punkter ändras endast när du väljer det; ett nytt antal fördelar om punkterna jämnt. Spara och planera om för att använda ändringarna.', 'The automatic curve is selected by testing several shapes using published-price quarters only. Demand, solar, efficiency, wear and remaining energy are valued consistently. The best tested curve is then used throughout the 72-hour plan and reconsidered when new prices arrive. The search does not guarantee a global optimum. Your saved points are never automatically changed or capped. Only you change their count; applying a new count redistributes points evenly. Save and replan to apply changes.')}</p>
             </details>
           </CardContent>
         </Card>
@@ -796,8 +796,8 @@ const PreviewPanel: React.FC<{ preview: PreviewComparison | string; dirty: boole
         </div>
         <p className="text-[11px] text-muted-foreground">
           {t(
-            'Räknat över hela planens 72 timmar med samma väder och priser som den sparade ögonblicksbilden, med planerarens egen kod. Spara och planera om för att verkligen använda ändringen.',
-            'Solved over the plan’s full 72 hours against the stored snapshot’s own weather and prices, using the planner’s own code. Save and replan to actually apply the change.',
+            'Jämförelsen omfattar endast kvartar med publicerade priser, med planerarens egen kod. Energianvändning och slutvärden gäller samma period; prognospriser ingår inte. Spara och planera om för att använda kurvan i hela 72-timmarsplanen.',
+            'Compared only over quarters with published prices, using the planner’s own code. Energy use and end states cover that same window; forecast price padding is excluded. Save and replan to apply the curve to the full 72-hour plan.',
           )}
         </p>
       </CardContent>

@@ -8,16 +8,18 @@
 //
 // The re-solve runs **the planner itself**, not a second model of it. The
 // snapshot every plan was built from is persisted alongside the plan, so the
-// browser can hand the real `generateOptimisationPlan` a copy with one curve
+// browser can hand the real planner a copy with one curve
 // swapped and read the answer. A prettier approximation living in the portal
 // would be free to disagree with the thing it claims to predict, which is the
 // failure §3.1.1 records in the load model.
 
 import {
-  generateOptimisationPlan,
+  dispatchWorkbench,
+  validateSnapshot,
   type OptimisationSnapshot,
   type OptimisationPlan,
 } from '../../../supabase/functions/_shared/energy-optimisation';
+import { scoreDispatch } from '../../../supabase/functions/_shared/dispatch-plan';
 import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value';
 import type { ValueStoreKey } from '../../../supabase/functions/_shared/value-curves';
 
@@ -36,59 +38,49 @@ export interface PlanOutcome {
   gridExportKwh: number;
   netCostSek: number;
   stores: StoreOutcome[];
+  batteryCurve?: UtilityCurve;
+  publishedUntil: string;
 }
 
-/** Which per-slot power column belongs to each store. */
-const POWER_FIELD: Record<string, 'pool_w' | 'ev_w' | 'battery_charge_w'> = {
-  pool: 'pool_w',
-  ev: 'ev_w',
-  battery: 'battery_charge_w',
-};
-
 /**
- * Re-solve the persisted snapshot with these curves in place.
+ * Re-solve only published-price quarters with these curves in place.
+ * Forecast padding cannot affect either candidate dispatch or its comparison.
  *
- * `now` is taken from the snapshot rather than the wall clock: the planner
- * refuses a snapshot older than fifteen minutes, and a preview is by nature
- * being run against one that has been sitting in a table.
+ * Keep the comparison time anchored to the stored snapshot, so opening an
+ * older plan does not silently advance or shorten its published-price window.
  */
 export function solveWith(
   snapshot: OptimisationSnapshot,
   curves: Partial<Record<ValueStoreKey, UtilityCurve>>,
   priceOutlook?: OptimisationPlan['price_outlook'],
 ): PlanOutcome | string {
-  let plan;
   try {
-    plan = generateOptimisationPlan(
-      { ...snapshot, value_curves: curves },
-      new Date(Date.parse(snapshot.captured_at) + 60_000),
-      [],
-      priceOutlook,
-    );
+    const input = { ...snapshot, value_curves: curves };
+    const errors = validateSnapshot(input);
+    if (errors.length) return errors.join('; ');
+    const workbench = dispatchWorkbench(input, [], priceOutlook,
+      new Date(Date.parse(snapshot.captured_at) + 60_000), 'published');
+    if (!workbench) return 'No measured stores are available for comparison';
+    const score = scoreDispatch(workbench.slots, workbench.stores, workbench.limits, workbench.planned);
+    return {
+      gridImportKwh: score.grid_import_kwh,
+      gridExportKwh: score.grid_export_kwh,
+      netCostSek: score.billable_quoted_sek,
+      batteryCurve: workbench.stores.find(store => store.key === 'battery')?.curve,
+      publishedUntil: new Date(workbench.slot_start_ms.at(-1)! + 900_000).toISOString(),
+      stores: score.stores.map(entry => ({
+        key: entry.key,
+        unit: entry.state_unit,
+        plannedKwh: entry.charged_kwh,
+        runHours: workbench.planned.power_w[entry.key].reduce((hours, watts, i) =>
+          hours + (watts > 0 ? workbench.slots[i].duration_hours ?? 0.25 : 0), 0),
+        endState: entry.end_state,
+        reason: entry.charged_kwh > 0 ? 'scheduled' : 'not_scheduled',
+      })),
+    };
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-  const executed = plan.plans.priority;
-  const slotHours = 0.25;
-  return {
-    gridImportKwh: executed.summary.grid_import_kwh,
-    gridExportKwh: executed.summary.grid_export_kwh,
-    netCostSek: executed.summary.net_cost_sek,
-    stores: executed.store_diagnostics.map(entry => {
-      const field = POWER_FIELD[entry.key];
-      const runHours = field
-        ? executed.slots.filter(slot => (slot[field] ?? 0) > 0).length * slotHours
-        : 0;
-      return {
-        key: entry.key,
-        unit: entry.unit,
-        plannedKwh: entry.planned_kwh,
-        runHours,
-        endState: entry.end_state,
-        reason: entry.reason,
-      };
-    }),
-  };
 }
 
 export interface OutcomeDelta {
@@ -111,7 +103,7 @@ export interface PreviewComparison {
   costDeltaSek: number;
 }
 
-/** Compare preferences against the same snapshot and resolved price forecast. */
+/** Compare preferences against the same snapshot and published-price window. */
 export function comparePreference(
   snapshot: OptimisationSnapshot,
   current: Partial<Record<ValueStoreKey, UtilityCurve>>,

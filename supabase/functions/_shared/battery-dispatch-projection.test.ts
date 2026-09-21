@@ -264,7 +264,9 @@ Deno.test("production captures exact execution demand and partial interval witho
       counting,
     );
   assertEquals(calls, normalCalls);
-  assertEquals(calls, 2); // One auction per branch, reused across scenario labels.
+  assertEquals(calls, 2 + normal.battery_value_curve!.optimisation!.candidates +
+    normal.execution_plan!.battery_value_curve!.optimisation!.candidates);
+  // One final auction per branch plus the once-per-price-set curve search.
   assertEquals(plan, normal);
   assertEquals(s, before);
   assert(p.status === "ready", JSON.stringify(p));
@@ -363,6 +365,8 @@ Deno.test("projection follows accepted continuity materialization and rejects ha
   s.policy.battery_export_min_price_sek_per_kwh = 0;
   s.slots[0].pv_forecast_w = s.slots[0].base_load_forecast_w;
   const now = new Date(s.captured_at);
+  const reference = generateOptimisationPlan(s, now).battery_value_curve!.optimisation!.reference_curve;
+  s.value_curves = { battery: reference };
   const previous = generateOptimisationPlan(s, now);
   s.snapshot_id = "00000000-0000-4000-8000-000000000002";
   s.slots[0].pv_forecast_w += 100;

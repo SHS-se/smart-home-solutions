@@ -28,6 +28,9 @@ function batteryContinuitySnapshot(solar = true) {
     import_price_sek_per_kwh: 1,
     export_price_sek_per_kwh: 0.01,
   }));
+  // Pin valuation so these tests isolate continuity, not daily curve selection.
+  const reference = generateOptimisationPlan(input, new Date(input.captured_at)).battery_value_curve!.optimisation!.reference_curve;
+  input.value_curves = { battery: reference };
   input.policy.battery_export_enabled = true;
   input.policy.battery_export_reserve_soc = 0.05;
   input.policy.battery_export_min_price_sek_per_kwh = 0;

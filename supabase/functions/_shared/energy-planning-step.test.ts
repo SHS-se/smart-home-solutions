@@ -59,7 +59,7 @@ function assertStagesMatch(
   let checkpoint: DispatchCheckpoint | undefined;
   const seen = new Set<string>();
   const counts = { calls: 0, transfers: 0, refinement: 0 };
-  for (let i = 0; i < 512; i++) {
+  for (let i = 0; i < 4096; i++) {
     counts.calls++;
     const step: EnergyPlanningStep = wire(
       energyPlanningStep(wire(input), wire({ completed, checkpoint }), budget?.()),

@@ -1,3 +1,4 @@
+import { automaticCurveIdentity, reusableAutomaticCurve, searchAutomaticBatteryCurve, type AutomaticCurveRecord } from "./automatic-battery-curve.ts";
 import {
   powerEnvelope,
   powerEnvelopeError,
@@ -127,7 +128,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v38";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v39";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -445,6 +446,8 @@ export interface OptimisationSnapshot {
    * defaults apply, which is what a home that has never opened the editor gets.
    */
   value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
+  /** Server-owned daily search records, restored from the last published plan. */
+  automatic_battery_curves?: AutomaticCurveRecord[];
   /**
    * The home's scalar prices, resolved by the edge alongside the curves.
    *
@@ -511,6 +514,7 @@ export interface BatteryValueCurveDiagnostic {
   schema_version: 2;
   source: "automatic" | "customer";
   automatic_curve: UtilityCurve;
+  optimisation?: AutomaticCurveRecord;
   curve: UtilityCurve;
   state_basis: "usable_kwh_above_min_soc";
   initial_state_kwh: number;
@@ -678,6 +682,8 @@ export interface OptimisationPlan {
   /** Required by schema 9. Top-level scenarios remain hypothetical. */
   operating_scope?: OperatingScope;
   execution_plan?: OptimisationPlan;
+  /** Daily curve evidence for the conditional battery verification branch. */
+  battery_verification_value_curve?: BatteryValueCurveDiagnostic | null;
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
   schema_version: 5 | 6 | 7 | 8 | 9;
   mode: PlanMode;
@@ -2310,6 +2316,9 @@ function deriveBatteryValueCurve(
 ): DerivedBatteryValueCurve | null {
   const battery = snapshot.battery;
   if (!battery) return null;
+  // The automatic curve is learned exclusively from published prices. Forecast
+  // padding may use that curve, but must never set its scale or reference value.
+  slots = slots.filter(slot => slot.binding);
 
   const usableKwh = (battery.max_soc - battery.min_soc) *
     battery.capacity_kwh;
@@ -2469,13 +2478,16 @@ function deriveBatteryValueCurve(
         battery.discharge_efficiency - curveInput.degradationSekPerKwh,
   );
   const generated = batteryValueCurve(curveInput);
-  const automaticCurve = {
+  let automaticCurve = {
     ...generated,
     points: generated.points.map((point) => ({
       ...point,
       sek_per_unit: Math.min(point.sek_per_unit, terminalReplacement),
     })),
   };
+  const identity = automaticCurveIdentity(snapshot);
+  const cached = snapshot.automatic_battery_curves?.find(record => reusableAutomaticCurve(identity, record));
+  if (cached) automaticCurve = cached.curve;
   const custom = snapshot.value_curves?.battery;
   if (custom) {
     const invalid = validateBatteryCurve(custom);
@@ -2488,6 +2500,7 @@ function deriveBatteryValueCurve(
       schema_version: 2,
       source: custom ? "customer" : "automatic",
       automatic_curve: automaticCurve,
+      ...(cached ? { optimisation: cached } : {}),
       curve,
       state_basis: "usable_kwh_above_min_soc",
       initial_state_kwh: Math.max(
@@ -2934,10 +2947,30 @@ function scheduleServices(
         grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
         load_start_preference_sek: peakShaping.load_start_preference_sek,
       };
-      dispatchBundle = {
-        stores, slots: dispatchSlots, limits,
-        result: dispatchWithFixedPlan(dispatchSlots, stores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction),
-      };
+      const solve = (trialStores: DispatchStore[]) => dispatchWithFixedPlan(
+        dispatchSlots, trialStores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction,
+      );
+      if (!fixed && derivedBatteryValue?.diagnostic.source === "automatic" &&
+          !derivedBatteryValue.diagnostic.optimisation && stores.some(s => s.key === "battery") &&
+          dispatchSlots.some(slot => slot.binding)) {
+        const publishedSlots = slots.filter(slot => slot.binding);
+        const publishedDispatch = dispatchSlots.slice(0, publishedSlots.length);
+        const publishedStores = buildDispatchStores(publishedSlots, snapshot, derivedBatteryValue)!;
+        const record = searchAutomaticBatteryCurve({ snapshot, slots: publishedDispatch, stores: publishedStores, limits,
+          solve: trialStores => dispatchWithFixedPlan(publishedDispatch, trialStores, limits,
+            publishedSlots.map(s => s.epoch_ms), undefined, solveAuction),
+        });
+        derivedBatteryValue.curve = record.curve;
+        derivedBatteryValue.diagnostic.curve = record.curve;
+        derivedBatteryValue.diagnostic.automatic_curve = record.curve;
+        derivedBatteryValue.diagnostic.optimisation = record;
+        const selectedStores = stores.map(s => s.key === "battery" ? { ...s, curve: record.curve } : s);
+        // Re-solve the complete horizon with the selected curve. The short
+        // published-price search result is never installed as a 72-hour plan.
+        dispatchBundle = { stores: selectedStores, slots: dispatchSlots, limits, result: solve(selectedStores) };
+      } else {
+        dispatchBundle = { stores, slots: dispatchSlots, limits, result: solve(stores) };
+      }
     } else {
       if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
       dispatchBundle = null;
@@ -4689,11 +4722,14 @@ function workbenchSetup(
   priceArchive: StoredPriceRow[],
   resolvedPriceOutlook: OptimisationPlan["price_outlook"] | undefined,
   now: Date,
+  publishedOnly = false,
 ) {
   const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
   // Stored plan outlooks are already aligned to the remaining horizon.
   const remaining = remainingSnapshot(snapshot, effectiveAt);
-  const { slots } = preparedSlots(remaining, priceArchive, resolvedPriceOutlook, effectiveAt);
+  const prepared = preparedSlots(remaining, priceArchive, resolvedPriceOutlook, effectiveAt);
+  const slots = publishedOnly ? prepared.slots.filter(slot => slot.binding) : prepared.slots;
+  if (!slots.length) throw new Error("No published prices are available for comparison");
   const { reservedW, protectedSoc } = batteryReservation(slots, remaining);
   const derivedBatteryValue = remaining.schema_version >= 6
     ? deriveBatteryValueCurve(slots, remaining)
@@ -4715,8 +4751,9 @@ export function dispatchWorkbench(
   priceArchive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
+  horizon: "full" | "published" = "full",
 ): DispatchWorkbench | null {
-  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now);
+  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now, horizon === "published");
   const dispatchCache = new Map<string, DispatchBundle | null>();
   setup.buildPriority(dispatchCache);
   const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
@@ -4848,6 +4885,7 @@ export function generateOptimisationPlanWithBatteryProjection(
   return { battery_projection: batteryProjection, plan: { ...hypothetical.plan, schema_version: 9,
     ...(contract ? { battery_execution: contract } : {}),
     operating_scope: operatingScope,
+    ...(batteryExecution !== execution ? { battery_verification_value_curve: batteryExecution.plan.battery_value_curve } : {}),
     execution_plan: execution.plan } };
 }
 

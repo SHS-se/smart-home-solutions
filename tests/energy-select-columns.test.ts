@@ -96,7 +96,8 @@ Deno.test('edge functions only name columns the migrations define', async () => 
 
       const named: string[] = [];
       const select = chain.match(/\.select\(\s*"([^"]*)"/);
-      if (select) named.push(...select[1].split(',').map((column) => column.trim()));
+      if (select) named.push(...select[1].split(',').map((column) =>
+        column.trim().replace(/^[a-z_]+:/i, '').split('->')[0]));
       for (const filter of chain.matchAll(new RegExp(`\\.(?:${FILTERS})\\(\\s*"([^"]*)"`, 'g'))) {
         named.push(filter[1]);
       }
