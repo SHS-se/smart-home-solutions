@@ -1773,7 +1773,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v39");
+  assertEquals(plan.model_version, "marginal-value-planner-v40");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -3344,7 +3344,7 @@ Deno.test("a winter covering window and its reference value use published prices
   // Against the wear the plan actually used, which it publishes. Reading the
   // shipped default back would assert nothing when that default moves.
   assertAlmostEquals(
-    curve.optimisation!.reference_curve.points[0].sek_per_unit,
+    curve.automatic_curve.points[0].sek_per_unit,
     Math.min(
       curve.terminal_replacement_sek_per_kwh,
       dearestCovered * battery.discharge_efficiency -
@@ -3405,6 +3405,10 @@ Deno.test("§8.12 #11 — charge power gives way to the load already in the quar
           ...base.policy,
           peak_shaping_sek_per_kwh_per_kw: 0.1,
         } as OptimisationSnapshot["policy"],
+        // Hold valuation fixed so changed demand tests shaping, not curve derivation.
+        value_curves: { battery: { unit: "kwh", points: [
+          { at: 0, sek_per_unit: 2 }, { at: 17.176, sek_per_unit: 1 },
+        ] } },
         battery: {
           ...base.battery!,
           capacity_kwh: 18.08,
@@ -3508,7 +3512,7 @@ Deno.test("a soft battery reserve cannot inflate terminal value beyond replaceme
     "the reserve reaches the curve in its own units",
   );
   assertAlmostEquals(
-    curve.optimisation!.reference_curve.points[0].sek_per_unit,
+    curve.automatic_curve.points[0].sek_per_unit,
     curve.terminal_replacement_sek_per_kwh,
     0.02,
   );

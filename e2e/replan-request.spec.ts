@@ -15,11 +15,13 @@
  */
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
-import { generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
+import { balancedBatteryCurve, generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { portalDelta } from './helpers/portal-delta';
+import { comparePreference } from '../src/lib/energy-shift/curve-preview';
+import { DEFAULT_VALUE_CURVES } from '../supabase/functions/_shared/value-curves';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
@@ -280,6 +282,7 @@ test.describe('requesting a replan', () => {
     await card.getByRole('button', { name: /^(Spara|Save)$/ }).click();
     await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeDisabled();
     expect(saved!.store_key).toBe('battery');
+    expect(saved!.generation_mode).toBe('custom');
     const points = saved!.points as { at: number; sek_per_unit: number }[];
     expect(points).toHaveLength(4);
     expect(points[0].sek_per_unit).toBeGreaterThan(10);
@@ -297,6 +300,116 @@ test.describe('requesting a replan', () => {
     await expect(card.getByRole('spinbutton', { name: /Punktens värde|Point value/ })).toHaveValue('20');
     await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeEnabled();
     await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+  });
+
+  test('battery generators preserve authoritative points through pending, preview, save and reload', async ({ context, page }) => {
+    const selectedCurve = { unit: 'kwh', points: Array.from({ length: 10 }, (_, index) => ({
+      at: index * 0.6, sek_per_unit: (10 - index) * 0.073,
+    })) };
+    // The server can freeze a newer input in the same quarter. The browser must
+    // replay its clock and measurements, rather than the displayed plan's copy.
+    const frozen = snapshot();
+    frozen.captured_at = new Date(Date.parse(CAPTURED_AT) + 5 * 60_000).toISOString();
+    frozen.battery_curve_mode = 'balanced';
+    const frozenNow = new Date(Date.parse(CAPTURED_AT) + 7 * 60_000);
+    let requests = 0;
+    let release: () => void = () => {};
+    const firstRequest = new Promise<void>(resolve => { release = resolve; });
+    await context.route('**/functions/v1/energy-optimisation-battery-curve*', async route => {
+      requests++;
+      expect(route.request().postDataJSON()).toEqual({ home_id: HOME_ID });
+      if (requests === 1) await firstRequest;
+      await route.fulfill({ json: {
+        selection: { key: 'frozen-quarter-prices', curve: selectedCurve, source_snapshot_id: frozen.snapshot_id,
+          evaluations: 40, bill_before_sek: 12, bill_after_sek: 10, published_until: frozen.slots[99].start },
+        input: { snapshot: frozen, now: frozenNow.toISOString() },
+      } });
+    });
+    let saved: Record<string, unknown> | null = null;
+    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
+      if (route.request().method() === 'POST') saved = route.request().postDataJSON();
+      await route.fulfill({ json: saved ? [saved] : [] });
+    });
+    await page.goto('/portal/energy-modeling?tab=economics');
+    const card = page.getByTestId('battery-curve-card');
+    const price = card.getByRole('button', { name: /Minimera elkostnaden|Minimize electricity cost/ });
+    const balanced = card.getByRole('button', { name: /Balansera kostnad och lagrad energi|Balance cost and stored energy/ });
+    const save = card.getByRole('button', { name: /^(Spara|Save)$/ });
+    const preview = page.getByRole('button', { name: /Vad skulle ändras|What would change/ });
+    const pointValue = card.getByRole('spinbutton', { name: /Punktens värde|Point value/ });
+    await expect(balanced).toHaveAttribute('aria-pressed', 'true');
+    const blueBefore = await card.getByTestId('battery-current-curve').getAttribute('data-values');
+    const orangeBefore = await card.getByTestId('battery-next-curve').getAttribute('points');
+    await price.click();
+    await expect(card).toHaveAttribute('aria-busy', 'true');
+    await expect(card.getByRole('status')).toBeVisible();
+    await expect(save).toBeDisabled();
+    await expect(preview).toBeDisabled();
+    await expect(pointValue).toBeDisabled();
+    await expect(card.getByTestId('battery-next-curve')).toHaveAttribute('points', orangeBefore!);
+    release();
+    await expect(card).toHaveAttribute('aria-busy', 'false');
+    await expect(price).toHaveAttribute('aria-pressed', 'true');
+    await expect(pointValue).toHaveValue(String(selectedCurve.points[0].sek_per_unit));
+    const selectedShape = await card.getByTestId('battery-next-curve').getAttribute('points');
+    const expected = comparePreference(frozen, { battery: PLAN.battery_value_curve!.curve },
+      { pool: DEFAULT_VALUE_CURVES.pool, ev: DEFAULT_VALUE_CURVES.ev, battery: selectedCurve }, undefined, frozenNow);
+    if (typeof expected === 'string') throw new Error(expected);
+    await preview.click();
+    const expectedCost = `${expected.costDeltaSek > 0 ? '+' : ''}${expected.costDeltaSek.toFixed(2)} SEK`;
+    await expect(page.getByTestId('curve-preview').getByText(expectedCost, { exact: true })).toBeVisible();
+    await expect(card.getByTestId('battery-next-curve')).toHaveAttribute('points', selectedShape!);
+    await save.click();
+    await expect(save).toBeDisabled();
+    expect(saved!.generation_mode).toBe('price_only');
+    expect(saved!.points).toEqual(selectedCurve.points);
+    await page.reload();
+    await expect(price).toHaveAttribute('aria-pressed', 'true');
+    await expect(card.getByTestId('battery-next-curve')).toHaveAttribute('points', selectedShape!);
+    expect(requests).toBeGreaterThanOrEqual(2);
+    await expect(card.getByTestId('battery-current-curve')).toHaveAttribute('data-values', blueBefore!);
+    await balanced.click();
+    await expect(balanced).toHaveAttribute('aria-pressed', 'true');
+    const expectedBalanced = balancedBatteryCurve(snapshot(), new Date(Date.parse(CAPTURED_AT) + 60_000))!;
+    await expect(pointValue).toHaveValue(String(expectedBalanced.points[0].sek_per_unit));
+    await save.click();
+    await expect(save).toBeDisabled();
+    expect(saved!.generation_mode).toBe('balanced');
+    expect(saved!.points).toEqual(expectedBalanced.points);
+    // Persisted balanced points are a seed; they must not replace the fresh
+    // balanced curve when measurements are loaded for the next plan.
+    saved!.points = selectedCurve.points;
+    await page.reload();
+    await expect(balanced).toHaveAttribute('aria-pressed', 'true');
+    await expect(pointValue).toHaveValue(String(expectedBalanced.points[0].sek_per_unit));
+    await pointValue.fill('20');
+    await expect(balanced).toHaveAttribute('aria-pressed', 'false');
+    await expect(card.getByText(/^(Egen kurva|Your curve)$/)).toBeVisible();
+    await save.click();
+    await expect(save).toBeDisabled();
+    expect(saved!.generation_mode).toBe('custom');
+  });
+
+  test('failed price generation retains the editable draft and provides an explicit retry', async ({ context, page }) => {
+    let fail = true;
+    const selectedCurve = { unit: 'kwh', points: [{ at: 0, sek_per_unit: 0.25 }, { at: 5, sek_per_unit: 0 }] };
+    await context.route('**/functions/v1/energy-optimisation-battery-curve*', route => route.fulfill(fail
+      ? { status: 503, json: { error: 'Curve search temporarily unavailable' } }
+      : { json: { selection: { curve: selectedCurve }, input: { snapshot: snapshot(), now: CAPTURED_AT } } }));
+    await page.goto('/portal/energy-modeling?tab=economics');
+    const card = page.getByTestId('battery-curve-card');
+    const button = card.getByRole('button', { name: /Minimera elkostnaden|Minimize electricity cost/ });
+    const before = await card.getByTestId('battery-next-curve').getAttribute('points');
+    await button.click();
+    await expect(card.getByText('Curve search temporarily unavailable')).toBeVisible();
+    await expect(button).toHaveAttribute('aria-pressed', 'false');
+    await expect(button).toBeEnabled();
+    await expect(card.getByTestId('battery-next-curve')).toHaveAttribute('points', before!);
+    fail = false;
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await expect(card.getByText('Curve search temporarily unavailable')).toHaveCount(0);
+    await expect(card.getByRole('spinbutton', { name: /Punktens värde|Point value/ })).toHaveValue('0.25');
   });
 
   test('an invalid stored battery curve has a direct explicit correction', async ({ context, page }) => {

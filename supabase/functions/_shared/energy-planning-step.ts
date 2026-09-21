@@ -95,11 +95,20 @@ export function energyPlanningStep(
   continuation: EnergyPlanningContinuation = { completed: [] },
   budget?: PlanningBudget,
 ): EnergyPlanningStep {
+  return advanceAuctions(completed => replay(input, completed), continuation, budget);
+}
+
+/** Shared resumable auction driver; callers own their final result and scoring. */
+export function advanceAuctions(
+  resolve: (completed: DispatchResult[]) => {done: true} | {done: false; problem: Parameters<DispatchAuctionSolver>},
+  continuation: EnergyPlanningContinuation = {completed: []},
+  budget?: PlanningBudget,
+): EnergyPlanningStep {
   let completed = continuation.completed;
   let checkpoint = continuation.checkpoint;
   const finished: DispatchResult[] = [];
   for (;;) {
-    const replayed = replay(input, completed);
+    const replayed = resolve(completed);
     if (replayed.done === true) {
       if (checkpoint) {
         throw new Error("Planning continuation does not match the input");

@@ -44,7 +44,7 @@ import {
   vehiclePreference,
   type StorePreference,
 } from '../../../../supabase/functions/_shared/value-preferences';
-import { plannerValueStores, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import { balancedBatteryCurve, plannerValueStores, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import {
   replanCompleted,
@@ -87,6 +87,36 @@ interface Draft {
   source: 'customer' | 'default';
   edited?: boolean;
 }
+
+type BatteryMode = 'custom' | 'price_only' | 'balanced';
+interface BatteryDraft {
+  curve: UtilityCurve | null;
+  mode: BatteryMode;
+  edited: boolean;
+  comparisonInput?: { snapshot: OptimisationSnapshot; now: string };
+}
+
+async function priceOnlyDraft(homeId: string): Promise<BatteryDraft> {
+  const { data, error } = await supabase.functions.invoke('energy-optimisation-battery-curve', {
+    body: { home_id: homeId },
+  });
+  if (error) {
+    const response = (error as { context?: Response }).context;
+    if (response) {
+      const body = await response.json();
+      throw new Error(body.detail ?? body.error ?? error.message);
+    }
+    throw error;
+  }
+  const curve = data?.selection?.curve as UtilityCurve | undefined;
+  if (!curve || !Array.isArray(curve.points) || validateBatteryCurve(curve)
+    || !data?.input?.snapshot || !Number.isFinite(Date.parse(data?.input?.now))) {
+    throw new Error('The cost curve response is incomplete. Try generating it again.');
+  }
+  return { curve, mode: 'price_only', edited: true, comparisonInput: data.input };
+}
+
+const snapshotTime = (snapshot: OptimisationSnapshot) => new Date(Date.parse(snapshot.captured_at) + 60_000);
 
 type Drafts = Partial<Record<ValueStoreKey, Draft>>;
 
@@ -131,7 +161,10 @@ const ValueCurvesTab: React.FC<Props> = ({
 }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
-  const [batteryDraft, setBatteryDraft] = useState<{ curve: UtilityCurve | null; edited: boolean }>({ curve: null, edited: false });
+  const [batteryDraft, setBatteryDraft] = useState<BatteryDraft>({ curve: null, mode: 'balanced', edited: false });
+  const [savedBatteryDraft, setSavedBatteryDraft] = useState<BatteryDraft>(batteryDraft);
+  const [generatingBattery, setGeneratingBattery] = useState(false);
+  const [batteryGenerationError, setBatteryGenerationError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Drafts>({});
   const [stored, setStored] = useState<Partial<Record<ValueStoreKey, UtilityCurve>>>({});
   const [loading, setLoading] = useState(true);
@@ -203,7 +236,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     setSourcePlan(source.plan as unknown as OptimisationPlan);
     const { data, error } = await supabase
       .from('energy_optimisation_value_curves')
-      .select('store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier')
+      .select('store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier, generation_mode')
       .eq('home_id', homeId);
     if (error) { setCurveError(error.message); setLoading(false); return; }
     const nextDrafts: Drafts = {};
@@ -226,7 +259,24 @@ const ValueCurvesTab: React.FC<Props> = ({
     setBatteryLoadError(invalidBattery || null);
     const validBattery = typeof battery === 'string' || invalidBattery ? null : battery;
     if (validBattery) nextStored.battery = validBattery;
-    setBatteryDraft(current => current.edited ? current : { curve: validBattery, edited: false });
+    const loadedSnapshot = source.snapshot as unknown as OptimisationSnapshot;
+    const mode: BatteryMode = batteryRow?.generation_mode ?? (batteryRow ? 'custom' : 'balanced');
+    let loadedBattery: BatteryDraft = { curve: mode === 'balanced'
+      ? balancedBatteryCurve(loadedSnapshot, snapshotTime(loadedSnapshot)) : validBattery, mode, edited: false };
+    if (mode === 'price_only' && !invalidBattery) {
+      setGeneratingBattery(true);
+      setBatteryGenerationError(null);
+      try {
+        loadedBattery = { ...await priceOnlyDraft(homeId), edited: false };
+      } catch (error) {
+        loadedBattery.curve = null;
+        setBatteryGenerationError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setGeneratingBattery(false);
+      }
+    }
+    setSavedBatteryDraft(loadedBattery);
+    setBatteryDraft(current => current.edited ? current : loadedBattery);
     setStored(nextStored);
     setDrafts(current => Object.fromEntries(EDITABLE.map(key => [key, current[key]?.edited ? current[key] : nextDrafts[key]])));
     setLoading(false);
@@ -266,7 +316,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const save = async (key: DefaultValueStoreKey) => {
-    if (refreshing || replanning || waitingForReplan) return;
+    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
     const draft = drafts[key];
     if (!homeId || !customerId || !draft) return;
     const rejection = validatePreference(draft.preference);
@@ -299,7 +349,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const reset = async (key: ValueStoreKey) => {
-    if (refreshing || replanning || waitingForReplan) return;
+    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
     if (!homeId) return;
     setSaving(key);
     const { error } = await supabase
@@ -309,34 +359,52 @@ const ValueCurvesTab: React.FC<Props> = ({
       .eq('store_key', key);
     setSaving(null);
     if (error) { toast({ title: t('Kunde inte spara', 'Could not save'), description: error.message, variant: 'destructive' }); return; }
-    if (key === 'battery') setBatteryDraft({ curve: null, edited: false });
+    if (key === 'battery') { setBatteryDraft({ curve: null, mode: 'balanced', edited: false }); setBatteryGenerationError(null); }
     else setDrafts(current => ({ ...current, [key]: { ...current[key]!, edited: false } }));
     toast({ title: t('Återställd till standard', 'Reset to default') });
     void load();
   };
 
+  const generateBattery = async (mode: 'price_only' | 'balanced') => {
+    if (!homeId || !snapshot || generatingBattery || saving) return;
+    setBatteryGenerationError(null);
+    setPreview(null);
+    setGeneratingBattery(true);
+    try {
+      const draft = mode === 'price_only' ? await priceOnlyDraft(homeId) : {
+        curve: balancedBatteryCurve(snapshot, snapshotTime(snapshot)), mode, edited: true,
+      };
+      if (!draft.curve) throw new Error(t('Batterimätvärden saknas.', 'Battery measurements are missing.'));
+      setBatteryDraft(draft);
+    } catch (error) {
+      setBatteryGenerationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGeneratingBattery(false);
+    }
+  };
+
   const saveBattery = async () => {
-    if (refreshing || replanning || waitingForReplan) return;
-    if (!homeId || !customerId) return;
-    if (batteryDraft.curve && validateBatteryCurve(batteryDraft.curve)) return;
-    const submitted = batteryDraft.curve;
+    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
+    if (!homeId || !customerId || !batteryDraft.curve || validateBatteryCurve(batteryDraft.curve)) return;
+    const submitted = batteryDraft;
     setSaving('battery');
-    const query = supabase.from('energy_optimisation_value_curves');
-    const { error } = batteryDraft.curve
-      ? await query.upsert({ customer_id: customerId, home_id: homeId, store_key: 'battery', unit: 'kwh',
-        points: batteryDraft.curve.points, max_value_sek_per_kwh: null, urgent_price_multiplier: null,
-        updated_at: new Date().toISOString() }, { onConflict: 'home_id,store_key' })
-      : await query.delete().eq('home_id', homeId).eq('store_key', 'battery');
+    const { error } = await supabase.from('energy_optimisation_value_curves').upsert({
+      customer_id: customerId, home_id: homeId, store_key: 'battery', unit: 'kwh',
+      points: submitted.curve!.points, generation_mode: submitted.mode,
+      max_value_sek_per_kwh: null, urgent_price_multiplier: null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'home_id,store_key' });
     setSaving(null);
     if (error) { toast({ title: t('Kunde inte spara', 'Could not save'), description: error.message, variant: 'destructive' }); return; }
-    setBatteryDraft(current => current.curve === submitted ? { ...current, edited: false } : current);
+    setBatteryDraft(current => current === submitted ? { ...current, edited: false } : current);
+    setSavedBatteryDraft({ ...submitted, edited: false });
     toast({ title: t('Sparad för nästa plan', 'Saved for the next plan') });
     void load();
   };
 
   /** Compare with the same resolved forecast used to construct the charts. */
   const runPreview = async () => {
-    if (!snapshot || !sourcePlan) return;
+    if (!snapshot || !sourcePlan || generatingBattery || batteryGenerationError) return;
     setPreviewing(true);
     const edited: Partial<Record<ValueStoreKey, UtilityCurve>> = { ...stored };
     if (batteryDraft.curve) {
@@ -352,7 +420,13 @@ const ValueCurvesTab: React.FC<Props> = ({
         edited[key] = curveOf(key, draft.preference);
       }
     }
-    setPreview(comparePreference(snapshot, snapshot.value_curves ?? {}, edited, sourcePlan.price_outlook));
+    const input = batteryDraft.comparisonInput;
+    const comparisonSnapshot = input?.snapshot ?? snapshot;
+    const current = { ...comparisonSnapshot.value_curves,
+      ...(batteryValueCurve?.curve ? { battery: batteryValueCurve.curve } : {}),
+    };
+    setPreview(comparePreference(comparisonSnapshot, current, edited,
+      input ? undefined : sourcePlan.price_outlook, input ? new Date(input.now) : undefined));
     setPreviewing(false);
   };
 
@@ -372,7 +446,7 @@ const ValueCurvesTab: React.FC<Props> = ({
    * push, and the panel below says so until it does.
    */
   const requestReplan = async () => {
-    if (refreshing || replanning || waitingForReplan) return;
+    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
     if (!homeId) return;
     setReplanning(true);
     const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
@@ -430,7 +504,10 @@ const ValueCurvesTab: React.FC<Props> = ({
     return <p className="text-sm text-muted-foreground">{t('Välj ett hem.', 'Select a home.')}</p>;
   }
   if (loading) {
-    return <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />;
+    return <div role="status" aria-busy="true" className="flex items-center gap-2 text-sm text-muted-foreground">
+      <Loader2 aria-hidden="true" className="w-5 h-5 animate-spin" />
+      {generatingBattery ? t('Hämtar den valda elkostnadskurvan…', 'Loading the selected electricity cost curve…') : t('Hämtar kurvor…', 'Loading curves…')}
+    </div>;
   }
 
   if (curveError) return <Alert variant="destructive"><AlertDescription>{curveError}</AlertDescription></Alert>;
@@ -462,14 +539,14 @@ const ValueCurvesTab: React.FC<Props> = ({
       </Alert>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Button size="sm" onClick={() => void runPreview()} disabled={previewing} variant="outline">
+        <Button size="sm" onClick={() => void runPreview()} disabled={previewing || generatingBattery || !!batteryGenerationError} variant="outline">
           {previewing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
           {t('Vad skulle ändras?', 'What would change?')}
         </Button>
         <Button
           size="sm"
           onClick={() => void requestReplan()}
-          disabled={refreshing || replanning || waitingForReplan}
+          disabled={refreshing || replanning || waitingForReplan || generatingBattery}
           variant="secondary"
         >
           {replanning || waitingForReplan
@@ -528,29 +605,39 @@ const ValueCurvesTab: React.FC<Props> = ({
         </AlertDescription>
       </Alert>}
       {!batteryLoadError && batteryValueCurve?.automatic_curve && (
-        <Card data-testid="battery-curve-card">
+        <Card data-testid="battery-curve-card" aria-busy={generatingBattery}>
           <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
             <div>
               <CardTitle className="text-base">{t('Hembatteriets värdekurva', 'Home battery value curve')}</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">{t('Ett högre värde gör lagrad energi mer värdefull att behålla. Kurvan anger inget klockslag eller laddningseffekt.', 'A higher value makes stored energy more valuable to retain. The curve does not set a time or charging power.')}</p>
             </div>
-            <Badge variant="outline">{batteryDraft.curve ? t('Egen kurva', 'Your curve') : t('Automatisk', 'Automatic')}</Badge>
+            <Badge variant="outline">{batteryDraft.mode === 'custom' ? t('Egen kurva', 'Your curve') : batteryDraft.mode === 'price_only' ? t('Lägsta elkostnad', 'Minimum electricity cost') : t('Kostnad och lagrad energi', 'Cost and stored energy')}</Badge>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap justify-between gap-3">
               <p className="text-sm">{t('Användbar kapacitet', 'Usable capacity')}: {batteryValueCurve.usable_capacity_kwh.toFixed(3)} kWh</p>
-              <div className="flex gap-2">
-                <Button variant="ghost" disabled={!batteryDraft.edited} onClick={() => setBatteryDraft({ curve: stored.battery ?? null, edited: false })}>{t('Ångra ändringar', 'Discard edits')}</Button>
-                <Button variant="outline" onClick={() => { setBatteryDraft({ curve: null, edited: true }); setPreview(null); }}>{t('Använd automatisk kurva', 'Use automatic curve')}</Button>
-                <Button disabled={refreshing || replanning || waitingForReplan || !batteryDraft.edited || saving === 'battery' || !!(batteryDraft.curve && validateBatteryCurve(batteryDraft.curve))} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="ghost" disabled={!batteryDraft.edited || generatingBattery || saving === 'battery'} onClick={() => { setBatteryDraft(savedBatteryDraft); setBatteryGenerationError(null); setPreview(null); }}>{t('Ångra ändringar', 'Discard edits')}</Button>
+                <Button disabled={refreshing || replanning || waitingForReplan || generatingBattery || !batteryDraft.edited || saving === 'battery' || !batteryDraft.curve || !!validateBatteryCurve(batteryDraft.curve)} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
               </div>
             </div>
-            <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve ?? (typeof preview === "object" ? preview?.after.batteryCurve : undefined) ?? batteryValueCurve.automatic_curve}
-              capacity={batteryValueCurve.usable_capacity_kwh} state={batteryValueCurve.initial_state_kwh}
-              onChange={curve => { setBatteryDraft({ curve, edited: true }); setPreview(null); }} />
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" className="h-auto min-h-11 whitespace-normal" aria-pressed={batteryDraft.mode === 'price_only'} disabled={generatingBattery || saving === 'battery'} onClick={() => void generateBattery('price_only')}>{t('Minimera elkostnaden', 'Minimize electricity cost')}</Button>
+              <Button variant="outline" className="h-auto min-h-11 whitespace-normal" aria-pressed={batteryDraft.mode === 'balanced'} disabled={generatingBattery || saving === 'battery'} onClick={() => void generateBattery('balanced')}>{t('Balansera kostnad och lagrad energi', 'Balance cost and stored energy')}</Button>
+            </div>
+            {generatingBattery && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />{t('Jämför kurvor med publicerade elpriser…', 'Comparing curves using published electricity prices…')}</p>}
+            {batteryGenerationError && <Alert variant="destructive"><AlertTitle>{t('Kunde inte skapa batterikurvan', 'Could not generate the battery curve')}</AlertTitle><AlertDescription>{batteryGenerationError}</AlertDescription></Alert>}
+            {batteryDraft.curve && <fieldset disabled={generatingBattery || saving === 'battery'} aria-disabled={generatingBattery || saving === 'battery'}
+              className={generatingBattery || saving === 'battery' ? 'pointer-events-none opacity-60' : ''}
+              onKeyDownCapture={event => { if ((generatingBattery || saving === 'battery') && event.key !== 'Tab') { event.preventDefault(); event.stopPropagation(); } }}>
+              <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve}
+                capacity={batteryValueCurve.usable_capacity_kwh} state={batteryValueCurve.initial_state_kwh}
+                onChange={curve => { if (generatingBattery || saving === 'battery') return; setBatteryDraft({ curve, mode: 'custom', edited: true, comparisonInput: batteryDraft.comparisonInput }); setBatteryGenerationError(null); setPreview(null); }} />
+            </fieldset>}
             {batteryDraft.curve && validateBatteryCurve(batteryDraft.curve) && <p role="alert" className="text-sm text-destructive">{validateBatteryCurve(batteryDraft.curve)}</p>}
-            <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">{t('Om automatisk och egen kurva', 'About automatic and custom curves')}</summary>
-              <p className="mt-2">{t('Den automatiska kurvan väljs genom att jämföra flera former enbart över timmar med publicerade priser. Behov, sol, verkningsgrad, slitage och kvarvarande energi värderas lika i jämförelsen. Bästa prövade kurva används sedan i hela 72-timmarsplanen och omprövas när nya priser kommer. Sökningen garanterar inte ett globalt optimum. Dina sparade punkter ändras aldrig automatiskt och får inget sådant pristak. Antal punkter ändras endast när du väljer det; ett nytt antal fördelar om punkterna jämnt. Spara och planera om för att använda ändringarna.', 'The automatic curve is selected by testing several shapes using published-price quarters only. Demand, solar, efficiency, wear and remaining energy are valued consistently. The best tested curve is then used throughout the 72-hour plan and reconsidered when new prices arrive. The search does not guarantee a global optimum. Your saved points are never automatically changed or capped. Only you change their count; applying a new count redistributes points evenly. Save and replan to apply changes.')}</p>
+            <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">{t('Om kurvvalen', 'About the curve choices')}</summary>
+              <p className="mt-2">{t('Minimera elkostnaden väljer den billigaste prövade kurvan enbart efter elräkningen under kvartar med publicerade priser. Den kan lämna mindre energi i batteriet eller minska andra tjänster. Planerarens vanliga utrustnings- och tjänsteregler styr fortfarande varje provkörning. Sökningen garanterar inte ett globalt optimum. Samma kvart och publicerade priser ger samma val.', 'Minimize electricity cost selects the cheapest tested curve by the electricity bill over published-price quarters only. It can leave less energy in the battery or reduce other services. The planner’s ordinary equipment and service rules still govern each trial. The search does not guarantee a global optimum. The same quarter and published prices give the same selection.')}</p>
+              <p className="mt-2">{t('Balansera kostnad och lagrad energi värderar också energin som finns kvar och beräknar en ny kurva med färska mätvärden för varje plan. Redigering av punkter väljer Egen kurva. Spara och planera om för att använda valet; den blå kurvan visar alltid den nuvarande planen.', 'Balance cost and stored energy also values retained energy and derives a fresh curve from new measurements for every plan. Editing points selects Your curve. Save and replan to apply the selection; the blue curve always shows the current plan.')}</p>
             </details>
           </CardContent>
         </Card>
@@ -631,10 +718,10 @@ const ValueCurvesTab: React.FC<Props> = ({
                 <Badge className="hidden sm:inline-flex" variant="outline">{plannedStore?.active ? t('I planen', 'In plan') : t('Inte schemalagd', 'Not dispatched')}</Badge>
               </div>
               <div className="flex items-center gap-1">
-                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || replanning || waitingForReplan || saving === key}>
+                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || replanning || waitingForReplan || generatingBattery || saving === key}>
                   {t('Återställ', 'Reset')}
                 </Button>}
-                <Button size="sm" onClick={() => void save(key)} disabled={refreshing || replanning || waitingForReplan || !canEdit || saving === key || rejection !== null || !draft.edited}>
+                <Button size="sm" onClick={() => void save(key)} disabled={refreshing || replanning || waitingForReplan || generatingBattery || !canEdit || saving === key || rejection !== null || !draft.edited}>
                   {saving === key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                   {t('Spara', 'Save')}
                 </Button>
@@ -741,7 +828,7 @@ const PreviewPanel: React.FC<{ preview: PreviewComparison | string; dirty: boole
   const stateUnit = (unit: string) => (unit === 'celsius' ? '°C' : unit === 'km' ? 'km' : 'kWh');
 
   return (
-    <Card className="border-primary/40 bg-primary/[0.03]">
+    <Card data-testid="curve-preview" className="border-primary/40 bg-primary/[0.03]">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{t('Vad som skulle ändras', 'What would change')}</CardTitle>
       </CardHeader>

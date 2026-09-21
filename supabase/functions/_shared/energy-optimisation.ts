@@ -1,4 +1,4 @@
-import { automaticCurveIdentity, reusableAutomaticCurve, searchAutomaticBatteryCurve, type AutomaticCurveRecord } from "./automatic-battery-curve.ts";
+import type { CostCurveRecord } from "./battery-cost-curve.ts";
 import {
   powerEnvelope,
   powerEnvelopeError,
@@ -128,7 +128,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v39";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v40";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -446,8 +446,9 @@ export interface OptimisationSnapshot {
    * defaults apply, which is what a home that has never opened the editor gets.
    */
   value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
-  /** Server-owned daily search records, restored from the last published plan. */
-  automatic_battery_curves?: AutomaticCurveRecord[];
+  /** Resolved server-side; explicit points are manual unless a generation mode is stated. */
+  battery_curve_mode?: "custom" | "price_only" | "balanced";
+  battery_cost_curve?: CostCurveRecord;
   /**
    * The home's scalar prices, resolved by the edge alongside the curves.
    *
@@ -514,7 +515,8 @@ export interface BatteryValueCurveDiagnostic {
   schema_version: 2;
   source: "automatic" | "customer";
   automatic_curve: UtilityCurve;
-  optimisation?: AutomaticCurveRecord;
+  generation_mode?: "custom" | "price_only" | "balanced";
+  cost_selection?: CostCurveRecord;
   curve: UtilityCurve;
   state_basis: "usable_kwh_above_min_soc";
   initial_state_kwh: number;
@@ -2478,29 +2480,29 @@ function deriveBatteryValueCurve(
         battery.discharge_efficiency - curveInput.degradationSekPerKwh,
   );
   const generated = batteryValueCurve(curveInput);
-  let automaticCurve = {
+  const automaticCurve = {
     ...generated,
     points: generated.points.map((point) => ({
       ...point,
       sek_per_unit: Math.min(point.sek_per_unit, terminalReplacement),
     })),
   };
-  const identity = automaticCurveIdentity(snapshot);
-  const cached = snapshot.automatic_battery_curves?.find(record => reusableAutomaticCurve(identity, record));
-  if (cached) automaticCurve = cached.curve;
-  const custom = snapshot.value_curves?.battery;
+  const mode = snapshot.battery_curve_mode ?? (snapshot.value_curves?.battery ? "custom" : "balanced");
+  if (mode === "price_only" && !snapshot.battery_cost_curve) throw new Error("The price-only battery curve must be resolved before planning");
+  const custom = mode === "custom" ? snapshot.value_curves?.battery : undefined;
   if (custom) {
     const invalid = validateBatteryCurve(custom);
     if (invalid) throw new Error(`Battery curve: ${invalid}`);
   }
-  const curve = custom ?? automaticCurve;
+  const curve = mode === "price_only" ? snapshot.battery_cost_curve!.curve : custom ?? automaticCurve;
   return {
     curve,
     diagnostic: {
       schema_version: 2,
       source: custom ? "customer" : "automatic",
       automatic_curve: automaticCurve,
-      ...(cached ? { optimisation: cached } : {}),
+      generation_mode: mode,
+      ...(mode === "price_only" ? { cost_selection: snapshot.battery_cost_curve } : {}),
       curve,
       state_basis: "usable_kwh_above_min_soc",
       initial_state_kwh: Math.max(
@@ -2947,30 +2949,10 @@ function scheduleServices(
         grid_ramp_sek_per_kw: peakShaping.grid_ramp_sek_per_kw,
         load_start_preference_sek: peakShaping.load_start_preference_sek,
       };
-      const solve = (trialStores: DispatchStore[]) => dispatchWithFixedPlan(
-        dispatchSlots, trialStores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction,
-      );
-      if (!fixed && derivedBatteryValue?.diagnostic.source === "automatic" &&
-          !derivedBatteryValue.diagnostic.optimisation && stores.some(s => s.key === "battery") &&
-          dispatchSlots.some(slot => slot.binding)) {
-        const publishedSlots = slots.filter(slot => slot.binding);
-        const publishedDispatch = dispatchSlots.slice(0, publishedSlots.length);
-        const publishedStores = buildDispatchStores(publishedSlots, snapshot, derivedBatteryValue)!;
-        const record = searchAutomaticBatteryCurve({ snapshot, slots: publishedDispatch, stores: publishedStores, limits,
-          solve: trialStores => dispatchWithFixedPlan(publishedDispatch, trialStores, limits,
-            publishedSlots.map(s => s.epoch_ms), undefined, solveAuction),
-        });
-        derivedBatteryValue.curve = record.curve;
-        derivedBatteryValue.diagnostic.curve = record.curve;
-        derivedBatteryValue.diagnostic.automatic_curve = record.curve;
-        derivedBatteryValue.diagnostic.optimisation = record;
-        const selectedStores = stores.map(s => s.key === "battery" ? { ...s, curve: record.curve } : s);
-        // Re-solve the complete horizon with the selected curve. The short
-        // published-price search result is never installed as a 72-hour plan.
-        dispatchBundle = { stores: selectedStores, slots: dispatchSlots, limits, result: solve(selectedStores) };
-      } else {
-        dispatchBundle = { stores, slots: dispatchSlots, limits, result: solve(stores) };
-      }
+      dispatchBundle = {
+        stores, slots: dispatchSlots, limits,
+        result: dispatchWithFixedPlan(dispatchSlots, stores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction),
+      };
     } else {
       if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
       dispatchBundle = null;
@@ -4752,10 +4734,11 @@ export function dispatchWorkbench(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
   horizon: "full" | "published" = "full",
+  solveAuction?: DispatchAuctionSolver,
 ): DispatchWorkbench | null {
   const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now, horizon === "published");
   const dispatchCache = new Map<string, DispatchBundle | null>();
-  setup.buildPriority(dispatchCache);
+  setup.buildPriority(dispatchCache, solveAuction);
   const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
   if (!bundle) return null;
   const peakShaping = derivePeakShaping(setup.snapshot);
@@ -4803,8 +4786,9 @@ export function dispatchWorkbenchInputs(
   priceArchive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   now = new Date(snapshot.replan_reference?.evaluated_at ?? snapshot.captured_at),
+  horizon: "full" | "published" = "full",
 ): DispatchWorkbenchInputs | null {
-  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now);
+  const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now, horizon === "published");
   const captured = new Error("dispatch_inputs_captured");
   let problem: Parameters<DispatchAuctionSolver> | undefined;
   try {
@@ -4825,6 +4809,11 @@ export function dispatchWorkbenchInputs(
     limits,
     slot_start_ms: setup.slots.map((slot) => slot.epoch_ms),
   };
+}
+
+/** Resolve the live balanced curve without running any candidate dispatch. */
+export function balancedBatteryCurve(snapshot: OptimisationSnapshot, now = new Date(snapshot.captured_at)): UtilityCurve | null {
+  return dispatchWorkbenchInputs({...snapshot, battery_curve_mode: "balanced", battery_cost_curve: undefined}, [], undefined, now, "published")?.stores.find(store => store.key === "battery")?.curve ?? null;
 }
 
 export function generateOptimisationPlan(

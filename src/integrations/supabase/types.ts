@@ -2171,6 +2171,7 @@ export type Database = {
       energy_optimisation_value_curves: {
         Row: {
           customer_id: string
+          generation_mode: "custom" | "price_only" | "balanced"
           home_id: string
           id: string
           urgent_price_multiplier: number | null
@@ -2183,6 +2184,7 @@ export type Database = {
         }
         Insert: {
           customer_id: string
+          generation_mode?: "custom" | "price_only" | "balanced"
           home_id: string
           id?: string
           urgent_price_multiplier?: number | null
@@ -2195,6 +2197,7 @@ export type Database = {
         }
         Update: {
           customer_id?: string
+          generation_mode?: "custom" | "price_only" | "balanced"
           home_id?: string
           id?: string
           urgent_price_multiplier?: number | null

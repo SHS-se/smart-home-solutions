@@ -48,18 +48,22 @@ export interface PlanOutcome {
  *
  * Keep the comparison time anchored to the stored snapshot, so opening an
  * older plan does not silently advance or shorten its published-price window.
+ * A server-selected curve supplies its frozen comparison time instead.
  */
 export function solveWith(
   snapshot: OptimisationSnapshot,
   curves: Partial<Record<ValueStoreKey, UtilityCurve>>,
   priceOutlook?: OptimisationPlan['price_outlook'],
+  comparisonNow?: Date,
 ): PlanOutcome | string {
   try {
-    const input = { ...snapshot, value_curves: curves };
+    const input: OptimisationSnapshot = { ...snapshot, value_curves: curves,
+      ...(curves.battery ? { battery_curve_mode: 'custom', battery_cost_curve: undefined } : {}),
+    };
     const errors = validateSnapshot(input);
     if (errors.length) return errors.join('; ');
     const workbench = dispatchWorkbench(input, [], priceOutlook,
-      new Date(Date.parse(snapshot.captured_at) + 60_000), 'published');
+      comparisonNow ?? new Date(Date.parse(snapshot.captured_at) + 60_000), 'published');
     if (!workbench) return 'No measured stores are available for comparison';
     const score = scoreDispatch(workbench.slots, workbench.stores, workbench.limits, workbench.planned);
     return {
@@ -109,10 +113,11 @@ export function comparePreference(
   current: Partial<Record<ValueStoreKey, UtilityCurve>>,
   edited: Partial<Record<ValueStoreKey, UtilityCurve>>,
   priceOutlook?: OptimisationPlan['price_outlook'],
+  comparisonNow?: Date,
 ): PreviewComparison | string {
-  const before = solveWith(snapshot, current, priceOutlook);
+  const before = solveWith(snapshot, current, priceOutlook, comparisonNow);
   if (typeof before === 'string') return before;
-  const after = solveWith(snapshot, edited, priceOutlook);
+  const after = solveWith(snapshot, edited, priceOutlook, comparisonNow);
   if (typeof after === 'string') return after;
 
   const keys = [...new Set([...before.stores, ...after.stores].map(store => store.key))];

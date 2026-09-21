@@ -1,4 +1,4 @@
-import type { AutomaticCurveRecord } from "../_shared/automatic-battery-curve.ts";
+import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import type { BatteryProjection } from "../_shared/battery-dispatch-projection.ts";
 import { replanReference, type ReplanPreviousPlan } from "../_shared/replan-continuity.ts";
@@ -1733,7 +1733,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // with a warning instead of failing the plan.
       const [curveResult, settingsResult] = await Promise.all([
         supabase.from("energy_optimisation_value_curves")
-          .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier")
+          .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier, generation_mode")
           .eq("home_id", auth.homeId),
         supabase.from("energy_optimisation_value_settings")
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
@@ -1743,6 +1743,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const resolved = resolveValueCurves(curveResult.data ?? []);
       for (const warning of resolved.warnings) console.warn("[ENERGY-OPTIMISATION] value curve", warning);
       const settingsRow = settingsResult.data;
+      const batteryRow = curveResult.data?.find(row => row.store_key === "battery");
       snapshot = {
         ...snapshot,
         value_curves: {
@@ -1751,6 +1752,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           ...(resolved.curves.battery ? { battery: resolved.curves.battery.curve } : {}),
         },
         value_settings: resolveValueSettings(settingsRow),
+        battery_curve_mode: batteryRow?.generation_mode ?? "balanced",
+        battery_cost_curve: undefined,
       };
 
       // Refit the pool alongside the rooms, then hand the planner whatever the
@@ -1796,20 +1799,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
       }
 
-      const [fixedResponse, curveResponse] = await Promise.all([
-        supabase.rpc("get_energy_replan_state", { p_home_id: auth.homeId }),
-        supabase.from("energy_optimisation_current")
-          .select("priority:plan->battery_value_curve->optimisation,execution:plan->execution_plan->battery_value_curve->optimisation,verification:plan->battery_verification_value_curve->optimisation")
-          .eq("home_id", auth.homeId).maybeSingle(),
-      ]);
-      const { data: fixedState, error: fixedReadError } = fixedResponse;
+      const { data: fixedState, error: fixedReadError } = await supabase.rpc("get_energy_replan_state", { p_home_id: auth.homeId });
       if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
-      if (curveResponse.error) return json({ error: "automatic_curve_read_failed" }, 500);
-      // Never accept a device-supplied cache. Only this home's published plan
-      // owns the daily result; price/configuration matching occurs in the planner.
-      snapshot = { ...snapshot, automatic_battery_curves: [
-        curveResponse.data?.priority, curveResponse.data?.execution, curveResponse.data?.verification,
-      ].filter(Boolean) as AutomaticCurveRecord[] };
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       let thermalZones: ProjectionZoneInput[] = [];
@@ -1834,6 +1825,15 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           device_count: snapshot.device_models.length,
           thermal_zone_count: thermalZones.length,
         });
+        if (snapshot.battery_curve_mode === "price_only") {
+          const { selection } = await resolveCostCurve(supabase, auth.homeId, auth.customerId,
+            { snapshot, now: planningNow.toISOString() }, {
+              url: Deno.env.get("SUPABASE_URL") ?? "",
+              planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
+              requestId,
+            }, traffic.fetch);
+          snapshot = { ...snapshot, battery_cost_curve: selection };
+        }
         const planned = await generateRemoteOptimisationPlan({
           snapshot,
           now: planningNow.toISOString(),

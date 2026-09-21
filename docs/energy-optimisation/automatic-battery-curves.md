@@ -1,81 +1,113 @@
-# Automatic battery curves
+# Battery curve generators
 
-The automatic home-battery curve is selected against **published prices only**,
-ending at the first missing price.
-The selected curve is then used to solve the complete 72-hour plan. Estimated
-prices in the remaining horizon do not determine the curve or enter the curve
-comparison.
+The editor offers **Minimize electricity cost** and **Balance cost and stored
+energy**. Both use published prices to generate their curve. The selected
+curve then applies to the full 72-hour plan. Manual point edits select **Your
+curve**; saving persists both the points and generation mode atomically.
 
-## Selection and comparison
+## Electricity cost
 
-The planner first derives a reference curve from the published-price window's
-residual demand, solar, battery efficiency and configured wear. It retains the
-existing covering-window construction and replacement-price cap for this
-reference. It then tests that curve and twelve descending slopes with different
-height and fullness values. Every candidate is dispatched over the published
-window using the ordinary planner, including the other stores and equipment
-limits.
+Price-only selection ranks actual planner runs by published import charges
+minus published export revenue (`billable_quoted_sek`). Wear, starts, shaping
+penalties, comfort utility and retained-energy credits do not enter that
+ranking. The trial planner still applies its ordinary equipment and service
+scheduling policy, including the economics that generate each candidate's
+schedule. This selects a curve for the existing planner, not a replacement
+operating policy for every appliance. No new comfort or terminal-state floor
+is imposed. A trial introducing physical infeasibilities beyond the initial
+incumbent's inherited conditions fails explicitly.
 
-Candidates are scored under **one unchanged reference objective**: published
-import cost minus published export revenue, configured wear and power-shaping
-costs, and the value of pool/vehicle service and energy left at the end of that
-window. Changing a candidate curve cannot award itself more terminal value.
-The search retains its incumbent unless a candidate improves that objective
-without introducing additional dispatch infeasibilities. Existing inherited
-conditions, such as an EV already above its charge target, are not turned into
-new planning rejection rules.
+The search uses deterministic coordinate pattern search on nonnegative gaps
+between adjacent marginal values. A gap move changes a prefix of the curve,
+allowing knees and plateaus while preserving a nonincreasing shape. Normal
+proposals have ten evenly spaced points across usable battery capacity.
+The exact saved curve is evaluated before its resampling, so resampling cannot
+hide a better incumbent. Other seeds are the current balanced heuristic and a
+zero-value curve. The lowest bill wins; ties retain the earlier candidate.
 
-This is a bounded search for the **best tested curve**, not proof of a global
-optimum across all possible points or schedules. The search can select a curve
-with a higher electricity bill if it delivers sufficiently more heat, vehicle
-range or retained energy. Diagnostics keep the objective and electricity bill
-separate and expose both before/after values, the reference curve, candidate
-count, price window and generating snapshot.
+The hard limit is **40 evaluations including seeds**, not 40 complete sweeps.
+The initial step is one quarter of the largest seed value or absolute published
+price adjusted for charge efficiency. An unsuccessful sweep divides the step
+by four. The search stops after three unsuccessful scales, six sweeps, or the
+evaluation limit. Duplicate proposals do not consume evaluations. Completion
+depends on evaluation history, never elapsed wall-clock time. A zero or flat
+curve is valid: without terminal credit, emptying the battery can minimize the
+quoted bill. Ten points are a useful search representation, not a theorem that
+the optimum must resemble a smooth declining curve. The exact incumbent may
+retain a different point count if it wins.
 
-“What would change?” re-solves both alternatives over published-price quarters
-only. Import/export energy, running hours, stored energy and net cost all refer
-to that same window. Net cost is the electricity bill, without assigning a cash
-saving to differences in retained energy. Save and replan applies the chosen
-curve to the complete 72-hour plan.
+This is the best tested curve, **not a proven global optimum**. The narrow
+architect review compared independent Claude Opus 5 Max and Codex candidates.
+Both favored evaluating the actual planner with a compact adaptive search.
+A linear-programming battery schedule would solve a different model unless
+all current household decisions and curve-to-schedule behavior were reproduced;
+LP minimizes a linear objective under linear constraints ([SciPy HiGHS
+reference](https://docs.scipy.org/doc/scipy/reference/optimize.linprog-highs.html)).
+Dynamic programming was considered useful for an offline discretized battery
+benchmark, not a direct replacement for this curve search. Population searches
+were rejected for this request's evaluation budget: for example, differential
+evolution scales its population and evaluation count with parameter count
+([SciPy reference](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.differential_evolution.html)).
+The old thirteen predetermined curves and broad-objective ranking are removed.
 
-## Daily reuse
+## Persistence and comparison
 
-The cloud restores automatic results from this home's last published plan,
-separately for hypothetical, execution and conditional battery-verification
-contexts. The cache matches the
-remaining published-price vector and its end, equipment/configuration and
-preferences. Rolling past earlier quarters or receiving new SOC, temperature,
-solar and demand measurements does not by itself rerun the search. Timestamped
-service IDs are not configuration changes.
+The first request atomically captures a server-owned source in
+`energy_optimisation_battery_cost_curves`, before computation. Identity is home,
+actual quarter, algorithm version, and the canonical published timestamp/buy/sell
+vector through the first price gap. JSON property ordering, changing SOC,
+weather, demand and other measurements cannot replace the frozen input within
+that identity. A new quarter, published prices, or price correction selects a
+new identity. No publication-hour timer or CET/CEST assumption is necessary.
 
-A new published quarter, a changed remaining price, or changed configuration
-invalidates the record. The next fresh snapshot searches again. This responds
-to actual price availability rather than a hard-coded publication hour or time
-zone. There is no extra daily timer. Ordinary dispatch still replans against
-current measurements and all 72 hours of forecasts.
+The portal and ingest use the same resolver. Switching to another curve or
+replacing the current plan does not erase a price-only selection. Concurrent
+requests advance the same frozen job using revision compare-and-swap. Ready
+results are immutable. Completed rows older than two days are pruned while
+retaining the newest result and pending jobs. Existing saved curves migrate as
+custom; no saved row means balanced. Ingest overrides device-supplied selection
+metadata with server-owned preferences and selection.
 
-Customer curves are never overwritten. To opt in, select **Use automatic curve**,
-save, and replan. Fixed plans keep their explicit authority and do not run the
-curve search. Trial solves use the existing staged worker and propagate failures;
-they do not run inside ingest's CPU budget. Worker protocol 5 and planner v39
-must be deployed together.
+The price button resolves before showing its selected curve. Its preview uses
+the same frozen snapshot and time for both curves, over published prices only.
+Other previews also use only published prices. Energy use and end states refer
+to that window, making the consequences of ignoring terminal credit visible.
+Full-plan generation uses current measurements and the selected curve across
+72 hours; physical/fixed-plan execution authority remains in the planner.
 
-## Edge-function computation
+## Balanced behavior
 
-The existing worker splits auctions into resumable stages with a 1,200 ms
-planning budget. It only starts an additional auction within the first 300 ms
-of a call, leaving headroom for bidding/settlement and serialization. These
-per-call limits are unchanged. The 120-second chain deadline permits network
-waits between calls; it does not increase the CPU budget of an invocation.
-Ingest receives completed results and reconstructs the final plan without
-running candidate auctions itself.
+Balanced derives a fresh forecast-based curve from published demand, solar,
+efficiency and wear, including the replacement-price cap. The normal planner
+also values service and remaining energy. This mode intentionally responds to
+new measurements between plans. It no longer runs the thirteen-candidate search.
+The generated points shown in the editor come from the same shared resolver
+used by the planner.
 
-Local checks on the supplied replay used six worker calls for the initial
-search (28 auctions across two planning contexts), and one call on reuse
-(two auctions). Additional 72-hour dark/sunny cases with 48 hours of published
-prices used eight/five calls. The slowest measured call was 638 ms including
-JSON handling, and continuation requests stayed below 3.8 MB. These are local
-measurements, not a guarantee of hosted performance. Supabase's published
-[limits](https://supabase.com/docs/guides/functions/limits) allow two seconds
-of CPU per request; 546 can also indicate memory exhaustion. Worker errors
-remain explicit and are never retried as an inline ingest calculation.
+## Worker budget and verification
+
+Search is a separate `cost_curve` worker chain. A continuation contains scalar
+curve/bill history and only the active trial's auction checkpoint. Completed
+trials never accumulate full dispatch histories. Each worker retains the
+existing 1,200 ms pause budget and 300 ms additional-auction start threshold;
+the 120-second orchestration deadline includes network waits, not extra CPU.
+Errors, including 546 responses, propagate explicitly with no inline rerun.
+Saved progress can resume on a subsequent request.
+
+Local tests on the supplied 18:03 replay used 35 evaluations and five worker
+calls: published bill 22.3105 to 12.2378 SEK. The 17:51 replay used 40 evaluations
+and four calls: 31.2027 to 22.9108 SEK. The slowest observed call was about 0.38 s,
+including JSON, with requests below 114 KB. A separate local orchestration
+check, with JSON round-trips substituting for database transport, measured
+about 5 ms outside worker execution and less than 1 ms for cache reuse. This
+excludes real database SDK/network overhead. These are local measurements, not
+a guarantee of hosted CPU limits or future savings. Comparisons have different
+initial states and must not be interpreted as comparing the two replays with
+each other.
+
+Tests cover canonical identity, quarter/price changes, monotonicity, exact
+incumbent preservation, deterministic interrupted execution through JSON,
+forecast-tail exclusion, server authorization, persisted source ownership,
+revision races, worker failures, and editor generate/preview/save/reload flows.
+Planner v40, worker protocol 6, the new endpoint and migration must be deployed
+together.

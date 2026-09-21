@@ -29,7 +29,7 @@ function batteryContinuitySnapshot(solar = true) {
     export_price_sek_per_kwh: 0.01,
   }));
   // Pin valuation so these tests isolate continuity, not daily curve selection.
-  const reference = generateOptimisationPlan(input, new Date(input.captured_at)).battery_value_curve!.optimisation!.reference_curve;
+  const reference = generateOptimisationPlan(input, new Date(input.captured_at)).battery_value_curve!.automatic_curve;
   input.value_curves = { battery: reference };
   input.policy.battery_export_enabled = true;
   input.policy.battery_export_reserve_soc = 0.05;
@@ -93,6 +93,19 @@ function referencedSnapshot(cheap = false) {
       if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
       if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;
     });
+    // These continuity cases need a fixed declining valuation: a 10 W
+    // adjustment stays within the deadband, while replacing house supply
+    // with hold costs enough to switch immediately. Previously the automatic
+    // candidate search supplied this shape; balanced valuation need not do so.
+    const battery = input.battery!;
+    input.battery_curve_mode = "custom";
+    input.value_curves = { ...input.value_curves, battery: {
+      unit: "kwh",
+      points: [
+        { at: 0, sek_per_unit: .159 },
+        { at: (battery.max_soc - battery.min_soc) * battery.capacity_kwh, sek_per_unit: 0 },
+      ],
+    } };
   }
   const previous = generateOptimisationPlan(input, new Date(input.captured_at));
   input.snapshot_id = "00000000-0000-4000-8000-000000000002";

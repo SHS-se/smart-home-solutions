@@ -1,3 +1,5 @@
+import { costCurveStep, type CostCurveProgress } from "./battery-cost-step.ts";
+import type { CostCurveInput } from "./battery-cost-curve.ts";
 import { energyPlanningStep } from "./energy-planning-step.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
@@ -53,6 +55,8 @@ export async function handleEnergyPlanningStep(
     const received = performance.now();
     const body = JSON.parse(raw) as {
       protocol: number;
+      kind?: "cost_curve";
+      progress?: CostCurveProgress;
       input: EnergyPlanningInput;
       continuation?: EnergyPlanningContinuation;
     };
@@ -61,6 +65,16 @@ export async function handleEnergyPlanningStep(
     }
     const started = performance.now();
     const elapsed = () => performance.now() - received;
+    if (body.kind === "cost_curve") {
+      const result = await costCurveStep(body.input as CostCurveInput, body.progress, {
+        spent: () => elapsed() > STAGE_BUDGET_MS,
+        allowsAuction: () => elapsed() < AUCTION_START_MS,
+      });
+      console.info("[BATTERY-COST-STEP] completed", {request_id:requestId,
+        elapsed_ms:Math.round(performance.now()-started), done:result.done,
+        evaluations:result.done === true ? result.record.evaluations : result.progress.evaluations.length});
+      return json(result);
+    }
     const result: EnergyPlanningStep = energyPlanningStep(
       body.input,
       body.continuation,
