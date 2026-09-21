@@ -51,7 +51,7 @@ Each scenario records balance, purchase/export cost, objective components, impor
 | Replan after completed service | No duplicate obligation; a stateful pool can still need later replacement of heat losses |
 | Unplanned stove/sauna | Correct residual, measured grid response, timing-aware shedding, and no double allocation |
 | Forecast misses | Reactive adaptation, confirmed delivered-energy deficit, and bounded replan trigger |
-| Sensor or backend failure | Explicit authority loss, tested baseline handover, and chosen optional-capability/lease policy |
+| Sensor or backend failure | Hold the last setting SHS sent and resume when the source returns; only the execution-mode select hands a device back (control continuity) |
 | Actuator fails | No reuse of unconfirmed released watts; observable fault and replan |
 | Manual override/vacation | Correct local versus planner ownership, expiry, and safety precedence |
 | Demand tariff | Correct month/day/measurement-window state for the actual statistic; no artificial smoothing billed as tariff |
