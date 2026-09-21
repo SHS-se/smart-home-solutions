@@ -1,7 +1,7 @@
-import { replanState } from '@/lib/energy-shift/replan-request';
+import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
-import { readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
+import { planRefreshError, readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
 import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -85,6 +85,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   );
   const [zoneModels, setZoneModels] = useState<ThermalZoneModelSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'live' | 'demo'>('live');
   // The chart always loads the full window and slices locally, so this is
@@ -101,6 +102,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     scope: string;
     busy: boolean;
     initialized: boolean;
+    failures: number;
     current: CurrentRow | null;
     known: Record<string, string | Record<string, string>>;
     actuals: HistoryCache<ActualEnergySlot>;
@@ -108,7 +110,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     deviceActuals: HistoryCache<EmpiricalDeviceSlotMatrix>;
   } | null>(null);
   if (syncRef.current?.scope !== syncScope) {
-    syncRef.current = { scope: syncScope, busy: false, initialized: false, current: null, known: {},
+    syncRef.current = { scope: syncScope, busy: false, initialized: false, failures: 0, current: null, known: {},
       actuals: new HistoryCache(), prices: new HistoryCache(), deviceActuals: new HistoryCache() };
   }
 
@@ -125,6 +127,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       setThermalObservations(EMPTY_THERMAL_OBSERVATIONS);
       setZoneModels([]);
       setError(null);
+      setRetrying(false);
     }
     if (!customerId || !homeId) { setLoading(false); return; }
     cache.busy = true;
@@ -153,6 +156,9 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       } : null;
       const refreshed = readPlanRefresh(row);
       setLatestRuntime(refreshed.runtime);
+      if (refreshed.unsupported && delta.current?.plan_id) {
+        throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet.', 'The website cannot display the received plan format.'));
+      }
       setCurrent(refreshed.current);
       // Cache only validated plans; an unsupported response is retried and
       // cannot make a later metadata-only response appear usable.
@@ -168,12 +174,18 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       cache.known.zone_models = delta.zone_models.hash;
       cache.known.thermal = delta.thermal.hash;
       cache.initialized = true;
-      if (refreshed.unsupported && delta.current?.plan_id) {
-        throw new Error(t('Webbplatsen kan inte visa det mottagna planformatet.', 'The website cannot display the received plan format.'));
-      }
+      cache.failures = 0;
+      setRetrying(false);
       setError(null);
     } catch (loadError) {
-      if (syncRef.current === cache) setError(loadError instanceof Error ? loadError.message : String(loadError));
+      if (syncRef.current === cache) {
+        cache.failures += 1;
+        // Keep the displayed plan through a failed background read and retry
+        // promptly. Repeated failures remain visible with a readable message.
+        const retry = cache.current !== null && cache.failures === 1;
+        setRetrying(retry);
+        setError(retry ? null : planRefreshError(loadError));
+      }
     } finally {
       cache.busy = false;
       if (syncRef.current === cache) {
@@ -209,18 +221,21 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   useEffect(() => { void load(false); }, [load]);
   const pendingReplan = replanState(current).status === 'waiting';
+  const runtimeRefreshing = Boolean(latestRuntime?.ha_runtime?.recovering)
+    && clock - Date.parse(latestRuntime?.ha_runtime_received_at ?? '') < REPLAN_OVERDUE_MS;
+  const refreshing = pendingReplan || runtimeRefreshing || retrying || (loading && current !== null);
   useEffect(() => {
     // Poll small metadata and content deltas. Hidden tabs resume on visibility.
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void load(true);
-    }, pendingReplan ? 1_000 : 30_000);
+    }, refreshing ? 1_000 : 30_000);
     const resume = () => { if (document.visibilityState === 'visible') void load(true); };
     document.addEventListener('visibilitychange', resume);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', resume);
     };
-  }, [load, pendingReplan]);
+  }, [load, refreshing]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 30_000);
     return () => window.clearInterval(timer);
@@ -277,6 +292,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       content = (
         <EmpiricalDeviceModelsCard
           devices={empiricalDevices}
+          refreshing={refreshing}
           homeId={homeId}
           onChanged={() => load(true)}
         />
@@ -375,6 +391,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           homeId={homeId}
           current={current}
           refreshError={error}
+          refreshing={refreshing}
           latestRuntime={latestRuntime}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
@@ -429,6 +446,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           ))}
         </div>
       )}
+      {view === 'live' && refreshing && (
+        <Alert role="status" aria-live="polite" data-testid="plan-refresh-progress">
+          <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+          <AlertTitle>{pendingReplan ? t('Omplanering pågår', 'Replan in progress') : t('Uppdatering pågår', 'Refresh in progress')}</AlertTitle>
+          <AlertDescription>{t('Den tidigare planen visas under tiden. Du kan spara igen när uppdateringen är klar.', 'The previous plan remains visible. Saving is available when the refresh finishes.')}</AlertDescription>
+        </Alert>
+      )}
       {content}
       {view === 'live' && (
         <details className="text-xs text-muted-foreground">
@@ -449,6 +473,7 @@ const PlanView: React.FC<{
   homeId: string | null;
   current: CurrentRow;
   refreshError?: string | null;
+  refreshing?: boolean;
   latestRuntime?: HaRuntimeRow | null;
   actuals: ActualEnergySlot[];
   empiricalDevices: EmpiricalEnergyDevice[];
@@ -477,6 +502,7 @@ const PlanView: React.FC<{
   homeId,
   current,
   refreshError = null,
+  refreshing = false,
   latestRuntime,
   actuals,
   empiricalDevices,
@@ -639,7 +665,7 @@ const PlanView: React.FC<{
           <AlertTitle>{t('Webbplatsen kunde inte uppdateras', 'The website could not refresh')}</AlertTitle>
           <AlertDescription>{refreshError} {t('Visade uppgifter kan vara inaktuella.', 'Displayed information may be out of date.')}</AlertDescription>
         </Alert>
-      ) : (!runtimeReady || validationMessages.length > 0) && (() => {
+      ) : (validationMessages.length > 0 || (!refreshing && !runtimeReady)) && (() => {
         // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
@@ -933,6 +959,7 @@ const PlanView: React.FC<{
               vehicleChargeLimitSoc={vehicleChargeLimitSoc}
               batteryValueCurve={plan.battery_value_curve}
               replan={current}
+              refreshing={refreshing}
               onReplanChanged={onReplanChanged}
             />
           )}

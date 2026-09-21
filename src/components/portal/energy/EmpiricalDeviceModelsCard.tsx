@@ -63,7 +63,8 @@ const EmpiricalDeviceModelsCard: React.FC<{
   devices: EmpiricalEnergyDevice[];
   homeId: string;
   onChanged: () => Promise<void> | void;
-}> = ({ devices, homeId, onChanged }) => {
+  refreshing?: boolean;
+}> = ({ devices, homeId, onChanged, refreshing = false }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -78,6 +79,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
     return () => { active = false; };
   }, [homeId]);
   const chooseBattery = async (included: boolean) => {
+    if (refreshing || savingId !== null) return;
     setSavingId('battery'); setChoiceError("");
     const { data, error } = await supabase.rpc('set_energy_battery_planning', { p_home_id: homeId, p_included: included });
     if (error) setChoiceError(error.message);
@@ -116,6 +118,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
     operation: PromiseLike<{ error: { message: string } | null }>,
     errorTitle: string,
   ) => {
+    if (refreshing || savingId !== null) return;
     setSavingId(device.id);
     const { error } = await operation;
     if (error) {
@@ -161,7 +164,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
           <strong>{t('Husbatteri', 'House battery')}</strong>
           <label className="mt-2 block text-sm">{t('Planering', 'Planning')}</label>
           <PlanningToggle name={t('husbatteriet', 'house battery')} included={battery.battery_included}
-            disabled={savingId !== null} onChange={included => void chooseBattery(included)} />
+            disabled={refreshing || savingId !== null} onChange={included => void chooseBattery(included)} />
           <p className="mt-2 text-xs text-muted-foreground">{t('Tillåt styrning i Home Assistant.', 'Permission to operate it is chosen in Home Assistant.')}</p>
         </div>}
         <p className="text-sm text-muted-foreground">
@@ -217,7 +220,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>
                     <TableCell>
                       <PlanningToggle name={device.name} included={device.planning_role_override === 'controllable'}
-                        disabled={savingId !== null || (!device.control_type_override && device.planning_role_override !== 'controllable')}
+                        disabled={refreshing || savingId !== null || (!device.control_type_override && device.planning_role_override !== 'controllable')}
                         onChange={included => void updatePlanning(device, included)} />
                       {!device.control_type_override && <p className="mt-1 text-xs text-muted-foreground">
                         {t('Välj en styrmetod först.', 'Choose a control method first.')}
@@ -226,7 +229,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                     <TableCell className="min-w-[200px]">
                       <Select value={device.control_type_override ?? ''}
                         onValueChange={value => void updatePlanning(device, device.planning_role_override === 'controllable', value as DeviceControlType)}
-                        disabled={savingId !== null}>
+                        disabled={refreshing || savingId !== null}>
                         <SelectTrigger className="h-8" aria-label={t(`Styrmetod för ${device.name}`, `Control method for ${device.name}`)}>
                           <SelectValue placeholder={t('Välj metod', 'Choose method')} />
                         </SelectTrigger>
@@ -251,7 +254,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                         <Select
                           value={device.load_type_override}
                           onValueChange={value => void updateLoadType(device, value)}
-                          disabled={savingId !== null}
+                          disabled={refreshing || savingId !== null}
                         >
                           <SelectTrigger className="h-8">
                             <SelectValue />

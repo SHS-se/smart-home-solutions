@@ -59,7 +59,7 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN }, plan = PLAN, planSnapshot = snapshot()) {
+async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN; refreshing?: boolean; readError?: boolean }, plan = PLAN, planSnapshot = snapshot()) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -118,6 +118,10 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
     const shown = replan.publishedPlan ?? plan;
     const url = new URL(route.request().url());
     if (url.pathname.endsWith('/rpc/get_energy_portal_delta')) {
+      if (replan.readError) {
+        await route.fulfill({ status: 503, json: { message: 'Database temporarily unavailable' } });
+        return;
+      }
       await route.fulfill({ json: portalDelta(route.request().postDataJSON().p_known, {
         current: {
           home_id: HOME_ID,
@@ -129,7 +133,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           ha_runtime: replan.reportedPlanId ? {
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
             reason: 'A validated plan is available', binding_until: shown.binding_until,
-            valid_until: shown.valid_until, recovering: false, retry_at: null, last_error: null,
+            valid_until: shown.valid_until, recovering: replan.refreshing ?? false, retry_at: null, last_error: null,
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: 'accepted',
@@ -173,7 +177,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
 const replanButton = /Planera om nu|Replan now/;
 
 test.describe('requesting a replan', () => {
-  let replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN };
+  let replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN; refreshing?: boolean; readError?: boolean };
 
   test.beforeEach(async ({ context, page }) => {
     replan = { row: { ...idle } };
@@ -206,6 +210,50 @@ test.describe('requesting a replan', () => {
       await expect(page.getByText(/Nästa omplanering|Next replan/)).toHaveCount(0);
     });
   }
+
+  test('configuration refresh retains the plan, locks saves and recovers automatically', async ({ page }) => {
+    replan.reportedPlanId = PLAN.plan_id;
+    await page.goto('/portal/energy-modeling?tab=economics');
+    const identity = page.locator(`code[title="${PLAN.plan_id}"]`).first();
+    await expect(identity).toBeVisible();
+    const request = page.getByRole('button', { name: replanButton });
+    await expect(request).toBeEnabled();
+    replan.refreshing = true;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    const banner = page.getByTestId('plan-refresh-progress');
+    await expect(banner).toBeVisible();
+    await expect(banner.locator('.animate-spin')).toBeVisible();
+    await expect(identity).toBeVisible();
+    await expect(request).toBeDisabled();
+    for (const button of await page.getByRole('button', { name: /^(Spara|Save)$/ }).all()) {
+      await expect(button).toBeDisabled();
+    }
+    await page.screenshot({ path: '/tmp/shs-website-refresh.png', fullPage: false });
+    replan.refreshing = false;
+    replan.publishedPlan = { ...PLAN, plan_id: REQUEST_ID };
+    replan.reportedPlanId = REQUEST_ID;
+    await expect(banner).toHaveCount(0);
+    await expect(page.locator(`code[title="${REQUEST_ID}"]`).first()).toBeVisible();
+    await expect(request).toBeEnabled();
+  });
+
+  test('failed background reads retain the chart and display readable persistent errors', async ({ page }) => {
+    replan.reportedPlanId = PLAN.plan_id;
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const identity = page.locator(`code[title="${PLAN.plan_id}"]`).first();
+    await expect(identity).toBeVisible();
+    replan.readError = true;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByTestId('plan-refresh-progress')).toBeVisible();
+    await expect(identity).toBeVisible();
+    await expect(page.getByText(/Database temporarily unavailable/)).toBeVisible();
+    await expect(page.getByText('[object Object]', { exact: true })).toHaveCount(0);
+    await expect(identity).toBeVisible();
+    replan.readError = false;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByText(/Database temporarily unavailable/)).toHaveCount(0);
+    await expect(identity).toBeVisible();
+  });
 
   test('battery points save exactly and blue changes only when a new plan is published', async ({ context, page }) => {
     let saved: Record<string, unknown> | null = null;

@@ -1,5 +1,5 @@
 import { assertEquals } from 'jsr:@std/assert@1';
-import { readPlanRefresh } from './plan-refresh.ts';
+import { planRefreshError, readPlanRefresh } from './plan-refresh.ts';
 import { haRuntimeStatus, type HaRuntime } from './ha-runtime.ts';
 
 const now = Date.parse('2026-09-11T13:15:00Z');
@@ -19,7 +19,7 @@ Deno.test('the portal reads real producer plans including the battery schema upg
   }
 });
 
-Deno.test('an unreadable replacement clears the old chart but preserves fresh HA readiness', () => {
+Deno.test('an unreadable replacement is rejected while preserving fresh HA readiness', () => {
   const result = readPlanRefresh({ ...metadata, plan: { schema_version: 99 } });
   assertEquals(result.current, null);
   assertEquals(result.unsupported, true);
@@ -33,4 +33,10 @@ Deno.test('a malformed payload cannot masquerade as a readable schema-8 plan', (
 
 Deno.test('a deleted plan clears both the chart and its readiness report', () => {
   assertEquals(readPlanRefresh(null), { current: null, runtime: null, unsupported: false });
+});
+
+Deno.test('plain API errors have readable messages', () => {
+  assertEquals(planRefreshError({ message: 'Database temporarily unavailable', code: '503' }), 'Database temporarily unavailable');
+  assertEquals(planRefreshError(new Error('Disconnected')), 'Disconnected');
+  assertEquals(planRefreshError({}), 'The energy plan could not be refreshed. Please try again.');
 });

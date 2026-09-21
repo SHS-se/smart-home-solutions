@@ -77,6 +77,7 @@ interface Props {
   replan?: ReplanRow | null;
   /** Re-read the row, so a queued request appears without waiting for a poll. */
   onReplanChanged?: () => void;
+  refreshing?: boolean;
 }
 
 const EDITABLE: DefaultValueStoreKey[] = ['pool', 'ev'];
@@ -126,6 +127,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   batteryValueCurve,
   replan,
   onReplanChanged,
+  refreshing = false,
 }) => {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -264,6 +266,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const save = async (key: DefaultValueStoreKey) => {
+    if (refreshing || replanning || waitingForReplan) return;
     const draft = drafts[key];
     if (!homeId || !customerId || !draft) return;
     const rejection = validatePreference(draft.preference);
@@ -296,6 +299,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const reset = async (key: ValueStoreKey) => {
+    if (refreshing || replanning || waitingForReplan) return;
     if (!homeId) return;
     setSaving(key);
     const { error } = await supabase
@@ -312,6 +316,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const saveBattery = async () => {
+    if (refreshing || replanning || waitingForReplan) return;
     if (!homeId || !customerId) return;
     if (batteryDraft.curve && validateBatteryCurve(batteryDraft.curve)) return;
     const submitted = batteryDraft.curve;
@@ -367,6 +372,7 @@ const ValueCurvesTab: React.FC<Props> = ({
    * push, and the panel below says so until it does.
    */
   const requestReplan = async () => {
+    if (refreshing || replanning || waitingForReplan) return;
     if (!homeId) return;
     setReplanning(true);
     const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
@@ -463,7 +469,7 @@ const ValueCurvesTab: React.FC<Props> = ({
         <Button
           size="sm"
           onClick={() => void requestReplan()}
-          disabled={replanning || waitingForReplan}
+          disabled={refreshing || replanning || waitingForReplan}
           variant="secondary"
         >
           {replanning || waitingForReplan
@@ -536,7 +542,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               <div className="flex gap-2">
                 <Button variant="ghost" disabled={!batteryDraft.edited} onClick={() => setBatteryDraft({ curve: stored.battery ?? null, edited: false })}>{t('Ångra ändringar', 'Discard edits')}</Button>
                 <Button variant="outline" onClick={() => { setBatteryDraft({ curve: null, edited: true }); setPreview(null); }}>{t('Använd automatisk kurva', 'Use automatic curve')}</Button>
-                <Button disabled={!batteryDraft.edited || saving === 'battery' || !!(batteryDraft.curve && validateBatteryCurve(batteryDraft.curve))} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
+                <Button disabled={refreshing || replanning || waitingForReplan || !batteryDraft.edited || saving === 'battery' || !!(batteryDraft.curve && validateBatteryCurve(batteryDraft.curve))} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
               </div>
             </div>
             <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve ?? batteryValueCurve.automatic_curve}
@@ -625,10 +631,10 @@ const ValueCurvesTab: React.FC<Props> = ({
                 <Badge className="hidden sm:inline-flex" variant="outline">{plannedStore?.active ? t('I planen', 'In plan') : t('Inte schemalagd', 'Not dispatched')}</Badge>
               </div>
               <div className="flex items-center gap-1">
-                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={saving === key}>
+                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || replanning || waitingForReplan || saving === key}>
                   {t('Återställ', 'Reset')}
                 </Button>}
-                <Button size="sm" onClick={() => void save(key)} disabled={!canEdit || saving === key || rejection !== null || !draft.edited}>
+                <Button size="sm" onClick={() => void save(key)} disabled={refreshing || replanning || waitingForReplan || !canEdit || saving === key || rejection !== null || !draft.edited}>
                   {saving === key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                   {t('Spara', 'Save')}
                 </Button>
