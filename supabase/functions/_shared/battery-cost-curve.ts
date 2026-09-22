@@ -2,7 +2,8 @@
 import { marginalValue, type UtilityCurve } from "./store-value.ts";
 import type { OptimisationSnapshot } from "./energy-optimisation.ts";
 
-export const COST_CURVE_ALGORITHM = 2;
+// Invalidate saved searches whose transfers could spend an export reserve.
+export const COST_CURVE_ALGORITHM = 3;
 export const COST_CURVE_EVALUATIONS = 160;
 export const COST_CURVE_KNOTS = 10;
 export interface CostCurveInput {

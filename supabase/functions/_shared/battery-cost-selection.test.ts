@@ -340,3 +340,29 @@ Deno.test("cost selection survives elapsed quarters and rolling slots until publ
   await resolveCostCurve(db, "home", "customer", later, connection, fetcher);
   assertEquals(calls, 3);
 });
+
+for (const completed of [false, true]) {
+  Deno.test(`cost selection replaces an obsolete algorithm's ${completed ? "result" : "progress"}`, async () => {
+    const { db, rows } = database();
+    const source = input();
+    const selected = await record(source);
+    const oldInput = structuredClone(source);
+    oldInput.snapshot.snapshot_id = "older-measurements";
+    const old = {
+      home_id: "home", key: "obsolete-algorithm", input: oldInput,
+      revision: 6,
+      progress: { evaluations: [{ curve: selected.curve, bill_sek: 10 }] },
+      record: completed ? { ...selected, key: "obsolete-algorithm" } : null,
+    };
+    rows.set("home:obsolete-algorithm", structuredClone(old));
+    const result = await resolveCostCurve(db, "home", "customer", source, connection,
+      worker(body => {
+        assertEquals(body.input, source);
+        assertEquals(body.progress, { evaluations: [] });
+        return response({ done: true, record: selected });
+      }));
+    assertEquals(result.selection, selected);
+    assertEquals(rows.size, 2);
+    assertEquals(rows.get("home:obsolete-algorithm"), old);
+  });
+}

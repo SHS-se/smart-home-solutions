@@ -128,7 +128,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v40";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v41";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**

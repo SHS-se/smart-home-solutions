@@ -3691,7 +3691,14 @@ export function* dispatchAuctionSteps(
                 if (
                   !Number.isFinite(projected) ||
                   projected < (store.min_state ?? -Infinity) - 1e-9 ||
-                  projected > (store.max_state ?? Infinity) + 1e-9
+                  projected > (store.max_state ?? Infinity) + 1e-9 ||
+                  // Spending now and refilling later must preserve the reserve
+                  // behind any export already scheduled between the two legs.
+                  (discharge[index] > gridImportW(
+                    slots[index], occupiedW[index],
+                    returnedW[index] - discharge[index],
+                  ) + GRID_NOISE_W &&
+                    projected < (store.discharge!.export_min_state ?? -Infinity) - 1e-9)
                 ) {
                   feasible = false;
                   break;

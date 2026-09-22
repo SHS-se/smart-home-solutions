@@ -2198,3 +2198,33 @@ Deno.test("cost refinement moves energy, not equal watts, between unequal durati
   assertEquals(score.stores[0].end_state, .25);
   assertEquals(score.billable_sek, .25);
 });
+
+Deno.test("use-then-refill transfers preserve the reserve behind intervening exports", () => {
+  const slots: DispatchSlot[] = [
+    {pv_w: 0, fixed_load_w: 902.5, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .1},
+    {pv_w: 0, fixed_load_w: 0, import_price_sek_per_kwh: 7, export_price_sek_per_kwh: 6},
+    {pv_w: 1000, fixed_load_w: 0, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .1},
+    {pv_w: 2000, fixed_load_w: 0, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .01},
+  ];
+  const battery = batteryStore(slots.length, 1.5, 3, {exportAllowed: true});
+  battery.min_state = 0;
+  battery.max_state = 1.5;
+  battery.discharge!.export_min_state = 1;
+  battery.discharge!.export_allowed_by_slot = [false, true, false, false];
+  const result = planDispatch(slots, [battery], LIMITS);
+  assert(result.export_w[1] > 0, "exercise an existing export between use and refill");
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, result).infeasibilities, []);
+  assert(result.state.battery[2] >= 1 - 1e-9);
+  let checkpoint: DispatchCheckpoint | undefined;
+  for (let request = 0; request < 32; request++) {
+    const next = dispatchAuctionSteps(slots, [battery], LIMITS, {}, checkpoint, () => true).next();
+    if (next.done === true) {
+      assertEquals(next.value.power_w, result.power_w);
+      assertEquals(next.value.discharge_w, result.discharge_w);
+      assertEquals(scoreDispatch(slots, [battery], LIMITS, next.value).infeasibilities, []);
+      return;
+    }
+    checkpoint = JSON.parse(JSON.stringify(next.value));
+  }
+  throw new Error("Paused export-reserve dispatch did not finish");
+});
