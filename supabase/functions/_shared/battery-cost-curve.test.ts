@@ -10,6 +10,7 @@ import {
   type CostCurveInput,
   costCurveKey,
   costCurveSearch,
+  samePublishedPrices,
 } from "./battery-cost-curve.ts";
 import { type CostCurveProgress, costCurveStep } from "./battery-cost-step.ts";
 import {
@@ -35,7 +36,7 @@ function input(): CostCurveInput {
 }
 const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
-Deno.test("price identity freezes measurements and object ordering but detects quarter and published corrections", async () => {
+Deno.test("price release reuse ignores elapsed quarters but detects published corrections", async () => {
   const a = input(), b = wire(a);
   b.now = new Date(Date.parse(a.now) + 800_000).toISOString();
   b.snapshot.battery!.soc = .7;
@@ -48,7 +49,11 @@ Deno.test("price identity freezes measurements and object ordering but detects q
   assertNotEquals(await costCurveKey(a), await costCurveKey(b));
   const c = wire(a);
   c.now = new Date(Date.parse(a.now) + 900_000).toISOString();
-  assertNotEquals(await costCurveKey(a), await costCurveKey(c));
+  assertEquals(samePublishedPrices(a, c), true);
+  c.snapshot.slots = c.snapshot.slots.slice(1);
+  assertEquals(samePublishedPrices(a, c), true);
+  c.snapshot.slots[0].import_price_sek_per_kwh! += .01;
+  assertEquals(samePublishedPrices(a, c), false);
   const d = wire(a);
   d.snapshot.slots[0].import_price_sek_per_kwh = null;
   await assertRejects(() => costCurveKey(d), Error, "No published prices");
@@ -70,7 +75,7 @@ Deno.test("adaptive curve search keeps exact incumbent, monotone proposals, hard
       count++;
       p = generator.next(10);
     }
-    assert(count <= 40);
+    assert(count <= 160);
     assertEquals(p.value.curve, curve);
     return { count, result: p.value };
   };
@@ -117,7 +122,7 @@ Deno.test("price search resumed through JSON equals uninterrupted search and bea
     staged = await complete(source, true);
   assertEquals(staged.record, direct.record);
   assert(staged.calls > direct.calls);
-  assert(direct.record.evaluations <= 40);
+  assert(direct.record.evaluations <= 160);
   assert(direct.record.bill_after_sek <= direct.record.bill_before_sek + 1e-8);
   const work = dispatchWorkbench(
     {

@@ -2,8 +2,8 @@
 import { marginalValue, type UtilityCurve } from "./store-value.ts";
 import type { OptimisationSnapshot } from "./energy-optimisation.ts";
 
-export const COST_CURVE_ALGORITHM = 1;
-export const COST_CURVE_EVALUATIONS = 40;
+export const COST_CURVE_ALGORITHM = 2;
+export const COST_CURVE_EVALUATIONS = 160;
 export const COST_CURVE_KNOTS = 10;
 export interface CostCurveInput {
   snapshot: OptimisationSnapshot;
@@ -23,12 +23,11 @@ export interface CostCurveEvaluation {
   bill_sek: number;
 }
 
-/** Object key ordering and evolving measurements cannot change a price identity. */
-export async function costCurveKey(input: CostCurveInput): Promise<string> {
-  const quarter = Math.floor(Date.parse(input.now) / 900_000) * 900_000;
+/** Published future rows; forecast padding never identifies a price release. */
+function publishedPrices(input: CostCurveInput): [number, number, number][] {
   const prices: [number, number, number][] = [];
   for (const slot of input.snapshot.slots) {
-    if (Date.parse(slot.start) + 900_000 <= quarter) continue;
+    if (Date.parse(slot.start) + 900_000 <= Date.parse(input.now)) continue;
     if (
       slot.import_price_sek_per_kwh === null ||
       slot.export_price_sek_per_kwh === null
@@ -42,10 +41,30 @@ export async function costCurveKey(input: CostCurveInput): Promise<string> {
   if (!prices.length) {
     throw new Error("No published prices are available for a price-only curve");
   }
+  return prices;
+}
+
+/** Elapsed quarters and refreshed measurements do not create a new release. */
+export function samePublishedPrices(
+  frozen: CostCurveInput,
+  current: CostCurveInput,
+): boolean {
+  const before = publishedPrices(frozen), after = publishedPrices(current);
+  if (before.at(-1)![0] !== after.at(-1)![0]) return false;
+  const byTime = new Map(before.map((row) => [row[0], row]));
+  return after.every(([time, buy, sell]) => {
+    const old = byTime.get(time);
+    return old !== undefined && old[1] === buy && old[2] === sell;
+  });
+}
+
+/** The first source owns a release identity; subsequent calls reuse that source. */
+export async function costCurveKey(input: CostCurveInput): Promise<string> {
+  const prices = publishedPrices(input);
   const bytes = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(
-      JSON.stringify([COST_CURVE_ALGORITHM, quarter, prices]),
+      JSON.stringify([COST_CURVE_ALGORITHM, prices]),
     ),
   );
   return Array.from(
@@ -116,7 +135,7 @@ export function* costCurveSearch(
   // Stop after three unsuccessful scales; the evaluation limit bounds partial sweeps.
   for (
     let sweep = 0;
-    sweep < 6 && count < COST_CURVE_EVALUATIONS && step > 0;
+    sweep < 24 && count < COST_CURVE_EVALUATIONS && step > 0;
     sweep++
   ) {
     let improved = false;

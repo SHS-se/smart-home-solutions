@@ -21,6 +21,7 @@ function database() {
     from() {
       const query = (update?: Row) => {
         const filters: [string, unknown][] = [];
+        let newest = false;
         const execute = () => {
           if (update && loseNextUpdate) {
             const lose = loseNextUpdate;
@@ -28,13 +29,21 @@ function database() {
             lose();
             return { data: null, error: null };
           }
-          const row = [...rows.values()].find((row) =>
-            filters.every(([key, value]) => (row[key] ?? null) === value)
-          );
+          const row =
+            (newest ? [...rows.values()].reverse() : [...rows.values()]).find((
+              row,
+            ) => filters.every(([key, value]) => (row[key] ?? null) === value));
           if (row && update) Object.assign(row, structuredClone(update));
           return { data: row ? structuredClone(row) : null, error: null };
         };
         const builder = {
+          order() {
+            newest = true;
+            return builder;
+          },
+          limit() {
+            return builder;
+          },
           eq(key: string, value: unknown) {
             filters.push([key, value]);
             return builder;
@@ -285,4 +294,49 @@ Deno.test("portal authorizes home before resolving and ignores user supplied sna
     )).status,
     401,
   );
+});
+
+Deno.test("cost selection survives elapsed quarters and rolling slots until published prices change", async () => {
+  const { db, rows } = database();
+  const source = input();
+  let calls = 0;
+  const fetcher = worker(async (body) => {
+    calls++;
+    return response({
+      done: true,
+      record: await record(body.input as CostCurveInput),
+    });
+  });
+  const first = await resolveCostCurve(
+    db,
+    "home",
+    "customer",
+    source,
+    connection,
+    fetcher,
+  );
+  const later = structuredClone(source);
+  later.now = new Date(Date.parse(source.now) + 3 * 900_000).toISOString();
+  later.snapshot.slots = later.snapshot.slots.slice(3);
+  later.snapshot.snapshot_id = "later-quarter";
+  later.snapshot.battery!.soc = .3;
+  later.snapshot.value_curves = {
+    battery: { unit: "kwh", points: [{ at: 0, sek_per_unit: 9 }] },
+  };
+  assertEquals(
+    await resolveCostCurve(db, "home", "customer", later, connection, fetcher),
+    first,
+  );
+  assertEquals(calls, 1);
+  assertEquals(rows.size, 1);
+  later.snapshot.slots[0].import_price_sek_per_kwh! += .01;
+  await resolveCostCurve(db, "home", "customer", later, connection, fetcher);
+  assertEquals(calls, 2);
+  const newlyPublished = later.snapshot.slots.find((slot) =>
+    slot.import_price_sek_per_kwh === null
+  )!;
+  newlyPublished.import_price_sek_per_kwh = 1.25;
+  newlyPublished.export_price_sek_per_kwh = .1;
+  await resolveCostCurve(db, "home", "customer", later, connection, fetcher);
+  assertEquals(calls, 3);
 });

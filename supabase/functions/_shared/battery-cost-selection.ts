@@ -3,6 +3,7 @@ import {
   type CostCurveInput,
   costCurveKey,
   type CostCurveRecord,
+  samePublishedPrices,
 } from "./battery-cost-curve.ts";
 import type { CostCurveProgress, CostCurveStep } from "./battery-cost-step.ts";
 import { EnergyPlanningError } from "./energy-planning-client.ts";
@@ -18,6 +19,8 @@ interface SelectionResult extends PromiseLike<QueryResult> {
   maybeSingle(): PromiseLike<QueryResult>;
 }
 interface SelectionQuery extends SelectionResult {
+  order(column: string, options: { ascending: boolean }): SelectionQuery;
+  limit(count: number): SelectionQuery;
   eq(column: string, value: unknown): SelectionQuery;
   is(column: string, value: null): SelectionQuery;
   select(columns: string): SelectionResult;
@@ -34,13 +37,14 @@ interface SelectionTable {
   update(value: unknown): SelectionQuery;
 }
 interface StoredSelection {
+  key: string;
   input: CostCurveInput;
   progress: CostCurveProgress;
   revision: number;
   record: CostCurveRecord | null;
 }
 const TABLE = "energy_optimisation_battery_cost_curves";
-const COLUMNS = "input,progress,revision,record";
+const COLUMNS = "key,input,progress,revision,record";
 
 function stored(result: QueryResult): StoredSelection {
   if (result.error) {
@@ -67,9 +71,28 @@ export async function resolveCostCurve(
     ...input,
     snapshot: { ...input.snapshot, battery_cost_curve: undefined },
   };
-  const key = await costCurveKey(input);
   // Adapt the transport builder once; keep Supabase generics outside the domain.
   const table = () => db.from(TABLE) as SelectionTable;
+  const latest = await table().select(COLUMNS).eq("home_id", homeId)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (latest.error) {
+    throw new EnergyPlanningError(
+      `Battery curve storage failed: ${latest.error.message}`,
+    );
+  }
+  if (latest.data) {
+    const previous = stored(latest);
+    if (
+      previous.key === await costCurveKey(previous.input) &&
+      samePublishedPrices(previous.input, input)
+    ) {
+      if (previous.record) {
+        return { selection: previous.record, input: previous.input };
+      }
+      input = previous.input;
+    }
+  }
+  const key = await costCurveKey(input);
   const inserted = await table().upsert({
     home_id: homeId,
     customer_id: customerId,

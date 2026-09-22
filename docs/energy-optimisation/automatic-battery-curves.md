@@ -25,10 +25,10 @@ The exact saved curve is evaluated before its resampling, so resampling cannot
 hide a better incumbent. Other seeds are the current balanced heuristic and a
 zero-value curve. The lowest bill wins; ties retain the earlier candidate.
 
-The hard limit is **40 evaluations including seeds**, not 40 complete sweeps.
+The hard limit is **160 evaluations including seeds**, not 160 complete sweeps.
 The initial step is one quarter of the largest seed value or absolute published
 price adjusted for charge efficiency. An unsuccessful sweep divides the step
-by four. The search stops after three unsuccessful scales, six sweeps, or the
+by four. The search stops after three unsuccessful scales, 24 sweeps, or the
 evaluation limit. Duplicate proposals do not consume evaluations. Completion
 depends on evaluation history, never elapsed wall-clock time. A zero or flat
 curve is valid: without terminal credit, emptying the battery can minimize the
@@ -54,11 +54,21 @@ The old thirteen predetermined curves and broad-objective ranking are removed.
 
 The first request atomically captures a server-owned source in
 `energy_optimisation_battery_cost_curves`, before computation. Identity is home,
-actual quarter, algorithm version, and the canonical published timestamp/buy/sell
-vector through the first price gap. JSON property ordering, changing SOC,
-weather, demand and other measurements cannot replace the frozen input within
-that identity. A new quarter, published prices, or price correction selects a
-new identity. No publication-hour timer or CET/CEST assumption is necessary.
+algorithm version and the canonical published timestamp/buy/sell vector through
+the first price gap. The latest selection's frozen source is reused when all
+remaining published prices match and their end is unchanged. Elapsed quarters,
+midnight, JSON property ordering, SOC, weather, demand and other measurements
+do not regenerate the curve. New published prices or corrections to remaining
+prices start a new search. Thus generation is normally once per daily price
+release, triggered by the first price-mode request with that release, with no
+publication-hour timer or CET/CEST assumption. Algorithm upgrades regenerate
+once. Balanced mode still responds to fresh inputs; manual curves remain fixed.
+
+The 160-evaluation ceiling replaces up to 40 trials every quarter with a more
+thorough search per price release. Early stopping remains active. There is no
+random sampling and no penalty for changing curve shape. The first saved curve
+is still an exact seed. Fixing the curve does not fix the whole schedule: live
+load, solar and equipment state continue to affect dispatch.
 
 The portal and ingest use the same resolver. Switching to another curve or
 replacing the current plan does not erase a price-only selection. Concurrent
@@ -105,9 +115,16 @@ a guarantee of hosted CPU limits or future savings. Comparisons have different
 initial states and must not be interpreted as comparing the two replays with
 each other.
 
-Tests cover canonical identity, quarter/price changes, monotonicity, exact
+Tests cover canonical identity, reuse across elapsed quarters and rolling slots,
+price publication/correction invalidation, monotonicity, exact
 incumbent preservation, deterministic interrupted execution through JSON,
 forecast-tail exclusion, server authorization, persisted source ownership,
 revision races, worker failures, and editor generate/preview/save/reload flows.
 Planner v40, worker protocol 6, the new endpoint and migration must be deployed
 together.
+
+
+With the larger search budget, the supplied September 22 replays stopped after
+50 and 64 evaluations, using eight local worker calls each. The longest local
+call was under 0.35 seconds. These measurements do not establish hosted CPU
+performance. Ordinary cache hits perform no candidate dispatches.
