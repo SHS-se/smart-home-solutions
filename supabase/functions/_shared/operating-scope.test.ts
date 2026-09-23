@@ -1,21 +1,36 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 import { generateOptimisationPlan, type OptimisationSnapshot } from "./energy-optimisation.ts";
-import { projectExecutionSnapshot, validateOperatingScope } from "./operating-scope.ts";
+import { validateOperatingScope } from "./operating-scope.ts";
 import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 
-Deno.test("mixed mode conserves fixed demand and conditions only the current quarter", () => {
-  const s = mixedModeSnapshot(); const before = structuredClone(s);
-  const projected = projectExecutionSnapshot(s);
-  assertEquals(s, before);
-  assertEquals(projected.capabilities.pool, false);
-  assertEquals(projected.device_models, []);
-  assertEquals(projected.services, []);
-  assertEquals(projected.slots[0].base_load_forecast_w, s.slots[0].base_load_forecast_w + 2100);
-  assertEquals(projected.slots[1].base_load_forecast_w, s.slots[1].base_load_forecast_w + 1260);
-  assertEquals(projected.replan_reference, null);
+Deno.test("Verification and Controlling never change the plan", () => {
+  // User requirement, 23 September 2026: switching a device between
+  // Verification and Controlling changes only which writer is authorised. The
+  // schedule, device requests and battery reference stay exactly the same.
+  const solve = (battery: "controlling" | "control_verification", pool: "controlling" | "control_verification") => {
+    const s = mixedModeSnapshot();
+    s.operating_scope.modes.$battery = battery;
+    s.operating_scope.modes.$pool = pool;
+    if (pool === "controlling") delete s.operating_scope.external_demands.pool_heater;
+    s.battery_execution_feedback = { generation: 1, source_receipt: 0, previous_contract_id: null,
+      objectives: [], scope_revision: "fixture-whole-house" };
+    const plan = generateOptimisationPlan(s, new Date(s.captured_at));
+    assert(plan.battery_execution, "both modes carry the battery reference");
+    return plan;
+  };
+  const reference = solve("controlling", "control_verification");
+  for (const [battery, pool] of [["control_verification", "control_verification"], ["controlling", "controlling"],
+    ["control_verification", "controlling"]] as const) {
+    const plan = solve(battery, pool);
+    for (const key of ["plans", "capabilities", "services", "device_models", "battery", "pool", "valid_until"] as const) {
+      assertEquals(plan[key], reference[key], `${battery}/${pool}: ${key}`);
+      assertEquals(plan.execution_plan![key], reference.execution_plan![key], `${battery}/${pool}: execution ${key}`);
+    }
+    // The reference differs only in the mode it was captured under.
+    assertEquals({ ...plan.battery_execution, mode: reference.battery_execution!.mode }, reference.battery_execution);
+  }
 });
 
 Deno.test("both charts and execution publish one authoritative device schedule", () => {
@@ -39,42 +54,9 @@ Deno.test("all controlling preserves the unscoped electrical plan", () => {
   assertEquals(p.execution_plan?.plans.priority.slots, original.plans.priority.slots);
 });
 
-Deno.test("a pool pump owned by $pool runs with the pool and sizes it with the heater", () => {
-  // The integration sends every Planned pool member under $pool. A pump owning
-  // itself left its power outside the controlled pool, or was refused alone.
-  for (const pool of ["control_verification", "controlling"] as const) {
-    const s = mixedModeSnapshot();
-    s.operating_scope.device_owners.pool_pump = "$pool";
-    delete s.operating_scope.modes.pool_pump;
-    s.operating_scope.modes.$pool = pool;
-    if (pool === "controlling") s.operating_scope.external_demands = {};
-    const projected = projectExecutionSnapshot(s);
-    assertEquals(projected.device_models.map(m => m.key), pool === "controlling" ? ["pool_heater", "pool_pump"] : []);
-    assertEquals(projected.services.map(service => service.control),
-      pool === "controlling" ? [{type: "fixed_power", power_w: 2100}] : []);
-  }
-  const alone = mixedModeSnapshot();
-  alone.operating_scope.modes.pool_pump = "controlling";
-  delete alone.operating_scope.external_demands.pool_pump;
-  assertThrows(() => projectExecutionSnapshot(alone), Error, "physical controller in Controlling mode");
-});
-
-Deno.test("external forecasts survive hypothetical thermal enrichment", () => {
-  const s: OptimisationSnapshot = {...commandSnapshot(), schema_version: 9};
-  s.operating_scope = {modes: {$battery: 'monitoring', $pool: 'monitoring', $ev: 'monitoring', relay: 'planning', thermostat: 'planning'},
-    device_owners: {relay: 'relay', thermostat: 'thermostat'}, external_demands: Object.fromEntries(s.device_models.map(m =>
-      [m.key, {forecast_w_by_slot: [...m.forecast_w_by_slot], recent_observation: null}]))};
-  s.device_models.forEach(m => m.forecast_w_by_slot.fill(0));
-  const projected = projectExecutionSnapshot(s);
-  assertEquals(projected.slots[0].base_load_forecast_w, s.slots[0].base_load_forecast_w + 1500);
-  assertEquals(projected.thermal_zones, []);
-  s.operating_scope.modes.relay = 'controlling'; delete s.operating_scope.external_demands.relay;
-  assertThrows(() => projectExecutionSnapshot(s), Error, 'Partial control of thermal zone');
-});
-
 Deno.test("scope requires complete nonnegative evidence and accepts observed zero", () => {
   const s = mixedModeSnapshot(); s.operating_scope.external_demands.pool_heater.recent_observation!.average_w = 0;
-  assertEquals(projectExecutionSnapshot(s).slots[0].base_load_forecast_w, 1400);
+  validateOperatingScope(s);
   s.operating_scope.external_demands.pool_heater.forecast_w_by_slot[0] = -1;
   assertThrows(() => validateOperatingScope(s), Error, 'nonnegative');
   delete s.operating_scope.external_demands.pool_heater;

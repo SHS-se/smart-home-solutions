@@ -1,5 +1,5 @@
 /** Physical execution scope, independent of hypothetical scheduling preferences. */
-import type { OptimisationSnapshot, ServiceInput } from "./energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./energy-optimisation.ts";
 
 export type OperatingMode = "monitoring" | "planning" | "control_verification" | "controlling";
 export interface OperatingScope {
@@ -48,69 +48,4 @@ export function validateOperatingScope(snapshot: OptimisationSnapshot): void {
       throw new Error("external demand observation must be the last completed meter quarter");
     }
   }
-}
-
-/** Fold independently operated devices into fixed demand before invoking the same solver. */
-export function projectExecutionSnapshot(snapshot: OptimisationSnapshot): OptimisationSnapshot {
-  validateOperatingScope(snapshot);
-  const scope = snapshot.operating_scope!;
-  const live = snapshot.device_models.filter(m => scope.modes[scope.device_owners[m.key]] === "controlling");
-  const keys = new Set(live.map(m => m.key));
-  const isPool = (m: typeof live[number]) => m.planning_service === "pool";
-  const pool = snapshot.capabilities.pool ? live.filter(isPool) : [];
-  const ev = snapshot.capabilities.ev ? live.filter(m => m.category === "ev_charging") : [];
-  const boiler = snapshot.capabilities.boiler ? live.filter(m => m.category === "hot_water" && m.control_type === "permit_inhibit") : [];
-  if (pool.length && scope.modes.$pool !== "controlling") throw new Error("pool execution requires its physical controller in Controlling mode");
-  if (ev.length && (scope.modes.$ev !== "controlling" || ev.length !== snapshot.device_models.filter(m => m.category === "ev_charging").length)) {
-    throw new Error("partial EV control cannot define an executable charger envelope");
-  }
-  const zones = (snapshot.thermal_zones ?? []).filter(zone => {
-    const selected = zone.device_keys.filter(key => keys.has(key));
-    if (selected.length && selected.length !== zone.device_keys.length) throw new Error(`Partial control of thermal zone ${zone.key} is unsupported`);
-    return selected.length > 0;
-  });
-  const battery = scope.modes.$battery === "controlling" ? snapshot.battery : null;
-  const services = snapshot.services.flatMap<ServiceInput>(service => {
-    if (service.device === "pool") {
-      if (!pool.length) return [];
-      if (service.control.type !== "fixed_power") throw new Error("pool execution needs a fixed-power service");
-      const watts = pool.reduce((sum, m) => sum + (m.active_power_w ?? 0), 0);
-      if (!power(watts) || watts <= 0) throw new Error("controlled pool devices need measured or reviewed running power");
-      return [{ ...service, control: { ...service.control, power_w: watts } }];
-    }
-    if (service.device === "ev") return ev.length ? [service] : [];
-    if (!boiler.length) return [];
-    if (boiler.length === snapshot.device_models.filter(m => m.category === "hot_water").length) return [service];
-    if (service.control.type !== "duty_cycle") throw new Error("boiler execution needs a duty-cycle service");
-    const expected = snapshot.slots.map((_, i) => boiler.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
-    const rated = boiler.reduce((sum, m) => sum + (m.active_power_w ?? 0), 0);
-    return [{ ...service, device: "boiler", required_kwh: expected.reduce((sum, w, i) => {
-      const t = Date.parse(snapshot.slots[i].start);
-      return sum + (t >= Date.parse(service.earliest_start) && t + 900_000 <= Date.parse(service.deadline) ? w / 4000 : 0);
-    }, 0), control: { ...service.control, rated_power_w: rated, expected_power_w_by_slot: expected } }];
-  });
-  const result: OptimisationSnapshot = {
-    ...snapshot,
-    schema_version: 8,
-    replan_reference: null,
-    slots: snapshot.slots.map((slot, i) => {
-      const fixed = Object.values(scope.external_demands).reduce((sum, d) =>
-        sum + (i === 0 && d.recent_observation !== null ? d.recent_observation.average_w : d.forecast_w_by_slot[i]), 0);
-      return { ...slot, base_load_forecast_w: slot.base_load_forecast_w + fixed };
-    }),
-    capabilities: { ...snapshot.capabilities, battery: battery !== null,
-      pool: pool.length > 0, ev: ev.length > 0, boiler: boiler.length > 0 },
-    battery,
-    sources: { ...snapshot.sources, battery: battery ? snapshot.sources.battery : null },
-    pool: pool.length ? snapshot.pool : null,
-    ev_battery: ev.length ? snapshot.ev_battery : null,
-    device_models: live,
-    thermal_zones: zones,
-    services,
-    policy: battery ? snapshot.policy : { battery_end_of_solar_target_soc: 0, battery_target_is_hard: false,
-      terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0, battery_export_enabled: false,
-      battery_export_reserve_soc: 0, battery_export_min_price_sek_per_kwh: 0 },
-  };
-  delete result.operating_scope;
-  return result;
 }

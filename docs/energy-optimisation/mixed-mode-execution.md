@@ -1,5 +1,11 @@
 # Mixed-mode execution scope (schema 9)
 
+> **Superseded, 23 September 2026.** Switching a device between Verification
+> and Controlling must not change the plan: it changes only which writer is
+> authorised. One schedule is solved for every mode and the per-mode execution
+> projection described below has been removed. See the
+> [authoritative plan contract](authoritative-plan-contract.md).
+
 ## Replacement scope terminology — 15 September 2026
 
 The schema-9 four-local-mode implementation below is historical basis for the next contract. The replacement has HA inclusion, website Monitoring/Planned, and HA Verification/Controlling. Planned Verification equipment stays separately identified but external to executable decision variables. Base consumption and fixed external demand are distinct; add uncontrolled Planned demand once. Battery supply eligibility may include a Planned Verification device without treating its hypothetical actions as real.
