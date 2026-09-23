@@ -1,7 +1,8 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
 import { generateOptimisationPlan } from './energy-optimisation.ts';
-import { hasNewPublishedPrices, deviationRecommendations } from './replan-policy.ts';
+import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations } from './replan-policy.ts';
+import { isolateMeasurements } from './measurement-isolation.ts';
 
 Deno.test('quarter exchange and changed measurements preserve plan until a price publication', () => {
   const before = mixedModeSnapshot(), next = structuredClone(before);
@@ -43,4 +44,33 @@ Deno.test('pack warning compares energy at the captured time, independent of mod
   s.captured_at = plan.plans.priority.slots[index].start;
   s.battery.soc = plan.plans.priority.slots[index - 1].battery_soc - 4.1 / s.battery.capacity_kwh;
   assertEquals(deviationRecommendations(plan, [], s, new Date(s.captured_at)).map(r => r.key), ['battery_energy']);
+});
+
+Deno.test('a device left out for its readings recommends a replan once they are valid again', () => {
+  const broken = mixedModeSnapshot();
+  broken.pool = { ...broken.pool!, water_temperature_c: 500 };
+  const plan = generateOptimisationPlan(broken, new Date(broken.captured_at));
+  assertEquals(plan.capabilities.pool, false);
+  // Still impossible: nothing to recommend, and no deviation warning either.
+  assertEquals(recoveredMeasurementRecommendations(plan, isolateMeasurements(broken)), []);
+  const later = structuredClone(broken);
+  later.captured_at = new Date(Date.parse(broken.captured_at) + 900_000).toISOString();
+  later.pool!.water_temperature_c = 26.4;
+  assertEquals(recoveredMeasurementRecommendations(plan, isolateMeasurements(later)), [{
+    key: 'measurement_recovered_pool',
+    reason: "The pool's readings are valid again, but the current plan leaves it out. Replan to include it.",
+    occurred_at: later.captured_at,
+  }]);
+  // A plan that already includes the device has nothing to recover.
+  const whole = generateOptimisationPlan(mixedModeSnapshot(), new Date(later.captured_at));
+  assertEquals(recoveredMeasurementRecommendations(whole, isolateMeasurements(later)), []);
+});
+
+Deno.test('an impossible pack reading raises no stored-energy warning', () => {
+  const s = mixedModeSnapshot(), plan = generateOptimisationPlan(s, new Date(s.captured_at));
+  const impossible = structuredClone(s);
+  impossible.battery!.soc = 1.4;
+  const now = new Date(s.captured_at);
+  assertEquals(deviationRecommendations(plan, [], impossible, now).map(r => r.key), ['battery_energy']);
+  assertEquals(deviationRecommendations(plan, [], isolateMeasurements(impossible), now), []);
 });

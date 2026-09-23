@@ -1126,6 +1126,13 @@
               "type": "integer",
               "minimum": 0
             }
+          },
+          "measurement_issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeasurementIssueV1"
+            },
+            "description": "Devices Home Assistant left out of this snapshot because a reading was unusable or impossible. Optional; absent means none."
           }
         },
         "additionalProperties": true
@@ -1422,6 +1429,13 @@
                 "description": "Website Stop at temperature. Controllers may enable scheduled heating only below this measured water temperature; null means no explicit zero-value endpoint is configured."
               }
             }
+          },
+          "measurement_issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeasurementIssueV1"
+            },
+            "description": "Devices this plan leaves out because a reading could not be real or read, and why. Present from marginal-value-planner-v43; absent on earlier plans."
           }
         },
         "additionalProperties": true
@@ -3119,6 +3133,59 @@
             "type": "string"
           }
         }
+      },
+      "MeasurementIssueV1": {
+        "type": "object",
+        "description": "A device reading that could not be real (or, from Home Assistant, could not be read). Only that device is left out of the plan; every other device is planned. Home Assistant reports the devices it already left out of the snapshot; the planner adds its own findings and publishes the complete list on the plan for both interfaces.",
+        "required": [
+          "device",
+          "field",
+          "entity_id",
+          "value",
+          "reason",
+          "detected_by"
+        ],
+        "properties": {
+          "device": {
+            "enum": [
+              "battery",
+              "ev",
+              "pool"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reading, in snapshot field names, e.g. soc, departure_target_soc, capacity_kwh, water_temperature_c, connected, energy_remaining."
+          },
+          "entity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "value": {
+            "type": [
+              "number",
+              "string",
+              "null"
+            ],
+            "description": "What was reported: a number, or Home Assistant's state text such as unavailable."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One sentence both interfaces show."
+          },
+          "detected_by": {
+            "enum": [
+              "home_assistant",
+              "planner"
+            ]
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

@@ -1,4 +1,6 @@
 import ReplanControls from './ReplanControls';
+import MeasurementIssuesAlert from './MeasurementIssuesAlert';
+import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
@@ -463,6 +465,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           </details>
         </AlertDescription>
       </Alert>}
+      {view === 'live' && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
       {view === 'live' && section === 'plan' && <ReplanControls homeId={homeId} replan={current} refreshing={refreshing} onReplanChanged={() => void load(true)} />}
       {content}
       {view === 'live' && (

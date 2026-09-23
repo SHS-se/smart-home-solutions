@@ -8,6 +8,7 @@ import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
 import { validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
+import { isolateMeasurements, type MeasurementIssue } from "./measurement-isolation.ts";
 /**
  * Pure 15-minute energy planner shared by the ingestion edge function and its
  * contract tests. It deliberately has no database or browser dependencies.
@@ -128,7 +129,9 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v42";
+// v43 plans measured state beyond a bound as it is, and leaves out only the
+// device whose reading could not be real (`measurement_issues`).
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v43";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -397,6 +400,12 @@ export interface OptimisationSnapshot {
   operating_scope?: OperatingScope;
   /** Server-derived economic reference, frozen with the replay input; never physical authority. */
   replan_reference?: ReplanReference | null;
+  /**
+   * Devices Home Assistant left out because a reading was unusable or
+   * impossible. The planner adds its own findings and leaves out the same
+   * devices (see `isolateMeasurements`).
+   */
+  measurement_issues?: MeasurementIssue[];
   schema_version: 5 | 6 | 7 | 8 | 9;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
@@ -707,6 +716,12 @@ export interface OptimisationPlan {
   slot_minutes: 15;
   status: "ready" | "incomplete" | "infeasible";
   validation_errors: string[];
+  /**
+   * Devices this plan leaves out because a reading could not be real, and why.
+   * Every other device is planned; both interfaces show these. Always present
+   * from marginal-value-planner-v43; absent on plans stored before it.
+   */
+  measurement_issues?: MeasurementIssue[];
   sources: OptimisationSnapshot["sources"];
   pv_calibration: OptimisationSnapshot["pv_calibration"];
   /**
@@ -1102,9 +1117,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       !inRange(battery.min_soc, 0, 1) || !inRange(battery.max_soc, 0, 1) ||
       battery.min_soc >= battery.max_soc
     ) errors.push("battery SOC bounds are invalid");
-    if (!inRange(battery.soc, battery.min_soc, battery.max_soc)) {
-      errors.push("battery.soc is outside its configured bounds");
-    }
+    // A pack below a cut-off raised after it discharged, or above a ceiling
+    // lowered after it charged, is realistic state rather than an invalid
+    // snapshot. `isolateMeasurements` has already left out a battery whose
+    // reading could not be real.
     if (
       !inRange(battery.charge_efficiency, 0.5, 1) ||
       !inRange(battery.discharge_efficiency, 0.5, 1)
@@ -1127,10 +1143,11 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   // say what it declined to plan and why (§8.12.1).
   if (evBattery) {
     const sourceIds = evBattery.source_entity_ids;
+    // State of charge, charge limit and the capacity derived from usable
+    // energy are the car's readings: `isolateMeasurements` leaves out a car
+    // whose readings could not be real, so only the contract is checked here.
     if (
-      !evBattery.name || !inRange(evBattery.capacity_kwh, 1, 500) ||
-      !inRange(evBattery.soc, 0, 1) ||
-      !inRange(evBattery.departure_target_soc, 0, 1) ||
+      !evBattery.name ||
       !inRange(evBattery.charge_efficiency, 0.5, 1) ||
       !Number.isInteger(evBattery.priority) || evBattery.priority < 1 ||
       !sourceIds ||
@@ -1163,12 +1180,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   }
   const pool = snapshot?.pool;
   if (pool !== undefined && pool !== null) {
-    // A pool sensor reading an air probe, or a volume nobody reviewed, would
-    // silently mis-scale every degree the planner later buys. Refuse it here
-    // rather than store a state that reads plausibly and models nothing.
+    // A volume nobody reviewed would silently mis-scale every degree the
+    // planner later buys. The water temperature is a reading:
+    // `isolateMeasurements` leaves out a pool whose reading could not be real.
     if (
-      !finite(pool.water_temperature_c) ||
-      !inRange(pool.water_temperature_c, -5, 60) ||
       !finite(pool.volume_m3) ||
       !inRange(pool.volume_m3, 0.5, 5_000) ||
       (pool.heating_running != null && typeof pool.heating_running !== "boolean")
@@ -1201,22 +1216,10 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
     errors.push(
       "battery policy must be disabled when no battery is configured",
     );
-  } else if (
-    battery && (
-      !inRange(
-        snapshot.policy.battery_end_of_solar_target_soc,
-        battery.min_soc,
-        battery.max_soc,
-      ) ||
-      !inRange(
-        snapshot.policy.terminal_soc_min,
-        battery.min_soc,
-        battery.max_soc,
-      )
-    )
-  ) {
-    errors.push("battery policy targets are outside the configured SOC bounds");
   }
+  // Targets are preferences and the cut-off can be a live reading: a cut-off
+  // raised above a configured target leaves the target trivially met. Every
+  // consumer measures a target from the floor and clamps it at zero.
   if (
     typeof snapshot.policy.battery_export_enabled !== "boolean" ||
     !inRange(snapshot.policy.battery_export_reserve_soc, 0, 1) ||
@@ -1227,15 +1230,6 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
     )
   ) {
     errors.push("battery export policy is invalid");
-  } else if (
-    battery && snapshot.policy.battery_export_enabled &&
-    !inRange(
-      snapshot.policy.battery_export_reserve_soc,
-      battery.min_soc,
-      battery.max_soc,
-    )
-  ) {
-    errors.push("battery export reserve is outside the configured SOC bounds");
   } else if (
     !battery && (
       snapshot.policy.battery_export_enabled ||
@@ -4712,8 +4706,9 @@ function workbenchSetup(
   publishedOnly = false,
 ) {
   const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
-  // Stored plan outlooks are already aligned to the remaining horizon.
-  const remaining = remainingSnapshot(snapshot, effectiveAt);
+  // Stored plan outlooks are already aligned to the remaining horizon. The
+  // workbench leaves out the same devices the plan did.
+  const remaining = remainingSnapshot(isolateMeasurements(snapshot), effectiveAt);
   const prepared = preparedSlots(remaining, priceArchive, resolvedPriceOutlook, effectiveAt);
   const slots = publishedOnly ? prepared.slots.filter(slot => slot.binding) : prepared.slots;
   if (!slots.length) throw new Error("No published prices are available for comparison");
@@ -4838,6 +4833,8 @@ export function generateOptimisationPlanWithBatteryProjection(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"], fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
 ): OptimisationResult {
+  // An impossible reading leaves out its own device before anything reads it.
+  snapshot = isolateMeasurements(snapshot);
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   if (snapshot.schema_version !== 9) {
     const { plan, battery_projection } = generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction);
@@ -4990,6 +4987,7 @@ function generatePlanBody(
     slot_minutes: 15,
     status,
     validation_errors: [...validationErrors, ...priorityErrors],
+    measurement_issues: snapshot.measurement_issues ?? [],
     sources: snapshot.sources,
     pv_calibration: snapshot.pv_calibration,
     price_outlook: {

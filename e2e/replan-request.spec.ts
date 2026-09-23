@@ -443,6 +443,24 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('button', {name: replanButton})).toHaveCount(0);
   });
 
+  test('a device left out for an impossible reading is named while the rest stays planned', async ({ page }) => {
+    const input = snapshot();
+    input.pool = { ...input.pool!, water_temperature_c: 500, source_entity_ids: { water_temperature: 'sensor.pool_water' } };
+    const isolated = generateOptimisationPlan(input, new Date(CAPTURED_AT));
+    expect(isolated.status).toBe('ready');
+    expect(isolated.plans.priority.dispatched_devices).toContain('battery');
+    replan.publishedPlan = { ...isolated, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const banner = page.getByTestId('measurement-issues');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText(/Poolen: vattentemperaturen visar 500 °C|Pool: the water temperature reads 500 °C/);
+    await expect(banner).toContainText('sensor.pool_water');
+    await expect(banner).toContainText(/Resten av hemmet planeras som vanligt|The rest of the home is planned as usual/);
+    replan.publishedPlan = undefined;
+    await page.reload();
+    await expect(banner).toHaveCount(0);
+  });
+
   test('pressing it records a request and says the house is answering', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=plan');
 

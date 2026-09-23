@@ -1,4 +1,5 @@
 import type { OptimisationPlan, OptimisationSnapshot } from './energy-optimisation.ts';
+import type { IsolatedDevice } from './measurement-isolation.ts';
 
 export interface ReplanRecommendation { key: string; reason: string; occurred_at: string }
 type PriceSnapshot = { slots: Array<Pick<OptimisationSnapshot['slots'][number], 'start' | 'import_price_sek_per_kwh' | 'export_price_sek_per_kwh'>> };
@@ -69,4 +70,25 @@ export function deviationRecommendations(plan: MonitoredPlan, actuals: Deviation
     }
   }
   return result;
+}
+
+const DEVICE_NAMES: Record<IsolatedDevice, string> = { battery: 'home battery', ev: 'car', pool: 'pool' };
+
+/** A device the accepted plan left out for its readings is readable again.
+ * Plans are kept between price releases, so without this the device would
+ * stay out of the schedule until the next release. `snapshot` must already
+ * be isolated, so a device that is still unusable is not reported. */
+export function recoveredMeasurementRecommendations(
+  plan: Pick<OptimisationPlan, 'measurement_issues'>,
+  snapshot: OptimisationSnapshot | null,
+): ReplanRecommendation[] {
+  if (!snapshot) return [];
+  const present: Record<IsolatedDevice, unknown> = { battery: snapshot.battery, ev: snapshot.ev_battery, pool: snapshot.pool };
+  const stillOut = new Set((snapshot.measurement_issues ?? []).map(issue => issue.device));
+  const excluded = new Set((plan.measurement_issues ?? []).map(issue => issue.device));
+  return [...excluded].filter(device => present[device] && !stillOut.has(device)).map(device => ({
+    key: `measurement_recovered_${device}`,
+    reason: `The ${DEVICE_NAMES[device]}'s readings are valid again, but the current plan leaves it out. Replan to include it.`,
+    occurred_at: snapshot.captured_at,
+  }));
 }

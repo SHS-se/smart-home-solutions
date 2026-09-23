@@ -1533,6 +1533,57 @@ Deno.test("a schedule that overfills a store is reported, not clamped", () => {
   );
 });
 
+Deno.test("a store measured past its bound is feasible until the schedule pushes it further", () => {
+  // A car at 83% against an 80% limit, a pool the weather warmed past its stop
+  // temperature and a pack below a raised cut-off are where those stores are,
+  // not rules a schedule broke. Before this, the car's own reading made every
+  // schedule infeasible, which silently disabled cost refinement and replan
+  // continuity for the whole house.
+  const slots = buildSlots([solarDay(8_000)]);
+  const car = { ...evStore(slots.length, 393, slots.length - 1), max_state: 378.8 };
+  const left = scoreDispatch(slots, [car], LIMITS, idle(slots.length, [car]));
+  assertEquals(left.infeasibilities, []);
+  // The trajectory keeps the measured range instead of moving it to the limit.
+  assertEquals(left.state.ev.at(-1), 393);
+
+  const charged = idle(slots.length, [car]);
+  charged.power_w.ev[40] = 11_000;
+  const over = scoreDispatch(slots, [car], LIMITS, charged);
+  assertEquals(over.infeasibilities.map((entry) => [entry.slot, entry.store_key]), [[41, "ev"]]);
+
+  // Warming on its own, from inside the band to beyond it, is not the
+  // schedule's doing; heating on top of it is.
+  const pool = {
+    ...poolStore(slots.length, 31.95),
+    max_state: 32,
+    drift: (state: number) => state + 0.02,
+  };
+  assertEquals(
+    scoreDispatch(slots, [pool], LIMITS, idle(slots.length, [pool])).infeasibilities,
+    [],
+  );
+  const heated = idle(slots.length, [pool]);
+  heated.power_w.pool[10] = 3_500;
+  assertEquals(
+    scoreDispatch(slots, [pool], LIMITS, heated).infeasibilities.map((entry) => entry.slot),
+    [11],
+  );
+
+  const pack = batteryStore(slots.length, 0.5, 1);
+  assertEquals(
+    scoreDispatch(slots, [pack], LIMITS, idle(slots.length, [pack])).infeasibilities,
+    [],
+  );
+  const drained = idle(slots.length, [pack]);
+  drained.discharge_w.battery[0] = 500;
+  assertEquals(
+    scoreDispatch(slots, [pack], LIMITS, drained).infeasibilities
+      .filter((entry) => entry.message.includes("outside"))
+      .map((entry) => [entry.slot, entry.store_key]),
+    [[1, "battery"]],
+  );
+});
+
 Deno.test("a schedule above the connection is reported", () => {
   const slots = buildSlots([solarDay(0)]);
   const ev = evStore(slots.length, 90, slots.length - 1);

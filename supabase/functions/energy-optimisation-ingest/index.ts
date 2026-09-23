@@ -1,4 +1,5 @@
-import { hasNewPublishedPrices, deviationRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
+import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
+import { isolateMeasurements } from '../_shared/measurement-isolation.ts';
 import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import type { BatteryProjection } from "../_shared/battery-dispatch-projection.ts";
@@ -1695,8 +1696,19 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         .select('start_ts,total_load_kwh').eq('home_id', auth.homeId)
         .gte('start_ts', new Date(Date.now() - 5 * SLOT_MS).toISOString()).order('start_ts');
       if (error) throw new Error(error.message);
-      for (const warning of deviationRecommendations(accepted.plan, (measured ?? []) as DeviationActual[], snapshot, new Date()))
-        await recommend(warning.key, warning.reason, warning.occurred_at);
+      // A reading that could not be real is named on the next plan, never
+      // compared against this one. A malformed issue list is refused by the
+      // planner itself if this snapshot is solved.
+      let observed: OptimisationSnapshot | null = null;
+      try {
+        observed = snapshot ? isolateMeasurements(snapshot) : null;
+      } catch (isolationError) {
+        console.warn("[ENERGY-OPTIMISATION] measurement issues unreadable", describeThrown(isolationError));
+      }
+      for (const warning of [
+        ...deviationRecommendations(accepted.plan, (measured ?? []) as DeviationActual[], observed, new Date()),
+        ...recoveredMeasurementRecommendations(accepted.plan, observed),
+      ]) await recommend(warning.key, warning.reason, warning.occurred_at);
     }
     // Exchanging telemetry is not permission to replace an accepted schedule.
     // A manual request may be picked up by either the listener or quarter poll.

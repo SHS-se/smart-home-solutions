@@ -444,6 +444,44 @@ function nextState(
   return store.drift(current + gained - spent, index);
 }
 
+/**
+ * The band a schedule may move a store within during one quarter.
+ *
+ * A bound limits what the schedule does to a store, not where the store may
+ * be. A car measured above its charge limit, a pool the weather warmed past its
+ * stop temperature and a pack below a cut-off raised after it discharged are
+ * realistic states: leaving them alone is feasible. The band therefore widens
+ * to wherever the store goes on its own, and only charge that raises it
+ * further above its ceiling, or discharge that lowers it further below its
+ * floor, falls outside.
+ */
+function transitionBand(
+  store: DispatchStore,
+  current: number,
+  index: number,
+): { floor: number; ceiling: number } {
+  const passive = store.drift(current, index);
+  return {
+    floor: Math.min(store.min_state ?? -Infinity, passive),
+    ceiling: Math.max(store.max_state ?? Infinity, passive),
+  };
+}
+
+/** The state a transition lands on once the schedule's band is applied. */
+function boundedState(
+  store: DispatchStore,
+  current: number,
+  next: number,
+  index: number,
+): number {
+  if (
+    next >= (store.min_state ?? -Infinity) &&
+    next <= (store.max_state ?? Infinity)
+  ) return next;
+  const { floor, ceiling } = transitionBand(store, current, index);
+  return Math.min(ceiling, Math.max(floor, next));
+}
+
 /** Project a store's state through the horizon under a power schedule. */
 function project(
   store: DispatchStore,
@@ -452,8 +490,6 @@ function project(
   from: number,
   state: number[],
 ): void {
-  const low = store.min_state ?? -Infinity;
-  const high = store.max_state ?? Infinity;
   for (let index = from; index < powerW.length; index += 1) {
     const next = nextState(
       store,
@@ -462,7 +498,7 @@ function project(
       dischargeW[index],
       index,
     );
-    state[index + 1] = Math.min(high, Math.max(low, next));
+    state[index + 1] = boundedState(store, state[index], next, index);
   }
 }
 
@@ -869,7 +905,9 @@ function scoreDispatchWithReuse(
     }
 
     // Project the trajectory unclamped so a schedule that overfills or drains a
-    // store is reported rather than quietly bounded into feasibility.
+    // store is reported rather than quietly bounded into feasibility. A state
+    // the store reaches on its own is not the schedule's doing (see
+    // `transitionBand`), so it is carried forward and never reported.
     const low = store.min_state ?? -Infinity;
     const high = store.max_state ?? Infinity;
     const state = new Array<number>(count + 1).fill(store.initial_state);
@@ -882,15 +920,18 @@ function scoreDispatchWithReuse(
         index,
       );
       if (next < low - 1e-6 || next > high + 1e-6) {
-        infeasibilities.push({
-          slot: index + 1,
-          store_key: store.key,
-          message: `${store.key} reaches ${
-            next.toFixed(2)
-          } ${store.curve.unit}, outside ${low}–${high}`,
-        });
+        const { floor, ceiling } = transitionBand(store, state[index], index);
+        if (next < floor - 1e-6 || next > ceiling + 1e-6) {
+          infeasibilities.push({
+            slot: index + 1,
+            store_key: store.key,
+            message: `${store.key} reaches ${
+              next.toFixed(2)
+            } ${store.curve.unit}, outside ${low}–${high}`,
+          });
+        }
       }
-      state[index + 1] = Math.min(high, Math.max(low, next));
+      state[index + 1] = boundedState(store, state[index], next, index);
     }
     stateByKey[store.key] = state;
 
