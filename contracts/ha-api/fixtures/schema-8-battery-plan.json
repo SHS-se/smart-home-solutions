@@ -399,6 +399,24 @@
         "expected_draw_kwh": 5.89473684210526
       }
     },
+    "resolved_value_stores": [
+      {
+        "key": "battery",
+        "curve": {
+          "unit": "kwh",
+          "points": [
+            {
+              "at": 17.176,
+              "sek_per_unit": 2.8
+            }
+          ]
+        },
+        "initial_state": 8.136,
+        "max_state": 17.176,
+        "units_per_kwh": 0.95,
+        "reference_sek_per_kwh": 0.1
+      }
+    ],
     "policy": {
       "battery_end_of_solar_target_soc": 0.8,
       "battery_target_is_hard": false,

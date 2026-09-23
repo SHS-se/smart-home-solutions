@@ -108,3 +108,18 @@ Deno.test("scope trimming keeps resolved prices and future empirical demand alig
   assertEquals(p.execution_plan!.plans.priority.slots[0].base_w, s.slots[1].base_load_forecast_w);
   assertEquals(p.operating_scope!.external_demands.pool_heater.recent_observation, null);
 });
+
+Deno.test("current curve evidence is frozen from the selected solver inputs", () => {
+  const s = mixedModeSnapshot();
+  const p = generateOptimisationPlan(s, new Date(s.captured_at));
+  assert(p.resolved_value_stores?.length);
+  assertEquals(p.resolved_value_stores, p.execution_plan!.resolved_value_stores);
+  const pool = p.resolved_value_stores.find(store => store.key === 'pool')!;
+  assert(pool.units_per_kwh > 0);
+  assert(pool.reference_sek_per_kwh > 0);
+  assertEquals(pool.initial_state, s.pool!.water_temperature_c);
+  const curve = structuredClone(pool.curve);
+  s.pool!.water_temperature_c += 1;
+  s.value_curves = {};
+  assertEquals(pool.curve, curve, 'editing inputs cannot mutate recorded current-plan evidence');
+});

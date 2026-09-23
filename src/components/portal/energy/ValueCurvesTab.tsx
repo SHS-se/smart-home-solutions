@@ -30,6 +30,7 @@ import {
 } from '../../../../supabase/functions/_shared/value-curves';
 import {
   marginalValue,
+  curveWithinReach,
   type UtilityCurve,
 } from '../../../../supabase/functions/_shared/store-value';
 import { WATER_KWH_PER_M3_K } from '../../../../supabase/functions/_shared/store-models';
@@ -37,14 +38,13 @@ import {
   curveFromPreference,
   DEFAULT_POOL_PREFERENCE,
   DEFAULT_URGENT_PRICE_MULTIPLIER,
-  horizonReferenceSekPerKwh,
   preferenceFromCurve,
   preferenceWithPriceMode,
   validatePreference,
   vehiclePreference,
   type StorePreference,
 } from '../../../../supabase/functions/_shared/value-preferences';
-import { balancedBatteryCurve, plannerValueStores, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+import { balancedBatteryCurve, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import {
   replanCompleted,
@@ -116,7 +116,6 @@ async function priceOnlyDraft(homeId: string): Promise<BatteryDraft> {
   return { curve, mode: 'price_only', edited: true, comparisonInput: data.input };
 }
 
-const snapshotTime = (snapshot: OptimisationSnapshot) => new Date(Date.parse(snapshot.captured_at) + 60_000);
 
 type Drafts = Partial<Record<ValueStoreKey, Draft>>;
 
@@ -178,19 +177,11 @@ const ValueCurvesTab: React.FC<Props> = ({
   const [sourcePlan, setSourcePlan] = useState<OptimisationPlan | null>(null);
   const [batteryLoadError, setBatteryLoadError] = useState<string | null>(null);
   const [curveError, setCurveError] = useState<string | null>(null);
-  const plannedStores = useMemo(() => {
-    if (!snapshot || !sourcePlan) return [];
-    return plannerValueStores(snapshot, sourcePlan.price_outlook);
-  }, [snapshot, sourcePlan]);
-  const scales = useMemo(() => {
-    const reference = sourcePlan
-      ? horizonReferenceSekPerKwh(sourcePlan.price_outlook.shadow_import_sek_per_kwh)
-      : 0;
-    return Object.fromEntries(plannedStores.map(store => [store.key, {
-      units_per_kwh: store.units_per_kwh(store.initial_state, 0),
-      reference_sek_per_kwh: reference,
-    }])) as Record<string, { units_per_kwh: number; reference_sek_per_kwh: number }>;
-  }, [plannedStores, sourcePlan]);
+  const plannedStores = useMemo(() => sourcePlan?.resolved_value_stores ?? [], [sourcePlan]);
+  const scales = useMemo(() => Object.fromEntries(plannedStores.map(store => [store.key, {
+    units_per_kwh: store.units_per_kwh,
+    reference_sek_per_kwh: store.reference_sek_per_kwh,
+  }])) as Record<string, { units_per_kwh: number; reference_sek_per_kwh: number }>, [plannedStores]);
 
   /**
    * What the editor opens on when the stored shape is not one of ours.
@@ -262,7 +253,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     const loadedSnapshot = source.snapshot as unknown as OptimisationSnapshot;
     const mode: BatteryMode = batteryRow?.generation_mode ?? (batteryRow ? 'custom' : 'balanced');
     let loadedBattery: BatteryDraft = { curve: mode === 'balanced'
-      ? balancedBatteryCurve(loadedSnapshot, snapshotTime(loadedSnapshot)) : validBattery, mode, edited: false };
+      ? balancedBatteryCurve(loadedSnapshot, new Date((source.plan as unknown as OptimisationPlan).issued_at)) : validBattery, mode, edited: false };
     if (mode === 'price_only' && !invalidBattery) {
       setGeneratingBattery(true);
       setBatteryGenerationError(null);
@@ -372,7 +363,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     setGeneratingBattery(true);
     try {
       const draft = mode === 'price_only' ? await priceOnlyDraft(homeId) : {
-        curve: balancedBatteryCurve(snapshot, snapshotTime(snapshot)), mode, edited: true,
+        curve: balancedBatteryCurve(snapshot, new Date(sourcePlan!.issued_at)), mode, edited: true,
       };
       if (!draft.curve) throw new Error(t('Batterimätvärden saknas.', 'Battery measurements are missing.'));
       setBatteryDraft(draft);
@@ -643,6 +634,10 @@ const ValueCurvesTab: React.FC<Props> = ({
         </Card>
       )}
 
+      {sourcePlan && !sourcePlan.resolved_value_stores && <Alert><AlertDescription>{t(
+        'Planen saknar sparade värdekurvor. Planera om för att visa vad planeraren använder.',
+        'This plan has no recorded curve evidence. Replan to display the curves the planner uses.',
+      )}</AlertDescription></Alert>}
       {EDITABLE.map(key => {
         const draft = drafts[key];
         if (!draft) return null;
@@ -650,22 +645,21 @@ const ValueCurvesTab: React.FC<Props> = ({
         if (!snapshot || !sourcePlan) return null;
         const conversion = scales[key]?.units_per_kwh ?? null;
         const canEdit = conversion !== null;
-        const baselineCurve = plannedStore?.curve ?? stored[key];
+        const baselineCurve = plannedStore?.curve;
         if (!baselineCurve) return null;
         const rejection = validatePreference(draft.preference);
-        const candidate = rejection || !canEdit ? null : draft.edited ? curveOf(key, draft.preference) : stored[key];
-        const editedStore = candidate ? plannerValueStores({
-          ...snapshot, value_curves: { ...snapshot.value_curves, [key]: candidate },
-        }, sourcePlan.price_outlook).find(store => store.key === key) : null;
+        const candidate = rejection || !canEdit ? null : draft.edited ? curveOf(key, draft.preference) : baselineCurve;
+        const editedStore = candidate && plannedStore ? { curve:
+          key === 'ev' && plannedStore.max_state !== undefined
+            ? curveWithinReach(candidate, plannedStore.max_state) : candidate } : null;
         const isPool = key === 'pool';
         const unitSuffix = isPool ? '°C' : 'km';
         const absolute = draft.preference.max_value_sek_per_kwh != null;
         const multiplier = draft.preference.urgent_price_multiplier ?? DEFAULT_URGENT_PRICE_MULTIPLIER;
-        const reference = horizonReferenceSekPerKwh(sourcePlan.price_outlook.shadow_import_sek_per_kwh);
+        const reference = plannedStore!.reference_sek_per_kwh;
         const state = plannedStore?.initial_state;
         const yUnit = canEdit ? 'SEK/kWh' : `SEK/${unitSuffix}`;
-        const seriesName = plannedStore?.active ? t('Aktuell plan', 'Current plan')
-          : plannedStore ? t('Ögonblicksbildens kurva', 'Snapshot curve') : t('Sparad kurva', 'Saved curve');
+        const seriesName = t('Aktuell plan', 'Current plan');
         const changed = editedStore && JSON.stringify(editedStore.curve.points) !== JSON.stringify(baselineCurve.points);
         const points = [...baselineCurve.points, ...(changed ? editedStore.curve.points : [])];
         const first = Math.min(...points.map(p => p.at));
@@ -678,19 +672,7 @@ const ValueCurvesTab: React.FC<Props> = ({
           sekPerKwh: marginalValue(baselineCurve, at) * (conversion ?? 1),
           ...(changed ? { editedSekPerKwh: marginalValue(editedStore.curve, at) * conversion! } : {}),
         }));
-        const inactiveMessage = !plannedStore ? t(
-          'Mätvärden saknas. Sparad kurva visas i ursprungsenheten; redigering kräver aktuella mätvärden.',
-          'Measurements are missing. Showing the saved curve in its original units; editing needs current measurements.',
-        ) : plannedStore.inactive_reason === 'ev_control_missing' ? t(
-          'Laddarstyrning saknas i ögonblicksbilden. Bilens värdekurva kan fortfarande redigeras.',
-          'Charger controls are missing from this snapshot. Vehicle preferences are still editable.',
-        ) : plannedStore.inactive_reason === 'ev_capability_disabled' ? t(
-          'Billaddning är inte aktiverad i den här planen. Bilens värdekurva kan fortfarande redigeras.',
-          'EV charging is not enabled in this plan. Vehicle preferences are still editable.',
-        ) : plannedStore.inactive_reason === 'snapshot_not_dispatchable' ? t(
-          'Ögonblicksbilden saknar underlag för schemaläggning. Bilens värdekurva kan fortfarande redigeras.',
-          'This snapshot cannot support store dispatch. Vehicle preferences are still editable.',
-        ) : null;
+
 
         const fields: Array<{ field: keyof StorePreference; label: [string, string]; hint: [string, string] }> = [
           {
@@ -715,7 +697,7 @@ const ValueCurvesTab: React.FC<Props> = ({
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 px-4 py-3">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-base">{isPool ? t('Pool', 'Pool') : t('Elbil', 'Vehicle')}</CardTitle>
-                <Badge className="hidden sm:inline-flex" variant="outline">{plannedStore?.active ? t('I planen', 'In plan') : t('Inte schemalagd', 'Not dispatched')}</Badge>
+                <Badge className="hidden sm:inline-flex" variant="outline">{t('I planen', 'In plan')}</Badge>
               </div>
               <div className="flex items-center gap-1">
                 {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || replanning || waitingForReplan || generatingBattery || saving === key}>
@@ -728,7 +710,6 @@ const ValueCurvesTab: React.FC<Props> = ({
               </div>
             </CardHeader>
             <CardContent className="space-y-2 px-4 pb-3">
-              {inactiveMessage && <p className="text-xs text-muted-foreground" role="status">{inactiveMessage}</p>}
               <fieldset disabled={!canEdit} className="grid grid-cols-3 gap-x-3 gap-y-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(180px,1.3fr)_minmax(100px,0.7fr)] disabled:opacity-60">
                 {fields.map(({ field, label, hint }) => (
                   <label key={field} className="min-w-0 space-y-1" title={t(hint[0], hint[1])}>

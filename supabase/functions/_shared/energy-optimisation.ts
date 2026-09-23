@@ -678,10 +678,15 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  /** Exact solver inputs for current-plan charts; never reconstructed in a UI. */
+  resolved_value_stores?: Array<{
+    key: string; curve: UtilityCurve; initial_state: number; max_state?: number;
+    units_per_kwh: number; reference_sek_per_kwh: number;
+  }>;
   battery_execution?: BatteryExecutionContract;
   /** Explicit default planning intent: all household consumption is eligible. */
   battery_supply_scope?: {kind:"whole_house"} | {kind:"none"} | {kind:"selected";include_base:boolean;planned_device_keys:string[]};
-  /** Required by schema 9. Top-level scenarios remain hypothetical. */
+  /** Required by schema 9. Top-level priority is the authoritative execution schedule. */
   operating_scope?: OperatingScope;
   execution_plan?: OptimisationPlan;
   /** Daily curve evidence for the conditional battery verification branch. */
@@ -4995,6 +5000,12 @@ function generatePlanBody(
       shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh,
     },
     battery_value_curve: derivedBatteryValueCurve,
+    resolved_value_stores: (priority.bundle?.stores ?? []).map(store => ({
+      key: store.key, curve: store.curve, initial_state: store.initial_state,
+      ...(store.max_state === undefined ? {} : { max_state: store.max_state }),
+      units_per_kwh: store.units_per_kwh(store.initial_state, 0),
+      reference_sek_per_kwh: horizonReferenceSekPerKwh(slots.map(slot => slot.shadow_import_sek_per_kwh)),
+    })),
     policy: snapshot.policy,
     battery_supply_scope: {kind:"whole_house"},
       battery: snapshot.battery,

@@ -161,6 +161,32 @@
       ]
     },
     "battery_value_curve": null,
+    "resolved_value_stores": [
+      {
+        "key": "ev",
+        "curve": {
+          "unit": "km",
+          "points": [
+            {
+              "at": 60,
+              "sek_per_unit": 2
+            },
+            {
+              "at": 120,
+              "sek_per_unit": 0.45
+            },
+            {
+              "at": 375,
+              "sek_per_unit": 0.3316071428571429
+            }
+          ]
+        },
+        "initial_state": 257.8125,
+        "max_state": 375,
+        "units_per_kwh": 5.75,
+        "reference_sek_per_kwh": 1.5
+      }
+    ],
     "policy": {
       "battery_end_of_solar_target_soc": 0,
       "battery_target_is_hard": false,
