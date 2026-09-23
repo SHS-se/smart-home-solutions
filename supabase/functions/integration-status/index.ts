@@ -110,7 +110,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
     const { data: current, error: currentError } = await supabase
       .from("energy_optimisation_current")
       .select(
-        "generation_request_id, replan_request_id, replan_completed_request_id, replan_error",
+        "generation_request_id, replan_request_id, replan_completed_request_id, replan_error, replan_recommendations",
       )
       .eq("home_id", auth.homeId)
       .maybeSingle();
@@ -159,6 +159,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       minimum_plan_schema_version: HA_MINIMUM_PLAN_SCHEMA_VERSION,
       latest_plan_request_id: current?.generation_request_id ?? null,
       pending_replan_request_id: pending,
+      replan_recommendations: current?.replan_recommendations ?? [],
       subscription_active: auth.subscriptionActive,
       subscription_expires_at: auth.subscriptionExpiresAt,
       customer_name: auth.customerName,

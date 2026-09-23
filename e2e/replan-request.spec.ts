@@ -47,6 +47,7 @@ interface ReplanColumns {
   replan_requested_at: string | null;
   replan_completed_request_id: string | null;
   replan_error: string | null;
+  replan_recommendations?: Array<{key: string; reason: string; occurred_at: string}>;
 }
 
 const idle: ReplanColumns = {
@@ -218,15 +219,13 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=economics');
     const identity = page.locator(`code[title="${PLAN.plan_id}"]`).first();
     await expect(identity).toBeVisible();
-    const request = page.getByRole('button', { name: replanButton });
-    await expect(request).toBeEnabled();
+    await expect(page.getByRole('button', { name: replanButton })).toHaveCount(0);
     replan.refreshing = true;
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     const banner = page.getByTestId('plan-refresh-progress');
     await expect(banner).toBeVisible();
     await expect(banner.locator('.animate-spin')).toBeVisible();
     await expect(identity).toBeVisible();
-    await expect(request).toBeDisabled();
     for (const button of await page.getByRole('button', { name: /^(Spara|Save)$/ }).all()) {
       await expect(button).toBeDisabled();
     }
@@ -236,7 +235,8 @@ test.describe('requesting a replan', () => {
     replan.reportedPlanId = REQUEST_ID;
     await expect(banner).toHaveCount(0);
     await expect(page.locator(`code[title="${REQUEST_ID}"]`).first()).toBeVisible();
-    await expect(request).toBeEnabled();
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
   });
 
   test('failed background reads retain the chart and display readable persistent errors', async ({ page }) => {
@@ -290,8 +290,11 @@ test.describe('requesting a replan', () => {
     await expect(blue).toHaveAttribute('data-values', before!);
     await card.screenshot({path: test.info().outputPath('battery-curve.png')});
     await card.getByRole('spinbutton', { name: /Punktens värde|Point value/ }).fill('20');
-    await page.getByRole('button', { name: replanButton }).click();
-    await expect(page.getByText(/Omplanering beställd|Replan requested/)).toBeVisible();
+    const planPage = await context.newPage();
+    await planPage.goto('/portal/energy-modeling?tab=plan');
+    await planPage.getByRole('button', { name: replanButton }).click();
+    await expect(planPage.getByText(/Omplanering beställd|Replan requested/)).toBeVisible();
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
       battery_value_curve: { ...PLAN.battery_value_curve!, source: 'customer', curve: { unit: 'kwh', points } } };
     replan.row.replan_completed_request_id = REQUEST_ID;
@@ -299,7 +302,7 @@ test.describe('requesting a replan', () => {
     // A plan refresh must preserve an unsaved edit made after Save.
     await expect(card.getByRole('spinbutton', { name: /Punktens värde|Point value/ })).toHaveValue('20');
     await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeEnabled();
-    await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+    await expect(page.getByRole('button', { name: replanButton })).toHaveCount(0);
   });
 
   test('battery generators preserve authoritative points through pending, preview, save and reload', async ({ context, page }) => {
@@ -426,8 +429,22 @@ test.describe('requesting a replan', () => {
     await expect(page.getByText(/Batterikurvan kan inte användas|The battery curve cannot be used/)).toHaveCount(0);
   });
 
-  test('pressing it records a request and says the house is answering', async ({ page }) => {
+  test('recommendations are shared, expandable, and clear when the published row clears them', async ({ page }) => {
+    replan.row = {...replan.row, replan_recommendations: [{key: 'household_energy', reason: 'Rolling four-quarter difference exceeded 6 kWh.', occurred_at: CAPTURED_AT}]};
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const banner = page.getByTestId('replan-recommendations');
+    await expect(banner).toBeVisible();
+    await banner.locator('summary').click();
+    await expect(banner.getByText(/Rolling four-quarter/)).toBeVisible();
+    replan.row = {...replan.row, replan_recommendations: []};
+    await page.reload();
+    await expect(banner).toHaveCount(0);
     await page.goto('/portal/energy-modeling?tab=economics');
+    await expect(page.getByRole('button', {name: replanButton})).toHaveCount(0);
+  });
+
+  test('pressing it records a request and says the house is answering', async ({ page }) => {
+    await page.goto('/portal/energy-modeling?tab=plan');
 
     const button = page.getByRole('button', { name: replanButton });
     await expect(button).toBeEnabled();
@@ -454,7 +471,7 @@ test.describe('requesting a replan', () => {
       replan_completed_request_id: null,
       replan_error: null,
     };
-    await page.goto('/portal/energy-modeling?tab=economics');
+    await page.goto('/portal/energy-modeling?tab=plan');
 
     await expect(
       page.getByText(/Omplanering beställd|Replan requested/),
@@ -469,7 +486,7 @@ test.describe('requesting a replan', () => {
       replan_completed_request_id: null,
       replan_error: 'kitchen: no trained thermal model is available',
     };
-    await page.goto('/portal/energy-modeling?tab=economics');
+    await page.goto('/portal/energy-modeling?tab=plan');
 
     await expect(
       page.getByText(/kitchen: no trained thermal model is available/),
@@ -488,7 +505,7 @@ test.describe('requesting a replan', () => {
       replan_completed_request_id: REQUEST_ID,
       replan_error: null,
     };
-    await page.goto('/portal/energy-modeling?tab=economics');
+    await page.goto('/portal/energy-modeling?tab=plan');
 
     await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
     await expect(

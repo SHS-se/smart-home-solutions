@@ -1,3 +1,4 @@
+import { hasNewPublishedPrices, deviationRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import type { BatteryProjection } from "../_shared/battery-dispatch-projection.ts";
@@ -981,6 +982,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     let equipment: { battery: boolean } | undefined;
     let integrationVersion: string | null = null;
     let portalReplanId: string | null = null;
+    let replanRecommendation: string | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
       if (declaredLength > MAX_REQUEST_BYTES) {
@@ -991,6 +993,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         return json({ error: "request_too_large" }, 413);
       }
       const body = JSON.parse(rawBody);
+      if (body?.replan_recommendation !== undefined) {
+        if (typeof body.replan_recommendation !== 'string' || body.replan_recommendation.length > 1000) throw new Error('replan_recommendation');
+        replanRecommendation = body.replan_recommendation;
+      }
       if (!body || typeof body !== "object") throw new Error("body");
       // The portal request this push is answering, if it is answering one.
       // Only meaningful alongside a snapshot: an actuals-only exchange produces
@@ -1675,6 +1681,32 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       ? new Date(Math.max(...thermalStarts) + SLOT_MS).toISOString()
       : null;
 
+    const { data: accepted, error: acceptedError } = await supabase.rpc('get_energy_replan_monitor', { p_home_id: auth.homeId });
+    if (acceptedError) throw new Error(acceptedError.message);
+    const recommend = async (key: string, reason: string, at = new Date().toISOString()) => {
+      const { error } = await supabase.rpc('recommend_energy_replan', {
+        p_home_id: auth.homeId, p_key: key, p_reason: reason, p_occurred_at: at,
+      });
+      if (error) throw new Error(error.message);
+    };
+    if (replanRecommendation) await recommend('integration_change', replanRecommendation);
+    if (accepted?.plan?.status === 'ready') {
+      const { data: measured, error } = await supabase.from('energy_optimisation_actual_slots')
+        .select('start_ts,total_load_kwh').eq('home_id', auth.homeId)
+        .gte('start_ts', new Date(Date.now() - 5 * SLOT_MS).toISOString()).order('start_ts');
+      if (error) throw new Error(error.message);
+      for (const warning of deviationRecommendations(accepted.plan, (measured ?? []) as DeviationActual[], snapshot, new Date()))
+        await recommend(warning.key, warning.reason, warning.occurred_at);
+    }
+    // Exchanging telemetry is not permission to replace an accepted schedule.
+    // A manual request may be picked up by either the listener or quarter poll.
+    const pendingManual = accepted?.replan_request_id && !accepted.replan_error &&
+      accepted.replan_request_id !== accepted.replan_completed_request_id && snapshot &&
+      Date.parse(snapshot.captured_at) >= Date.parse(accepted.replan_requested_at);
+    if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
+      snapshot = null;
+    }
+
     let batteryProjection: BatteryProjection | null = null;
     let generated:
       | (ReturnType<typeof generateOptimisationPlan> & {
@@ -2036,7 +2068,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       console.error("[ENERGY-OPTIMISATION] retention prune failed", pruneError);
     }
 
+    const { data: recommendationState, error: recommendationError } = await supabase.from('energy_optimisation_current')
+      .select('replan_recommendations').eq('home_id', auth.homeId).maybeSingle();
+    if (recommendationError) throw new Error(recommendationError.message);
     return json({
+      replan_recommendations: recommendationState?.replan_recommendations ?? [],
       actual_slots_accepted: actualRows.length,
       actuals_accepted_until: actualRows.length > 0
         ? actualRows[actualRows.length - 1].start_ts

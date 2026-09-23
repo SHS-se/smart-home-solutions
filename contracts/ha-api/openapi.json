@@ -929,6 +929,29 @@
           "server_time": {
             "type": "string",
             "format": "date-time"
+          },
+          "replan_recommendations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "reason",
+                "occurred_at"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "occurred_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
           }
         },
         "additionalProperties": false
@@ -1250,6 +1273,11 @@
                 "$ref": "#/components/schemas/SnapshotV9"
               }
             ]
+          },
+          "replan_recommendation": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "An integration event recommending a manual replan. This never authorizes a new solve."
           }
         },
         "dependentRequired": {
@@ -2202,6 +2230,29 @@
                     ],
                     "format": "date-time"
                   }
+                }
+              }
+            }
+          },
+          "replan_recommendations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "reason",
+                "occurred_at"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "occurred_at": {
+                  "type": "string",
+                  "format": "date-time"
                 }
               }
             }

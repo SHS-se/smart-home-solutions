@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Loader2, RefreshCw, Save, Sparkles, TrendingDown } from 'lucide-react';
+import { Loader2, Save, Sparkles, TrendingDown } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,7 +47,6 @@ import {
 import { balancedBatteryCurve, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import {
-  replanCompleted,
   replanState,
   type ReplanRow,
 } from '@/lib/energy-shift/replan-request';
@@ -76,7 +75,6 @@ interface Props {
    */
   replan?: ReplanRow | null;
   /** Re-read the row, so a queued request appears without waiting for a poll. */
-  onReplanChanged?: () => void;
   refreshing?: boolean;
 }
 
@@ -155,7 +153,6 @@ const ValueCurvesTab: React.FC<Props> = ({
   vehicleChargeLimitSoc,
   batteryValueCurve,
   replan,
-  onReplanChanged,
   refreshing = false,
 }) => {
   const { t } = useLanguage();
@@ -168,8 +165,6 @@ const ValueCurvesTab: React.FC<Props> = ({
   const [stored, setStored] = useState<Partial<Record<ValueStoreKey, UtilityCurve>>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
-  const [replanning, setReplanning] = useState(false);
-  const [awaitedReplanId, setAwaitedReplanId] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewComparison | string | null>(null);
   const [snapshot, setSnapshot] = useState<OptimisationSnapshot | null>(null);
@@ -307,7 +302,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const save = async (key: DefaultValueStoreKey) => {
-    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
+    if (refreshing || waitingForReplan || generatingBattery) return;
     const draft = drafts[key];
     if (!homeId || !customerId || !draft) return;
     const rejection = validatePreference(draft.preference);
@@ -340,7 +335,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const reset = async (key: ValueStoreKey) => {
-    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
+    if (refreshing || waitingForReplan || generatingBattery) return;
     if (!homeId) return;
     setSaving(key);
     const { error } = await supabase
@@ -375,7 +370,7 @@ const ValueCurvesTab: React.FC<Props> = ({
   };
 
   const saveBattery = async () => {
-    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
+    if (refreshing || waitingForReplan || generatingBattery) return;
     if (!homeId || !customerId || !batteryDraft.curve || validateBatteryCurve(batteryDraft.curve)) return;
     const submitted = batteryDraft;
     setSaving('battery');
@@ -421,75 +416,7 @@ const ValueCurvesTab: React.FC<Props> = ({
     setPreviewing(false);
   };
 
-  /**
-   * Ask the house for a plan built on measurements taken from now.
-   *
-   * This used to re-solve the snapshot stored beside the plan. That snapshot is
-   * only replaced when Home Assistant pushes one, so for most of every quarter
-   * it was already older than the planner's fifteen-minute freshness limit and
-   * the button answered `captured_at must describe a fresh snapshot`. Nothing
-   * was wrong with the request — it simply could not be answered from stored
-   * state.
-   *
-   * So the request is recorded and the house answers it on the ordinary ingest
-   * path, which keeps one planning route rather than two. What comes back here
-   * is therefore an acknowledgement; the plan itself arrives with the next
-   * push, and the panel below says so until it does.
-   */
-  const requestReplan = async () => {
-    if (refreshing || replanning || waitingForReplan || generatingBattery) return;
-    if (!homeId) return;
-    setReplanning(true);
-    const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
-      body: { home_id: homeId },
-    });
-    setReplanning(false);
-    if (error) {
-      // supabase-js reports only "non-2xx status code" for a failed call, so
-      // the function's own explanation has to be read off the response body.
-      let detail = error.message;
-      const response = (error as { context?: Response }).context;
-      if (response && typeof response.json === 'function') {
-        try {
-          const body = await response.json();
-          detail = body?.detail ?? body?.error ?? detail;
-        } catch {
-          // Keep the generic message rather than replacing it with a parse error.
-        }
-      }
-      toast({ title: t('Kunde inte planera om', 'Could not replan'), description: detail, variant: 'destructive' });
-      return;
-    }
-    // Held only to tell this browser's own request from one that was already
-    // outstanding when the page loaded; the wait itself is read from the row.
-    setAwaitedReplanId(
-      typeof data?.replan_request_id === 'string' ? data.replan_request_id : null,
-    );
-    onReplanChanged?.();
-  };
-
-  // The answer arrives through the row on the workspace's own refresh, not
-  // through the call that asked for it, so the confirmation is raised here.
-  useEffect(() => {
-    if (!replanCompleted(replan, awaitedReplanId)) return;
-    setAwaitedReplanId(null);
-    // The preview re-solves a cached copy of the snapshot. That copy is now the
-    // older measurement, and comparing against it would answer a question about
-    // a house that has moved on.
-    void load();
-    toast({
-      title: t('Planen är omräknad', 'Plan rebuilt'),
-      description: t(
-        'Hemmet skickade färska mätvärden och planerades om med dina värden.',
-        'The house sent fresh measurements and was replanned with your numbers.',
-      ),
-    });
-  }, [awaitedReplanId, replan, t, toast, load]);
-
-  // Recomputed on every render rather than memoised: the wait is measured
-  // against the wall clock, and the workspace re-renders on its own refresh.
-  const replanProgress = replanState(replan);
-  const waitingForReplan = replanProgress.status === 'waiting';
+  const waitingForReplan = replanState(replan).status === 'waiting';
 
   if (!homeId) {
     return <p className="text-sm text-muted-foreground">{t('Välj ett hem.', 'Select a home.')}</p>;
@@ -534,56 +461,7 @@ const ValueCurvesTab: React.FC<Props> = ({
           {previewing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
           {t('Vad skulle ändras?', 'What would change?')}
         </Button>
-        <Button
-          size="sm"
-          onClick={() => void requestReplan()}
-          disabled={refreshing || replanning || waitingForReplan || generatingBattery}
-          variant="secondary"
-        >
-          {replanning || waitingForReplan
-            ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            : <RefreshCw className="w-4 h-4 mr-2" />}
-          {t('Planera om nu', 'Replan now')}
-        </Button>
       </div>
-
-      {replanProgress.status === 'waiting' && (
-        <Alert>
-          <RefreshCw className="w-4 h-4" />
-          <AlertTitle>{t('Omplanering beställd', 'Replan requested')}</AlertTitle>
-          <AlertDescription className="text-sm">
-            {t(
-              'Hemmet skickar färska mätvärden och planeras om med dina värden. Planen uppdaterar sig själv här när den är klar.',
-              'The house is sending fresh measurements and will be replanned with your numbers. The plan updates itself here when it is done.',
-            )}
-            {replanProgress.overdue && (
-              <>
-                {' '}
-                <span className="font-medium">
-                  {t(
-                    `Det har gått ${Math.round(replanProgress.waitedMs / 60_000)} minuter utan svar — kontrollera att Home Assistant är igång och uppkopplat.`,
-                    `${Math.round(replanProgress.waitedMs / 60_000)} minutes have passed without an answer — check that Home Assistant is running and connected.`,
-                  )}
-                </span>
-              </>
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {replanProgress.status === 'failed' && (
-        <Alert variant="destructive">
-          <AlertTitle>{t('Hemmet kunde inte planera om', 'The house could not replan')}</AlertTitle>
-          <AlertDescription className="text-sm">
-            {replanProgress.detail}
-            {' '}
-            {t(
-              'Hemmet försöker igen av sig självt vid nästa kvart; du kan också begära en ny omplanering här.',
-              'The house tries again by itself on the next quarter; you can also request another replan here.',
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
 
       {preview !== null && (
         <PreviewPanel preview={preview} dirty={dirty} />
@@ -609,7 +487,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               <p className="text-sm">{t('Användbar kapacitet', 'Usable capacity')}: {batteryValueCurve.usable_capacity_kwh.toFixed(3)} kWh</p>
               <div className="flex flex-wrap gap-2">
                 <Button variant="ghost" disabled={!batteryDraft.edited || generatingBattery || saving === 'battery'} onClick={() => { setBatteryDraft(savedBatteryDraft); setBatteryGenerationError(null); setPreview(null); }}>{t('Ångra ändringar', 'Discard edits')}</Button>
-                <Button disabled={refreshing || replanning || waitingForReplan || generatingBattery || !batteryDraft.edited || saving === 'battery' || !batteryDraft.curve || !!validateBatteryCurve(batteryDraft.curve)} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
+                <Button disabled={refreshing || waitingForReplan || generatingBattery || !batteryDraft.edited || saving === 'battery' || !batteryDraft.curve || !!validateBatteryCurve(batteryDraft.curve)} onClick={() => void saveBattery()}><Save className="mr-2 h-4 w-4" />{t('Spara', 'Save')}</Button>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -700,10 +578,10 @@ const ValueCurvesTab: React.FC<Props> = ({
                 <Badge className="hidden sm:inline-flex" variant="outline">{t('I planen', 'In plan')}</Badge>
               </div>
               <div className="flex items-center gap-1">
-                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || replanning || waitingForReplan || generatingBattery || saving === key}>
+                {draft.source === 'customer' && <Button size="sm" variant="ghost" onClick={() => void reset(key)} disabled={refreshing || waitingForReplan || generatingBattery || saving === key}>
                   {t('Återställ', 'Reset')}
                 </Button>}
-                <Button size="sm" onClick={() => void save(key)} disabled={refreshing || replanning || waitingForReplan || generatingBattery || !canEdit || saving === key || rejection !== null || !draft.edited}>
+                <Button size="sm" onClick={() => void save(key)} disabled={refreshing || waitingForReplan || generatingBattery || !canEdit || saving === key || rejection !== null || !draft.edited}>
                   {saving === key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                   {t('Spara', 'Save')}
                 </Button>

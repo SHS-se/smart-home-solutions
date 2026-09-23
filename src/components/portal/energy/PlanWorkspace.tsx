@@ -1,3 +1,4 @@
+import ReplanControls from './ReplanControls';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
@@ -406,7 +407,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           now={clock}
           dayWindow={dayWindow}
           onDayWindowChange={setDayWindow}
-          onReplanChanged={() => void load(true)}
         />
       </div>
     );
@@ -453,6 +453,17 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           <AlertDescription>{t('Den tidigare planen visas under tiden. Du kan spara igen när uppdateringen är klar.', 'The previous plan remains visible. Saving is available when the refresh finishes.')}</AlertDescription>
         </Alert>
       )}
+      {view === 'live' && (current?.replan_recommendations?.length ?? 0) > 0 && <Alert data-testid="replan-recommendations">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>{t('Omplanering rekommenderas', 'Manual replan recommended')}</AlertTitle>
+        <AlertDescription>
+          {t('Den nuvarande planen ligger kvar. Använd Planera om nu på planfliken för att ändra den.', 'The current schedule is retained. Use Replan now on the Plan tab to change it.')}
+          <details className="mt-2"><summary className="cursor-pointer">{t('Orsaker och tidpunkter', 'Reasons and times')}</summary>
+            <ul>{current?.replan_recommendations!.map(reason => <li key={reason.key}>{reason.reason} · {formatHomeStamp(reason.occurred_at, homeTimeZone)}</li>)}</ul>
+          </details>
+        </AlertDescription>
+      </Alert>}
+      {view === 'live' && section === 'plan' && <ReplanControls homeId={homeId} replan={current} refreshing={refreshing} onReplanChanged={() => void load(true)} />}
       {content}
       {view === 'live' && (
         <details className="text-xs text-muted-foreground">
@@ -495,7 +506,6 @@ const PlanView: React.FC<{
   dayWindow: DayWindow;
   onDayWindowChange: (value: DayWindow) => void;
   /** Re-read the row, so a queued replan shows without waiting for a poll. */
-  onReplanChanged?: () => void;
 }> = ({
   section,
   customerId,
@@ -517,7 +527,6 @@ const PlanView: React.FC<{
   deviceActuals,
   prices,
   now,
-  onReplanChanged,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -960,7 +969,6 @@ const PlanView: React.FC<{
               batteryValueCurve={plan.battery_value_curve}
               replan={current}
               refreshing={refreshing}
-              onReplanChanged={onReplanChanged}
             />
           )}
         </CardContent>

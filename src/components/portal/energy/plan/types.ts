@@ -9,6 +9,7 @@ import type { PortalOptimisationPlan } from '@/lib/energy-shift/contracts';
 import type { ThermalObservationSummary } from '@/lib/energy-shift/thermal-readiness';
 
 export interface CurrentRow {
+  replan_recommendations?: Array<{ key: string; reason: string; occurred_at: string }>;
   plan: PortalOptimisationPlan;
   home_id: string | null;
   captured_at: string;
