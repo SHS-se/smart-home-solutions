@@ -7,7 +7,7 @@ import {
 import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
-import { projectExecutionSnapshot, validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
+import { validateOperatingScope, type OperatingScope } from "./operating-scope.ts";
 /**
  * Pure 15-minute energy planner shared by the ingestion edge function and its
  * contract tests. It deliberately has no database or browser dependencies.
@@ -128,7 +128,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * prices executable setpoints and records exact quarter evidence.
  */
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v41";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v42";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -4840,41 +4840,22 @@ export function generateOptimisationPlanWithBatteryProjection(
   }
   validateOperatingScope(snapshot);
   if (fixed) throw new Error("Rescind the fixed plan before generating an operating-scope plan");
-  const hypotheticalInput = { ...snapshot, schema_version: 8 as const };
-  delete hypotheticalInput.operating_scope;
-  const hypothetical = generatePlanBody(hypotheticalInput, now, priceArchive, resolvedPriceOutlook, null, solveAuction);
+  // One selected schedule owns both charts, device requests and the battery
+  // contract. Verification changes the writer, never the intended household.
+  const planningInput = { ...snapshot, schema_version: 8 as const };
+  delete planningInput.operating_scope;
   const operatingScope = remainingSnapshot(snapshot, Math.max(now.getTime(), isoMs(snapshot.captured_at))).operating_scope;
-  const execution = generatePlanBody(projectExecutionSnapshot(snapshot), now, priceArchive, resolvedPriceOutlook, null, solveAuction, operatingScope);
-  let batteryProjection = execution.battery_projection;
-  let batteryExecution = execution;
-  if (snapshot.operating_scope?.modes.$battery === "control_verification" && snapshot.battery && execution.plan.status === "ready") {
-    // A distinct counterfactual: freeze every other device to the physical
-    // execution schedule. Re-running the joint hypothetical schedule would
-    // silently change the household whose battery economics we are evaluating.
-    const conditional: OptimisationSnapshot = {
-      ...execution.snapshot,
-      battery: snapshot.battery, policy: snapshot.policy,
-      capabilities: { pv: snapshot.capabilities.pv, battery: true, pool: false, ev: false, boiler: false },
-      sources: { ...execution.snapshot.sources, battery: snapshot.sources.battery },
-      pool: null, ev_battery: null, services: [], device_models: [], thermal_zones: [], replan_reference: null,
-      slots: execution.snapshot.slots.map((slot, i) => ({ ...slot,
-        base_load_forecast_w: execution.rows[i].house_w })),
-    };
-    batteryExecution = generatePlanBody(conditional, now, priceArchive, execution.plan.price_outlook,
-      null, solveAuction, operatingScope, "battery_verification", execution.rows);
-    batteryProjection = batteryExecution.battery_projection;
-  }
+  const execution = generatePlanBody(planningInput, now, priceArchive, resolvedPriceOutlook, null, solveAuction, operatingScope);
   const feedback = snapshot.battery_execution_feedback;
   const mode = snapshot.operating_scope?.modes.$battery;
-  const contract = feedback && snapshot.battery && batteryExecution.plan.status === "ready" &&
+  const contract = feedback && snapshot.battery && execution.plan.status === "ready" &&
       (mode === "controlling" || mode === "control_verification")
-    ? buildBatteryExecutionContract({ plan: batteryExecution.plan, rows: batteryExecution.rows,
-        pv_w: batteryExecution.pv_w, mode, scope_revision: feedback.scope_revision!, feedback })
+    ? buildBatteryExecutionContract({ plan: execution.plan, rows: execution.rows,
+        pv_w: execution.pv_w, mode, scope_revision: feedback.scope_revision!, feedback })
     : undefined;
-  return { battery_projection: batteryProjection, plan: { ...hypothetical.plan, schema_version: 9,
+  return { battery_projection: execution.battery_projection, plan: { ...execution.plan, schema_version: 9,
     ...(contract ? { battery_execution: contract } : {}),
     operating_scope: operatingScope,
-    ...(batteryExecution !== execution ? { battery_verification_value_curve: batteryExecution.plan.battery_value_curve } : {}),
     execution_plan: execution.plan } };
 }
 

@@ -18,16 +18,14 @@ Deno.test("mixed mode conserves fixed demand and conditions only the current qua
   assertEquals(projected.replan_reference, null);
 });
 
-Deno.test("live branch has no hypothetical pool commands while preview remains available", () => {
+Deno.test("both charts and execution publish one authoritative device schedule", () => {
   const s = mixedModeSnapshot();
   const p = generateOptimisationPlan(s, new Date(s.captured_at));
   assertEquals(p.schema_version, 9);
   assert(p.execution_plan);
-  assertEquals(p.execution_plan.capabilities.pool, false);
-  assertEquals(p.device_models.length, 2);
-  assertEquals(p.execution_plan.device_models.length, 0);
-  assert(p.execution_plan.plans.priority.slots.every(slot => slot.pool_w === 0 && Object.keys(slot.device_commands).length === 0));
-  assertEquals(p.execution_plan.plans.priority.slots[0].load_w, 2800);
+  assertEquals(p.plans, p.execution_plan.plans);
+  assertEquals(p.device_models, p.execution_plan.device_models);
+  assert(p.plans.priority.slots.some(slot => slot.pool_w > 0));
 });
 
 Deno.test("all controlling preserves the unscoped electrical plan", () => {
@@ -107,6 +105,6 @@ Deno.test("scope trimming keeps resolved prices and future empirical demand alig
   s.sources.battery!.issued_at = s.captured_at;
   const p = generateOptimisationPlan(s, now, [], initial.price_outlook);
   assertEquals(p.price_outlook.shadow_import_sek_per_kwh, initial.price_outlook.shadow_import_sek_per_kwh.slice(1));
-  assertEquals(p.execution_plan!.plans.priority.slots[0].base_w, s.slots[1].base_load_forecast_w + 1260);
+  assertEquals(p.execution_plan!.plans.priority.slots[0].base_w, s.slots[1].base_load_forecast_w);
   assertEquals(p.operating_scope!.external_demands.pool_heater.recent_observation, null);
 });

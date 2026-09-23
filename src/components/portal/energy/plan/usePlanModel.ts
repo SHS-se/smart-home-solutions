@@ -36,7 +36,8 @@ export function usePlanModel(
   const homeTimeZone = useHomeTimeZone();
   const { plan } = current;
   const [planView, setPlanView] = useState<PlanViewMode>('planned');
-  // Home Assistant executes the priority scenario. Baseline is exposed only
+  // The producer publishes the actual execution schedule as priority in both UIs.
+  // Baseline is exposed only
   // as a counterfactual chart and cannot change local control.
   const executed = plan.plans.priority;
   const active = planView === 'planned' ? plan.plans.priority : plan.plans.baseline;

@@ -94,12 +94,13 @@ Deno.test("production contract binds the physical branch and acknowledges captur
   assertEquals(battery_projection.status, "unsupported");
 });
 
-Deno.test("Verification freezes other devices to their physical schedule", () => {
+Deno.test("Verification uses the same displayed household schedule", () => {
   const s = captured("control_verification");
   const { plan } = generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
   const contract = plan.battery_execution!;
   assertEquals(contract.mode, "control_verification");
-  assertEquals(plan.execution_plan!.battery, null);
+  assertEquals(plan.execution_plan!.battery, plan.battery);
+  assertEquals(plan.execution_plan!.plans, plan.plans);
   for (const [i, row] of contract.intervals.entries()) {
     const slot = plan.execution_plan!.plans.priority.slots[i];
     assert(Math.abs(row.load_mwh - slot.load_w * slot.duration_hours * 1000) <= 2);

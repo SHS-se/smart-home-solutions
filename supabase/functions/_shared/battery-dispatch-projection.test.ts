@@ -264,8 +264,8 @@ Deno.test("production captures exact execution demand and partial interval witho
       counting,
     );
   assertEquals(calls, normalCalls);
-  assertEquals(calls, 2);
-  // One final auction per branch plus the once-per-price-set curve search.
+  assertEquals(calls, 1);
+  // One authoritative auction supplies both presentation and execution.
   assertEquals(plan, normal);
   assertEquals(s, before);
   assert(p.status === "ready", JSON.stringify(p));
@@ -279,7 +279,7 @@ Deno.test("production captures exact execution demand and partial interval witho
     1e-9,
   );
   assertEquals(plan.execution_plan!.plans.priority.slots[0].load_w, 2800.12);
-  assertEquals(p.problem.plant.residual_loads[0].power_w[1], 1960);
+  assertEquals(p.problem.plant.residual_loads[0].power_w[1], 2800);
   assertEquals(JSON.parse(JSON.stringify(plan)), plan);
   const battery = p.problem.plant.equipment[0];
   assert(battery.kind === "battery");

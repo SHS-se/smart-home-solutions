@@ -15,7 +15,7 @@ Deno.test('replay retains both branches of a scoped solve and bookmarks the disp
     assertEquals(replay.expected.planner_output, generateOptimisationPlan(snapshot, now, [], plan.price_outlook));
     assertEquals(replay.expected.selected_quarter, slot);
     assertEquals(replay.expected.planner_output.device_models.length, 2);
-    assertEquals(replay.expected.planner_output.execution_plan!.device_models.length, 0);
+    assertEquals(replay.expected.planner_output.execution_plan!.plans, replay.expected.planner_output.plans);
   }
   assertThrows(() => replayPlanSelection(plan, 'priority', '2000-01-01T00:00:00Z'));
 });
