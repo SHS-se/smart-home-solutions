@@ -1955,9 +1955,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         battery_projection: batteryProjection,
         updated_at: new Date().toISOString(),
       };
-      const { error: currentError } = await supabase
-        .from("energy_optimisation_current")
-        .upsert(currentRow, { onConflict: "home_id" });
+      const { error: currentError } = await supabase.rpc(
+        "store_energy_optimisation_current",
+        { p_row: currentRow },
+      );
       if (currentError) {
         console.error(
           "[ENERGY-OPTIMISATION] current plan upsert failed",
