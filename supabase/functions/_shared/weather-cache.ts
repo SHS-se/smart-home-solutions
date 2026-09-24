@@ -34,6 +34,8 @@ export const gridRound = (value: number): number =>
   Math.round(value * 100) / 100;
 
 /** How long a response is trusted when the provider names no expiry. */
+export const PROVIDER_TIMEOUT_MS = 10_000;
+
 export const DEFAULT_TTL_MS = 30 * 60_000;
 
 export interface ProviderResponse {

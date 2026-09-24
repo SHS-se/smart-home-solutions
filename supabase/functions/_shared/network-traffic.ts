@@ -30,14 +30,59 @@ export function trafficEndpoint(input: RequestInfo | URL, method?: string): stri
   } catch { return `${safeVerb} /other`; }
 }
 
+/** Count the caller's stream once; never buffer or clone a planning payload. */
+export function measureResponse(
+  response: Response,
+  finished: (bytes: number, complete: boolean) => void,
+): Response {
+  if (!response.body) {
+    finished(0, true);
+    return response;
+  }
+  const reader = response.body.getReader();
+  let bytes = 0;
+  let settled = false;
+  const finish = (complete: boolean) => {
+    if (settled) return;
+    settled = true;
+    try { finished(bytes, complete); } catch { /* Measurement cannot break delivery. */ }
+  };
+  return new Response(new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          finish(true);
+          controller.close();
+        } else {
+          bytes += next.value.byteLength;
+          controller.enqueue(next.value);
+        }
+      } catch (error) {
+        finish(false);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      finish(false);
+      await reader.cancel(reason);
+    },
+  }, { highWaterMark: 0 }), {
+    status: response.status, statusText: response.statusText, headers: response.headers,
+  });
+}
+
 export class NetworkTraffic {
   private readonly startedAt = new Date().toISOString();
   private readonly started = performance.now();
   private readonly endpoints = new Map<string, TrafficTotals>();
 
-  constructor(private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {}
+  constructor(
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
+    private readonly requestTimeoutMs?: number,
+  ) {}
 
-  /** Clone consumption counts decoded body bytes and leaves the caller's response intact. */
+  /** Fetch returns on headers; byte counts settle when the caller reads the body. */
   fetch: typeof fetch = async (input, init) => {
     const endpoint = trafficEndpoint(input, init?.method);
     const key = this.endpoints.has(endpoint) || this.endpoints.size < 64 ? endpoint : 'OTHER /overflow';
@@ -51,19 +96,25 @@ export class NetworkTraffic {
     else if (body != null || (input instanceof Request && input.body !== null)) totals.request_bodies_unmeasured++;
     const started = performance.now();
     try {
-      const response = await this.fetcher(input, init);
+      const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const deadline = this.requestTimeoutMs === undefined ? undefined : AbortSignal.timeout(this.requestTimeoutMs);
+      const response = await this.fetcher(input, { ...init,
+        signal: deadline && callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline ?? callerSignal,
+      });
       if (response.status >= 400) totals.http_errors++;
-      try {
-        const bytes = (await response.clone().arrayBuffer()).byteLength;
-        totals.response_body_bytes += bytes;
-        totals.responses_measured++;
-      } catch { totals.responses_unmeasured++; }
-      return response;
+      return measureResponse(response, (bytes, complete) => {
+        if (complete) {
+          totals.response_body_bytes += bytes;
+          totals.responses_measured++;
+        } else totals.responses_unmeasured++;
+        totals.elapsed_ms += performance.now() - started;
+      });
     } catch (error) {
       totals.transport_errors++;
       totals.responses_unmeasured++;
+      totals.elapsed_ms += performance.now() - started;
       throw error;
-    } finally { totals.elapsed_ms += performance.now() - started; }
+    }
   };
 
   snapshot() {

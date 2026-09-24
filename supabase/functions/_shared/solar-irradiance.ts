@@ -1,3 +1,4 @@
+import { PROVIDER_TIMEOUT_MS } from "./weather-cache.ts";
 // How much sun is going to fall on the house, for every home.
 //
 // A heated room gains far more from the sun than from anything the planner
@@ -120,6 +121,7 @@ export async function irradiancePoints(options: {
         `&hourly=shortwave_radiation&past_days=${PAST_DAYS}` +
         `&forecast_days=${FORECAST_DAYS}&timezone=UTC`;
       const response = await fetchImpl(url, {
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         headers: { Accept: "application/json" },
       });
       if (!response.ok) {

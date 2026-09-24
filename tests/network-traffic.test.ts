@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assert } from 'jsr:@std/assert@1';
-import { NetworkTraffic, trafficEndpoint } from '../supabase/functions/_shared/network-traffic.ts';
+import { measureResponse, NetworkTraffic, trafficEndpoint } from '../supabase/functions/_shared/network-traffic.ts';
 import { withTrafficMetrics } from '../supabase/functions/_shared/edge-traffic.ts';
 import { browserTrafficReport, recordPortalSync } from '../src/lib/network-traffic.ts';
 
@@ -64,7 +64,7 @@ Deno.test('endpoint cardinality is bounded and dynamic paths are redacted', asyn
   assertEquals(trafficEndpoint('https://db.example/auth/v1/user/secret'), 'GET /auth/v1/*');
   assertEquals(trafficEndpoint('https://db.example/rest/v1/customers/secret'), 'GET /other');
   const meter = new NetworkTraffic(async () => new Response('x'));
-  await Promise.all(Array.from({ length: 80 }, (_, i) => meter.fetch(`https://db.example/rest/v1/table_${'a'.repeat(i + 1)}`)));
+  await Promise.all(Array.from({ length: 80 }, (_, i) => meter.fetch(`https://db.example/rest/v1/table_${'a'.repeat(i + 1)}`).then(response => response.text())));
   assert(Object.keys(meter.snapshot().endpoints).length <= 65);
   assertEquals(meter.snapshot().total.requests, 80);
   assertEquals(meter.snapshot().total.response_body_bytes, 80);
@@ -111,4 +111,50 @@ Deno.test('portal counters distinguish unchanged polling from plan and history d
   assertEquals(report.configuration_downloads - baseline.configuration_downloads, 1);
   assertEquals(report.history_upserts - baseline.history_upserts, 1);
   assertEquals(report.history_removals - baseline.history_removals, 1);
+});
+
+Deno.test('traffic returns headers without waiting for a stalled body and forwards cancellation', async () => {
+  let cancelled = false;
+  let observedSignal: AbortSignal | null | undefined;
+  const caller = new AbortController();
+  const meter = new NetworkTraffic(async (_input, init) => {
+    observedSignal = init?.signal;
+    return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+  });
+  const response = await meter.fetch('https://db.example/rest/v1/plan', { signal: caller.signal });
+  assert(observedSignal);
+  assertEquals(observedSignal.aborted, false);
+  caller.abort();
+  assertEquals(observedSignal.aborted, true);
+  await response.body!.cancel();
+  assertEquals(cancelled, true);
+  assertEquals(meter.snapshot().total.responses_unmeasured, 1);
+});
+
+Deno.test('stream measurement forwards the first chunk before the last chunk exists', async () => {
+  let source: ReadableStreamDefaultController<Uint8Array>;
+  const reports: unknown[] = [];
+  const original = new Response(new ReadableStream<Uint8Array>({ start(controller) { source = controller; } }));
+  const response = measureResponse(original, (bytes, complete) => reports.push({ bytes, complete }));
+  const reader = response.body!.getReader();
+  source!.enqueue(new Uint8Array([1, 2, 3]));
+  assertEquals((await reader.read()).value, new Uint8Array([1, 2, 3]));
+  assertEquals(reports, []);
+  source!.enqueue(new Uint8Array([4]));
+  source!.close();
+  assertEquals((await reader.read()).value, new Uint8Array([4]));
+  assertEquals((await reader.read()).done, true);
+  assertEquals(reports, [{ bytes: 4, complete: true }]);
+});
+
+Deno.test('upstream deadline remains active while consuming a stalled response body', async () => {
+  const meter = new NetworkTraffic(async (_input, init) => new Response(new ReadableStream({
+    start(controller) {
+      const signal = init!.signal!;
+      signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+    },
+  })), 5);
+  const response = await meter.fetch('https://db.example/rest/v1/plan');
+  await assertRejects(() => response.text(), DOMException);
+  assertEquals(meter.snapshot().total.responses_unmeasured, 1);
 });

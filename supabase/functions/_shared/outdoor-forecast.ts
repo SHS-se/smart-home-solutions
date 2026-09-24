@@ -1,3 +1,4 @@
+import { PROVIDER_TIMEOUT_MS } from "./weather-cache.ts";
 // Where the outdoor temperature a plan is built on comes from.
 //
 // Room comfort forecasting is the one part of the plan that needs tomorrow's
@@ -176,6 +177,7 @@ export async function outdoorSeriesFromProvider(options: {
           longitude.toFixed(2)
         }`,
         {
+          signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
           headers: {
             "User-Agent": MET_NO_USER_AGENT,
             Accept: "application/json",

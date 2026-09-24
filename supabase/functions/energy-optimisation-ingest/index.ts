@@ -1956,10 +1956,15 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         battery_projection: batteryProjection,
         updated_at: new Date().toISOString(),
       };
+      const storingStarted = performance.now();
       const { error: currentError } = await supabase.rpc(
         "store_energy_optimisation_current",
-        { p_row: currentRow },
+        currentRow,
       );
+      console.info("[ENERGY-OPTIMISATION] current plan storage", {
+        request_id: requestId, elapsed_ms: Math.round(performance.now() - storingStarted),
+        error_code: currentError?.code ?? null,
+      });
       if (currentError) {
         console.error(
           "[ENERGY-OPTIMISATION] current plan upsert failed",
@@ -1968,6 +1973,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         return json({ error: "storage_failed" }, 500);
       }
 
+      const runStarted = performance.now();
       const { error: runError } = await supabase
         .from("energy_optimisation_plan_runs")
         .upsert({
@@ -1989,6 +1995,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           summary: compactPlanSummary(generated),
           validation_errors: generated.validation_errors,
         }, { onConflict: "home_id,snapshot_id" });
+      console.info("[ENERGY-OPTIMISATION] run summary storage", {
+        request_id: requestId, elapsed_ms: Math.round(performance.now() - runStarted),
+        error_code: runError?.code ?? null,
+      });
       if (runError) {
         console.error(
           "[ENERGY-OPTIMISATION] run summary upsert failed",
@@ -2074,12 +2084,16 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       }
     }
 
-    const { error: pruneError } = await supabase.rpc(
-      "prune_energy_optimisation_data",
-      { p_home_id: auth.homeId },
-    );
-    if (pruneError) {
-      console.error("[ENERGY-OPTIMISATION] retention prune failed", pruneError);
+    // Deliver newly generated plans before doing retention maintenance. Ordinary
+    // telemetry exchanges drain bounded batches independently of replanning.
+    if (!generated) {
+      const { error: pruneError } = await supabase.rpc(
+        "prune_energy_optimisation_data",
+        { p_home_id: auth.homeId },
+      );
+      if (pruneError) {
+        console.error("[ENERGY-OPTIMISATION] retention prune failed", pruneError);
+      }
     }
 
     const { data: recommendationState, error: recommendationError } = await supabase.from('energy_optimisation_current')

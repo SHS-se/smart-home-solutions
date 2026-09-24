@@ -32,6 +32,9 @@ Deno.test('JSONB plan publication preserves payloads, operational state and gene
     const recommendations = await migration('20260923103000_replan_recommendations');
     await db.exec(recommendations.slice(0, recommendations.indexOf('CREATE FUNCTION public.energy_value_change_recommendation')));
     await db.exec(await migration('20260924121500_store_energy_plan_jsonb'));
+    await db.exec(await migration('20260924160000_streamline_energy_plan_storage'));
+    const signature = await db.query<{ proargnames: unknown }>("SELECT proargnames FROM pg_proc WHERE oid='store_energy_optimisation_current(jsonb)'::regprocedure");
+    assertEquals(signature.rows[0].proargnames, null);
     // Larger than the 4.9 MB plan involved in the reported production-path timeout.
     const plan = { mode: 'live', plan_id: home, policy: Array.from({ length: 60_000 },
       (_, i) => ({ slot: i, values: [0, 1.25, -3], explanation: 'Keep the complete planner output unchanged.' })) };
@@ -57,6 +60,7 @@ Deno.test('JSONB plan publication preserves payloads, operational state and gene
       await db.exec('RESET ROLE');
     }
     await db.exec('SET ROLE service_role');
+    await assertRejects(() => store({ p_row: row }), Error, 'null value');
     await store(row);
     const inserted = await read();
     assertEquals(inserted.plan, plan);
@@ -91,5 +95,41 @@ Deno.test('JSONB plan publication preserves payloads, operational state and gene
     assertEquals(saved.replan_recommendations.map(r => r.key), ['during']);
     await assertRejects(() => store({ ...replacement, input_hash: 'invalid' }), Error, 'check constraint');
     assertEquals((await read()).input_hash, row.input_hash);
+    // Revising the generation marker alone cannot bypass the existing guard.
+    await assertRejects(() => db.exec(`UPDATE energy_optimisation_current SET
+      fixed_plan_generation_revision=0, plan='{"changed":true}'`),
+      Error, 'Fixed plan changed during generation');
+    await db.exec('RESET ROLE');
+    for (const object of [{ keep: null, extra: { huge: [1, 2] } }, null, [], 'text']) {
+      const result = await db.query<{ picked: unknown }>(
+        "SELECT energy_replan_pick($1::jsonb, ARRAY['keep','keep','missing']) picked", [JSON.stringify(object)]);
+      assertEquals(result.rows[0].picked, object && !Array.isArray(object) && typeof object === 'object'
+        ? { keep: null } : object);
+    }
+  } finally { await db.close(); }
+});
+
+Deno.test('retention drains bounded batches and preserves other homes and recent data', async () => {
+  const db = new PGlite();
+  try {
+    const tables = ['actual_slots', 'pool_slots', 'device_slots', 'plan_runs', 'forecast_runs'];
+    for (const table of tables) {
+      const column = table.endsWith('slots') ? 'start_ts' : 'issued_at';
+      await db.exec(`CREATE TABLE energy_optimisation_${table} (
+        id integer PRIMARY KEY, home_id uuid, ${column} timestamptz);
+        INSERT INTO energy_optimisation_${table}
+        SELECT n, '${home}', now() - interval '1100 days' FROM generate_series(1,1005) n;
+        INSERT INTO energy_optimisation_${table} VALUES
+          (1006, '${home}', now()), (1007, '${nextPlan}', now() - interval '1100 days');`);
+    }
+    await db.exec(await migration('20260924160100_bound_energy_retention_batches'));
+    await db.query('SELECT prune_energy_optimisation_data($1)', [home]);
+    for (const table of tables) {
+      assertEquals((await db.query<{ n: number }>(`SELECT count(*)::int n FROM energy_optimisation_${table}`)).rows[0].n, 7);
+    }
+    await db.query('SELECT prune_energy_optimisation_data($1)', [home]);
+    for (const table of tables) {
+      assertEquals((await db.query(`SELECT id FROM energy_optimisation_${table} ORDER BY id`)).rows, [{ id: 1006 }, { id: 1007 }]);
+    }
   } finally { await db.close(); }
 });
