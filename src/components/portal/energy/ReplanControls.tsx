@@ -7,18 +7,27 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { replanCompleted, replanState, type ReplanRow } from '@/lib/energy-shift/replan-request';
 
-export default function ReplanControls({ homeId, replan, refreshing, onReplanChanged }: {
-  homeId: string | null; replan: ReplanRow | null; refreshing: boolean; onReplanChanged?: () => void;
+export default function ReplanControls({ homeId, replan, refreshing, onReplanChanged, onBusyChange }: {
+  homeId: string | null; replan: ReplanRow | null; refreshing: boolean; onReplanChanged?: () => void; onBusyChange?: (busy: boolean) => void;
 }) {
   const { t } = useLanguage();
   const { toast } = useToast();
   const [replanning, setReplanning] = useState(false);
   const [awaitedReplanId, setAwaitedReplanId] = useState<string | null>(null);
+  const [requestBaselineId, setRequestBaselineId] = useState<string | null>(null);
   const replanProgress = replanState(replan);
   const waitingForReplan = replanProgress.status === 'waiting';
+  const awaitingRow = awaitedReplanId !== null && (replan?.replan_request_id ?? null) === requestBaselineId
+    && !replanCompleted(replan, awaitedReplanId);
+  const busy = replanning || waitingForReplan || awaitingRow;
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
   const requestReplan = async () => {
-    if (refreshing || replanning || waitingForReplan) return;
+    if (refreshing || busy) return;
     if (!homeId) return;
+    setRequestBaselineId(replan?.replan_request_id ?? null);
     setReplanning(true);
     const { data, error } = await supabase.functions.invoke('energy-optimisation-replan', {
       body: { home_id: homeId },
@@ -63,43 +72,23 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
   }, [awaitedReplanId, replan, t, toast]);
 
 
- return <div className="space-y-3">        <Button
+  return <div className="space-y-3">
+        <Button
           size="sm"
           onClick={() => void requestReplan()}
-          disabled={refreshing || replanning || waitingForReplan}
+          disabled={!homeId || refreshing || busy}
+          aria-busy={busy}
+          aria-label={busy ? t('Planera om nu – pågår', 'Replan now – in progress') : undefined}
+          className="min-h-11"
           variant="secondary"
         >
-          {replanning || waitingForReplan
-            ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            : <RefreshCw className="w-4 h-4 mr-2" />}
+          {busy
+            ? <Loader2 aria-hidden="true" className="w-4 h-4 mr-2 animate-spin motion-reduce:animate-none" />
+            : <RefreshCw aria-hidden="true" className="w-4 h-4 mr-2" />}
           {t('Planera om nu', 'Replan now')}
         </Button>
 
-      {replanProgress.status === 'waiting' && (
-        <Alert>
-          <RefreshCw className="w-4 h-4" />
-          <AlertTitle>{t('Omplanering beställd', 'Replan requested')}</AlertTitle>
-          <AlertDescription className="text-sm">
-            {t(
-              'Hemmet skickar färska mätvärden och planeras om med dina värden. Planen uppdaterar sig själv här när den är klar.',
-              'The house is sending fresh measurements and will be replanned with your numbers. The plan updates itself here when it is done.',
-            )}
-            {replanProgress.overdue && (
-              <>
-                {' '}
-                <span className="font-medium">
-                  {t(
-                    `Det har gått ${Math.round(replanProgress.waitedMs / 60_000)} minuter utan svar — kontrollera att Home Assistant är igång och uppkopplat.`,
-                    `${Math.round(replanProgress.waitedMs / 60_000)} minutes have passed without an answer — check that Home Assistant is running and connected.`,
-                  )}
-                </span>
-              </>
-            )}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {replanProgress.status === 'failed' && (
+      {!busy && replanProgress.status === 'failed' && (
         <Alert variant="destructive">
           <AlertTitle>{t('Hemmet kunde inte planera om', 'The house could not replan')}</AlertTitle>
           <AlertDescription className="text-sm">
@@ -112,5 +101,5 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
           </AlertDescription>
         </Alert>
       )}
-</div>;
+  </div>;
 }

@@ -86,7 +86,7 @@
       },
       "post": {
         "operationId": "reportIntegrationStatus",
-        "description": "Report current HA runtime readiness or a requested replan failure, and read status back. The response is the same discovery document the GET returns.",
+        "description": "Report current HA runtime readiness or a requested replan failure and read status back, or queue a manual replan for the authenticated home. Manual requests return a 202 acknowledgement with the queued request ID.",
         "security": [
           {
             "deviceToken": []
@@ -103,6 +103,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/RuntimeStatusRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ManualReplanRequest"
                   }
                 ]
               }
@@ -122,6 +125,29 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "202": {
+            "description": "A manual replan was queued for the authenticated home.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "api_version",
+                    "replan_request_id"
+                  ],
+                  "properties": {
+                    "api_version": {
+                      "const": 1
+                    },
+                    "replan_request_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -3225,6 +3251,23 @@
             }
           }
         ]
+      },
+      "ManualReplanRequest": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "request_replan"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "const": 1
+          },
+          "request_replan": {
+            "type": "boolean",
+            "const": true
+          }
+        }
       }
     }
   }

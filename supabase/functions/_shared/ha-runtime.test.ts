@@ -28,6 +28,7 @@ Deno.test('the published status contract accepts runtime reports independently o
   const variants = spec.paths['/integration-status'].post.requestBody.content['application/json'].schema.oneOf;
   assertEquals(variants.map((v: { $ref: string }) => v.$ref), [
     '#/components/schemas/ReplanFailureRequest', '#/components/schemas/RuntimeStatusRequest',
+    '#/components/schemas/ManualReplanRequest',
   ]);
   assertEquals(spec.components.schemas.RuntimeStatusRequest.properties.runtime.required.sort(), Object.keys(runtime).sort());
 });

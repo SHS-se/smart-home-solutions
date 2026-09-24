@@ -325,7 +325,7 @@ const AppShell: React.FC<AppShellProps> = ({ customerView, children }) => {
         )}
       </Sidebar>
 
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         {isTestEnvironment() && (
           <div className="bg-amber-500 py-1 text-center text-sm font-medium text-black">
             ⚠️ {t('TESTMILJÖ - All data är endast för testning', 'TEST ENVIRONMENT - All data is for testing only')}

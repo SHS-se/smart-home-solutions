@@ -8,7 +8,7 @@ import { planRefreshError, readPlanRefresh } from '@/lib/energy-shift/plan-refre
 import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,9 +18,7 @@ import { supabase } from '@/integrations/supabase/client';
 import {
   effectivePlanningRole,
   type ActualEnergySlot,
-  type ThermalFixtureSeason,
 } from '@/lib/energy-shift/contracts';
-import { createWebsiteDemoActuals, createWebsiteDemoPlan } from '@/lib/energy-shift/demo';
 import {
   type ThermalObservationSummary,
   type ThermalZoneModelSummary,
@@ -90,11 +88,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'live' | 'demo'>('live');
+  const [requestingReplan, setRequestingReplan] = useState(false);
   // The chart always loads the full window and slices locally, so this is
   // presentation state and never triggers a refetch.
   const [dayWindow, setDayWindow] = useState<DayWindow>(0);
-  const [demoSeason, setDemoSeason] = useState<ThermalFixtureSeason>('winter');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
 
@@ -226,7 +223,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const pendingReplan = replanState(current).status === 'waiting';
   const runtimeRefreshing = Boolean(latestRuntime?.ha_runtime?.recovering)
     && clock - Date.parse(latestRuntime?.ha_runtime_received_at ?? '') < REPLAN_OVERDUE_MS;
-  const refreshing = pendingReplan || runtimeRefreshing || retrying || (loading && current !== null);
+  const refreshing = requestingReplan || pendingReplan || runtimeRefreshing || retrying || (loading && current !== null);
   useEffect(() => {
     // Poll small metadata and content deltas. Hidden tabs resume on visibility.
     const timer = window.setInterval(() => {
@@ -244,38 +241,12 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     return () => window.clearInterval(timer);
   }, []);
 
-  const demoBucket = Math.floor(clock / (15 * 60_000));
-  const demoReferenceTime = demoBucket * 15 * 60_000 + 1;
-  const demoCurrent = useMemo<CurrentRow>(() => {
-    const plan = createWebsiteDemoPlan(demoReferenceTime, demoSeason);
-    return {
-      plan,
-      home_id: null,
-      captured_at: plan.issued_at,
-      updated_at: plan.issued_at,
-      plan_id: plan.plan_id,
-      generation_request_id: null,
-      plan_schema_version: plan.schema_version,
-      ha_runtime: null,
-      ha_runtime_received_at: null,
-      ha_ack_status: 'accepted',
-      ha_acknowledged_at: plan.issued_at,
-      ha_integration_version: null,
-      ha_ack_request_id: null,
-      ha_ack_error: null,
-      replan_request_id: null,
-      replan_requested_at: null,
-      replan_completed_request_id: null,
-      replan_error: null,
-    };
-  }, [demoReferenceTime, demoSeason]);
-  const demoActuals = useMemo(
-    () => createWebsiteDemoActuals(demoReferenceTime),
-    [demoReferenceTime],
-  );
   const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at
     ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
     : undefined;
+
+  const replanControls = <ReplanControls homeId={homeId} replan={current} refreshing={refreshing}
+    onBusyChange={setRequestingReplan} onReplanChanged={() => void load(true)} />;
 
   let content: React.ReactNode;
   if (section === 'devices') {
@@ -301,26 +272,6 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         />
       );
     }
-  } else if (view === 'demo') {
-    content = (
-      <PlanView
-        section={section}
-        customerId={null}
-        homeId={null}
-        current={demoCurrent}
-        actuals={demoActuals}
-        empiricalDevices={[]}
-        thermalObservations={EMPTY_THERMAL_OBSERVATIONS}
-        zoneModels={[]}
-        stale={false}
-        isDemo
-        deviceActuals={[]}
-        prices={[]}
-        now={clock}
-        dayWindow={dayWindow}
-        onDayWindowChange={setDayWindow}
-      />
-    );
   } else if (!homeId) {
     content = <EmptyState text={t('Välj ett hem för att visa energiplanen.', 'Select a home to view its energy plan.')} />;
   } else if (loading && !current) {
@@ -370,17 +321,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
                   <Link to={accountPath}>{t('Öppna Home Assistant-anslutningar', 'Open Home Assistant connections')}</Link>
                 </Button>
               )}
-              <Button size="sm" onClick={() => setView('demo')}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                {t('Visa exempelhemmet', 'View example home')}
-              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {t(
-                'Exempelhemmet byggs enbart av fasta tal i webbläsaren och sparas aldrig i databasen.',
-                'The example home is built only from fixed numbers in your browser and is never stored in the database.',
-              )}
-            </p>
           </CardContent>
         </Card>
       </div>
@@ -394,14 +335,14 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           homeId={homeId}
           current={current}
           refreshError={error}
-          refreshing={refreshing}
+          refreshing={refreshing || requestingReplan}
           latestRuntime={latestRuntime}
           actuals={actuals}
           empiricalDevices={empiricalDevices}
           thermalObservations={thermalObservations}
           zoneModels={zoneModels}
           stale={clock > Date.parse(current.plan.valid_until)}
-          isDemo={false}
+          replanControls={section === 'plan' ? replanControls : undefined}
           lastCheckedAt={lastCheckedAt}
           connectionLastSeenAt={activeConnection?.last_seen_at ?? null}
           deviceActuals={deviceActuals}
@@ -416,46 +357,14 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   return (
     <div className="space-y-4">
-      {section !== 'devices' && (
-        <div className="flex justify-end gap-2">
-          <Button size="sm" variant={view === 'live' ? 'default' : 'outline'} onClick={() => setView('live')}>
-            {t('Mitt hem', 'My home')}
-          </Button>
-          <Button size="sm" variant={view === 'demo' ? 'default' : 'outline'} onClick={() => setView('demo')}>
-            <Sparkles className="mr-2 h-4 w-4" />
-            {t('Exempel', 'Example')}
-          </Button>
-        </div>
-      )}
-      {section !== 'devices' && view === 'demo' && (
-        <div className="flex flex-wrap justify-end gap-1" role="group" aria-label={t('Demoperiod', 'Demo season')}>
-          {([
-            ['winter', t('Vinter', 'Winter')],
-            ['spring', t('Vår', 'Spring')],
-            ['summer', t('Sommar', 'Summer')],
-            ['autumn', t('Höst', 'Autumn')],
-            ['ev_only', t('Enkel EV-kund', 'Simple EV customer')],
-          ] as const).map(([season, label]) => (
-            <Button
-              key={season}
-              size="sm"
-              variant={demoSeason === season ? 'secondary' : 'ghost'}
-              aria-pressed={demoSeason === season}
-              onClick={() => setDemoSeason(season)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
-      )}
-      {view === 'live' && refreshing && (
+      {refreshing && !pendingReplan && !requestingReplan && (
         <Alert role="status" aria-live="polite" data-testid="plan-refresh-progress">
           <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />
-          <AlertTitle>{pendingReplan ? t('Omplanering pågår', 'Replan in progress') : t('Uppdatering pågår', 'Refresh in progress')}</AlertTitle>
+          <AlertTitle>{t('Uppdatering pågår', 'Refresh in progress')}</AlertTitle>
           <AlertDescription>{t('Den tidigare planen visas under tiden. Du kan spara igen när uppdateringen är klar.', 'The previous plan remains visible. Saving is available when the refresh finishes.')}</AlertDescription>
         </Alert>
       )}
-      {view === 'live' && (current?.replan_recommendations?.length ?? 0) > 0 && <Alert data-testid="replan-recommendations">
+      {!pendingReplan && !requestingReplan && (current?.replan_recommendations?.length ?? 0) > 0 && <Alert data-testid="replan-recommendations">
         <AlertTriangle className="h-4 w-4" />
         <AlertTitle>{t('Omplanering rekommenderas', 'Manual replan recommended')}</AlertTitle>
         <AlertDescription>
@@ -465,10 +374,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           </details>
         </AlertDescription>
       </Alert>}
-      {view === 'live' && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
-      {view === 'live' && section === 'plan' && <ReplanControls homeId={homeId} replan={current} refreshing={refreshing} onReplanChanged={() => void load(true)} />}
+      {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
+      {!current && section === 'plan' && replanControls}
       {content}
-      {view === 'live' && (
+      {(
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer">{t('Trafikdiagnostik', 'Traffic diagnostics')}</summary>
           <p className="mt-1">{t('Trafik i denna flik sedan sidan laddades. Datastorlek före komprimering, inte fakturerad trafik.', 'Traffic in this tab since page load. Payload sizes before compression, not billed traffic.')}</p>
@@ -494,7 +403,7 @@ const PlanView: React.FC<{
   thermalObservations: ThermalObservationSummary;
   zoneModels: ThermalZoneModelSummary[];
   stale: boolean;
-  isDemo: boolean;
+  replanControls?: React.ReactNode;
   lastCheckedAt?: number | null;
   /**
    * When Home Assistant last authenticated with us. Stamped before any
@@ -522,7 +431,7 @@ const PlanView: React.FC<{
   thermalObservations,
   zoneModels,
   stale,
-  isDemo,
+  replanControls,
   lastCheckedAt,
   connectionLastSeenAt,
   dayWindow,
@@ -540,7 +449,7 @@ const PlanView: React.FC<{
     validationMessages,
   } = model;
   const runtimeStatus = haRuntimeStatus(latestRuntime ?? current, now);
-  const runtimeReady = ready && (isDemo || runtimeStatus.ready);
+  const runtimeReady = ready && runtimeStatus.ready;
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
     : runtimeStatus.state === 'ready' ? t('Senast rapporterad redo i HA', 'Last reported ready in HA')
@@ -663,21 +572,13 @@ const PlanView: React.FC<{
 
   return (
     <div className="space-y-6">
-      {isDemo && (
-        <Alert>
-          <AlertTitle>{t('Demoplan', 'Demo plan')}</AlertTitle>
-          <AlertDescription>
-            {t('Den här planen använder syntetiska exempeldata och kan aldrig styra enheter i Home Assistant.', 'This plan uses synthetic example data and can never control devices in Home Assistant.')}
-          </AlertDescription>
-        </Alert>
-      )}
       {refreshError ? (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>{t('Webbplatsen kunde inte uppdateras', 'The website could not refresh')}</AlertTitle>
           <AlertDescription>{refreshError} {t('Visade uppgifter kan vara inaktuella.', 'Displayed information may be out of date.')}</AlertDescription>
         </Alert>
-      ) : (validationMessages.length > 0 || (!refreshing && !runtimeReady)) && (() => {
+      ) : (!refreshing && (validationMessages.length > 0 || !runtimeReady)) && (() => {
         // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
@@ -721,7 +622,7 @@ const PlanView: React.FC<{
           'This is something for us to put right, not something you need to do.',
         );
 
-        const title = !isDemo && !runtimeStatus.ready
+        const title = !runtimeStatus.ready
           ? runtimeLabel
           : stale
               ? connectionLive
@@ -733,7 +634,7 @@ const PlanView: React.FC<{
                   ? t('En del av prognosen är inaktuell', 'Part of the forecast is out of date')
                   : t('Planen går inte att genomföra', 'This plan cannot be carried out');
 
-        const body = !isDemo && !runtimeStatus.ready
+        const body = !runtimeStatus.ready
           ? [runtimeDetail]
           : stale
               ? connectionLive
@@ -828,16 +729,16 @@ const PlanView: React.FC<{
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <CardTitle className="text-lg">{isDemo ? t('Demoplan med 15-minutersupplösning', '15-minute demo energy plan') : t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
-                {(isDemo || (!refreshError && runtimeReady && validationMessages.length === 0)) && (
-                  <Badge variant="secondary">{isDemo ? t('Demo', 'Demo') : runtimeLabel}</Badge>
+                <CardTitle className="text-lg">{t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
+                {(!refreshError && runtimeReady && validationMessages.length === 0) && (
+                  <Badge variant="secondary">{runtimeLabel}</Badge>
                 )}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {t('Plan', 'Plan')} <code title={plan.plan_id}>{plan.plan_id.slice(0, 8)}</code>
                 {' · '}{t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
               </p>
-              {!isDemo && (
+              {(
                 <p className="mt-1 text-sm text-muted-foreground" data-testid="ha-plan-identity">
                   {t('Senast rapporterad plan i HA', 'Last reported plan in HA')}: {runtimeStatus.runtime?.plan_id
                     ? <><code title={runtimeStatus.runtime.plan_id}>{runtimeStatus.runtime.plan_id.slice(0, 8)}</code>{' · '}{runtimeStatus.runtime.plan_id === plan.plan_id
@@ -846,7 +747,7 @@ const PlanView: React.FC<{
                     : t('Inte bekräftad', 'Unconfirmed')}
                 </p>
               )}
-              {!isDemo && (
+              {(
                 <details className="mt-2 text-xs text-muted-foreground">
                   <summary className="cursor-pointer">{t('Statusdetaljer', 'Status details')}</summary>
                   <p className="mt-1">{plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}</p>
@@ -877,7 +778,8 @@ const PlanView: React.FC<{
                 </details>
               )}
             </div>
-            <div className="space-y-1.5 text-right">
+            <div className="space-y-3 text-right">
+              {replanControls}
               <div className="flex gap-1" role="group" aria-label={t('Jämför planvyer', 'Compare plan views')}>
                 <Button
                   size="sm"

@@ -293,7 +293,7 @@ test.describe('requesting a replan', () => {
     const planPage = await context.newPage();
     await planPage.goto('/portal/energy-modeling?tab=plan');
     await planPage.getByRole('button', { name: replanButton }).click();
-    await expect(planPage.getByText(/Omplanering beställd|Replan requested/)).toBeVisible();
+    await expect(planPage.getByRole('button', { name: replanButton })).toHaveAttribute('aria-busy', 'true');
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
       battery_value_curve: { ...PLAN.battery_value_curve!, source: 'customer', curve: { unit: 'kwh', points } } };
@@ -465,12 +465,23 @@ test.describe('requesting a replan', () => {
     await expect(banner).toHaveCount(0);
   });
 
-  test('pressing it records a request and says the house is answering', async ({ page }) => {
+  test('pressing it uses only the button for progress and clears redundant warnings', async ({ page }) => {
+    replan.row.replan_recommendations = [{key: 'changed', reason: 'Measurements changed', occurred_at: CAPTURED_AT}];
     await page.goto('/portal/energy-modeling?tab=plan');
 
     const button = page.getByRole('button', { name: replanButton });
     await expect(button).toBeEnabled();
+    await expect(page.getByTestId('replan-recommendations')).toBeVisible();
+    await page.setViewportSize({ width: 375, height: 812 });
+    const bounds = await button.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(375);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(page.getByRole('button', { name: /^(My home|Mitt hem|Example|Exempel)$/ })).toHaveCount(0);
     await button.click();
+    await expect(page.getByTestId('replan-recommendations')).toHaveCount(0);
+    await expect(page.getByTestId('plan-refresh-progress')).toHaveCount(0);
+    await expect(page.getByText(/Omplanering beställd|Replan requested/)).toHaveCount(0);
 
     // The failure this replaces: a red toast saying the stored snapshot was
     // too old to plan against. Nothing may report the request as refused.
@@ -478,10 +489,22 @@ test.describe('requesting a replan', () => {
     await expect(page.getByText(/captured_at/)).toHaveCount(0);
 
     await expect(
-      page.getByText(/Omplanering beställd|Replan requested/),
-    ).toBeVisible();
+      page.getByRole('button', { name: replanButton }),
+    ).toHaveAttribute('aria-busy', 'true');
     // Asking twice cannot help: the house is already building the answer.
     await expect(button).toBeDisabled();
+  });
+
+  test('a later completed request also releases this browser’s busy button', async ({ page }) => {
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const button = page.getByRole('button', { name: replanButton });
+    await button.click();
+    await expect(button).toHaveAttribute('aria-busy', 'true');
+    const laterRequest = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    replan.row = { ...idle, replan_request_id: laterRequest,
+      replan_completed_request_id: laterRequest, replan_requested_at: CAPTURED_AT };
+    await expect(button).toBeEnabled();
+    await expect(button).toHaveAttribute('aria-busy', 'false');
   });
 
   test('a request already outstanding is shown to whoever opens the page', async ({ page }) => {
@@ -496,8 +519,8 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=plan');
 
     await expect(
-      page.getByText(/Omplanering beställd|Replan requested/),
-    ).toBeVisible();
+      page.getByRole('button', { name: replanButton }),
+    ).toHaveAttribute('aria-busy', 'true');
     await expect(page.getByRole('button', { name: replanButton })).toBeDisabled();
   });
 
