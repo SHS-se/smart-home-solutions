@@ -1241,7 +1241,7 @@ export interface RefinementCursor {
 }
 
 /** Improve real operating cost without selling away the service the auction chose.
- * Neighbouring charge exchanges keep delivered energy, enforce every physical
+ * Neighbouring charge and discharge exchanges keep delivered energy, enforce every physical
  * bound through the independent scorer, and may not lower any store's utility.
  * Thus a generated curve cannot pay for a more expensive refinement. This is
  * bounded local search, not a claim of global optimality or minimum runtime.
@@ -1297,7 +1297,11 @@ export function* refineDispatchCostSteps(
   for (let sweep = cursor?.sweep ?? 0; sweep < 8; sweep += 1) {
     const startStore = firstStore;
     firstStore = 0;
-    for (let storeIndex = startStore; storeIndex < stores.length; storeIndex += 1) {
+    for (
+      let storeIndex = startStore;
+      storeIndex < stores.length;
+      storeIndex += 1
+    ) {
       const store = stores[storeIndex];
       const startFrom = firstFrom;
       firstFrom = 0;
@@ -1350,97 +1354,147 @@ export function* refineDispatchCostSteps(
           searched = false;
         }
         searched = true;
-        if (power[from] <= GRID_NOISE_W) continue;
-        for (
-          let to = Math.max(0, from - 4);
-          to <= Math.min(slots.length - 1, from + 4);
-          to += 1
-        ) {
-          if (from === to || (schedule.discharge_w[store.key]?.[to] ?? 0) > 0) {
-            continue;
-          }
-          if (store.units_per_kwh(current.state[store.key][to], to) <= 0) {
-            continue;
-          }
-          if (store.discharge && slots[to].binding && !slots[from].binding) {
-            continue;
-          }
-          const beforeFrom = power[from];
-          const beforeTo = power[to];
-          const ratio = hoursAt(store, from) / hoursAt(store, to);
-          const room = Math.min(beforeFrom, (store.max_power_w - beforeTo) / ratio);
-          if (room <= GRID_NOISE_W) continue;
-          // Full moves merge relay runs; equalisation smooths variable loads.
-          const equalise = Math.max(
-            0,
-            (current.import_w[from] - current.import_w[to]) / (1 + ratio),
-          );
-          const levels = new Set([room, Math.min(room, equalise)]);
-          if ((store.power_step_w ?? 0) > 0) {
-            levels.add(store.power_step_w!);
-          }
-          let best = current;
-          let accepted = 0;
-          for (const watts of levels) {
-            power[from] = beforeFrom;
-            power[to] = beforeTo;
-            if (watts <= GRID_NOISE_W || watts > room + GRID_NOISE_W) continue;
-            if (store.discharge && slots[to].binding) {
-              const roundTrip =
-                store.units_per_kwh(current.state[store.key][to], to) /
-                store.discharge.state_per_kwh_out(
-                  current.state[store.key][to],
-                  to,
+        for (const releasing of [false, true]) {
+          if (releasing && !supportsEnergyTransfers(store)) continue;
+          const flow = releasing ? schedule.discharge_w[store.key] : power;
+          if (!flow || flow[from] <= GRID_NOISE_W ||
+            (releasing && current.export_w[from] <= GRID_NOISE_W)) continue;
+          for (
+            let to = Math.max(0, from - 4);
+            to <= Math.min(slots.length - 1, from + 4);
+            to += 1
+          ) {
+            if (
+              from === to ||
+              (releasing
+                  ? power[to]
+                  : schedule.discharge_w[store.key]?.[to] ?? 0) > 0
+            ) {
+              continue;
+            }
+            if (
+              !releasing &&
+              store.units_per_kwh(current.state[store.key][to], to) <= 0
+            ) {
+              continue;
+            }
+            if (
+              !releasing && store.discharge &&
+              slots[to].binding && !slots[from].binding
+            ) {
+              continue;
+            }
+            const beforeFrom = flow[from];
+            const beforeTo = flow[to];
+            const fromUnits = releasing
+              ? store.discharge!.state_per_kwh_out(
+                current.state[store.key][from],
+                from,
+              )
+              : 1;
+            const toUnits = releasing
+              ? store.discharge!.state_per_kwh_out(
+                current.state[store.key][to],
+                to,
+              )
+              : 1;
+            if (fromUnits <= 0 || toUnits <= 0) continue;
+            const ratio = hoursAt(store, from) * fromUnits /
+              (hoursAt(store, to) * toUnits);
+            const maxPower = releasing
+              ? store.discharge!.max_power_w
+              : store.max_power_w;
+            // Re-time sales while retaining this quarter's house supply.
+            const room = Math.min(beforeFrom, (maxPower - beforeTo) / ratio,
+              releasing ? current.export_w[from] : Infinity);
+            if (room <= GRID_NOISE_W) continue;
+            // Full moves merge relay runs; equalisation smooths variable loads.
+            const equalise = Math.max(
+              0,
+              (releasing
+                ? current.import_w[to] - current.import_w[from]
+                : current.import_w[from] - current.import_w[to]) / (1 + ratio),
+            );
+            const levels = new Set([room, Math.min(room, equalise)]);
+            if (releasing) {
+              // Selling excess and supplying the house have different prices.
+              // Test the grid-balance boundaries as well as the full exchange;
+              // moving all discharge would otherwise buy back the house supply.
+              levels.add(Math.min(room, current.export_w[from]));
+              levels.add(Math.min(room, current.import_w[to] / ratio));
+            }
+            if ((store.power_step_w ?? 0) > 0) {
+              levels.add(store.power_step_w!);
+            }
+            let best = current;
+            let accepted = 0;
+            for (const watts of levels) {
+              flow[from] = beforeFrom;
+              flow[to] = beforeTo;
+              if (watts <= GRID_NOISE_W || watts > room + GRID_NOISE_W) {
+                continue;
+              }
+              if (!releasing && store.discharge && slots[to].binding) {
+                const roundTrip =
+                  store.units_per_kwh(current.state[store.key][to], to) /
+                  store.discharge.state_per_kwh_out(
+                    current.state[store.key][to],
+                    to,
+                  );
+                const spare = Math.max(
+                  0,
+                  slots[to].pv_w - slots[to].fixed_load_w -
+                    stores.reduce(
+                      (sum, other) =>
+                        sum + (schedule.power_w[other.key]?.[to] ?? 0),
+                      0,
+                    ),
                 );
-              const spare = Math.max(
-                0,
-                slots[to].pv_w - slots[to].fixed_load_w -
-                  stores.reduce(
-                    (sum, other) =>
-                      sum + (schedule.power_w[other.key]?.[to] ?? 0),
-                    0,
-                  ),
+                if (
+                  watts * ratio > spare + GRID_NOISE_W &&
+                  !(sellPrices[to] >
+                    slots[to].import_price_sek_per_kwh / roundTrip)
+                ) continue;
+              }
+              if (
+                !releasing && (!executable(beforeFrom - watts, from) ||
+                  !executable(beforeTo + watts * ratio, to))
+              ) continue;
+              flow[from] = beforeFrom - watts;
+              flow[to] = beforeTo + watts * ratio;
+              const candidate = scoreDispatchWithReuse(
+                slots,
+                stores,
+                limits,
+                schedule,
+                undefined,
+                {
+                  previous: current,
+                  changedKey: store.key,
+                },
               );
               if (
-                watts * ratio > spare + GRID_NOISE_W &&
-                !(sellPrices[to] >
-                  slots[to].import_price_sek_per_kwh / roundTrip)
-              ) continue;
+                candidate.infeasibilities.length === 0 &&
+                (!releasing || Math.abs(
+                      candidate.state[store.key].at(-1)! -
+                        current.state[store.key].at(-1)!,
+                    ) < 1e-8) &&
+                candidate.stores.every((value, index) =>
+                  value.service_value_sek >= serviceFloor[index] - 1e-8
+                ) &&
+                cost(candidate) < cost(best) - 1e-7
+              ) {
+                best = candidate;
+                accepted = watts;
+              }
             }
-            if (
-              !executable(beforeFrom - watts, from) ||
-              !executable(beforeTo + watts * ratio, to)
-            ) continue;
-            power[from] = beforeFrom - watts;
-            power[to] = beforeTo + watts * ratio;
-            const candidate = scoreDispatchWithReuse(
-              slots,
-              stores,
-              limits,
-              schedule,
-              undefined,
-              {
-                previous: current,
-                changedKey: store.key,
-              },
-            );
-            if (
-              candidate.infeasibilities.length === 0 &&
-              candidate.stores.every((value, index) =>
-                value.service_value_sek >= serviceFloor[index] - 1e-8
-              ) &&
-              cost(candidate) < cost(best) - 1e-7
-            ) {
-              best = candidate;
-              accepted = watts;
+            flow[from] = beforeFrom - accepted;
+            flow[to] = beforeTo + accepted * ratio;
+            if (accepted > 0) {
+              current = best;
+              changed.add(store.key);
+              improved = true;
             }
-          }
-          power[from] = beforeFrom - accepted;
-          power[to] = beforeTo + accepted * ratio;
-          if (accepted > 0) {
-            current = best;
-            changed.add(store.key);
-            improved = true;
           }
         }
       }
@@ -2385,6 +2439,7 @@ export function* dispatchAuctionSteps(
   const bookedDischarge = (
     store: DispatchStore,
     index: number,
+    adjustment: "cost_refined" | "minimum_adjusted" = "minimum_adjusted",
   ): DispatchAllocationDiagnostic => {
     const slot = slots[index];
     const watts = dischargeW[store.key][index];
@@ -2407,7 +2462,7 @@ export function* dispatchAuctionSteps(
       direction: "discharge",
       trigger: "economic_winner",
       allocation_order: iterations,
-      minimum_adjusted: true,
+      [adjustment]: true,
       run_start_index: index,
       run_slots: 1,
       power_w: watts,
@@ -3972,6 +4027,10 @@ export function* dispatchAuctionSteps(
           (sum, store) => sum + powerW[store.key][index],
           0,
         );
+        returnedW[index] = stores.reduce(
+          (sum, store) => sum + dischargeW[store.key][index],
+          0,
+        );
       }
       for (const store of stores) {
         if (!changed.has(store.key)) continue;
@@ -3984,21 +4043,16 @@ export function* dispatchAuctionSteps(
         );
         for (let index = 0; index < count; index += 1) {
           const old = partAt(store, index);
-          // A refined charge is repriced below; discharge evidence retains its
-          // original decision with the final measured-state projection.
-          if (old?.direction === "discharge") {
-            // Original pair indices cease to describe the final charge profile.
-            delete old.energy_transfers;
-            old.cost_refined = true;
-            old.state_before = stateByKey[store.key][index];
-            old.state_after = stateByKey[store.key][index + 1];
-            continue;
-          }
           if (old) {
             allocations[index].splice(allocations[index].indexOf(old), 1);
           }
-          if (powerW[store.key][index] <= GRID_NOISE_W) continue;
-          allocations[index].push(bookedCharge(store, index, "cost_refined"));
+          if (dischargeW[store.key][index] > GRID_NOISE_W) {
+            allocations[index].push(
+              bookedDischarge(store, index, "cost_refined"),
+            );
+          } else if (powerW[store.key][index] > GRID_NOISE_W) {
+            allocations[index].push(bookedCharge(store, index, "cost_refined"));
+          }
         }
       }
       for (let index = 0; index < count; index += 1) recostSlot(index);

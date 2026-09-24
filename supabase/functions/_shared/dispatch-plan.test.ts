@@ -2279,3 +2279,103 @@ Deno.test("use-then-refill transfers preserve the reserve behind intervening exp
   }
   throw new Error("Paused export-reserve dispatch did not finish");
 });
+
+function exportTimingCase() {
+  // September 24 replay: 18:45 pays more than 19:15. Keep each
+  // quarter's house supply and move only the later sale.
+  const slots: DispatchSlot[] = [
+    [1161.13, 4.03626, 2.59301],
+    [1713.75, 3.84745, 2.44196],
+    [1445.01, 3.99092, 2.55674],
+  ].map(([fixed_load_w, import_price_sek_per_kwh, export_price_sek_per_kwh]) => ({
+    pv_w: 0, fixed_load_w, import_price_sek_per_kwh,
+    export_price_sek_per_kwh, binding: true, published_price: true,
+  }));
+  const battery: DispatchStore = {
+    key: "battery",
+    curve: { unit: "kwh", points: [{ at: 0, sek_per_unit: 2.3 }] },
+    initial_state: 16.27703539853092,
+    min_state: 0, max_state: 17.176, max_power_w: 8800,
+    min_sized_power_w: 500,
+    retention_per_slot: 1, usage_weight: [0, 0, 0], terminal_weight: 1,
+    units_per_kwh: () => 0.95, drift: (state) => state,
+    discharge: {
+      max_power_w: 9600, state_per_kwh_out: () => 1 / 0.95,
+      export_allowed: true, export_allowed_by_slot: [true, false, true],
+      export_min_state: 13.56, cycling_cost_sek_per_unit: 0.05,
+    },
+  };
+  const schedule: DispatchSchedule = {
+    power_w: { battery: [0, 0, 0] },
+    discharge_w: { battery: [1161.13, 1713.75, 4477.46] },
+  };
+  return { slots, battery, schedule };
+}
+
+Deno.test("discharge refinement sells at the higher price with identical closing inventory", () => {
+  const { slots, battery, schedule } = exportTimingCase();
+  const original = structuredClone(schedule);
+  const before = scoreDispatch(slots, [battery], LIMITS, schedule);
+  assertEquals(before.infeasibilities, []);
+  assert(refineDispatchCosts(slots, [battery], LIMITS, schedule).has("battery"));
+  const after = scoreDispatch(slots, [battery], LIMITS, schedule);
+  assertEquals(after.infeasibilities, []);
+  assert(Math.abs(after.export_w[0] - 3032.45) < 1e-6);
+  assert(Math.abs(after.export_w[2]) < 1e-6);
+  assert(after.import_w.every((w) => w < 1e-6));
+  assert(Math.abs(before.billable_sek - after.billable_sek - 0.027496740375) < 1e-9);
+  assert(Math.abs(after.stores[0].end_state - before.stores[0].end_state) < 1e-9);
+  assert(Math.abs(after.wear_sek - before.wear_sek) < 1e-9);
+  const paused = refineWithPauses(slots, [battery], LIMITS, original);
+  assert(paused.pauses > 0);
+  assertEquals(paused.schedule, schedule);
+});
+
+Deno.test("discharge refinement honours export eligibility", () => {
+  const { slots, battery, schedule } = exportTimingCase();
+  battery.discharge!.export_allowed_by_slot![0] = false;
+  const before = structuredClone(schedule);
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, schedule).infeasibilities, []);
+  refineDispatchCosts(slots, [battery], LIMITS, schedule);
+  assertEquals(schedule, before);
+});
+
+Deno.test("discharge refinement preserves the reserve behind an intervening sale", () => {
+  const { battery } = exportTimingCase();
+  battery.initial_state = 4;
+  battery.units_per_kwh = () => 1;
+  battery.discharge!.state_per_kwh_out = () => 1;
+  battery.discharge!.export_min_state = 3;
+  battery.discharge!.export_allowed_by_slot = [true, true, false, true];
+  battery.usage_weight = [0, 0, 0, 0];
+  const slots: DispatchSlot[] = [3, 4, 0, 2.5].map(price => ({
+    pv_w: 0, fixed_load_w: 0, import_price_sek_per_kwh: price + 2,
+    export_price_sek_per_kwh: price, binding: true, published_price: true,
+  }));
+  const schedule: DispatchSchedule = {
+    power_w: { battery: [0, 0, 4000, 0] },
+    discharge_w: { battery: [0, 3000, 0, 4000] },
+  };
+  const original = structuredClone(schedule);
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, schedule).infeasibilities, []);
+  // Moving the later sale earlier without checking the middle quarter fails.
+  schedule.discharge_w.battery = [4000, 3000, 0, 0];
+  assert(scoreDispatch(slots, [battery], LIMITS, schedule).infeasibilities.some(
+    entry => entry.slot === 1 && entry.store_key === "battery"));
+  refineDispatchCosts(slots, [battery], LIMITS, original);
+  assertEquals(scoreDispatch(slots, [battery], LIMITS, original).infeasibilities, []);
+  assert(original.discharge_w.battery[0] <= 1000 + 1e-6);
+});
+
+Deno.test("discharge refinement preserves energy between unequal quarter durations", () => {
+  const { slots, battery, schedule } = exportTimingCase();
+  battery.slot_hours = [0.125, 0.25, 0.25];
+  slots[0].duration_hours = 0.125;
+  const before = scoreDispatch(slots, [battery], LIMITS, schedule);
+  refineDispatchCosts(slots, [battery], LIMITS, schedule);
+  const after = scoreDispatch(slots, [battery], LIMITS, schedule);
+  assertEquals(after.infeasibilities, []);
+  assert(Math.abs(after.export_w[0] - 6064.9) < 1e-6);
+  assert(Math.abs(after.stores[0].end_state - before.stores[0].end_state) < 1e-9);
+  assert(after.billable_sek < before.billable_sek);
+});
