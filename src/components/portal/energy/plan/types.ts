@@ -157,7 +157,6 @@ export const COLORS = {
   batteryExport: '#059669',
 };
 
-export type PlanViewMode = 'planned' | 'unplanned';
 /**
  * The optimisation workspace uses top-level tabs. `plan` contains the headline
  * numbers, the live schedule and what the meters already recorded; `devices`

@@ -8,7 +8,7 @@
 // state and now lives in the section that owns the chart, so toggling a series
 // on Power cannot re-render Storage.
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { comparePlans } from '@/lib/energy-shift/plan-comparison';
 import {
@@ -24,7 +24,6 @@ import {
   type CurrentRow,
   type PlanChartSeries,
   type PlanChartSeriesKey,
-  type PlanViewMode,
 } from './types';
 
 export function usePlanModel(
@@ -35,12 +34,9 @@ export function usePlanModel(
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const { plan } = current;
-  const [planView, setPlanView] = useState<PlanViewMode>('planned');
-  // The producer publishes the actual execution schedule as priority in both UIs.
-  // Baseline is exposed only
-  // as a counterfactual chart and cannot change local control.
+  // Every live plan section displays the published execution schedule.
   const executed = plan.plans.priority;
-  const active = planView === 'planned' ? plan.plans.priority : plan.plans.baseline;
+  const active = executed;
   const comparison = useMemo(
     () => comparePlans(plan.plans.priority, plan.plans.baseline),
     [plan],
@@ -93,19 +89,15 @@ export function usePlanModel(
     i: index,
     label: formatHomeDayMonthTime(start, homeTimeZone),
     outdoor: thermalProjection.outdoor_temperature_c[index],
-    thermalPower: planView === 'planned'
-      ? thermalProjection.planned_total_power_w[index]
-      : thermalProjection.unplanned_total_power_w[index],
+    thermalPower: thermalProjection.planned_total_power_w[index],
     ...Object.fromEntries(thermalProjection.zones.flatMap((zone, zoneIndex) => [
       [
         `zoneTemperature${zoneIndex}`,
-        planView === 'planned'
-          ? zone.planned_temperature_c[index]
-          : zone.unplanned_temperature_c[index],
+        zone.planned_temperature_c[index],
       ],
       [`zoneTarget${zoneIndex}`, zone.target_c[index]],
     ])),
-  })) ?? [], [homeTimeZone, planView, thermalProjection]);
+  })) ?? [], [homeTimeZone, thermalProjection]);
   const firstAdvisory = active.slots.findIndex(slot => !slot.binding);
   const bindingIndex = firstAdvisory < 0 ? active.slots.length : firstAdvisory;
   const ticks = active.slots.map((slot, index) => ({ slot, index }))
@@ -207,8 +199,6 @@ export function usePlanModel(
   return {
     current,
     plan,
-    planView,
-    setPlanView,
     executed,
     active,
     comparison,

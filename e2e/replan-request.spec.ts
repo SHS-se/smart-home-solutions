@@ -560,7 +560,7 @@ test.describe('requesting a replan', () => {
 });
 
 
-test('mixed modes show one complete device plan and export the selected comparison', async ({ context, page }) => {
+test('mixed modes show and export the published device plan', async ({ context, page }) => {
   const plan = mixedModeFixture.plan as typeof PLAN;
   await page.clock.setFixedTime(new Date(mixedModeFixture.validation_time));
   await mockBackend(context, { row: { ...idle } }, plan, mixedModeSnapshot());
@@ -586,6 +586,5 @@ test('mixed modes show one complete device plan and export the selected comparis
     );
   };
   await downloadReplay('priority');
-  await page.getByRole('button', { name: /Utan plan|Without plan/ }).click();
-  await downloadReplay('baseline');
+  await expect(page.getByRole('button', { name: /Utan plan|Without plan|Med plan|With plan/ })).toHaveCount(0);
 });

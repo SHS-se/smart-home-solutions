@@ -444,7 +444,7 @@ const PlanView: React.FC<{
   const homeTimeZone = useHomeTimeZone();
   const model = usePlanModel(current, empiricalDevices, stale);
   const {
-    plan, planView, setPlanView, executed, active, comparison, hasBattery, hasEvBattery,
+    plan, executed, active, comparison, hasBattery, hasEvBattery,
     sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
@@ -780,27 +780,6 @@ const PlanView: React.FC<{
             </div>
             <div className="space-y-3 text-right">
               {replanControls}
-              <div className="flex gap-1" role="group" aria-label={t('Jämför planvyer', 'Compare plan views')}>
-                <Button
-                  size="sm"
-                  variant={planView === 'planned' ? 'default' : 'outline'}
-                  aria-pressed={planView === 'planned'}
-                  onClick={() => setPlanView('planned')}
-                >
-                  {t('Med plan', 'With plan')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant={planView === 'unplanned' ? 'default' : 'outline'}
-                  aria-pressed={planView === 'unplanned'}
-                  onClick={() => setPlanView('unplanned')}
-                >
-                  {t('Utan plan', 'Without plan')}
-                </Button>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {t('Ändrar bara jämförelsevyn', 'Changes only the comparison view')}
-              </p>
             </div>
           </div>
         </CardHeader>

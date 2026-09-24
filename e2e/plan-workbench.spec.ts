@@ -354,3 +354,111 @@ test('fixed plan activation, replacement and rescission use the edited interval'
   await page.reload();
   await expect(page.getByText(/^(Automatisk planering|Automatic planning)$/)).toBeVisible();
 });
+
+// ROI uses stored metered costs, independently of planner forecasts.
+test.describe('contract ROI', () => {
+  test.beforeEach(async ({ context, page }) => {
+    await mockBackend(context);
+    await page.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: Array.from({ length: 31 }, (_, i) => ({
+      id: `day-${i}`, customer_id: CUSTOMER_ID, device_token_id: null,
+      cost_date: `2026-01-${String(i + 1).padStart(2, '0')}`, import_kwh: 20, import_cost_sek: 10,
+      export_kwh: 5, export_credit_sek: 8, priced_hours: 24, created_at: '', updated_at: '',
+    })) }));
+    await page.goto('/login');
+    await page.fill('#email', 'whoever@example.com');
+    await page.fill('#password', 'mock-password');
+    await page.getByRole('button', { name: 'Logga in' }).click();
+    await page.waitForURL(url => !url.pathname.endsWith('/login'));
+    await page.goto('/portal/energy-modeling?tab=roi');
+  });
+
+  test('compares real imports, persists costs, selects all contract types and reports losses', async ({ page }) => {
+    await expect(page.getByTestId('roi-period-saving')).toContainText('392');
+    await page.locator('#roi-current-fee').fill('40');
+    await page.locator('#roi-pricing-method').selectOption('components');
+    await page.locator('#roi-rate').fill('100');
+    await page.locator('#roi-contract-fee').fill('50');
+    await page.locator('#roi-subscription').fill('100');
+    await page.locator('#roi-equipment').fill('2400');
+    await page.locator('#roi-installation').fill('240');
+    // Alternative 670 - actual 350 = 320; less subscription 100 => 220/month.
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('320 SEK');
+    await expect(page.getByTestId('roi-annual-net')).toHaveText(/2\s*640 SEK/);
+    await expect(page.getByTestId('roi-payback')).toHaveText('1 år');
+    await page.reload();
+    await expect(page.locator('#roi-equipment')).toHaveValue('2400');
+    await expect(page.getByTestId('roi-payback')).toHaveText('1 år');
+    await page.locator('#roi-equipment').fill('-1');
+    await expect(page.locator('#roi-equipment')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByTestId('roi-payback')).toHaveCount(0);
+    await page.locator('#roi-equipment').fill('2400');
+    await page.locator('#roi-contract-kind').selectOption('monthly');
+    await page.locator('#roi-example').selectOption('greenely-month');
+    await expect(page.locator('#roi-rate')).toHaveValue('80.75');
+    await page.getByText('Ange olika priser per månad', { exact: true }).click();
+    await page.locator('#roi-rate-2026-01').fill('90');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('208 SEK');
+    await page.locator('#roi-contract-kind').selectOption('mixed');
+    await page.locator('#roi-pricing-method').selectOption('components');
+    await page.locator('#roi-rate').fill('100');
+    await page.locator('#roi-variable-rate').fill('60');
+    await page.locator('#roi-fixed-share').fill('50');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('196 SEK');
+    await page.locator('#roi-contract-kind').selectOption('quarterly');
+    await page.locator('#roi-pricing-method').selectOption('profile');
+    await page.locator('#roi-markup').fill('10');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('72 SEK');
+    await expect(page.getByTestId('roi-payback')).toHaveText('Ingen återbetalning');
+    await page.locator('#roi-markup').fill('-10');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText(/[-−]52 SEK/);
+    await expect(page.getByText('högre elkostnad med mitt nuvarande avtal')).toBeVisible();
+  });
+
+  test('uses bills without adding supplier fees twice, then exposes missing and failed data', async ({ page }) => {
+    await page.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: [{
+      id: 'invoice', customer_id: CUSTOMER_ID, document_kind: 'electricity', currency: 'SEK',
+      period_start: '2026-01-01', period_end: '2026-01-31', consumption_kwh: 620,
+      exported_kwh: 100, total_amount_sek: 250, peak_demand_kw: null,
+      energy_billing_line_items: [
+        { category: 'spot_energy', amount_sek: 300, quantity: 620, period_start: null, period_end: null },
+        { category: 'fixed_fee', amount_sek: 50, quantity: null, period_start: null, period_end: null },
+        { category: 'export_credit', amount_sek: -100, quantity: null, period_start: null, period_end: null },
+      ],
+    }] }));
+    await page.locator('#roi-current-fee').fill('999');
+    await page.locator('#roi-source').selectOption('invoices');
+    await expect(page.locator('#roi-current-fee')).toHaveCount(0);
+    await page.locator('#roi-rate').fill('100');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('270 SEK');
+    await page.locator('#roi-from').fill('2027-01');
+    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
+    await page.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ status: 500, json: { message: 'Unavailable' } }));
+    await page.reload();
+    await expect(page.getByText('Kunde inte läsa elhistoriken', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
+  });
+
+  test('remains readable on mobile and at desktop size', async ({ page }) => {
+    await expect(page.getByTestId('roi-period-saving')).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: '/tmp/roi-desktop.png', fullPage: true });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.setViewportSize({ width: 375, height: 812 });
+    const roi = page.getByTestId('contract-roi');
+    await expect(roi).toBeVisible();
+    const bounds = await roi.boundingBox();
+    expect(bounds!.width).toBeLessThanOrEqual(375);
+    await expect(page.locator('#roi-contract-kind')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ({
+      viewport: window.innerWidth,
+      overflow: [...document.querySelectorAll('body *')].filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.right > window.innerWidth + 1 && getComputedStyle(el).position !== 'fixed';
+      }).slice(0, 12).map(el => `${el.tagName}.${el.className}`),
+      width: document.documentElement.scrollWidth,
+    }))).toMatchObject({ width: 375 });
+    await page.screenshot({ path: '/tmp/roi-mobile.png', fullPage: true });
+    await page.setViewportSize({ width: 812, height: 375 });
+    expect((await roi.boundingBox())!.width).toBeLessThanOrEqual(812);
+  });
+});
