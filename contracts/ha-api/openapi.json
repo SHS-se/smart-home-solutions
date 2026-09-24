@@ -263,6 +263,16 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "202": {
+            "description": "Battery curve calculation accepted and checkpointed. Continue the same snapshot and replan request after retry_after_ms; this is not a completed exchange.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OptimisationPendingResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3186,6 +3196,35 @@
           }
         },
         "additionalProperties": false
+      },
+      "OptimisationPendingResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "required": [
+                  "pending",
+                  "retry_after_ms"
+                ],
+                "properties": {
+                  "pending": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "retry_after_ms": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     }
   }

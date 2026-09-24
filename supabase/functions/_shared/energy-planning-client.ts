@@ -67,11 +67,18 @@ export async function generateRemoteOptimisationPlan(
           signal,
         },
       );
-    } catch {
+    } catch (error) {
+      console.error("[ENERGY-PLANNING] worker transport failed", {
+        request_id: connection.requestId,
+        name: error instanceof Error ? error.name : null,
+        detail: describeThrown(error),
+        retry_after_ms: error && typeof error === "object" && "retryAfterMs" in error
+          ? error.retryAfterMs : null,
+      });
       throw new EnergyPlanningError(
         signal.aborted
           ? "Planning stages exceeded the 120-second request deadline"
-          : "Planning worker could not be reached",
+          : `Planning worker could not be reached: ${describeThrown(error)}`,
       );
     }
     let body: EnergyPlanningStep & {

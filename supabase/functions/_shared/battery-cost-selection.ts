@@ -1,3 +1,4 @@
+import { describeThrown } from "./ha-api-contract.ts";
 import {
   COST_CURVE_EVALUATIONS,
   type CostCurveInput,
@@ -43,6 +44,16 @@ interface StoredSelection {
   revision: number;
   record: CostCurveRecord | null;
 }
+export interface CostCurvePending { pending: true; retry_after_ms: number }
+export type CostCurveResolution =
+  | { selection: CostCurveRecord; input: CostCurveInput }
+  | CostCurvePending;
+const pending = (retry_after_ms = 1000): CostCurvePending => ({ pending: true, retry_after_ms });
+// Leave room within one device request for authentication, storage and transfer.
+// Search progress already belongs to the price-release row, not the HTTP request.
+const MAX_WORKER_CALLS = 8;
+const BATCH_MS = 8_000;
+
 const TABLE = "energy_optimisation_battery_cost_curves";
 const COLUMNS = "key,input,progress,revision,record";
 
@@ -66,7 +77,7 @@ export async function resolveCostCurve(
   input: CostCurveInput,
   connection: { url: string; planningSecret: string; requestId: string },
   fetcher: typeof fetch = fetch,
-): Promise<{ selection: CostCurveRecord; input: CostCurveInput }> {
+): Promise<CostCurveResolution> {
   input = {
     ...input,
     snapshot: { ...input.snapshot, battery_cost_curve: undefined },
@@ -116,11 +127,12 @@ export async function resolveCostCurve(
   if (!connection.url || !connection.planningSecret) {
     throw new EnergyPlanningError("Planning worker is not configured");
   }
-  const signal = AbortSignal.timeout(120_000);
-  for (let calls = 0; calls < 512; calls++) {
+  const started = performance.now();
+  const signal = AbortSignal.timeout(20_000);
+  for (let calls = 0; calls < MAX_WORKER_CALLS; calls++) {
     if (signal.aborted) {
       throw new EnergyPlanningError(
-        "Battery curve stages exceeded the 120-second request deadline",
+        "Battery curve batch exceeded the 20-second request deadline",
       );
     }
     let response: Response;
@@ -143,11 +155,23 @@ export async function resolveCostCurve(
           signal,
         },
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === "RateLimitError" &&
+          "retryAfterMs" in error && typeof error.retryAfterMs === "number" &&
+          Number.isFinite(error.retryAfterMs) && error.retryAfterMs >= 0) {
+        return pending(Math.ceil(error.retryAfterMs));
+      }
+      console.error("[ENERGY-PLANNING] worker transport failed", {
+        request_id: connection.requestId,
+        name: error instanceof Error ? error.name : null,
+        detail: describeThrown(error),
+        retry_after_ms: error && typeof error === "object" && "retryAfterMs" in error
+          ? error.retryAfterMs : null,
+      });
       throw new EnergyPlanningError(
         signal.aborted
-          ? "Battery curve stages exceeded the 120-second request deadline"
-          : "Planning worker could not be reached",
+          ? "Battery curve batch exceeded the 20-second request deadline"
+          : `Planning worker could not be reached: ${describeThrown(error)}`,
       );
     }
     let body: CostCurveStep & {
@@ -235,7 +259,9 @@ export async function resolveCostCurve(
       );
     }
     row = result.data ? stored(result) : await read();
-    if (row.record) return { selection: row.record, input: row.input };
+    // Even a finished batch is acknowledged separately from the final plan:
+    // its next request can use the whole planning deadline.
+    if (row.record || performance.now() - started >= BATCH_MS) return pending();
   }
-  throw new EnergyPlanningError("Planning worker exceeded the stage limit");
+  return pending();
 }

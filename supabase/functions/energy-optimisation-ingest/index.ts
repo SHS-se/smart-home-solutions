@@ -1870,13 +1870,14 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           thermal_zone_count: thermalZones.length,
         });
         if (snapshot.battery_curve_mode === "price_only") {
-          const { selection } = await resolveCostCurve(supabase, auth.homeId, auth.customerId,
+          const costCurve = await resolveCostCurve(supabase, auth.homeId, auth.customerId,
             { snapshot, now: planningNow.toISOString() }, {
               url: Deno.env.get("SUPABASE_URL") ?? "",
               planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
               requestId,
             }, traffic.fetch);
-          snapshot = { ...snapshot, battery_cost_curve: selection };
+          if ("pending" in costCurve) return json(costCurve, 202);
+          snapshot = { ...snapshot, battery_cost_curve: costCurve.selection };
         }
         const planned = await generateRemoteOptimisationPlan({
           snapshot,

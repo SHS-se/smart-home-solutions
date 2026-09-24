@@ -95,23 +95,32 @@ interface BatteryDraft {
 }
 
 async function priceOnlyDraft(homeId: string): Promise<BatteryDraft> {
-  const { data, error } = await supabase.functions.invoke('energy-optimisation-battery-curve', {
-    body: { home_id: homeId },
-  });
-  if (error) {
-    const response = (error as { context?: Response }).context;
-    if (response) {
-      const body = await response.json();
-      throw new Error(body.detail ?? body.error ?? error.message);
+  for (;;) {
+    const { data, error } = await supabase.functions.invoke('energy-optimisation-battery-curve', {
+      body: { home_id: homeId },
+    });
+    if (error) {
+      const response = (error as { context?: Response }).context;
+      if (response) {
+        const body = await response.json();
+        throw new Error(body.detail ?? body.error ?? error.message);
+      }
+      throw error;
     }
-    throw error;
+    if (data?.pending === true) {
+      if (!Number.isFinite(data.retry_after_ms) || data.retry_after_ms < 0) {
+        throw new Error('The cost curve response has an invalid continuation delay.');
+      }
+      await new Promise(resolve => setTimeout(resolve, data.retry_after_ms));
+      continue;
+    }
+    const curve = data?.selection?.curve as UtilityCurve | undefined;
+    if (!curve || !Array.isArray(curve.points) || validateBatteryCurve(curve)
+      || !data?.input?.snapshot || !Number.isFinite(Date.parse(data?.input?.now))) {
+      throw new Error('The cost curve response is incomplete. Try generating it again.');
+    }
+    return { curve, mode: 'price_only', edited: true, comparisonInput: data.input };
   }
-  const curve = data?.selection?.curve as UtilityCurve | undefined;
-  if (!curve || !Array.isArray(curve.points) || validateBatteryCurve(curve)
-    || !data?.input?.snapshot || !Number.isFinite(Date.parse(data?.input?.now))) {
-    throw new Error('The cost curve response is incomplete. Try generating it again.');
-  }
-  return { curve, mode: 'price_only', edited: true, comparisonInput: data.input };
 }
 
 

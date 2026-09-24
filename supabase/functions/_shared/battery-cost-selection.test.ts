@@ -127,6 +127,14 @@ const worker = (
 ): typeof fetch =>
 (_url, options) => Promise.resolve(fn(JSON.parse(String(options?.body))));
 
+// Existing domain checks complete all accepted batches, like the callers do.
+async function finishCostCurve(...args: Parameters<typeof resolveCostCurve>) {
+  for (;;) {
+    const result = await resolveCostCurve(...args);
+    if (!("pending" in result)) return result;
+  }
+}
+
 Deno.test("cost selection persists compact progress and reuses frozen source across reloads", async () => {
   const { db, rows } = database();
   const source = input();
@@ -147,7 +155,7 @@ Deno.test("cost selection persists compact progress and reuses frozen source acr
     });
     return response({ done: true, record: selected });
   });
-  const first = await resolveCostCurve(
+  const first = await finishCostCurve(
     db,
     "home",
     "customer",
@@ -158,7 +166,7 @@ Deno.test("cost selection persists compact progress and reuses frozen source acr
   const changed = structuredClone(source);
   changed.snapshot.snapshot_id = "different-snapshot";
   changed.snapshot.battery!.soc = 0.8;
-  const second = await resolveCostCurve(
+  const second = await finishCostCurve(
     db,
     "home",
     "customer",
@@ -179,7 +187,7 @@ Deno.test("cost selection CAS loser returns the winner's immutable result", asyn
   loseUpdate(() =>
     Object.assign([...rows.values()][0], { record: winner, revision: 1 })
   );
-  const result = await resolveCostCurve(
+  const result = await finishCostCurve(
     db,
     "home",
     "customer",
@@ -201,7 +209,7 @@ Deno.test("cost selection propagates 546 without retry and resumes persisted pro
   let calls = 0;
   await assertRejects(
     () =>
-      resolveCostCurve(
+      finishCostCurve(
         db,
         "home",
         "customer",
@@ -220,7 +228,7 @@ Deno.test("cost selection propagates 546 without retry and resumes persisted pro
   assertEquals(calls, 2);
   const newer = structuredClone(source);
   newer.snapshot.snapshot_id = "new-measurement";
-  await resolveCostCurve(
+  await finishCostCurve(
     db,
     "home",
     "customer",
@@ -240,7 +248,7 @@ Deno.test("cost selection rejects mismatched worker record before persisting", a
   const selected = await record(source);
   await assertRejects(
     () =>
-      resolveCostCurve(
+      finishCostCurve(
         db,
         "home",
         "customer",
@@ -307,7 +315,7 @@ Deno.test("cost selection survives elapsed quarters and rolling slots until publ
       record: await record(body.input as CostCurveInput),
     });
   });
-  const first = await resolveCostCurve(
+  const first = await finishCostCurve(
     db,
     "home",
     "customer",
@@ -324,20 +332,20 @@ Deno.test("cost selection survives elapsed quarters and rolling slots until publ
     battery: { unit: "kwh", points: [{ at: 0, sek_per_unit: 9 }] },
   };
   assertEquals(
-    await resolveCostCurve(db, "home", "customer", later, connection, fetcher),
+    await finishCostCurve(db, "home", "customer", later, connection, fetcher),
     first,
   );
   assertEquals(calls, 1);
   assertEquals(rows.size, 1);
   later.snapshot.slots[0].import_price_sek_per_kwh! += .01;
-  await resolveCostCurve(db, "home", "customer", later, connection, fetcher);
+  await finishCostCurve(db, "home", "customer", later, connection, fetcher);
   assertEquals(calls, 2);
   const newlyPublished = later.snapshot.slots.find((slot) =>
     slot.import_price_sek_per_kwh === null
   )!;
   newlyPublished.import_price_sek_per_kwh = 1.25;
   newlyPublished.export_price_sek_per_kwh = .1;
-  await resolveCostCurve(db, "home", "customer", later, connection, fetcher);
+  await finishCostCurve(db, "home", "customer", later, connection, fetcher);
   assertEquals(calls, 3);
 });
 
@@ -355,7 +363,7 @@ for (const completed of [false, true]) {
       record: completed ? { ...selected, key: "obsolete-algorithm" } : null,
     };
     rows.set("home:obsolete-algorithm", structuredClone(old));
-    const result = await resolveCostCurve(db, "home", "customer", source, connection,
+    const result = await finishCostCurve(db, "home", "customer", source, connection,
       worker(body => {
         assertEquals(body.input, source);
         assertEquals(body.progress, { evaluations: [] });
@@ -366,3 +374,49 @@ for (const completed of [false, true]) {
     assertEquals(rows.get("home:obsolete-algorithm"), old);
   });
 }
+
+Deno.test("cost selection yields bounded batches and reserves final planning for the next request", async () => {
+  const { db, rows } = database();
+  const source = input(), selected = await record(source);
+  let calls = 0;
+  const fetcher = worker(body => {
+    assertEquals(body.input, source);
+    assertEquals((body.progress as { evaluations: unknown[] }).evaluations.length, calls);
+    calls++;
+    return calls === 19 ? response({ done: true, record: selected }) : response({
+      done: false, progress: { evaluations: Array.from({ length: calls }, () => ({ curve: selected.curve, bill_sek: 10 })) },
+    });
+  });
+  for (const expected of [8, 16, 19]) {
+    assertEquals(await resolveCostCurve(db, "home", "customer", source, connection, fetcher),
+      { pending: true, retry_after_ms: 1000 });
+    assertEquals(calls, expected);
+    assertEquals([...rows.values()][0].revision, expected);
+  }
+  assertEquals(await resolveCostCurve(db, "home", "customer", source, connection, fetcher),
+    { selection: selected, input: { ...source, snapshot: { ...source.snapshot, battery_cost_curve: undefined } } });
+  assertEquals(calls, 19);
+});
+
+Deno.test("cost selection respects platform rate-limit delay without losing progress or retrying errors", async () => {
+  const { db, rows } = database();
+  const source = input();
+  const limited = Object.assign(new Error("Rate limit exceeded for trace"), { name: "RateLimitError", retryAfterMs: 1234 });
+  assertEquals(await resolveCostCurve(db, "home", "customer", source, connection,
+    () => Promise.reject(limited)), { pending: true, retry_after_ms: 1234 });
+  assertEquals([...rows.values()][0].revision, 0);
+  await assertRejects(() => resolveCostCurve(db, "home", "customer", source, connection,
+    () => Promise.reject(new Error("connection reset"))), EnergyPlanningError, "connection reset");
+});
+
+Deno.test("portal reports pending work as accepted, not a completed curve", async () => {
+  const pending = { pending: true as const, retry_after_ms: 1000 };
+  const response = await handleBatteryCostCurve(new Request("https://portal.test", {
+    method: "POST", headers: { Authorization: "Bearer caller" }, body: JSON.stringify({ home_id: "home" }),
+  }), {
+    readHome: () => Promise.resolve({ customerId: "customer", input: input() }),
+    resolve: () => Promise.resolve(pending),
+  });
+  assertEquals(response.status, 202);
+  assertEquals(await response.json(), pending);
+});

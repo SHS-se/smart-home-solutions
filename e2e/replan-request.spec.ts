@@ -321,7 +321,11 @@ test.describe('requesting a replan', () => {
     await context.route('**/functions/v1/energy-optimisation-battery-curve*', async route => {
       requests++;
       expect(route.request().postDataJSON()).toEqual({ home_id: HOME_ID });
-      if (requests === 1) await firstRequest;
+      if (requests === 1) {
+        await firstRequest;
+        await route.fulfill({ status: 202, json: { pending: true, retry_after_ms: 1 } });
+        return;
+      }
       await route.fulfill({ json: {
         selection: { key: 'frozen-quarter-prices', curve: selectedCurve, source_snapshot_id: frozen.snapshot_id,
           evaluations: 40, bill_before_sek: 12, bill_after_sek: 10, published_until: frozen.slots[99].start },

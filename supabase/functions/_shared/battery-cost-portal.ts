@@ -1,4 +1,5 @@
-import type { CostCurveInput, CostCurveRecord } from "./battery-cost-curve.ts";
+import type { CostCurveResolution } from "./battery-cost-selection.ts";
+import type { CostCurveInput } from "./battery-cost-curve.ts";
 import { EnergyPlanningError } from "./energy-planning-client.ts";
 
 export const batteryCurveCorsHeaders = {
@@ -16,7 +17,7 @@ export interface BatteryCurvePortalDependencies {
   resolve(
     homeId: string,
     home: PortalHome,
-  ): Promise<{ selection: CostCurveRecord; input: CostCurveInput }>;
+  ): Promise<CostCurveResolution>;
 }
 
 /** Only home_id is accepted: source measurements always come from the server. */
@@ -50,7 +51,8 @@ export async function handleBatteryCostCurve(
   try {
     const home = await dependencies.readHome(authorization, homeId);
     if (!home) return json({ error: "not_found" }, 404);
-    return json(await dependencies.resolve(homeId, home));
+    const result = await dependencies.resolve(homeId, home);
+    return json(result, "pending" in result ? 202 : 200);
   } catch (error) {
     return json({
       error: "battery_curve_failed",
