@@ -41,6 +41,11 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
       CREATE TABLE energy_optimisation_thermal_slots (customer_id uuid, home_id uuid, start_ts timestamptz, room_key text);
       CREATE TABLE energy_optimisation_outdoor_slots (home_id uuid, start_ts timestamptz, temperature_c numeric);
     `);
+    await db.exec(`
+      CREATE INDEX idx_energy_optimisation_device_slots_home_start ON energy_optimisation_device_slots (home_id, start_ts DESC);
+      CREATE INDEX idx_energy_optimisation_thermal_home_start ON energy_optimisation_thermal_slots (home_id, start_ts DESC);
+    `);
+    await db.exec(await Deno.readTextFile('supabase/migrations/20260924170000_speed_up_energy_portal_and_replan_reads.sql'));
     const deviceMigration = await Deno.readTextFile('supabase/migrations/20260811100000_add_empirical_energy_device_models.sql');
     const start = deviceMigration.indexOf('CREATE OR REPLACE FUNCTION public.get_energy_optimisation_device_slots(');
     await db.exec(deviceMigration.slice(start, deviceMigration.indexOf('$$;', start) + 3));

@@ -17,10 +17,23 @@ Deno.test('replan read preserves decisions and atomic fixed state with a smaller
       ALTER TABLE energy_optimisation_current ENABLE ROW LEVEL SECURITY;
       GRANT SELECT ON energy_optimisation_current TO service_role;
     `);
-    await db.exec(await Deno.readTextFile('supabase/migrations/20260914220000_narrow_energy_replan_state.sql'));
-    const read = async (id = home) => (await db.query<{ value: {
+    const original = await Deno.readTextFile('supabase/migrations/20260914220000_narrow_energy_replan_state.sql');
+    await db.exec(original);
+    await db.exec(original.slice(original.indexOf('CREATE FUNCTION public.get_energy_replan_state'))
+      .replaceAll('get_energy_replan_state', 'original_replan_state'));
+    const pick = await Deno.readTextFile('supabase/migrations/20260924160000_streamline_energy_plan_storage.sql');
+    await db.exec(pick.slice(pick.indexOf('CREATE OR REPLACE FUNCTION public.energy_replan_pick')));
+    const migration = await Deno.readTextFile('supabase/migrations/20260924170000_speed_up_energy_portal_and_replan_reads.sql');
+    await db.exec(migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION')));
+    type State = {
       previous_plan: ReplanPreviousPlan | null; fixed_plan: unknown; fixed_plan_revision: number;
-    } | null }>('SELECT get_energy_replan_state($1) AS value', [id])).rows[0].value;
+    } | null;
+    const read = async (id = home) => {
+      const { value, original } = (await db.query<{ value: State; original: State }>(
+        'SELECT get_energy_replan_state($1) AS value, original_replan_state($1) AS original', [id])).rows[0];
+      assertEquals(value, original, 'Optimized projection must preserve the complete RPC result');
+      return value;
+    };
     for (const role of ['anon', 'authenticated']) {
       await db.exec(`SET ROLE ${role}`);
       await assertRejects(() => read(), Error, 'permission denied');
@@ -78,6 +91,13 @@ Deno.test('replan read preserves decisions and atomic fixed state with a smaller
     const sparse = { capabilities: { battery: null }, plans: { priority: { slots: [{ start: 'x' }, { start: 'x', battery_command: null }] } } };
     await db.query('UPDATE energy_optimisation_current SET plan=$1', [sparse]);
     assertEquals<unknown>((await read())!.previous_plan, sparse);
+    for (const value of [null, [], 7, {}, { plans: null }, { plans: [] },
+      { plans: {} }, { plans: { priority: null } }, { plans: { priority: [] } },
+      { plans: { priority: {} } }, { plans: { priority: { slots: null } } },
+      { plans: { priority: { slots: {} } } }, { plans: { priority: { slots: [] } } }]) {
+      await db.query('UPDATE energy_optimisation_current SET plan=$1::jsonb', [JSON.stringify(value)]);
+      assertEquals<unknown>((await read())!.previous_plan, value);
+    }
     await db.exec("UPDATE energy_optimisation_current SET plan='null'::jsonb");
     assertEquals((await read())!.previous_plan, null);
   } finally { await db.close(); }
