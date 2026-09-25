@@ -3,7 +3,7 @@ import { compareContract, hoursInDay, invoiceRoiHistory, supplierRoiHistory, typ
 import type { EnergySupplierDailyCostRecord } from './energy-supplier-series.ts';
 import type { EnergyBillingDocumentForSeries } from './energy-billing-series.ts';
 
-const contract: ComparisonContract = { kind: 'fixed', method: 'components', rateOre: 100, monthlyFeeSek: 50, variableRateOre: 60, fixedSharePercent: 50, markupDifferenceOre: 10, monthlyRates: {} };
+const contract: ComparisonContract = { kind: 'fixed', method: 'components', rateOre: 100, monthlyFeeSek: 50, variableRateOre: 60, fixedSharePercent: 50, markupDifferenceOre: 10, monthlyRates: {}, monthlyMarkupPercent: 0 };
 const investment: RoiInvestment = { equipmentSek: 10000, installationSek: 2000, subscriptionSek: 100, currentMonthlyFeeSek: 40 };
 const months = [{ month: '2026-01', days: 31, monthFraction: 1, importKwh: 1000, importCostSek: 500 }];
 
@@ -73,4 +73,12 @@ Deno.test('partial and overlapping invoice periods cannot inflate ROI', () => {
   const overlap = invoiceRoiHistory([invoice, { ...invoice, id: 'duplicate' }]);
   assertEquals(overlap.months.length, 0);
   assertEquals(overlap.excluded, 1);
+});
+
+Deno.test('monthly averages require real market data and apply supplier markup separately', () => {
+  assertThrows(() => compareContract(months, { ...contract, kind: 'monthly' }, investment));
+  const monthly = { ...contract, kind: 'monthly' as const, monthlyRates: { '2026-01': 80 }, monthlyMarkupPercent: 10, monthlyFeeSek: 0 };
+  assertAlmostEquals(compareContract(months, monthly, investment)!.alternative, 880);
+  assertAlmostEquals(compareContract(months, { ...monthly, monthlyMarkupPercent: 0, monthlyFeeSek: 49 }, investment)!.alternative, 849);
+  assertThrows(() => compareContract(months, { ...monthly, monthlyMarkupPercent: -1 }, investment));
 });

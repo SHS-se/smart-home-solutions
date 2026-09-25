@@ -372,8 +372,9 @@ test.describe('contract ROI', () => {
     await page.goto('/portal/energy-modeling?tab=roi');
   });
 
-  test('compares real imports, persists costs, selects all contract types and reports losses', async ({ page }) => {
-    await expect(page.getByTestId('roi-period-saving')).toContainText('392');
+  test('leads with net savings, uses monthly market averages and labels losses without minus signs', async ({ page }) => {
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('93 SEK');
+    await expect(page.getByTestId('roi-outcome')).toHaveText('Sparat per månad');
     await page.locator('#roi-current-fee').fill('40');
     await page.locator('#roi-pricing-method').selectOption('components');
     await page.locator('#roi-rate').fill('100');
@@ -381,37 +382,35 @@ test.describe('contract ROI', () => {
     await page.locator('#roi-subscription').fill('100');
     await page.locator('#roi-equipment').fill('2400');
     await page.locator('#roi-installation').fill('240');
-    // Alternative 670 - actual 350 = 320; less subscription 100 => 220/month.
-    await expect(page.getByTestId('roi-period-saving')).toHaveText('320 SEK');
-    await expect(page.getByTestId('roi-annual-net')).toHaveText(/2\s*640 SEK/);
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('220 SEK');
     await expect(page.getByTestId('roi-payback')).toHaveText('1 år');
     await page.reload();
     await expect(page.locator('#roi-equipment')).toHaveValue('2400');
-    await expect(page.getByTestId('roi-payback')).toHaveText('1 år');
     await page.locator('#roi-equipment').fill('-1');
-    await expect(page.locator('#roi-equipment')).toHaveAttribute('aria-invalid', 'true');
-    await expect(page.getByTestId('roi-payback')).toHaveCount(0);
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('—');
     await page.locator('#roi-equipment').fill('2400');
+    await page.route('**/functions/v1/roi-monthly-prices*', route => {
+      expect(route.request().postDataJSON()).toEqual({ area: 'SE3', month: '2026-01' });
+      return route.fulfill({ json: { average_sek_ex_vat: 0.64, through_date: '2026-01-31' } });
+    });
     await page.locator('#roi-contract-kind').selectOption('monthly');
-    await page.locator('#roi-example').selectOption('greenely-month');
-    await expect(page.locator('#roi-rate')).toHaveValue('80.75');
-    await page.getByText('Ange olika priser per månad', { exact: true }).click();
-    await page.locator('#roi-rate-2026-01').fill('90');
-    await expect(page.getByTestId('roi-period-saving')).toHaveText('208 SEK');
-    await page.locator('#roi-contract-kind').selectOption('mixed');
-    await page.locator('#roi-pricing-method').selectOption('components');
-    await page.locator('#roi-rate').fill('100');
-    await page.locator('#roi-variable-rate').fill('60');
-    await page.locator('#roi-fixed-share').fill('50');
-    await expect(page.getByTestId('roi-period-saving')).toHaveText('196 SEK');
-    await page.locator('#roi-contract-kind').selectOption('quarterly');
-    await page.locator('#roi-pricing-method').selectOption('profile');
-    await page.locator('#roi-markup').fill('10');
-    await expect(page.getByTestId('roi-period-saving')).toHaveText('72 SEK');
-    await expect(page.getByTestId('roi-payback')).toHaveText('Ingen återbetalning');
-    await page.locator('#roi-markup').fill('-10');
-    await expect(page.getByTestId('roi-period-saving')).toHaveText(/[-−]52 SEK/);
-    await expect(page.getByText('högre elkostnad med mitt nuvarande avtal')).toBeVisible();
+    await expect(page.locator('#roi-rate')).toHaveCount(0);
+    await expect(page.getByText('Ange olika priser per månad')).toHaveCount(0);
+    await page.locator('#roi-area').selectOption('SE3');
+    await page.locator('#roi-monthly-markup').fill('10');
+    // 620 × 0.64 × 1.25 × 1.10 - 350 - 100 = 95.60.
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('96 SEK');
+    await page.locator('#roi-markup-unit').selectOption('monthly');
+    await page.locator('#roi-monthly-markup').fill('49');
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('95 SEK');
+    await page.locator('#roi-subscription').fill('300');
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('105 SEK');
+    await expect(page.getByTestId('roi-outcome')).toHaveText('Extra kostnad per månad');
+    await expect(page.getByTestId('roi-hero')).toHaveClass(/bg-warning/);
+    await expect(page.getByTestId('roi-payback')).toHaveText('Ingen');
+    await page.route('**/functions/v1/roi-monthly-prices*', route => route.fulfill({ status: 502, json: { error: 'monthly_prices_unavailable' } }));
+    await page.locator('#roi-area').selectOption('SE2');
+    await expect(page.getByTestId('roi-monthly-net')).toHaveText('—');
   });
 
   test('uses bills without adding supplier fees twice, then exposes missing and failed data', async ({ page }) => {
@@ -429,18 +428,20 @@ test.describe('contract ROI', () => {
     await page.locator('#roi-source').selectOption('invoices');
     await expect(page.locator('#roi-current-fee')).toHaveCount(0);
     await page.locator('#roi-rate').fill('100');
-    await expect(page.getByTestId('roi-period-saving')).toHaveText('270 SEK');
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('29 SEK');
     await page.locator('#roi-from').fill('2027-01');
-    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('—');
     await page.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ status: 500, json: { message: 'Unavailable' } }));
     await page.reload();
     await expect(page.getByText('Kunde inte läsa elhistoriken', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
+    await expect(page.getByTestId('roi-period-saving')).toHaveText('—');
   });
 
   test('remains readable on mobile and at desktop size', async ({ page }) => {
     await expect(page.getByTestId('roi-period-saving')).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(page.getByTestId('roi-hero')).toBeInViewport();
+    await expect(page.getByText('Examples come from your screenshots', { exact: false })).toHaveCount(0);
     await page.screenshot({ path: '/tmp/roi-desktop.png', fullPage: true });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 375, height: 812 });

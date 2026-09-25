@@ -89,6 +89,7 @@ export interface ComparisonContract {
   fixedSharePercent: number;
   markupDifferenceOre: number;
   monthlyRates: Record<string, number>;
+  monthlyMarkupPercent: number;
 }
 export interface RoiInvestment {
   equipmentSek: number;
@@ -99,19 +100,22 @@ export interface RoiInvestment {
 
 export function compareContract(months: readonly RoiMonth[], contract: ComparisonContract, investment: RoiInvestment) {
   const numbers = [contract.rateOre, contract.monthlyFeeSek, contract.variableRateOre, contract.fixedSharePercent,
-    contract.markupDifferenceOre, ...Object.values(contract.monthlyRates), ...Object.values(investment)];
+    contract.markupDifferenceOre, contract.monthlyMarkupPercent, ...Object.values(contract.monthlyRates), ...Object.values(investment)];
   if (numbers.some(n => !Number.isFinite(n)) || contract.fixedSharePercent < 0 || contract.fixedSharePercent > 100
-    || contract.monthlyFeeSek < 0 || Object.values(investment).some(n => n < 0)) throw new Error('Invalid ROI inputs');
+    || contract.monthlyMarkupPercent < 0 || contract.monthlyFeeSek < 0 || Object.values(investment).some(n => n < 0)) throw new Error('Invalid ROI inputs');
   if (months.length === 0) return null;
   const compared = months.map(month => {
-    const rate = contract.monthlyRates[month.month] ?? contract.rateOre;
-    const alternativeEnergy = contract.method === 'profile'
+    if (contract.kind === 'monthly' && contract.monthlyRates[month.month] === undefined) throw new Error('Monthly market price missing');
+    const rate = contract.kind === 'monthly'
+      ? contract.monthlyRates[month.month] * (1 + contract.monthlyMarkupPercent / 100)
+      : contract.rateOre;
+    const alternativeEnergy = contract.kind !== 'monthly' && contract.method === 'profile'
       ? month.importCostSek + month.importKwh * contract.markupDifferenceOre / 100
       : month.importKwh / 100 * (contract.kind === 'mixed' && contract.method === 'components'
         ? contract.rateOre * contract.fixedSharePercent / 100 + contract.variableRateOre * (1 - contract.fixedSharePercent / 100)
         : rate);
     const actual = month.importCostSek + investment.currentMonthlyFeeSek * month.monthFraction;
-    const alternative = alternativeEnergy + (contract.method === 'quote' ? 0 : contract.monthlyFeeSek * month.monthFraction);
+    const alternative = alternativeEnergy + (contract.method === 'quote' && contract.kind !== 'monthly' ? 0 : contract.monthlyFeeSek * month.monthFraction);
     const subscription = investment.subscriptionSek * month.monthFraction;
     return { ...month, actual, alternative, subscription, saving: alternative - actual, net: alternative - actual - subscription };
   });

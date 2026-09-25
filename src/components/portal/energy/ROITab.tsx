@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
-import { ArrowRightLeft, Loader2 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
+import { ArrowDownRight, ArrowUpRight, Loader2 } from 'lucide-react';
+import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { fetchEnergySupplierDailyCosts } from '@/lib/energy-tariff-storage';
-import { fetchRoiInvoices } from '@/lib/contract-roi-storage';
+import { fetchRoiInvoices, fetchRoiMonthlyPrices } from '@/lib/contract-roi-storage';
 import { compareContract, invoiceRoiHistory, numericInput, supplierRoiHistory } from '@/lib/contract-roi';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import ContractFields, { type ContractDraft } from './roi/ContractFields';
@@ -19,19 +17,19 @@ import { RoiNumberField, RoiSelect } from './roi/RoiFields';
 
 const settingsSchema = z.object({
   source: z.enum(['ha', 'invoices']),
-  from: z.string(), to: z.string(),
+  from: z.string(), to: z.string(), area: z.string(),
   equipment: z.string(), installation: z.string(), subscription: z.string(), currentFee: z.string(),
   contract: z.object({
     kind: z.enum(['fixed', 'monthly', 'quarterly', 'mixed']),
     method: z.enum(['quote', 'components', 'profile']),
     example: z.string(), rate: z.string(), fee: z.string(), variableRate: z.string(), fixedShare: z.string(), markup: z.string(),
-    monthlyRates: z.record(z.string()),
+    monthlyMarkup: z.string(), markupUnit: z.enum(['percent', 'monthly']),
   }),
 });
 type Settings = Required<Omit<z.infer<typeof settingsSchema>, 'contract'>> & { contract: ContractDraft };
 const initialSettings: Settings = {
-  source: 'ha', from: '', to: '', equipment: '50000', installation: '15000', subscription: '299', currentFee: '0',
-  contract: { kind: 'fixed', method: 'quote', example: 'svealand-5', rate: '113.28', fee: '0', variableRate: '80.75', fixedShare: '50', markup: '0', monthlyRates: {} },
+  source: 'ha', from: '', to: '', area: '', equipment: '50000', installation: '15000', subscription: '299', currentFee: '0',
+  contract: { kind: 'fixed', method: 'quote', example: 'svealand-5', rate: '113.28', fee: '0', variableRate: '80.75', fixedShare: '50', markup: '0', monthlyMarkup: '0', markupUnit: 'percent' },
 };
 
 interface ROITabProps { customerId: string; homeId: string | null; homeCount?: number }
@@ -39,7 +37,7 @@ interface ROITabProps { customerId: string; homeId: string | null; homeCount?: n
 function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
   const { t } = useLanguage();
   const timeZone = useHomeTimeZone();
-  const storageKey = `shs-contract-roi-v1:${customerId}`;
+  const storageKey = `shs-contract-roi-v2:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -70,15 +68,22 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
   const to = settings.to || latest;
   const months = useMemo(() => allMonths.filter(m => m.month >= from && m.month <= to), [allMonths, from, to]);
   const draft = settings.contract;
+  const market = useQuery({
+    queryKey: ['roi-monthly-market', settings.area, months.map(m => m.month)],
+    queryFn: () => fetchRoiMonthlyPrices(settings.area, months.map(m => m.month)),
+    enabled: draft.kind === 'monthly' && Boolean(settings.area) && months.length > 0,
+    staleTime: 60 * 60 * 1000, retry: false,
+  });
   const number = (value: string) => numericInput(value) ?? NaN;
   const contract = {
     kind: draft.kind, method: draft.method,
-    rateOre: draft.method === 'profile' ? 0 : number(draft.rate),
-    monthlyFeeSek: draft.method === 'quote' ? 0 : number(draft.fee),
+    rateOre: draft.kind === 'monthly' || draft.method === 'profile' ? 0 : number(draft.rate),
+    monthlyFeeSek: draft.kind === 'monthly' ? (draft.markupUnit === 'monthly' ? number(draft.monthlyMarkup) : 0) : draft.method === 'quote' ? 0 : number(draft.fee),
+    monthlyMarkupPercent: draft.kind === 'monthly' && draft.markupUnit === 'percent' ? number(draft.monthlyMarkup) : 0,
     variableRateOre: draft.kind === 'mixed' && draft.method === 'components' ? number(draft.variableRate) : 0,
     fixedSharePercent: draft.kind === 'mixed' && draft.method === 'components' ? number(draft.fixedShare) : 0,
     markupDifferenceOre: draft.method === 'profile' ? number(draft.markup) : 0,
-    monthlyRates: draft.kind === 'monthly' ? Object.fromEntries(months.filter(m => draft.monthlyRates[m.month] !== undefined).map(m => [m.month, number(draft.monthlyRates[m.month])])) : {},
+    monthlyRates: market.data ?? {},
   };
   const investment = {
     equipmentSek: number(settings.equipment), installationSek: number(settings.installation), subscriptionSek: number(settings.subscription),
@@ -86,102 +91,88 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
   };
   let invalid = false;
   let result: ReturnType<typeof compareContract> = null;
-  try { result = compareContract(months, contract, investment); }
+  const needsMarket = draft.kind === 'monthly';
+  const marketReady = !needsMarket || (Boolean(settings.area) && market.isSuccess);
+  try { if (marketReady) result = compareContract(months, contract, investment); }
   catch { invalid = true; }
-  const sek = (value: number | null | undefined, digits = 0) => value == null ? '—' : `${value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })} SEK`;
-  const actualLabel = settings.source === 'ha' ? t('Min beräknade elkostnad', 'My calculated electricity cost') : t('Min fakturerade elkostnad', 'My billed electricity cost');
+  const sek = (value: number | null | undefined, digits = 0) => value == null ? '—' : `${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })} SEK`;
+  const ready = history.isSuccess && !invalid && result !== null;
+  const loss = ready && result.net < 0;
+  const outcome = (value: number) => value < 0 ? t('Extra kostnad', 'Extra cost') : t('Sparat', 'Saved');
+  const tone = !ready ? 'bg-muted border-border' : loss ? 'bg-warning/20 border-warning/50' : 'bg-energy/30 border-energy-dark/40';
+  const changeSource = (value: string) => setSettings(s => ({ ...s, source: value as Settings['source'], from: '', to: '', contract: { ...s.contract, method: s.contract.method === 'profile' ? 'quote' : s.contract.method } }));
 
-  return <div className="space-y-6" data-testid="contract-roi">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="max-w-3xl space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">{t('Vad tjänar du på ditt elavtal?', 'How much does your electricity contract save?')}</h2>
-        <p className="text-muted-foreground">{t('Jämför din verkliga förbrukning med ett annat avtal och se när utrustningen har betalat sig.', 'Compare your real consumption with another contract and see when your equipment pays for itself.')}</p>
-      </div>
-      <Badge variant="outline" className="py-2">{t('Uppmätt förbrukning', 'Measured consumption')}</Badge>
-    </div>
-    {homeCount > 1 && <Alert><AlertTitle>{t('Kontogemensamt underlag', 'Account-wide history')}</AlertTitle><AlertDescription>{t('Elhistoriken är kopplad till kundkontot, inte till valt hem. Jämförelsen omfattar kontots lagrade underlag och ändras inte med hemväljaren.', 'Energy history belongs to the customer account, not the selected home. This comparison uses the account’s stored history and does not change with the home selector.')}</AlertDescription></Alert>}
-
-    <Card>
-      <CardHeader><CardTitle className="text-base">{t('1. Ditt underlag', '1. Your history')}</CardTitle></CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-3">
-          <RoiSelect id="roi-source" label={t('Datakälla', 'Data source')} value={settings.source} onChange={value => setSettings(s => ({ ...s, source: value as Settings['source'], from: '', to: '', contract: { ...s.contract, method: s.contract.method === 'profile' ? 'quote' : s.contract.method } }))}>
-            <option value="ha">{t('Home Assistant · beräknad kostnad', 'Home Assistant · calculated cost')}</option>
-            <option value="invoices">{t('Importerade elfakturor', 'Imported electricity bills')}</option>
-          </RoiSelect>
-          {[{ key: 'from' as const, label: t('Från månad', 'From month'), value: from }, { key: 'to' as const, label: t('Till månad', 'To month'), value: to }].map(field => <div className="space-y-2" key={field.key}>
-            <Label htmlFor={`roi-${field.key}`}>{field.label}</Label>
-            <Input id={`roi-${field.key}`} className="h-11" type="month" value={field.value} onChange={e => set(field.key, e.target.value)} aria-invalid={from > to} />
-          </div>)}
-        </div>
-        {from > to && <p role="alert" className="text-sm text-destructive">{t('Startmånaden måste vara före slutmånaden.', 'The start month must be before the end month.')}</p>}
-        <p className="text-sm leading-relaxed text-muted-foreground">{settings.source === 'ha'
-          ? t('HA-underlaget använder uppmätt import och timmedel av leverantörspriser inklusive moms och påslag. Endast helt prissatta dygn ingår. Månadsavgiften läggs till nedan.', 'HA history uses measured imports and hourly averages of supplier prices including VAT and markup. Only fully priced days are included. Add the supplier monthly fee below.')
-          : t('Hela månader från dina importerade elfakturor, inklusive moms och leverantörsavgifter. Exportersättning räknas bort från jämförelsen. Delvis täckta eller överlappande fakturamånader utesluts.', 'Full months from your imported electricity bills, including VAT and supplier fees. Export credits are removed from the comparison. Partial or overlapping invoice months are excluded.')}</p>
-        {history.isPending ? <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Laddar elhistorik…', 'Loading energy history…')}</p>
-          : history.isError ? <Alert variant="destructive"><AlertTitle>{t('Kunde inte läsa elhistoriken', 'Could not load energy history')}</AlertTitle><AlertDescription>{t('Inga resultat visas förrän underlaget kan läsas.', 'Results are unavailable until history can be loaded.')} <Button variant="outline" className="ml-2 min-h-11" onClick={() => void history.refetch()}>{t('Försök igen', 'Retry')}</Button></AlertDescription></Alert>
-          : <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <span><strong className="tabular-nums">{months.reduce((sum, m) => sum + m.days, 0)}</strong> {t('täckta dygn', 'covered days')}</span>
-            <span><strong className="tabular-nums">{months.reduce((sum, m) => sum + m.importKwh, 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh</strong> {t('importerat', 'imported')}</span>
-            <span className="text-muted-foreground">{t(`${history.data?.excluded ?? 0} ofullständiga/överlappande ${settings.source === 'ha' ? 'dygn' : 'månader'} uteslutna i källan`, `${history.data?.excluded ?? 0} incomplete/overlapping ${settings.source === 'ha' ? 'days' : 'months'} excluded from the source`)}</span>
-          </div>}
-        {settings.source === 'ha' && <div className="max-w-sm"><RoiNumberField id="roi-current-fee" label={t('Min leverantörs månadsavgift (SEK inkl. moms)', 'My supplier monthly fee (SEK incl. VAT)')} min={0} value={settings.currentFee} onChange={v => set('currentFee', v)} hint={t('Ange avgiften från ditt avtal. 0 betyder ingen avgift. Samma avgift används för hela perioden.', 'Enter the fee from your contract. 0 means no fee. The same fee applies throughout the period.')} /></div>}
-      </CardContent>
-    </Card>
-
-    <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.55fr)]">
-      <div className="min-w-0 space-y-6">
-        <Card><CardHeader><CardTitle className="flex items-center gap-2 text-base"><ArrowRightLeft aria-hidden="true" className="h-4 w-4" />{t('2. Avtalet att jämföra med', '2. Compare another contract')}</CardTitle></CardHeader>
-          <CardContent><ContractFields draft={settings.contract} onChange={v => set('contract', v)} months={months.map(m => m.month)} source={settings.source} /></CardContent>
-        </Card>
-        <Card><CardHeader><CardTitle className="text-base">{t('3. Din investering', '3. Your investment')}</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">{t('Startvärdena är exempel. Ange dina kostnader inklusive moms. Abonnemanget avser planeringstjänsten, utöver elavtalets avgift.', 'Starting values are examples. Enter your costs including VAT. The subscription is for the planning service, in addition to your electricity supplier’s fee.')}</p>
-            <RoiNumberField id="roi-equipment" label={t('Utrustning (SEK)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
-            <RoiNumberField id="roi-installation" label={t('Installation (SEK)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />
-            <RoiNumberField id="roi-subscription" label={t('Planeringsabonnemang (SEK/månad)', 'Planning subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
-            <p className="text-sm text-muted-foreground">{saved ? t('Dina val sparas i den här webbläsaren.', 'Your choices are saved in this browser.') : t('Dina val kan inte sparas i den här webbläsaren.', 'Your choices cannot be saved in this browser.')}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="min-w-0 space-y-6">
-        {history.isSuccess && !invalid && result ? <>
-          <Card className="border-primary/30 bg-primary/5"><CardContent className="space-y-5 pt-6">
-            <p className="text-sm font-medium">{t('Skillnad under vald period', 'Difference over the selected period')} · {from} — {to}</p>
-            <div><p className="text-4xl font-semibold tabular-nums tracking-tight" data-testid="roi-period-saving">{sek(result.saving)}</p>
-              <p className="mt-2 text-sm">{result.saving >= 0 ? t('lägre elkostnad med mitt nuvarande avtal', 'lower electricity cost with my current contract') : t('högre elkostnad med mitt nuvarande avtal', 'higher electricity cost with my current contract')}</p></div>
-            <dl className="space-y-3 text-sm">
-              {[[actualLabel, result.actual], [t('Jämförelseavtal, samma kWh', 'Comparison contract, same kWh'), result.alternative], [t('Planeringsabonnemang för perioden', 'Planning subscription for the period'), result.subscription], [t('Min nettobesparing', 'My net saving'), result.net]].map(([label, value]) => <div key={label} className="flex items-start justify-between gap-4 border-t pt-3"><dt>{label}</dt><dd className="shrink-0 font-medium tabular-nums">{sek(value as number, 2)}</dd></div>)}
-            </dl>
-          </CardContent></Card>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card><CardContent className="space-y-2 pt-6"><p className="text-sm text-muted-foreground">{t('Netto per år om takten håller', 'Annual net if this rate holds')}</p><p className="text-2xl font-semibold tabular-nums" data-testid="roi-annual-net">{sek(result.annualNet)}</p><p className="text-sm text-muted-foreground">{t('Efter planeringsabonnemang', 'After the planning subscription')}</p></CardContent></Card>
-            <Card><CardContent className="space-y-2 pt-6"><p className="text-sm text-muted-foreground">{t('Återbetalningstid', 'Equipment payback')}</p><p className="text-2xl font-semibold tabular-nums" data-testid="roi-payback">{result.paybackYears === null ? t('Ingen återbetalning', 'No payback') : `${result.paybackYears.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${t('år', 'years')}`}</p><p className="text-sm text-muted-foreground">{result.paybackYears === null ? t('Besparingen täcker inte löpande kostnader.', 'Savings do not cover running costs.') : `${sek(result.investmentSek)} ${t('i utrustning och installation', 'in equipment and installation')}`}</p></CardContent></Card>
+  return <div className="space-y-5" data-testid="contract-roi">
+    <section className={`rounded-2xl border p-6 sm:p-8 ${tone}`} aria-label={t('Ditt resultat', 'Your result')} data-testid="roi-hero">
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr] lg:items-center">
+        <div>
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+            {loss ? <ArrowUpRight aria-hidden="true" className="h-5 w-5" /> : <ArrowDownRight aria-hidden="true" className="h-5 w-5" />}
+            <span data-testid="roi-outcome">{ready ? loss ? t('Extra kostnad per månad', 'Extra cost per month') : t('Sparat per månad', 'Saved per month') : t('Din besparing', 'Your savings')}</span>
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">{t('Årstakten är periodens netto dividerat med täckta månadsandelar × 12. Säsong, framtida priser och avtalets löptid kan ändra återbetalningen. Ingen ränta, värdeminskning eller underhåll ingår.', 'The annual rate is the period’s net saving divided by covered month fractions × 12. Seasons, future prices and contract expiry can change payback. Financing, depreciation and maintenance are not included.')}</p>
-          <Card><CardHeader><CardTitle className="text-base">{t('Kostnad månad för månad', 'Cost by month')}</CardTitle></CardHeader><CardContent>
-            <div className="h-64 overflow-hidden" aria-hidden="true"><ResponsiveContainer width="100%" height="100%"><BarChart data={result.months} margin={{ left: 0, right: 0, top: 10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-              <XAxis dataKey="month" tick={{ fontSize: 12 }} /><YAxis width={55} tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(value: number) => sek(value, 2)} /><Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar isAnimationActive={false} dataKey="actual" name={t('Mitt avtal', 'My contract')} fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
-              <Bar isAnimationActive={false} dataKey="alternative" name={t('Jämförelse', 'Comparison')} fill="hsl(var(--muted-foreground))" radius={[3, 3, 0, 0]} />
-            </BarChart></ResponsiveContainer></div>
-            <details className="mt-4"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">{t('Visa värden och täckning', 'Show values and coverage')}</summary>
-              <div className="overflow-x-auto"><table className="w-full text-right text-sm tabular-nums"><caption className="sr-only">{t('Månadskostnader i SEK', 'Monthly costs in SEK')}</caption><thead><tr className="border-b">
-                {[t('Månad', 'Month'), t('Dygn', 'Days'), 'kWh', t('Mitt avtal', 'My contract'), t('Jämförelse', 'Comparison'), t('Netto', 'Net')].map(label => <th scope="col" className="p-2 font-medium" key={label}>{label}</th>)}
-              </tr></thead><tbody>{result.months.map(m => <tr key={m.month} className="border-b"><th scope="row" className="whitespace-nowrap p-2 font-normal">{m.month}</th><td className="p-2">{m.days}</td><td className="p-2">{m.importKwh.toFixed(1)}</td><td className="p-2">{m.actual.toFixed(2)}</td><td className="p-2">{m.alternative.toFixed(2)}</td><td className="p-2">{m.net.toFixed(2)}</td></tr>)}</tbody></table></div>
-            </details>
-          </CardContent></Card>
-          <Card><CardContent className="space-y-2 pt-6"><p className="font-medium">{t('Vilket jämförpris måste du slå?', 'What comparison price do you need to beat?')}</p><p className="text-2xl font-semibold tabular-nums">{result.breakEvenOre === null ? '—' : `${result.breakEvenOre.toFixed(2)} öre/kWh`}</p><p className="text-sm text-muted-foreground">{t('Vid detta effektiva pris inklusive avgifter täcker skillnaden precis ditt planeringsabonnemang. Utrustningen kräver ytterligare besparing.', 'At this effective rate including fees, the difference just covers your planning subscription. Equipment needs additional savings.')}</p></CardContent></Card>
-        </> : <Card><CardContent className="py-12"><h3 className="font-semibold">{invalid ? t('Kontrollera dina belopp', 'Check your amounts') : t('Lägg till ett jämförbart underlag', 'Add comparable history')}</h3><p className="mt-2 text-sm leading-relaxed text-muted-foreground">{invalid ? t('Rätta de markerade fälten för att beräkna lönsamheten.', 'Correct the highlighted fields to calculate ROI.') : t('Välj en period med helt prissatta HA-dygn eller hela fakturamånader. Du kan importera elfakturor under Energihistorik → Data, eller låta HA synka förbrukning och leverantörspriser.', 'Choose a period with fully priced HA days or complete invoice months. Import electricity bills in Energy history → Data, or let HA sync consumption and supplier prices.')}</p></CardContent></Card>}
+          <p className="text-4xl font-semibold tracking-tight tabular-nums sm:text-6xl" data-testid="roi-monthly-net">{ready ? sek(result.annualNet / 12) : '—'}</p>
+          <p className="mt-3 text-sm text-muted-foreground">{t('Efter abonnemang', 'After subscription')}{from && ` · ${from} – ${to}`}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-5 border-t border-foreground/10 pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+          <div><p className="text-sm text-muted-foreground">{ready && loss ? t('Total extra kostnad', 'Total extra cost') : t('Totalt sparat', 'Total saved')}</p><p className="mt-2 text-2xl font-semibold tabular-nums" data-testid="roi-period-saving">{ready ? sek(result.net) : '—'}</p></div>
+          <div><p className="text-sm text-muted-foreground">{t('Återbetalning', 'Payback')}</p><p className="mt-2 text-2xl font-semibold" data-testid="roi-payback">{!ready ? '—' : result.paybackYears === null ? t('Ingen', 'None') : `${result.paybackYears.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${t('år', 'yr')}`}</p></div>
+        </div>
+      </div>
+    </section>
+
+    <div className="grid gap-4 rounded-xl border bg-card p-4 sm:grid-cols-2 xl:grid-cols-4">
+      <RoiSelect id="roi-source" label={t('Förbrukning', 'Consumption')} value={settings.source} onChange={changeSource}>
+        <option value="ha">Home Assistant</option><option value="invoices">{t('Elfakturor', 'Electricity bills')}</option>
+      </RoiSelect>
+      {[{ key: 'from' as const, label: t('Från', 'From'), value: from }, { key: 'to' as const, label: t('Till', 'To'), value: to }].map(field => <div className="space-y-2" key={field.key}>
+        <Label htmlFor={`roi-${field.key}`}>{field.label}</Label><Input id={`roi-${field.key}`} className="h-11" type="month" value={field.value} onChange={e => set(field.key, e.target.value)} aria-invalid={from > to} />
+      </div>)}
+      {settings.source === 'ha' && <RoiNumberField id="roi-current-fee" label={t('Min elavgift (kr/månad)', 'My supplier fee (SEK/month)')} min={0} value={settings.currentFee} onChange={v => set('currentFee', v)} />}
+    </div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+      <span>{months.reduce((sum, m) => sum + m.days, 0)} {t('dygn', 'days')}</span>
+      <span>{months.reduce((sum, m) => sum + m.importKwh, 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh</span>
+      <span>{t('Inkl. moms', 'Incl. VAT')}</span>
+      {homeCount > 1 && <span>{t('Hela kontot', 'Account-wide')}</span>}
+      {!saved && <span>{t('Kan inte spara lokalt', 'Local saving unavailable')}</span>}
+    </div>
+    {history.isPending && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Laddar…', 'Loading…')}</p>}
+    {history.isError && <Alert variant="destructive"><AlertTitle>{t('Kunde inte läsa elhistoriken', 'Could not load energy history')}</AlertTitle><Button variant="outline" className="mt-2" onClick={() => void history.refetch()}>{t('Försök igen', 'Retry')}</Button></Alert>}
+    {from > to && <p role="alert" className="text-sm text-destructive">{t('Välj ett giltigt datumintervall.', 'Choose a valid date range.')}</p>}
+    {invalid && <p role="alert" className="text-sm text-destructive">{t('Kontrollera markerade belopp.', 'Check highlighted amounts.')}</p>}
+    {history.isSuccess && months.length === 0 && <p className="text-sm">{t('Välj en annan period eller lägg till elfakturor i Energihistorik.', 'Choose another period or add bills in Energy history.')}</p>}
+
+    <div className="grid items-start gap-5 lg:grid-cols-2">
+      <Card><CardHeader className="pb-4"><CardTitle className="text-base">{t('Jämför avtal', 'Compare contract')}</CardTitle></CardHeader><CardContent>
+        <ContractFields draft={settings.contract} onChange={v => set('contract', v)} source={settings.source} />
+        {needsMarket && <div className="mt-4 space-y-3">
+          <RoiSelect id="roi-area" label={t('Elområde', 'Price area')} value={settings.area} onChange={v => set('area', v)}><option value="">{t('Välj elområde', 'Choose area')}</option>{['SE1', 'SE2', 'SE3', 'SE4'].map(a => <option key={a}>{a}</option>)}</RoiSelect>
+          <p className="text-xs text-muted-foreground">{market.isFetching ? t('Hämtar månadspriser…', 'Loading monthly prices…') : t('Månadsmedel + påslag', 'Monthly average + markup')}</p>
+          {market.isError && <p role="alert" className="text-sm text-destructive">{t('Månadspriser saknas.', 'Monthly prices unavailable.')} <Button variant="link" onClick={() => void market.refetch()}>{t('Försök igen', 'Retry')}</Button></p>}
+        </div>}
+      </CardContent></Card>
+      <div className="space-y-5">
+        <Card><CardHeader className="pb-4"><CardTitle className="text-base">{t('Investering', 'Investment')}</CardTitle></CardHeader><CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2"><RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} /><RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} /></div>
+          <RoiNumberField id="roi-subscription" label={t('Abonnemang (kr/månad)', 'Subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
+        </CardContent></Card>
+        {ready && <Card><CardHeader className="pb-4"><CardTitle className="text-base">{t('Periodens kostnader', 'Period costs')}</CardTitle></CardHeader><CardContent>
+          <dl className="space-y-3 text-sm">
+            {[[t('Mitt elavtal', 'My electricity'), result.actual], [t('Abonnemang', 'Subscription'), result.subscription], [t('Jämförelseavtal', 'Comparison contract'), result.alternative]].map(([label, value]) => <div key={label} className="flex justify-between gap-4"><dt>{label}{Number(value) < 0 ? ` · ${t('tillgodo', 'credit')}` : ''}</dt><dd className="font-medium tabular-nums">{sek(Number(value), 2)}</dd></div>)}
+            <div className="flex justify-between gap-4 border-t pt-3 font-semibold"><dt>{outcome(result.net)}</dt><dd>{sek(result.net, 2)}</dd></div>
+          </dl>
+        </CardContent></Card>}
       </div>
     </div>
-    <Alert><AlertTitle>{t('Vad jämförelsen visar', 'What this comparison measures')}</AlertTitle><AlertDescription className="max-w-5xl leading-relaxed">{t(
-      'Båda avtalen använder samma uppmätta nätimport. Elnätsavgifter, energiskatt och exportintäkter hålls lika och ingår inte i skillnaden. Använd elhandelspriser inklusive moms. Detta visar avtalsskillnaden för din faktiska drift, inte hur huset hade förbrukat utan utrustning eller planering. Återbetalningen förutsätter att hela den beräknade nettoskillnaden används för investeringen.',
-      'Both contracts use the same measured grid imports. Grid fees, energy tax and export revenue are held equal and do not enter the difference. Use electricity supply prices including VAT. This measures the contract difference for your actual operation, not how the home would have consumed without equipment or planning. Payback assumes the entire calculated net difference goes towards the investment.',
-    )}</AlertDescription></Alert>
+    {ready && <details className="rounded-xl border bg-card px-5">
+      <summary className="cursor-pointer py-4 text-sm font-medium">{t('Månadsöversikt & årsprognos', 'Monthly breakdown & annual estimate')}</summary>
+      <div className="space-y-4 pb-5">
+        <p className="text-sm">{result.annualNet < 0 ? t('Extra kostnad/år (prognos)', 'Extra cost/year (estimate)') : t('Sparat/år (prognos)', 'Saved/year (estimate)')}: <strong data-testid="roi-annual-net">{sek(result.annualNet)}</strong></p>
+        <div className="overflow-x-auto"><table className="w-full text-right text-sm tabular-nums"><caption className="sr-only">{t('Månadskostnader', 'Monthly costs')}</caption><thead><tr className="border-b">{[t('Månad', 'Month'), 'kWh', t('Mitt avtal', 'My contract'), t('Jämförelse', 'Comparison'), t('Resultat', 'Result')].map(label => <th scope="col" className="p-2 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{result.months.map(m => <tr key={m.month} className="border-b"><th scope="row" className="whitespace-nowrap p-2 font-normal">{m.month}</th><td className="p-2">{m.importKwh.toFixed(1)}</td><td className="p-2">{sek(m.actual)}{m.actual < 0 ? ` (${t('tillgodo', 'credit')})` : ''}</td><td className="p-2">{sek(m.alternative)}{m.alternative < 0 ? ` (${t('tillgodo', 'credit')})` : ''}</td><td className="p-2">{outcome(m.net)} {sek(m.net)}</td></tr>)}</tbody></table></div>
+        <p className="text-xs text-muted-foreground">{t('Samma kWh · Exkl. elnät · Årsprognos från vald period', 'Same kWh · Excl. grid fees · Annual estimate from selected period')}</p>
+        {needsMarket && <a className="text-xs underline" href="https://www.elprisetjustnu.se/elpris-api" target="_blank" rel="noreferrer">{t('Priskälla · månadsmedel, pågående månad t.o.m. igår', 'Price source · monthly average, current month through yesterday')}</a>}
+      </div>
+    </details>}
   </div>;
 }
 
