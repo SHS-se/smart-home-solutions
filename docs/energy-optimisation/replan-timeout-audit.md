@@ -1,5 +1,107 @@
 # Replanning timeout audit — 24 September 2026
 
+## Follow-up — 25 September 2026
+
+### Failure
+
+A manual replan on SHS test failed with `storage failed [request_id=3c45cf63-8a04-4b6c-9e3f-39fa911d7e81]`.
+PostgreSQL logged `57014` at 13:48:16 UTC for the PostgREST call to
+`store_energy_optimisation_current(jsonb)`. The solve had already completed. The
+log context places the cancellation in `guard_fixed_energy_plan_generation()` at
+its first, integer-only comparison.
+
+### What the log context establishes
+
+The following were reproduced on a local PostgreSQL 16 with the same migrations
+and PostgREST's statement shape:
+
+- **Not a row-lock wait.** Cancelling during a wait on the home's row reports
+  `while locking tuple (…) in relation "energy_optimisation_current"` in the
+  context. The failure has no such line, so no lock wait was in progress at 8 s.
+  A shorter wait earlier in the statement cannot be ruled out.
+- **The budget was already spent before the trigger.** Parsing and
+  `jsonb_populate_record` rarely check for interrupts. A body-parsing overrun is
+  cancelled with no PL/pgSQL context. An overrun that ends after the conflict
+  lookup is first noticed at the trigger's first expression, as reported. The
+  cheap comparison did not itself take 8 s.
+- **Normal cost is far below the limit.** A PostgREST-shaped store of a 4.2 MB
+  body took about 0.2 s median locally: parsing about 0.2 s, population
+  0.18 s, and the whole statement 0.21 s, including transport from a local
+  client.
+- **Memory cost is high.** A fresh backend's peak resident memory rose by
+  8 MB just to bind a 2.8 MB text parameter. It rose by 36 MB to parse it as
+  JSONB, 41 MB to populate the record, and 64 MB for the complete store. That is
+  roughly 23 times the body size, so it scales with plan size.
+
+The failure therefore needed the same work to run about 40 times slower than on
+an idle machine. The instance's CPU, memory and I/O metrics at 13:48 UTC were not
+available to this investigation. Contention from other load is the leading
+explanation but is unconfirmed. Check the database's resource graphs for that
+minute before assuming a specific cause.
+
+### Duplicate schedule in stored plans
+
+Since `087a49f` (23 September), a schema 9 plan is
+`{...execution.plan, schema_version: 9, operating_scope, battery_execution?, execution_plan: execution.plan}`.
+`execution_plan` is an exact copy of the top level apart from those keys and the
+ingest-added `thermal_projection`. In the contract fixture it is exactly half of
+the plan's JSON. The 3.56 MB test plan measured on 18 September already
+included a 952 kB `execution_plan`, from an earlier projection.
+
+Home Assistant receives plans only from the ingest response, which is generated
+in memory. No SQL function, edge function or portal view reads `execution_plan`
+from `energy_optimisation_current`; the portal only validated its presence.
+
+### Changes
+
+- `store_energy_optimisation_current(jsonb)` has a function-level
+  `statement_timeout = 30s`. PostgREST hoists function settings named in
+  `db-hoisted-tx-settings` into the call's transaction. Its default list
+  includes `statement_timeout`. Supabase honours this for RPCs. A
+  `SET LOCAL` inside the function body would not re-arm the running timer. All
+  other API calls keep the 8 s role default.
+- Ingest stores `storedPlan(generated)` (`_shared/stored-plan.ts`). It omits
+  `execution_plan` only when that copy serializes identically to the top level
+  after removing `schema_version`, `operating_scope`, `battery_execution`,
+  `execution_plan` and `thermal_projection` (then `schema_version: 8`). Any
+  divergence is stored as generated. `expandStoredPlan` restores the copy
+  exactly. Home Assistant continues to receive the complete generated plan. The
+  portal validator accepts a schema 9 plan without the copy and still rejects an
+  invalid copy.
+- `snapshot` and `battery_projection` use LZ4, like `plan`. Existing values
+  stay pglz until their next publication.
+- The portal's replan failure is a full-width row below the plan heading. It
+  previously wrapped the "Replan now" button into a right-aligned block the
+  width of the error text.
+
+### Verification
+
+- A local PostgREST 12.2.12 had its authenticator `statement_timeout` set to
+  1 s, and another session held the home's row for 2.5 s.
+  - With the function setting, the RPC returned 204 after 2.3 s.
+  - After `RESET statement_timeout` on the function, the same call returned
+    `57014` after 1.0 s. This is the production failure.
+- Omitting the copy halves the schema 9 contract fixture's plan. The full
+  execution plan round-trips exactly.
+- Lint had no errors and 26 existing warnings. Typecheck and the test build
+  passed. All 1,292 Deno tests passed.
+  - `deno.land` and `esm.sh` are blocked in the sandbox, so the Deno run used a
+    temporary import map to equivalent JSR/npm packages.
+  - The mocked-backend Playwright suites did not run: the sandbox's Chromium
+    build did not match the project's Playwright. CI runs them.
+
+### Remaining
+
+- Home Assistant still receives the duplicated plan, because the schema 9
+  contract (`contracts/ha-api/openapi.json`, `PlanV9`) requires
+  `execution_plan`. Dropping it from delivery needs a coordinated
+  `shs-ha-integration` change. It would halve ingest response size and HA
+  parsing.
+- The 30 s limit is headroom, not a guarantee. The structural alternatives
+  below remain: durable jobs, a dedicated worker, or artifact separation.
+- The `current plan storage` ingest log records each write's duration. A
+  duration approaching 30 s means the headroom is being consumed.
+
 ## Confirmed failure and immediate changes
 
 Request `a8eee7a9-da13-4c67-8e92-04a6f0b46729` failed at

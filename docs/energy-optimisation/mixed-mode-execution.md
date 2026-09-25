@@ -19,6 +19,12 @@ solved plans: the top-level planning preview and a self-contained
 `execution_plan` used by devices in Controlling mode. Verification continues to
 use the preview. Both solves use the same planner and prices.
 
+Since `087a49f` the two are one solve: `execution_plan` is the top level without
+`operating_scope`, `battery_execution` and `thermal_projection`, at schema 8.
+`energy_optimisation_current.plan` stores it without that identical copy
+(`_shared/stored-plan.ts`; see the [timeout audit](replan-timeout-audit.md)).
+Home Assistant still receives the full generated plan from ingest.
+
 Home Assistant captures `operating_scope` with canonical device modes, physical
 model owners, and external-demand forecasts before server comfort enrichment.
 For execution, non-controlling models are removed from dispatch and their frozen
