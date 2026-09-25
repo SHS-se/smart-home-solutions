@@ -121,7 +121,11 @@ const archive = Array.from({ length: 3 * 96 }, (_value, index) => {
   };
 });
 
-const planned = () => {
+// Every test below only reads this one solve, so it is made once.
+let solved: ReturnType<typeof build> | undefined;
+const planned = () => solved ??= build();
+
+const build = () => {
   const plan = generateOptimisationPlan(snapshot(), new Date(START + 60_000), archive);
   const timeline = buildEnergyTimeline({
     actuals: [],

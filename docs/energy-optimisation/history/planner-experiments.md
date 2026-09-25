@@ -1191,7 +1191,7 @@ curves editor.
   `value_settings` must produce a curve built from it, published in
   `curve_input.degradation_sek_per_kwh`, and must change the decision: a 50%
   evening spread is refused through 0.45 and taken through 0.05. A snapshot
-  without one gets the shipped default. Covered by `energy-optimisation.test.ts`,
+  without one gets the shipped default. Covered by `energy-optimisation-allocation.test.ts`,
   "[§8.19](planner-experiments.md#legacy-section-8.19) — the home's own wear cost reaches the curve".
 - **Behavioural fixtures state their own wear.** Three tests turned on the
   battery declining a round trip and read the shipped default to do it, so

@@ -1,10 +1,10 @@
+import { solvedPlan } from "./solved-plan.fixture.ts";
 import { replanReference } from "./replan-continuity.ts";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import {
   generateOptimisationPlan,
-  generateOptimisationPlanWithBatteryProjection,
   type OptimisationSnapshot,
 } from "./energy-optimisation.ts";
 import {
@@ -48,13 +48,13 @@ function assertStagesMatch(
   budget?: () => PlanningBudget,
 ) {
   const original = wire(input);
-  const expected = generateOptimisationPlan(
+  const expected = solvedPlan(
     input.snapshot,
     new Date(input.now),
     input.price_archive,
     input.resolved_price_outlook,
     input.fixed_plan,
-  );
+  ).plan;
   const completed: DispatchResult[] = [];
   let checkpoint: DispatchCheckpoint | undefined;
   const seen = new Set<string>();
@@ -198,7 +198,7 @@ Deno.test("ingest client completes real planning over serialized stage requests"
   assert(calls >= 1);
   assertEquals(
     result,
-    wire(generateOptimisationPlanWithBatteryProjection(input.snapshot, new Date(input.now))),
+    wire(solvedPlan(input.snapshot, new Date(input.now))),
   );
 });
 
@@ -232,7 +232,7 @@ Deno.test("ingest client accumulates each call's auctions and checkpoint across 
   assert(calls > 3 && resumed > 0, JSON.stringify({ calls, resumed }));
   assertEquals(
     result,
-    wire(generateOptimisationPlanWithBatteryProjection(input.snapshot, new Date(input.now))),
+    wire(solvedPlan(input.snapshot, new Date(input.now))),
   );
 });
 

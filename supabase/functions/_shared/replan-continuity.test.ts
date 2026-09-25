@@ -16,6 +16,7 @@ import {
   usableReference,
 } from "./replan-continuity.ts";
 import { scoreDispatch } from "./dispatch-plan.ts";
+import { solvedPlan } from "./solved-plan.fixture.ts";
 import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 function batteryContinuitySnapshot(solar = true) {
@@ -107,7 +108,7 @@ function referencedSnapshot(cheap = false) {
       ],
     } };
   }
-  const previous = generateOptimisationPlan(input, new Date(input.captured_at));
+  const previous = solvedPlan(input, new Date(input.captured_at)).plan;
   input.snapshot_id = "00000000-0000-4000-8000-000000000002";
   input.replan_reference = replanReference(
     previous,

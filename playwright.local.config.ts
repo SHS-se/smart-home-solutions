@@ -11,6 +11,9 @@ export default defineConfig(config, {
     'plan-workbench.spec.ts',
     'replan-request.spec.ts',
   ],
+  // Every test builds its own context and route mocks, so tests within a file
+  // are independent and can share the workers instead of running file by file.
+  fullyParallel: true,
   use: { baseURL },
   webServer: {
     command: 'npx vite preview --port 4173 --host 127.0.0.1 --strictPort',

@@ -33,6 +33,20 @@ const evCurve: UtilityCurve = {
 };
 
 /** Two hours: the first dark and dear, the second sunny and cheap to export. */
+/**
+ * `dispatchWorkbench` solves the whole 288-quarter shared snapshot, which takes
+ * most of a second. The tests below all start from that same solve, so it is
+ * made once and each test gets its own copy (the store functions are pure and
+ * shared) to read or edit.
+ */
+let realBench: ReturnType<typeof dispatchWorkbench> | undefined;
+const copy = <T>(value: T): T => Array.isArray(value)
+  ? value.map(copy) as T
+  : value !== null && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, copy(entry)])) as T
+    : value;
+const realWorkbench = () => copy(realBench === undefined ? realBench = dispatchWorkbench(realSnapshot()) : realBench);
+
 function workbench(): DispatchWorkbench {
   return {
     slots: Array.from({ length: SLOTS }, (_slot, index) => ({
@@ -174,7 +188,7 @@ Deno.test('an hourly duty cycle does not buy extra energy to pad a run', () => {
 // ---------------------------------------------------------------------------
 
 Deno.test('the workbench hands back the auction’s own inputs', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
 
   assert(bench !== null, 'a home with a battery and a pool must build stores');
   assertEquals(bench.slots.length, 288);
@@ -190,7 +204,7 @@ Deno.test('scoring the planner’s own plan reproduces the planner’s own answe
   // The identity every comparison rests on: hand the scorer the schedule the
   // planner issued and it must price it exactly as the planner priced it, or
   // no difference the workbench reports means anything.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const comparison = compareWorkbench(bench, bench.planned);
@@ -200,13 +214,13 @@ Deno.test('scoring the planner’s own plan reproduces the planner’s own answe
 });
 
 Deno.test('settlement leaves the real plan physically feasible', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   assertEquals(compareWorkbench(bench, bench.planned).planner.infeasibilities, []);
 });
 
 Deno.test('doing nothing is scored, and the planner beats it', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const nothing = { power_w: {}, discharge_w: {} };
 
@@ -222,7 +236,7 @@ Deno.test('doing nothing is scored, and the planner beats it', () => {
 Deno.test('a breach the planner already had is not blamed on the household', () => {
   // Simulate an imported plan with an excessive battery discharge. Its
   // existing defect must not be attributed to an unchanged household draft.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   bench.planned.discharge_w.battery[0] = 100_000;
@@ -245,7 +259,7 @@ const chartOf = (bench: DispatchWorkbench, schedule = bench.planned) =>
   );
 
 Deno.test('the chart covers every quarter the plan does', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const chart = chartOf(bench);
@@ -263,7 +277,7 @@ Deno.test('the chart covers every quarter the plan does', () => {
 Deno.test('charging the pack is a flow, not consumption', () => {
   // Drawn in the flow panel as "battery in" already; counting it as house
   // demand too would draw the same kilowatt twice and inflate the base band.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const battery = bench.stores.find(store => store.discharge !== undefined);
   assert(battery !== undefined);
@@ -290,7 +304,7 @@ Deno.test('charging the pack is a flow, not consumption', () => {
 Deno.test('editing the schedule redraws the chart', () => {
   // The whole reason the panels are here: a number says a plan is better, the
   // shape says whether it looks right, and the shape has to follow the edit.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const pool = model.rows.find(row => row.storeKey === 'pool');
@@ -321,7 +335,7 @@ Deno.test('a windowed chart draws only that day, costed from its own edge', () =
   // The day tabs narrow the chart and the table together. A window that still
   // carried the horizon's running total would open every day but the first on
   // a cost line that started halfway up the axis.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).manual;
   const label = (ms: number) => new Date(ms).toISOString();
@@ -346,7 +360,7 @@ Deno.test('a windowed chart draws only that day, costed from its own edge', () =
 });
 
 Deno.test('a window past the horizon is clamped rather than padded', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).manual;
 
@@ -411,7 +425,7 @@ Deno.test('a breach names the exact quarter it happens in', () => {
 });
 
 Deno.test('an export carries both plans, their inputs and where they came from', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const pool = model.rows.find(row => row.storeKey === 'pool');
@@ -456,7 +470,7 @@ const netAt = (bench: DispatchWorkbench, schedule: DispatchSchedule, slot: numbe
 Deno.test('a hand-rounded overshoot is trimmed onto the load it meant to cover', () => {
   // 0.7 kW typed against a 676 W load is not a decision to sell 24 W, and the
   // grid row should not read as one.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -486,7 +500,7 @@ Deno.test('a sale the household actually asked for is left alone', () => {
   // Half a kilowatt beyond the load is five times the editor's resolution, so
   // it is a decision rather than hand-rounding — and in a quarter opened to
   // selling, the trim must not quietly undo it.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -511,7 +525,7 @@ Deno.test('a sale the household actually asked for is left alone', () => {
 Deno.test('the permit decides whether a sale can be asked for at all', () => {
   // Not whether it is reported afterwards. With the switch off the quarter is
   // held at the load and no breach can arise; with it on the same figure sells.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -545,7 +559,7 @@ Deno.test('the permit decides whether a sale can be asked for at all', () => {
 
 Deno.test('a quarter that balances reports no flow at all', () => {
   // Float error over 288 quarters produced 1.1e-13 W, which read as a sale.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).manual;
 
@@ -561,7 +575,7 @@ Deno.test('a quarter that balances reports no flow at all', () => {
 Deno.test('what a store holds is priced per kWh delivered, not per its own unit', () => {
   // The car's curve is over kilometres. Read raw it is nonsense beside a price;
   // through its own efficiency it is the number the objective compares.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).manual;
 
@@ -586,7 +600,7 @@ Deno.test('with the permit off the pack is capped at the load it can cover', () 
   // The defect this replaced: the permit only suppressed the message, so a
   // household could type the pack past the house load, watch the grid row go
   // negative, and be told afterwards it was not allowed.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -608,7 +622,7 @@ Deno.test('with the permit off the pack is capped at the load it can cover', () 
 });
 
 Deno.test('with the permit on the same figure is left to sell', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'quarter');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -632,7 +646,7 @@ Deno.test('what the editor snaps to is what the schedule then leaves alone', () 
   // cannot sell in any of its quarters, while the schedule caps each quarter at
   // its own room — so the claim that matters is that the conservative one is
   // survivable: type the editor's ceiling and nothing is trimmed afterwards.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const model = buildWorkbenchModel(bench, 'hour');
   const battery = model.rows.find(row => row.direction === 'discharge');
@@ -664,7 +678,7 @@ Deno.test('what the editor snaps to is what the schedule then leaves alone', () 
 });
 
 Deno.test('a figure above the ceiling never sells, whatever the resolution', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   for (const granularity of ['quarter', 'hour'] as const) {
     const model = buildWorkbenchModel(bench, granularity);
@@ -689,7 +703,7 @@ Deno.test('a quarter of grid charging lands in the pack, and the export says so'
   // The confusion this answers: 5 kW typed into the pack for one quarter moves
   // it by 1.19 kWh, not 5, and the flow panel draws "battery in" *below* the
   // axis — which reads as export until the arithmetic is checked. It is not.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   // Isolate the manual-edit arithmetic from the optimiser's choice to serve
   // every dark quarter from storage.
@@ -737,7 +751,7 @@ Deno.test('a quarter of grid charging lands in the pack, and the export says so'
 // ---------------------------------------------------------------------------
 
 Deno.test('the bill is bought minus sold, and nothing the curves touch', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).planner;
 
@@ -752,7 +766,7 @@ Deno.test('the bill is bought minus sold, and nothing the curves touch', () => {
 });
 
 Deno.test('the quoted part of the bill is the published quarters only', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const score = compareWorkbench(bench, bench.planned).planner;
 
@@ -775,7 +789,7 @@ Deno.test('doing nothing is cheapest on the bill and worst on the objective', ()
   // The trap the caption warns about, and the reason the bill is shown beside
   // the score rather than instead of it: a plan that serves nobody always wins
   // on money.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const comparison = compareWorkbench(bench, { power_w: {}, discharge_w: {} });
@@ -879,7 +893,7 @@ Deno.test('the worth row reads the curve the household is looking at', () => {
 });
 
 Deno.test('a windowed score accounts for that window only', () => {
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const whole = compareWorkbench(bench, bench.planned).planner;
@@ -906,7 +920,7 @@ Deno.test('a windowed score accounts for that window only', () => {
 Deno.test('terminal value belongs only to the window holding the horizon end', () => {
   // It prices what the house is left holding, which is not something Tuesday
   // can be credited with while Wednesday is still to come.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const first = compareWorkbench(bench, bench.planned, { from: 0, to: 96 }).planner;
@@ -922,7 +936,7 @@ Deno.test('terminal value belongs only to the window holding the horizon end', (
 
 Deno.test('a window is projected from the start, not from its own edge', () => {
   // Tuesday's cost depends on where Monday left the house.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const windowed = compareWorkbench(bench, bench.planned, { from: 192, to: 288 }).planner;
@@ -941,7 +955,7 @@ Deno.test('a window is projected from the start, not from its own edge', () => {
 Deno.test('a v2 export carries what the objective was computed from', () => {
   // v1 showed what was decided and not what it was decided against, so an audit
   // could compare the two schedules it was handed but never check either.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const comparison = compareWorkbench(bench, bench.planned);
 
@@ -973,7 +987,7 @@ Deno.test('a v2 export carries what the objective was computed from', () => {
 Deno.test('a v2 export says why, not only what', () => {
   // A declined discharge looks identical in the schedule whether it was never
   // bid, bid and outranked, or bid, won and released by settlement.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
   const exported = buildWorkbenchExport(
     bench,
@@ -1004,7 +1018,7 @@ Deno.test('an export covers the whole horizon whatever day is on screen', () => 
   // The scores on screen follow the day tabs; a file does not. An audit
   // reproduces complete-horizon figures, and an export whose meaning depended
   // on an invisible tab selection would be silently incomparable with the last.
-  const bench = dispatchWorkbench(realSnapshot());
+  const bench = realWorkbench();
   assert(bench !== null);
 
   const whole = buildWorkbenchExport(
