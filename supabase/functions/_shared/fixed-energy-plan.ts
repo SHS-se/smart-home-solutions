@@ -1,3 +1,4 @@
+import { continuedRun } from "./minimum-run.ts";
 import {
   type DispatchAuctionSolver,
   type DispatchLimits,
@@ -143,6 +144,8 @@ export function dispatchWithPrefix(
     stores.map((s) => ({ ...s, usage_weight: s.usage_weight.slice(0, end) })),
     limits,
     schedule,
+    undefined,
+    { continuesBeyondHorizon: end < slots.length },
   );
   // Do not silently clamp an invalid fixed trajectory and then optimise from it.
   if (prefix.infeasibilities.length) {
@@ -155,6 +158,8 @@ export function dispatchWithPrefix(
   const suffixStores = stores.map((s) => ({
     ...s,
     initial_state: prefix.state[s.key][end],
+    minimum_run: continuedRun(s.minimum_run, schedule.power_w[s.key].slice(0, end),
+      slots.slice(0, end).map(slot => slot.duration_hours ?? 0.25)),
     initially_charging: schedule.power_w[s.key][end - 1] > 0,
     usage_weight: s.usage_weight.slice(end),
     slot_hours: s.slot_hours?.slice(end),

@@ -1,3 +1,4 @@
+import { type MinimumRun, validRun } from "./minimum-run.ts";
 // Marginal-value dispatch with lookahead.
 //
 // This replaces the placement rule that produced the defects in
@@ -65,6 +66,7 @@ export interface DispatchSlot {
 }
 
 export interface DispatchStore {
+  minimum_run?: MinimumRun;
   /** Aligned physical durations, including a partially elapsed first quarter. */
   slot_hours?: number[];
   key: string;
@@ -195,6 +197,7 @@ export interface DispatchAllocationDiagnostic {
   cost_refined?: boolean;
   /** Power was rounded onto the store's minimum active power, or to rest. */
   minimum_adjusted?: boolean;
+  minimum_run_committed?: boolean;
   run_start_index: number;
   run_slots: number;
   power_w: number;
@@ -266,8 +269,28 @@ export interface DispatchResult {
   iterations: number;
 }
 
+function runHours(store: DispatchStore, count: number): number[] {
+  return Array.from({length: count}, (_, i) => hoursAt(store, i));
+}
+function runValid(store: DispatchStore, power: number[], continuesBeyondHorizon = false): boolean {
+  return !store.minimum_run || validRun(power, runHours(store, power.length), store.minimum_run, continuesBeyondHorizon);
+}
+function runEditValid(store: DispatchStore, power: number[], indices: number[], value: number): boolean {
+  if (!store.minimum_run) return true;
+  const edited = power.slice();
+  for (const i of indices) edited[i] = value;
+  return runValid(store, edited);
+}
+function committedPower(store: DispatchStore, index: number): number {
+  if (!store.minimum_run) return 0;
+  let remaining = store.minimum_run.remaining_seconds;
+  for (let i = 0; i < index && remaining > 1e-6; i++) remaining -= hoursAt(store, i) * 3600;
+  return remaining > 1e-6 ? store.min_power_w ?? store.max_power_w : 0;
+}
+
 /** Continuous storage with no intermediate utility can move equal stored energy. */
 function supportsEnergyTransfers(store: DispatchStore): boolean {
+  if (store.minimum_run) return false;
   return store.discharge !== undefined && store.retention_per_slot === 1 &&
     store.usage_weight.every((weight) => weight === 0) &&
     (store.min_power_w ?? 0) === 0 && (store.power_step_w ?? 0) === 0 &&
@@ -463,7 +486,8 @@ function transitionBand(
   const passive = store.drift(current, index);
   return {
     floor: Math.min(store.min_state ?? -Infinity, passive),
-    ceiling: Math.max(store.max_state ?? Infinity, passive),
+    ceiling: Math.max(store.max_state ?? Infinity, passive,
+      nextState(store, current, committedPower(store, index), 0, index)),
   };
 }
 
@@ -863,8 +887,10 @@ export function scoreDispatch(
    * Tuesday can be credited with when Wednesday is still to come.
    */
   range?: { from: number; to: number },
+  /** Fixed prefixes may end mid-run; the completed schedule is checked again. */
+  continuation?: { continuesBeyondHorizon: boolean },
 ): DispatchScore {
-  return scoreDispatchWithReuse(slots, stores, limits, schedule, range);
+  return scoreDispatchWithReuse(slots, stores, limits, schedule, range, undefined, continuation);
 }
 
 // Only refinement uses this: exactly one store's power changes between trials.
@@ -876,6 +902,7 @@ function scoreDispatchWithReuse(
   schedule: DispatchSchedule,
   range?: { from: number; to: number },
   reuse?: { previous: DispatchScore; changedKey: string },
+  continuation?: { continuesBeyondHorizon: boolean },
 ): DispatchScore {
   const count = slots.length;
   const from = Math.max(0, range?.from ?? 0);
@@ -897,6 +924,8 @@ function scoreDispatchWithReuse(
       : (inputDischarge ?? zeros()).slice(0, count);
     while (power.length < count) power.push(0);
     while (discharge.length < count) discharge.push(0);
+    if (!runValid(store, power, continuation?.continuesBeyondHorizon)) infeasibilities.push({slot: 0, store_key: store.key,
+      message: `${store.key} violates its minimum run time`});
     powerByKey[store.key] = power;
     dischargeByKey[store.key] = discharge;
     if (reuse && store.key !== reuse.changedKey) {
@@ -1809,6 +1838,7 @@ export function planDispatch(
     }).total_sek;
   let bestCost = objective(best);
   for (const store of stores) {
+    if (store.minimum_run) continue;
     const profile = cheapestDiscreteProfile(
       slots,
       store,
@@ -2028,7 +2058,8 @@ export function* dispatchAuctionSteps(
 
   for (const store of stores) {
     if (!checkpoint) {
-      powerW[store.key] = new Array(count).fill(0);
+      powerW[store.key] = Array.from({length: count}, (_, i) => committedPower(store, i));
+      for (let i = 0; i < count; i++) occupiedW[i] += powerW[store.key][i];
       dischargeW[store.key] = new Array(count).fill(0);
       const state = new Array(count + 1).fill(store.initial_state);
       state[0] = store.initial_state;
@@ -2251,7 +2282,8 @@ export function* dispatchAuctionSteps(
           ? 0
           : startCost;
         const score = (prefixSurplus - cost) / addedKwh;
-        if (prefixSurplus - cost > 1e-9 && score > bestScore + 1e-12) {
+        if (prefixSurplus - cost > 1e-9 && score > bestScore + 1e-12 &&
+            runEditValid(store, powerW[store.key], indices.slice(0, parts.length), powerLevel)) {
           bestLength = parts.length;
           bestScore = score;
           prefixStartCost = cost;
@@ -2279,7 +2311,7 @@ export function* dispatchAuctionSteps(
       0,
     );
     const surplus = totalSurplus - previousSurplus;
-    if (surplus <= 1e-9 || addedKwh <= 1e-9) return null;
+    if (surplus <= 1e-9 || addedKwh <= 1e-9 || !runEditValid(store, powerW[store.key], indices, powerLevel)) return null;
     for (const part of parts) part.run_net_value_sek = totalSurplus;
     return {
       store,
@@ -2383,7 +2415,7 @@ export function* dispatchAuctionSteps(
   const bookedCharge = (
     store: DispatchStore,
     index: number,
-    adjustment: "cost_refined" | "minimum_adjusted",
+    adjustment: "cost_refined" | "minimum_adjusted" | "minimum_run_committed",
   ): DispatchAllocationDiagnostic => {
     const watts = powerW[store.key][index];
     const kwh = watts / 1_000 * hoursAt(store, index);
@@ -2413,9 +2445,7 @@ export function* dispatchAuctionSteps(
       direction: "charge",
       trigger: "economic_winner",
       allocation_order: iterations,
-      ...(adjustment === "cost_refined"
-        ? { cost_refined: true }
-        : { minimum_adjusted: true }),
+      [adjustment]: true,
       run_start_index: index,
       run_slots: 1,
       power_w: watts,
@@ -2722,13 +2752,21 @@ export function* dispatchAuctionSteps(
    * Only stores explicitly carrying compressor start costs use this accounting;
    * battery and EV allocations retain their energy-trade identities.
    */
+  if (!checkpoint) {
+    for (const store of stores) {
+      for (let i = 0; i < count; i++) {
+        if (committedPower(store, i) > 0) allocations[i].push(bookedCharge(store, i, "minimum_run_committed"));
+      }
+    }
+  }
+
   const reconcileChargeRuns = (): void => {
     for (const store of stores) {
-      if ((store.start_cost_sek ?? 0) <= 0) continue;
+      if ((store.start_cost_sek ?? 0) <= 0 && !store.minimum_run) continue;
       for (const run of runsOf(powerW[store.key])) {
         const startCost = run.start === 0 && store.initially_charging
           ? 0
-          : store.start_cost_sek!;
+          : store.start_cost_sek ?? 0;
         const parts = Array.from(
           { length: run.slots },
           (_, offset) => partAt(store, run.start + offset)!,
@@ -2760,7 +2798,7 @@ export function* dispatchAuctionSteps(
       outW,
       index,
     );
-    if (inW > 0 && after > (store.max_state ?? Infinity) + 1e-9) return true;
+    if (inW > 0 && after > transitionBand(store, stateByKey[store.key][index], index).ceiling + 1e-9) return true;
     if (outW > 0 && after < (store.min_state ?? -Infinity) - 1e-9) return true;
     const exporting = outW >
       gridImportW(slots[index], occupiedW[index], returnedW[index] - outW) +
@@ -2771,6 +2809,7 @@ export function* dispatchAuctionSteps(
   };
 
   const releaseRun = (store: DispatchStore, indices: number[]): void => {
+    if (!runEditValid(store, powerW[store.key], indices, 0)) throw new Error("Cannot release a minimum run commitment");
     for (const index of indices) {
       const at = allocations[index].findIndex((part) =>
         part.store_key === store.key
@@ -3302,11 +3341,11 @@ export function* dispatchAuctionSteps(
           // Search every executable run length only once single-quarter bids
           // are exhausted. Each prefix is priced incrementally, so this is
           // quadratic in the horizon, not a fresh simulation for every block.
-          // These are economic candidates, never mandatory minimum runtimes.
+          // Economic starts must also include any configured minimum run.
           for (const store of stores) {
             if (
-              store.discharge || store.min_power_w !== store.max_power_w ||
-              (store.start_cost_sek ?? 0) <= 0
+              store.discharge || (!store.minimum_run && (store.min_power_w !== store.max_power_w ||
+              (store.start_cost_sek ?? 0) <= 0))
             ) continue;
             const schedule = powerW[store.key];
             for (let start = 0; start < count; start += 1) {
@@ -3318,14 +3357,11 @@ export function* dispatchAuctionSteps(
                 end += 1
               ) indices.push(end);
               if (indices.length < 2) continue;
-              const candidate = chargeCandidate(
-                store,
-                indices,
-                store.max_power_w,
-                true,
-                true,
-              );
-              if (candidate && outranks(candidate, best)) best = candidate;
+              const levels = new Set([store.max_power_w, store.min_power_w ?? store.max_power_w]);
+              for (const level of levels) {
+                const candidate = chargeCandidate(store, indices, level, true, true);
+                if (candidate && outranks(candidate, best)) best = candidate;
+              }
             }
           }
         }
@@ -3468,7 +3504,8 @@ export function* dispatchAuctionSteps(
             }
           }
           // Resolve the run only once the scan has collected all of its slots.
-          if (starvedKey !== null && starved === null) {
+          if (starvedKey !== null && starved === null &&
+              runEditValid(store, powerW[store.key], runs.get(starvedKey)!.indices, 0)) {
             starved = { store, indices: runs.get(starvedKey)!.indices };
           }
           for (const run of runs.values()) {
@@ -3491,7 +3528,8 @@ export function* dispatchAuctionSteps(
                   const remainingStarts = (from > 0 ? originalStart : 0) +
                     (to + 1 < run.indices.length ? startCost : 0);
                   const net = margin + remainingStarts - originalStart;
-                  if (net < -1e-9 && (worst === null || net < worst.net)) {
+                  if (net < -1e-9 && (worst === null || net < worst.net) &&
+                      runEditValid(store, powerW[store.key], run.indices.slice(from, to + 1), 0)) {
                     worst = {
                       store,
                       indices: run.indices.slice(from, to + 1),
@@ -3501,7 +3539,8 @@ export function* dispatchAuctionSteps(
                 }
               }
             } else if (
-              run.net < -1e-9 && (worst === null || run.net < worst.net)
+              run.net < -1e-9 && (worst === null || run.net < worst.net) &&
+              runEditValid(store, powerW[store.key], run.indices, 0)
             ) {
               worst = { store, indices: run.indices, net: run.net };
             }

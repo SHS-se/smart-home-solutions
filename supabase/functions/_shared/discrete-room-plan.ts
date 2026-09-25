@@ -1,3 +1,4 @@
+import { continuedRun, type MinimumRun } from "./minimum-run.ts";
 import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
 /** Convert room optimisation into full-quarter relay decisions before simulation.
  * A bounded beam search checks both comfort bounds on every transition. No HA
@@ -22,14 +23,14 @@ export function discreteRoomPlan(
   const models = zone.device_keys.map((key) =>
     snapshot.device_models.find((m) => m.key === key)!
   );
-  const relays = models.filter((m) => m.control_type === "switch_schedule");
+  const relays = models.filter((m) => m.control_type === "switch_schedule" || m.minimum_run);
   if (!relays.length) return null;
   if (relays.length > 8 || models.some((m) => !(m.active_power_w! > 0))) {
     throw new Error(
       `${zone.name}: relay planning requires measured ratings and at most eight relays per room`,
     );
   }
-  const continuous = models.filter((m) => m.control_type === "setpoint");
+  const continuous = models.filter((m) => m.control_type === "setpoint" && !m.minimum_run);
   const continuousMax = continuous.reduce(
     (sum, m) => sum + m.active_power_w!,
     0,
@@ -44,21 +45,25 @@ export function discreteRoomPlan(
     cost: number;
     powers: number[];
     devicePower: Record<string, number[]>;
+    runs: Record<string, MinimumRun | undefined>;
   };
   let beam: Node[] = [{
     temperature: zone.start_temperature_c,
     cost: 0,
     powers: [],
+    runs: Object.fromEntries(models.map(m => [m.key, m.minimum_run])),
     devicePower: Object.fromEntries(models.map((m) => [m.key, []])),
   }];
   const frozen = new Map(fixed?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
   for (let i = 0; i < outdoor.length; i++) {
     const locked = frozen.get(Date.parse(snapshot.slots[i].start));
-    const next = new Map<number, Node>();
+    const next = new Map<string, Node>();
     const at = Math.min(i + 1, zone.comfort_min_c.length - 1);
     for (const prior of beam) {
       for (let mask = 0; mask < (1 << relays.length); mask++) {
         if (locked && relays.some((m, bit) => Boolean(mask & (1 << bit)) !== (locked.device_loads_w[m.key] > 0))) continue;
+        if (relays.some((m, bit) => !(mask & (1 << bit)) && (prior.runs[m.key]?.remaining_seconds ?? 0) > 1e-6)) continue;
+        const forced = relays.some(m => (prior.runs[m.key]?.remaining_seconds ?? 0) > 1e-6);
         const relayW = relays.reduce(
           (sum, m, bit) => sum + ((mask & (1 << bit)) ? m.active_power_w! : 0),
           0,
@@ -69,7 +74,7 @@ export function discreteRoomPlan(
         );
         const watts = relayW + continuousW;
         if (locked && Math.abs(watts - locked.room_heating_w[zone.key]) > 0.01) continue;
-        if (watts > zone.maximum_power_w_by_slot[i] + 0.01) {
+        if (!forced && watts > zone.maximum_power_w_by_slot[i] + 0.01) {
           continue;
         }
         const temperature = prior.temperature +
@@ -79,19 +84,23 @@ export function discreteRoomPlan(
               backgroundRateForSlot(zone.model, i));
         if (
           temperature < zone.comfort_min_c[at] - 0.01 ||
-          temperature > zone.comfort_max_c[at] + 0.01
+          (!forced && temperature > (models.some(m => m.minimum_run) ? Math.max(prior.temperature, zone.comfort_max_c[at]) : zone.comfort_max_c[at]) + 0.01)
         ) {
           continue;
         }
         const cost = prior.cost + (temperature - desired[i + 1]) ** 2 +
           ((watts - preferred[i]) / 1000) ** 2 * 0.01;
-        const bucket = Math.round(temperature * 100);
+        const runs = Object.fromEntries(relays.map((m, bit) => [m.key, continuedRun(prior.runs[m.key],
+          [mask & (1 << bit) ? 1 : 0], [durationHours?.[i] ?? 0.25])]));
+        if (i === outdoor.length - 1 && relays.some(m => (runs[m.key]?.remaining_seconds ?? 0) > 1e-6 &&
+          (m.minimum_run?.remaining_seconds ?? 0) <= (durationHours ?? outdoor.map(() => 0.25)).reduce((a,b) => a+b,0)*3600)) continue;
+        const bucket = `${Math.round(temperature * 100)}:${JSON.stringify(runs)}`;
         if ((next.get(bucket)?.cost ?? Infinity) <= cost) continue;
         const devicePower = Object.fromEntries(
           models.map(
             (m) => [m.key, [
               ...prior.devicePower[m.key],
-              m.control_type === "switch_schedule"
+              relays.includes(m)
                 ? ((mask & (1 << relays.indexOf(m))) ? m.active_power_w! : 0)
                 : continuousMax > 0
                 ? continuousW * m.active_power_w! / continuousMax
@@ -101,6 +110,7 @@ export function discreteRoomPlan(
         );
         next.set(bucket, {
           temperature,
+          runs,
           cost,
           powers: [...prior.powers, watts],
           devicePower,
