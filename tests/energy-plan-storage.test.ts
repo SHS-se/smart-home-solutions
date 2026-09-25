@@ -33,8 +33,13 @@ Deno.test('JSONB plan publication preserves payloads, operational state and gene
     await db.exec(recommendations.slice(0, recommendations.indexOf('CREATE FUNCTION public.energy_value_change_recommendation')));
     await db.exec(await migration('20260924121500_store_energy_plan_jsonb'));
     await db.exec(await migration('20260924160000_streamline_energy_plan_storage'));
-    const signature = await db.query<{ proargnames: unknown }>("SELECT proargnames FROM pg_proc WHERE oid='store_energy_optimisation_current(jsonb)'::regprocedure");
+    // PGlite lacks lz4; the column compression change is exercised on Supabase.
+    const timeout = await migration('20260925160000_bound_energy_plan_storage_timeout');
+    await db.exec(timeout.slice(0, timeout.indexOf('ALTER TABLE')));
+    const signature = await db.query<{ proargnames: unknown; proconfig: string[] }>("SELECT proargnames, proconfig FROM pg_proc WHERE oid='store_energy_optimisation_current(jsonb)'::regprocedure");
     assertEquals(signature.rows[0].proargnames, null);
+    // PostgREST hoists this into the call's transaction, overriding the 8 s role default.
+    assertEquals(signature.rows[0].proconfig, ['search_path=public', 'statement_timeout=30s']);
     // Larger than the 4.9 MB plan involved in the reported production-path timeout.
     const plan = { mode: 'live', plan_id: home, policy: Array.from({ length: 60_000 },
       (_, i) => ({ slot: i, values: [0, 1.25, -3], explanation: 'Keep the complete planner output unchanged.' })) };

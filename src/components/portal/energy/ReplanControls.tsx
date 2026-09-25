@@ -72,7 +72,10 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
   }, [awaitedReplanId, replan, t, toast]);
 
 
-  return <div className="space-y-3">
+  // A fragment, so the host lays out the button and the failure separately: the
+  // button keeps its place beside the plan heading and a long error message
+  // takes a full, left-aligned row of its own instead of dragging the button.
+  return <>
         <Button
           size="sm"
           onClick={() => void requestReplan()}
@@ -89,7 +92,7 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
         </Button>
 
       {!busy && replanProgress.status === 'failed' && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="basis-full">
           <AlertTitle>{t('Hemmet kunde inte planera om', 'The house could not replan')}</AlertTitle>
           <AlertDescription className="text-sm">
             {replanProgress.detail}
@@ -101,5 +104,5 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
           </AlertDescription>
         </Alert>
       )}
-  </div>;
+  </>;
 }

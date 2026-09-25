@@ -38,6 +38,7 @@ import {
   generateRemoteOptimisationPlan,
 } from "../_shared/energy-planning-client.ts";
 import { type StoredPriceRow } from "../_shared/energy-price-shape.ts";
+import { storedPlan } from "../_shared/stored-plan.ts";
 import {
   buildThermalProjection,
   fitZones,
@@ -1952,7 +1953,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         status: generated.status,
         model_version: generated.model_version,
         snapshot,
-        plan: generated,
+        plan: storedPlan(generated),
         battery_projection: batteryProjection,
         updated_at: new Date().toISOString(),
       };

@@ -778,9 +778,7 @@ const PlanView: React.FC<{
                 </details>
               )}
             </div>
-            <div className="space-y-3 text-right">
-              {replanControls}
-            </div>
+            {replanControls}
           </div>
         </CardHeader>
         <CardContent>
