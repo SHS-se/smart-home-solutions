@@ -7,6 +7,13 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](energy-optimisation/device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+Historical release record for the named beta, not current rollout instructions.
+Current battery execution uses schema 8; the [current architecture](../ENERGY_OPTIMISATION_ARCHITECTURE.md)
+and 13 September controller policy supersede conflicting target requirements.
+Preserved release behaviour and test evidence below retain their original scope.
+In particular, reviewed minimum-on/off fields are historical/current implementation,
+explicitly retired by the latest target design; they are not new commissioning requirements.
+
 Deploy the accompanying website schema-7 contract and optimiser first, then
 upgrade HA. The website continues serving schema 5/6 to existing clients during
 the coordinated release. This integration requests schema 7; it refuses an

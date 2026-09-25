@@ -137,5 +137,12 @@ adapter. Captured-case resolution, model calibration, joint suffix search and th
 policy compiler remain subsequent work; passing these offline tests does not
 complete production or physical commissioning gates.
 
+Scope update, 14 September: [thermal modelling is a significant deferred
+workstream](models-and-forecasts.md#deferred-thermal-modelling-workstream).
+Step 3 can begin with battery alternatives and battery suffix reoptimisation;
+other demand is an explicit external electrical forecast. This is readiness to
+start that bounded compiler slice, not completion of the whole-household scorer's
+model evidence or live-control delivery gates.
+
 See [controller policy](controller-policy.md) and
 [verification requirements](verification-and-delivery.md).

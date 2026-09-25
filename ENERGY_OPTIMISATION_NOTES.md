@@ -7,10 +7,11 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](docs/energy-optimisation/device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
-Status: **working document, not committed.** Written 2026-08-09 while wiring EMHASS up
-against Phil's house. Captures what exists, what was learned the hard way, and where this
-is going. Everything here was verified against the live Home Assistant instance rather
-than inferred from documentation.
+Status: **historical, non-normative working notes from 9 August 2026**. Observations,
+experiments and proposals below describe that date; the former blanket statement
+that everything was verified live is not evidence of commissioning or current
+implementation. The [current architecture](ENERGY_OPTIMISATION_ARCHITECTURE.md)
+and its 13 September controller decisions supersede conflicting requirements.
 
 ---
 
@@ -54,7 +55,7 @@ sensor.sigen_plant_battery_state_of_charge   %
 
 ### 2.1 Control surface
 
-Historical survey: for current battery mode policy and implementation, use the [accepted 10 September battery control design](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-control.md). The mode inventory below includes ESS First, which is excluded from routine optimisation, and does not define the current executor contract.
+Historical survey: for current battery mode policy and implementation, use the [accepted 10 September battery control design](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-control-configuration.md). The mode inventory below includes ESS First, which is excluded from routine optimisation, and does not define the current executor contract.
 
 The `sigen` integration **ships read-only** and drops writes silently:
 
@@ -93,8 +94,11 @@ Command Discharging (PV First) · Command Discharging (ESS First)
 V2G · Unknown
 ```
 
-Grid First vs PV First matters in a Swedish winter in a way it does not in the
-Australian guides this is all derived from.
+The available options are not all approved operating modes. **Forced charging
+uses Command Charging (PV First)**. On 15 September, Phil's installation history
+showed Grid First suppressing PV production to zero while importing for charging;
+returning to PV First restored solar production. Grid First is excluded from normal
+SHS operation, including winter. See the [battery execution contract](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery-control-configuration.md).
 
 ### 2.2 Known cosmetic defect
 

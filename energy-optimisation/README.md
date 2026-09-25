@@ -7,17 +7,12 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](../docs/energy-optimisation/device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
-> **Superseded.** This folder is the original **hourly** prototype, kept for the
-> findings written up below. The live version is 15-minute and lives in the
-> portal:
->
-> - `src/lib/energy-shift/inputs.ts` — 15-min snapshot, 288 slots
-> - `src/lib/energy-shift/model.ts` — same model at the canonical 900 s timestep
-> - `src/components/portal/energy/LoadShiftTab.tsx` — the page
-> - Portal → Energy Modeling → **Load Shifting**
->
-> Everything in "The headline finding" and "Two bugs found while building this"
-> still applies; the numbers there are from the hourly 2026-08-09 snapshot.
+> **Historical, non-normative hourly prototype.** The findings and numbers below
+> describe the 9 August 2026 experiment, not the current runtime or control policy.
+> Old priority, clamping and storage conclusions are not carried forward by default.
+> Use the [current architecture](../ENERGY_OPTIMISATION_ARCHITECTURE.md) and
+> [executable economic policy](../docs/energy-optimisation/controller-policy.md).
+
 
 ## Original notes
 

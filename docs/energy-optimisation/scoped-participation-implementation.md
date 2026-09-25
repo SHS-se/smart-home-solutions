@@ -52,9 +52,9 @@ and rollout](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery
 
 `generateOptimisationPlanWithBatteryProjection` returns the existing plan and a
 separate resolved battery projection from the same generation. The existing plan
-wire also carries explicit `battery_supply_scope` (`whole_house` for current generated plans). Schema 9 uses the execution branch's
-projection for Controlling; provenance is trimmed with that branch's remaining
-horizon. Verification uses the conditional branch described below.
+wire also carries explicit `battery_supply_scope` (`whole_house` for current generated plans). Schema 9 publishes one projection from
+the single selected schedule for both Verification and Controlling; provenance is
+trimmed with its remaining horizon.
 
 Each continuity candidate carries its own materialization. The selected candidate
 supplies unrounded final household demand after thermal/device scheduling, exact
@@ -89,12 +89,12 @@ with the plan in the same upsert; old rows remain null until a fresh generation.
 The transport rejects missing or mismatched projections rather than reconstructing
 one from display slots.
 
-When the battery is in Verification, the physical execution plan still contains
-no battery command. A separate `battery_verification` projection evaluates only
-the battery while freezing all other consumption to the exact physical execution
-schedule. Its gross load and Planned/base partition come from that execution
-schedule, not the joint hypothetical plan. Controlling uses the selected execution
-projection without another battery solve.
+Superseded 23 September 2026: Verification and Controlling share one schedule,
+one projection and one battery reference, which differs only in the mode it was
+captured under. There is no separate `battery_verification` solve; Verification
+evaluates the same requests Controlling would send, without writing them. The
+earlier design froze other consumption to a mode-specific physical execution
+schedule.
 
 The retired battery-policy exchange endpoint has been removed. Current HA builds
 receive battery execution data through the household plan exchange; they do not

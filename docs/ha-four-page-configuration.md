@@ -7,6 +7,11 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](energy-optimisation/device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+Historical release record for the named beta, not current rollout instructions.
+Current battery execution uses schema 8; the [current architecture](../ENERGY_OPTIMISATION_ARCHITECTURE.md)
+and 13 September controller policy supersede conflicting target requirements.
+Preserved release behaviour and test evidence below retain their original scope.
+
 Phase 3 is implemented on top of Phase 4. The schema-7 command channel and
 journaled controller remain in place; this release does not enable new targets.
 

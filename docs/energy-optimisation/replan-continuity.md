@@ -7,6 +7,13 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+Current behaviour, 23 September 2026: plans are solved only for a new published
+price release or a manual replan, so continuity applies at those solves rather
+than at every quarterly exchange. Since `marginal-value-planner-v43` a store
+measured beyond its own bound, such as a car above its charge limit, no longer
+makes the proposed dispatch infeasible. Before that it bypassed continuity with
+`invalid_proposed_dispatch` and disabled cost refinement for the whole house.
+
 Planner v30 adds an economic reference to the priority scenario. Ingest derives `snapshot.replan_reference` from the server's previous ready plan, never from a client claim. The bounded reference describes the current absolute quarter's battery powers and pool heat/defer action. It is frozen in the enriched snapshot, so saved replays and distributed planning see the same input. It is not evidence that a device applied or delivered the old request.
 
 The ordinary solution is scored against two alternatives: replace its first-quarter battery/pool allocations while retaining its future trajectory, and reoptimize the suffix after those allocations. Both use fresh measured state, current limits and the existing complete dispatch objective. Pool heat uses the current learned power. Battery powers are rejected if infeasible; they are not clipped or promoted to fixed-plan authority.

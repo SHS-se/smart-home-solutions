@@ -7,6 +7,10 @@ Future valuation audits must compare actions within the same explicit battery ho
 See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+Historical experiment, not a competing current specification or current unresolved
+questionnaire. Preserve its capsule arithmetic and limitations; subsequent decisions
+and implementation are in the [planner](planner.md) and [decision register](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md).
+
 Source: the household's `plan-2026-09-06-16-30.json` workbench export, captured at 16:30 UTC on 6 September. It contains 288 quarters, EV and battery stores, and both planner and manual schedules. The pool is absent from this export.
 
 ## Result
@@ -45,6 +49,11 @@ The upper band values stored energy at about 2.0353 SEK per DC kWh. The curve is
 That makes its continuation interpretation questionable, but simply lowering the curve would conflate a valuation change with a demonstrated search defect. The equal-final-state example cancels the continuation value entirely and still wins. Keep the curve unchanged for this investigation; address paired search before tuning its levels. A later continuation-value change needs an explicit treatment of future replenishment and uncertainty beyond the horizon, without reinstating an arbitrary end-SOC target.
 
 ## Changes made alongside the investigation
+
+Historical scope note (13 September): the removal recorded below did not establish
+that generic relay minimum-on/off fields are absent from current HA code; those
+fields and enforcement still exist and are now explicitly retired in the target.
+No home/EV battery switching penalty is introduced by the current design.
 
 - Removed planner minimum-runtime inputs and enforcement from the service contract, dispatch, workbench and HA mapping/configuration. Single-quarter runs are permitted at executable power. Equipment protections remain local.
 - Preserved the pool's existing curve and introduced no new EV switching coefficient. A switching penalty is a separate soft preference, not a hidden minimum run.

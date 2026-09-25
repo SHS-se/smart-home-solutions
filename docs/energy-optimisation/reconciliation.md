@@ -7,6 +7,46 @@ Acknowledged inclusion, planning, physical-authority and supply-scope revisions 
 See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+## Later 13 September feedback
+
+The latest feedback supersedes the earlier requirement to import commissioned
+minimum-on/off obligations: the target has no SHS minimum-runtime settings or
+hard run commitments. Native protection remains physical equipment behaviour.
+Battery headroom for intermittent PV is valued through subquarter whole-objective
+counterfactuals, without a fixed SOC trigger. Desired EV scheduling remains
+independent of current cable/location, with separate executable eligibility,
+conditional service reporting. Unplugged planned charging is only an example
+for future notifications; the framework and its full specification are deferred.
+
+The target uses a synchronous internal event-loop reducer with no global action
+mutex. Full operational authority in Controlling supersedes the earlier
+external-hold rule; a technical lock on other HA writers is not assumed.
+[Control reconciliation](control-reconciliation.md) specifies overwritable drift,
+timeout outcomes, bounded automatic retries
+and ambiguous/late-effect accounting. Generic partial rollback and apparent-reset
+replay are rejected. Economic alternatives remain documented with measured
+revisit criteria. No runtime/settings/schema/notifications change here.
+
+## 13 September 2026 disposition
+
+The active topic documents and [economic policy](controller-policy.md) now adopt
+editable service curves, priced extra grid supply without fixed slot entitlements,
+explicit conditional reservation release, bounded joint suffix reoptimisation,
+filtered economic PV response with raw electrical guards, and durable routine
+restart/reload continuation. Current schema-8 execution remains explicitly labelled.
+The old D1–D6 questionnaire has been replaced by settled decisions and remaining
+engineering/commissioning evidence. Detailed direct user API/entity design is deferred.
+
+Related HA README/current operation documents and the stale runtime-recovery
+description were reconciled against source. Older notes, prototypes and release
+records are labelled historical rather than left as competing requirements.
+No runtime or schema change, live actuation or deployment is implied.
+
+## Historical 6 September reconciliation
+
+The dispositions and then-open D references below describe that earlier review;
+they are not a current list of unanswered controller decisions.
+
 [Architecture index](../../ENERGY_OPTIMISATION_ARCHITECTURE.md) · [Outstanding decisions](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md)
 
 On 2026-09-06 the original architecture was split into current topic specifications and a separately labelled historical record. The full 5,370-line source, including new 6 September workbench notes, is preserved in [history](history/README.md). Current specifications take precedence over historical prose. This record describes documentation changes, not runtime fixes.

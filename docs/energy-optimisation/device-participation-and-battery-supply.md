@@ -1,5 +1,12 @@
 # Device participation and battery supply — backend contract companion
 
+> **Controller ownership update — 17 September 2026.**
+> Participation, source attribution and supply-scope requirements below remain in
+> force. [Plan execution and deviation accounting](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/controller-plan-execution.md)
+> supersedes references to independent controller economic selection. The planner
+> chooses economic intent; HA follows it using actual eligible demand, records
+> deviations and applies only authorised recovery.
+
 **Agreed design, 15 September 2026; production command wiring implemented 16 September. Deployment pending.**
 The [canonical cross-repository specification](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/device-participation-and-battery-supply.md)
 owns terminology, UI behaviour, accounting formulas, lifecycle, source permissions
@@ -28,10 +35,13 @@ The existing schema-9 implementation remains evidence, not the final vocabulary.
 ## Planning and measurement partition
 
 Gross house consumption excludes home-battery charging. Base consumption is gross
-house consumption minus all Planned appliance consumption. Verification appliances
-remain Planned on charts and hypothetical schedules, but their real demand is
-external in the executable projection. External demand is base plus Planned loads
-without effective physical authority, counted once; logged actions cannot remove it.
+house consumption minus all Planned appliance consumption. Every Planned appliance
+is planned in the one selected schedule whatever its mode: Verification and
+Controlling change only whether SHS sends its requests
+([authoritative plan contract](authoritative-plan-contract.md)). A Verification
+appliance's logged requests cannot remove its measured demand; execution accounts
+for what it actually draws, and the difference from the plan is a recorded
+deviation.
 
 HA resolves aligned current gross demand, PV, stored energy and necessary device
 measurements. The server forecasts the future, retaining uncertainty for external

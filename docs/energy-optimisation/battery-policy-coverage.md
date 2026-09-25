@@ -7,6 +7,11 @@ Published coverage must bind participation, eligible demand selector, solar attr
 See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+Follow-up: the [14 September architecture review and battery release gates](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/controller-architecture-review.md)
+compares this diagnostic compiler with the HA reader/runtime and records the
+remaining executable-profile, native-response and mixed-mode gates. The
+independent Claude Opus Max review has now run; production execution remains open.
+
 Implemented 14 September 2026. The offline compiler now builds continuous
 remaining-time/battery-energy cells, with component C/F interpolation, a common
 feasible reference and fresh held-out counterfactual solves. This extends the
@@ -171,8 +176,9 @@ SOC failures, unsupported idle witnesses, excess PV, invalid axes and work limit
 terminal-value interpolation errors, independent ranking-regret gates, pruned
 searches and malformed public inputs. Independent Codex review validated the
 restricted feasibility argument and found a battery-free-input guard defect;
-the guard and regression test are included. Claude review remains deferred by
-agreement.
+the guard and regression test are included. Claude review was deferred at implementation time. The subsequent Opus Max/Codex
+architecture review linked above is now complete; it does not turn this profile
+into an executable policy.
 
 Validation passed: 1,099 backend tests, all 31 mocked browser tests against a fresh
 test build, Deno type checks, formatting and the unchanged HA provider-fixture

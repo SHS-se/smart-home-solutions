@@ -87,7 +87,9 @@ The sampled snapshots have no resolved pool model and no thermal-zone models.
 This says what these captures contain, not whether the house has other heating
 systems. Device load forecasts alone do not supply thermal states or utility.
 
-The next modelling slice must explicitly resolve:
+Thermal modelling is now explicitly [deferred as a significant workstream](models-and-forecasts.md#deferred-thermal-modelling-workstream).
+These are prerequisites for a captured **whole-household thermal** case, not
+blockers to starting step 3 with battery actions and external electrical demand:
 
 1. Thermal state, capacity, losses, withdrawals, COP and service utility on one
    common horizon, with model identity and calibration evidence.
@@ -102,8 +104,10 @@ The next modelling slice must explicitly resolve:
 Do not fabricate those inputs from predicted watts, the house's 60/20-minute
 priority periods or a missing-model default. General model work can continue
 with explicit synthetic cases; a captured whole-household score remains pending
-until the corresponding resolved inputs exist. Battery remains the first live
-controller delivery, followed by pool and EV.
+until the corresponding resolved inputs exist. A battery-only case still needs
+explicit battery economics, source allocations and reconciled initial-state
+provenance; the audit does not supply them automatically. Battery remains the
+first live controller delivery, followed by pool and EV.
 
 See [offline scorer](household-scorer.md) and
 [separate household notes](reference-installations/phils-house.md).

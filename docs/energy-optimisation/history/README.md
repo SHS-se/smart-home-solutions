@@ -7,6 +7,11 @@ Preserve the historical behaviour and evidence below. The agreed participation o
 See the [agreed participation and battery supply specification](../device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.
 
+The 13 September 2026 target revision specifically supersedes older fixed slot
+budgets, mandatory household service tiers and routine-restart baseline cycling.
+Retain the dated source below as evidence; follow the current topic documents
+for requirements. No historical experiment is promoted to a live control contract.
+
 [Current architecture](../../../ENERGY_OPTIMISATION_ARCHITECTURE.md)
 
 Preserved on 2026-09-06. These records retain the original observations, fixtures, experiments, and dated implementation claims. They are not active specifications. Corrections and current requirements live in the topic documents.
