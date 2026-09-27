@@ -1,6 +1,7 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1';
 import {
   earnsOwnBand,
+  consumptionGapDescription,
   MAX_SERIES,
   splitConsumption,
   type ConsumptionCandidate,
@@ -165,4 +166,40 @@ Deno.test("duplicate meter identities cannot manufacture base consumption", () =
   const split = splitConsumption([c, c], [500]);
   assertEquals(split.invalidIndices, [0]);
   assert(Number.isNaN(split.baseValues[0]));
+});
+
+Deno.test('missing planned meter identifies the source and clears when its reading returns', () => {
+  const split = splitConsumption([
+    candidate({ key: 'sensor.pool_pump_energy', name: 'Pool pump', values: [NaN, 0] }),
+    candidate({ key: 'heater', values: [0, 0] }),
+  ], [2600, 2600]);
+  assertEquals(split.invalidIndices, [0]);
+  assertEquals(split.issues, [{ missingDevices: ['Pool pump'] }, null]);
+  assert(Number.isNaN(split.baseValues[0]));
+  assertEquals(split.baseValues[1], 2600);
+  assertEquals(consumptionGapDescription(split.issues[0]!, (_sv, en) => en),
+    'Missing readings for: Pool pump. Base load cannot be calculated.');
+  assert(consumptionGapDescription(split.issues[0]!, sv => sv).includes('Pool pump'));
+});
+
+Deno.test('inconsistent consumption is not described as a missing device', () => {
+  const split = splitConsumption([candidate({ key: 'pump', values: [3000] })], [2600]);
+  assertEquals(split.issues, [{ missingDevices: [] }]);
+  assertEquals(consumptionGapDescription(split.issues[0]!, (_sv, en) => en),
+    'Household and device readings cannot be reconciled for this quarter.');
+});
+
+Deno.test('one missing device leaves other device readings intact, including grouped loads', () => {
+  const split = splitConsumption([
+    candidate({ key: 'pump', values: [800, NaN, 800, 800, 800] }),
+    candidate({ key: 'heater', values: [1800, 1800, 1800, 1800, 1800] }),
+    candidate({ key: 'small-missing', values: [20, NaN, 20, 20, 20] }),
+    candidate({ key: 'small-known', values: [50, 50, 50, 50, 50] }),
+  ], flat(3000, 5));
+  assertEquals(split.series.find(s => s.key === 'heater')!.values, flat(1800, 5));
+  assert(Number.isNaN(split.baseValues[1]));
+  const grouped = split.series.find(s => s.key === '$other_planned')!;
+  assertEquals(grouped.values[1], 50);
+  assertEquals(grouped.partial, [false, true, false, false, false]);
+  assertEquals(split.issues[1]!.missingDevices, ['pump', 'small-missing']);
 });

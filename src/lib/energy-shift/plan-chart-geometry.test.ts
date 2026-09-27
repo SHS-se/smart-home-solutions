@@ -163,3 +163,12 @@ Deno.test('invalid consumption quarters remain gaps through stacking and SVG pat
     assert(!path.includes('NaN'));
   }
 });
+
+Deno.test('a missing base or device band never hides another device', () => {
+  const bands = stackBands([[1, NaN, 1], [2, 2, 2], [3, NaN, 3], [4, 4, 4]]);
+  assertEquals(bands[1], [[1, 3], [0, 2], [1, 3]]);
+  assertEquals(bands[3], [[6, 10], [2, 6], [6, 10]]);
+  assertEquals(stepBandPath(bands[1], x, y).split('M').length - 1, 1);
+  assertEquals(stepBandPath(bands[3], x, y).split('M').length - 1, 1);
+  assert(Number.isNaN(bands[2][1][1]));
+});

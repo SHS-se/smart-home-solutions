@@ -24,7 +24,7 @@ import {
 import {
   PRICE_RAMP_STEPS, priceBands, priceGradientStops,
 } from '@/lib/energy-shift/price-bands';
-import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
+import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { loadColour, PLAN_COLOURS } from './types';
@@ -147,6 +147,7 @@ const PlanPanels: React.FC<{
   series: ConsumptionSeries[];
   /** Base load plus every meter that did not. */
   baseValues: number[];
+  consumptionIssues: (ConsumptionIssue | null)[];
   /** First quarter on the plan side, including quarters with missing data. */
   dividerIndex: number;
   hasBattery: boolean;
@@ -154,7 +155,7 @@ const PlanPanels: React.FC<{
   selectedIndex?: number;
   onQuarterClick?: (index: number) => void;
 }> = ({
-  rows, series, baseValues, dividerIndex, hasBattery, hasEvBattery,
+  rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick,
 }) => {
   const { t } = useLanguage();
@@ -212,7 +213,7 @@ const PlanPanels: React.FC<{
     ]);
     const loadMax = Math.max(
       0.5,
-      ...loadBands[loadBands.length - 1].map(pair => pair[1]).filter(Number.isFinite),
+      ...loadBands.flatMap(band => band.map(pair => pair[1])).filter(Number.isFinite),
       ...rows.map(row => (row.solarW ?? 0) / 1_000),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
@@ -640,7 +641,8 @@ const PlanPanels: React.FC<{
         <PlanTooltip
           row={hovered}
           series={series}
-          baseValue={baseValues[hover as number] ?? 0}
+          baseValue={baseValues[hover as number]}
+          consumptionIssue={consumptionIssues[hover as number]}
           index={hover as number}
           measured={(hover as number) < dividerIndex}
           hasBattery={hasBattery}
@@ -666,6 +668,7 @@ const PlanTooltip: React.FC<{
   row: PlanPanelRow;
   series: ConsumptionSeries[];
   baseValue: number;
+  consumptionIssue: ConsumptionIssue | null;
   index: number;
   measured: boolean;
   hasBattery: boolean;
@@ -674,7 +677,7 @@ const PlanTooltip: React.FC<{
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, series, baseValue, index, measured, hasBattery, hasEvBattery, left, top, bounds,
+  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, left, top, bounds,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -705,6 +708,7 @@ const PlanTooltip: React.FC<{
 
   return (
     <div
+      role="tooltip"
       className="pointer-events-none absolute z-10 rounded-lg border bg-popover px-2.5 py-2 text-xs shadow-md"
       style={{ left: Math.max(4, left + offset), top: clampedTop, width }}
     >
@@ -728,13 +732,16 @@ const PlanTooltip: React.FC<{
         {running.map(entry => (
           <Reading
             key={entry.key} name={entry.name} colour={loadColour(entry.slot)}
-            value={`${(entry.value / 1_000).toFixed(2)} kW`}
+            value={`${entry.partial[index] ? "≥ " : ""}${(entry.value / 1_000).toFixed(2)} kW`}
           />
         ))}
         <Reading
           name={t('Baslast', 'Base load')} colour={PLAN_COLOURS.base}
-          value={`${(baseValue / 1_000).toFixed(2)} kW`}
+          value={Number.isFinite(baseValue) ? `${(baseValue / 1_000).toFixed(2)} kW` : t('Ej tillgänglig', 'Unavailable')}
         />
+        {consumptionIssue && <p className="mt-1 text-muted-foreground">
+          {consumptionGapDescription(consumptionIssue, t)}
+        </p>}
       </div>
       <div className="mt-1 border-t pt-1">
         {hasBattery && row.homeSoc !== null && (

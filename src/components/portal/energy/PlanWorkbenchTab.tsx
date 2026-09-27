@@ -748,6 +748,7 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
               rows={chart.rows}
               series={chart.series}
               baseValues={chart.baseValues}
+              consumptionIssues={chart.consumptionIssues}
               dividerIndex={0}
               hasBattery={chart.hasBattery}
               hasEvBattery={chart.hasEvBattery}

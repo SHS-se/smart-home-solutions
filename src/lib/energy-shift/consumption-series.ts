@@ -27,6 +27,8 @@ export interface ConsumptionSeries {
   name: string;
   values: number[];
   kwh: number;
+  /** A grouped value contains only the available device readings. */
+  partial: boolean[];
   /**
    * Palette slot, assigned over every schedulable meter the home has rather
    * than over the ones drawn today. A meter that happens not to run keeps its
@@ -34,6 +36,19 @@ export interface ConsumptionSeries {
    */
   slot: number;
 }
+
+export interface ConsumptionIssue {
+  missingDevices: string[];
+}
+
+export const consumptionGapDescription = (
+  issue: ConsumptionIssue,
+  t: (sv: string, en: string) => string,
+): string => issue.missingDevices.length
+  ? t(`Mätvärden saknas för: ${issue.missingDevices.join(', ')}. Baslasten kan inte beräknas.`,
+      `Missing readings for: ${issue.missingDevices.join(', ')}. Base load cannot be calculated.`)
+  : t('Husets och enheternas mätvärden kan inte stämmas av för denna kvart.',
+      'Household and device readings cannot be reconciled for this quarter.');
 
 export interface ConsumptionSplit {
   /** Drawn bands, largest first. */
@@ -44,6 +59,7 @@ export interface ConsumptionSplit {
   /** Monitoring meters, already included in gross base consumption. */
   foldedCount: number;
   invalidIndices: number[];
+  issues: (ConsumptionIssue | null)[];
 }
 
 /**
@@ -72,7 +88,7 @@ const totalKwh = (values: readonly number[]): number =>
  *
  * `houseDemandW` is gross household consumption. Subtract all Planned meters,
  * including those grouped for display. Inconsistent or missing measurements
- * produce a gap in the whole stack, never an invented zero remainder.
+ * leave the base unknown; each available device keeps its own reading.
  */
 export const splitConsumption = (
   candidates: readonly ConsumptionCandidate[],
@@ -97,6 +113,7 @@ export const splitConsumption = (
       name: candidate.name,
       values: [...candidate.values],
       kwh: totalKwh(candidate.values),
+      partial: candidate.values.map(() => false),
       slot: slotByKey.get(candidate.key) ?? 0,
     }))
     .sort((left, right) => right.kwh - left.kwh || left.key.localeCompare(right.key));
@@ -105,12 +122,15 @@ export const splitConsumption = (
   const drawn = new Set(series.map(entry => entry.key));
   const grouped = candidates.filter(c => c.schedulable && !drawn.has(c.key));
   if (grouped.some(c => c.values.some(w => w > 0))) {
-    const values = Array.from({ length }, (_, i) => grouped.reduce((sum, c) => sum + c.values[i], 0));
+    const readings = Array.from({ length }, (_, i) => grouped.map(c => c.values[i]).filter(Number.isFinite));
+    const values = readings.map(known => known.length ? known.reduce((sum, w) => sum + w, 0) : NaN);
+    const partial = readings.map(known => known.length < grouped.length);
     series.push({ key: "$other_planned", name: "Other planned devices", values,
-      kwh: totalKwh(values), slot: MAX_SERIES });
+      kwh: totalKwh(values), partial, slot: MAX_SERIES });
   }
   const planned = candidates.filter(c => c.schedulable);
   const invalidIndices: number[] = [];
+  const issues: (ConsumptionIssue | null)[] = Array(length).fill(null);
   const duplicate = new Set(candidates.map(c => c.key)).size !== candidates.length;
   const baseValues = Array.from({ length }, (_, index) => {
     const demand = houseDemandW[index];
@@ -119,8 +139,10 @@ export const splitConsumption = (
     if (duplicate || demand === null || !Number.isFinite(demand) || demand < 0 ||
         values.some(w => !Number.isFinite(w) || w < 0) || plannedW > demand) {
       invalidIndices.push(index);
-      // A gap is honest; zero would manufacture a reconciled house balance.
-      for (const entry of series) entry.values = entry.values.map((w, i) => i === index ? NaN : w);
+      issues[index] = { missingDevices: planned
+        .filter(c => !Number.isFinite(c.values[index]))
+        .map(c => c.name) };
+      // Only the remainder is unknown. Keep every available device reading.
       return NaN;
     }
     return demand - plannedW;
@@ -132,5 +154,6 @@ export const splitConsumption = (
     baseKwh: invalidIndices.length ? NaN : totalKwh(baseValues),
     foldedCount: candidates.filter(c => !c.schedulable).length,
     invalidIndices,
+    issues,
   };
 };

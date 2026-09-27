@@ -23,7 +23,7 @@ import {
 import type { DispatchStore } from '../../../supabase/functions/_shared/dispatch-plan';
 import { marginalValueHeld } from '../../../supabase/functions/_shared/store-value';
 import type { DispatchWorkbench } from '../../../supabase/functions/_shared/energy-optimisation';
-import { splitConsumption, type ConsumptionSeries } from './consumption-series';
+import { splitConsumption, type ConsumptionIssue, type ConsumptionSeries } from './consumption-series';
 
 /** Quarters per editable column at each granularity. */
 export const GRANULARITY_SLOTS = { hour: 4, quarter: 1 } as const;
@@ -429,6 +429,7 @@ export interface WorkbenchChart {
   rows: WorkbenchPanelRow[];
   series: ConsumptionSeries[];
   baseValues: number[];
+  consumptionIssues: (ConsumptionIssue | null)[];
   hasBattery: boolean;
   hasEvBattery: boolean;
 }
@@ -522,6 +523,7 @@ export function buildWorkbenchChart(
     rows,
     series: split.series,
     baseValues: split.baseValues,
+    consumptionIssues: split.issues,
     hasBattery: battery !== undefined,
     hasEvBattery: vehicle !== undefined,
   };

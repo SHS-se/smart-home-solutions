@@ -191,6 +191,7 @@ const PowerSection: React.FC<{
         rows={panelRows}
         series={consumption.series}
         baseValues={consumption.baseValues}
+        consumptionIssues={consumption.issues}
         dividerIndex={divider}
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
@@ -204,8 +205,8 @@ const PowerSection: React.FC<{
         'Historisk förbrukning visas med denna plans enhetsindelning.',
         'Historical consumption is reclassified using this plan’s device roles.')}</p>}
       {consumption.invalidIndices.length > 0 && <p role="status" className="text-xs text-muted-foreground">{t(
-        'Luckor betyder att total och enhetsmätningar inte kan stämmas av.',
-        'Gaps mean household and device measurements cannot be reconciled.')}</p>}
+        'Baslasten saknas när mätvärden inte kan stämmas av. Tillgängliga enhetsvärden visas fortfarande; ≥ anger en ofullständig grupp.',
+        'Base load is unavailable when readings cannot be reconciled. Available device readings remain visible; ≥ marks an incomplete group.')}</p>}
       <PanelLegend
         series={consumption.series}
         hasBattery={hasBattery}

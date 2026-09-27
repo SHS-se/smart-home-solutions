@@ -62,7 +62,18 @@ const idle: ReplanColumns = {
  * control. Held in a mutable cell so pressing the button can change what the
  * next read returns, which is the whole behaviour being checked.
  */
-async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN; refreshing?: boolean; readError?: boolean }, plan = PLAN, planSnapshot = snapshot()) {
+interface MockPlanState {
+  row: ReplanColumns;
+  reportedPlanId?: string;
+  publishedPlan?: typeof PLAN;
+  refreshing?: boolean;
+  readError?: boolean;
+  history?: Array<{ start_ts: string; total_load_kwh: number }>;
+  deviceHistory?: Array<{ start_ts: string; device_energy_kwh: Record<string, number> }>;
+  devices?: Array<Record<string, unknown>>;
+}
+
+async function mockBackend(context: BrowserContext, replan: MockPlanState, plan = PLAN, planSnapshot = snapshot()) {
   const nowIso = new Date().toISOString();
   const email = 'ana@example.com';
   const user = {
@@ -125,7 +136,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
         await route.fulfill({ status: 503, json: { message: 'Database temporarily unavailable' } });
         return;
       }
-      await route.fulfill({ json: portalDelta(route.request().postDataJSON().p_known, {
+      await route.fulfill({ json: { ...portalDelta(route.request().postDataJSON().p_known, {
         current: {
           home_id: HOME_ID,
           captured_at: CAPTURED_AT,
@@ -147,7 +158,14 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
           ...replan.row,
         },
         plan: shown,
-      }) });
+        devices: replan.devices ?? [],
+      }),
+      device_actuals: {
+        upserts: (replan.deviceHistory ?? []).map(row => ({ row, hash: JSON.stringify(row) })), removed: [],
+      },
+      actuals: {
+        upserts: (replan.history ?? []).map(row => ({ row, hash: JSON.stringify(row) })), removed: [],
+      } } });
       return;
     }
     if (url.pathname.includes('/rpc/')) {
@@ -180,7 +198,7 @@ async function mockBackend(context: BrowserContext, replan: { row: ReplanColumns
 const replanButton = /Planera om nu|Replan now/;
 
 test.describe('requesting a replan', () => {
-  let replan: { row: ReplanColumns; reportedPlanId?: string; publishedPlan?: typeof PLAN; refreshing?: boolean; readError?: boolean };
+  let replan: MockPlanState;
 
   test.beforeEach(async ({ context, page }) => {
     replan = { row: { ...idle } };
@@ -196,6 +214,30 @@ test.describe('requesting a replan', () => {
     await page.fill('#password', 'mock-password');
     await page.getByRole('button', { name: 'Logga in' }).click();
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
+  });
+
+  test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {
+    replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
+    replan.history = [{
+      start_ts: new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString(),
+      total_load_kwh: 0.65,
+    }];
+    replan.devices = [{ id: 'heater-id', device_key: 'pool_heater', name: 'Pool heater', planning_role_override: 'controllable' }];
+    replan.deviceHistory = [{ start_ts: replan.history[0].start_ts, device_energy_kwh: { 'heater-id': 0.45 } }];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    await expect(chart).toBeVisible();
+    await chart.focus();
+    await chart.press('ArrowLeft');
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toContainText(/Ej tillgänglig|Unavailable/);
+    await expect(tooltip).toContainText(/Mätvärden saknas för|Missing readings for/);
+    await expect(tooltip).toContainText('pool_pump');
+    await expect(tooltip).toContainText('Pool heater');
+    await expect(tooltip).toContainText('1.80 kW');
+    await expect(tooltip).toContainText('2.60 kW');
+    await expect(tooltip).not.toContainText('NaN');
+    await page.screenshot({ path: testInfo.outputPath('partial-consumption.png') });
   });
 
   for (const samePlan of [true, false]) {
@@ -498,7 +540,9 @@ test.describe('requesting a replan', () => {
   test('a later completed request also releases this browser’s busy button', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=plan');
     const button = page.getByRole('button', { name: replanButton });
+    const requested = page.waitForResponse(response => response.url().includes('/energy-optimisation-replan'));
     await button.click();
+    await requested; // The request handler must finish before simulating a later completion.
     await expect(button).toHaveAttribute('aria-busy', 'true');
     const laterRequest = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     replan.row = { ...idle, replan_request_id: laterRequest,

@@ -129,8 +129,11 @@ export const stackBands = (
   const length = series[0]?.length ?? 0;
   const running = new Array<number>(length).fill(0);
   return series.map(values => values.map((value, index) => {
+    // Missing bands have no geometry; available bands still show their known
+    // contribution. The partial stack is not a reconstructed household total.
+    if (!Number.isFinite(value)) return [NaN, NaN] as [number, number];
     const lower = running[index];
-    running[index] += Number.isFinite(value) ? value : NaN;
+    running[index] += value;
     return [lower, running[index]] as [number, number];
   }));
 };
