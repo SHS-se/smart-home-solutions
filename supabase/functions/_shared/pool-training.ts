@@ -244,3 +244,109 @@ export function poolRefitIsDue(
   }
   return nowMs - fittedAtMs >= intervalHours * 3_600_000;
 }
+
+/** Quarters after heating stops before the water reading describes cooling again. */
+export const POOL_LOSS_SETTLE_QUARTERS = 8;
+/** Settled idle quarters an unbroken stretch needs before it counts. */
+export const MIN_POOL_LOSS_RUN_QUARTERS = 16;
+/** Settled idle hours needed before a loss is offered at all. */
+export const MIN_POOL_LOSS_HOURS = 24;
+
+export interface PoolLossSample extends PoolTrainingSample {
+  /** Start of the quarter, so unbroken stretches can be told from gaps. */
+  start_ms: number;
+}
+
+export interface PoolLossFit {
+  loss_kw_per_k: number;
+  hours: number;
+  run_count: number;
+}
+
+export type PoolLossFitResult =
+  | { fitted: PoolLossFit }
+  | { rejected: "insufficient_idle" | "unphysical"; hours: number; run_count: number };
+
+/**
+ * The pool's heat loss from the stretches when nothing was heating it.
+ *
+ * Split from `fitPoolModel` because the two answers need different evidence:
+ * the COP needs heating across a spread of air temperatures, which a season can
+ * withhold for months, while the loss is measured every night the heater is off.
+ * Tying them together left the planner on its seeded 0.35 kW/K for a pool whose
+ * unheated nights measured 0.07–0.16, and a pool believed to leak several times
+ * too fast is one the planner never heats early.
+ *
+ * Each unbroken idle stretch is judged end to end — how far the water fell
+ * against how much water-to-air difference it spent — rather than quarter by
+ * quarter, because a reading that jumps a tenth of a degree when the pump stops
+ * swamps a fifteen-minute rate but not a ten-hour one. The first
+ * `POOL_LOSS_SETTLE_QUARTERS` after heating are left out: the water is still
+ * mixing and the sensor still settling.
+ *
+ * There is no background or solar term. The planner's pool model has neither,
+ * so the loss it needs is the net one: what the pool actually lost per kelvin,
+ * sunshine included. Fitting a gain it cannot use would make the loss right and
+ * the plan wrong.
+ */
+export function fitPoolLoss(
+  samples: PoolLossSample[],
+  volumeM3: number,
+): PoolLossFitResult {
+  const capacityKwhPerK = volumeM3 * WATER_KWH_PER_M3_K;
+  const ordered = samples
+    .filter((sample) =>
+      Number.isFinite(sample.start_ms) &&
+      Number.isFinite(sample.water_temperature_c) &&
+      Number.isFinite(sample.next_water_temperature_c) &&
+      Number.isFinite(sample.outdoor_temperature_c) &&
+      Number.isFinite(sample.electrical_kwh)
+    )
+    .sort((a, b) => a.start_ms - b.start_ms);
+  const runs: PoolLossSample[][] = [];
+  let run: PoolLossSample[] = [];
+  let idle = 0;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const sample = ordered[index];
+    const unbroken = index > 0 &&
+      sample.start_ms - ordered[index - 1].start_ms === SLOT_HOURS * 3_600_000;
+    const heated = sample.electrical_kwh >= HEATED_SLOT_MIN_KWH;
+    if (!unbroken || heated) {
+      if (run.length) runs.push(run);
+      run = [];
+      idle = 0;
+    }
+    if (heated) continue;
+    idle += 1;
+    if (idle > POOL_LOSS_SETTLE_QUARTERS) run.push(sample);
+  }
+  if (run.length) runs.push(run);
+
+  let fallC = 0;
+  let exposureKh = 0;
+  let quarters = 0;
+  let runCount = 0;
+  for (const stretch of runs) {
+    if (stretch.length < MIN_POOL_LOSS_RUN_QUARTERS) continue;
+    fallC += stretch[0].water_temperature_c -
+      stretch[stretch.length - 1].next_water_temperature_c;
+    exposureKh += stretch.reduce((total, sample) =>
+      total + (sample.water_temperature_c - sample.outdoor_temperature_c) * SLOT_HOURS, 0);
+    quarters += stretch.length;
+    runCount += 1;
+  }
+  const hours = quarters * SLOT_HOURS;
+  const counts = { hours, run_count: runCount };
+  if (hours < MIN_POOL_LOSS_HOURS || capacityKwhPerK <= 0) {
+    return { rejected: "insufficient_idle", ...counts };
+  }
+  const lossKwPerK = fallC * capacityKwhPerK / exposureKh;
+  // A pool warmer than the air that warmed on its own, or one colder than it,
+  // is not a loss coefficient however long it was watched.
+  if (!(exposureKh > 0) || !(lossKwPerK > 0) || !(lossKwPerK < 20)) {
+    return { rejected: "unphysical", ...counts };
+  }
+  return {
+    fitted: { loss_kw_per_k: Number(lossKwPerK.toFixed(4)), ...counts },
+  };
+}

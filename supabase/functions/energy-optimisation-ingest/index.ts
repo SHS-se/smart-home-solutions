@@ -54,8 +54,9 @@ import {
   resolveValueSettings,
 } from "../_shared/value-curves.ts";
 import {
+  fitPoolLoss,
   fitPoolModel,
-  type PoolTrainingSample,
+  type PoolLossSample,
   poolRefitIsDue,
   poolTrainingWindowStartMs,
 } from "../_shared/pool-training.ts";
@@ -467,7 +468,7 @@ async function refitPoolModel(
     at: Date.parse(String(row.start_ts)),
     c: Number(row.water_temperature_c),
   }));
-  const samples: PoolTrainingSample[] = [];
+  const samples: PoolLossSample[] = [];
   for (let index = 0; index + 1 < water.length; index += 1) {
     const current = water[index];
     const next = water[index + 1];
@@ -477,6 +478,7 @@ async function refitPoolModel(
     const air = outdoorByStart.get(current.at);
     if (air === undefined || !Number.isFinite(air)) continue;
     samples.push({
+      start_ms: current.at,
       water_temperature_c: current.c,
       next_water_temperature_c: next.c,
       outdoor_temperature_c: air,
@@ -485,6 +487,20 @@ async function refitPoolModel(
   }
 
   const result = fitPoolModel(samples, volumeM3);
+  const idle = fitPoolLoss(samples, volumeM3);
+  const idleRow = "fitted" in idle
+    ? {
+      idle_loss_kw_per_k: idle.fitted.loss_kw_per_k,
+      idle_loss_hours: idle.fitted.hours,
+      idle_loss_run_count: idle.fitted.run_count,
+      idle_loss_rejection: null,
+    }
+    : {
+      idle_loss_kw_per_k: null,
+      idle_loss_hours: idle.hours,
+      idle_loss_run_count: idle.run_count,
+      idle_loss_rejection: idle.rejected,
+    };
   const row = "fitted" in result
     ? {
       home_id: homeId,
@@ -492,10 +508,12 @@ async function refitPoolModel(
       fitted_at: new Date(now).toISOString(),
       ...result.fitted,
       rejection: null,
+      ...idleRow,
     }
     : {
       home_id: homeId,
       customer_id: customerId,
+      ...idleRow,
       fitted_at: new Date(now).toISOString(),
       loss_kw_per_k: null,
       rated_cop: null,
@@ -1823,16 +1841,20 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
         const { data: poolModel } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k")
           .eq("home_id", auth.homeId)
           .maybeSingle();
-        if (poolModel?.loss_kw_per_k && poolModel?.rated_cop) {
+        // The idle loss stands on its own; the joint fit adds the COP when it
+        // has one. Either is enough to stop planning on the seeded loss.
+        const copFitted = Boolean(poolModel?.loss_kw_per_k && poolModel?.rated_cop);
+        const lossKwPerK = poolModel?.idle_loss_kw_per_k ?? (copFitted ? poolModel?.loss_kw_per_k : null);
+        if (lossKwPerK) {
           snapshot = {
             ...snapshot,
             pool_model: {
-              loss_kw_per_k: Number(poolModel.loss_kw_per_k),
-              rated_cop: Number(poolModel.rated_cop),
-              cop_per_air_c: Number(poolModel.cop_per_air_c ?? 0),
+              loss_kw_per_k: Number(lossKwPerK),
+              rated_cop: copFitted ? Number(poolModel!.rated_cop) : null,
+              cop_per_air_c: copFitted ? Number(poolModel!.cop_per_air_c ?? 0) : null,
               // Null stays null: the planner reads it as "no cut-out on
               // record" and applies none, which is not the same as zero.
               cutout_air_c: poolModel.cutout_air_c === null ||

@@ -9,6 +9,7 @@ import {
   type DispatchResult,
   type DispatchSlot,
   type DispatchStore,
+  planDispatch,
   scoreDispatch,
 } from "./dispatch-plan.ts";
 import {
@@ -20,6 +21,16 @@ import {
 import type { BatteryOperation } from "./battery-command.ts";
 
 export const REPLAN_DEADBAND_SEK = 0.05;
+/**
+ * What a replan must save before it may stop a big load that is already on.
+ *
+ * Measured over the whole horizon, so it is the saving from cutting the rest
+ * of the run, not a per-quarter margin. The quarter deadband above is five öre:
+ * a new price release shifting the pool's value by less than that switched a
+ * heat pump off mid-run, which costs a compressor stop and a pump sequence the
+ * objective does not see.
+ */
+export const HELD_RUN_RELEASE_SEK = 5;
 export interface ReplanReference {
   version: 2;
   source_plan_id: string;
@@ -29,6 +40,11 @@ export interface ReplanReference {
   slot_start: string;
   store_keys: string[];
   pool_heat: boolean | null;
+  /**
+   * Published quarters, from the current one, that the previous plan kept the
+   * pool on without a break. Absent in references frozen before it existed.
+   */
+  pool_run_quarters?: number | null;
   battery: {
     operation: Exclude<BatteryOperation, "self_consumption">;
     charge_w: number;
@@ -37,11 +53,13 @@ export interface ReplanReference {
 }
 export interface ReplanDecision {
   source_plan_id: string;
-  selected: "proposed" | "direct" | "repaired";
+  selected: "proposed" | "direct" | "repaired" | "held";
   reason: string;
   proposed_sek: number | null;
   reference_sek: number | null;
   deadband_sek: number;
+  /** Present when a running pool was held or deliberately let go. */
+  held_run?: { quarters: number; held_sek: number; release_sek: number; released: boolean };
 }
 export interface ContinuityProblem {
   slots: DispatchSlot[];
@@ -50,7 +68,7 @@ export interface ContinuityProblem {
   result: DispatchResult;
 }
 export interface ContinuityCandidate {
-  construction: "direct" | "repaired";
+  construction: "direct" | "repaired" | "held";
   result: DispatchResult;
   objective_sek: number;
 }
@@ -87,10 +105,14 @@ export function replanReference(
     )
   ) return null;
   const current = snapshot.slots.find(s => Date.parse(s.start) + QUARTER_MS > now.getTime());
-  const slot = previous.plans?.priority?.slots.find((s) =>
+  const previousSlots = previous.plans?.priority?.slots ?? [];
+  const index = previousSlots.findIndex((s) =>
     Date.parse(s.start) === Date.parse(current?.start ?? "")
   );
+  const slot = previousSlots[index];
   if (!slot?.binding || previous.plans.priority.status !== "ready") return null;
+  let poolRun = 0;
+  while (previousSlots[index + poolRun]?.binding && previousSlots[index + poolRun].pool_w > 0) poolRun += 1;
   const batteryDispatched = previous.plans.priority.dispatched_devices.includes("battery");
   const command = slot.battery_command;
   // Forecast watts alone cannot preserve which source or destination was authorized.
@@ -105,6 +127,9 @@ export function replanReference(
     store_keys: previous.plans.priority.dispatched_devices,
     pool_heat: previous.plans.priority.dispatched_devices.includes("pool")
       ? slot.pool_w > 0
+      : null,
+    pool_run_quarters: previous.plans.priority.dispatched_devices.includes("pool")
+      ? poolRun
       : null,
     battery: batteryDispatched && command && command.operation !== "self_consumption"
       ? {
@@ -142,6 +167,9 @@ export function usableReference(
     new Set(reference.store_keys).size === reference.store_keys.length &&
     (reference.pool_heat === null ||
       typeof reference.pool_heat === "boolean") &&
+    (reference.pool_run_quarters == null ||
+      (Number.isInteger(reference.pool_run_quarters) && reference.pool_run_quarters >= 0 &&
+        (reference.pool_run_quarters === 0) === !reference.pool_heat)) &&
     (reference.battery === null || (reference.battery != null &&
       [reference.battery.charge_w, reference.battery.discharge_w].every((w) =>
         typeof w === "number" && Number.isFinite(w) && w >= 0
@@ -251,5 +279,51 @@ export function continuityCandidates(
   return {
     candidates,
     reason: candidates.length ? "material_benefit" : "reference_infeasible",
+  };
+}
+
+/**
+ * The plan that keeps an already-running pool on to the end of its previous run.
+ *
+ * A running load is held, a planned one is not: until the pool has actually
+ * switched on, moving its start costs nothing physical, so the proposal stands.
+ * Once it is on, the rest of the run the previous plan gave it is committed the
+ * same way a user minimum run is — through the store's `minimum_run` — and the
+ * auction re-plans every other store around it. Pinning the whole prefix, as
+ * `dispatchWithPrefix` does, would also freeze the battery for hours.
+ *
+ * Returns null when there is nothing to hold or the proposal already holds it.
+ */
+export function heldRunCandidate(
+  problem: ContinuityProblem,
+  reference: ReplanReference,
+  poolRunning: boolean,
+  solveAuction?: DispatchAuctionSolver,
+): ContinuityCandidate | null {
+  const { slots, stores, limits, result } = problem;
+  const quarters = Math.min(reference.pool_run_quarters ?? 0, slots.length);
+  const pool = stores.find((store) => store.key === "pool");
+  if (!poolRunning || !pool || quarters < 1) return null;
+  if (result.power_w.pool.slice(0, quarters).every((watts) => watts > 0)) return null;
+  const heldSeconds = slots.slice(0, quarters)
+    .reduce((total, slot) => total + (slot.duration_hours ?? 0.25) * 3600, 0);
+  const held = stores.map((store) => store !== pool ? store : {
+    ...store,
+    initially_charging: true,
+    minimum_run: {
+      minimum_seconds: store.minimum_run?.minimum_seconds ?? 0,
+      remaining_seconds: Math.max(store.minimum_run?.remaining_seconds ?? 0, heldSeconds),
+      running: true,
+    },
+  });
+  const solved = planDispatch(slots, held, limits, { solveAuction });
+  // Judged by the same stores as the proposal, so the comparison is only the
+  // schedule, never a different objective.
+  const score = scoreDispatch(slots, stores, limits, solved);
+  if (score.infeasibilities.length || !Number.isFinite(score.total_sek)) return null;
+  return {
+    construction: "held",
+    objective_sek: score.total_sek,
+    result: { ...solved, state: score.state, import_w: score.import_w, export_w: score.export_w },
   };
 }

@@ -20,7 +20,7 @@ import { isolateMeasurements, type MeasurementIssue } from "./measurement-isolat
  * verified before it may be published as `ready`.
  */
 
-import { continuityCandidates, REPLAN_DEADBAND_SEK, type ReplanDecision, type ReplanReference, usableReference } from "./replan-continuity.ts";
+import { continuityCandidates, HELD_RUN_RELEASE_SEK, heldRunCandidate, REPLAN_DEADBAND_SEK, type ReplanDecision, type ReplanReference, usableReference } from "./replan-continuity.ts";
 import { batteryCommand, type BatteryCommand } from "./battery-command.ts";
 import { dispatchWithFixedPlan, type FixedEnergyPlan } from "./fixed-energy-plan.ts";
 
@@ -479,8 +479,9 @@ export interface OptimisationSnapshot {
    */
   pool_model?: {
     loss_kw_per_k: number;
-    rated_cop: number;
-    cop_per_air_c: number;
+    /** Null while only the idle loss is fitted; the seeded COP stands then. */
+    rated_cop: number | null;
+    cop_per_air_c: number | null;
     /**
      * Air temperature below which the unit cannot run, when one is on record.
      * Null — the default — means no cut-out is known, not that it is zero.
@@ -4619,12 +4620,37 @@ function buildPriorityPlan(
     decision.reason = "invalid_proposed_dispatch"; return proposed;
   }
   decision.proposed_sek = score.total_sek;
-  const alternatives = continuityCandidates(bundle, reference, solveAuction);
-  decision.reason = alternatives.reason;
   const ancillary = (plan: GeneratedPlan) => JSON.stringify(plan.slots.map(s => [
     s.boiler_expected_w, s.boiler_permitted, s.room_heating_w,
   ]));
   const proposedAncillary = ancillary(proposed.plan);
+  // A pool that is already heating keeps its previous run unless stopping it
+  // saves a real amount; the quarter deadband below is for everything else.
+  const held = heldRunCandidate(bundle, reference, snapshot.pool?.heating_running === true, solveAuction);
+  if (held) {
+    decision.held_run = {
+      quarters: reference.pool_run_quarters ?? 0,
+      held_sek: held.objective_sek,
+      release_sek: HELD_RUN_RELEASE_SEK,
+      released: held.objective_sek > score.total_sek + HELD_RUN_RELEASE_SEK,
+    };
+    if (!decision.held_run.released) {
+      const selectedBundle = { ...bundle, result: held.result };
+      const cache = new Map(dispatchCache).set(cacheKey, selectedBundle);
+      const plan = materialize(cache);
+      if (plan.plan.status === "ready" && ancillary(plan.plan) === proposedAncillary) {
+        plan.plan.continuity = {
+          ...decision, selected: "held", reason: "running_load_held",
+          reference_sek: held.objective_sek, deadband_sek: HELD_RUN_RELEASE_SEK,
+        };
+        dispatchCache.set(cacheKey, selectedBundle);
+        return plan;
+      }
+      decision.held_run.released = true;
+    }
+  }
+  const alternatives = continuityCandidates(bundle, reference, solveAuction);
+  decision.reason = alternatives.reason;
   for (const candidate of alternatives.candidates) {
     decision.reference_sek ??= candidate.objective_sek;
     if (candidate.objective_sek > score.total_sek + REPLAN_DEADBAND_SEK) continue;

@@ -1,7 +1,10 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   COP_REFERENCE_AIR_C,
+  fitPoolLoss,
   fitPoolModel,
+  POOL_LOSS_SETTLE_QUARTERS,
+  type PoolLossSample,
   type PoolTrainingSample,
   poolRefitIsDue,
   poolTrainingWindowStartMs,
@@ -180,4 +183,66 @@ Deno.test("an epoch older than the standing fit does not force one", () => {
   // The fit already saw only post-epoch samples; nothing has been restated.
   const fittedAt = NOW - 3 * HOUR;
   assertEquals(poolRefitIsDue(NOW, fittedAt, NOW - 10 * DAY, 24), false);
+});
+
+const timed = (samples: PoolTrainingSample[]): PoolLossSample[] =>
+  samples.map((sample, index) => ({ ...sample, start_ms: index * SLOT_HOURS * 3_600_000 }));
+
+Deno.test("the idle loss recovers the pool's own loss, not the seeded one", () => {
+  for (const lossKwPerK of [0.075, 0.35]) {
+    const result = fitPoolLoss(timed(simulate({ lossKwPerK, slots: 96 * 7 })), VOLUME_M3);
+    assert("fitted" in result, JSON.stringify(result));
+    assert(
+      Math.abs(result.fitted.loss_kw_per_k - lossKwPerK) < lossKwPerK * 0.02,
+      `loss ${result.fitted.loss_kw_per_k} should recover ${lossKwPerK}`,
+    );
+    assertEquals(result.fitted.run_count, 7);
+  }
+});
+
+Deno.test("the idle loss needs no air spread and no heating to be identified", () => {
+  // The seasons that refuse a COP fit are exactly the ones with most idle nights.
+  const flat = fitPoolLoss(timed(simulate({ lossKwPerK: 0.1, airSwing: 0.5, heatFraction: 0.1 })), VOLUME_M3);
+  assert("fitted" in flat);
+  assert(Math.abs(flat.fitted.loss_kw_per_k - 0.1) < 0.005);
+  const unheated = fitPoolLoss(timed(simulate({ lossKwPerK: 0.1, heatFraction: 0 })), VOLUME_M3);
+  assert("fitted" in unheated);
+  assert(Math.abs(unheated.fitted.loss_kw_per_k - 0.1) < 0.005);
+});
+
+Deno.test("readings settling after the heater stops do not count as cooling", () => {
+  const samples = timed(simulate({ lossKwPerK: 0.1 }));
+  const clean = fitPoolLoss(samples, VOLUME_M3);
+  // The sensor reads the stagnant pipe a few tenths low once the pump stops.
+  for (let index = 1; index < samples.length; index += 1) {
+    if (samples[index - 1].electrical_kwh > 0 && samples[index].electrical_kwh === 0) {
+      for (let k = 0; k < POOL_LOSS_SETTLE_QUARTERS; k += 1) {
+        const settling = samples[index + k];
+        if (settling) settling.next_water_temperature_c -= 0.3 * (1 - k / POOL_LOSS_SETTLE_QUARTERS);
+      }
+    }
+  }
+  const settled = fitPoolLoss(samples, VOLUME_M3);
+  assert("fitted" in clean && "fitted" in settled);
+  assertEquals(settled.fitted.loss_kw_per_k, clean.fitted.loss_kw_per_k);
+});
+
+Deno.test("gaps split stretches and short stretches are not counted", () => {
+  const samples = timed(simulate({ lossKwPerK: 0.1, heatFraction: 0, slots: 96 * 2 }));
+  const whole = fitPoolLoss(samples, VOLUME_M3);
+  assert("fitted" in whole);
+  assertEquals(whole.fitted.run_count, 1);
+  // Every tenth quarter missing leaves stretches too short to judge.
+  const holed = fitPoolLoss(samples.filter((_, index) => index % 10 !== 0), VOLUME_M3);
+  assertEquals("rejected" in holed && holed.rejected, "insufficient_idle");
+});
+
+Deno.test("a pool that is always heating offers no idle loss", () => {
+  const result = fitPoolLoss(timed(simulate({ heatFraction: 0.95 })), VOLUME_M3);
+  assertEquals("rejected" in result && result.rejected, "insufficient_idle");
+});
+
+Deno.test("a pool that warms with nothing heating it is refused", () => {
+  const result = fitPoolLoss(timed(simulate({ lossKwPerK: 0.1, backgroundKw: 5, heatFraction: 0 })), VOLUME_M3);
+  assertEquals("rejected" in result && result.rejected, "unphysical");
 });

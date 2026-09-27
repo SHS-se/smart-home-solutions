@@ -11,6 +11,8 @@ import {
 } from "./energy-optimisation.ts";
 import {
   continuityCandidates,
+  HELD_RUN_RELEASE_SEK,
+  heldRunCandidate,
   REPLAN_DEADBAND_SEK,
   replanReference,
   usableReference,
@@ -411,4 +413,88 @@ Deno.test("pool-only continuity does not require a battery command", () => {
   assertEquals(reference.pool_heat, previous.plans.priority.slots[0].pool_w > 0);
   const plan = generateOptimisationPlan({ ...input, replan_reference: reference }, now);
   assertEquals(plan.plans.priority.continuity!.reason, "agrees");
+});
+
+/** A pool-only home whose previous plan heated for `run` published quarters from now. */
+function heatingPoolSnapshot(run: number) {
+  const input = snapshotV8();
+  input.capabilities.battery = false;
+  input.battery = null;
+  input.sources.battery = null;
+  input.policy = {
+    battery_end_of_solar_target_soc: 0, battery_target_is_hard: false,
+    terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0,
+    battery_export_enabled: false, battery_export_reserve_soc: 0,
+    battery_export_min_price_sek_per_kwh: 0,
+  };
+  const now = new Date(input.captured_at);
+  const previous = generateOptimisationPlan(input, now);
+  previous.plans.priority.slots.forEach((slot, index) => {
+    slot.pool_w = index < run ? 3500 : 0;
+  });
+  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
+  input.pool!.heating_running = true;
+  input.replan_reference = replanReference(previous, input, now);
+  assert(input.replan_reference);
+  return { input, now, previous };
+}
+
+Deno.test("the reference counts the unbroken published pool run from the current quarter", () => {
+  const { input, now, previous } = heatingPoolSnapshot(6);
+  assertEquals(input.replan_reference!.pool_heat, true);
+  assertEquals(input.replan_reference!.pool_run_quarters, 6);
+  previous.plans.priority.slots[3].binding = false;
+  assertEquals(replanReference(previous, input, now)!.pool_run_quarters, 3);
+  previous.plans.priority.slots[0].pool_w = 0;
+  assertEquals(replanReference(previous, input, now)!.pool_run_quarters, 0);
+  const start = Date.parse(input.slots[0].start);
+  for (const bad of [-1, 1.5]) {
+    assertEquals(usableReference({ ...input.replan_reference!, pool_run_quarters: bad }, input.snapshot_id, start, now.getTime()), false);
+  }
+  // A run cannot contradict the heat action it continues.
+  assertEquals(usableReference({ ...input.replan_reference!, pool_run_quarters: 0 }, input.snapshot_id, start, now.getTime()), false);
+  assertEquals(usableReference({ ...input.replan_reference!, pool_run_quarters: undefined }, input.snapshot_id, start, now.getTime()), true);
+});
+
+Deno.test("a running pool keeps its previous run, and a planned one may still move", () => {
+  const { input } = heatingPoolSnapshot(8);
+  // Dear enough that a fresh solve waits for quarter 5, cheap enough that
+  // holding the run costs less than the release margin.
+  const start = input.slots[5].import_price_sek_per_kwh! + 1;
+  input.slots.slice(0, 5).forEach((slot) => slot.import_price_sek_per_kwh = start);
+  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
+  const result = {
+    ...bench.planned,
+    ...scoreDispatch(bench.slots, bench.stores, bench.limits, bench.planned),
+    allocations: [], battery: [],
+    stopped_because: "no_profitable_candidate" as const, iterations: 0,
+  };
+  assert(result.power_w.pool.slice(0, 8).some((watts) => watts === 0));
+  const problem = { ...bench, result };
+  assertEquals(heldRunCandidate(problem, input.replan_reference!, false), null);
+  const held = heldRunCandidate(problem, input.replan_reference!, true)!;
+  assertEquals(held.construction, "held");
+  assert(held.result.power_w.pool.slice(0, 8).every((watts) => watts > 0));
+  assertEquals(bench.stores.find((s) => s.key === "pool")!.minimum_run, undefined);
+  const agreeing = { ...problem, result: { ...result, power_w: { ...result.power_w, pool: held.result.power_w.pool } } };
+  assertEquals(heldRunCandidate(agreeing, input.replan_reference!, true, () => {
+    throw new Error("unnecessary solve");
+  }), null);
+
+  const plan = generateOptimisationPlan(input, new Date(input.captured_at));
+  const continuity = plan.plans.priority.continuity!;
+  assertEquals(continuity.selected, "held", JSON.stringify(continuity));
+  assertEquals(continuity.held_run!.released, false);
+  assert(continuity.held_run!.held_sek <= continuity.proposed_sek! + HELD_RUN_RELEASE_SEK);
+  assert(plan.plans.priority.slots.slice(0, 8).every((slot) => slot.pool_w > 0));
+});
+
+Deno.test("a running pool is let go when stopping it saves more than the release margin", () => {
+  const { input } = heatingPoolSnapshot(8);
+  input.slots.slice(0, 8).forEach((slot) => slot.import_price_sek_per_kwh! += 40);
+  const plan = generateOptimisationPlan(input, new Date(input.captured_at));
+  const continuity = plan.plans.priority.continuity!;
+  assertEquals(continuity.held_run!.released, true);
+  assert(continuity.held_run!.held_sek > continuity.proposed_sek! + HELD_RUN_RELEASE_SEK);
+  assert(plan.plans.priority.slots.slice(0, 8).some((slot) => slot.pool_w === 0));
 });
