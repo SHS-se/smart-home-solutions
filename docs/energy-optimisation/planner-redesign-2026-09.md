@@ -364,7 +364,7 @@ Replay gates run through a local script (`scripts/replay-acceptance.ts`) over th
 | G8 Battery demand | Backtest over 26–28 Sep: daily base-load error ≤ ½ of HA-empirical (27 Sep: 38 actual vs ~24) |
 | G9 Spreading | Synthetic cheap stretch with pool + EV + battery: peak import is lower than stacked, and no cheap-stretch energy is left unused when it beats the alternative by > 0.25 SEK/kWh. Effektavgift unit tests pass with rate > 0. |
 | G10 Legacy | `withoutPlanningBasis` reproduces the pre-change planner on all 87 captures, except for the unconditional G1 tail fix and the §5.6 spreading-term scaling |
-| G11 CPU | Local per-stage time within the existing stage budgets. Total local planning CPU ≤ 1.5× baseline when no run candidate fires, ≤ 3× when one does. Planning-time valuation < 2 ms. Evidence refresh < 400 ms local. |
+| G11 CPU | Local per-stage time within the existing stage budgets, or ≤ 1.1× the same capture's baseline stage where the baseline already exceeds them (pre-existing overruns are reported, not attributed to the redesign). Total local planning CPU ≤ 1.5× baseline when no run candidate fires, ≤ 3× when one does. Planning-time valuation < 2 ms. Evidence refresh < 400 ms local. |
 | G12 Repository | `npm run lint`, `npm run build:test`, `npm run test:e2e:local` and `deno task test` all pass. HA contract fixture regenerated (`deno task generate:ha-contract-fixture`). Migration version test passes. HA integration tests pass (pure-tier, checkpoint, contract). |
 
 ## 8. Order of work
