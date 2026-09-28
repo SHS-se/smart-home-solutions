@@ -115,9 +115,26 @@ Modified modules:
 
 The idle-stretch loss fit (`fitPoolLoss`, dev d737694) must be deployed and producing `pool_model.loss_kw_per_k` before any valuation work is judged. The valuation differs about twofold between 0.35 and 0.1 kW/K. Verify on the test deployment that `energy_optimisation_pool_model.idle_loss_kw_per_k` is populated.
 
+*Amendment 2026-09-28.* A null `idle_loss_kw_per_k` blocks **rollout**, not implementation. Replays keep the 0.1 kW/K substitution (§7).
+
+In step 1, read `idle_loss_rejection`, `idle_loss_hours`, `idle_loss_run_count` and `fitted_at` for the row, then act on the cause:
+
+| Cause | Action |
+|---|---|
+| `insufficient_idle` with ~0 hours because the home has no `energy_optimisation_outdoor_slots` rows | Move §5.8's outdoor-observation recording and provider backfill into step 1. The fit joins water temperature against outdoor temperature and cannot run without it. |
+| `fitted_at` predates the d737694 deployment | The refit interval (24 h) has not elapsed yet. Record it and re-check. |
+| The test home has no pool quarters | List production verification after push as live verification. |
+
+Report which cause applied.
+
 ### 5.2 Floor-affine forecast tail (unconditional fix)
 
-- **Floor.** `F(h)` is the 2nd percentile of published all-in import prices per local hour-of-day over the last 60 days. The plan's own published window is always included.
+- **Floor.** Computed from published all-in import prices over the last 60 days. The plan's own published window is always included, with the same recency and season kernel weights as the price shape. *(Amended 2026-09-28: pooled estimator for unobserved hours.)*
+  - `F_all` is the weighted 2nd percentile over all observed quarters, pooled.
+  - `F_hour(h)` is the weighted 2nd percentile of local hour-of-day `h`.
+  - `n_h` is the effective number of observed days for hour `h` (sum of kernel weights).
+  - `F(h) = (n_h·F_hour(h) + k·F_all) / (n_h + k)`, with `k = 5` days. An hour with no observations gets `F_all`.
+  - With no published observations at all, there is no floor and the tail uses the pre-change estimator unchanged.
 - **Tail.** `F(h) + max(0, L − F̄)·s(h)`, where `s` is the existing weighted intraday shape, re-normalised on *excess over floor* (mean 1).
 - **Invariant:** no non-binding slot is priced below `min(F)`. This is a test, not a clamp applied after the fact.
 - Keep the existing recency (21 d), season (σ 45 d) and day-type weighting.
@@ -293,9 +310,17 @@ This replaces `anchorPreferenceCurve` against the horizon's cheapest decile for 
 
 Replay gates run through a local script (`scripts/replay-acceptance.ts`) over the captures in `~/Downloads`. The captures contain household data and must **not** be committed; CI tests use synthetic or trimmed, anonymised fixtures. Use a fitted pool loss of 0.1 kW/K where the capture has none (§5.1).
 
+*Amendment 2026-09-28: two labelled replay lanes.* Every number states its lane, and lanes are never mixed in one number.
+
+- **`exact`.** Replays the capture as frozen, including its `resolved_price_outlook`. It tests valuation, search and continuity, so G3–G7, G10 and G11 use it. G1 does not apply here, because the frozen outlook bypasses the estimator.
+- **`rebuilt-outlook`.** For each capture, reconstruct a price archive from the published slots of **all** captures (plus HA price history if available locally), taking only rows with `start` earlier than that capture's `captured_at`. Where a slot appears in several captures, keep the latest published value known before `captured_at`. That archive must not include future rows.
+  - Rebuild the outlook from that same archive twice: once with the pre-change estimator and once with the new one. Run the planner on each.
+  - G1 and G2 are judged on this lane: old estimator vs new estimator, same archive, same loss substitution.
+  - Also report G2 on the `exact` lane, for reference.
+
 | Gate | Criterion |
 |---|---|
-| G1 Floor | No non-binding slot below the published floor on every capture |
+| G1 Floor | `rebuilt-outlook` lane: no non-binding slot below `min_h F(h)` on every capture that has published observations |
 | G2 Tail deferral | On C-0919, C-0920, C-0927, C-0928a and C-0928b, the pool's tail share of planned pool kWh falls by ≥ 50 % against baseline. The pool uses published hours priced ≤ the published 25th percentile whenever it is below Stop-at and such hours have spare capacity. |
 | G3 One run | C-0924: the published pool schedule is one contiguous run (no two runs < 4 h apart) |
 | G4 No non-start | On all acceptance captures, the pool trajectory stays ≥ 28.0 °C and ends ≥ 29.0 °C |
