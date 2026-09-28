@@ -206,7 +206,11 @@ This replaces `anchorPreferenceCurve` against the horizon's cheapest decile for 
 - **Mandatory properties (tests):**
   - concavity/monotonicity of the marginal curves;
   - bounds: `V' ≤ max(W' on reachable states, max path price)`;
-  - lossless, drain, no reward reproduces `batteryValueCurve` within its band tolerance;
+  - lossless, drain, no reward reproduces `batteryValueCurve` within its band tolerance **only in the merit-order limiting case**. *(Amendment 2026-09-29.)* That case means no replenishment opportunity cheaper than the displaced import exists before the demand, and grid energy can cover the demand without consuming stored energy. The water-value oracle is authoritative in every other case.
+
+    **Why:** a counterexample (cheap hour, then an expensive drain, repeating daily) gives a Bellman marginal of 1 SEK/kWh against the battery curve's 3. The battery curve prices the import that stored energy displaces and ignores cheaper refills before that demand.
+  - **Recharge cases** are validated against an independent exact Bellman or brute-force oracle. That includes the periodic 1 / 3 SEK counterexample and its slot-0 decision: with an extra hour at 2 SEK/kWh before the periodic day, the single-store auction must wait for the 1 SEK hour.
+  - The battery keeps `batteryValueCurve` in this redesign. Its overvaluation in recharge cases is a recorded finding for a later battery change (Phase 6 of the design history), not part of steps 1–10;
   - Bellman consistency: auction value over `[0, H]` plus `V_H` equals the explicit dynamic program over `[0, H + 7 d]` within 1 % for slot-0 decisions, single store, periodic prices;
   - time invariance of `V_H` under periodic prices.
 
@@ -391,6 +395,7 @@ Each step lands on `dev` as its own commit, with tests and the replay-acceptance
 
 ## 9. Out of scope
 
+- The battery's own valuation. `batteryValueCurve` overvalues stored energy when a cheaper grid refill exists before the demand (§5.4 amendment 2026-09-29). Replacing its terminal value with the water-value DP is a separate follow-up, measured by replay A/B.
 - Notifications.
 - Effektavgift UI and tariff data entry.
 - HA recorder configuration.
