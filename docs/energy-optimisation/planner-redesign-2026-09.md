@@ -124,8 +124,26 @@ In step 1, read `idle_loss_rejection`, `idle_loss_hours`, `idle_loss_run_count` 
 | `insufficient_idle` with ~0 hours because the home has no `energy_optimisation_outdoor_slots` rows | Move §5.8's outdoor-observation recording and provider backfill into step 1. The fit joins water temperature against outdoor temperature and cannot run without it. |
 | `fitted_at` predates the d737694 deployment | The refit interval (24 h) has not elapsed yet. Record it and re-check. |
 | The test home has no pool quarters | List production verification after push as live verification. |
+| `unphysical` (fitted loss ≤ 0 or ≥ 20, or non-positive exposure) | Diagnose from the rows the fit read before changing anything (below). |
 
 Report which cause applied.
+
+**Diagnosing `unphysical`.** For each idle run, print:
+- start and end, and quarters;
+- start and end water temperature, and the fall;
+- Σ(water − air)·h exposure;
+- mean water and mean air temperature;
+- the pool devices' summed `energy_kwh` inside the run and in the 2 h before it;
+- the device ids the fit resolved from the pool's `device_key`s.
+
+Cross-check a run against HA history (`sensor.filtered_pool_water_temperature`, `sensor.pool_heater_energy`, `sensor.outdoor_temperature`).
+
+Likely causes, each to be proven with data:
+1. The pool heater's quarters are missing from `energy_optimisation_device_slots` for the resolved device ids, so heating is classified as idle and the pool appears to warm.
+2. The outdoor series is not outdoor air (units or source), which makes exposure wrong.
+3. Solar gain dominates daytime idle stretches.
+
+Fix a data or mapping defect at its source. Do **not** loosen the physical checks. If cause 3 is proven, restrict the fit to night-time idle stretches (sun below the horizon), because the planner's model has no solar term. Record that as a spec deviation.
 
 ### 5.2 Floor-affine forecast tail (unconditional fix)
 
@@ -317,6 +335,22 @@ Replay gates run through a local script (`scripts/replay-acceptance.ts`) over th
   - Rebuild the outlook from that same archive twice: once with the pre-change estimator and once with the new one. Run the planner on each.
   - G1 and G2 are judged on this lane: old estimator vs new estimator, same archive, same loss substitution.
   - Also report G2 on the `exact` lane, for reference.
+
+*Amendment 2026-09-28 (b): redesign lanes carry a frozen basis.*
+
+**Why.** Captures predate `planning_basis`, so they take the legacy path (§4). Redesign behaviour is therefore evaluated on lanes where the harness **attaches a reproducibly built `planning_basis`** to each capture. The basis is built only from the leakage-free reconstructed archive (§7 lane `rebuilt-outlook`) and the capture's own snapshot data. Fields whose evidence the capture cannot supply stay absent; for example, monitored-device history is missing, and those parts use their documented legacy fallback.
+
+**The lanes:**
+
+| Lane | Outlook | Basis | Used for |
+|---|---|---|---|
+| `exact` | Captured | None | G10 (legacy equivalence), plus the CPU baseline |
+| `exact+basis` | Captured `resolved_price_outlook` | Attached | G3–G7, G9 and G11 |
+| `rebuilt-outlook+basis` | Rebuilt with the new estimator | Attached | G1 and G2 |
+
+`rebuilt-outlook` without a basis stays available for estimator-only comparisons.
+
+**Final gates are not step blockers.** G2–G9 are acceptance gates for the finished redesign. Each step reports them with its lane, but a gate that later steps are meant to satisfy does not block the current step. A step stops only on a spec contradiction, a settled-decision conflict, or a regression in an already-passing gate.
 
 | Gate | Criterion |
 |---|---|
