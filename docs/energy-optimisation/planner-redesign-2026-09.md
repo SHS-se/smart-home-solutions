@@ -265,6 +265,13 @@ This replaces `anchorPreferenceCurve` against the horizon's cheapest decile for 
 
 **Continuity.**
 - Re-express `heldRunCandidate` as the "previous run" candidate. A running pool continues unless the best alternative saves ≥ `HELD_RUN_RELEASE_SEK = 5` over the horizon.
+- *Amendment 2026-09-28 (c): the ancillary guard compares commands, not forecasts.* The continuity guard that rejects a candidate whose ancillary outputs differ from the proposal compares the following **exactly**:
+  - executable commands: `boiler_permitted` and room-heating commands.
+
+  It compares the following **with a tolerance**:
+  - forecast-only expected draws such as `boiler_expected_w`: within max(5 W, 1 %) per slot.
+
+  **Why:** on C-0927 a held run costing 0.178 SEK more, well inside S7's 5 SEK, was rejected because expected boiler draw moved by 0.39 W while boiler permission was unchanged. That contradicts S7. The guard applies to every continuity candidate (direct, repaired, held). Add a regression test built from that case.
 - Remove its use of `minimum_run`.
 - Keep the `pool_run_quarters` reference field.
 
@@ -370,10 +377,10 @@ Replay gates run through a local script (`scripts/replay-acceptance.ts`) over th
 ## 8. Order of work
 
 1. §5.1 verify loss fit · §5.2 floor tail · replay-acceptance script (baseline numbers recorded)
-2. §5.6 peak policy
+2. §5.6 peak policy: build and test the full policy. That covers the spreading term, the effektavgift structure at rate 0 and the snapshot/basis plumbing. The spreading rate stays at the current value behind a named switch. *(Amendment 2026-09-28 (c): the switch to `PEAK_SPREAD_AT_LIMIT_SEK_PER_KWH = 0.25` activates at the end of step 5, after pool valuation and whole-run continuity are in. Activating it earlier regresses G4 on C-0924, G5 on C-0927 and G7 on C-0919, because the current valuation cannot absorb it. S5, the 0.25 value and all gate thresholds are unchanged.)*
 3. §5.4 regimes and water value (pure, with property tests)
 4. §5.3 pool valuation + `planning_basis` + evidence refresh + portal effective curves
-5. §5.7 whole-run candidates, start cost, continuity without `minimum_run`
+5. §5.7 whole-run candidates, start cost, continuity without `minimum_run`, the ancillary-guard fix; then activate the §5.6 spreading rate and re-run all lanes
 6. §5.5 EV projections (website), then HA execution of desired charging
 7. §5.8 weather, monitored loads and demand departure
 8. §5.9 forecast trust
