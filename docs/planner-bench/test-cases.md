@@ -52,11 +52,18 @@ fields.
   "outdoor_temperature_c": [ … ],         // recorded at the house (see Weather)
   "solar_irradiance_w_per_m2": [ … ],     // recorded at the house, when available
 
-  "start_state": {
+  "start_state": {                       // per case; persisted when edited
     "battery_soc": 0.64,
-    "pool_water_c": 29.9,
-    "ev": { "soc": 0.40, "plugged_in": true, "target_soc": 0.80, "departure": "2026-09-06T05:00:00Z" }
-  }
+    "pool_water_c": 23.4,
+    "ev": { "soc": 0.55, "plugged_in": false, "target_soc": 0.80 }
+  },
+
+  "history": {                           // what came before the start, for planners that read it
+    "prices": [ { "start": "…", "import_sek_per_kwh": 0.88, "export_sek_per_kwh": 0.07 }, … ],
+    "grid_import_kwh": [ { "start": "…", "kwh": 0.3 }, … ]   // month to date, for peak tariffs
+  },
+
+  "preferences": null                    // optional owner overrides; null = planner decides
 }
 ```
 
@@ -67,9 +74,19 @@ Rules:
   the household plans them. Adding one to the household later means taking its
   share back out of base load, which needs its own per-device series, so the
   converter also keeps `other_devices_w: { "<key>": [ … ] }` for that purpose.
-- **Starting state is explicit and editable.** The converter fills it from the
-  source (replay reading, else the household default), and it can be changed by
-  hand afterwards.
+- **Starting state belongs to the case, not the household.** The converter
+  fills it from the source: the replay's readings, else the recorded history
+  at the start quarter (battery, pool water, car). An edit on the bench page is
+  saved into the case. The car keeps whatever the source says, including
+  unplugged or already at its target; there is no invented departure time.
+- **No value curves in a case.** Curves are the planner's to work out from the
+  case (prices, history, states). A case stores only explicit owner
+  preferences, and by default none.
+- **History is part of the case.** Planners increasingly read what came before
+  the start: the live planner estimates unpublished prices from the last 60
+  days, and the checkpoint branch builds price regimes and monthly peaks from
+  history. The case stores that history, extracted once, so any planner
+  generation finds what it needs.
 - **A case is complete or it is not run.** A case whose weather is not yet
   recorded (its window reaches into the future) waits; the runner fills it in
   once the history covers the window.
@@ -81,13 +98,17 @@ Version 1 plans:
 | Device | Parameters | Default start state |
 |---|---|---|
 | Home battery | 18.08 kWh, 8.8 kW in, 9.6 kW out, 95 % each way | 50 % |
-| Car | 75.6 kWh, 3 × 16 A charger | Plugged in at 40 %, 80 % by 07:00 next morning |
-| Pool | 55 m³, 764 W pump + 2314 W heater, fitted loss 0.1 kW/K unless the source has a fit | 29 °C |
+| Car | 75.6 kWh, 3 × 16 A charger | 50 %, target 80 %, no departure |
+| Pool | 55 m³, 764 W pump + 2314 W heater, heat loss 0.13 kW/K | 29 °C |
 
-The household also holds the owner's preferences (value curves, battery policy,
-curve mode), taken once from the most recent capture, so every case plans with
-the same preferences. Heating and hot water join later. Changing the household
-bumps its version and every result is run again.
+Defaults apply only where neither the source nor the history has a reading.
+The pool's loss is a property of the pool: 0.1308 kW/K is what the idle-loss
+fit gives once its reads are paginated (fix on `planner-refactor-checkpoint`,
+`0d6d5cc`; the test database's own fit is still rejected as unphysical).
+
+The household holds devices only, not preferences or curves. Heating and hot
+water join later. Changing the household's devices bumps its version and every
+result is run again; adding a test case never touches existing results.
 
 ## Adapter
 
@@ -97,16 +118,36 @@ version needs a different input, the adapter gains a branch for it; test cases
 never change. The planner declares which input it takes by exporting a
 constant from its entry module; a planner without one takes schema 9.
 
+## Value curves
+
+How much a kWh in the battery, a degree in the pool or a km in the car is
+worth is planner logic, worked out per case:
+
+- **Today (`dev`):** the pool and car curves are the planner's shipped
+  defaults unless the owner edited them; the battery curve is either the
+  planner's *balanced* curve, or a *price_only* search that the server runs
+  before planning (`_shared/battery-cost-curve.ts`, outside the planner
+  folder) and freezes into the snapshot. Old replays carry that frozen result.
+- **Checkpoint branch:** pool and battery values come from price regimes and
+  water values fitted to price history, i.e. from the case itself.
+
+So: the battery cost-curve search moves into the planner folder, the adapter
+lets each planner version compute its own curves from the case, and each
+result records the curves that version planned with. The bench page shows
+them per case and per planner version.
+
 ## Where test cases come from
 
 1. **Replay files (upload on the bench page).** Converted to a test case on
    upload: prices, solar and base load (plus the non-household devices'
    forecasts) from the replay's slots; starting state from its readings. The
-   replay itself is not kept. Weather comes from recorded history once
-   available (below), so a freshly uploaded replay waits up to three days.
-2. **The existing seven cases.** Converted the same way, once. Their weather is
-   extracted from recorded history in the same step; C-0928a and C-0928b become
-   complete after 11:15 UTC on 1 October 2026, when their windows are recorded.
+   replay itself is not kept. History and weather come from the recorded
+   tables; a freshly uploaded replay's weather is recorded over the following
+   three days, and the runner fills it in automatically once it is.
+2. **The existing seven cases.** Converted the same way, once, with history
+   and weather extracted in the same step. C-0928a and C-0928b get the rest of
+   their weather automatically on the first bench run after 11:15 UTC on
+   1 October 2026; nothing has to be done by hand.
 3. **Recorded history (later).** Any 72-hour window since 12 August 2026 can
    become a test case from the stored quarter tables
    (`energy_optimisation_price_slots`, `_actual_slots`, `_outdoor_slots`,
@@ -137,13 +178,16 @@ converted, then the replay column is dropped.
 
 ## Open questions
 
-1. **Prices for unpublished quarters.** A replay carries the server's estimate
-   (`outlook`); a history window knows the real prices. Should a history case
-   hide the unpublished part and give the planner an estimate, or show the
-   real prices (a perfect price forecast)? Proposal: hide, and estimate from
-   the preceding 14 days' prices, which the case stores.
-2. **Solar and load in history cases.** History has what actually happened,
-   not what was forecast. Proposal: use the actuals as a perfect forecast, the
-   same choice as for temperature, and say so in the case's origin.
-3. **Preferences from one capture.** Is taking value curves and policy from the
-   most recent capture right, or should they be set by hand in the household?
+Decided:
+
+- **Unpublished prices:** a history case hides them; the planner estimates
+  them from the price history the case stores.
+- **Solar and load in history cases:** actuals, used as a perfect forecast.
+- **Preferences:** worked out automatically per case; explicit overrides only.
+
+Still open:
+
+1. **How much price history a case stores.** The live planner reads 60 days
+   (not 14) and weights them with a 21-day half-life. Storing 3 days would
+   make every bench planner estimate differently from the live one.
+   Proposal: store 60 days, and let each planner version use what it reads.
