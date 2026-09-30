@@ -69,17 +69,14 @@ import {
 import {
   classifyOutdoorSeries,
   homeLocation,
-  outdoorSeriesFromProvider,
+  withServerOutdoorTemperature,
 } from "../_shared/outdoor-forecast.ts";
 import {
   irradianceForQuarters,
   irradianceOnto,
   irradiancePoints,
 } from "../_shared/solar-irradiance.ts";
-import {
-  gridRound,
-  type WeatherPoint,
-} from "../_shared/weather-cache.ts";
+import type { WeatherPoint } from "../_shared/weather-cache.ts";
 
 /**
  * Training quarters given an irradiance figure per push.
@@ -614,49 +611,10 @@ async function prepareThermalPlanning(
       "room comfort forecasting needs outdoor temperature for every slot",
     );
   }
-  let outdoor: number[];
-  if (classified.status === "complete") {
-    outdoor = classified.series;
-  } else {
-    // Home Assistant's adapter did not reach the end of the horizon. The
-    // weather usually still exists — met.no publishes ten days of it — so ask
-    // the provider directly before planning the rooms blind, using the
-    // coordinates the snapshot already declares.
-    const location = homeLocation(snapshot);
-    if (!location) return withoutComfortForecast(snapshot);
-    const { latitude, longitude } = location;
-    const provided = await outdoorSeriesFromProvider({
-      supabase,
-      latitude,
-      longitude,
-      starts,
-    });
-    if (!provided) return withoutComfortForecast(snapshot);
-    outdoor = provided.series;
-    snapshot = {
-      ...snapshot,
-      outdoor_temperature_c: provided.series,
-      sources: {
-        ...snapshot.sources,
-        outdoor_temperature: {
-          provider: "met_no_locationforecast",
-          // No Home Assistant entity stands behind this one; the portal
-          // reads the empty list as "the planner fetched this itself".
-          entity_ids: [],
-          issued_at: provided.issuedAt,
-          valid_until: new Date(
-            Date.parse(starts[starts.length - 1]) + SLOT_MS,
-          ).toISOString(),
-          quality: "provider_raw",
-          sample_count: provided.points,
-          location: {
-            latitude: gridRound(latitude),
-            longitude: gridRound(longitude),
-          },
-        },
-      },
-    };
-  }
+  // The series is the server's own SMHI forecast
+  // (`withServerOutdoorTemperature`); without it the rooms go unforecast.
+  if (classified.status !== "complete") return withoutComfortForecast(snapshot);
+  const outdoor = classified.series;
 
   // What the sun is expected to do over the horizon. A zone fitted with a
   // solar term projects far better with this than without, but it is never
@@ -1872,6 +1830,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       let thermalZones: ProjectionZoneInput[] = [];
       try {
+        // Outdoor temperature is the server's to provide (SMHI), for the pool
+        // and the rooms alike; a series from Home Assistant is replaced.
+        snapshot = await withServerOutdoorTemperature(supabase, snapshot);
         const thermal = await prepareThermalPlanning(
           supabase,
           auth.customerId,

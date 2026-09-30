@@ -3,7 +3,8 @@ import {
   classifyOutdoorSeries,
   homeLocation,
   outdoorSeriesFromProvider,
-  parseMetNoForecast,
+  parseSmhiForecast,
+  withServerOutdoorTemperature,
 } from "./outdoor-forecast.ts";
 
 Deno.test("a complete series is handed back as numbers", () => {
@@ -50,28 +51,21 @@ const quarters = (from: string, count: number): string[] => {
   );
 };
 
-Deno.test("parses air temperature out of a met.no response and skips junk", () => {
+Deno.test("parses air temperature out of an SMHI response and skips junk", () => {
   const body = {
-    properties: {
-      timeseries: [
-        {
-          time: "2026-08-30T04:00:00Z",
-          data: { instant: { details: { air_temperature: 14.4 } } },
-        },
-        { time: "2026-08-30T05:00:00Z", data: { instant: { details: {} } } },
-        { data: { instant: { details: { air_temperature: 15 } } } },
-        {
-          time: "not-a-time",
-          data: { instant: { details: { air_temperature: 15 } } },
-        },
-      ],
-    },
+    timeSeries: [
+      { time: "2026-08-30T04:00:00Z", data: { air_temperature: 14.4 } },
+      { time: "2026-08-30T05:00:00Z", data: {} },
+      { time: "2026-08-30T06:00:00Z", data: { air_temperature: 9999 } },
+      { data: { air_temperature: 15 } },
+      { time: "not-a-time", data: { air_temperature: 15 } },
+    ],
   };
-  assertEquals(parseMetNoForecast(body), [
+  assertEquals(parseSmhiForecast(body), [
     { t: Date.parse("2026-08-30T04:00:00Z"), v: 14.4 },
   ]);
-  assertEquals(parseMetNoForecast({}), []);
-  assertEquals(parseMetNoForecast(null), []);
+  assertEquals(parseSmhiForecast({}), []);
+  assertEquals(parseSmhiForecast(null), []);
 });
 
 /** Minimal stand-in for the query builder the edge functions use. */
@@ -93,20 +87,18 @@ const fakeSupabase = (
   },
 });
 
-const metNoResponse = (from: string, hours: number) =>
+const smhiResponse = (from: string, hours: number) =>
   new Response(
     JSON.stringify({
-      properties: {
-        timeseries: Array.from({ length: hours }, (_unused, index) => ({
-          time: new Date(Date.parse(from) + index * 3_600_000).toISOString(),
-          data: { instant: { details: { air_temperature: 10 + index } } },
-        })),
-      },
+      timeSeries: Array.from({ length: hours }, (_unused, index) => ({
+        time: new Date(Date.parse(from) + index * 3_600_000).toISOString(),
+        data: { air_temperature: 10 + index },
+      })),
     }),
     { headers: { expires: "Sun, 30 Aug 2026 04:42:35 GMT" } },
   );
 
-Deno.test("fetches met.no, caches the response and covers the horizon", async () => {
+Deno.test("fetches SMHI for the home's own grid point, caches it and covers the horizon", async () => {
   const written: Record<string, unknown>[] = [];
   const result = await outdoorSeriesFromProvider({
     supabase: fakeSupabase(null, written),
@@ -117,9 +109,9 @@ Deno.test("fetches met.no, caches the response and covers the horizon", async ()
     fetchImpl: (input) => {
       assertEquals(
         String(input),
-        "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=59.46&lon=18.04",
+        "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/18.0408/lat/59.4561/data.json",
       );
-      return Promise.resolve(metNoResponse("2026-08-30T04:00:00Z", 4));
+      return Promise.resolve(smhiResponse("2026-08-30T04:00:00Z", 4));
     },
   });
   assertEquals(result?.series, [
@@ -133,7 +125,8 @@ Deno.test("fetches met.no, caches the response and covers the horizon", async ()
     11.75,
   ]);
   assertEquals(written.length, 1);
-  assertEquals(written[0].latitude, 59.46);
+  assertEquals(written[0].latitude, 59.4561);
+  assertEquals(written[0].provider, "smhi_snow1g");
   assertEquals(written[0].expires_at, "2026-08-30T04:42:35.000Z");
 });
 
@@ -175,7 +168,7 @@ Deno.test("an expired cache entry is refetched", async () => {
     now: new Date("2026-08-30T04:10:00Z"),
     fetchImpl: () => {
       calls += 1;
-      return Promise.resolve(metNoResponse("2026-08-30T04:00:00Z", 4));
+      return Promise.resolve(smhiResponse("2026-08-30T04:00:00Z", 4));
     },
   });
   assertEquals(calls, 1);
@@ -189,7 +182,7 @@ Deno.test("a forecast that still falls short yields nothing rather than a partia
     longitude: 18.04,
     starts: quarters("2026-08-30T04:00:00Z", 288),
     now: new Date("2026-08-30T04:10:00Z"),
-    fetchImpl: () => Promise.resolve(metNoResponse("2026-08-30T04:00:00Z", 4)),
+    fetchImpl: () => Promise.resolve(smhiResponse("2026-08-30T04:00:00Z", 4)),
   });
   assertEquals(result, null);
 });
@@ -245,4 +238,32 @@ Deno.test("a home with neither is simply unlocated, not an error", () => {
     null,
     "an impossible latitude is not a location",
   );
+});
+
+const located = (outdoor?: number[]) => ({
+  slots: quarters("2026-08-30T04:00:00Z", 2).map((start) => ({ start })),
+  location: { latitude: 59.456128, longitude: 18.040849 },
+  sources: {
+    pv: null,
+    outdoor_temperature: { provider: "home_assistant_entity", entity_ids: ["weather.home"] },
+  },
+  ...(outdoor ? { outdoor_temperature_c: outdoor } : {}),
+});
+
+Deno.test("the server's SMHI forecast replaces whatever Home Assistant sent", async () => {
+  const snapshot = await withServerOutdoorTemperature(fakeSupabase(null, []), located([30, 30]), {
+    now: new Date("2026-08-30T04:10:00Z"),
+    fetchImpl: () => Promise.resolve(smhiResponse("2026-08-30T04:00:00Z", 4)),
+  });
+  assertEquals(snapshot.outdoor_temperature_c, [10, 10.25]);
+  assertEquals((snapshot.sources.outdoor_temperature as { provider: string }).provider, "smhi_snow1g");
+});
+
+Deno.test("without SMHI there is no outdoor temperature, not Home Assistant's", async () => {
+  const snapshot = await withServerOutdoorTemperature(fakeSupabase(null, []), located([30, 30]), {
+    now: new Date("2026-08-30T04:10:00Z"),
+    fetchImpl: () => Promise.resolve(new Response("down", { status: 503 })),
+  });
+  assertEquals("outdoor_temperature_c" in snapshot, false);
+  assertEquals("outdoor_temperature" in snapshot.sources, false);
 });

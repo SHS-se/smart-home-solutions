@@ -24,9 +24,9 @@ import { PROVIDER_TIMEOUT_MS } from "./weather-cache.ts";
 // term possible at all: without the history a home would have to accumulate
 // months of observations before its rooms could learn anything from the sun.
 //
-// met.no stays the temperature source. It is Nordic-specialised where these
-// homes are, and it publishes no irradiance, so the two providers are used for
-// what each actually offers rather than one being made to answer for both.
+// SMHI is the temperature source (outdoor-forecast.ts). It publishes no
+// irradiance, so the two providers are used for what each actually offers
+// rather than one being made to answer for both.
 
 import {
   cachedProviderPoints,

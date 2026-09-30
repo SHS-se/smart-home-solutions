@@ -1,35 +1,14 @@
 import { PROVIDER_TIMEOUT_MS } from "./weather-cache.ts";
 // Where the outdoor temperature a plan is built on comes from.
 //
-// Room comfort forecasting is the one part of the plan that needs tomorrow's
-// weather: a 1R1C zone cannot be projected forward without knowing what it is
-// losing heat to. Every other load — battery, boiler, pool, EV — plans on
-// prices and its own recent history and needs no forecast at all.
+// The server provides it, never Home Assistant: SMHI's point forecast for the
+// model grid point nearest the home, for every home and every plan. Rooms need
+// it to be projected forward, and the pool's losses and heat-pump COP depend
+// on it. Whatever series a snapshot arrives with is replaced.
 //
-// That asymmetry decides how a missing forecast is handled. A home whose
-// weather provider stops short of the horizon should lose its comfort
-// forecast, not its plan, so an absent series degrades rather than rejects.
-//
-// A series that arrives holed is the opposite case and is rejected. Home
-// Assistant's contract is all-or-nothing precisely so that the two are
-// distinguishable here: absence means "no provider reached that far", while a
-// hole means something built a series it could not fill, and averaging over
-// it would quietly plan a room against weather nobody forecast.
-//
-// Absence is then a question rather than a verdict, because it usually means
-// the adapter fell short rather than the weather being unknown. Home
-// Assistant's weather platform exposes only the part of a forecast the
-// provider marks hourly — for met.no about two days, against a three-day
-// horizon — while the same met.no response describes temperature for ten
-// days, hourly at first and six-hourly after. So the planner asks met.no
-// itself before giving up on comfort.
-//
-// Reading the provider directly is a wider change than it looks: until now
-// every forecast reached the planner through the home's own integration, and
-// a server that fetches weather is a second source of truth about the same
-// quantity. It is deliberately the fallback and never the default. Whatever
-// the home's own adapter can cover, it covers; this only answers for the part
-// no adapter reached.
+// There is no second provider. If SMHI cannot cover the horizon the plan goes
+// without outdoor temperature: rooms lose their comfort forecast and the pool
+// is planned without it, as it always was when no weather arrived.
 
 import {
   cachedProviderPoints,
@@ -103,52 +82,49 @@ export function homeLocation(
 }
 
 /**
- * met.no requires an identifying User-Agent with a way to reach whoever runs
- * the client, and blocks requests without one. It also asks for coordinates
- * truncated to at most four decimals; the cache rounds harder still, to two,
- * so the request and the cache describe the same square kilometre.
+ * SMHI's point forecast (snow1g): hourly for about two days, then three- and
+ * six-hourly out to ten days, for the grid point nearest the coordinates.
+ * The grid is 2.5 km apart, so the request and its cache key carry four
+ * decimals (~11 m) and name the home's own point, not a neighbour's.
  */
-const MET_NO_USER_AGENT =
-  "SmartHomeSolutions-EnergyPlanner/1.0 support@smarthomesolutions.se";
-const MET_NO_ENDPOINT =
-  "https://api.met.no/weatherapi/locationforecast/2.0/compact";
-export const MET_NO_PROVIDER = "met_no_locationforecast";
+const SMHI_ENDPOINT =
+  "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point";
+export const SMHI_PROVIDER = "smhi_snow1g";
+const SMHI_DECIMALS = 4;
+/** SMHI's missing-value marker. */
+const SMHI_MISSING = 9999;
 
-/** Widest step met.no issues, once past its first two hourly days. */
-const MET_NO_MAX_STEP_MS = 6 * 3_600_000;
+/** Widest step SMHI issues inside a three-day horizon. */
+const SMHI_MAX_STEP_MS = 6 * 3_600_000;
 
 /**
- * Read `properties.timeseries[].data.instant.details.air_temperature` out of a
- * met.no locationforecast response, skipping anything malformed rather than
- * failing the whole plan over one bad entry.
+ * Read `timeSeries[].data.air_temperature` out of an SMHI snow1g response,
+ * skipping anything malformed or marked missing rather than failing the whole
+ * plan over one bad entry.
  */
-export function parseMetNoForecast(body: unknown): WeatherPoint[] {
-  const series = (body as {
-    properties?: { timeseries?: unknown[] };
-  })?.properties?.timeseries;
+export function parseSmhiForecast(body: unknown): WeatherPoint[] {
+  const series = (body as { timeSeries?: unknown[] })?.timeSeries;
   if (!Array.isArray(series)) return [];
   const points: WeatherPoint[] = [];
   for (const entry of series) {
     const time = (entry as { time?: unknown })?.time;
-    const celsius = (entry as {
-      data?: { instant?: { details?: { air_temperature?: unknown } } };
-    })?.data?.instant?.details?.air_temperature;
+    const celsius = (entry as { data?: { air_temperature?: unknown } })?.data?.air_temperature;
     if (typeof time !== "string" || typeof celsius !== "number") continue;
     const at = Date.parse(time);
-    if (!Number.isFinite(at) || !Number.isFinite(celsius)) continue;
+    if (!Number.isFinite(at) || !Number.isFinite(celsius) || celsius === SMHI_MISSING) continue;
     points.push({ t: at, v: celsius });
   }
   return points;
 }
 
 /**
- * Outdoor temperature for every slot start, from met.no via the shared cache.
+ * Outdoor temperature for every slot start, from SMHI via the shared cache.
  *
  * Returns null whenever the horizon cannot be covered end to end — provider
  * unreachable, response unusable, or a forecast that still falls short. A
  * partial answer is worth nothing here: the caller's alternative is to plan
- * without comfort forecasting, which is strictly better than projecting a
- * room against weather that was interpolated out of nothing.
+ * without outdoor temperature, which is strictly better than projecting
+ * against weather that was interpolated out of nothing.
  */
 export async function outdoorSeriesFromProvider(options: {
   // deno-lint-ignore no-explicit-any
@@ -164,43 +140,89 @@ export async function outdoorSeriesFromProvider(options: {
 
   const points = await cachedProviderPoints({
     supabase,
-    provider: MET_NO_PROVIDER,
+    provider: SMHI_PROVIDER,
     latitude: options.latitude,
     longitude: options.longitude,
+    decimals: SMHI_DECIMALS,
     now,
     fetchPoints: async (
       latitude,
       longitude,
     ): Promise<ProviderResponse | null> => {
       const response = await fetchImpl(
-        `${MET_NO_ENDPOINT}?lat=${latitude.toFixed(2)}&lon=${
-          longitude.toFixed(2)
-        }`,
+        `${SMHI_ENDPOINT}/lon/${longitude.toFixed(SMHI_DECIMALS)}/lat/${
+          latitude.toFixed(SMHI_DECIMALS)
+        }/data.json`,
         {
           signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-          headers: {
-            "User-Agent": MET_NO_USER_AGENT,
-            Accept: "application/json",
-          },
+          headers: { Accept: "application/json" },
         },
       );
       if (!response.ok) {
-        console.error("[WEATHER] met.no responded", response.status);
+        console.error("[WEATHER] SMHI responded", response.status);
         return null;
       }
       return {
-        points: parseMetNoForecast(await response.json()),
+        points: parseSmhiForecast(await response.json()),
         expiresAt: expiryFrom(response, now),
       };
     },
   });
   if (!points) return null;
 
-  const series = interpolateOntoSlots(points, starts, MET_NO_MAX_STEP_MS);
+  const series = interpolateOntoSlots(points, starts, SMHI_MAX_STEP_MS);
   if (series.some((value) => value === null)) return null;
   return {
     series: series as number[],
     issuedAt: now.toISOString(),
     points: points.length,
+  };
+}
+
+/**
+ * The snapshot with the server's outdoor temperature: SMHI's forecast over its
+ * slots, or none at all. A series Home Assistant sent is never kept.
+ */
+export async function withServerOutdoorTemperature<
+  S extends {
+    slots: { start: string }[];
+    outdoor_temperature_c?: (number | null)[];
+    location?: { latitude?: number; longitude?: number } | null;
+    sources: { pv?: { location?: { latitude?: number; longitude?: number } } | null; outdoor_temperature?: unknown };
+  },
+>(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  snapshot: S,
+  options: { now?: Date; fetchImpl?: typeof fetch } = {},
+): Promise<S> {
+  const { outdoor_temperature_c: _ignored, ...rest } = snapshot;
+  const { outdoor_temperature: _unused, ...sources } = snapshot.sources;
+  const without = { ...rest, sources } as S;
+  const location = homeLocation(snapshot);
+  if (!location) return without;
+  const starts = snapshot.slots.map((slot) => slot.start);
+  const provided = await outdoorSeriesFromProvider({ supabase, ...location, starts, ...options });
+  if (!provided) return without;
+  return {
+    ...without,
+    outdoor_temperature_c: provided.series,
+    sources: {
+      ...sources,
+      outdoor_temperature: {
+        provider: SMHI_PROVIDER,
+        // No Home Assistant entity stands behind this one; the portal reads
+        // the empty list as "the server fetched this itself".
+        entity_ids: [],
+        issued_at: provided.issuedAt,
+        valid_until: new Date(Date.parse(starts[starts.length - 1]) + 15 * 60_000).toISOString(),
+        quality: "provider_raw",
+        sample_count: provided.points,
+        location: {
+          latitude: Math.round(location.latitude * 1e4) / 1e4,
+          longitude: Math.round(location.longitude * 1e4) / 1e4,
+        },
+      },
+    },
   };
 }

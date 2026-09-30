@@ -13,7 +13,7 @@
 //
 // Expiry comes from the provider's `Expires` header wherever one is offered,
 // because that describes the model run better than any interval we could
-// invent, and because met.no's terms of service require clients to honour it.
+// invent, and because providers' terms of service ask clients to honour it.
 
 /**
  * One instant a provider described, in that series' own unit.
@@ -56,14 +56,21 @@ export async function cachedProviderPoints(options: {
   latitude: number;
   longitude: number;
   now: Date;
+  /**
+   * Coordinate precision of the cache key and the request. Two decimals by
+   * default; a provider whose answer depends on the exact grid point asks for
+   * more, so the request names the home's own point and not a neighbour's.
+   */
+  decimals?: number;
   fetchPoints: (
     latitude: number,
     longitude: number,
   ) => Promise<ProviderResponse | null>;
 }): Promise<WeatherPoint[] | null> {
-  const { supabase, provider, now, fetchPoints } = options;
-  const latitude = gridRound(options.latitude);
-  const longitude = gridRound(options.longitude);
+  const { supabase, provider, now, fetchPoints, decimals = 2 } = options;
+  const round = (value: number) => Math.round(value * 10 ** decimals) / 10 ** decimals;
+  const latitude = round(options.latitude);
+  const longitude = round(options.longitude);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
   try {
