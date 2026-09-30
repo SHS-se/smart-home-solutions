@@ -394,13 +394,13 @@ const delta = (a: number | null, b: number | null, digits: number) => {
   return signed(d, Math.abs(d) < 1 && digits < 2 ? 2 : digits);
 };
 
-interface SuiteLine { label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better }
+interface SuiteLine { key: keyof SuiteStats; label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better }
 
 const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test: SuiteStats }; scores: { current: number | null; test: number | null } }> = ({ totals, scores }) => {
   const { t } = useLanguage();
   const { current: c, test: x } = totals;
   const line = (label: string, unit: string, digits: number, key: keyof SuiteStats, better: Better): SuiteLine =>
-    ({ label, unit, digits, a: c[key] as number | null, b: x[key] as number | null, better });
+    ({ key, label, unit, digits, a: c[key] as number | null, b: x[key] as number | null, better });
   const groups: [string, SuiteLine[]][] = [
     [t('Kostnad', 'Cost'), [
       line(t('Nätkostnad, 72 h', 'Grid cost, 72 h'), 'kr', 1, 'grid_cost_sek', 'lower'),
@@ -430,7 +430,7 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
 
   return (
     <div className="space-y-3">
-      <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
+      <div id="bench-total-score" className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
         <div className="flex items-baseline gap-2">
           <span className="text-xs uppercase tracking-wide opacity-80">{t('Poäng', 'Score')}</span>
           <span className="font-mono tabular-nums text-foreground">{scores.current ?? '—'}</span>
@@ -462,7 +462,7 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
             {lines.map(l => {
               const tone = toneOf(l.a, l.b, l.better);
               return (
-                <div key={l.label} className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
+                <div key={l.key} id={`bench-total-${l.key}`} className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
                   <span className="truncate">{l.label}</span>
                   <span className="text-right font-mono tabular-nums text-muted-foreground">{fmt(l.a, l.digits)}</span>
                   <span className={`text-right font-mono tabular-nums ${tone === 'better' || tone === 'worse' ? 'font-semibold' : ''}`}>

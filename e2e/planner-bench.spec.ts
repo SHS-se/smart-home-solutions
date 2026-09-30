@@ -155,8 +155,8 @@ test.describe('planner bench', () => {
     await expect(page.getByText(/ccccccc · .* · \d+ (pts|p) · (current|nuvarande)/)).toBeVisible();
 
     // Totals over every case, current against test.
-    const totals = page.locator('tr', { hasText: /Total grid cost|Total nätkostnad/ });
-    await expect(totals).toContainText(/kr.*kr/);
+    await expect(page.locator('#bench-total-score')).toContainText(/Test planner is (better|worse)|No score difference|Testplaneraren är (bättre|sämre)|Ingen skillnad i poäng/);
+    await expect(page.locator('#bench-total-grid_cost_sek')).toContainText(/-?\d+\.\d.*-?\d+\.\d\s*kr/);
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
