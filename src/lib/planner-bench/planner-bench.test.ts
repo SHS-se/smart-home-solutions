@@ -2,7 +2,7 @@ import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { ReplayFormatError, stripReplay } from './strip.ts';
 import { planSeries } from './series.ts';
 import { planStats, suiteStats } from './stats.ts';
-import { runScore, scoreCase } from './score.ts';
+import { CASE_SCALE, isStale, runScore, scoreQuarters, storedScore } from './score.ts';
 import type { BenchStats } from './types.ts';
 
 const slot = (i: number, over: Record<string, unknown> = {}) => ({
@@ -76,30 +76,56 @@ const stats = (over: Partial<BenchStats>): BenchStats => ({
   import_price_paid: 1.4, import_price_mean: 2, ...over,
 });
 
-Deno.test('scoreCase adds passes, deducts misses and clamps to ±10', () => {
-  const good = scoreCase(stats({}));
-  // pool_min 1 + end 1 + max 1 + cheap 3 + estimated 2 + price 3 (70 %); car n/a.
-  assertEquals(good.raw, 11);
-  assertEquals(good.points, 10);
-  assertEquals(good.passed, true);
+/** Eight quarters priced 1..8, the first four published, pool at 30 °C. */
+const quarterPlan = (over: (i: number) => Record<string, unknown> = () => ({})) =>
+  planSeries(Array.from({ length: 8 }, (_, i) => slot(i, {
+    binding: i < 4, import_price_sek_per_kwh: i < 4 ? i + 1 : null, shadow_import_sek_per_kwh: i + 1, ...over(i),
+  })), [30, ...Array(8).fill(30)]);
 
-  const cold = scoreCase(stats({ pool_min_c: 27, pool_end_c: 27 }));
-  assertEquals(cold.criteria.find(c => c.key === 'pool_min')?.points, -4);
-  assertEquals(cold.passed, false, 'a missed required criterion fails the case');
+Deno.test('quarters score the rules that fire, clamped to ±2', () => {
+  // Pool heating in the cheapest quarter: cheap (+1) and very cheap (+1).
+  const s = quarterPlan(i => (i === 0 ? { pool_w: 3000 } : {}));
+  const scored = scoreQuarters(s);
+  assertEquals(scored.quarters[0], { score: 2, fired: ['cheap_buy', 'cheapest_buy'] });
+  assertEquals(scored.quarters[1].score, 0, 'an ordinary quarter scores nothing');
+  assertEquals(scored.sum, 2);
+
+  // Heating in the dearest, estimated quarter (rank 7/8: dear, not the dearest tenth) = -2.
+  const dear = scoreQuarters(quarterPlan(i => (i === 7 ? { pool_w: 3000 } : {})));
+  assertEquals(dear.quarters[7], { score: -2, fired: ['dear_buy', 'estimated_buy'] });
+  // With the pool also cold the raw -4 is clamped to -2.
+  const cold = quarterPlan(i => (i === 7 ? { pool_w: 3000 } : {}));
+  cold.poolC[7] = 27;
+  assertEquals(scoreQuarters(cold).quarters[7].score, -2);
 });
 
-Deno.test('price paid scales linearly between its threshold and full penalty', () => {
-  const mid = scoreCase(stats({ import_price_paid: 1.6 })); // 80 % of mean: halfway between +3 and -3
-  assertAlmostEquals(mid.criteria.find(c => c.key === 'price_paid')!.points, 0, 1e-9);
+Deno.test('a cold pool fails the case through a required rule', () => {
+  const s = quarterPlan();
+  s.poolC = s.poolC.map((t, i) => (i === 3 ? 27.5 : t));
+  const scored = scoreQuarters(s);
+  assertEquals(scored.quarters[3].fired, ['pool_cold', 'pool_low']);
+  assertEquals(scored.quarters[3].score, -2);
+  assertEquals(scored.requiredFired, ['pool_cold']);
+  assertEquals(scored.passed, false);
+  assertEquals(scoreQuarters(s, {}, 'pass').passed, true, 'your verdict overrides the automatic reading');
 });
 
-Deno.test('overrides, disabled criteria and verdicts change the score', () => {
-  const base = stats({ pool_min_c: 27.5 });
-  assertEquals(scoreCase(base, { pool_min: { threshold: 27 } }).criteria.find(c => c.key === 'pool_min')?.met, true);
-  assertEquals(scoreCase(base, { pool_min: { enabled: false } }).criteria.some(c => c.key === 'pool_min'), false);
-  const failed = scoreCase(stats({}), {}, 'fail');
-  assertEquals(failed.passed, false, 'your verdict overrides the automatic reading');
-  assertEquals(failed.raw, 11 - 4);
+Deno.test('rule overrides change thresholds, points and whether a rule runs', () => {
+  const s = quarterPlan(i => (i === 0 ? { pool_w: 3000 } : {}));
+  assertEquals(scoreQuarters(s, { cheapest_buy: { enabled: false } }).quarters[0].score, 1);
+  assertEquals(scoreQuarters(s, { cheap_buy: { points: -1 } }).quarters[0].score, 0);
+  assertEquals(scoreQuarters(s, { cheap_buy: { threshold: 0 }, cheapest_buy: { threshold: 0 } }).quarters[0].score, 0);
+});
+
+Deno.test('case points are the quarter sum scaled and clamped, and stored scores know when they are stale', () => {
+  const s = quarterPlan(i => ({ pool_w: i < 2 ? 3000 : 0 }));
+  const scored = scoreQuarters(s);
+  assertAlmostEquals(scored.points, scored.sum / CASE_SCALE);
+  const stored = storedScore(s);
+  assertEquals(stored.histogram['2'], 1);
+  assertEquals(isStale(stored), false);
+  assertEquals(isStale(stored, { cheap_buy: { points: 2 } }), true);
+  assertEquals(isStale({ ...stored, version: stored.version - 1 }), true);
 });
 
 Deno.test('runScore maps the mean case score onto 100–1000', () => {

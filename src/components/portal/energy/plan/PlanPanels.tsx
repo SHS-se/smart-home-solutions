@@ -154,9 +154,14 @@ const PlanPanels: React.FC<{
   hasEvBattery: boolean;
   selectedIndex?: number;
   onQuarterClick?: (index: number) => void;
+  /**
+   * Planner bench: one score per quarter, -2..+2, drawn as its own strip
+   * above the price panel. The portal never passes it.
+   */
+  quarterScores?: readonly (number | null)[];
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
-  selectedIndex = -1, onQuarterClick,
+  selectedIndex = -1, onQuarterClick, quarterScores,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -172,7 +177,8 @@ const PlanPanels: React.FC<{
   const geometry = useMemo(() => {
     const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, RIGHT]);
 
-    const price: Panel = { top: 30, height: 68 };
+    const scoreStrip: Panel | null = quarterScores ? { top: 30, height: 16 } : null;
+    const price: Panel = { top: scoreStrip ? scoreStrip.top + scoreStrip.height + GAP : 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
     const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
@@ -235,17 +241,17 @@ const PlanPanels: React.FC<{
     const costY = linearScale([costMin, costMax], [cost.top + cost.height, cost.top]);
 
     return {
-      x, axisY, height: axisY + 42,
+      x, axisY, height: axisY + 42, scoreStrip,
       price, priceY, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, cost, costY, cumulative, costMin, costMax,
     };
-  }, [baseValues, n, rows, series, showSoc, t]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores]);
 
   const {
-    x, axisY, height, price, priceY, priceMax, buy, sell, bands,
+    x, axisY, height, scoreStrip, price, priceY, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
@@ -364,6 +370,39 @@ const PlanPanels: React.FC<{
               width={planWidth} height={axisY - price.top + 14}
               fill="var(--plan-wash)"
             />
+          )}
+
+          {/* ----------------------------------------------- Bench score --- */}
+          {scoreStrip && quarterScores && (
+            <g>
+              <PanelHeading
+                title={t('Poäng', 'Score')}
+                unit={t('per kvart, −2 till +2', 'per quarter, −2 to +2')}
+                y={scoreStrip.top - 6}
+              />
+              {quarterScores.map((score, index) => {
+                if (score === null || score === undefined) return null;
+                const left = x(index), width = x(index + 1) - left;
+                const colour = `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.abs(score)})`;
+                // Digits need about 10 units; narrower quarters (a three-day
+                // view) fall back to a coloured cell of the same colour.
+                return width >= 9.5 ? (
+                  <text
+                    key={index} x={left + width / 2} y={scoreStrip.top + 12}
+                    textAnchor="middle" fill={colour}
+                    className="text-[8.5px] font-mono font-semibold"
+                  >
+                    {score < 0 ? `−${-score}` : String(score)}
+                  </text>
+                ) : (
+                  <rect
+                    key={index} x={left} y={scoreStrip.top + 3}
+                    width={Math.max(0.5, width - 0.3)} height={scoreStrip.height - 6}
+                    fill={colour}
+                  />
+                );
+              })}
+            </g>
           )}
 
           {/* ---------------------------------------------------- Price --- */}

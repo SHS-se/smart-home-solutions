@@ -6,12 +6,14 @@
 // database; its test cases come from replay files in a directory.
 
 import { stripReplay } from "../src/lib/planner-bench/strip.ts";
-import type { BenchInput, BenchSeries, BenchStats } from "../src/lib/planner-bench/types.ts";
+import type { StoredScore } from "../src/lib/planner-bench/score.ts";
+import type { BenchInput, BenchSeries, BenchStats, CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
 
 export interface StoredScenario {
   id: string;
   name: string;
   input: BenchInput;
+  criteria: CriteriaOverrides;
 }
 
 export interface RunRecord {
@@ -33,6 +35,13 @@ export interface ResultRecord {
   cpu_ms: number | null;
   series: BenchSeries | null;
   stats: BenchStats | null;
+  score: StoredScore | null;
+}
+
+export interface ScoredResult {
+  sha: string;
+  scenario_id: string;
+  score: StoredScore | null;
 }
 
 export interface BenchStore {
@@ -43,6 +52,10 @@ export interface BenchStore {
   saveRun(run: RunRecord): Promise<void>;
   markCurrent(sha: string): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
+  /** Every successful result's stored score, for staleness checks. */
+  scoredResults(): Promise<ScoredResult[]>;
+  series(sha: string, scenarioId: string): Promise<BenchSeries | null>;
+  saveScore(sha: string, scenarioId: string, score: StoredScore): Promise<void>;
 }
 
 export class DbStore implements BenchStore {
@@ -65,7 +78,7 @@ export class DbStore implements BenchStore {
 
   async scenarios(only?: string) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
-    return await this.request(`bench_scenarios?select=id,name,input&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
+    return await this.request(`bench_scenarios?select=id,name,input,criteria&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
   }
 
   async knownShas() {
@@ -102,6 +115,21 @@ export class DbStore implements BenchStore {
       body: JSON.stringify({ ...result, created_at: new Date().toISOString() }),
     });
   }
+
+  async scoredResults() {
+    return await this.request("bench_result_summaries?select=sha,scenario_id,score&status=eq.ok") as ScoredResult[];
+  }
+
+  async series(sha: string, scenarioId: string) {
+    const rows = await this.request(`bench_results?select=series&sha=eq.${sha}&scenario_id=eq.${scenarioId}`) as { series: BenchSeries | null }[];
+    return rows[0]?.series ?? null;
+  }
+
+  async saveScore(sha: string, scenarioId: string, score: StoredScore) {
+    await this.request(`bench_results?sha=eq.${sha}&scenario_id=eq.${scenarioId}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ score }),
+    });
+  }
 }
 
 interface LocalFile {
@@ -126,7 +154,7 @@ export class LocalStore implements BenchStore {
       const id = entry.name.replace(/\.json$/, "");
       if (only && only !== id) continue;
       const stripped = stripReplay(JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`)));
-      out.push({ id, name: id, input: stripped.input });
+      out.push({ id, name: id, input: stripped.input, criteria: {} });
     }
     return out.sort((a, b) => a.input.snapshot.captured_at.localeCompare(b.input.snapshot.captured_at));
   }
@@ -147,6 +175,17 @@ export class LocalStore implements BenchStore {
   async saveResult(result: ResultRecord) {
     const file = await this.load();
     file.results = [...file.results.filter(r => !(r.sha === result.sha && r.scenario_id === result.scenario_id)), result];
+    await this.save(file);
+  }
+  async scoredResults() {
+    return (await this.load()).results.filter(r => r.status === "ok").map(r => ({ sha: r.sha, scenario_id: r.scenario_id, score: r.score ?? null }));
+  }
+  async series(sha: string, scenarioId: string) {
+    return (await this.load()).results.find(r => r.sha === sha && r.scenario_id === scenarioId)?.series ?? null;
+  }
+  async saveScore(sha: string, scenarioId: string, score: StoredScore) {
+    const file = await this.load();
+    file.results = file.results.map(r => r.sha === sha && r.scenario_id === scenarioId ? { ...r, score } : r);
     await this.save(file);
   }
 }

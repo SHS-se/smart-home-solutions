@@ -24,7 +24,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { stripReplay, type StrippedReplay } from '@/lib/planner-bench/strip';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
-import { resolveCriteria, runScore, scoreCase, type CaseScore } from '@/lib/planner-bench/score';
+import {
+  isStale, resolveRules, runScore, scoreQuarters, storedPassed, CASE_SCALE, type CaseScore,
+} from '@/lib/planner-bench/score';
 import type {
   BenchResultSummary, BenchRun, BenchScenario, BenchSeries, BenchVerdict, CriteriaOverrides, Verdict,
 } from '@/lib/planner-bench/types';
@@ -44,6 +46,8 @@ async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: str
 }
 
 const key = (sha: string, scenario: string) => `${sha}/${scenario}`;
+
+interface CaseSummary { points: number; passed: boolean }
 
 /** PostgREST's answer when a table is not in the schema: this is not the test project. */
 const isMissingTable = (error: unknown) => /PGRST205|bench_\w+.*(does not exist|schema cache)/i.test(String((error as Error)?.message ?? error));
@@ -89,17 +93,25 @@ const Bench: React.FC = () => {
   const summaryByKey = useMemo(() => new Map((summaries.data ?? []).map(s => [key(s.sha, s.scenario_id), s])), [summaries.data]);
   const verdictByKey = useMemo(() => new Map((verdicts.data ?? []).map(v => [key(v.sha, v.scenario_id), v])), [verdicts.data]);
 
-  /** Every case scored for one run; null where the run has no usable result. */
+  /** Every case's stored score for one run; null where the run has no scored result. */
   const scoresFor = useMemo(() => (sha: string) => new Map(cases.map(c => {
     const summary = summaryByKey.get(key(sha, c.id));
     const verdict = verdictByKey.get(key(sha, c.id))?.verdict ?? null;
-    return [c.id, summary?.status === 'ok' && summary.stats ? scoreCase(summary.stats, c.criteria, verdict) : null] as const;
+    const score = summary?.status === 'ok' ? summary.score : null;
+    return [c.id, score ? { points: score.points, passed: storedPassed(score, verdict) } : null] as const;
   })), [cases, summaryByKey, verdictByKey]);
 
   const runScores = useMemo(() => new Map(allRuns.map(run => {
-    const points = [...scoresFor(run.sha).values()].filter((s): s is CaseScore => s !== null).map(s => s.points);
+    const points = [...scoresFor(run.sha).values()].filter((s): s is CaseSummary => s !== null).map(s => s.points);
     return [run.sha, runScore(points)] as const;
   })), [allRuns, scoresFor]);
+
+  /** Results scored by an older scorer, or before their case's rules last changed. */
+  const staleCount = useMemo(() => {
+    const criteria = new Map(cases.map(c => [c.id, c.criteria]));
+    return (summaries.data ?? []).filter(s => s.status === 'ok' && criteria.has(s.scenario_id)
+      && isStale(s.score, criteria.get(s.scenario_id))).length;
+  }, [cases, summaries.data]);
 
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
@@ -196,7 +208,12 @@ const Bench: React.FC = () => {
     mutationFn: async (criteria: CriteriaOverrides) => {
       await rows(db.from('bench_scenarios').update({ criteria }).eq('id', selectedCase!.id));
     },
-    onSuccess: () => { refresh(); toast({ title: t('Kriterierna sparade', 'Criteria saved') }); },
+    onSuccess: () => {
+      refresh();
+      toast({ title: t('Reglerna sparade', 'Rules saved') });
+      // Stored scores for this case are now stale; recompute them without re-running planners.
+      dispatch.mutate({ shas: 'none' });
+    },
     onError: (error: Error) => toast({ title: t('Kunde inte spara kriterierna', 'Could not save the criteria'), description: error.message, variant: 'destructive' }),
   });
 
@@ -242,6 +259,18 @@ const Bench: React.FC = () => {
           </AlertDescription></Alert>
         : <Alert variant="destructive"><AlertDescription>{(loadError as Error).message}</AlertDescription></Alert>)}
       {loading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar…', 'Loading…')}</div>}
+
+      {!loading && !loadError && staleCount > 0 && (
+        <Alert>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Listor och summor visar de gamla poängen tills de räknats om.`,
+              `${staleCount} result${staleCount === 1 ? ' has' : 's have'} scores from an older scorer. Lists and totals show the old scores until they are recomputed.`)}</span>
+            <Button size="sm" variant="outline" disabled={dispatch.isPending} onClick={() => dispatch.mutate({ shas: 'none' })}>
+              {t('Räkna om poäng', 'Recompute scores')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {!loading && !loadError && (
         <>
@@ -298,8 +327,6 @@ const Bench: React.FC = () => {
               scenario={selectedCase}
               currentRun={currentRun}
               testRun={testRun}
-              currentScore={currentScores?.get(selectedCase.id) ?? null}
-              testScore={testScores?.get(selectedCase.id) ?? null}
               summaryByKey={summaryByKey}
               verdictByKey={verdictByKey}
               series={series.data ?? null}
@@ -389,8 +416,6 @@ interface CaseViewProps {
   scenario: BenchScenario;
   currentRun: BenchRun | null;
   testRun: BenchRun | null;
-  currentScore: CaseScore | null;
-  testScore: CaseScore | null;
   summaryByKey: Map<string, BenchResultSummary>;
   verdictByKey: Map<string, BenchVerdict>;
   series: { current: BenchSeries | null; test: BenchSeries | null } | null;
@@ -402,19 +427,36 @@ interface CaseViewProps {
   onRerun: () => void;
 }
 
+const SCORE_COLOUR = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.abs(score)})`;
+const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
+
 const CaseView: React.FC<CaseViewProps> = ({
-  scenario, currentRun, testRun, currentScore, testScore, summaryByKey, verdictByKey,
+  scenario, currentRun, testRun, summaryByKey, verdictByKey,
   series, seriesLoading, shown, onShown, onVerdict, onSaveCriteria, onRerun,
 }) => {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
-  const criteria = resolveCriteria(draft);
-  const minC = criteria.find(c => c.key === 'pool_min')?.threshold ?? 28;
+  const [selected, setSelected] = useState<number | null>(null);
+  const rules = resolveRules(draft);
+  const minC = rules.find(r => r.key === 'pool_cold')?.threshold ?? 28;
+  const comfortC = rules.find(r => r.key === 'pool_low')?.threshold ?? 29;
+  const verdictOf = (run: BenchRun | null) => (run ? verdictByKey.get(key(run.sha, scenario.id))?.verdict : null) ?? null;
+
+  // Scored live with the rules being edited, so a change shows before it is saved.
+  const currentScore = useMemo(() => series?.current ? scoreQuarters(series.current, draft, verdictOf(currentRun)) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [series?.current, draft, currentRun, verdictByKey]);
+  const testScore = useMemo(() => series?.test ? scoreQuarters(series.test, draft, verdictOf(testRun)) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [series?.test, draft, testRun, verdictByKey]);
+
   const shownSeries = shown === 'current' ? series?.current : series?.test;
+  const shownScore = shown === 'current' ? currentScore : testScore;
   const errorFor = (run: BenchRun | null) => run ? summaryByKey.get(key(run.sha, scenario.id)) : undefined;
   const errors = [errorFor(currentRun), errorFor(testRun)].filter(s => s?.status === 'error');
-  const patch = (criterion: string, field: keyof NonNullable<CriteriaOverrides[string]>, value: number | boolean) =>
-    setDraft(d => ({ ...d, [criterion]: { ...d[criterion], [field]: value } }));
+  const patch = (rule: string, field: 'enabled' | 'threshold' | 'points', value: number | boolean) =>
+    setDraft(d => ({ ...d, [rule]: { ...d[rule], [field]: value } }));
+  const ruleLabel = new Map(rules.map(r => [r.key, r]));
 
   return (
     <Card>
@@ -439,68 +481,112 @@ const CaseView: React.FC<CaseViewProps> = ({
         {seriesLoading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar planer…', 'Loading plans…')}</div>}
         {series && (
           <>
-            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={30} />
-            {shownSeries
-              ? <BenchPlanChart series={shownSeries} timeZone={TZ} />
-              : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {([['current', currentRun, currentScore], ['test', testRun, testScore]] as const).map(([which, run, score]) => run && (
+                <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
+                  <div className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'} <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
+                    <span className="font-mono">{score ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
+                  </div>
+                  {score && (
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs tabular-nums">
+                      {[2, 1, 0, -1, -2].map(v => (
+                        <span key={v} style={{ color: SCORE_COLOUR(v) }}>{signed(v)} × {score.histogram[String(v)]}</span>
+                      ))}
+                      <span className="text-muted-foreground">{t('summa', 'sum')} {signed(score.sum)} ÷ {CASE_SCALE}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={Math.max(comfortC, 30)} />
+            {shownSeries ? (
+              <>
+                <BenchPlanChart series={shownSeries} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+                  selected={selected} onSelect={setSelected} />
+                <div className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
+                  {selected === null || !shownScore?.quarters[selected]
+                    ? <span className="text-muted-foreground">{t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
+                    : (() => {
+                      const q = shownScore.quarters[selected];
+                      return (
+                        <div className="space-y-1">
+                          <div>
+                            <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
+                            <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
+                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {shownSeries.published[selected] ? t('publicerat', 'published') : t('uppskattat', 'estimated')}</span>
+                          </div>
+                          {q.fired.length
+                            ? <ul className="text-xs space-y-0.5">{q.fired.map(k => (
+                              <li key={k} className="font-mono">{signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}</li>
+                            ))}</ul>
+                            : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
+                        </div>
+                      );
+                    })()}
+                </div>
+              </>
+            ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
           </>
         )}
 
         <div className="space-y-6">
           <div className="space-y-2 min-w-0">
-            <h3 className="font-medium">{t('Poäng och kriterier', 'Score and criteria')}</h3>
+            <h3 className="font-medium">{t('Regler per kvart', 'Quarter rules')}</h3>
+            <p className="text-xs text-muted-foreground max-w-3xl">
+              {t(`Varje kvart får summan av reglerna som slår till, begränsad till −2…+2. Fallets poäng är kvartssumman ÷ ${CASE_SCALE}, begränsad till −10…+10.`,
+                `Each quarter scores the sum of the rules that fire, limited to −2…+2. The case scores its quarter sum ÷ ${CASE_SCALE}, limited to −10…+10.`)}
+            </p>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{t('Kriterium', 'Criterion')}</TableHead>
+                    <TableHead>{t('Regel', 'Rule')}</TableHead>
                     <TableHead>{t('På', 'On')}</TableHead>
                     <TableHead>{t('Gräns', 'Threshold')}</TableHead>
-                    <TableHead>{t('Klarad', 'Pass')}</TableHead>
-                    <TableHead>{t('Missad', 'Miss')}</TableHead>
+                    <TableHead>{t('Poäng', 'Points')}</TableHead>
                     <TableHead className="text-right">{t('Nuvarande', 'Current')}</TableHead>
                     <TableHead className="text-right">Test</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {criteria.map(def => {
-                    const cur = currentScore?.criteria.find(c => c.key === def.key);
-                    const test = testScore?.criteria.find(c => c.key === def.key);
-                    const cell = (s: typeof cur) => s ? `${s.value ?? 'n/a'} → ${s.points > 0 ? '+' : ''}${s.points.toFixed(1)}` : '—';
+                  {rules.map(rule => {
+                    const cell = (score: CaseScore | null) => {
+                      if (!score) return '—';
+                      const count = score.counts[rule.key] ?? 0;
+                      return count ? `${count} × ${signed(rule.points)}` : '0';
+                    };
                     return (
-                      <TableRow key={def.key}>
-                        <TableCell className="text-sm min-w-[220px]">{def.label}{def.required ? ' *' : ''}<div className="text-xs text-muted-foreground">{def.describe(def.threshold)}</div></TableCell>
-                        <TableCell><Switch id={`bench-${def.key}-on`} checked={def.enabled} onCheckedChange={v => patch(def.key, 'enabled', v)} /></TableCell>
-                        <TableCell><Input id={`bench-${def.key}-threshold`} type="number" step="0.05" className="w-20 h-8" value={def.threshold} onChange={e => patch(def.key, 'threshold', Number(e.target.value))} /></TableCell>
-                        <TableCell><Input id={`bench-${def.key}-pass`} type="number" step="0.5" className="w-16 h-8" value={def.pass} onChange={e => patch(def.key, 'pass', Number(e.target.value))} /></TableCell>
-                        <TableCell><Input id={`bench-${def.key}-fail`} type="number" step="0.5" className="w-16 h-8" value={def.fail} onChange={e => patch(def.key, 'fail', Number(e.target.value))} /></TableCell>
-                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(cur)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(test)}</TableCell>
+                      <TableRow key={rule.key}>
+                        <TableCell className="text-sm min-w-[260px]">{rule.label}{rule.required ? ' *' : ''}<div className="text-xs text-muted-foreground">{rule.describe(rule.threshold)}</div></TableCell>
+                        <TableCell><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} /></TableCell>
+                        <TableCell><Input id={`bench-${rule.key}-threshold`} type="number" step="0.05" className="w-20 h-8" value={rule.threshold} onChange={e => patch(rule.key, 'threshold', Number(e.target.value))} /></TableCell>
+                        <TableCell>
+                          <Input id={`bench-${rule.key}-points`} type="number" step="1" min={-2} max={2} className="w-16 h-8" value={rule.points}
+                            onChange={e => patch(rule.key, 'points', Math.max(-2, Math.min(2, Math.round(Number(e.target.value)))))} />
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(currentScore)}</TableCell>
+                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(testScore)}</TableCell>
                       </TableRow>
                     );
                   })}
-                  <TableRow>
-                    <TableCell colSpan={5} className="font-medium">{t('Fallets poäng (−10 till +10)', 'Case score (−10 to +10)')}</TableCell>
-                    <TableCell className="text-right font-mono">{currentScore ? currentScore.points.toFixed(1) : '—'}</TableCell>
-                    <TableCell className="text-right font-mono">{testScore ? testScore.points.toFixed(1) : '—'}</TableCell>
-                  </TableRow>
                 </TableBody>
               </Table>
             </div>
-            <div className="flex items-center gap-3">
-              <Button size="sm" onClick={() => onSaveCriteria(draft)}>{t('Spara kriterier för fallet', 'Save criteria for this case')}</Button>
-              <span className="text-xs text-muted-foreground">{t('* krävs för godkänt. Ändringar räknar om alla körningar direkt.', '* required to pass. Changes rescore every run immediately.')}</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button size="sm" onClick={() => onSaveCriteria(draft)}>{t('Spara regler för fallet', 'Save rules for this case')}</Button>
+              <span className="text-xs text-muted-foreground">{t('* slår regeln till blir fallet underkänt. Sparade ändringar räknar om fallet för alla körningar.', '* the case fails if this rule fires anywhere. Saving rescores this case for every run.')}</span>
             </div>
           </div>
 
           <div className="space-y-3 min-w-0">
             <h3 className="font-medium">{t('Din bedömning', 'Your verdict')}</h3>
             <div className="grid gap-3 md:grid-cols-2">
-            {[['current', currentRun, currentScore] as const, ['test', testRun, testScore] as const].map(([which, run, score]) => run && (
-              <VerdictRow key={which} label={which === 'current' ? t('Nuvarande', 'Current') : 'Test'} run={run} score={score}
-                existing={verdictByKey.get(key(run.sha, scenario.id)) ?? null}
-                onVerdict={(verdict, note) => onVerdict(run.sha, verdict, note)} />
-            ))}
+              {([['current', currentRun, currentScore] as const, ['test', testRun, testScore] as const]).map(([which, run, score]) => run && (
+                <VerdictRow key={which} label={which === 'current' ? t('Nuvarande', 'Current') : 'Test'} run={run} score={score}
+                  existing={verdictByKey.get(key(run.sha, scenario.id)) ?? null}
+                  onVerdict={(verdict, note) => onVerdict(run.sha, verdict, note)} />
+              ))}
             </div>
           </div>
         </div>
@@ -518,7 +604,9 @@ const VerdictRow: React.FC<{
 }> = ({ label, run, score, existing, onVerdict }) => {
   const { t } = useLanguage();
   const [note, setNote] = useState(existing?.note ?? '');
-  const auto = score ? (score.passed ? t('godkänd', 'passes') : t('underkänd', 'fails')) : t('inget resultat', 'no result');
+  const auto = score
+    ? (score.requiredFired.length === 0 && score.points >= 0 ? t('godkänd', 'passes') : t('underkänd', 'fails'))
+    : t('inget resultat', 'no result');
   return (
     <div className="rounded-md border p-3 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">

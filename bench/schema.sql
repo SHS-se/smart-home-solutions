@@ -47,6 +47,10 @@ create table if not exists public.bench_results (
   created_at timestamptz not null default now(),
   primary key (sha, scenario_id)
 );
+-- Quarter-scoring summary (src/lib/planner-bench/score.ts StoredScore). Written
+-- by the runner and recomputed whenever the scorer version or the case's
+-- criteria change, so run lists never need the plan series.
+alter table public.bench_results add column if not exists score jsonb;
 
 create table if not exists public.bench_verdicts (
   sha text not null references public.bench_runs (sha) on delete cascade,
@@ -100,5 +104,5 @@ grant execute on function public.bench_set_current(text) to authenticated;
 -- Totals for every result, without the 30–40 kB plan series behind each.
 create or replace view public.bench_result_summaries
 with (security_invoker = true) as
-select sha, scenario_id, status, error, cpu_ms, stats
+select sha, scenario_id, status, error, cpu_ms, stats, score
 from public.bench_results;

@@ -104,6 +104,7 @@ export interface BenchResultSummary {
   status: 'ok' | 'error';
   error: string | null;
   stats: BenchStats | null;
+  score: import('./score').StoredScore | null;
   cpu_ms: number | null;
 }
 
@@ -114,11 +115,11 @@ export interface BenchVerdict {
   note: string | null;
 }
 
-/** Per-case changes to a default criterion; omitted fields keep the default. */
+/** Per-case changes to a default quarter rule; omitted fields keep the default. */
 export interface CriterionOverride {
   enabled?: boolean;
   threshold?: number;
-  pass?: number;
-  fail?: number;
+  /** Signed points the rule adds to a quarter, -2..+2. */
+  points?: number;
 }
 export type CriteriaOverrides = Record<string, CriterionOverride>;

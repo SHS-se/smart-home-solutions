@@ -7,6 +7,8 @@ name: Planner bench
 #   planner, because dev is what the test environment runs.
 # - Manual / from the bench page: runs any commits, typically `all` after a
 #   new test case is added. Existing results are kept unless `force` is set.
+#   `none` runs no planners and only recomputes stale scores (after a case's
+#   criteria change). Every run ends by rescoring whatever is stale.
 #
 # Uses the existing SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD_TEST secrets.
 
@@ -16,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       shas:
-        description: "Commits to run: comma-separated SHAs, or 'all' for every commit already on the bench"
+        description: "Commits to run: comma-separated SHAs, 'all' for every commit on the bench, or 'none' to only rescore"
         required: true
         default: all
       scenario:

@@ -102,6 +102,14 @@
     --plan-load-8: #a855b5;
     /* Base load is grey on purpose: it is the background, not a series. */
     --plan-base: #8a8f98;
+
+    /* Planner bench quarter scores, -2..+2. Red to green through grey, with
+       lightness stepping too, so the five stay apart without hue. */
+    --plan-score-n2: #b3261e;
+    --plan-score-n1: #e0735a;
+    --plan-score-p0: #8a8f98;
+    --plan-score-p1: #2fae78;
+    --plan-score-p2: #0b6e44;
   }
 }
 

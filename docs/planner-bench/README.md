@@ -46,30 +46,44 @@ The totals table compares only the cases both runs have results for.
 
 ## Scoring
 
-Each case scores between −10 and +10. A met criterion adds its pass points, a
-missed one adds its (negative) miss points, and one that does not apply (no
-pool, car never unplugged) adds nothing. Your verdict counts too: pass +2,
-fail −4.
+Every 15-minute quarter of a plan scores an integer from −2 to +2. The rules
+that fire for the quarter add their points, and the sum is clamped. A quarter
+where nothing notable happens scores 0.
 
-| Criterion | Default | Pass | Miss |
-|---|---|---:|---:|
-| Pool never below * | ≥ 28 °C | +1 | −4 |
-| Pool at the end of the plan | ≥ 29 °C | +1 | −2 |
-| Pool never above | ≤ 32.5 °C | +1 | −2 |
-| Pool heat bought in the cheapest published hours (published 25th percentile) | ≥ 30 % | +3 | −4 |
-| Pool heat bought at estimated prices | ≤ 50 % | +2 | −4 |
-| Import price paid vs time-average price | ≤ 70 %, full penalty at 90 % | +3 | −3 (linear between) |
-| Car charging planned while unplugged | ≤ 0.1 kWh | +1 | −4 |
+The plan chart shows these scores as a colour-coded strip above the price
+panel: dark red −2, light red −1, grey 0, light green +1, dark green +2. A
+single day shows the digits; the three-day view shows coloured cells. Click a
+quarter to see which rules fired.
 
-\* A missed required criterion shows the case as failed even when its points
-add up. Your verdict overrides the automatic pass/fail.
+"Flexible load" is pool + battery charging + car of at least 500 W. Price
+ranks are over the whole 72-hour plan, as the planner saw it.
 
-Run score = 550 + 45 × the mean case score, which maps onto 100–1000. With these
-defaults, the planner on `dev` at the time of writing (d737694) scores 264.
+| Rule | Default threshold | Points |
+|---|---|---:|
+| Pool below minimum * | < 28 °C | −2 |
+| Pool below comfort band | < 29 °C | −1 |
+| Pool above maximum | > 32.5 °C | −1 |
+| Flexible load in a cheap quarter | cheapest 25 % | +1 |
+| Flexible load in a very cheap quarter | cheapest 10 % | +1 |
+| Flexible load in a dear quarter | dearest 25 % | −1 |
+| Flexible load in a very dear quarter | dearest 10 % | −1 |
+| Flexible load at an estimated price above cheap published ones | > published 25th percentile | −1 |
+| Car charging planned while unplugged * | > 50 W | −2 |
+| Solar exported while the home battery has room | battery < 95 % | −1 |
+| Very dear import while the battery sits idle | battery > 20 %, dearest 10 % | −1 |
 
-Thresholds and points can be changed per case on the page. Scoring reads only
-the stored totals, so a change rescores every run at once. Planners are re-run
-only for new cases or new commits.
+\* If this rule fires anywhere, the case shows as failed. Your verdict
+overrides the automatic pass/fail but does not change points.
+
+- **Case points:** quarter sum ÷ 10, clamped to −10…+10.
+- **Run score:** 550 + 45 × the mean case points, which maps onto 100–1000.
+
+Every rule can be switched off, re-thresholded or re-pointed per case on the
+page. The chart and rule counts update as you edit, and saving recomputes that
+case's stored scores for every run. To change a rule for all cases, edit
+`DEFAULT_RULES` in `src/lib/planner-bench/score.ts` and bump `SCORER_VERSION`.
+The next bench run, or **Recompute scores**, rescores every stored result from
+its saved plan, without re-running any planner.
 
 ## Running it
 
@@ -81,7 +95,8 @@ deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-
 ```
 
 **Run commits by hand:** use the workflow's *Run workflow* button in GitHub
-Actions (`shas`: `all` or comma-separated SHAs), or locally:
+Actions (`shas`: `all`, comma-separated SHAs, or `none` to only rescore), or
+locally:
 
 ```bash
 deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas all

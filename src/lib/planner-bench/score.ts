@@ -1,159 +1,210 @@
-// Points for one plan, and the run score built from them.
+// Quarter-by-quarter scoring of a plan, and the run score built from it.
 //
-// Each test case scores between -10 and +10. A criterion that is met adds its
-// `pass` points, one that is missed adds its (negative) `fail` points, and one
-// that does not apply to the case (no pool, car always plugged in) adds
-// nothing. Phil's own verdict on the case counts as a criterion too, and
-// outweighs any single automatic one.
+// Every 15-minute quarter scores an integer from -2 to +2: the rules that fire
+// for the quarter add their points, and the sum is clamped. A quarter where
+// nothing notable happens scores 0, so the score is a count of good and bad
+// decisions rather than an average that ordinary quarters dilute.
 //
-// The run score maps the average case score onto 100–1000: 550 + 45 × mean.
-// A run where every case scores -10 lands on 100, one where every case scores
-// +10 on 1000. Scoring reads only stored totals, so changing a threshold
-// rescores every run instantly; the planners are re-run only for new cases or
-// new commits.
+// A case's points are its quarter sum divided by CASE_SCALE, clamped to
+// -10..+10. The run score maps the mean case score onto 100–1000
+// (550 + 45 × mean). Scoring reads only the stored plan series, so a rule
+// change rescoring every run needs no planner re-run.
+//
+// Bump SCORER_VERSION whenever a rule or default changes, so stored scores
+// are recognised as stale and recomputed.
 
-import type { BenchStats, CriteriaOverrides, Verdict } from './types';
+import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
+export const SCORER_VERSION = 1;
+export const QUARTER_MIN = -2;
+export const QUARTER_MAX = 2;
 export const CASE_MIN = -10;
 export const CASE_MAX = 10;
+/** Quarter points per case point: 10 quarter-points ≈ one case point. */
+export const CASE_SCALE = 10;
 export const RUN_MIN = 100;
 export const RUN_MAX = 1000;
+/** Pool, battery charging and car together above this count as a flexible purchase. */
+export const FLEXIBLE_W = 500;
 
-type Metric = (s: BenchStats) => number | null;
-
-export interface CriterionDefinition {
-  key: string;
-  label: string;
-  /** How the threshold reads, e.g. "≥ 28 °C". */
-  describe: (threshold: number) => string;
-  metric: Metric;
-  /** `min`: value ≥ threshold passes. `max`: value ≤ threshold passes. */
-  direction: 'min' | 'max';
-  threshold: number;
-  pass: number;
-  fail: number;
-  /** A case with a missed required criterion shows as failed even when its points add up. */
-  required?: boolean;
-  /** `linear` criteria scale from `pass` at the threshold to `fail` at `failAt`. */
-  failAt?: number;
-  format: (value: number) => string;
+/** What a rule can see about one quarter. */
+export interface QuarterView {
+  s: BenchSeries;
+  i: number;
+  /** Share of the plan's quarters priced strictly below this one, 0–1. */
+  priceRank: number;
+  /** Published 25th-percentile import price, or null without published prices. */
+  publishedP25: number | null;
+  /** Pool + battery charging + car, W. */
+  flexibleW: number;
 }
 
-const c = (value: number, digits = 2) => `${value.toFixed(digits)}`;
-const poolShare = (part: (s: BenchStats) => number): Metric =>
-  s => s.pool_kwh >= 1 ? part(s) / s.pool_kwh : null;
+export interface QuarterRule {
+  key: string;
+  label: string;
+  describe: (threshold: number) => string;
+  threshold: number;
+  /** Signed points added when the rule fires. */
+  points: number;
+  /** A case in which this rule fires anywhere is shown as failed. */
+  required?: boolean;
+  fires: (q: QuarterView, threshold: number) => boolean;
+}
 
-export const DEFAULT_CRITERIA: CriterionDefinition[] = [
+const pct = (t: number) => `${Math.round(t * 100)} %`;
+const buying = (q: QuarterView) => q.flexibleW >= FLEXIBLE_W;
+
+export const DEFAULT_RULES: QuarterRule[] = [
   {
-    key: 'pool_min', label: 'Pool never below', describe: t => `≥ ${c(t, 1)} °C`,
-    metric: s => s.pool_min_c, direction: 'min', threshold: 28, pass: 1, fail: -4, required: true,
-    format: v => `${c(v)} °C`,
+    key: 'pool_cold', label: 'Pool below minimum', describe: t => `< ${t} °C`, threshold: 28, points: -2, required: true,
+    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! < t,
   },
   {
-    key: 'pool_end', label: 'Pool at the end of the plan', describe: t => `≥ ${c(t, 1)} °C`,
-    metric: s => s.pool_end_c, direction: 'min', threshold: 29, pass: 1, fail: -2,
-    format: v => `${c(v)} °C`,
+    key: 'pool_low', label: 'Pool below comfort band', describe: t => `< ${t} °C`, threshold: 29, points: -1,
+    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! < t,
   },
   {
-    key: 'pool_max', label: 'Pool never above', describe: t => `≤ ${c(t, 1)} °C`,
-    metric: s => s.pool_max_c, direction: 'max', threshold: 32.5, pass: 1, fail: -2,
-    format: v => `${c(v)} °C`,
+    key: 'pool_hot', label: 'Pool above maximum', describe: t => `> ${t} °C`, threshold: 32.5, points: -1,
+    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > t,
   },
   {
-    key: 'pool_cheap', label: 'Pool heat bought in the cheapest published hours', describe: t => `≥ ${Math.round(t * 100)} %`,
-    metric: poolShare(s => s.pool_cheap_kwh), direction: 'min', threshold: 0.3, pass: 3, fail: -4,
-    format: v => `${Math.round(v * 100)} %`,
+    key: 'cheap_buy', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.25, points: 1,
+    fires: (q, t) => buying(q) && q.priceRank < t,
   },
   {
-    key: 'pool_estimated', label: 'Pool heat bought at estimated prices', describe: t => `≤ ${Math.round(t * 100)} %`,
-    metric: poolShare(s => s.pool_estimated_kwh), direction: 'max', threshold: 0.5, pass: 2, fail: -4,
-    format: v => `${Math.round(v * 100)} %`,
+    key: 'cheapest_buy', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 1,
+    fires: (q, t) => buying(q) && q.priceRank < t,
   },
   {
-    key: 'price_paid', label: 'Import price paid vs average price', describe: t => `≤ ${Math.round(t * 100)} % (full penalty at 90 %)`,
-    metric: s => s.import_price_paid !== null && s.grid_import_kwh >= 1 && s.import_price_mean > 0
-      ? s.import_price_paid / s.import_price_mean : null,
-    direction: 'max', threshold: 0.7, failAt: 0.9, pass: 3, fail: -3,
-    format: v => `${Math.round(v * 100)} %`,
+    key: 'dear_buy', label: 'Flexible load in a dear quarter', describe: t => `price in dearest ${pct(1 - t)}`, threshold: 0.75, points: -1,
+    fires: (q, t) => buying(q) && q.priceRank >= t,
   },
   {
-    key: 'ev_unplugged', label: 'Car charging planned while unplugged', describe: t => `≤ ${c(t, 1)} kWh`,
-    metric: s => s.ev_unplugged_quarters > 0 ? s.ev_unplugged_kwh : null,
-    direction: 'max', threshold: 0.1, pass: 1, fail: -4,
-    format: v => `${c(v, 1)} kWh`,
+    key: 'dearest_buy', label: 'Flexible load in a very dear quarter', describe: t => `price in dearest ${pct(1 - t)}`, threshold: 0.9, points: -1,
+    fires: (q, t) => buying(q) && q.priceRank >= t,
+  },
+  {
+    key: 'estimated_buy', label: 'Flexible load at an estimated price above cheap published ones',
+    describe: t => `estimated price > ${t}× published 25th percentile`, threshold: 1, points: -1,
+    fires: (q, t) => buying(q) && !q.s.published[q.i] && q.publishedP25 !== null && q.s.importPrice[q.i] > q.publishedP25 * t,
+  },
+  {
+    key: 'unplugged_charge', label: 'Car charging planned while unplugged', describe: t => `> ${t} W`, threshold: 50, points: -2, required: true,
+    fires: (q, t) => q.s.carW[q.i] > t && !q.s.carConnected[q.i],
+  },
+  {
+    key: 'solar_spill', label: 'Solar exported while the home battery has room', describe: t => `battery below ${t} %`, threshold: 95, points: -1,
+    fires: (q, t) => Math.min(q.s.solarW[q.i], q.s.gridExportW[q.i]) >= FLEXIBLE_W && q.s.homeSoc[q.i] !== null && q.s.homeSoc[q.i]! < t,
+  },
+  {
+    key: 'idle_battery', label: 'Very dear import while the battery sits idle', describe: t => `battery above ${t} %, dearest 10 %`, threshold: 20, points: -1,
+    fires: (q, t) => q.s.gridImportW[q.i] >= FLEXIBLE_W && q.priceRank >= 0.9 && q.s.homeSoc[q.i] !== null && q.s.homeSoc[q.i]! > t
+      && q.s.batteryDischargeW[q.i] < 100,
   },
 ];
 
-export const VERDICT_POINTS: Record<Verdict, number> = { pass: 2, fail: -4 };
+export type ResolvedRule = QuarterRule & { enabled: boolean };
 
-export interface CriterionScore {
-  key: string;
-  label: string;
-  target: string;
-  value: string | null;
-  points: number;
-  met: boolean | null;
-  required: boolean;
+/** A case's rules: the defaults with its `enabled`, `threshold` and `points` overrides applied. */
+export function resolveRules(overrides: CriteriaOverrides = {}): ResolvedRule[] {
+  return DEFAULT_RULES.map(rule => {
+    const o = overrides[rule.key] ?? {};
+    return { ...rule, enabled: o.enabled ?? true, threshold: o.threshold ?? rule.threshold, points: o.points ?? rule.points };
+  });
+}
+
+export interface QuarterScore {
+  score: number;
+  /** Rule keys that fired, in rule order. */
+  fired: string[];
 }
 
 export interface CaseScore {
   points: number;
-  /** Before clamping to ±10, so a reader can see how far past the limit it was. */
-  raw: number;
-  criteria: CriterionScore[];
-  /** Phil's verdict when there is one, otherwise the automatic reading. */
+  /** Sum of every quarter's score, before scaling. */
+  sum: number;
+  quarters: QuarterScore[];
+  /** How often each rule fired. */
+  counts: Record<string, number>;
+  /** How many quarters scored each value, -2..+2. */
+  histogram: Record<string, number>;
+  requiredFired: string[];
+  /** Your verdict when there is one, otherwise the automatic reading. */
   passed: boolean;
   verdict: Verdict | null;
 }
 
-export function resolveCriteria(overrides: CriteriaOverrides = {}): (CriterionDefinition & { enabled: boolean })[] {
-  return DEFAULT_CRITERIA.map(definition => {
-    const o = overrides[definition.key] ?? {};
-    return {
-      ...definition,
-      enabled: o.enabled ?? true,
-      threshold: o.threshold ?? definition.threshold,
-      pass: o.pass ?? definition.pass,
-      fail: o.fail ?? definition.fail,
+export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {}, verdict: Verdict | null = null): CaseScore {
+  const rules = resolveRules(overrides).filter(r => r.enabled);
+  const n = s.start.length;
+  const sorted = [...s.importPrice].sort((a, b) => a - b);
+  const below = (price: number) => {
+    let lo = 0, hi = sorted.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < price) lo = mid + 1; else hi = mid; }
+    return lo;
+  };
+  const published = s.importPrice.filter((_, i) => s.published[i]).sort((a, b) => a - b);
+  const publishedP25 = published.length ? published[Math.max(0, Math.ceil(published.length * 0.25) - 1)] : null;
+
+  const counts: Record<string, number> = {};
+  const histogram: Record<string, number> = { '-2': 0, '-1': 0, '0': 0, '1': 0, '2': 0 };
+  const quarters: QuarterScore[] = [];
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const q: QuarterView = {
+      s, i, priceRank: n ? below(s.importPrice[i]) / n : 0, publishedP25,
+      flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
     };
-  });
+    let raw = 0;
+    const fired: string[] = [];
+    for (const rule of rules) {
+      if (!rule.fires(q, rule.threshold)) continue;
+      raw += rule.points;
+      fired.push(rule.key);
+      counts[rule.key] = (counts[rule.key] ?? 0) + 1;
+    }
+    const score = Math.max(QUARTER_MIN, Math.min(QUARTER_MAX, Math.round(raw)));
+    histogram[String(score)]++;
+    sum += score;
+    quarters.push({ score, fired });
+  }
+  const requiredFired = rules.filter(r => r.required && counts[r.key]).map(r => r.key);
+  const points = Math.max(CASE_MIN, Math.min(CASE_MAX, sum / CASE_SCALE));
+  return {
+    points, sum, quarters, counts, histogram, requiredFired, verdict,
+    passed: verdict ? verdict === 'pass' : requiredFired.length === 0 && points >= 0,
+  };
 }
 
-export function scoreCase(stats: BenchStats, overrides: CriteriaOverrides = {}, verdict: Verdict | null = null): CaseScore {
-  const criteria: CriterionScore[] = [];
-  let raw = 0;
-  let requiredMissed = false;
-  for (const def of resolveCriteria(overrides)) {
-    if (!def.enabled) continue;
-    const value = def.metric(stats);
-    let points = 0, met: boolean | null = null;
-    if (value !== null && Number.isFinite(value)) {
-      met = def.direction === 'min' ? value >= def.threshold : value <= def.threshold;
-      if (def.failAt !== undefined) {
-        const span = def.failAt - def.threshold;
-        const along = Math.min(1, Math.max(0, (value - def.threshold) / span));
-        points = def.pass + (def.fail - def.pass) * along;
-      } else {
-        points = met ? def.pass : def.fail;
-      }
-      if (!met && def.required) requiredMissed = true;
-    }
-    raw += points;
-    criteria.push({
-      key: def.key, label: def.label, target: def.describe(def.threshold),
-      value: value === null ? null : def.format(value), points, met, required: !!def.required,
-    });
-  }
-  if (verdict) {
-    raw += VERDICT_POINTS[verdict];
-    criteria.push({
-      key: 'verdict', label: 'Your verdict', target: 'pass', value: verdict,
-      points: VERDICT_POINTS[verdict], met: verdict === 'pass', required: false,
-    });
-  }
-  const points = Math.min(CASE_MAX, Math.max(CASE_MIN, raw));
-  return { points, raw, criteria, verdict, passed: verdict ? verdict === 'pass' : !requiredMissed && points >= 0 };
+/** What the bench stores per result, so run lists need no plan series. */
+export interface StoredScore {
+  version: number;
+  /** Fingerprint of the case's overrides the score was computed with. */
+  criteria: string;
+  points: number;
+  sum: number;
+  histogram: Record<string, number>;
+  counts: Record<string, number>;
+  required_fired: string[];
 }
+
+export const criteriaFingerprint = (overrides: CriteriaOverrides = {}) =>
+  JSON.stringify(Object.keys(overrides).sort().map(k => [k, overrides[k]]));
+
+export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): StoredScore {
+  const c = scoreQuarters(s, overrides);
+  return {
+    version: SCORER_VERSION, criteria: criteriaFingerprint(overrides), points: c.points, sum: c.sum,
+    histogram: c.histogram, counts: c.counts, required_fired: c.requiredFired,
+  };
+}
+
+export const isStale = (score: StoredScore | null | undefined, overrides: CriteriaOverrides = {}) =>
+  !score || score.version !== SCORER_VERSION || score.criteria !== criteriaFingerprint(overrides);
+
+/** Pass/fail from a stored score and your verdict. */
+export const storedPassed = (score: StoredScore, verdict: Verdict | null) =>
+  verdict ? verdict === 'pass' : score.required_fired.length === 0 && score.points >= 0;
 
 /** 100–1000; null until at least one case has a result. */
 export function runScore(casePoints: readonly number[]): number | null {

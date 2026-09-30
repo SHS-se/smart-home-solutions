@@ -3,7 +3,9 @@
 //
 //   deno run -A --config deno.json bench/run.ts [options]
 //
-//   --shas a,b,c | all      commits to run (default: HEAD). `all` = every commit already on the bench.
+//   --shas a,b,c | all | none
+//                           commits to run (default: HEAD). `all` = every commit already on the bench,
+//                           `none` = no planner runs, only recompute stale scores.
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases that already have a result for the commit.
 //   --current <sha>         mark this commit as the planner currently deployed.
@@ -19,6 +21,7 @@
 // cannot take the others with it.
 
 import { loadPlanner } from "./planner-adapter.ts";
+import { isStale, storedScore } from "../src/lib/planner-bench/score.ts";
 import { type BenchStore, DbStore, LocalStore } from "./store.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -60,19 +63,39 @@ async function worker(sha: string, root: string) {
     if (done.has(scenario.id)) continue;
     try {
       const { series, stats, cpuMs } = planner.run(scenario.input, all);
-      await bench.saveResult({ sha, scenario_id: scenario.id, status: "ok", error: null, cpu_ms: Math.round(cpuMs), series, stats });
+      await bench.saveResult({ sha, scenario_id: scenario.id, status: "ok", error: null, cpu_ms: Math.round(cpuMs), series, stats,
+        score: storedScore(series, scenario.criteria) });
       console.log(`  ${scenario.name}: ${Math.round(cpuMs)} ms, pool ${stats.pool_kwh.toFixed(1)} kWh, cost ${stats.grid_cost_sek.toFixed(1)} kr`);
     } catch (error) {
       const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
-      await bench.saveResult({ sha, scenario_id: scenario.id, status: "error", error: message, cpu_ms: null, series: null, stats: null });
+      await bench.saveResult({ sha, scenario_id: scenario.id, status: "error", error: message, cpu_ms: null, series: null, stats: null, score: null });
       console.log(`  ${scenario.name}: ERROR ${message.split("\n")[0]}`);
     }
   }
 }
 
+/**
+ * Recompute every stored score written by an older scorer or before the case's
+ * criteria last changed. Reads the stored plan series; no planner runs.
+ */
+async function rescoreStale(bench: BenchStore) {
+  const criteria = new Map((await bench.scenarios()).map(c => [c.id, c.criteria]));
+  let rescored = 0;
+  for (const result of await bench.scoredResults()) {
+    const overrides = criteria.get(result.scenario_id);
+    if (overrides === undefined || !isStale(result.score, overrides)) continue;
+    const series = await bench.series(result.sha, result.scenario_id);
+    if (!series) continue;
+    await bench.saveScore(result.sha, result.scenario_id, storedScore(series, overrides));
+    rescored++;
+  }
+  console.log(`Rescored ${rescored} stale result${rescored === 1 ? "" : "s"}.`);
+}
+
 async function orchestrate() {
   const bench = store();
   const requested = args.shas === "all" ? await bench.knownShas()
+    : args.shas === "none" ? []
     : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
@@ -105,6 +128,7 @@ async function orchestrate() {
       }
     }
     if (args.current) await bench.markCurrent(await git("rev-parse", args.current));
+    await rescoreStale(bench);
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }

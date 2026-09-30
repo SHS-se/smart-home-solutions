@@ -9,6 +9,7 @@
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
+import { storedScore } from '../src/lib/planner-bench/score';
 import type { BenchSeries } from '../src/lib/planner-bench/types';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -118,7 +119,7 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
         case 'bench_scenarios': return CASES.map(c => ({ ...c, source_filename: null, criteria: {}, notes: null, archived: false, created_at: nowIso }));
         case 'bench_result_summaries': return Object.entries(PLANS).map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
-          return { sha, scenario_id, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan) };
+          return { sha, scenario_id, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: storedScore(plan) };
         });
         case 'bench_verdicts': return [];
         case 'bench_results': {
@@ -159,6 +160,15 @@ test.describe('planner bench', () => {
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
+
+    // Every quarter of the shown plan carries its score in a strip above the chart.
+    await expect(page.getByText(/per quarter, −2 to \+2|per kvart, −2 till \+2/)).toBeVisible();
+
+    // Clicking a quarter explains its score.
+    const plan = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const box = (await plan.boundingBox())!;
+    await plan.click({ position: { x: box.width * 0.2, y: box.height * 0.5 } });
+    await expect(page.getByText(/No rule fired|Ingen regel slog till|Flexible load|Pool/).first()).toBeVisible();
 
     // Both planners are drawn for the case; the toggle swaps the full plan chart.
     await expect(page.getByRole('img', { name: /Pool temperature|Pooltemperatur/ })).toBeVisible();

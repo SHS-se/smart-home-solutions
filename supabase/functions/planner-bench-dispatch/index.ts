@@ -43,7 +43,7 @@ serve(async (request: Request): Promise<Response> => {
     const body = await request.json();
     const shas = String(body?.shas ?? "all").trim();
     const scenario = String(body?.scenario ?? "").trim();
-    if (!/^(all|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'all' or commit SHAs" }, 400);
+    if (!/^(all|none|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'all', 'none' or commit SHAs" }, 400);
     if (scenario && !/^[0-9a-f-]{36}$/.test(scenario)) return json({ error: "scenario must be a test case id" }, 400);
     inputs = { shas, scenario, force: body?.force ? "true" : "false" };
   } catch {
