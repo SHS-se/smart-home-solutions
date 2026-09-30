@@ -37,7 +37,8 @@ export type NavIcon =
   | 'questionnaire'
   | 'tariffs'
   | 'erd'
-  | 'staff';
+  | 'staff'
+  | 'bench';
 
 export interface AppNavItem {
   path: string;
@@ -228,6 +229,7 @@ export const staffNavGroups: AppNavGroup[] = [
       { path: '/portal/customers/questionnaire', labelSv: 'Hemprofilfrågor', labelEn: 'Home profile questions', icon: 'questionnaire' },
       { path: '/portal/settings/energy-tariffs', labelSv: 'Ellevio-tariffer', labelEn: 'Ellevio tariffs', icon: 'tariffs' },
       { path: '/portal/erd', labelSv: 'Databasdiagram', labelEn: 'Database ERD', icon: 'erd' },
+      { path: '/portal/planner-bench', labelSv: 'Planerarbänk', labelEn: 'Planner bench', icon: 'bench' },
     ],
   },
 ];

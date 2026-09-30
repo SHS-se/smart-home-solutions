@@ -10,6 +10,7 @@ export default defineConfig(config, {
     'invoice-bom-fulfillment.spec.ts',
     'plan-workbench.spec.ts',
     'replan-request.spec.ts',
+    'planner-bench.spec.ts',
   ],
   // Every test builds its own context and route mocks, so tests within a file
   // are independent and can share the workers instead of running file by file.

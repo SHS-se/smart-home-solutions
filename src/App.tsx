@@ -48,6 +48,7 @@ const StaffUsers = lazy(() => import("./pages/portal/StaffUsers"));
 const QuestionnaireManager = lazy(() => import("./pages/portal/settings/QuestionnaireManager"));
 const EnergyTariffSettings = lazy(() => import("./pages/portal/settings/EnergyTariffSettings"));
 const ERDiagram = lazy(() => import("./pages/portal/ERDiagram"));
+const PlannerBench = lazy(() => import("./pages/portal/PlannerBench"));
 const InvoicesList = lazy(() => import("./pages/portal/invoices/InvoicesList"));
 const InvoiceDraftEditor = lazy(() => import("./pages/portal/invoices/InvoiceDraftEditor"));
 const InvoiceDetail = lazy(() => import("./pages/portal/invoices/InvoiceDetail"));
@@ -195,6 +196,7 @@ const App = () => (
                         <Route path="/portal/settings/business" element={<BusinessSettings />} />
                         <Route path="/portal/staff" element={<StaffUsers />} />
                         <Route path="/portal/erd" element={<ERDiagram />} />
+                        <Route path="/portal/planner-bench" element={<PlannerBench />} />
 
                         {/* Accounting (part of the staff app) */}
                         <Route path="/accounting" element={<AccountingOverview />} />

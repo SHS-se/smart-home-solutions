@@ -29,6 +29,7 @@ import {
   ClipboardList,
   Database,
   UserCog,
+  FlaskConical,
   ChevronDown,
   Eye,
   X,
@@ -110,6 +111,7 @@ const navIcons: Record<NavIcon, LucideIcon> = {
   tariffs: Calculator,
   erd: Database,
   staff: UserCog,
+  bench: FlaskConical,
 };
 
 export interface CustomerViewInfo {
