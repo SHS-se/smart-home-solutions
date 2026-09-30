@@ -19,11 +19,17 @@ name: CI & Deploy
 # VITE_SUPABASE_* anon keys are baked in at build time (public), so no anon secrets here.
 # Edge functions are deployed by the `functions` job below (Supabase Management API via
 # SUPABASE_ACCESS_TOKEN — no DB password or Docker needed).
+#
+# Each job runs only for what changed since the last successful deploy of the branch
+# (scripts/ci-changes.ts follows local imports, so a planner change still redeploys the
+# portal, which runs the planner in the browser). Run the workflow manually to deploy
+# everything.
 
 on:
   push:
     branches: [main, dev]
   pull_request:
+  workflow_dispatch:
 
 # Cancel superseded runs for the same branch/PR.
 concurrency:
@@ -34,8 +40,59 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # to find the last successful run
+    outputs:
+      deploy: ${{ steps.base.outputs.deploy }}
+      code: ${{ steps.detect.outputs.code }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      migrations: ${{ steps.detect.outputs.migrations }}
+      functions: ${{ steps.detect.outputs.functions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Find the last deployed commit
+        # Diff against the last successful run, not the previous push: a cancelled or failed
+        # run deployed nothing, so its changes must ride along with the next one.
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.ref_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          deploy=false
+          if [ "$EVENT" != pull_request ] && { [ "$BRANCH" = main ] || [ "$BRANCH" = dev ]; }; then deploy=true; fi
+          case "$EVENT" in
+            pull_request) sha="$PR_BASE" ;;
+            workflow_dispatch) sha="" ;; # deploy everything
+            *) sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-deploy.yml/runs?branch=$BRANCH&status=success&per_page=30" \
+                 --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].head_sha // ""') ;;
+          esac
+          echo "Base: ${sha:-none (everything)}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
+      - name: Classify changed files
+        id: detect
+        run: deno run -A --no-check scripts/ci-changes.ts --base "${{ steps.base.outputs.sha }}" --workflow ci-deploy.yml
+
   ci:
     name: Lint, test & build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +126,7 @@ jobs:
         run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
 
       - name: Build
+        if: needs.changes.outputs.frontend == 'true'
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then
@@ -78,6 +136,7 @@ jobs:
           fi
 
       - name: Upload build output
+        if: needs.changes.outputs.frontend == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -85,16 +144,19 @@ jobs:
           retention-days: 7
 
       - name: Install Playwright browser
+        if: needs.changes.outputs.frontend == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests (mocked backend)
+        if: needs.changes.outputs.frontend == 'true'
         # Same command locally and in CI; Playwright owns the preview server.
         run: npm run test:e2e:local
 
   migrate:
     name: Apply Supabase migrations
-    needs: ci
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    needs: [changes, ci]
+    # !failure() lets a skipped job pass through while still stopping on a failed one.
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.deploy == 'true' && needs.changes.outputs.migrations == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Attaching an environment lets you require manual approval before prod migrations run:
@@ -140,8 +202,8 @@ jobs:
 
   functions:
     name: Deploy edge functions
-    needs: migrate
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    needs: [changes, migrate]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.deploy == 'true' && needs.changes.outputs.functions != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Same gated environment as migrate, so prod function deploys can require approval too.
@@ -159,17 +221,30 @@ jobs:
           version: latest
 
       - name: Deploy edge functions
-        # Deploys every function under supabase/functions (per-function settings come from
-        # config.toml). --use-api bundles without Docker; auth is the access token above, so no DB
-        # password is needed. Runs after migrate so functions can rely on the latest schema/RPCs.
+        # Deploys the functions whose code changed (per-function settings come from config.toml,
+        # and changing it deploys them all). --use-api bundles without Docker; auth is the access
+        # token above, so no DB password is needed. Runs after migrate so functions can rely on the
+        # latest schema/RPCs. The plan step goes first: the ingest functions call it.
+        env:
+          FUNCTIONS: ${{ needs.changes.outputs.functions }}
         run: |
-          bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
-          supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+          set -euo pipefail
+          rest=()
+          for name in $FUNCTIONS; do
+            if [ "$name" = energy-optimisation-plan-step ]; then
+              bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
+            else
+              rest+=("$name")
+            fi
+          done
+          if [ ${#rest[@]} -gt 0 ]; then
+            supabase functions deploy "${rest[@]}" --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+          fi
 
   deploy:
     name: Deploy to Cloudflare Pages
-    needs: functions
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    needs: [changes, functions]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.deploy == 'true' && needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
