@@ -3,7 +3,7 @@ import {
   batteryPolicyRequestSchema,
   compileBatteryPolicy,
 } from "./battery-policy.ts";
-import { parseHouseholdProblem } from "./household-case.ts";
+import { parseHouseholdProblem } from "./planner/household-case.ts";
 import {
   compileBatteryPolicyCoverage,
   evaluateBatteryPolicyCoverage,

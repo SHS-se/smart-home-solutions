@@ -1,8 +1,8 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
-import { generateOptimisationPlan } from './energy-optimisation.ts';
+import { generateOptimisationPlan } from './planner/energy-optimisation.ts';
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations } from './replan-policy.ts';
-import { isolateMeasurements } from './measurement-isolation.ts';
+import { isolateMeasurements } from './planner/measurement-isolation.ts';
 
 Deno.test('quarter exchange and changed measurements preserve plan until a price publication', () => {
   const before = mixedModeSnapshot(), next = structuredClone(before);

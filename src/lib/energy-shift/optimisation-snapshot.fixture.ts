@@ -10,7 +10,7 @@
 
 
 
-import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 
 export const CAPTURED_AT = '2026-08-17T20:45:00.000Z';
 export const START = Date.parse(CAPTURED_AT);

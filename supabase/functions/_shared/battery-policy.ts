@@ -11,7 +11,7 @@ import {
   type HouseholdProblem,
   parseHouseholdProblem,
   type Violation,
-} from "./household-case.ts";
+} from "./planner/household-case.ts";
 import {
   type BatteryPrefix,
   createBatteryPrefixScorer,
@@ -20,7 +20,7 @@ import {
   HOUSEHOLD_SCORER_VERSION,
   type HouseholdScore,
   type Objective,
-} from "./household-score.ts";
+} from "./planner/household-score.ts";
 
 export const BATTERY_POLICY_VERSION = "offline-battery-policy-v1";
 export const BATTERY_POLICY_LIMITS = {

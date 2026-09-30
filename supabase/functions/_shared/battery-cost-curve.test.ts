@@ -17,9 +17,9 @@ import {
   dispatchWorkbench,
   dispatchWorkbenchInputs,
   generateOptimisationPlan,
-} from "./energy-optimisation.ts";
-import { dispatchAuctionSteps, scoreDispatch } from "./dispatch-plan.ts";
-import type { UtilityCurve } from "./store-value.ts";
+} from "./planner/energy-optimisation.ts";
+import { dispatchAuctionSteps, scoreDispatch } from "./planner/dispatch-plan.ts";
+import type { UtilityCurve } from "./planner/store-value.ts";
 
 const curve: UtilityCurve = {
   unit: "kwh",

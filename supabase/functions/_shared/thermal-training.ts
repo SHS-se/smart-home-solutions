@@ -11,7 +11,7 @@ import {
   type ThermalFitResult,
   type ThermalMoments,
   type ThermalZoneModel,
-} from "./thermal-model.ts";
+} from "./planner/thermal-model.ts";
 
 export const REFIT_INTERVAL_HOURS = 24;
 /**

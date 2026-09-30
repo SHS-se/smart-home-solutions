@@ -10,7 +10,7 @@ import type {
   PlanKey,
   PlanSummary,
   PlannedSlot,
-} from '../../../supabase/functions/_shared/energy-optimisation';
+} from '../../../supabase/functions/_shared/planner/energy-optimisation';
 
 export type {
   BatteryValueCurveDiagnostic,

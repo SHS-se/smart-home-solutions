@@ -8,8 +8,8 @@ import { batteryExecutionSearchScope } from "./battery-execution-policy.ts";
 import {
   createBatteryPrefixScorer,
   emptyObjective,
-} from "./household-score.ts";
-import { gridPower, solarCapacity } from "./battery-conversion.ts";
+} from "./planner/household-score.ts";
+import { gridPower, solarCapacity } from "./planner/battery-conversion.ts";
 
 function setup(dc: boolean) {
   const r = executionFixtureRequest(1), p = r.problem, b = p.plant.equipment[0];

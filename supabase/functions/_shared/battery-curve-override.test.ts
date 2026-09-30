@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import { snapshot, CAPTURED_AT } from '../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts';
-import { generateOptimisationPlan } from './energy-optimisation.ts';
-import { resolveValueCurves } from './value-curves.ts';
+import { generateOptimisationPlan } from './planner/energy-optimisation.ts';
+import { resolveValueCurves } from './planner/value-curves.ts';
 
 Deno.test('custom battery values are uncapped, retain every point, and change dispatch', () => {
   const input = snapshot();

@@ -678,7 +678,7 @@ Deno.test("owned problem and per-call results cannot mutate later evaluations", 
 
 Deno.test("bundled resolved case is runnable and recovery improves whole-household objective", async () => {
   const file = new URL(
-    "../../../docs/energy-optimisation/fixtures/household-scorer/grid-recovery.json",
+    "../../../../docs/energy-optimisation/fixtures/household-scorer/grid-recovery.json",
     import.meta.url,
   );
   const input = JSON.parse(await Deno.readTextFile(file));

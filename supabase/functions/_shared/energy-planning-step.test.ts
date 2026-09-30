@@ -1,12 +1,12 @@
-import { solvedPlan } from "./solved-plan.fixture.ts";
-import { replanReference } from "./replan-continuity.ts";
+import { solvedPlan } from "./planner/solved-plan.fixture.ts";
+import { replanReference } from "./planner/replan-continuity.ts";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import {
   assembleOptimisationPlan,
   energyPlanningStep,
@@ -17,13 +17,13 @@ import {
   type EnergyPlanningInput,
   type EnergyPlanningStep,
 } from "./energy-planning-protocol.ts";
-import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
+import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
 } from "./energy-planning-client.ts";
-import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
+import type { FixedEnergyPlan } from "./planner/fixed-energy-plan.ts";
 
 const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const inputFor = (snapshot: OptimisationSnapshot): EnergyPlanningInput => ({

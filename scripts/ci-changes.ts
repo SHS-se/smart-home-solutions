@@ -10,8 +10,10 @@
  * An empty or unreachable base (first push, force push) means everything
  * changed. Writes key=value lines to $GITHUB_OUTPUT when it is set.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { diskTree, reach } from "./module-graph.ts";
+import { PLANNER_DIR } from "../bench/planner-version.ts";
 
 export interface Changes {
   /** Anything beyond documentation: lint, typecheck and unit tests run. */
@@ -23,50 +25,6 @@ export interface Changes {
   functions: string[];
   /** The planner the bench replays. */
   planner: boolean;
-}
-
-const EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", "/index.ts", "/index.tsx", "/index.js"];
-// `import … from "x"` and `export … from "x"`, skipping `import type`, which
-// leaves no code behind; then `import "x"` and `import("x")`. A match inside a
-// comment only over-includes.
-const FROM = /\b(?:import|export)\s+(type\s)?[^'"`;]*?\bfrom\s*(['"])([^'"\n]+)\2/g;
-const BARE = /\bimport\s*\(?\s*(['"])([^'"\n]+)\1/g;
-
-const specifiers = (text: string) => [
-  ...[...text.matchAll(FROM)].filter(m => !m[1]).map(m => m[3]),
-  ...[...text.matchAll(BARE)].map(m => m[2]),
-];
-
-const isFile = (path: string) => {
-  try { return statSync(path).isFile(); } catch { return false; }
-};
-
-/** Repository-relative path of a local import, or null for packages and URLs. */
-function resolve(root: string, from: string, specifier: string): string | null {
-  const bare = specifier.split("?")[0];
-  let base: string;
-  if (bare.startsWith("./") || bare.startsWith("../")) base = join(dirname(from), bare);
-  else if (bare.startsWith("@/")) base = `src/${bare.slice(2)}`;
-  else return null;
-  return EXTENSIONS.map(ext => base + ext).find(candidate => isFile(join(root, candidate))) ?? null;
-}
-
-/** Every local file the entry points reach, entries included. */
-export function reach(root: string, entries: readonly string[]): Set<string> {
-  const seen = new Set<string>();
-  const queue = entries.filter(e => existsSync(join(root, e)));
-  while (queue.length) {
-    const file = queue.pop()!;
-    if (seen.has(file)) continue;
-    seen.add(file);
-    if (!/\.(tsx?|jsx?|mjs)$/.test(file)) continue;
-    const text = readFileSync(join(root, file), "utf8");
-    for (const specifier of specifiers(text)) {
-      const next = resolve(root, file, specifier);
-      if (next && !seen.has(next)) queue.push(next);
-    }
-  }
-  return seen;
 }
 
 const isDoc = (f: string) => f.endsWith(".md") || f.startsWith("docs/");
@@ -95,7 +53,8 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
   const any = (test: (f: string) => boolean) => changed.some(test);
   const touches = (files: Set<string>) => any(f => files.has(f));
 
-  const frontendGraph = reach(root, ["src/main.tsx", "vite.config.ts"]);
+  const tree = diskTree(root);
+  const frontendGraph = reach(tree, ["src/main.tsx", "vite.config.ts"]);
   const frontend = touches(frontendGraph)
     || any(f => FRONTEND_FILES.includes(f) || f.startsWith("public/") || f.startsWith("e2e/")
       || (f.startsWith("src/") && !isTest(f) && !isDoc(f)));
@@ -104,19 +63,14 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
   const functions = names.filter(name => {
     if (allFunctions) return true;
     const dir = `supabase/functions/${name}/`;
-    const graph = reach(root, [`${dir}index.ts`]);
+    const graph = reach(tree, [`${dir}index.ts`]);
     if (name === "energy-optimisation-plan-step") graph.add("scripts/deploy-energy-planning.sh");
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));
   });
 
-  // The bench loads these by path from each planner commit (bench/planner-adapter.ts).
-  const plannerGraph = reach(root, [
-    "supabase/functions/_shared/energy-optimisation.ts",
-    "supabase/functions/_shared/dispatch-plan.ts",
-    "bench/prepare.ts",
-    "bench/run.ts",
-  ]);
-  const planner = any(f => (plannerGraph.has(f) && !isTest(f)) || f === "bench/schema.sql");
+  // A cheap gate only: the bench itself skips a commit whose planner version it
+  // already has (bench/planner-version.ts), so over-including costs one CI job.
+  const planner = any(f => (f.startsWith(`${PLANNER_DIR}/`) && !isTest(f) && !isDoc(f)) || f === "bench/prepare.ts");
 
   return {
     code: any(f => !isDoc(f)),

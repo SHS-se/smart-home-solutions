@@ -9,12 +9,12 @@ import {
 import {
   type HouseholdProblem,
   parseHouseholdProblem,
-} from "./household-case.ts";
+} from "./planner/household-case.ts";
 import {
   createHouseholdScorer,
   HOUSEHOLD_SCORER_VERSION,
   type Objective,
-} from "./household-score.ts";
+} from "./planner/household-score.ts";
 
 export const BATTERY_COVERAGE_VERSION = "offline-battery-coverage-v1";
 const axis = z.array(z.number().finite()).min(2).max(6);

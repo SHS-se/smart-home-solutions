@@ -13,7 +13,7 @@ const migration = await Deno.readTextFile(
   "supabase/migrations/20260815113000_include_on_off_room_heaters.sql",
 );
 const optimiser = await Deno.readTextFile(
-  "supabase/functions/_shared/energy-optimisation.ts",
+  "supabase/functions/_shared/planner/energy-optimisation.ts",
 );
 
 Deno.test("every Ready room control is visible regardless of actuator style", () => {

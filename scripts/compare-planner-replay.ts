@@ -3,7 +3,7 @@
 import {
   generateOptimisationPlan,
   type OptimisationPlan,
-} from "../supabase/functions/_shared/energy-optimisation.ts";
+} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 
 const [path, from, to] = Deno.args;
 if (

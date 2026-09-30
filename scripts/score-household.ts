@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   createHouseholdScorer,
   HOUSEHOLD_SCORER_VERSION,
-} from "../supabase/functions/_shared/household-score.ts";
+} from "../supabase/functions/_shared/planner/household-score.ts";
 
 const [path, ...extra] = Deno.args;
 if (!path || extra.length) {

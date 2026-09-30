@@ -1,7 +1,7 @@
 import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
-} from '../../../supabase/functions/_shared/energy-optimisation';
+} from '../../../supabase/functions/_shared/planner/energy-optimisation';
 import type {
   ActualEnergySlot,
   OptimisationPlan,

@@ -8,7 +8,7 @@ import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation
 import {
   dispatchWorkbench,
   generateOptimisationPlan,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import {
   continuityCandidates,
   HELD_RUN_RELEASE_SEK,
@@ -16,9 +16,9 @@ import {
   REPLAN_DEADBAND_SEK,
   replanReference,
   usableReference,
-} from "./replan-continuity.ts";
-import { scoreDispatch } from "./dispatch-plan.ts";
-import { solvedPlan } from "./solved-plan.fixture.ts";
+} from "./planner/replan-continuity.ts";
+import { scoreDispatch } from "./planner/dispatch-plan.ts";
+import { solvedPlan } from "./planner/solved-plan.fixture.ts";
 import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 function batteryContinuitySnapshot(solar = true) {

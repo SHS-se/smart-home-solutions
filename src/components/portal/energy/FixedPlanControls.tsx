@@ -5,9 +5,9 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { editedPeriodEnd, fixedPlanState, type FixedPlanStatus } from '@/lib/energy-shift/fixed-plan';
 import type { WorkbenchDraft, WorkbenchModel } from '@/lib/energy-shift/plan-workbench';
-import type { DispatchWorkbench } from '../../../../supabase/functions/_shared/energy-optimisation';
-import type { DispatchSchedule } from '../../../../supabase/functions/_shared/dispatch-plan';
-import { QUARTER_MS } from '../../../../supabase/functions/_shared/fixed-energy-plan';
+import type { DispatchWorkbench } from '../../../../supabase/functions/_shared/planner/energy-optimisation';
+import type { DispatchSchedule } from '../../../../supabase/functions/_shared/planner/dispatch-plan';
+import { QUARTER_MS } from '../../../../supabase/functions/_shared/planner/fixed-energy-plan';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 

@@ -35,6 +35,9 @@ create table if not exists public.bench_runs (
   created_at timestamptz not null default now()
 );
 create unique index if not exists bench_runs_one_current on public.bench_runs (is_current) where is_current;
+-- What the planner's code does (bench/planner-version.ts). Commits that share a
+-- version share one run: the runner folds later ones into the earliest.
+alter table public.bench_runs add column if not exists planner_version text;
 
 create table if not exists public.bench_results (
   sha text not null references public.bench_runs (sha) on delete cascade,

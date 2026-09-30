@@ -1,6 +1,6 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1';
-import { plannerValueStores, dispatchWorkbench, generateOptimisationPlan } from '../../../supabase/functions/_shared/energy-optimisation.ts';
-import { curveFromPreference } from '../../../supabase/functions/_shared/value-preferences.ts';
+import { plannerValueStores, dispatchWorkbench, generateOptimisationPlan } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+import { curveFromPreference } from '../../../supabase/functions/_shared/planner/value-preferences.ts';
 import { snapshot } from './optimisation-snapshot.fixture.ts';
 
 Deno.test('chart stores exactly match dispatch with the resolved price forecast and fitted equipment', () => {

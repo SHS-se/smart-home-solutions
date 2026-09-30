@@ -14,7 +14,16 @@ import type {
   OptimisationSnapshot,
   PlannedSlot,
 } from "./energy-optimisation.ts";
-import type { EnergyPlanningInput } from "./energy-planning-protocol.ts";
+import type { StoredPriceRow } from "./energy-price-shape.ts";
+
+/** Everything one planning run reads. */
+export interface EnergyPlanningInput {
+  snapshot: OptimisationSnapshot;
+  now: string;
+  price_archive: StoredPriceRow[];
+  fixed_plan?: FixedEnergyPlan | null;
+  resolved_price_outlook?: OptimisationPlan["price_outlook"];
+}
 
 export const QUARTER_MS = 15 * 60_000;
 export interface FixedEnergyPlan {

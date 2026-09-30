@@ -1,8 +1,8 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
-import { replanReference, type ReplanPreviousPlan } from '../supabase/functions/_shared/replan-continuity.ts';
+import { replanReference, type ReplanPreviousPlan } from '../supabase/functions/_shared/planner/replan-continuity.ts';
 import { snapshot as exampleSnapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture.ts';
-import type { OptimisationPlan, OptimisationSnapshot } from '../supabase/functions/_shared/energy-optimisation.ts';
+import type { OptimisationPlan, OptimisationSnapshot } from '../supabase/functions/_shared/planner/energy-optimisation.ts';
 
 const home = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';

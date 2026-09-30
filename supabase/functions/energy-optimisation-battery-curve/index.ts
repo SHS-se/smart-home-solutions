@@ -5,8 +5,8 @@ import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import {
   resolveValueCurves,
   resolveValueSettings,
-} from "../_shared/value-curves.ts";
-import type { OptimisationSnapshot } from "../_shared/energy-optimisation.ts";
+} from "../_shared/planner/value-curves.ts";
+import type { OptimisationSnapshot } from "../_shared/planner/energy-optimisation.ts";
 
 Deno.serve(
   withTrafficMetrics(

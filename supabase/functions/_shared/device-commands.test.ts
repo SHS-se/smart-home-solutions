@@ -6,9 +6,9 @@ import {
 import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
-} from "./energy-optimisation.ts";
-import { discreteRoomPlan } from "./discrete-room-plan.ts";
-import { deviceCommands } from "./device-commands.ts";
+} from "./planner/energy-optimisation.ts";
+import { discreteRoomPlan } from "./planner/discrete-room-plan.ts";
+import { deviceCommands } from "./planner/device-commands.ts";
 
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 

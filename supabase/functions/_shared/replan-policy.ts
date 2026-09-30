@@ -1,5 +1,5 @@
-import type { OptimisationPlan, OptimisationSnapshot } from './energy-optimisation.ts';
-import type { IsolatedDevice } from './measurement-isolation.ts';
+import type { OptimisationPlan, OptimisationSnapshot } from './planner/energy-optimisation.ts';
+import type { IsolatedDevice } from './planner/measurement-isolation.ts';
 
 export interface ReplanRecommendation { key: string; reason: string; occurred_at: string }
 type PriceSnapshot = { slots: Array<Pick<OptimisationSnapshot['slots'][number], 'start' | 'import_price_sek_per_kwh' | 'export_price_sek_per_kwh'>> };

@@ -4,7 +4,7 @@ import {
   CAPTURED_AT,
   snapshot,
 } from "../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
-import { generateOptimisationPlan } from "../supabase/functions/_shared/energy-optimisation.ts";
+import { generateOptimisationPlan } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 import {
   assembleOptimisationPlan,
   energyPlanningStep,

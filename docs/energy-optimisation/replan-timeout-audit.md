@@ -177,7 +177,7 @@ Other implemented changes:
 
 Sources: `energy-optimisation-ingest/index.ts`, `_shared/energy-planning-client.ts`,
 `_shared/energy-planning-worker.ts`, `_shared/energy-planning-step.ts`,
-`_shared/dispatch-plan.ts`, `_shared/battery-cost-selection.ts`, and the integration's
+`_shared/planner/dispatch-plan.ts`, `_shared/battery-cost-selection.ts`, and the integration's
 `api.py` and `coordinator.py`.
 
 ## Redesign required for bounded end-to-end work

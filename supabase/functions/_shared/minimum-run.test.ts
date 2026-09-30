@@ -1,6 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import { validRun, continuedRun, validMinimumRun } from "./minimum-run.ts";
-import { planDispatch, scoreDispatch, type DispatchStore, type DispatchSlot } from "./dispatch-plan.ts";
+import { validRun, continuedRun, validMinimumRun } from "./planner/minimum-run.ts";
+import { planDispatch, scoreDispatch, type DispatchStore, type DispatchSlot } from "./planner/dispatch-plan.ts";
 
 const limits = {grid_import_limit_w: 10000, grid_export_limit_w: 10000,
   grid_import_shaping_w: 10000, peak_shaping_sek_per_kwh_per_kw: 0};
@@ -50,8 +50,8 @@ Deno.test("new economic starts survive settlement and refinement only as complet
 });
 
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
-import { discreteRoomPlan } from "./discrete-room-plan.ts";
-import { generateOptimisationPlan } from "./energy-optimisation.ts";
+import { discreteRoomPlan } from "./planner/discrete-room-plan.ts";
+import { generateOptimisationPlan } from "./planner/energy-optimisation.ts";
 
 Deno.test("room relay and setpoint searches retain ongoing and future runs", () => {
   for (const kind of ["relay", "thermostat"]) {
@@ -84,7 +84,7 @@ Deno.test("hot water permission cannot be inhibited during a protected initial r
   }
 });
 
-import { dispatchWithPrefix, DispatchPrefixInfeasible } from "./fixed-energy-plan.ts";
+import { dispatchWithPrefix, DispatchPrefixInfeasible } from "./planner/fixed-energy-plan.ts";
 import { assertThrows } from "jsr:@std/assert@1";
 
 Deno.test("fixed prefix can start a run that its suffix must finish", () => {

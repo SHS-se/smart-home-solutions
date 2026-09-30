@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert@1";
 import { isOptimisationPlan } from "../../../src/lib/energy-shift/contracts.ts";
-import type { OptimisationPlan } from "./energy-optimisation.ts";
+import type { OptimisationPlan } from "./planner/energy-optimisation.ts";
 import { derivedExecutionPlan, expandStoredPlan, storedPlan } from "./stored-plan.ts";
 
 const fixture = JSON.parse(await Deno.readTextFile(

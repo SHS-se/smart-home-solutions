@@ -1,5 +1,5 @@
 import { batterySnapshot } from "./generate-ha-plan-fixture.ts";
-import { generateOptimisationPlanWithBatteryProjection } from "../supabase/functions/_shared/energy-optimisation.ts";
+import { generateOptimisationPlanWithBatteryProjection } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 
 
 export function batteryExecutionFixture() {

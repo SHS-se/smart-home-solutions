@@ -1,10 +1,10 @@
-import type { OperatingScope } from "../supabase/functions/_shared/operating-scope.ts";
+import type { OperatingScope } from "../supabase/functions/_shared/planner/operating-scope.ts";
 import {
   generateOptimisationPlan,
   type OptimisationSnapshotV6,
   type OptimisationSnapshotV8,
   type OptimisationSnapshot,
-} from "../supabase/functions/_shared/energy-optimisation.ts";
+} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 
 const NOW = new Date("2026-08-20T08:55:00.000Z");
 const SLOT_MS = 15 * 60_000;

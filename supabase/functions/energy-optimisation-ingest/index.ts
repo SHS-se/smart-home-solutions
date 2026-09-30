@@ -1,11 +1,11 @@
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
-import { isolateMeasurements } from '../_shared/measurement-isolation.ts';
+import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
-import type { BatteryProjection } from "../_shared/battery-dispatch-projection.ts";
-import { replanReference, type ReplanPreviousPlan } from "../_shared/replan-continuity.ts";
+import type { BatteryProjection } from "../_shared/planner/battery-dispatch-projection.ts";
+import { replanReference, type ReplanPreviousPlan } from "../_shared/planner/replan-continuity.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
-import type { FixedEnergyPlan } from "../_shared/fixed-energy-plan.ts";
+import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
 //
@@ -32,12 +32,12 @@ import {
   type DevicePlanningRole,
   type generateOptimisationPlan,
   type OptimisationSnapshot,
-} from "../_shared/energy-optimisation.ts";
+} from "../_shared/planner/energy-optimisation.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
 } from "../_shared/energy-planning-client.ts";
-import { type StoredPriceRow } from "../_shared/energy-price-shape.ts";
+import { type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
 import { storedPlan } from "../_shared/stored-plan.ts";
 import {
   buildThermalProjection,
@@ -48,11 +48,11 @@ import {
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
 } from "../_shared/thermal-training.ts";
-import { MIN_TRAINING_SAMPLES } from "../_shared/thermal-model.ts";
+import { MIN_TRAINING_SAMPLES } from "../_shared/planner/thermal-model.ts";
 import {
   resolveValueCurves,
   resolveValueSettings,
-} from "../_shared/value-curves.ts";
+} from "../_shared/planner/value-curves.ts";
 import {
   fitPoolLoss,
   fitPoolModel,

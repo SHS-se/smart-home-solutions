@@ -1,5 +1,5 @@
-import type { OptimisationResult } from "./energy-optimisation.ts";
-import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
+import type { OptimisationResult } from "./planner/energy-optimisation.ts";
+import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
   type EnergyPlanningInput,

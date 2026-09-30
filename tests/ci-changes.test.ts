@@ -4,7 +4,7 @@ import { classify, functionNames } from "../scripts/ci-changes.ts";
 const root = new URL("..", import.meta.url).pathname;
 
 Deno.test("a planner change deploys the energy functions and the portal, and runs the bench", () => {
-  const c = classify(root, ["supabase/functions/_shared/energy-optimisation.ts"]);
+  const c = classify(root, ["supabase/functions/_shared/planner/energy-optimisation.ts"]);
   assert(c.planner);
   // The portal's plan workbench runs the planner in the browser.
   assert(c.frontend);

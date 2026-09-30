@@ -5,8 +5,8 @@ import {
   gridPower,
   outputPower,
   solarCapacity,
-} from "./battery-conversion.ts";
-import type { HouseholdCandidate, HouseholdProblem } from "./household-case.ts";
+} from "./planner/battery-conversion.ts";
+import type { HouseholdCandidate, HouseholdProblem } from "./planner/household-case.ts";
 
 export type BatteryAction = Extract<
   HouseholdCandidate["actions"][string][number],

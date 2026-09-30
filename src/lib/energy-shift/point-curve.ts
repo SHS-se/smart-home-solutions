@@ -1,4 +1,4 @@
-import { marginalValue, validateCurve, type UtilityCurve } from '../../../supabase/functions/_shared/store-value';
+import { marginalValue, validateCurve, type UtilityCurve } from '../../../supabase/functions/_shared/planner/store-value';
 
 /** Only an explicit resize changes the number of points. Preserve the end points. */
 export function resizeCurve(curve: UtilityCurve, count: number): UtilityCurve {

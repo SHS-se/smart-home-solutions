@@ -93,7 +93,7 @@ const PlanReplayDownload: React.FC<{
         format: 'shs-energy-optimisation-quarter-replay',
         schema_version: 2,
         entrypoint: {
-          module: 'supabase/functions/_shared/energy-optimisation.ts',
+          module: 'supabase/functions/_shared/planner/energy-optimisation.ts',
           export: 'generateOptimisationPlan',
           argument_order: ['snapshot', 'now', 'price_archive', 'resolved_price_outlook'],
           invocation: 'generateOptimisationPlan(arguments.snapshot, new Date(arguments.now), arguments.price_archive, arguments.resolved_price_outlook)',

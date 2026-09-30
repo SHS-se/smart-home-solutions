@@ -1,8 +1,8 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { batteryExecutionFixture } from "../../../scripts/generate-battery-execution-fixture.ts";
 import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { generateOptimisationPlanWithBatteryProjection } from "./energy-optimisation.ts";
-import { buildBatteryExecutionContract } from "./battery-plan-execution.ts";
+import { generateOptimisationPlanWithBatteryProjection } from "./planner/energy-optimisation.ts";
+import { buildBatteryExecutionContract } from "./planner/battery-plan-execution.ts";
 
 function source() {
   const snapshot = batterySnapshot();

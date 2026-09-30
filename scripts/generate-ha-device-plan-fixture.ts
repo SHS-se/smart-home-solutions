@@ -2,7 +2,7 @@ import { dispatchedEvSnapshot } from "./generate-ha-plan-fixture.ts";
 import {
   generateOptimisationPlan,
   type OptimisationSnapshot,
-} from "../supabase/functions/_shared/energy-optimisation.ts";
+} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 export function commandSnapshot(): OptimisationSnapshot {
   const snapshot: OptimisationSnapshot = {
     ...dispatchedEvSnapshot(),

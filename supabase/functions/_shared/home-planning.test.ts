@@ -1,7 +1,7 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { applyBatteryChoice } from "./home-planning.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { generateOptimisationPlan } from "./energy-optimisation.ts";
+import { generateOptimisationPlan } from "./planner/energy-optimisation.ts";
 
 Deno.test("battery exclusion changes planning without mutating hardware or per-device identity", () => {
   const original = dispatchedEvSnapshot();

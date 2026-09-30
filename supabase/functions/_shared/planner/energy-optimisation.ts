@@ -1,5 +1,4 @@
 import { type MinimumRun, validMinimumRun, validRun, requiredRunSlots } from "./minimum-run.ts";
-import type { CostCurveRecord } from "./battery-cost-curve.ts";
 import {
   powerEnvelope,
   powerEnvelopeError,
@@ -394,6 +393,17 @@ export interface ThermalZonePlanningInput {
   comfort_max_c: number[];
   maximum_power_w_by_slot: number[];
   unplanned_power_w: number[];
+}
+
+/** A saved battery cost-curve search (battery-cost-curve.ts), read as planner input. */
+export interface CostCurveRecord {
+  key: string;
+  curve: UtilityCurve;
+  source_snapshot_id: string;
+  evaluations: number;
+  bill_before_sek: number;
+  bill_after_sek: number;
+  published_until: string;
 }
 
 export interface OptimisationSnapshot {

@@ -1,6 +1,6 @@
-import { generateOptimisationPlan, type OptimisationSnapshot, validateSnapshot } from "./energy-optimisation.ts";
+import { generateOptimisationPlan, type OptimisationSnapshot, validateSnapshot } from "./planner/energy-optimisation.ts";
 import { assertEquals } from "jsr:@std/assert@1";
-import { NOW, assert, input, horizon, routedEvService } from "./energy-optimisation.fixture.ts";
+import { NOW, assert, input, horizon, routedEvService } from "./planner/energy-optimisation.fixture.ts";
 
 Deno.test("EV charging is planned as valid discrete current setpoints", () => {
   const base = input();

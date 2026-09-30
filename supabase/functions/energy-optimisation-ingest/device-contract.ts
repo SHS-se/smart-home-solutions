@@ -2,7 +2,7 @@ import type {
   DeviceControlType,
   DeviceLoadType,
   DevicePlanningRole,
-} from "../_shared/energy-optimisation.ts";
+} from "../_shared/planner/energy-optimisation.ts";
 
 export type DeviceMappingStatus = "not_configured" | "ready" | "invalid";
 

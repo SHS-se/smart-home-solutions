@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { generateOptimisationPlan, type OptimisationSnapshot } from "./energy-optimisation.ts";
-import { validateOperatingScope } from "./operating-scope.ts";
+import { generateOptimisationPlan, type OptimisationSnapshot } from "./planner/energy-optimisation.ts";
+import { validateOperatingScope } from "./planner/operating-scope.ts";
 import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 

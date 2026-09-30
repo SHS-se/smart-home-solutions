@@ -1,12 +1,12 @@
 import {
   generateOptimisationPlanWithBatteryProjection,
   type OptimisationResult,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import {
   type DispatchAuctionSolver,
   dispatchAuctionSteps,
   type DispatchResult,
-} from "./dispatch-plan.ts";
+} from "./planner/dispatch-plan.ts";
 import type {
   EnergyPlanningContinuation,
   EnergyPlanningInput,

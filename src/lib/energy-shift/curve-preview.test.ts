@@ -1,8 +1,8 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1';
 import { comparePreference, solveWith } from './curve-preview.ts';
-import { curveFromPreference } from '../../../supabase/functions/_shared/value-preferences.ts';
-import { WATER_KWH_PER_M3_K } from '../../../supabase/functions/_shared/store-models.ts';
-import { DEFAULT_VALUE_CURVES } from '../../../supabase/functions/_shared/value-curves.ts';
+import { curveFromPreference } from '../../../supabase/functions/_shared/planner/value-preferences.ts';
+import { WATER_KWH_PER_M3_K } from '../../../supabase/functions/_shared/planner/store-models.ts';
+import { DEFAULT_VALUE_CURVES } from '../../../supabase/functions/_shared/planner/value-curves.ts';
 import { CAPTURED_AT, snapshot } from './optimisation-snapshot.fixture.ts';
 
 const poolScale = {

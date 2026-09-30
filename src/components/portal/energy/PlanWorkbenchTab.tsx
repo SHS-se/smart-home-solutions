@@ -29,8 +29,8 @@ import {
   type DispatchWorkbench,
   type OptimisationPlan,
   type OptimisationSnapshot,
-} from '../../../../supabase/functions/_shared/energy-optimisation';
-import type { DispatchInfeasibility } from '../../../../supabase/functions/_shared/dispatch-plan';
+} from '../../../../supabase/functions/_shared/planner/energy-optimisation';
+import type { DispatchInfeasibility } from '../../../../supabase/functions/_shared/planner/dispatch-plan';
 import {
   buildWorkbenchChart,
   buildWorkbenchExport,

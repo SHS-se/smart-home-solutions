@@ -19,10 +19,10 @@ import {
   type DispatchInfeasibility,
   type DispatchSchedule,
   type DispatchScore,
-} from '../../../supabase/functions/_shared/dispatch-plan';
-import type { DispatchStore } from '../../../supabase/functions/_shared/dispatch-plan';
-import { marginalValueHeld } from '../../../supabase/functions/_shared/store-value';
-import type { DispatchWorkbench } from '../../../supabase/functions/_shared/energy-optimisation';
+} from '../../../supabase/functions/_shared/planner/dispatch-plan';
+import type { DispatchStore } from '../../../supabase/functions/_shared/planner/dispatch-plan';
+import { marginalValueHeld } from '../../../supabase/functions/_shared/planner/store-value';
+import type { DispatchWorkbench } from '../../../supabase/functions/_shared/planner/energy-optimisation';
 import { splitConsumption, type ConsumptionIssue, type ConsumptionSeries } from './consumption-series';
 
 /** Quarters per editable column at each granularity. */

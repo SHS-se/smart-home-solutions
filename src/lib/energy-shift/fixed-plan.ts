@@ -1,5 +1,5 @@
 import type { WorkbenchDraft, WorkbenchModel } from './plan-workbench';
-import { QUARTER_MS } from '../../../supabase/functions/_shared/fixed-energy-plan';
+import { QUARTER_MS } from '../../../supabase/functions/_shared/planner/fixed-energy-plan';
 
 /** Reverting a cell removes it from the modified interval; a day filter does not. */
 export function editedPeriodEnd(model: WorkbenchModel | null, draft: WorkbenchDraft, allowExport: boolean[]): number | null {

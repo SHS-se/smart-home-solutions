@@ -18,10 +18,10 @@ import {
   validateSnapshot,
   type OptimisationSnapshot,
   type OptimisationPlan,
-} from '../../../supabase/functions/_shared/energy-optimisation';
-import { scoreDispatch } from '../../../supabase/functions/_shared/dispatch-plan';
-import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value';
-import type { ValueStoreKey } from '../../../supabase/functions/_shared/value-curves';
+} from '../../../supabase/functions/_shared/planner/energy-optimisation';
+import { scoreDispatch } from '../../../supabase/functions/_shared/planner/dispatch-plan';
+import type { UtilityCurve } from '../../../supabase/functions/_shared/planner/store-value';
+import type { ValueStoreKey } from '../../../supabase/functions/_shared/planner/value-curves';
 
 export interface StoreOutcome {
   key: string;

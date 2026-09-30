@@ -1,4 +1,4 @@
-import type { OptimisationPlan } from "./energy-optimisation.ts";
+import type { OptimisationPlan } from "./planner/energy-optimisation.ts";
 
 /**
  * Keys a schema 9 plan carries beside the schedule it shares with

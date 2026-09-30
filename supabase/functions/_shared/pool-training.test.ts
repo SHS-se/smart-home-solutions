@@ -10,7 +10,7 @@ import {
   poolTrainingWindowStartMs,
   SLOT_HOURS,
 } from "./pool-training.ts";
-import { WATER_KWH_PER_M3_K } from "./store-models.ts";
+import { WATER_KWH_PER_M3_K } from "./planner/store-models.ts";
 
 const VOLUME_M3 = 55;
 const CAPACITY = VOLUME_M3 * WATER_KWH_PER_M3_K;

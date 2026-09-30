@@ -3,10 +3,10 @@ import {
   dispatchWorkbench,
   generateOptimisationPlan,
   type OptimisationSnapshot,
-} from "./energy-optimisation.ts";
-import { isolateMeasurements } from "./measurement-isolation.ts";
-import { replanReference } from "./replan-continuity.ts";
-import { scoreDispatch } from "./dispatch-plan.ts";
+} from "./planner/energy-optimisation.ts";
+import { isolateMeasurements } from "./planner/measurement-isolation.ts";
+import { replanReference } from "./planner/replan-continuity.ts";
+import { scoreDispatch } from "./planner/dispatch-plan.ts";
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 /** Battery, pool and a routed car, as one household. */

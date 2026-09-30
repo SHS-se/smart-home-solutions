@@ -3,13 +3,13 @@ import {
   balancedBatteryCurve,
   type DispatchWorkbench,
   dispatchWorkbench,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import {
   type DispatchAuctionSolver,
   type DispatchInfeasibility,
   type DispatchResult,
   scoreDispatch,
-} from "./dispatch-plan.ts";
+} from "./planner/dispatch-plan.ts";
 import {
   advanceAuctions,
   type PlanningBudget,
@@ -22,7 +22,7 @@ import {
   type CostCurveRecord,
   costCurveSearch,
 } from "./battery-cost-curve.ts";
-import type { UtilityCurve } from "./store-value.ts";
+import type { UtilityCurve } from "./planner/store-value.ts";
 
 export interface CostCurveProgress {
   evaluations: CostCurveEvaluation[];

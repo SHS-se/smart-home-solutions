@@ -1,14 +1,14 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { executionFixtureRequest } from "../../../scripts/generate-battery-execution-fixtures.ts";
-import { convertedFlows } from "./battery-conversion.ts";
+import { convertedFlows } from "./planner/battery-conversion.ts";
 import {
   createBatteryPrefixScorer,
   createHouseholdScorer,
   emptyObjective,
   type Objective,
   reconcileObjective,
-} from "./household-score.ts";
-import type { HouseholdCandidate } from "./household-case.ts";
+} from "./planner/household-score.ts";
+import type { HouseholdCandidate } from "./planner/household-case.ts";
 
 type Action = Extract<
   HouseholdCandidate["actions"][string][number],

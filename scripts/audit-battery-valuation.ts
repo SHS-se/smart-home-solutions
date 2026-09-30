@@ -5,7 +5,7 @@ import {
   type DispatchSchedule,
   type DispatchStore,
   scoreDispatch,
-} from "../supabase/functions/_shared/dispatch-plan.ts";
+} from "../supabase/functions/_shared/planner/dispatch-plan.ts";
 import type { WorkbenchExport } from "../src/lib/energy-shift/plan-workbench.ts";
 
 export function auditBatteryValuation(plan: WorkbenchExport) {

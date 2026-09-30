@@ -15,10 +15,10 @@ import {
 import {
   dispatchWorkbench,
   type DispatchWorkbench,
-} from '../../../supabase/functions/_shared/energy-optimisation.ts';
+} from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 import { snapshot as realSnapshot } from './optimisation-snapshot.fixture.ts';
-import type { UtilityCurve } from '../../../supabase/functions/_shared/store-value.ts';
-import type { DispatchSchedule } from '../../../supabase/functions/_shared/dispatch-plan.ts';
+import type { UtilityCurve } from '../../../supabase/functions/_shared/planner/store-value.ts';
+import type { DispatchSchedule } from '../../../supabase/functions/_shared/planner/dispatch-plan.ts';
 
 const START = Date.parse('2026-09-05T06:00:00.000Z');
 const SLOTS = 8;

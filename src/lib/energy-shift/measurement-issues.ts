@@ -1,4 +1,4 @@
-import type { MeasurementIssue } from '../../../supabase/functions/_shared/measurement-isolation';
+import type { MeasurementIssue } from '../../../supabase/functions/_shared/planner/measurement-isolation';
 
 export type { MeasurementIssue };
 

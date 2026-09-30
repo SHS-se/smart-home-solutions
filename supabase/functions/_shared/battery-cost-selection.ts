@@ -9,7 +9,7 @@ import {
 import type { CostCurveProgress, CostCurveStep } from "./battery-cost-step.ts";
 import { EnergyPlanningError } from "./energy-planning-client.ts";
 import { ENERGY_PLANNING_PROTOCOL } from "./energy-planning-protocol.ts";
-import { validateCurve } from "./store-value.ts";
+import { validateCurve } from "./planner/store-value.ts";
 
 interface QueryResult {
   data: unknown;

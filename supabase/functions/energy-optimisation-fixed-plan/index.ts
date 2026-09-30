@@ -1,4 +1,4 @@
-import { resolveValueCurves } from "../_shared/value-curves.ts";
+import { resolveValueCurves } from "../_shared/planner/value-curves.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -6,7 +6,7 @@ import {
   dispatchWorkbenchInputs,
   type OptimisationPlan,
   type OptimisationSnapshot,
-} from "../_shared/energy-optimisation.ts";
+} from "../_shared/planner/energy-optimisation.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
@@ -16,11 +16,11 @@ import {
   fixedPlanPreflightInput,
   QUARTER_MS,
   validateFixedSchedule,
-} from "../_shared/fixed-energy-plan.ts";
+} from "../_shared/planner/fixed-energy-plan.ts";
 import {
   type DispatchSchedule,
   scoreDispatch,
-} from "../_shared/dispatch-plan.ts";
+} from "../_shared/planner/dispatch-plan.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

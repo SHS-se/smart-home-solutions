@@ -1,6 +1,6 @@
 /** A deterministic, bill-only search over non-increasing battery value curves. */
-import { marginalValue, type UtilityCurve } from "./store-value.ts";
-import type { OptimisationSnapshot } from "./energy-optimisation.ts";
+import { marginalValue, type UtilityCurve } from "./planner/store-value.ts";
+import type { CostCurveRecord, OptimisationSnapshot } from "./planner/energy-optimisation.ts";
 
 // Invalidate saved searches whose transfers could spend an export reserve.
 export const COST_CURVE_ALGORITHM = 3;
@@ -10,15 +10,7 @@ export interface CostCurveInput {
   snapshot: OptimisationSnapshot;
   now: string;
 }
-export interface CostCurveRecord {
-  key: string;
-  curve: UtilityCurve;
-  source_snapshot_id: string;
-  evaluations: number;
-  bill_before_sek: number;
-  bill_after_sek: number;
-  published_until: string;
-}
+export type { CostCurveRecord } from "./planner/energy-optimisation.ts";
 export interface CostCurveEvaluation {
   curve: UtilityCurve;
   bill_sek: number;

@@ -6,19 +6,19 @@ import {
   fixedPlanPreflightInput,
   QUARTER_MS,
   validateFixedSchedule,
-} from "./fixed-energy-plan.ts";
+} from "./planner/fixed-energy-plan.ts";
 import {
   type DispatchSlot,
   type DispatchStore,
   planDispatch,
   scoreDispatch,
-} from "./dispatch-plan.ts";
+} from "./planner/dispatch-plan.ts";
 import {
   dispatchWorkbench,
   dispatchWorkbenchInputs,
   generateOptimisationPlan,
   type PlannedSlot,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import { generateRemoteOptimisationPlan } from "./energy-planning-client.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { batterySnapshot, dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";

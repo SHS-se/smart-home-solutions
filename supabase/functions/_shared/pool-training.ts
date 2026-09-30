@@ -22,8 +22,8 @@
 // `rated_cop` / `cop_per_air_c` pair the planner's model already carries, so a
 // fit drops straight into it.
 
-import { solveLinearSystem } from "./thermal-model.ts";
-import { WATER_KWH_PER_M3_K } from "./store-models.ts";
+import { solveLinearSystem } from "./planner/thermal-model.ts";
+import { WATER_KWH_PER_M3_K } from "./planner/store-models.ts";
 
 export const SLOT_HOURS = 0.25;
 

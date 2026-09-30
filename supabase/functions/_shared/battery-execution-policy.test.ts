@@ -1,4 +1,4 @@
-import { convertedFlows } from "./battery-conversion.ts";
+import { convertedFlows } from "./planner/battery-conversion.ts";
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import {
   executionContinuationVectors,
@@ -17,15 +17,15 @@ import {
   type ExecutionCell,
 } from "./battery-execution-policy.ts";
 import { compileBatteryPolicy } from "./battery-policy.ts";
-import { type HouseholdCandidate } from "./household-case.ts";
+import { type HouseholdCandidate } from "./planner/household-case.ts";
 import {
   createHouseholdScorer,
   emptyObjective,
   type Objective,
   reconcileObjective,
   scoreElectricityInterval,
-} from "./household-score.ts";
-import { totalUtility } from "./store-value.ts";
+} from "./planner/household-score.ts";
+import { totalUtility } from "./planner/store-value.ts";
 
 function compiled(request = executionFixtureRequest()) {
   const result = compileBatteryExecutionPolicy(request);

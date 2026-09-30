@@ -13,8 +13,8 @@
 // tail look like missing data rather than a broken objective.
 
 import { assert, assertEquals } from 'jsr:@std/assert@1';
-import { generateOptimisationPlan } from '../../../supabase/functions/_shared/energy-optimisation.ts';
-import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import { generateOptimisationPlan } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 import { buildEnergyTimeline } from './energy-timeline.ts';
 
 const CAPTURED_AT = '2026-08-18T20:45:00.000Z';

@@ -1,11 +1,11 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { compileBatteryPolicy, selectBatteryPolicy } from "./battery-policy.ts";
-import { createHouseholdScorer } from "./household-score.ts";
+import { createHouseholdScorer } from "./planner/household-score.ts";
 import type {
   Equipment,
   HouseholdCandidate,
   HouseholdProblem,
-} from "./household-case.ts";
+} from "./planner/household-case.ts";
 
 type Battery = Extract<Equipment, { kind: "battery" }>;
 type Action = Extract<

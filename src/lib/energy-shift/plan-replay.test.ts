@@ -1,7 +1,7 @@
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import { replayHistory, replayPlanSelection } from './plan-replay.ts';
 import { buildEnergyTimeline, SLOT_MS } from './energy-timeline.ts';
-import { generateOptimisationPlan } from '../../../supabase/functions/_shared/energy-optimisation.ts';
+import { generateOptimisationPlan } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
 
 Deno.test('replay retains both branches of a scoped solve and bookmarks the displayed scenario', () => {

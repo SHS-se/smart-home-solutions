@@ -27,13 +27,13 @@ import {
   type DefaultValueStoreKey,
   parseStoredCurve,
   validateBatteryCurve,
-} from '../../../../supabase/functions/_shared/value-curves';
+} from '../../../../supabase/functions/_shared/planner/value-curves';
 import {
   marginalValue,
   curveWithinReach,
   type UtilityCurve,
-} from '../../../../supabase/functions/_shared/store-value';
-import { WATER_KWH_PER_M3_K } from '../../../../supabase/functions/_shared/store-models';
+} from '../../../../supabase/functions/_shared/planner/store-value';
+import { WATER_KWH_PER_M3_K } from '../../../../supabase/functions/_shared/planner/store-models';
 import {
   curveFromPreference,
   DEFAULT_POOL_PREFERENCE,
@@ -43,8 +43,8 @@ import {
   validatePreference,
   vehiclePreference,
   type StorePreference,
-} from '../../../../supabase/functions/_shared/value-preferences';
-import { balancedBatteryCurve, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/energy-optimisation';
+} from '../../../../supabase/functions/_shared/planner/value-preferences';
+import { balancedBatteryCurve, type OptimisationPlan, type OptimisationSnapshot } from '../../../../supabase/functions/_shared/planner/energy-optimisation';
 import { comparePreference, type PreviewComparison } from '@/lib/energy-shift/curve-preview';
 import {
   replanState,

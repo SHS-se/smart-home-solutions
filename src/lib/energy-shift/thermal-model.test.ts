@@ -6,7 +6,7 @@ import {
   solveLinearSystem,
   type ThermalTrainingSample,
   type ThermalZoneModel,
-} from '../../../supabase/functions/_shared/thermal-model.ts';
+} from '../../../supabase/functions/_shared/planner/thermal-model.ts';
 
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);

@@ -15,13 +15,13 @@
  */
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
-import { balancedBatteryCurve, generateOptimisationPlan } from '../supabase/functions/_shared/energy-optimisation';
+import { balancedBatteryCurve, generateOptimisationPlan } from '../supabase/functions/_shared/planner/energy-optimisation';
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { portalDelta } from './helpers/portal-delta';
 import { comparePreference } from '../src/lib/energy-shift/curve-preview';
-import { DEFAULT_VALUE_CURVES } from '../supabase/functions/_shared/value-curves';
+import { DEFAULT_VALUE_CURVES } from '../supabase/functions/_shared/planner/value-curves';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';

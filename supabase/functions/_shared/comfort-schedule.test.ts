@@ -7,7 +7,7 @@ import {
   summerHeatingLockoutForStarts,
   type ZoneComfortSchedule,
 } from "./comfort-schedule.ts";
-import type { ThermalZoneModel } from "./thermal-model.ts";
+import type { ThermalZoneModel } from "./planner/thermal-model.ts";
 import { buildThermalProjection } from "./thermal-training.ts";
 
 const assert = (condition: boolean, message: string) => {

@@ -25,6 +25,15 @@ export interface RunRecord {
   status: "running" | "done" | "failed";
   error?: string | null;
   finished_at?: string | null;
+  /** What the planner's code does (planner-version.ts); commits sharing it share one entry. */
+  planner_version?: string | null;
+}
+
+export interface RunSummary {
+  sha: string;
+  committed_at: string;
+  planner_version: string | null;
+  is_current: boolean;
 }
 
 export interface ResultRecord {
@@ -47,6 +56,10 @@ export interface ScoredResult {
 export interface BenchStore {
   scenarios(only?: string): Promise<StoredScenario[]>;
   knownShas(): Promise<string[]>;
+  runs(): Promise<RunSummary[]>;
+  setPlannerVersion(sha: string, version: string): Promise<void>;
+  /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
+  mergeRun(from: string, into: string): Promise<void>;
   /** Scenario ids that already have a result for this commit (successful or not). */
   resultIds(sha: string): Promise<Set<string>>;
   saveRun(run: RunRecord): Promise<void>;
@@ -84,6 +97,31 @@ export class DbStore implements BenchStore {
   async knownShas() {
     const rows = await this.request("bench_runs?select=sha&order=committed_at") as { sha: string }[];
     return rows.map(row => row.sha);
+  }
+
+  async runs() {
+    return await this.request("bench_runs?select=sha,committed_at,planner_version,is_current&order=committed_at") as RunSummary[];
+  }
+
+  async setPlannerVersion(sha: string, version: string) {
+    await this.request(`bench_runs?sha=eq.${sha}`, {
+      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ planner_version: version }),
+    });
+  }
+
+  async mergeRun(from: string, into: string) {
+    const verdicts = await this.request(`bench_verdicts?select=scenario_id,verdict,note,decided_by,decided_at&sha=eq.${from}`) as Record<string, unknown>[];
+    if (verdicts.length) {
+      await this.request("bench_verdicts?on_conflict=sha,scenario_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+        body: JSON.stringify(verdicts.map(verdict => ({ ...verdict, sha: into }))),
+      });
+    }
+    const [run] = await this.request(`bench_runs?select=is_current&sha=eq.${from}`) as { is_current: boolean }[];
+    if (run?.is_current) await this.markCurrent(into);
+    // Results and verdicts cascade.
+    await this.request(`bench_runs?sha=eq.${from}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
 
   async resultIds(sha: string) {
@@ -159,12 +197,30 @@ export class LocalStore implements BenchStore {
     return out.sort((a, b) => a.input.snapshot.captured_at.localeCompare(b.input.snapshot.captured_at));
   }
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
+  async runs() {
+    return (await this.load()).runs.map(run => ({
+      sha: run.sha, committed_at: run.committed_at, planner_version: run.planner_version ?? null, is_current: !!run.is_current,
+    })).sort((a, b) => a.committed_at.localeCompare(b.committed_at));
+  }
+  async setPlannerVersion(sha: string, version: string) {
+    const file = await this.load();
+    file.runs = file.runs.map(run => run.sha === sha ? { ...run, planner_version: version } : run);
+    await this.save(file);
+  }
+  async mergeRun(from: string, into: string) {
+    const file = await this.load();
+    const moved = file.runs.find(run => run.sha === from)?.is_current;
+    file.runs = file.runs.filter(run => run.sha !== from).map(run => moved && run.sha === into ? { ...run, is_current: true } : run);
+    file.results = file.results.filter(result => result.sha !== from);
+    await this.save(file);
+  }
   async resultIds(sha: string) {
     return new Set((await this.load()).results.filter(r => r.sha === sha).map(r => r.scenario_id));
   }
   async saveRun(run: RunRecord) {
     const file = await this.load();
-    file.runs = [...file.runs.filter(r => r.sha !== run.sha), run];
+    const old = file.runs.find(r => r.sha === run.sha);
+    file.runs = [...file.runs.filter(r => r.sha !== run.sha), { ...old, ...run }];
     await this.save(file);
   }
   async markCurrent(sha: string) {

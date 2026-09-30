@@ -1,4 +1,4 @@
-import type { OptimisationSnapshot } from "./energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./planner/energy-optimisation.ts";
 
 /** Website choice only removes battery planning; measurements remain untouched. */
 export function applyBatteryChoice(snapshot: OptimisationSnapshot, included: boolean): OptimisationSnapshot {

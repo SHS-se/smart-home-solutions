@@ -7,24 +7,24 @@ import {
 import {
   projectBatteryDispatch,
   type ResolvedBatterySource,
-} from "./battery-dispatch-projection.ts";
-import { createHouseholdScorer } from "./household-score.ts";
-import { type HouseholdCandidate } from "./household-case.ts";
+} from "./planner/battery-dispatch-projection.ts";
+import { createHouseholdScorer } from "./planner/household-score.ts";
+import { type HouseholdCandidate } from "./planner/household-case.ts";
 import {
   type DispatchAuctionSolver,
   dispatchAuctionSteps,
   scoreDispatch,
-} from "./dispatch-plan.ts";
+} from "./planner/dispatch-plan.ts";
 import {
   generateOptimisationPlan,
   generateOptimisationPlanWithBatteryProjection,
-} from "./energy-optimisation.ts";
+} from "./planner/energy-optimisation.ts";
 import {
   batterySnapshot,
   mixedModeSnapshot,
 } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
-import { replanReference } from "./replan-continuity.ts";
+import { replanReference } from "./planner/replan-continuity.ts";
 
 function source(load = [1100.123456, 600, 2500, 2000]): ResolvedBatterySource {
   const hours = [1 / 8, 1 / 4, 1 / 4, 1 / 4];

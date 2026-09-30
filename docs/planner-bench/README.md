@@ -13,9 +13,9 @@ Page: **Planner bench** in the staff menu, on the test site
 | Piece | Where | What it does |
 |---|---|---|
 | Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household replays never reach production. |
-| Runner | `bench/run.ts`, `bench/planner-adapter.ts`, `bench/store.ts` | Checks each commit out as a git worktree and runs its planner on every case in a fresh Deno process. Stores a compact 72-hour series and totals per case. |
+| Runner | `bench/run.ts`, `bench/planner-adapter.ts`, `bench/store.ts`, `bench/planner-version.ts` | Skips a commit whose planner version is already on the bench. Otherwise checks the commit out as a git worktree and runs its planner on every case in a fresh Deno process. Stores a compact 72-hour series and totals per case. |
 | Shared logic | `src/lib/planner-bench/` | Replay stripping, plan series, totals, scoring. Used by both the runner and the page. |
-| CI | `.github/workflows/planner-bench.yml` | On push to `dev`: benches the pushed commit and marks it current. On manual dispatch: runs any commits, usually `all`. |
+| CI | `.github/workflows/planner-bench.yml` | On push to `dev` that touches the planner folder: benches the pushed commit and marks its planner version current. On manual dispatch: runs any commits, usually `all`. |
 | Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
 | Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, criteria editor, verdicts, upload. |
 
@@ -34,10 +34,25 @@ planning basis built from price history) owns that step. It exports
 `prepare(input, allInputs)` from `bench/prepare.ts` in its own commit, and the
 runner uses it when present.
 
+## Planner versions
+
+The bench lists planner versions, not commits. The planner is its own folder,
+`supabase/functions/_shared/planner/`, which imports nothing from outside
+itself (`tests/planner-boundary.test.ts`). A commit's planner version is a hash
+of the code that folder's entry points reach, with types, comments and
+formatting stripped by esbuild (`bench/planner-version.ts`). So a commit that
+changes only the website, the bench, tests, docs or types has the same version
+as the commit before it, and gets no new entry.
+
+Before each run the runner gives every stored run its version and folds runs
+that share one into the earliest: verdicts and the current mark move over, the
+duplicate's results go. When the pushed commit's version is already on the
+bench, nothing runs and that entry becomes current.
+
 ## Current and test planner
 
-- **Current:** the run marked `is_current`. CI marks each commit pushed to
-  `dev`, because `dev` is what the test environment runs. **Make current** on
+- **Current:** the run marked `is_current`. CI marks the planner version of each
+  commit pushed to `dev`, because `dev` is what the test environment runs. **Make current** on
   the page changes it by hand.
 - **Test:** whichever run you pick in the dropdown. Runs are listed oldest
   first as `short sha · commit time · score`.

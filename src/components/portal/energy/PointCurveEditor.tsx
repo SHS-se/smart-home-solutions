@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { marginalValue, type UtilityCurve } from '../../../../supabase/functions/_shared/store-value';
+import { marginalValue, type UtilityCurve } from '../../../../supabase/functions/_shared/planner/store-value';
 import { moveCurvePoint, resizeCurve } from '@/lib/energy-shift/point-curve';
 
 interface Props {

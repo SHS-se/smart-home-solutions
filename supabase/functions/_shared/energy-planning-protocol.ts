@@ -1,17 +1,8 @@
-import type { OptimisationPlan, OptimisationSnapshot } from "./energy-optimisation.ts";
-import type { DispatchCheckpoint, DispatchResult } from "./dispatch-plan.ts";
-import type { StoredPriceRow } from "./energy-price-shape.ts";
-import type { FixedEnergyPlan } from "./fixed-energy-plan.ts";
+import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
 
 export const ENERGY_PLANNING_PROTOCOL = 6;
 
-export interface EnergyPlanningInput {
-  snapshot: OptimisationSnapshot;
-  now: string;
-  price_archive: StoredPriceRow[];
-  fixed_plan?: FixedEnergyPlan | null;
-  resolved_price_outlook?: OptimisationPlan["price_outlook"];
-}
+export type { EnergyPlanningInput } from "./planner/fixed-energy-plan.ts";
 
 /** Everything the planning chain has produced so far; its caller holds it. */
 export interface EnergyPlanningContinuation {

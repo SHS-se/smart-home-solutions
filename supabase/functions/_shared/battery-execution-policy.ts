@@ -11,7 +11,7 @@ import {
   inputPower,
   outputPower,
   solarCapacity,
-} from "./battery-conversion.ts";
+} from "./planner/battery-conversion.ts";
 /** Executable, bounded finite bridge/suffix family. No native writes or continuous-optimum claim. */
 import {
   batterySupplyScopeSchema,
@@ -29,7 +29,7 @@ import {
   type HouseholdCandidate,
   type HouseholdProblem,
   parseHouseholdProblem,
-} from "./household-case.ts";
+} from "./planner/household-case.ts";
 import {
   createHouseholdScorer,
   emptyObjective,
@@ -37,8 +37,8 @@ import {
   type Objective,
   reconcileObjective,
   scoreElectricityInterval,
-} from "./household-score.ts";
-import { totalUtility } from "./store-value.ts";
+} from "./planner/household-score.ts";
+import { totalUtility } from "./planner/store-value.ts";
 
 export const BATTERY_EXECUTION_LIMITS = {
   policy_bytes: 512000,
