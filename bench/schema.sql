@@ -21,6 +21,10 @@ create table if not exists public.bench_scenarios (
   created_at timestamptz not null default now()
 );
 
+-- Archived weather for a replay that carries none (bench/weather.ts), fetched
+-- once so every run of the case sees the same weather.
+alter table public.bench_scenarios add column if not exists weather jsonb;
+
 create table if not exists public.bench_runs (
   sha text primary key,
   short_sha text not null,
@@ -54,6 +58,9 @@ create table if not exists public.bench_results (
 -- by the runner and recomputed whenever the scorer version or the case's
 -- criteria change, so run lists never need the plan series.
 alter table public.bench_results add column if not exists score jsonb;
+-- The bench household the result was planned for (bench/household.ts). A
+-- result for an older household is re-run.
+alter table public.bench_results add column if not exists household_version integer;
 
 create table if not exists public.bench_verdicts (
   sha text not null references public.bench_runs (sha) on delete cascade,

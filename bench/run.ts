@@ -5,7 +5,7 @@
 //
 //   --shas a,b,c | all | none
 //                           commits to run (default: HEAD). `all` = every commit already on the bench,
-//                           `none` = no planner runs, only recompute stale scores.
+//                           and may be one of the list; `none` = no planner runs, only recompute stale scores.
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases that already have a result for the commit.
 //   --current <sha>         mark this commit as the planner currently deployed.
@@ -15,6 +15,10 @@
 //                           records go to <file.json>.
 //
 // Database mode needs BENCH_SUPABASE_URL and BENCH_SERVICE_ROLE_KEY.
+//
+// Every case is planned for the bench household (household.ts): the replay
+// supplies forecasts, prices and base load, the bench the devices. A result
+// planned for an older household counts as missing and is run again.
 //
 // Commits whose planner code is the same (planner-version.ts) share one run:
 // a commit whose planner version is already on the bench is not run again, and
@@ -28,6 +32,9 @@ import { loadPlanner } from "./planner-adapter.ts";
 import { isStale, storedScore } from "../src/lib/planner-bench/score.ts";
 import { type BenchStore, DbStore, LocalStore, type RunSummary } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
+import { applyHousehold } from "./household.ts";
+import { archivedWeather } from "./weather.ts";
+import type { OptimisationSnapshot } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -63,11 +70,12 @@ async function worker(sha: string, root: string) {
   const planner = await loadPlanner(root);
   const cases = await bench.scenarios(args.scenario);
   const done = args.force ? new Set<string>() : await bench.resultIds(sha);
-  const all = cases.map(c => c.input);
+  const inputs = new Map(cases.map(c => [c.id, applyHousehold(c.input, c.weather)]));
+  const all = [...inputs.values()];
   for (const scenario of cases) {
     if (done.has(scenario.id)) continue;
     try {
-      const { series, stats, cpuMs } = planner.run(scenario.input, all);
+      const { series, stats, cpuMs } = planner.run(inputs.get(scenario.id)!, all);
       await bench.saveResult({ sha, scenario_id: scenario.id, status: "ok", error: null, cpu_ms: Math.round(cpuMs), series, stats,
         score: storedScore(series, scenario.criteria) });
       console.log(`  ${scenario.name}: ${Math.round(cpuMs)} ms, pool ${stats.pool_kwh.toFixed(1)} kWh, cost ${stats.grid_cost_sek.toFixed(1)} kr`);
@@ -127,12 +135,29 @@ async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSumma
   return kept;
 }
 
+/** Fetch archived weather once for every case whose replay carries none. */
+async function fillWeather(bench: BenchStore) {
+  for (const scenario of await bench.scenarios(args.scenario)) {
+    const snapshot = scenario.input.snapshot as unknown as OptimisationSnapshot;
+    const own = snapshot.outdoor_temperature_c;
+    if (scenario.weather || (Array.isArray(own) && own.length === snapshot.slots.length && own.every(v => typeof v === "number"))) continue;
+    const location = snapshot.location ?? snapshot.sources.pv?.location as { latitude: number; longitude: number } | undefined;
+    if (!location) { console.log(`${scenario.name}: no location, planned without weather.`); continue; }
+    try {
+      await bench.saveWeather(scenario.id, await archivedWeather(location, snapshot.slots.map(s => s.start), snapshot.captured_at));
+      console.log(`${scenario.name}: archived weather fetched.`);
+    } catch (error) {
+      console.log(`${scenario.name}: no archived weather (${(error as Error).message}); planned without it.`);
+    }
+  }
+}
+
 async function orchestrate() {
   const bench = store();
   const byVersion = await foldSameVersions(bench);
-  const requested = args.shas === "all" ? await bench.knownShas()
-    : args.shas === "none" ? []
-    : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  await fillWeather(bench);
+  const listed = args.shas === "none" ? [] : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  const requested = [...new Set((await Promise.all(listed.map(async ref => ref === "all" ? await bench.knownShas() : [ref]))).flat())];
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
   try {

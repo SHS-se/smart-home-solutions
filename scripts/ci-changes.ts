@@ -25,6 +25,8 @@ export interface Changes {
   functions: string[];
   /** The planner the bench replays. */
   planner: boolean;
+  /** The bench itself: its household, weather or runner. */
+  bench: boolean;
 }
 
 const isDoc = (f: string) => f.endsWith(".md") || f.startsWith("docs/");
@@ -48,7 +50,7 @@ export function functionNames(root: string): string[] {
 
 export function classify(root: string, changed: readonly string[] | "all"): Changes {
   const names = functionNames(root);
-  if (changed === "all") return { code: true, frontend: true, migrations: true, functions: names, planner: true };
+  if (changed === "all") return { code: true, frontend: true, migrations: true, functions: names, planner: true, bench: true };
 
   const any = (test: (f: string) => boolean) => changed.some(test);
   const touches = (files: Set<string>) => any(f => files.has(f));
@@ -78,6 +80,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     migrations: any(f => f.startsWith("supabase/migrations/")),
     functions,
     planner,
+    bench: any(f => f.startsWith("bench/") && !isDoc(f) && !isTest(f)),
   };
 }
 
@@ -114,6 +117,7 @@ if (import.meta.main) {
     `migrations=${c.migrations}`,
     `functions=${c.functions.join(" ")}`,
     `planner=${c.planner}`,
+    `bench=${c.bench}`,
   ];
   console.log(changed === "all" ? "Changed: everything" : `Changed files (${changed.length}):\n  ${changed.join("\n  ")}`);
   console.log(lines.join("\n"));

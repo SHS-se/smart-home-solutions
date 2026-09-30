@@ -25,9 +25,33 @@ A replay download is about 10 MB. The planner reads only
 `entrypoint.arguments`, which is about 90 kB, so that is all a case keeps. The
 page strips the file in the browser before saving it.
 
-The bench changes one thing in every case, for every planner version alike.
-Captures taken before the pool loss was fitted have no pool model, and the bench
-gives them 0.1 kW/K, as the acceptance replays always have.
+### The bench household
+
+A replay is a moment in one real home: its solar, price and base-load
+forecasts, and whatever devices that home had set up that day. The bench keeps
+the moment and plans its own household in it (`bench/household.ts`), the same
+for every case and every planner version:
+
+| Device | From the household | From the replay, when it has it |
+|---|---|---|
+| Home battery | 18.08 kWh, 8.8 kW in, 9.6 kW out, 95 % each way | State of charge (else 50 %) |
+| Car | 75.6 kWh, 3 × 16 A charger, controlled | State of charge, target and departure, but only while plugged in below its target. Otherwise it starts plugged in at 40 %, needing 80 % by 07:00 the next morning |
+| Pool | 55 m³, 764 W pump + 2314 W heater, controlled | Water temperature (else 29 °C) and fitted loss (else 0.1 kW/K) |
+
+Everything else the replay describes (hot water, room heaters) stays as the
+replay has it, as demand unless the replay controlled it. To plan another
+device, add it to the household and bump `HOUSEHOLD_VERSION`: every result
+planned for an older household counts as missing and is run again.
+
+### Weather
+
+Most replays carry no outdoor temperature: the server adds weather after the
+snapshot the replay stores. For those, the runner fetches Open-Meteo's archived
+forecasts once and stores them with the case (`bench_scenarios.weather`,
+`bench/weather.ts`). Each quarter gets the forecast issued about as far ahead of
+it as the capture was, so a quarter two days out reads a two-day-old forecast. A
+replay's own forecast always wins. Open-Meteo's free API is for non-commercial
+use; set the `OPEN_METEO_API_KEY` secret to use the commercial one.
 
 A planner version that needs its input prepared differently (for example a
 planning basis built from price history) owns that step. It exports
