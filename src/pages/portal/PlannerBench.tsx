@@ -365,49 +365,119 @@ const Bench: React.FC = () => {
   );
 };
 
-const n1 = (v: number | null) => v === null ? '—' : v.toFixed(1);
-const n2 = (v: number | null) => v === null ? '—' : v.toFixed(2);
+
+/** Which way a metric should move; null when neither way is better by itself. */
+type Better = 'higher' | 'lower' | null;
+type Tone = 'better' | 'worse' | 'same' | 'neutral';
+
+/** Changes smaller than this share of the current value are noise. */
+const SAME_SHARE = 0.005;
+
+const toneOf = (a: number | null, b: number | null, better: Better): Tone => {
+  if (a === null || b === null) return 'neutral';
+  const d = b - a;
+  if (Math.abs(d) <= Math.abs(a) * SAME_SHARE || Math.abs(d) < 1e-9) return 'same';
+  if (!better) return 'neutral';
+  return (d > 0) === (better === 'higher') ? 'better' : 'worse';
+};
+
+const TONE_CLASS: Record<Tone, string> = {
+  better: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+  worse: 'bg-red-500/15 text-red-700 dark:text-red-400',
+  same: 'text-muted-foreground',
+  neutral: 'bg-muted text-muted-foreground',
+};
+
+const delta = (a: number | null, b: number | null, digits: number) => {
+  if (a === null || b === null) return '';
+  const d = b - a;
+  return signed(d, Math.abs(d) < 1 && digits < 2 ? 2 : digits);
+};
+
+interface SuiteLine { label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better }
 
 const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test: SuiteStats }; scores: { current: number | null; test: number | null } }> = ({ totals, scores }) => {
   const { t } = useLanguage();
   const { current: c, test: x } = totals;
-  const lines: [string, string, string, number | null, number | null][] = [
-    [t('Poäng', 'Score'), `${scores.current ?? '—'}`, `${scores.test ?? '—'}`, scores.current, scores.test],
-    [t('Total förbrukning, 72 h', 'Total kWh used, 72 h'), `${n1(c.kwh_used)} kWh`, `${n1(x.kwh_used)} kWh`, c.kwh_used, x.kwh_used],
-    [t('Total nätkostnad, 72 h', 'Total grid cost, 72 h'), `${n1(c.grid_cost_sek)} kr`, `${n1(x.grid_cost_sek)} kr`, c.grid_cost_sek, x.grid_cost_sek],
-    [t('Snittkostnad per kWh', 'Average cost per kWh'), `${n2(c.cost_per_kwh)} kr`, `${n2(x.cost_per_kwh)} kr`, c.cost_per_kwh, x.cost_per_kwh],
-    [t('Poolvärme, timmar', 'Pool heating, hours'), `${n1(c.pool_heating_hours)} h`, `${n1(x.pool_heating_hours)} h`, c.pool_heating_hours, x.pool_heating_hours],
-    [t('Pool lägsta / högsta', 'Pool lowest / highest'), `${n2(c.pool_min_c)} / ${n2(c.pool_max_c)} °C`, `${n2(x.pool_min_c)} / ${n2(x.pool_max_c)} °C`, null, null],
-    [t('Hembatteri laddat', 'Home battery charged'), `${n1(c.battery_charge_kwh)} kWh`, `${n1(x.battery_charge_kwh)} kWh`, c.battery_charge_kwh, x.battery_charge_kwh],
-    [t('Elbil laddad', 'EV charged'), `${n1(c.ev_kwh)} kWh`, `${n1(x.ev_kwh)} kWh`, c.ev_kwh, x.ev_kwh],
-    [t('Solel använd', 'Solar used'), `${n1(c.solar_used_kwh)} kWh`, `${n1(x.solar_used_kwh)} kWh`, c.solar_used_kwh, x.solar_used_kwh],
-    [t('Solel exporterad', 'Solar exported'), `${n1(c.solar_exported_kwh)} kWh`, `${n1(x.solar_exported_kwh)} kWh`, c.solar_exported_kwh, x.solar_exported_kwh],
-    [t('Snittpris export per kWh', 'Average export price per kWh'), `${n2(c.export_price)} kr`, `${n2(x.export_price)} kr`, c.export_price, x.export_price],
+  const line = (label: string, unit: string, digits: number, key: keyof SuiteStats, better: Better): SuiteLine =>
+    ({ label, unit, digits, a: c[key] as number | null, b: x[key] as number | null, better });
+  const groups: [string, SuiteLine[]][] = [
+    [t('Kostnad', 'Cost'), [
+      line(t('Nätkostnad, 72 h', 'Grid cost, 72 h'), 'kr', 1, 'grid_cost_sek', 'lower'),
+      line(t('Snittkostnad per kWh', 'Average cost per kWh'), 'kr', 2, 'cost_per_kwh', 'lower'),
+      line(t('Snittpris export per kWh', 'Average export price per kWh'), 'kr', 2, 'export_price', 'higher'),
+    ]],
+    [t('Sol', 'Solar'), [
+      line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher'),
+      line(t('Solel exporterad', 'Solar exported'), 'kWh', 1, 'solar_exported_kwh', null),
+    ]],
+    [t('Energi', 'Energy'), [
+      line(t('Total förbrukning, 72 h', 'Total used, 72 h'), 'kWh', 1, 'kwh_used', null),
+      line(t('Hembatteri laddat', 'Home battery charged'), 'kWh', 1, 'battery_charge_kwh', null),
+      line(t('Elbil laddad', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
+    ]],
+    [t('Pool', 'Pool'), [
+      line(t('Poolvärme', 'Pool heating'), 'h', 1, 'pool_heating_hours', null),
+      line(t('Pool lägsta', 'Pool lowest'), '°C', 2, 'pool_min_c', null),
+      line(t('Pool högsta', 'Pool highest'), '°C', 2, 'pool_max_c', null),
+    ]],
   ];
+  const all = groups.flatMap(([, lines]) => lines);
+  const count = (tone: Tone) => all.filter(l => toneOf(l.a, l.b, l.better) === tone).length;
+  const scoreTone = toneOf(scores.current, scores.test, 'higher');
+  const scoreDelta = scores.current !== null && scores.test !== null ? scores.test - scores.current : null;
+  const fmt = (v: number | null, digits: number) => v === null ? '—' : v.toFixed(digits);
+
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t(`Alla ${totals.cases} testfall`, `All ${totals.cases} test cases`)}</TableHead>
-            <TableHead className="text-right">{t('Nuvarande', 'Current')}</TableHead>
-            <TableHead className="text-right">Test</TableHead>
-            <TableHead className="text-right">{t('Skillnad', 'Change')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {lines.map(([label, cur, test, a, b]) => (
-            <TableRow key={label}>
-              <TableCell>{label}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{cur}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums">{test}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
-                {a !== null && b !== null ? `${b - a >= 0 ? '+' : ''}${(b - a).toFixed(Math.abs(b - a) < 1 ? 2 : 1)}` : ''}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="space-y-3">
+      <div className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs uppercase tracking-wide opacity-80">{t('Poäng', 'Score')}</span>
+          <span className="font-mono tabular-nums text-foreground">{scores.current ?? '—'}</span>
+          <span className="opacity-60">→</span>
+          <span className="font-mono tabular-nums text-2xl font-semibold">{scores.test ?? '—'}</span>
+          {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta)})</span>}
+        </div>
+        <div className="font-medium">
+          {scoreTone === 'better' ? t('Testplaneraren är bättre', 'Test planner is better')
+            : scoreTone === 'worse' ? t('Testplaneraren är sämre', 'Test planner is worse')
+            : t('Ingen skillnad i poäng', 'No score difference')}
+        </div>
+        <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+          <span>{t(`${totals.cases} testfall`, `${totals.cases} test cases`)}</span>
+          <span className="text-emerald-700 dark:text-emerald-400">● {count('better')} {t('bättre', 'better')}</span>
+          <span className="text-red-700 dark:text-red-400">● {count('worse')} {t('sämre', 'worse')}</span>
+        </div>
+      </div>
+
+      <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
+        {groups.map(([title, lines]) => (
+          <div key={title}>
+            <div className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b pb-1 text-xs text-muted-foreground">
+              <span className="font-medium uppercase tracking-wide">{title}</span>
+              <span className="text-right">{t('Nuv.', 'Current')}</span>
+              <span className="text-right">Test</span>
+              <span />
+            </div>
+            {lines.map(l => {
+              const tone = toneOf(l.a, l.b, l.better);
+              return (
+                <div key={l.label} className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
+                  <span className="truncate">{l.label}</span>
+                  <span className="text-right font-mono tabular-nums text-muted-foreground">{fmt(l.a, l.digits)}</span>
+                  <span className={`text-right font-mono tabular-nums ${tone === 'better' || tone === 'worse' ? 'font-semibold' : ''}`}>
+                    {fmt(l.b, l.digits)} <span className="text-xs font-normal text-muted-foreground">{l.unit}</span>
+                  </span>
+                  <span title={l.better ? undefined : t('Varken högre eller lägre är bättre i sig', 'Neither higher nor lower is better by itself')}
+                    className={`justify-self-end rounded px-1.5 py-0.5 text-right font-mono text-xs tabular-nums ${TONE_CLASS[tone]}`}>
+                    {tone === 'same' ? '≈' : delta(l.a, l.b, l.digits)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
