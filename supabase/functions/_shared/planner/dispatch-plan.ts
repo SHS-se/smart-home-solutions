@@ -66,6 +66,8 @@ export interface DispatchSlot {
 }
 
 export interface DispatchStore {
+  /** How the curve was derived, carried through to the plan for whoever inspects it; the dispatch does not read it. */
+  derivation?: unknown;
   minimum_run?: MinimumRun;
   /** Aligned physical durations, including a partially elapsed first quarter. */
   slot_hours?: number[];

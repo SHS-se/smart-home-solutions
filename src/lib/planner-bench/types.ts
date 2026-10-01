@@ -160,6 +160,8 @@ export interface UsedCurve {
   reference_sek_per_kwh: number | null;
   /** How the planner made it: its own word for the method, e.g. "balanced". */
   mode: string | null;
+  /** The planner's own account of the derivation, when it gave one. */
+  derivation?: Record<string, number | string>;
 }
 
 /** What one planner version did with one test case: the bench's stored truth for a result. */

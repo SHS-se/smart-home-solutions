@@ -34,20 +34,33 @@ const recorded = (): BenchRecorded => ({
   recorded_at: "2026-09-28T00:00:00Z",
 });
 
-Deno.test("the current planner plans a bench case built from nothing but the case and the household", async () => {
+Deno.test("the current planner derives its curves from the targets, and the scale turns them up", async () => {
   const planner = await loadPlanner(root);
-  assertEquals(planner.generation, "snapshot");
+  assertEquals(planner.generation, "snapshot+comfort");
   const c = loadCase(dataset(), recorded());
   const { record } = planner.plan(c, HOUSEHOLD);
   assertEquals(record.status, "ready");
-  // It works its own curves out: the battery's from the forecast, the pool's and the car's from comfort.
-  assertEquals(record.curves.map(curve => curve.store).sort(), ["battery", "ev", "pool"]);
-  assertEquals(record.curves.find(curve => curve.store === "battery")!.mode, "balanced");
+  assertEquals(record.valuation, { scale: 1, pool: "scale", ev: "scale", battery: "scale" });
+  // Battery from the forecast; pool and car from what holding the target costs.
+  const curve = (store: string, from = record) => from.curves.find(candidate => candidate.store === store)!;
+  assertEquals(record.curves.map(candidate => candidate.store).sort(), ["battery", "ev", "pool"]);
+  assertEquals([curve("battery").mode, curve("pool").mode, curve("ev").mode], ["balanced", "merit order", "merit order"]);
+  assert(Number(curve("pool").derivation!.need) > 2.5, "the pool starts 2.5 °C short and also loses heat");
   // And it estimates the unpublished prices itself.
   assert(record.beliefs.import_sek_per_kwh.every(price => typeof price === "number" && price > 0));
 
-  const { outcome, stats } = evaluate(c, record, {});
+  const { outcome, stats, series } = evaluate(c, record, {});
   assert(stats.pool_kwh > 1 && stats.ev_kwh > 1 && stats.battery_charge_kwh > 1, JSON.stringify(stats));
+  // The plan heads for the targets: the pool ends within a degree of 30 °C, the car within 50 km of 300 km.
+  assert(Math.abs(series.poolC[287]! - 30) < 1, `pool ends at ${series.poolC[287]}`);
+  assert(series.carKm![287] > 250, `car ends at ${series.carKm![287]} km`);
   // The referee's physics and the planner's agree on what the household can do.
   assert(outcome.violations.length <= 2, JSON.stringify(outcome.violations.slice(0, 5)));
+
+  // A higher valuation multiplies every curve and buys at least as much comfort.
+  const high = planner.plan(c, HOUSEHOLD, Math.SQRT2).record;
+  for (const store of ["pool", "ev", "battery"]) {
+    const ratio = curve(store, high).points[0].sek_per_unit / curve(store).points[0].sek_per_unit;
+    assert(Math.abs(ratio - Math.SQRT2) < 0.01, `${store} scaled by ${ratio}`);
+  }
 });

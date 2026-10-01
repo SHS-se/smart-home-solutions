@@ -12,9 +12,12 @@
 // price estimate and its value curves are part of what is being compared.
 //
 // Generations, detected from the planner's own files:
-//   snapshot        the schema-9 snapshot every planner on `dev` reads.
-//   snapshot+basis  the same, plus the planning basis the redesign branch
-//                   builds from price history with its own code.
+//   snapshot          the schema-9 snapshot, with the owner's targets turned
+//                     into the comfort bands and urgency older planners read.
+//   snapshot+basis    the same, plus the planning basis the redesign branch
+//                     builds from price history with its own code.
+//   snapshot+comfort  the snapshot with the targets themselves and a valuation
+//                     scale; the planner derives its own curves from them.
 // A planner that needs a different input adds a generation here; test cases
 // never change.
 
@@ -26,7 +29,7 @@ import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 2;
+export const ADAPTER_VERSION = 3;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -38,11 +41,15 @@ const LEGACY_URGENCY = { pool: 1.8, ev: 3 };
 
 type Json = Record<string, unknown>;
 /** The entry points the bench calls; stable across the planner versions on the bench. */
-interface PlannerModule { generateOptimisationPlan(snapshot: Json, now: Date, archive: unknown[]): Json }
+interface PlannerModule {
+  generateOptimisationPlan(snapshot: Json, now: Date, archive: unknown[]): Json;
+  /** Inputs the planner reads beyond the plain snapshot; absent on older planners. */
+  PLANNER_INPUTS?: readonly string[];
+}
 interface BasisModule { freezePlanningBasis?(snapshot: Json, archive: unknown[], gridImports: unknown[]): unknown }
 
 export interface LoadedPlanner {
-  generation: "snapshot" | "snapshot+basis";
+  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort";
   /** `scale` multiplies what the planner's value curves are worth (lanes.ts); 1 is the planner as it runs live. */
   plan(c: BenchCase, household: Household, scale?: number): { record: PlanRecord; cpuMs: number };
 }
@@ -79,7 +86,7 @@ function legacyComfortCurve(unit: string, target: number, band: number, urgency:
   };
 }
 
-function snapshotFor(c: BenchCase, h: Household, scale: number): Json {
+function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean): Json {
   const starts = quarterStarts(c.start);
   const end = new Date(Date.parse(starts[QUARTERS - 1]) + 15 * 60_000).toISOString();
   const targets = { ...TARGETS, ...(c.comfort ?? {}) };
@@ -131,10 +138,17 @@ function snapshotFor(c: BenchCase, h: Household, scale: number): Json {
       source_entity_ids: { water_temperature: "sensor.bench_pool_water_temperature" },
     },
     pool_model: { loss_kw_per_k: h.pool.loss_kw_per_k, rated_cop: h.pool.rated_cop, cop_per_air_c: h.pool.cop_per_air_c, cutout_air_c: null },
-    value_curves: {
-      pool: legacyComfortCurve("celsius", targets.pool_c, LEGACY_BAND.pool_c, LEGACY_URGENCY.pool * scale),
-      ev: legacyComfortCurve("km", targets.ev_km, LEGACY_BAND.ev_km, LEGACY_URGENCY.ev * scale),
-    },
+    ...(comfort
+      ? {
+        comfort: { pool: { target_c: targets.pool_c }, ev: { target_km: targets.ev_km } },
+        valuation: { pool: scale, ev: scale, battery: scale },
+      }
+      : {
+        value_curves: {
+          pool: legacyComfortCurve("celsius", targets.pool_c, LEGACY_BAND.pool_c, LEGACY_URGENCY.pool * scale),
+          ev: legacyComfortCurve("km", targets.ev_km, LEGACY_BAND.ev_km, LEGACY_URGENCY.ev * scale),
+        },
+      }),
     value_settings: { battery_degradation_sek_per_kwh: h.site.battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km: null },
     grid: { import_limit_w: h.site.import_limit_w, export_limit_w: h.site.export_limit_w },
     policy: {
@@ -146,9 +160,9 @@ function snapshotFor(c: BenchCase, h: Household, scale: number): Json {
     },
     device_models: [
       deviceModel(EV_METER, "Car charging", "ev_charging", "variable_power", h.ev.voltage_v * h.ev.phase_count * h.ev.max_current_a),
-      deviceModel(POOL_PUMP, "Pool pump", "pool_heating", "switch_schedule", h.pool.pump_w, { planning_service: "pool" }),
+      deviceModel(POOL_PUMP, "Pool pump", "pool_heating", "switch_schedule", h.pool.pump_w, { planning_service: "pool", pool_role: "circulation" }),
       deviceModel(POOL_HEATER, "Pool heater", "pool_heating", "variable_power", h.pool.heater_w, {
-        planning_service: "pool",
+        planning_service: "pool", pool_role: "heater",
         minimum_run: { running: false, minimum_seconds: h.pool.heater_minimum_run_s, remaining_seconds: 0 },
       }),
     ],
@@ -199,7 +213,8 @@ function usedCurves(plan: Json): UsedCurve[] {
       store: String(store.key), unit: curve.unit ?? null, points: curve.points,
       initial_state: num(store.initial_state), max_state: num(store.max_state),
       units_per_kwh: num(store.units_per_kwh), reference_sek_per_kwh: num(store.reference_sek_per_kwh),
-      mode: null,
+      mode: (store.derivation as { method?: string } | undefined)?.method === "merit_order" ? "merit order" : null,
+      ...(store.derivation ? { derivation: store.derivation as Record<string, number | string> } : {}),
     });
   }
   const battery = plan.battery_value_curve as Json | null | undefined;
@@ -233,9 +248,11 @@ function recordFrom(plan: Json, generation: LoadedPlanner["generation"], scale: 
     : null;
   return {
     status: String(plan.status ?? "unknown"), generation, decisions,
-    // These generations have no scale input: urgency moves the pool and car curves below target only,
-    // and nothing reaches the battery's derived curve.
-    valuation: { scale, pool: "urgency_only", ev: "urgency_only", battery: "none" },
+    valuation: generation === "snapshot+comfort"
+      ? { scale, pool: "scale", ev: "scale", battery: "scale" }
+      // Older generations have no scale input: urgency moves the pool and car curves below
+      // target only, and nothing reaches the battery's derived curve.
+      : { scale, pool: "urgency_only", ev: "urgency_only", battery: "none" },
     beliefs: { import_sek_per_kwh: believed, grid_cost_sek: believedCost },
     curves: usedCurves(plan),
   };
@@ -250,11 +267,12 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
   const dir = `${root}/${plannerDir(diskTree(root))}`;
   const M: PlannerModule = await import(`file://${dir}/energy-optimisation.ts`);
   const basis = await optionalImport(`${dir}/planning-basis.ts`);
-  const generation = typeof basis?.freezePlanningBasis === "function" ? "snapshot+basis" : "snapshot";
+  const generation = M.PLANNER_INPUTS?.includes("comfort") ? "snapshot+comfort"
+    : typeof basis?.freezePlanningBasis === "function" ? "snapshot+basis" : "snapshot";
   return {
     generation,
     plan(c, household, scale = 1) {
-      const snapshot = snapshotFor(c, household, scale);
+      const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort");
       const archive = priceArchive(c);
       if (generation === "snapshot+basis") {
         // The planner's own code builds its basis from the case's history.

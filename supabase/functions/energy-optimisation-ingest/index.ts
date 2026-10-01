@@ -32,6 +32,7 @@ import {
   type generateOptimisationPlan,
   type OptimisationSnapshot,
 } from "../_shared/planner/energy-optimisation.ts";
+import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
@@ -1780,9 +1781,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // fit produced. A refusal leaves `pool_model` absent and the planner
       // falls back to its seeded figures.
       if (snapshot.pool) {
-        const poolKeys = snapshot.device_models
-          .filter((device) => device.planning_service === "pool")
-          .map((device) => device.key);
+        // The COP is fitted on the heater's energy alone: the pump circulates
+        // and heats nothing, and the planner applies the COP to heater power.
+        const poolKeys = poolHeaters(snapshot.device_models).map((device) => device.key);
         try {
           await refitPoolModel(
             supabase,
