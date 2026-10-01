@@ -20,7 +20,7 @@ interface EnergyModelingProps {
 type EnergyTab = 'roi' | 'comfort' | 'workbench' | PlanSection;
 
 const ENERGY_TABS = new Set<EnergyTab>([
-  'roi', 'plan', 'devices', 'comfort', 'thermal', 'economics', 'workbench',
+  'roi', 'plan', 'devices', 'comfort', 'thermal', 'workbench',
 ]);
 
 /**
@@ -104,7 +104,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
-    { key: 'economics', label: t('Ekonomi', 'Economics') },
     { key: 'workbench', label: t('Bygg plan', 'Build a plan') },
   ];
 

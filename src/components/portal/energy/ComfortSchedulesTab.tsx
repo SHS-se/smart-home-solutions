@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
+import ComfortTargetsCard from './ComfortTargetsCard';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 import {
   COMFORT_MODES,
@@ -298,6 +299,7 @@ const ComfortSchedulesTab: React.FC<{
 
   return (
     <div className="space-y-4">
+      <ComfortTargetsCard key={homeId} customerId={customerId} homeId={homeId} />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>{t('Komfortschemat behöver åtgärdas', 'The comfort schedule needs attention')}</AlertTitle>

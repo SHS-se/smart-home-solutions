@@ -306,24 +306,21 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
     if (!homeId) return;
     setLoading(true);
     setError(null);
-    const [{ data, error: queryError }, { data: curveRows }] = await Promise.all([
+    const [{ data, error: queryError }, { data: targetRow }] = await Promise.all([
       supabase
         .from('energy_optimisation_current')
         .select('snapshot, plan')
         .eq('home_id', homeId)
         .maybeSingle(),
-      // The curves as they are *now*, not as they were when the plan was made.
-      //
-      // A snapshot carries the value curves it was captured with, so editing a
-      // threshold and coming here showed the old one: the worth row said 4.87
-      // SEK/kWh while the curve editor's own chart said 2.05 for the same 239
-      // km. Worse than a stale number, it made the question the editor exists
-      // to answer — does this threshold stop the car outbidding the grid? —
-      // unanswerable until a replan happened to land.
+      // The comfort targets as they are *now*, not as they were when the plan
+      // was made: a snapshot carries the targets it was planned with, so
+      // changing one and coming here would otherwise show the old one until a
+      // replan happened to land.
       supabase
-        .from('energy_optimisation_value_curves')
-        .select('store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier')
-        .eq('home_id', homeId),
+        .from('energy_optimisation_comfort_targets')
+        .select('pool_target_c, ev_target_km')
+        .eq('home_id', homeId)
+        .maybeSingle(),
     ]);
     if (queryError || !data?.snapshot) {
       setLoading(false);
@@ -344,20 +341,16 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
       // household was reading.
       const stored = data.plan as unknown as OptimisationPlan | null;
       const snapshot = data.snapshot as unknown as OptimisationSnapshot;
-      // Merged rather than replaced: a row exists only for a curve the
-      // household has edited, and the rest of the snapshot's curves are still
-      // the right answer for the stores they describe.
-      const edited = Object.fromEntries(
-        (curveRows ?? [])
-          .filter(row => Array.isArray(row.points))
-          .map(row => [row.store_key, { unit: row.unit, points: row.points, max_value_sek_per_kwh: row.max_value_sek_per_kwh, urgent_price_multiplier: row.urgent_price_multiplier }]),
-      );
-      setCurveSource(Object.keys(edited).length > 0 ? 'settings' : 'snapshot');
+      // A snapshot planned from targets takes the current ones; an older
+      // snapshot, planned from its own curves, is rebuilt as it was.
+      const current = snapshot.comfort && targetRow
+        ? { pool: { target_c: Number(targetRow.pool_target_c) }, ev: { target_km: Number(targetRow.ev_target_km) } }
+        : null;
+      const changed = current !== null && (current.pool.target_c !== snapshot.comfort?.pool?.target_c
+        || current.ev.target_km !== snapshot.comfort?.ev?.target_km);
+      setCurveSource(changed ? 'settings' : 'snapshot');
       const built = dispatchWorkbench(
-        {
-          ...snapshot,
-          value_curves: { ...snapshot.value_curves, ...edited },
-        } as OptimisationSnapshot,
+        (changed ? { ...snapshot, comfort: current } : snapshot) as OptimisationSnapshot,
         [],
         stored?.price_outlook,
         stored ? new Date(stored.issued_at) : undefined,
@@ -1049,8 +1042,8 @@ const PlanWorkbenchTab: React.FC<Props> = ({ homeId }) => {
             </Badge>
             <Badge variant="outline" className="text-[10px]">
               {curveSource === 'settings'
-                ? t('värdekurvor från inställningar', 'curves from settings')
-                : t('värdekurvor från ögonblicksbilden', 'curves from the snapshot')}
+                ? t('komfortmål från inställningar', 'comfort targets from settings')
+                : t('komfortmål från ögonblicksbilden', 'comfort targets from the snapshot')}
             </Badge>
           </div>
         </CardContent>

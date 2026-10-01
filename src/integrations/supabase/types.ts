@@ -2225,6 +2225,48 @@ export type Database = {
           },
         ]
       }
+      energy_optimisation_comfort_targets: {
+        Row: {
+          customer_id: string
+          ev_target_km: number
+          home_id: string
+          pool_target_c: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          customer_id: string
+          ev_target_km?: number
+          home_id: string
+          pool_target_c?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          customer_id?: string
+          ev_target_km?: number
+          home_id?: string
+          pool_target_c?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "energy_optimisation_comfort_targets_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "energy_optimisation_comfort_targets_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: true
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       energy_optimisation_value_settings: {
         Row: {
           battery_degradation_sek_per_kwh: number

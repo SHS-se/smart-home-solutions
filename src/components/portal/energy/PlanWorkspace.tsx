@@ -54,7 +54,6 @@ import {
 import { usePlanModel } from './plan/usePlanModel';
 import PowerSection from './plan/sections/PowerSection';
 import ThermalSection from './plan/sections/ThermalSection';
-import ValueCurvesTab from './ValueCurvesTab';
 
 import EmpiricalDeviceModelsCard, {
   type EmpiricalEnergyDevice,
@@ -469,59 +468,6 @@ const PlanView: React.FC<{
           ? t('Inga bindande instruktioner återstår i planen.', 'No binding instructions remain in this plan.')
           : runtimeStatus.runtime?.reason ?? runtimeLabel;
 
-  // The price the planner is comparing against right now, and where each store
-  // actually sits, so the curve chart marks real positions rather than a
-  // textbook example.
-  const livePrices = useMemo(() => {
-    const slot = plan?.plans?.priority?.slots?.find(
-      entry => Date.parse(entry.start) <= now &&
-        now < Date.parse(entry.start) + 15 * 60_000,
-    ) ?? plan?.plans?.priority?.slots?.[0];
-    return {
-      import: typeof slot?.import_price_sek_per_kwh === 'number'
-        ? slot.import_price_sek_per_kwh
-        : null,
-      export: typeof slot?.export_price_sek_per_kwh === 'number'
-        ? slot.export_price_sek_per_kwh
-        : null,
-    };
-  }, [plan, now]);
-
-  const vehicleRangeKm = useMemo(() => {
-    const vehicle = plan?.ev_battery;
-    if (!vehicle?.capacity_kwh || typeof vehicle.soc !== 'number') return null;
-    // The same seeded 0.16 kWh/km the planner uses, so the marker and the
-    // decision agree.
-    return (vehicle.soc * vehicle.capacity_kwh) / 0.16;
-  }, [plan]);
-
-  /** The range the customer's own charge limit asks for, which anchors the curve. */
-  const vehicleTargetRangeKm = useMemo(() => {
-    const vehicle = plan?.ev_battery;
-    if (!vehicle?.capacity_kwh || typeof vehicle.departure_target_soc !== 'number') {
-      return null;
-    }
-    return (vehicle.departure_target_soc * vehicle.capacity_kwh) / 0.16;
-  }, [plan]);
-
-  /**
-   * Range at a full battery, so a threshold in kilometres can be read as SOC.
-   *
-   * The hardware limit is a state of charge and the curve is stated in
-   * kilometres; without this the household cannot tell whether a threshold they
-   * typed is even reachable under their own charge limit.
-   */
-  const vehicleFullRangeKm = useMemo(() => {
-    const vehicle = plan?.ev_battery;
-    if (!vehicle?.capacity_kwh) return null;
-    return vehicle.capacity_kwh / 0.16;
-  }, [plan]);
-
-  const vehicleChargeLimitSoc = useMemo(() => {
-    const target = plan?.ev_battery?.departure_target_soc;
-    return typeof target === 'number' ? target : null;
-  }, [plan]);
-
   // One timeline: measured quarters up to now, planned quarters after it.
   // Every headline number describes the day on screen, so a total can be
   // checked against the chart under it.
@@ -835,22 +781,6 @@ const PlanView: React.FC<{
               empiricalDevices={empiricalDevices}
               thermalObservations={thermalObservations}
               zoneModels={zoneModels}
-            />
-          )}
-          {section === 'economics' && (
-            <ValueCurvesTab
-              key={`${customerId}:${homeId}`}
-              customerId={customerId}
-              homeId={homeId}
-              planSnapshotId={plan.snapshot_id}
-              importPriceSekPerKwh={livePrices.import}
-              exportPriceSekPerKwh={livePrices.export}
-              vehicleTargetRangeKm={vehicleTargetRangeKm}
-              vehicleFullRangeKm={vehicleFullRangeKm}
-              vehicleChargeLimitSoc={vehicleChargeLimitSoc}
-              batteryValueCurve={plan.battery_value_curve}
-              replan={current}
-              refreshing={refreshing}
             />
           )}
         </CardContent>
