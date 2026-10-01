@@ -1004,6 +1004,26 @@ function extractDueDate(text: string, fingerprintId: string): string | null {
 }
 
 function extractProductName(text: string): string | null {
+  if (/Apple Distribution International Ltd\./i.test(text)) {
+    const match = text.match(/Apple Account:\s+\S+\s+ChatGPT\s+(.+?)\s+Renews/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
+  if (/Coolshop\.se/i.test(text)) {
+    const match = text.match(/SKU\s+BESKRIVNING\s+EAN\s+KVANTITET\s+PRIS\s+SUMMA\s+\d+\s+(.+?)\s+(?:\d{8,14}\s+)?\d+\s+\d+(?:[.,]\d+)?\s*kr/i);
+    return match ? cleanProductName(match[1]).replace(/\s+-$/, '') : null;
+  }
+  if (/Global-e NL B\.V/i.test(text)) {
+    const items = text.match(/Product\s+SKU\s+Quantity\s+Price\/Unit\s+SubTotal\s+(.+?)\s+Items Total/i)?.[1];
+    if (!items) return null;
+    const products = [...items.matchAll(/(.+?)\s+\d{8,20}\s+\d+\s+kr\s+[\d.,]+\s+kr\s+([\d.,]+)/gi)]
+      .filter((match) => (parseAmount(match[2]) ?? 0) > 0)
+      .map((match) => cleanProductName(match[1]));
+    return products.join(', ') || null;
+  }
+  if (/Supabase Pte\. Ltd\./i.test(text)) {
+    const match = text.match(/Description\s+Quantity\s+Rate\s+Amount\s+(.+?)\s+\d+\s+\$/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
   if (/www\.digikey\.com/i.test(text)) {
     const match = text.match(/DESC:\s+(.+?)\s+\d+\.\d{5}\s+\d+(?:,\d{3})*\.\d{2}/i);
     return match ? cleanProductName(match[1]) : null;

@@ -197,6 +197,8 @@ export function getAccountName(account: string): string {
 }
 
 const FINGERPRINT_ACCOUNT_MAP: Record<string, string> = {
+  apple_subscription_receipt: '6540',
+  supabase_invoice:           '6540',
   stripe_tax_invoice:         '6590',
   openai_invoice:             '6540',
   anthropic_invoice:          '6540',

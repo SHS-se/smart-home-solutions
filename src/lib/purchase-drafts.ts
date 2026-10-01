@@ -10,7 +10,6 @@ import {
   parseAmount,
   type ExchangeRateLookupResult,
 } from './accounting-fx';
-import { fetchSingleEcbExchangeRate } from './ecb-rates';
 import { PurchaseDraftError, toPurchaseDraftError } from './purchase-draft-error';
 import {
   buildInvoiceNumberNote,
@@ -242,6 +241,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
       }
     : params.exchangeRateLookup ?? await (async () => {
         try {
+          const { fetchSingleEcbExchangeRate } = await import('./ecb-rates');
           return await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
         } catch (error) {
           throw toPurchaseDraftError(error, {
