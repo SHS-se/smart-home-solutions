@@ -1,20 +1,35 @@
-// Planner bench runner: replay every test case through one or more planner
-// versions and store what each planned (docs/planner-bench/README.md).
+// Planner bench runner: plan every test case with one or more planner versions
+// and store what each decided (docs/planner-bench/README.md, test-cases.md).
 //
 //   deno run -A --config deno.json bench/run.ts [options]
 //
 //   --shas a,b,c | all | none
 //                           commits to run (default: HEAD). `all` = every commit already on the bench,
-//                           `none` = no planner runs, only recompute stale scores.
+//                           and may be one of the list; `none` = no planner runs, only prepare cases
+//                           and recompute stale evaluations.
 //   --scenario <id>         only this test case (default: every case).
-//   --force                 re-run cases that already have a result for the commit.
+//   --force                 re-run cases whose result is already up to date.
 //   --current <sha>         mark this commit as the planner currently deployed.
 //   --branch <name>         recorded against the run (CI passes the pushed branch).
 //   --local <dir> --out <file.json>
-//                           no database: cases are the replay files in <dir>,
+//                           no database: cases are `{ dataset, recorded }` files in <dir>,
 //                           records go to <file.json>.
 //
-// Database mode needs BENCH_SUPABASE_URL and BENCH_SERVICE_ROLE_KEY.
+// Database mode needs BENCH_SUPABASE_URL and BENCH_SERVICE_ROLE_KEY; BENCH_HOME_ID
+// names the home whose recorded history completes the cases (default: the one
+// home recording to the project).
+//
+// Before any planner runs, scenarios still held as replays are converted to
+// test cases, and cases whose 72 hours have since been recorded get their real
+// prices, weather and history (history.ts). A case is run only once complete.
+//
+// A result is up to date when it was planned from exactly the present input:
+// the case, the household, the comfort profile and the adapter (its
+// `input_hash`). Editing a case re-runs that case; changing the household
+// re-runs everything; adding a case re-runs nothing. What the planner decided
+// is stored, and the referee's account of it (cost at real prices, pool and
+// battery trajectories, score) is recomputed from that whenever the referee or
+// the scorer changes, with no planner run.
 //
 // Commits whose planner code is the same (planner-version.ts) share one run:
 // a commit whose planner version is already on the bench is not run again, and
@@ -24,9 +39,15 @@
 // process, so versions never share module state and one version crashing
 // cannot take the others with it.
 
-import { loadPlanner } from "./planner-adapter.ts";
-import { isStale, storedScore } from "../src/lib/planner-bench/score.ts";
-import { type BenchStore, DbStore, LocalStore, type RunSummary } from "./store.ts";
+import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
+import { canonicalJson, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
+import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
+import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
+import { COMFORT, HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
+import { isStale } from "../src/lib/planner-bench/score.ts";
+import { completeCase, type HistorySource } from "./history.ts";
+import { type BenchStore, DbStore, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -57,44 +78,96 @@ async function git(...argv: string[]): Promise<string> {
   return new TextDecoder().decode(out.stdout).trim();
 }
 
-/** Worker: run the planner at --root for commit --worker on every case it still lacks. */
+/** The scenarios that are complete test cases. */
+const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =>
+  scenario.dataset && scenario.recorded ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
+
+/** Identity of everything a planner generation is given for a case. */
+function inputHash(c: BenchCase, generation: string): Promise<string> {
+  const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, comfort: COMFORT, adapter: ADAPTER_VERSION, generation }));
+}
+
+/** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
 async function worker(sha: string, root: string) {
   const bench = store();
   const planner = await loadPlanner(root);
-  const cases = await bench.scenarios(args.scenario);
-  const done = args.force ? new Set<string>() : await bench.resultIds(sha);
-  const all = cases.map(c => c.input);
-  for (const scenario of cases) {
-    if (done.has(scenario.id)) continue;
+  const done = await bench.resultHashes(sha);
+  for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
+    const hash = await inputHash(c, planner.generation);
+    if (!args.force && done.get(scenario.id) === hash) continue;
+    const base = { sha, scenario_id: scenario.id, input_hash: hash };
     try {
-      const { series, stats, cpuMs } = planner.run(scenario.input, all);
-      await bench.saveResult({ sha, scenario_id: scenario.id, status: "ok", error: null, cpu_ms: Math.round(cpuMs), series, stats,
-        score: storedScore(series, scenario.criteria) });
-      console.log(`  ${scenario.name}: ${Math.round(cpuMs)} ms, pool ${stats.pool_kwh.toFixed(1)} kWh, cost ${stats.grid_cost_sek.toFixed(1)} kr`);
+      const { record, cpuMs } = planner.plan(c, HOUSEHOLD);
+      const evaluation = evaluate(c, record, scenario.criteria);
+      await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
+      console.log(`  ${scenario.name}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
+        + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh,`
+        + ` ${evaluation.outcome.violations.length} clipped decisions`);
     } catch (error) {
       const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
-      await bench.saveResult({ sha, scenario_id: scenario.id, status: "error", error: message, cpu_ms: null, series: null, stats: null, score: null });
+      await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });
       console.log(`  ${scenario.name}: ERROR ${message.split("\n")[0]}`);
     }
   }
 }
 
-/**
- * Recompute every stored score written by an older scorer or before the case's
- * criteria last changed. Reads the stored plan series; no planner runs.
- */
-async function rescoreStale(bench: BenchStore) {
-  const criteria = new Map((await bench.scenarios()).map(c => [c.id, c.criteria]));
-  let rescored = 0;
-  for (const result of await bench.scoredResults()) {
-    const overrides = criteria.get(result.scenario_id);
-    if (overrides === undefined || !isStale(result.score, overrides)) continue;
-    const series = await bench.series(result.sha, result.scenario_id);
-    if (!series) continue;
-    await bench.saveScore(result.sha, result.scenario_id, storedScore(series, overrides));
-    rescored++;
+/** Where the home's recorded history is read from, or null without a database. */
+async function historySource(): Promise<HistorySource | null> {
+  const url = Deno.env.get("BENCH_SUPABASE_URL"), key = Deno.env.get("BENCH_SERVICE_ROLE_KEY");
+  if (args.local || !url || !key) return null;
+  let homeId = Deno.env.get("BENCH_HOME_ID");
+  if (!homeId) {
+    const response = await fetch(`${url}/rest/v1/energy_optimisation_outdoor_slots?select=home_id&order=start_ts.desc&limit=1`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } });
+    homeId = response.ok ? (await response.json())[0]?.home_id : undefined;
   }
-  console.log(`Rescored ${rescored} stale result${rescored === 1 ? "" : "s"}.`);
+  return homeId ? { url, key, homeId } : null;
+}
+
+/** Convert scenarios still held as replays, and complete cases whose window has since been recorded. */
+async function prepareCases(bench: BenchStore) {
+  const source = await historySource();
+  for (const scenario of await bench.scenarios(args.scenario)) {
+    let dataset = scenario.dataset;
+    if (!dataset) {
+      const input = await bench.legacyReplayInput(scenario.id);
+      if (!input) { console.log(`${scenario.name}: has neither a test case nor a replay; skipped.`); continue; }
+      dataset = caseFromReplay({ format: REPLAY_FORMAT, entrypoint: { arguments: input } }, scenario.name).data;
+      await bench.saveDataset(scenario.id, dataset);
+      console.log(`${scenario.name}: converted from its replay.`);
+    }
+    if (scenario.recorded || !source) continue;
+    const done = await completeCase(source, dataset);
+    if (dataset.start_state_unread?.length) {
+      // Readings the replay lacked come from recorded history, once.
+      const { ev_soc, ...read } = done.startState;
+      const { start_state_unread: _unread, ...rest } = dataset;
+      dataset = { ...rest, start_state: { ...dataset.start_state, ...read, ev: { ...dataset.start_state.ev, ...(ev_soc !== undefined ? { soc: ev_soc } : {}) } } };
+      await bench.saveDataset(scenario.id, dataset);
+    }
+    await bench.saveRecorded(scenario.id, done.recorded, done.missing);
+    console.log(`${scenario.name}: ${done.recorded ? "complete, recorded data stored" : `waiting, ${done.missing}`}.`);
+  }
+}
+
+/**
+ * Recompute every evaluation made by an older referee or scorer, or before the
+ * case's criteria last changed, from the stored decisions. No planner runs.
+ */
+async function reevaluateStale(bench: BenchStore) {
+  const cases = new Map(readyCases(await bench.scenarios()).map(entry => [entry.scenario.id, entry]));
+  let count = 0;
+  for (const result of await bench.evaluatedResults()) {
+    const entry = cases.get(result.scenario_id);
+    if (!entry || (result.referee_version === REFEREE_VERSION && !isStale(result.score, entry.scenario.criteria))) continue;
+    const record = await bench.planRecord(result.sha, result.scenario_id);
+    // A result from before decisions were stored is replaced when its commit is next run.
+    if (!record) continue;
+    await bench.saveEvaluation(result.sha, result.scenario_id, evaluate(entry.c, record, entry.scenario.criteria));
+    count++;
+  }
+  console.log(`Re-evaluated ${count} stale result${count === 1 ? "" : "s"}.`);
 }
 
 const versionOf = (sha: string) => plannerVersion(commitTree(sha, harness));
@@ -129,10 +202,10 @@ async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSumma
 
 async function orchestrate() {
   const bench = store();
+  await prepareCases(bench);
   const byVersion = await foldSameVersions(bench);
-  const requested = args.shas === "all" ? await bench.knownShas()
-    : args.shas === "none" ? []
-    : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  const listed = args.shas === "none" ? [] : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  const requested = [...new Set((await Promise.all(listed.map(async ref => ref === "all" ? await bench.knownShas() : [ref]))).flat())];
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
   try {
@@ -175,7 +248,7 @@ async function orchestrate() {
       const sha = await git("rev-parse", args.current);
       await bench.markCurrent(byVersion.get(await versionOf(sha))?.sha ?? sha);
     }
-    await rescoreStale(bench);
+    await reevaluateStale(bench);
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }

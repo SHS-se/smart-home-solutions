@@ -48,5 +48,5 @@ Deno.test("a code change is a new planner version", async () => {
   const base = await plannerVersion(memoryTree(PLANNER_DIR, PLANNER));
   const changed = await plannerVersion(memoryTree(PLANNER_DIR, { ...PLANNER, "dispatch-plan.ts": `export function plan(x: number): number {\n  return x * 3;\n}\n` }));
   assertNotEquals(changed, base);
-  assert(changed.startsWith("v1-esbuild"));
+  assert(changed.startsWith("v2-esbuild"));
 });

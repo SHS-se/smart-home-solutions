@@ -23,8 +23,10 @@ export interface Changes {
   migrations: boolean;
   /** Edge functions to deploy, by name. */
   functions: string[];
-  /** The planner the bench replays. */
+  /** The planner the bench runs. */
   planner: boolean;
+  /** The bench's own input and judgement: household, adapter, referee, scorer. */
+  bench: boolean;
 }
 
 const isDoc = (f: string) => f.endsWith(".md") || f.startsWith("docs/");
@@ -48,7 +50,7 @@ export function functionNames(root: string): string[] {
 
 export function classify(root: string, changed: readonly string[] | "all"): Changes {
   const names = functionNames(root);
-  if (changed === "all") return { code: true, frontend: true, migrations: true, functions: names, planner: true };
+  if (changed === "all") return { code: true, frontend: true, migrations: true, functions: names, planner: true, bench: true };
 
   const any = (test: (f: string) => boolean) => changed.some(test);
   const touches = (files: Set<string>) => any(f => files.has(f));
@@ -70,7 +72,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
 
   // A cheap gate only: the bench itself skips a commit whose planner version it
   // already has (bench/planner-version.ts), so over-including costs one CI job.
-  const planner = any(f => (f.startsWith(`${PLANNER_DIR}/`) && !isTest(f) && !isDoc(f)) || f === "bench/prepare.ts");
+  const planner = any(f => (f.startsWith(`${PLANNER_DIR}/`) && !isTest(f) && !isDoc(f)));
 
   return {
     code: any(f => !isDoc(f)),
@@ -78,6 +80,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     migrations: any(f => f.startsWith("supabase/migrations/")),
     functions,
     planner,
+    bench: any(f => (f.startsWith("bench/") || f.startsWith("src/lib/planner-bench/")) && !isDoc(f) && !isTest(f)),
   };
 }
 
@@ -114,6 +117,7 @@ if (import.meta.main) {
     `migrations=${c.migrations}`,
     `functions=${c.functions.join(" ")}`,
     `planner=${c.planner}`,
+    `bench=${c.bench}`,
   ];
   console.log(changed === "all" ? "Changed: everything" : `Changed files (${changed.length}):\n  ${changed.join("\n  ")}`);
   console.log(lines.join("\n"));

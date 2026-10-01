@@ -3,17 +3,21 @@
 // `DbStore` is the real one: the bench_* tables in the TEST Supabase project,
 // written with the service-role key (CI only). `LocalStore` keeps the same
 // records in one JSON file so the runner can be developed and checked without a
-// database; its test cases come from replay files in a directory.
+// database; its test cases are `{ dataset, recorded }` files in a directory.
 
-import { stripReplay } from "../src/lib/planner-bench/strip.ts";
+import type { BenchRecorded, BenchScenarioData } from "../src/lib/planner-bench/case.ts";
+import type { Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
-import type { BenchInput, BenchSeries, BenchStats, CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
+import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
 export interface StoredScenario {
   id: string;
   name: string;
-  input: BenchInput;
   criteria: CriteriaOverrides;
+  /** The test case; null for a scenario still held as a replay. */
+  dataset: BenchScenarioData | null;
+  /** What was recorded for its window; null until the window has passed. */
+  recorded: BenchRecorded | null;
 }
 
 export interface RunRecord {
@@ -36,39 +40,45 @@ export interface RunSummary {
   is_current: boolean;
 }
 
-export interface ResultRecord {
+export interface ResultRecord extends Partial<Evaluation> {
   sha: string;
   scenario_id: string;
   status: "ok" | "error";
   error: string | null;
   cpu_ms: number | null;
-  series: BenchSeries | null;
-  stats: BenchStats | null;
-  score: StoredScore | null;
+  /** Identity of everything the planner was given (run.ts); a result with another hash is stale. */
+  input_hash: string;
+  /** What the planner did; the one stored truth a result's numbers derive from. */
+  record: PlanRecord | null;
 }
 
-export interface ScoredResult {
+export interface EvaluatedResult {
   sha: string;
   scenario_id: string;
   score: StoredScore | null;
+  referee_version: number | null;
 }
 
 export interface BenchStore {
   scenarios(only?: string): Promise<StoredScenario[]>;
+  /** The stripped replay a scenario was uploaded as, for converting it once. */
+  legacyReplayInput(id: string): Promise<unknown | null>;
+  saveDataset(id: string, dataset: BenchScenarioData): Promise<void>;
+  saveRecorded(id: string, recorded: BenchRecorded | null, pendingReason: string | null): Promise<void>;
   knownShas(): Promise<string[]>;
   runs(): Promise<RunSummary[]>;
   setPlannerVersion(sha: string, version: string): Promise<void>;
   /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
   mergeRun(from: string, into: string): Promise<void>;
-  /** Scenario ids that already have a result for this commit (successful or not). */
-  resultIds(sha: string): Promise<Set<string>>;
+  /** The input hash of each result this commit has, by scenario. */
+  resultHashes(sha: string): Promise<Map<string, string | null>>;
   saveRun(run: RunRecord): Promise<void>;
   markCurrent(sha: string): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
-  /** Every successful result's stored score, for staleness checks. */
-  scoredResults(): Promise<ScoredResult[]>;
-  series(sha: string, scenarioId: string): Promise<BenchSeries | null>;
-  saveScore(sha: string, scenarioId: string, score: StoredScore): Promise<void>;
+  /** Every successful result's score and referee version, for staleness checks. */
+  evaluatedResults(): Promise<EvaluatedResult[]>;
+  planRecord(sha: string, scenarioId: string): Promise<PlanRecord | null>;
+  saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation): Promise<void>;
 }
 
 export class DbStore implements BenchStore {
@@ -89,9 +99,26 @@ export class DbStore implements BenchStore {
     return body ? JSON.parse(body) : null;
   }
 
+  private patch(path: string, body: unknown) {
+    return this.request(path, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body) });
+  }
+
   async scenarios(only?: string) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
-    return await this.request(`bench_scenarios?select=id,name,input,criteria&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
+    return await this.request(`bench_scenarios?select=id,name,criteria,dataset,recorded&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
+  }
+
+  async legacyReplayInput(id: string) {
+    const rows = await this.request(`bench_scenarios?select=input&id=eq.${id}`) as { input: unknown }[];
+    return rows[0]?.input ?? null;
+  }
+
+  async saveDataset(id: string, dataset: BenchScenarioData) {
+    await this.patch(`bench_scenarios?id=eq.${id}`, { dataset, captured_at: dataset.start });
+  }
+
+  async saveRecorded(id: string, recorded: BenchRecorded | null, pendingReason: string | null) {
+    await this.patch(`bench_scenarios?id=eq.${id}`, { ...(recorded ? { recorded } : {}), pending_reason: pendingReason });
   }
 
   async knownShas() {
@@ -104,9 +131,7 @@ export class DbStore implements BenchStore {
   }
 
   async setPlannerVersion(sha: string, version: string) {
-    await this.request(`bench_runs?sha=eq.${sha}`, {
-      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ planner_version: version }),
-    });
+    await this.patch(`bench_runs?sha=eq.${sha}`, { planner_version: version });
   }
 
   async mergeRun(from: string, into: string) {
@@ -124,9 +149,9 @@ export class DbStore implements BenchStore {
     await this.request(`bench_runs?sha=eq.${from}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
 
-  async resultIds(sha: string) {
-    const rows = await this.request(`bench_results?select=scenario_id&sha=eq.${sha}`) as { scenario_id: string }[];
-    return new Set(rows.map(row => row.scenario_id));
+  async resultHashes(sha: string) {
+    const rows = await this.request(`bench_results?select=scenario_id,input_hash&sha=eq.${sha}`) as { scenario_id: string; input_hash: string | null }[];
+    return new Map(rows.map(row => [row.scenario_id, row.input_hash]));
   }
 
   async saveRun(run: RunRecord) {
@@ -138,35 +163,32 @@ export class DbStore implements BenchStore {
   }
 
   async markCurrent(sha: string) {
-    await this.request("bench_runs?is_current=eq.true", {
-      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ is_current: false }),
-    });
-    await this.request(`bench_runs?sha=eq.${sha}`, {
-      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ is_current: true }),
-    });
+    await this.patch("bench_runs?is_current=eq.true", { is_current: false });
+    await this.patch(`bench_runs?sha=eq.${sha}`, { is_current: true });
   }
 
   async saveResult(result: ResultRecord) {
     await this.request("bench_results?on_conflict=sha,scenario_id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({ ...result, created_at: new Date().toISOString() }),
+      body: JSON.stringify({
+        series: null, stats: null, outcome: null, score: null, referee_version: null,
+        ...result, created_at: new Date().toISOString(),
+      }),
     });
   }
 
-  async scoredResults() {
-    return await this.request("bench_result_summaries?select=sha,scenario_id,score&status=eq.ok") as ScoredResult[];
+  async evaluatedResults() {
+    return await this.request("bench_result_summaries?select=sha,scenario_id,score,referee_version&status=eq.ok") as EvaluatedResult[];
   }
 
-  async series(sha: string, scenarioId: string) {
-    const rows = await this.request(`bench_results?select=series&sha=eq.${sha}&scenario_id=eq.${scenarioId}`) as { series: BenchSeries | null }[];
-    return rows[0]?.series ?? null;
+  async planRecord(sha: string, scenarioId: string) {
+    const rows = await this.request(`bench_results?select=record&sha=eq.${sha}&scenario_id=eq.${scenarioId}`) as { record: PlanRecord | null }[];
+    return rows[0]?.record ?? null;
   }
 
-  async saveScore(sha: string, scenarioId: string, score: StoredScore) {
-    await this.request(`bench_results?sha=eq.${sha}&scenario_id=eq.${scenarioId}`, {
-      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ score }),
-    });
+  async saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation) {
+    await this.patch(`bench_results?sha=eq.${sha}&scenario_id=eq.${scenarioId}`, evaluation);
   }
 }
 
@@ -175,7 +197,7 @@ interface LocalFile {
   results: ResultRecord[];
 }
 
-/** Test cases from replay files in `dir`; records in the JSON file at `out`. */
+/** Test cases from `{ dataset, recorded }` files in `dir`; records in the JSON file at `out`. */
 export class LocalStore implements BenchStore {
   constructor(private dir: string, private out: string) {}
 
@@ -191,11 +213,18 @@ export class LocalStore implements BenchStore {
       if (entry.isDirectory || !entry.name.endsWith(".json")) continue;
       const id = entry.name.replace(/\.json$/, "");
       if (only && only !== id) continue;
-      const stripped = stripReplay(JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`)));
-      out.push({ id, name: id, input: stripped.input, criteria: {} });
+      const file = JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`));
+      out.push({ id, name: id, criteria: {}, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
     }
-    return out.sort((a, b) => a.input.snapshot.captured_at.localeCompare(b.input.snapshot.captured_at));
+    return out.sort((a, b) => (a.dataset?.start ?? "").localeCompare(b.dataset?.start ?? ""));
   }
+  legacyReplayInput() { return Promise.resolve(null); }
+  private async rewrite(id: string, change: Record<string, unknown>) {
+    const path = `${this.dir}/${id}.json`;
+    await Deno.writeTextFile(path, JSON.stringify({ ...JSON.parse(await Deno.readTextFile(path)), ...change }));
+  }
+  async saveDataset(id: string, dataset: BenchScenarioData) { await this.rewrite(id, { dataset }); }
+  async saveRecorded(id: string, recorded: BenchRecorded | null) { if (recorded) await this.rewrite(id, { recorded }); }
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
   async runs() {
     return (await this.load()).runs.map(run => ({
@@ -214,8 +243,8 @@ export class LocalStore implements BenchStore {
     file.results = file.results.filter(result => result.sha !== from);
     await this.save(file);
   }
-  async resultIds(sha: string) {
-    return new Set((await this.load()).results.filter(r => r.sha === sha).map(r => r.scenario_id));
+  async resultHashes(sha: string) {
+    return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [r.scenario_id, r.input_hash ?? null]));
   }
   async saveRun(run: RunRecord) {
     const file = await this.load();
@@ -233,15 +262,16 @@ export class LocalStore implements BenchStore {
     file.results = [...file.results.filter(r => !(r.sha === result.sha && r.scenario_id === result.scenario_id)), result];
     await this.save(file);
   }
-  async scoredResults() {
-    return (await this.load()).results.filter(r => r.status === "ok").map(r => ({ sha: r.sha, scenario_id: r.scenario_id, score: r.score ?? null }));
+  async evaluatedResults() {
+    return (await this.load()).results.filter(r => r.status === "ok")
+      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, score: r.score ?? null, referee_version: r.referee_version ?? null }));
   }
-  async series(sha: string, scenarioId: string) {
-    return (await this.load()).results.find(r => r.sha === sha && r.scenario_id === scenarioId)?.series ?? null;
+  async planRecord(sha: string, scenarioId: string) {
+    return (await this.load()).results.find(r => r.sha === sha && r.scenario_id === scenarioId)?.record ?? null;
   }
-  async saveScore(sha: string, scenarioId: string, score: StoredScore) {
+  async saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation) {
     const file = await this.load();
-    file.results = file.results.map(r => r.sha === sha && r.scenario_id === scenarioId ? { ...r, score } : r);
+    file.results = file.results.map(r => r.sha === sha && r.scenario_id === scenarioId ? { ...r, ...evaluation } : r);
     await this.save(file);
   }
 }

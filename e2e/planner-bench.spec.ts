@@ -1,16 +1,18 @@
 /**
  * The planner bench page, fully local — no real backend.
  *
- * Every number here is synthetic: bench test cases are household replays and
- * stay in the test database, never in the repository. What this covers is the
- * page: runs listed by commit with their score, the current-vs-test totals,
- * both planners drawn for a case, a verdict saved against the right commit,
- * and an uploaded replay stripped to the planner's input before it is stored.
+ * Every number here is synthetic: bench test cases come from household replays
+ * and stay in the test database, never in the repository. What this covers is
+ * the page: runs listed by commit with their score, the current-vs-test totals,
+ * both planners drawn for a case with the curves they used and their cost at
+ * real prices, a verdict saved against the right commit, a start state saved
+ * into its case, and an uploaded replay converted to a test case.
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
 import { storedScore } from '../src/lib/planner-bench/score';
-import type { BenchSeries } from '../src/lib/planner-bench/types';
+import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
+import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
@@ -59,6 +61,28 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   return s;
 }
 
+/** A test case as the page reads it: only what the page shows needs to be real. */
+const dataset = (start: string): BenchScenarioData => ({
+  format: 'shs-bench-case', version: 1, origin: { kind: 'replay', detail: 'e2e', created_at: start },
+  start, timezone: 'Europe/Stockholm', location: { latitude: 59.4, longitude: 18 },
+  known_prices: { import_sek_per_kwh: [], export_sek_per_kwh: [] },
+  solar_forecast_w: [], base_load_forecast_w: [], other_devices_w: {},
+  start_state: { battery_soc: 0.5, pool_water_c: 29.5, ev: { soc: 0.6, plugged_in: false, target_soc: 0.8 } },
+  comfort: null,
+});
+
+const record = (reference: number): PlanRecord => ({
+  status: 'ready', generation: 'snapshot',
+  decisions: { pool_w: [], ev_w: [], battery_charge_w: [], battery_discharge_w: [] },
+  beliefs: { import_sek_per_kwh: [], grid_cost_sek: 41.5 },
+  curves: [
+    { store: 'pool', unit: 'celsius', points: [{ at: 28, sek_per_unit: 30 }, { at: 30, sek_per_unit: 15 }, { at: 32, sek_per_unit: 0 }], initial_state: 29.5, max_state: 32, units_per_kwh: 0.07, reference_sek_per_kwh: reference, mode: null },
+    { store: 'battery', unit: 'kwh', points: [{ at: 0, sek_per_unit: 2 }, { at: 17, sek_per_unit: 0.4 }], initial_state: 8, max_state: 17, units_per_kwh: 1, reference_sek_per_kwh: null, mode: 'balanced' },
+  ],
+});
+
+const OUTCOME = { violations: [], cost_sek: 63.2, published_cost_sek: 20, terminal: { battery_kwh: 1, pool_c: -0.2, ev_kwh: 0, credit_sek: -3.4, reference_sek_per_kwh: 1.4 } };
+
 const PLANS: Record<string, BenchSeries> = {
   [`${CURRENT.sha}/${CASES[0].id}`]: series(160, 40),
   [`${TEST.sha}/${CASES[0].id}`]: series(8, 48),
@@ -72,10 +96,10 @@ function fakeJwt(sub: string, email: string): string {
   return [enc({ alg: 'HS256', typ: 'JWT' }), enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: now + 3600, iat: now }), 'x'.repeat(43)].join('.');
 }
 
-interface Captured { verdicts: unknown[]; inserted: Record<string, unknown>[]; dispatched: unknown[] }
+interface Captured { verdicts: unknown[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
 
 async function mockBackend(context: BrowserContext): Promise<Captured> {
-  const captured: Captured = { verdicts: [], inserted: [], dispatched: [] };
+  const captured: Captured = { verdicts: [], inserted: [], updated: [], dispatched: [] };
   const nowIso = new Date().toISOString();
   const user = {
     id: STAFF_ID, email: 'staff@example.com', aud: 'authenticated', role: 'authenticated', email_confirmed_at: nowIso,
@@ -106,6 +130,7 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
         await route.fulfill({ json: { id: '33333333-3333-4333-8333-333333333333' } });
         return;
       }
+      if (table === 'bench_scenarios' && request.method() === 'PATCH') captured.updated.push(request.postDataJSON());
       await route.fulfill({ status: 201, body: '' });
       return;
     }
@@ -116,7 +141,10 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
           { ...CURRENT, branch: 'dev', is_current: true, status: 'done', error: null, finished_at: nowIso },
           { ...TEST, branch: null, is_current: false, status: 'done', error: null, finished_at: nowIso },
         ];
-        case 'bench_scenarios': return CASES.map(c => ({ ...c, source_filename: null, criteria: {}, notes: null, archived: false, created_at: nowIso }));
+        case 'bench_scenarios': return CASES.map(c => ({
+          ...c, source_filename: null, criteria: {}, notes: null, archived: false, created_at: nowIso,
+          dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
+        }));
         case 'bench_result_summaries': return Object.entries(PLANS).map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
           return { sha, scenario_id, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: storedScore(plan) };
@@ -124,7 +152,9 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
         case 'bench_verdicts': return [];
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
-          return [CURRENT.sha, TEST.sha].map(sha => ({ sha, series: PLANS[`${sha}/${scenario}`] }));
+          return [CURRENT.sha, TEST.sha].map(sha => ({
+            sha, series: PLANS[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
+          }));
         }
         default: return [];
       }
@@ -178,6 +208,20 @@ test.describe('planner bench', () => {
     await page.locator('#bench-show-current').click();
     await expect(async () => expect(await chart.innerHTML()).not.toBe(drawn)).toPass({ timeout: 10_000 });
 
+    // Each planner's cost at real prices, beside what it expected, and the curves it planned with.
+    await expect(page.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
+    await expect(page.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
+    await expect(page.locator('#bench-curve-pool').getByRole('img')).toBeVisible();
+    await expect(page.locator('#bench-curve-battery')).toContainText('balanced');
+    await expect(page.locator('#bench-curve-ev')).toContainText(/reported no curve|rapporterade ingen kurva/);
+
+    // The start state belongs to the case: an edit is saved into it and the case is run again.
+    await page.locator('#bench-start-pool').fill('27');
+    await page.getByRole('button', { name: /Save and re-run|Spara och kör om/ }).click();
+    await expect.poll(() => captured.updated.length).toBe(1);
+    expect((captured.updated[0].dataset as BenchScenarioData).start_state.pool_water_c).toBe(27);
+    await expect.poll(() => captured.dispatched.length).toBe(1);
+
     // A verdict is saved against the commit it was given for.
     await page.locator(`#bench-note-${TEST.sha}`).fill('Heats in the cheap night, as it should');
     await page.getByRole('button', { name: /^(Pass|Godkänd)$/ }).last().click();
@@ -185,19 +229,31 @@ test.describe('planner bench', () => {
     expect(captured.verdicts[0]).toMatchObject({ sha: TEST.sha, verdict: 'pass', note: 'Heats in the cheap night, as it should' });
   });
 
-  test('stores only the planner input of an uploaded replay and starts a run for it', async ({ context, page }) => {
+  test('converts an uploaded replay to a test case and starts a run for it', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
     await expect(page.locator(`#bench-case-${CASES[0].id}`)).toBeVisible();
 
+    const start = Date.parse('2026-09-30T06:00:00Z');
     const replay = {
       format: 'shs-energy-optimisation-quarter-replay',
       schema_version: 2,
-      input_hash: 'hash-1',
-      entrypoint: { arguments: { snapshot: { captured_at: '2026-09-30T06:00:00Z', slots: [] }, now: '2026-09-30T06:00:05Z', price_archive: [] } },
+      entrypoint: { arguments: { now: '2026-09-30T06:00:05Z', price_archive: [], resolved_price_outlook: { secret: 'another planner\'s estimate' }, snapshot: {
+        captured_at: '2026-09-30T06:00:03Z', timezone: 'Europe/Stockholm', location: { latitude: 59.4, longitude: 18 },
+        slots: Array.from({ length: 288 }, (_, i) => ({
+          start: new Date(start + i * 900_000).toISOString(), pv_forecast_w: 1000, base_load_forecast_w: 500,
+          import_price_sek_per_kwh: i < 72 ? 1.2 : null, export_price_sek_per_kwh: i < 72 ? 0.4 : null,
+        })),
+        pv_calibration: { correction_factor_by_lead_day: [0.8, 0.9, 1, 1] },
+        battery: { soc: 0.42 }, pool: { water_temperature_c: 28.4 }, ev_battery: { soc: 0.7, connected: true, departure_target_soc: 0.8 },
+        device_models: [
+          { key: 'sensor.hot_water_energy', category: 'hot_water', forecast_w_by_slot: new Array(288).fill(200) },
+          { key: 'sensor.pool_heater_energy', category: 'pool_heating', planning_service: 'pool', forecast_w_by_slot: new Array(288).fill(900) },
+        ],
+        value_curves: { pool: { points: [] } }, battery_cost_curve: { key: 'frozen' },
+      } } },
       expected: { plans: 'x'.repeat(50_000) },
-      history: [{ big: 'y'.repeat(50_000) }],
     };
     await page.locator('#bench-replay-file').setInputFiles({ name: 'plan-replay-test.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(replay)) });
     await page.locator('#bench-case-name').fill('Cold morning');
@@ -205,9 +261,15 @@ test.describe('planner bench', () => {
 
     await expect.poll(() => captured.inserted.length).toBe(1);
     const row = captured.inserted[0];
-    expect(row).toMatchObject({ name: 'Cold morning', source_filename: 'plan-replay-test.json', input_hash: 'hash-1' });
-    expect(Object.keys(row.input as object).sort()).toEqual(['now', 'price_archive', 'snapshot']);
-    expect(JSON.stringify(row)).not.toContain('x'.repeat(100));
+    expect(row).toMatchObject({ name: 'Cold morning', source_filename: 'plan-replay-test.json', captured_at: '2026-09-30T06:00:00.000Z' });
+    const data = row.dataset as BenchScenarioData;
+    // The moment is kept: known prices, corrected solar, devices the household does not plan as base load, readings.
+    expect(data.known_prices.import_sek_per_kwh.filter(v => v !== null)).toHaveLength(72);
+    expect(data.solar_forecast_w[0]).toBeCloseTo(800);
+    expect(data.base_load_forecast_w[0]).toBe(700);
+    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, ev: { soc: 0.7, plugged_in: true, target_soc: 0.8 } });
+    // Nothing of another planner's work or the replay's bulk is.
+    expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);
     expect(captured.dispatched[0]).toMatchObject({ shas: 'all', scenario: '33333333-3333-4333-8333-333333333333' });
   });

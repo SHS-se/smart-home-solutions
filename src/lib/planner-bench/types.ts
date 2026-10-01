@@ -4,15 +4,6 @@
 // staff page reads them back, so both sides import this one definition. Pure
 // data only: no React, no Deno APIs.
 
-/** What the planner needs from a replay file, and nothing else. */
-export interface BenchInput {
-  /** `entrypoint.arguments` of an `shs-energy-optimisation-quarter-replay`. */
-  snapshot: Record<string, unknown> & { captured_at: string; timezone?: string };
-  now: string;
-  price_archive: unknown[];
-  resolved_price_outlook?: unknown;
-}
-
 /**
  * One planner's 72-hour plan for one test case, as parallel arrays over its
  * quarters. Watts are quarter averages; prices are SEK/kWh.
@@ -22,8 +13,11 @@ export interface BenchSeries {
   hours: number[];
   /** 1 where the market published the price, 0 where the planner estimated it. */
   published: number[];
+  /** What electricity really cost (referee.ts); results from before the referee hold the planner's own estimate. */
   importPrice: number[];
   exportPrice: number[];
+  /** What the planner believed the import price would be; null where it gave none. */
+  believedImportPrice?: (number | null)[];
   solarW: number[];
   loadW: number[];
   poolW: number[];
@@ -96,6 +90,18 @@ export interface BenchScenario {
   notes: string | null;
   archived: boolean;
   created_at: string;
+  /** The test case; null for a scenario the runner has not yet converted from its replay. */
+  dataset: import('./case').BenchScenarioData | null;
+  /** When the window's real prices and weather were stored; null while the case waits for them. */
+  recorded_at: string | null;
+  pending_reason: string | null;
+}
+
+/** What the case view loads for one result. Results from before the referee have only the series. */
+export interface BenchResultDetail {
+  series: BenchSeries | null;
+  record: PlanRecord | null;
+  outcome: Omit<import('./referee').Outcome, 'series'> | null;
 }
 
 export interface BenchResultSummary {
@@ -123,3 +129,30 @@ export interface CriterionOverride {
   points?: number;
 }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
+
+/** A value curve a planner actually planned with, as it reported it. */
+export interface UsedCurve {
+  store: string;
+  unit: string | null;
+  points: { at: number; sek_per_unit: number }[];
+  initial_state: number | null;
+  max_state: number | null;
+  /** Units of the store one kWh of electricity buys at the start. */
+  units_per_kwh: number | null;
+  reference_sek_per_kwh: number | null;
+  /** How the planner made it: its own word for the method, e.g. "balanced". */
+  mode: string | null;
+}
+
+/** What one planner version did with one test case: the bench's stored truth for a result. */
+export interface PlanRecord {
+  /** The planner's own verdict on its plan, e.g. "ready". */
+  status: string;
+  /** Which input generation the adapter built for this planner (bench/adapter.ts). */
+  generation: string;
+  decisions: import('./referee').Decisions;
+  /** The planner's own estimates, kept beside the referee's account. */
+  beliefs: { import_sek_per_kwh: (number | null)[]; grid_cost_sek: number | null };
+  /** Empty when the planner version did not report its curves. */
+  curves: UsedCurve[];
+}

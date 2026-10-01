@@ -1,8 +1,5 @@
-// Turn a planner's priority plan into the compact series the bench stores.
-//
-// Reads plan slots structurally rather than through the planner's types: the
-// runner feeds it plans from every historical planner version, and the slot
-// shape is the stable HA/portal contract, not the planner's internals.
+// Test helper: a bench series built from plan-like slots, for the stats and
+// score tests. The bench itself gets its series from the referee (referee.ts).
 
 import type { BenchSeries } from './types';
 

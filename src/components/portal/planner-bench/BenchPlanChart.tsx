@@ -1,7 +1,7 @@
 // One planner's plan for one test case, drawn by the portal's own plan chart,
 // with the bench's quarter scores as a strip along the top.
 //
-// The bench stores plans as compact series (src/lib/planner-bench/series.ts);
+// The bench stores plans as compact series (src/lib/planner-bench/referee.ts);
 // this adapts them to PlanPanels' rows so a bench plan reads exactly like the
 // plan a customer sees. Every quarter is on the plan side of "now". Score
 // digits need a single day's width; the three-day view shows coloured cells.

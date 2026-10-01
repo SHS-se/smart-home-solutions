@@ -3,8 +3,8 @@
 // once types, comments and formatting are stripped, so a commit that changes
 // the website, the bench, tests, docs or only types gets no new bench entry.
 //
-// The planner is every module the bench's entry points reach through code
-// imports (bench/planner-adapter.ts), plus the version's own bench/prepare.ts.
+// The planner is every module reached through code imports from the entry
+// points the bench calls (bench/adapter.ts).
 
 import { reach, type SourceTree } from "../scripts/module-graph.ts";
 
@@ -12,8 +12,8 @@ import { reach, type SourceTree } from "../scripts/module-graph.ts";
 export const PLANNER_DIR = "supabase/functions/_shared/planner";
 /** Where the planner lived, loose among other shared modules, before it had a folder. */
 const LEGACY_DIR = "supabase/functions/_shared";
-const ENTRIES = ["energy-optimisation.ts", "dispatch-plan.ts"];
-const PREPARE = "bench/prepare.ts";
+/** `planning-basis.ts` exists only in planners that build a basis from history; the adapter calls it for those. */
+const ENTRIES = ["energy-optimisation.ts", "dispatch-plan.ts", "planning-basis.ts"];
 
 /** The folder holding a tree's planner: its own, or _shared for older commits. */
 export const plannerDir = (tree: SourceTree) =>
@@ -33,7 +33,7 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
   const dir = plannerDir(tree);
   const parts: string[] = [];
   try {
-    for (const file of reach(tree, [...ENTRIES.map(entry => `${dir}/${entry}`), PREPARE])) {
+    for (const file of reach(tree, ENTRIES.map(entry => `${dir}/${entry}`))) {
       // Keyed inside the planner folder, so moving the folder is not a new version.
       const key = file.startsWith(`${dir}/`) ? `planner/${file.slice(dir.length + 1)}` : file;
       // Not minifyIdentifiers: its short names depend on the whole text, types included.
@@ -50,7 +50,7 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
   return `${versionMethod(version)}:${[...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-const versionMethod = (esbuild: string) => `v1-esbuild${esbuild}`;
+const versionMethod = (esbuild: string) => `v2-esbuild${esbuild}`;
 
 /** The method prefix `plannerVersion` writes today. */
 export async function currentVersionMethod(): Promise<string> {

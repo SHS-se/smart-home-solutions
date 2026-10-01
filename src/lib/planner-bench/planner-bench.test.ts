@@ -1,6 +1,5 @@
-import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
-import { ReplayFormatError, stripReplay } from './strip.ts';
-import { planSeries } from './series.ts';
+import { assertAlmostEquals, assertEquals } from '@std/assert';
+import { planSeries } from './series.fixture.ts';
 import { planStats, suiteStats } from './stats.ts';
 import { CASE_SCALE, isStale, runScore, scoreQuarters, storedScore } from './score.ts';
 import type { BenchStats } from './types.ts';
@@ -18,30 +17,6 @@ const slot = (i: number, over: Record<string, unknown> = {}) => ({
   battery_charge_w: 0, battery_discharge_w: 0, battery_export_w: 0, battery_soc: 0.5,
   grid_import_w: 1000, grid_export_w: 0,
   ...over,
-});
-
-Deno.test('stripReplay keeps only the planner arguments', () => {
-  const replay = {
-    format: 'shs-energy-optimisation-quarter-replay',
-    input_hash: 'abc',
-    entrypoint: { arguments: { snapshot: { captured_at: '2026-09-24T07:25:46Z', slots: [] }, now: '2026-09-24T07:25:57Z', price_archive: [] } },
-    expected: { huge: true },
-    history: [1, 2, 3],
-  };
-  const stripped = stripReplay(replay);
-  assertEquals(Object.keys(stripped.input).sort(), ['now', 'price_archive', 'snapshot']);
-  assertEquals(stripped.capturedAt, '2026-09-24T07:25:46.000Z');
-  assertEquals(stripped.inputHash, 'abc');
-  assertThrows(() => stripReplay({ format: 'something-else' }), ReplayFormatError);
-  assertThrows(() => stripReplay({ format: replay.format, entrypoint: {} }), ReplayFormatError);
-});
-
-Deno.test('planSeries prices estimated quarters at the shadow price and reads pool state after each quarter', () => {
-  const series = planSeries([slot(0), slot(4)], [29, 29.5, 29.25]);
-  assertEquals(series.importPrice, [1, 2]);
-  assertEquals(series.published, [1, 0]);
-  assertEquals(series.poolC, [29.5, 29.25]);
-  assertAlmostEquals(series.costSek[0], 0.25);
 });
 
 Deno.test('planStats splits pool energy by price source and cheapness', () => {

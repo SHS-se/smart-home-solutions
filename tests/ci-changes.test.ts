@@ -15,7 +15,7 @@ Deno.test("a planner change deploys the energy functions and the portal, and run
 
 Deno.test("a website change deploys neither functions nor migrations", () => {
   const c = classify(root, ["src/pages/portal/PlannerBench.tsx"]);
-  assertEquals({ ...c, functions: c.functions.length }, { code: true, frontend: true, migrations: false, functions: 0, planner: false });
+  assertEquals({ ...c, functions: c.functions.length }, { code: true, frontend: true, migrations: false, functions: 0, planner: false, bench: false });
 });
 
 Deno.test("one function's change deploys only that function", () => {

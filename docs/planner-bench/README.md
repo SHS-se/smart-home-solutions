@@ -1,7 +1,8 @@
 # Planner bench
 
 The bench decides whether a planner change is better by showing it, not by a
-gate table. Every planner version is replayed on the same set of test cases.
+gate table. Every planner version plans the same set of test cases, for the
+same household, and is scored the same way at what electricity really cost.
 You can look at each plan beside the planner that is running now, score it with
 points you control, and give your own pass/fail verdict.
 
@@ -12,27 +13,20 @@ Page: **Planner bench** in the staff menu, on the test site
 
 | Piece | Where | What it does |
 |---|---|---|
-| Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household replays never reach production. |
-| Runner | `bench/run.ts`, `bench/planner-adapter.ts`, `bench/store.ts`, `bench/planner-version.ts` | Skips a commit whose planner version is already on the bench. Otherwise checks the commit out as a git worktree and runs its planner on every case in a fresh Deno process. Stores a compact 72-hour series and totals per case. |
-| Shared logic | `src/lib/planner-bench/` | Replay stripping, plan series, totals, scoring. Used by both the runner and the page. |
-| CI | `.github/workflows/planner-bench.yml` | On push to `dev` that touches the planner folder: benches the pushed commit and marks its planner version current. On manual dispatch: runs any commits, usually `all`. |
+| Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household data never reaches production. |
+| Runner | `bench/run.ts`, `bench/adapter.ts`, `bench/history.ts`, `bench/store.ts`, `bench/planner-version.ts` | Converts and completes test cases, then checks each planner commit out as a git worktree and plans every case whose result is missing or stale, in a fresh Deno process. Stores what the planner decided and the referee's account of it. |
+| Shared logic | `src/lib/planner-bench/` | Test case format, replay conversion, household, referee, totals, scoring. Used by both the runner and the page. |
+| CI | `.github/workflows/planner-bench.yml` | On push to `dev` that touches the planner or the bench's own input and judgement: benches the pushed commit and every stale result, and marks the pushed planner version current. On manual dispatch: runs any commits, usually `all`. |
 | Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
 | Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, criteria editor, verdicts, upload. |
 
 ## Test cases
 
-A replay download is about 10 MB. The planner reads only
-`entrypoint.arguments`, which is about 90 kB, so that is all a case keeps. The
-page strips the file in the browser before saving it.
-
-The bench changes one thing in every case, for every planner version alike.
-Captures taken before the pool loss was fitted have no pool model, and the bench
-gives them 0.1 kW/K, as the acceptance replays always have.
-
-A planner version that needs its input prepared differently (for example a
-planning basis built from price history) owns that step. It exports
-`prepare(input, allInputs)` from `bench/prepare.ts` in its own commit, and the
-runner uses it when present.
+A test case is a 72-hour scenario in the bench's own format, not a replay:
+what a planner is told at the start, plus what was recorded for the window
+afterwards. The household, the adapter that builds each planner's input, and
+the referee that scores every plan at real prices are described in
+[test-cases.md](test-cases.md).
 
 ## Planner versions
 
@@ -102,7 +96,7 @@ its saved plan, without re-running any planner.
 
 ## Running it
 
-**Add a case:** upload a replay file on the page. It is saved and every commit
+**Add a case:** upload a replay file on the page. It is converted to a test case, and once its 72 hours are recorded every commit
 on the bench is run for it. From the command line:
 
 ```bash
@@ -118,7 +112,7 @@ deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas a
 ```
 
 Database mode needs `BENCH_SUPABASE_URL` and `BENCH_SERVICE_ROLE_KEY`. Without
-a database, `--local <dir-of-replays> --out <file.json>` writes the same
+a database, `--local <dir-of-case-files> --out <file.json>` (each file `{ dataset, recorded }`) writes the same
 records to a file.
 
 CI can only run commits that are pushed. A local-only branch has to be run

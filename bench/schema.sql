@@ -21,6 +21,17 @@ create table if not exists public.bench_scenarios (
   created_at timestamptz not null default now()
 );
 
+-- A scenario is a test case in the bench's own format (src/lib/planner-bench/case.ts):
+-- `dataset` is authored (converted from a replay, edited on the page) and
+-- `recorded` is what the home recorded for its window, filled by the runner.
+-- `input` is the stripped replay older scenarios were uploaded as; the runner
+-- converts it once and no longer reads it.
+alter table public.bench_scenarios add column if not exists dataset jsonb;
+alter table public.bench_scenarios add column if not exists recorded jsonb;
+-- Why a case cannot be run yet, in words; null once it can.
+alter table public.bench_scenarios add column if not exists pending_reason text;
+alter table public.bench_scenarios alter column input drop not null;
+
 create table if not exists public.bench_runs (
   sha text primary key,
   short_sha text not null,
@@ -54,6 +65,15 @@ create table if not exists public.bench_results (
 -- by the runner and recomputed whenever the scorer version or the case's
 -- criteria change, so run lists never need the plan series.
 alter table public.bench_results add column if not exists score jsonb;
+-- What the planner did (PlanRecord: decisions, beliefs, curves) is the stored
+-- truth; series, stats, outcome and score are worked out from it by the
+-- referee and recomputed when `referee_version` is behind. `input_hash`
+-- identifies everything the planner was given: a result with another hash is
+-- stale and run again.
+alter table public.bench_results add column if not exists record jsonb;
+alter table public.bench_results add column if not exists outcome jsonb;
+alter table public.bench_results add column if not exists referee_version integer;
+alter table public.bench_results add column if not exists input_hash text;
 
 create table if not exists public.bench_verdicts (
   sha text not null references public.bench_runs (sha) on delete cascade,
@@ -107,5 +127,5 @@ grant execute on function public.bench_set_current(text) to authenticated;
 -- Totals for every result, without the 30–40 kB plan series behind each.
 create or replace view public.bench_result_summaries
 with (security_invoker = true) as
-select sha, scenario_id, status, error, cpu_ms, stats, score
+select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash
 from public.bench_results;

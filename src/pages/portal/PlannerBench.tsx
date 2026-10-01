@@ -22,16 +22,19 @@ import { useToast } from '@/hooks/use-toast';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
-import { stripReplay, type StrippedReplay } from '@/lib/planner-bench/strip';
+import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
+import type { CaseStartState } from '@/lib/planner-bench/case';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import {
   isStale, resolveRules, runScore, scoreQuarters, storedPassed, CASE_SCALE, type CaseScore,
 } from '@/lib/planner-bench/score';
 import type {
-  BenchResultSummary, BenchRun, BenchScenario, BenchSeries, BenchVerdict, CriteriaOverrides, Verdict,
+  BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchVerdict, CriteriaOverrides, Verdict,
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
+import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel';
+import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 
 // The generated Database types describe the migrated schema; the bench tables
 // live only in the test project, outside it.
@@ -68,7 +71,7 @@ const Bench: React.FC = () => {
   const scenarios = useQuery({
     queryKey: ['bench', 'scenarios'],
     queryFn: () => rows<BenchScenario[]>(db.from('bench_scenarios')
-      .select('id, name, captured_at, source_filename, criteria, notes, archived, created_at')
+      .select('id, name, captured_at, source_filename, criteria, notes, archived, created_at, pending_reason, dataset, recorded_at:recorded->>recorded_at')
       .eq('archived', false).order('captured_at')),
   });
   const summaries = useQuery({
@@ -129,9 +132,9 @@ const Bench: React.FC = () => {
     enabled: Boolean(selectedCase && (currentRun || testRun)),
     queryFn: async () => {
       const shas = [currentRun?.sha, testRun?.sha].filter((s): s is string => Boolean(s));
-      const data = await rows<{ sha: string; series: BenchSeries | null }[]>(db.from('bench_results')
-        .select('sha, series').eq('scenario_id', selectedCase!.id).in('sha', shas));
-      const by = new Map(data.map(r => [r.sha, r.series]));
+      const data = await rows<({ sha: string } & BenchResultDetail)[]>(db.from('bench_results')
+        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).in('sha', shas));
+      const by = new Map(data.map(r => [r.sha, r]));
       return { current: currentRun ? by.get(currentRun.sha) ?? null : null, test: testRun ? by.get(testRun.sha) ?? null : null };
     },
   });
@@ -158,15 +161,14 @@ const Bench: React.FC = () => {
     }),
   });
 
-  const [pending, setPending] = useState<(StrippedReplay & { filename: string; name: string }) | null>(null);
+  const [pending, setPending] = useState<(ConvertedReplay & { filename: string; name: string }) | null>(null);
   const addCase = useMutation({
     mutationFn: async () => {
       const inserted = await rows<{ id: string }>(db.from('bench_scenarios').insert({
         name: pending!.name.trim() || pending!.suggestedName,
-        captured_at: pending!.capturedAt,
+        captured_at: pending!.data.start,
         source_filename: pending!.filename,
-        input_hash: pending!.inputHash,
-        input: pending!.input,
+        dataset: pending!.data,
       }).select('id').single());
       return inserted.id;
     },
@@ -182,14 +184,26 @@ const Bench: React.FC = () => {
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     try {
-      const stripped = stripReplay(JSON.parse(await file.text()));
-      setPending({ ...stripped, filename: file.name, name: stripped.suggestedName });
+      const converted = caseFromReplay(JSON.parse(await file.text()), file.name);
+      setPending({ ...converted, filename: file.name, name: converted.suggestedName });
     } catch (error) {
       toast({ title: t('Filen kunde inte läsas', 'That file could not be read'), description: error instanceof Error ? error.message : String(error), variant: 'destructive' });
     } finally {
       if (fileInput.current) fileInput.current.value = '';
     }
   };
+
+  const saveStartState = useMutation({
+    mutationFn: async (start_state: CaseStartState) => {
+      const { start_state_unread: _unread, ...dataset } = selectedCase!.dataset!;
+      await rows(db.from('bench_scenarios').update({ dataset: { ...dataset, start_state } }).eq('id', selectedCase!.id));
+    },
+    onSuccess: () => {
+      refresh();
+      dispatch.mutate({ shas: 'all', scenario: selectedCase!.id });
+    },
+    onError: (error: Error) => toast({ title: t('Kunde inte spara starttillståndet', 'Could not save the start state'), description: error.message, variant: 'destructive' }),
+  });
 
   const setVerdict = useMutation({
     mutationFn: async ({ sha, verdict, note }: { sha: string; verdict: Verdict | null; note: string }) => {
@@ -315,6 +329,7 @@ const Bench: React.FC = () => {
                   <span className={`h-2 w-2 rounded-full ${dot}`} />
                   <span className="font-mono text-xs">{c.name}</span>
                   <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
+                  {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
                   {score && <span className="font-mono text-xs opacity-70">{score.points > 0 ? '+' : ''}{score.points.toFixed(1)}</span>}
                 </button>
               );
@@ -329,8 +344,10 @@ const Bench: React.FC = () => {
               testRun={testRun}
               summaryByKey={summaryByKey}
               verdictByKey={verdictByKey}
-              series={series.data ?? null}
+              details={series.data ?? null}
               seriesLoading={series.isLoading}
+              savingStartState={saveStartState.isPending}
+              onSaveStartState={state => saveStartState.mutate(state)}
               shown={shown}
               onShown={setShown}
               onVerdict={(sha, verdict, note) => setVerdict.mutate({ sha, verdict, note })}
@@ -347,8 +364,8 @@ const Bench: React.FC = () => {
             <DialogTitle>{t('Nytt testfall', 'New test case')}</DialogTitle>
             <DialogDescription>
               {pending && t(
-                `Planerat ${formatHomeStamp(pending.capturedAt, TZ)}. Bara planerarens indata sparas (${Math.round(JSON.stringify(pending.input).length / 1024)} kB).`,
-                `Planned at ${formatHomeStamp(pending.capturedAt, TZ)}. Only the planner's input is kept (${Math.round(JSON.stringify(pending.input).length / 1024)} kB).`)}
+                `72 timmar från ${formatHomeStamp(pending.data.start, TZ)}. Filen görs om till ett testfall: priser, sol- och förbrukningsprognos och starttillstånd. Det körs när fönstrets verkliga priser och temperaturer har spelats in.`,
+                `72 hours from ${formatHomeStamp(pending.data.start, TZ)}. The file becomes a test case: prices, solar and load forecasts and start states. It runs once the window's real prices and temperatures are recorded.`)}
             </DialogDescription>
           </DialogHeader>
           <label htmlFor="bench-case-name" className="text-sm">{t('Namn', 'Name')}</label>
@@ -488,8 +505,10 @@ interface CaseViewProps {
   testRun: BenchRun | null;
   summaryByKey: Map<string, BenchResultSummary>;
   verdictByKey: Map<string, BenchVerdict>;
-  series: { current: BenchSeries | null; test: BenchSeries | null } | null;
+  details: { current: BenchResultDetail | null; test: BenchResultDetail | null } | null;
   seriesLoading: boolean;
+  savingStartState: boolean;
+  onSaveStartState: (state: CaseStartState) => void;
   shown: 'current' | 'test';
   onShown: (value: 'current' | 'test') => void;
   onVerdict: (sha: string, verdict: Verdict | null, note: string) => void;
@@ -502,7 +521,7 @@ const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '
 
 const CaseView: React.FC<CaseViewProps> = ({
   scenario, currentRun, testRun, summaryByKey, verdictByKey,
-  series, seriesLoading, shown, onShown, onVerdict, onSaveCriteria, onRerun,
+  details, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onVerdict, onSaveCriteria, onRerun,
 }) => {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
@@ -511,6 +530,9 @@ const CaseView: React.FC<CaseViewProps> = ({
   const minC = rules.find(r => r.key === 'pool_cold')?.threshold ?? 28;
   const comfortC = rules.find(r => r.key === 'pool_low')?.threshold ?? 29;
   const verdictOf = (run: BenchRun | null) => (run ? verdictByKey.get(key(run.sha, scenario.id))?.verdict : null) ?? null;
+
+  const series = useMemo(() => details && { current: details.current?.series ?? null, test: details.test?.series ?? null }, [details]);
+  const shownDetail = shown === 'current' ? details?.current : details?.test;
 
   // Scored live with the rules being edited, so a change shows before it is saved.
   const currentScore = useMemo(() => series?.current ? scoreQuarters(series.current, draft, verdictOf(currentRun)) : null,
@@ -569,6 +591,26 @@ const CaseView: React.FC<CaseViewProps> = ({
                 </div>
               ))}
             </div>
+            {(details?.current?.outcome || details?.test?.outcome) && (
+              <div id="bench-real-cost" className="grid gap-3 text-sm sm:grid-cols-2">
+                {([['current', details?.current], ['test', details?.test]] as const).map(([which, d]) => d?.outcome && (
+                  <div key={which} className="rounded-md border px-3 py-2">
+                    <div className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
+                    <div className="text-xs text-muted-foreground">
+                      {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
+                      {' · '}{t('kvar i lagren vid slutet', 'left in the stores at the end')} <span className="font-mono">{signed(d.outcome.terminal.credit_sek, 1)} kr</span>
+                      {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
+                      {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
+            {scenario.dataset && (
+              <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
+                saving={savingStartState} onSave={onSaveStartState} />
+            )}
             <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={Math.max(comfortC, 30)} />
             {shownSeries ? (
               <>
@@ -584,7 +626,11 @@ const CaseView: React.FC<CaseViewProps> = ({
                           <div>
                             <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
                             <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
-                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {shownSeries.published[selected] ? t('publicerat', 'published') : t('uppskattat', 'estimated')}</span>
+                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {shownSeries.published[selected]
+                              ? t('publicerat', 'published')
+                              : shownDetail?.outcome
+                                ? t(`verkligt, planeraren trodde ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`, `real, the planner expected ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`)
+                                : t('uppskattat', 'estimated')}</span>
                           </div>
                           {q.fired.length
                             ? <ul className="text-xs space-y-0.5">{q.fired.map(k => (
