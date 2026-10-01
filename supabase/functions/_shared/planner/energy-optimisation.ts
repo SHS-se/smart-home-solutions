@@ -2300,6 +2300,12 @@ export const PLANNER_INPUTS = ["comfort", "valuation"] as const;
 
 /** How far above its target the pool may be heated when energy is cheap, °C. */
 const POOL_OVERSHOOT_C = 2;
+/**
+ * How far below its target the pool may drift before it buys heat at any price
+ * the horizon offers, °C. Between the target and this, it grows steadily more
+ * willing, so it dips a little when energy is dear and never far.
+ */
+const POOL_COMFORT_BAND_C = 1;
 /** Spacing of a derived curve's points below the target. */
 const MERIT_STEP = { pool_c: 1, ev_km: 50 };
 /** A scale an administrator may set on a derived curve. */
@@ -2605,6 +2611,28 @@ function anchorPreferenceCurve(stored: UtilityCurve, unitsPerKwh: number, refere
   });
 }
 
+/**
+ * A merit-order curve with comfort priced in below the target.
+ *
+ * The merit order says what a degree costs to supply. Left alone it lets the
+ * store drift as far below its target as prices make worthwhile, and a pool
+ * the owner wants at 30 °C should not sit at 28 °C for a day to save a few
+ * kronor. So the value rises over `band` below the target until, a full band
+ * down, a unit is worth what the dearest offer in the horizon charges: there
+ * the store buys whatever the hour costs. The dispatch bids on the state in
+ * each quarter, so this holds through the whole horizon, not just at its end.
+ */
+function withComfortPremium(curve: UtilityCurve, target: number, band: number, dearestSekPerUnit: number): UtilityCurve {
+  const floor = target - band;
+  const premiumAtFloor = Math.max(0, dearestSekPerUnit - marginalValue(curve, floor));
+  const premium = (at: number) => premiumAtFloor * Math.min(1, Math.max(0, (target - at) / band));
+  const ats = [...new Set([...curve.points.map(point => point.at), floor, target])].sort((a, b) => a - b);
+  return {
+    ...curve,
+    points: ats.map(at => ({ at, sek_per_unit: Number((marginalValue(curve, at) + premium(at)).toFixed(6)) })),
+  };
+}
+
 /** Valuation needs vehicle measurements, independently of charger control availability. */
 function vehicleValueState(vehicle: EvBatteryInput, stored: UtilityCurve, reference: number, derived?: UtilityCurve) {
   const perKm = vehicleKwhPerKm(vehicle);
@@ -2730,7 +2758,9 @@ function buildDispatchStores(
     });
     stores.push({
       key: "pool",
-      curve: poolMerit?.curve ?? anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
+      curve: poolMerit && poolTarget !== undefined
+        ? withComfortPremium(poolMerit.curve, poolTarget, POOL_COMFORT_BAND_C, poolMerit.evidence.dearest_sek_per_unit * poolMerit.evidence.scale)
+        : anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
       ...(poolMerit ? { derivation: poolMerit.evidence } : {}),
       initial_state: pool.water_temperature_c,
       max_state: poolTarget !== undefined ? poolTarget + POOL_OVERSHOOT_C : poolStopTemperature(curves.pool) ?? undefined,
@@ -2752,7 +2782,11 @@ function buildDispatchStores(
       // to be able to make. A pool at 27.4 °C — below the household's own
       // "really want heat" threshold — refused 30 kWh of surplus on the
       // sunniest day of a plan and the house exported it instead.
-      usage_weight: new Array(count).fill(0),
+      // Warmth counts in every quarter, not only at the end. The share of heat
+      // that leaks in a quarter is the share that quarter used, and what is
+      // left counts at the end; the two always sum to one, so waiting for
+      // cheaper energy is never taxed beyond what physically leaks.
+      usage_weight: slots.map(slot => poolMerit ? 1 - poolRetention ** (slot.duration_hours / SLOT_HOURS) : 0),
       terminal_weight: 1,
       retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,

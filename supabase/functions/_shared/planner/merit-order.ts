@@ -60,6 +60,8 @@ export interface MeritOrderEvidence {
   clearing_sek_per_unit: number;
   /** Units the whole horizon could supply. */
   supply: number;
+  /** What a unit costs from the dearest offer in the horizon, SEK per unit, before `scale`. */
+  dearest_sek_per_unit: number;
   scale: number;
 }
 
@@ -127,7 +129,8 @@ export function meritOrderCurve(input: MeritOrderInput): {
     curve: { unit: input.unit, points: curve },
     evidence: {
       method: "merit_order", need: round(need, 3), upkeep: round(input.upkeep, 3),
-      clearing_sek_per_unit: round(priceAt(need)), supply: round(supply, 3), scale: input.scale,
+      clearing_sek_per_unit: round(priceAt(need)), supply: round(supply, 3),
+      dearest_sek_per_unit: round(stack.length ? stack[stack.length - 1].sek_per_unit : 0), scale: input.scale,
     },
   };
 }
