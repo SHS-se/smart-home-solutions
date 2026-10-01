@@ -1,12 +1,86 @@
 /// <reference lib="deno.ns" />
 
 import { parseInvoiceText } from './invoice-parser.ts';
+import q3Invoices from './fixtures/invoices-2026-q3.json' with { type: 'json' };
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
   }
 }
+
+// Anonymised PDF.js text, retaining extraction order (including page breaks and
+// broken hyphens), so these exercise the same input as the upload pipeline.
+for (const { name, rawText, expected } of q3Invoices) {
+  Deno.test(`parseInvoiceText imports Q3 document ${name}`, () => {
+    const parsed = parseInvoiceText(rawText);
+    for (const [field, value] of Object.entries(expected)) {
+      const actual = field === 'fingerprintId'
+        ? parsed.fingerprint.id
+        : parsed[field as keyof typeof parsed];
+      assertEqual(actual, value, field);
+    }
+    assertEqual(parsed.fingerprint.recognized, true, 'recognized');
+    assertEqual(parsed.parserReviewReasons.includes('Unknown invoice layout'), false, 'known layout');
+  });
+}
+
+Deno.test('parseInvoiceText does not treat DigiKey identifiers as amounts when the totals are missing', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_order_acknowledgement')!;
+  const text = fixture.rawText.replace('123.38 123.38 123.38 USD', 'USD');
+  const parsed = parseInvoiceText(text);
+  assertEqual(parsed.grossAmount, null, 'grossAmount');
+  assertEqual(parsed.netAmount, null, 'netAmount');
+  assertEqual(parsed.vatAmount, null, 'unstated VAT');
+  assertEqual(parsed.vatNumber, null, 'customer VAT is not supplier VAT');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText reads changed DigiKey sales and tariff totals without using line prices', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_order_acknowledgement')!;
+  const text = fixture.rawText.replace('123.38 123.38 123.38 USD', '246.76 250.00 250.00 USD');
+  const parsed = parseInvoiceText(text);
+  assertEqual(parsed.grossAmount, 250, 'grossAmount');
+  assertEqual(parsed.netAmount, 246.76, 'sales amount');
+  assertEqual(parsed.invoiceDate, '2026-08-04', 'order date instead of compliance date');
+  assertEqual(parsed.documentType, null, 'acknowledgement is not proof of payment');
+});
+
+Deno.test('parseInvoiceText reads billed Supabase tax instead of assuming the memo means zero VAT', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'supabase_invoice')!;
+  const parsed = parseInvoiceText(fixture.rawText.replaceAll('Amount due   $25.00', 'Amount due   $31.25'));
+  assertEqual(parsed.grossAmount, 31.25, 'grossAmount');
+  assertEqual(parsed.netAmount, 25, 'netAmount');
+  assertEqual(parsed.vatAmount, 6.25, 'vatAmount');
+  assertEqual(parsed.vatRate, 25, 'vatRate');
+});
+
+for (const fingerprintId of ['apple_subscription_receipt', 'coolshop_receipt', 'global_e_invoice']) {
+  Deno.test(`parseInvoiceText flags an incomplete ${fingerprintId} summary without guessing from product rows`, () => {
+    const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === fingerprintId)!;
+    const text = fixture.rawText
+      .replace('VAT charged at', 'Missing tax at')
+      .replace('MOMS:   68,00', 'Missing tax')
+      .replace('Total VAT   kr 603.48', 'Missing tax');
+    const parsed = parseInvoiceText(text);
+    assertEqual(parsed.fingerprint.recognized, true, 'recognized');
+    assertEqual(parsed.grossAmount, null, 'grossAmount');
+    assertEqual(parsed.netAmount, null, 'netAmount');
+    assertEqual(parsed.vatAmount, null, 'vatAmount');
+    assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+  });
+}
+
+Deno.test('parseInvoiceText rejects the CS Megastore order summary as invoice evidence', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'cs_megastore_order_summary')!;
+  const parsed = parseInvoiceText(fixture.rawText);
+  assertEqual(parsed.invoiceNumber, null, 'order number is not an invoice number');
+  assertEqual(parsed.invoiceDate, null, 'order date is not an invoice date');
+  assertEqual(parsed.grossAmount, null, 'provisional order total is not an invoice amount');
+  assertEqual(parsed.documentType, null, 'not a receipt');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+  assertEqual(parsed.parserReviewReasons.includes('Order document only — confirm against a supplier invoice or receipt'), true, 'non-invoice reason');
+});
 
 const STRIPE_RAW_TEXT = `Tax Invoice  Stripe Payments Europe, Limited One Wilton Park Wilton Place Dublin 2 D02FX04 Ireland Account Number   acct_1StAUdFat41qiV6Y Invoice Number   T41QIV6Y-2026-03-01 Invoice Date   Apr 5, 2026 Service Month   Mar 2026 Stripe VAT Number   IE 3206488LH Customer VAT Number   SE790519759101  Bill to Philip Cheong  Porfyrvägen 10 Täby 187 34 SE support@smarthomesolutions.se Reverse Charge VAT may be applicable.  Transfer Currency: SEK   Fee Amount   VAT  Invoicing  Fees for Invoicing  33.75 kr   0.00 kr Stripe Processing Fees  1 other payment totaling 8,437.50 kr  256.28 kr   0.00 kr  in SEK   in EUR  Stripe Fees   290.03 kr   €26.93 Total VAT   0.00 kr   €0.00  Total   290.03 kr   €26.93  Debited from your Balance –290.03 kr  Amount Due   0.00 kr Total VAT in EUR   €0.00 Total fees in EUR   €26.93 Exchange Rates (derived from average rate for period)  SEK / EUR   0.09286746291485691 EUR / SEK   10.768034019803293 Questions? We're here to help. Contact us at support.stripe.com.   Mar 2026 — Page 1 of 2 
 The total above has been debited from your Stripe balance.  It is the responsibility of the customer to determine the correct local treatment in respect of the receipt of these services including any reverse charge considerations. Stripe Payments Europe, Limited is registered in Ireland, company number IE513174. Registered Office: One Wilton Park, Wilton Place, Dublin 2, D02FX04, Ireland. Mar 2026 — Page 2 of 2`;

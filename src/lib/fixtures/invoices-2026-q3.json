@@ -1,0 +1,222 @@
+[
+  {
+    "name": "15175822hgsektr7eib4i5g.pdf",
+    "rawText": "Ordernr.: 15175822  CS MEGASTORE AB - Tel. 8-124 551 00 - www.csmegastore.se  Example Buyer Example Street 10 SE 18734 - Täby Organisationsnummer: SE1234567890 Example Buyer Example Street 10 SE 18734-Täby Example Buyer  Beställningssammanfattning  Kundnummer:   1019412881  Orderdatum   15-07-2026 22:26:11  leveransmetod:   Bring - Nordic - Business Parcel Bulk  Valuta   SEK  Ordernr.:   15175822  Detta är inte en bekräftelse på beställningen, utan endast en kopia av de uppgifter som lagts in. OBS! Köpet är först bindande när vi har skickat en bekräftelse på beställningen eller en faktura för köpet.  CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * Tel. 08-124 551 00 * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 * BIC: SWEDSESS -Bankgironummer: 831-3082  --VIKTIGT!   Postadress för retur/reklamation: CS MEGASTORE, Tinvej 7, 4100 Ringsted, Danmark. --   Sida 1 av 1  Artikelnr.   Benämning   Antal   Pris / St.   Moms %   Pris (ex. moms)  8197962   Vår LZ3 är en intelligent Zigbee-utrustning NOU-LZ3 2   393,60   25,00   787,20 000001   Bring BusinessParcel – endast till bemannad företagsadress med fast bemanning på vardagar 1   39,20   25,00   39,20  Totalt ex. moms   826,40 Moms   206,60 Total inkl. moms   SEK   1.033,00",
+    "expected": {
+      "supplierName": "CS MEGASTORE AB",
+      "supplierCountry": "SE",
+      "invoiceNumber": null,
+      "invoiceDate": null,
+      "currency": "SEK",
+      "grossAmount": null,
+      "netAmount": null,
+      "vatAmount": null,
+      "vatRate": null,
+      "vatNumber": "SE5595229401",
+      "fingerprintId": "cs_megastore_order_summary",
+      "documentType": null,
+      "dueDate": null,
+      "parserReviewRequired": true
+    }
+  },
+  {
+    "name": "ChatGPT august.pdf",
+    "rawText": "Invoice  7 August 2026  Sequence:   1-14192242061  Order ID:   MK5YDJJ316  Document:   706172521563  Apple Account:   buyer@example.com  ChatGPT  ChatGPT Plus (Monthly)  Renews 8 September 2026  249,00 kr  Inclusive of VAT at 25 %   49,80 kr  Billing and Payment  Example Buyer  Example Street 10  187 34 Täby  Sweden  Subtotal   199,20 kr  VAT charged at 25 %   49,80 kr  Mastercard •••• 4789   249,00 kr  Get Help with Subscriptions and Purchases  Manage Subscriptions   ›  Purchase History   ›  Report a Problem   ›  View Your Account Information   ›  Visit Apple Support   ›  To cancel your purchase within 14 days of receiving this receipt,   report a problem   or   contact us .  9/29/26, 5:08 PM   Report a Problem  https://reportaproblem.apple.com/?s=3&wo=MK5YDJJ316   1/2 \nLearn more about your right of withdrawal  Privacy: We use a   Subscriber ID   to provide reports to developers.  TM and © 2026 Apple Distribution International Ltd., Hollyhill Industrial Estate, Hollyhill, Cork, Ireland  Ireland VAT Reg No. IE9700053D  All Rights Reserved   |   Privacy Policy   |   Terms of Sale  9/29/26, 5:08 PM   Report a Problem  https://reportaproblem.apple.com/?s=3&wo=MK5YDJJ316   2/2",
+    "expected": {
+      "supplierName": "Apple Distribution International Ltd.",
+      "supplierCountry": "IE",
+      "invoiceNumber": "706172521563",
+      "invoiceDate": "2026-08-07",
+      "currency": "SEK",
+      "grossAmount": 249,
+      "netAmount": 199.2,
+      "vatAmount": 49.8,
+      "vatRate": 25,
+      "vatNumber": "IE9700053D",
+      "fingerprintId": "apple_subscription_receipt",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "ChatGPT july.pdf",
+    "rawText": "Invoice  7 July 2026  Sequence:   1-13974552477  Order ID:   MK5YBML9KG  Document:   812157952855  Apple Account:   buyer@example.com  ChatGPT  ChatGPT Plus (Monthly)  Renews 8 August 2026  249,00 kr  Inclusive of VAT at 25 %   49,80 kr  Billing and Payment  Example Buyer  Example Street 10  187 34 Täby  Sweden  Subtotal   199,20 kr  VAT charged at 25 %   49,80 kr  Mastercard •••• 4789   249,00 kr  Get Help with Subscriptions and Purchases  Manage Subscriptions   ›  Purchase History   ›  Report a Problem   ›  View Your Account Information   ›  Visit Apple Support   ›  To cancel your purchase within 14 days of receiving this receipt,   report a problem   or   contact us .  9/29/26, 5:10 PM   Report a Problem  https://reportaproblem.apple.com   1/2 \nLearn more about your right of withdrawal  Privacy: We use a   Subscriber ID   to provide reports to developers.  TM and © 2026 Apple Distribution International Ltd., Hollyhill Industrial Estate, Hollyhill, Cork, Ireland  Ireland VAT Reg No. IE9700053D  All Rights Reserved   |   Privacy Policy   |   Terms of Sale  9/29/26, 5:10 PM   Report a Problem  https://reportaproblem.apple.com   2/2",
+    "expected": {
+      "supplierName": "Apple Distribution International Ltd.",
+      "supplierCountry": "IE",
+      "invoiceNumber": "812157952855",
+      "invoiceDate": "2026-07-07",
+      "currency": "SEK",
+      "grossAmount": 249,
+      "netAmount": 199.2,
+      "vatAmount": 49.8,
+      "vatRate": 25,
+      "vatNumber": "IE9700053D",
+      "fingerprintId": "apple_subscription_receipt",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "ChatGPT september.pdf",
+    "rawText": "Invoice  8 September 2026  Sequence:   1-14429178542  Order ID:   MK5YFH4QD3  Document:   736187694882  Apple Account:   buyer@example.com  ChatGPT  ChatGPT Pro 5x (Monthly)  Renews 8 October 2026  1 120,00 kr  Inclusive of VAT at 25 %   224,00 kr  Billing and Payment  Example Buyer  Example Street 10  187 34 Täby  Sweden  Subtotal   896,00 kr  VAT charged at 25 %   224,00 kr  Mastercard •••• 4789   1 120,00 kr  Get Help with Subscriptions and Purchases  Manage Subscriptions   ›  Purchase History   ›  Report a Problem   ›  View Your Account Information   ›  Visit Apple Support   ›  To cancel your purchase within 14 days of receiving this receipt,   report a problem   or   contact us .  9/29/26, 5:09 PM   Report a Problem  https://reportaproblem.apple.com   1/2 \nLearn more about your right of withdrawal  Privacy: We use a   Subscriber ID   to provide reports to developers.  TM and © 2026 Apple Distribution International Ltd., Hollyhill Industrial Estate, Hollyhill, Cork, Ireland  Ireland VAT Reg No. IE9700053D  All Rights Reserved   |   Privacy Policy   |   Terms of Sale  9/29/26, 5:09 PM   Report a Problem  https://reportaproblem.apple.com   2/2",
+    "expected": {
+      "supplierName": "Apple Distribution International Ltd.",
+      "supplierCountry": "IE",
+      "invoiceNumber": "736187694882",
+      "invoiceDate": "2026-09-08",
+      "currency": "SEK",
+      "grossAmount": 1120,
+      "netAmount": 896,
+      "vatAmount": 224,
+      "vatRate": 25,
+      "vatNumber": "IE9700053D",
+      "fingerprintId": "apple_subscription_receipt",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "Invoice-NKDITAWT-0001.pdf",
+    "rawText": "Page 1 of 1  Invoice  Invoice number   NKDITAWT \u0000 0001  Date of issue   October 6, 2025 Date due   October 6, 2025  Anthropic, PBC  548 Market Street PMB 90375 San Francisco, California 94104 United States support@anthropic.com  Bill to  buyer@example.com's Organization Example Street 10 SE \u0000 187 34 Täby Sweden buyer@example.com  €225.00 due October 6, 2025  Pay online  While we prefer electronic payment methods,  any checks must be sent to the address below, NOT to our San Francisco office.  ----------------------------  PAYMENT ADDRESS \u0000  Anthropic, PBC  P.O. Box 104477  Pasadena, CA 91189 \u0000 4477  Description   Qty   Unit price   Tax   Amount  Claude Pro Oct 6, 2025 \u0000 Oct 6, 2026 1   €180.00   25%   €180.00  Subtotal   €180.00 Total excluding tax   €180.00 Tax   \u0000 25% on €180.00 \u0000   €45.00 Total   €225.00  Amount due   €225.00",
+    "expected": {
+      "supplierName": "Anthropic, PBC",
+      "supplierCountry": "US",
+      "invoiceNumber": "NKDITAWT-0001",
+      "invoiceDate": "2025-10-06",
+      "currency": "EUR",
+      "grossAmount": 225,
+      "netAmount": 180,
+      "vatAmount": 45,
+      "vatRate": 25,
+      "vatNumber": null,
+      "fingerprintId": "anthropic_invoice",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "Invoice-PGOXRJ-00008.pdf",
+    "rawText": "INVOICE  Supabase Pte. Ltd. 65 Chulia Street #38-02/03 OCBC Centre Singapore, 01 049513 Singapore  Bill to:  Smart Home Solutions Example Street 10 Täby, SE 187 34 Sweden buyer@example.com Invoice number   PGOXRJ-00008 SE VAT   SE123456789001 Invoice date   Sep 23, 2026 Due date   Sep 23, 2026  Amount due   $25.00  Description   Quantity   Rate   Amount  Pro Plan  Sep 23 – Oct 22, 2026  1   $25.00   $25.00 Memo: Prices are exclusive of applicable taxes unless stated otherwise. Where Supabase is registered for sales tax, VAT, GST, or equivalent, it has been charged on this invoice based on your billing address. For Singapore invoices, the listed price is GST-inclusive. For B2B sales into jurisdictions where reverse charge applies, the customer is responsible for accounting for VAT/ GST to their local tax authority under the reverse charge mechanism.  Subtotal   $25.00  Amount due   $25.00  1 of 1",
+    "expected": {
+      "supplierName": "Supabase Pte. Ltd.",
+      "supplierCountry": "SG",
+      "invoiceNumber": "PGOXRJ-00008",
+      "invoiceDate": "2026-09-23",
+      "currency": "USD",
+      "grossAmount": 25,
+      "netAmount": 25,
+      "vatAmount": 0,
+      "vatRate": 0,
+      "vatNumber": null,
+      "fingerprintId": "supabase_invoice",
+      "documentType": null,
+      "dueDate": "2026-09-23",
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "Kvitto - 16613638.pdf",
+    "rawText": "Kvitto  Kvitto nr.: 16613638  Kvittodatum: 8 juli 2026  Ordernummer 92682027  Kundnummer: 26757577  Coolshop.se  Box 1063  43214 Varberg  SE  Org. Nr.: 5566113212  VAT No.: DK26457602  Fakturering  Example Buyer  Example Street 10  187 34 Täby  SE  Betalningsmetod  Credit by document  Leverans  Example Buyer  Example Street 10  187 34 Täby  SE  Fraktmetod  Early Bird SE  Spåra försändelse  00373402216191935567  SKU   BESKRIVNING   EAN   KVANTITET   PRIS   SUMMA  1289071   Aqara - 2x Door and Window Sensor T1 - Secure Your Home with Smart Monitoring -  1   272,00 kr.   272,00 kr.  1240712   Aqara - Door and Window Sensor T1 - Secure Your Home with Smart Monitoring  6975833352135   1   0,00 kr.   0,00 kr.  1240712   Aqara - Door and Window Sensor T1 - Secure Your Home with Smart Monitoring  6975833352135   1   0,00 kr.   0,00 kr.  Delsumma exkl. MOMS:   272,00 kr.  Totalt exkl. MOMS:   272,00 kr.  MOMS:   68,00 kr.  Totalt inkl. MOMS:   340,00 kr.  9/29/26, 4:45 PM   Kvitto - 16613638  https://www.coolshop.se/my/order/92682027/invoices/15613639/   1/2 \nVid de   fl esta beställningar har du en 14-dagars ångerrätt från det ögonblick du mottager leveransen, jfr (jämfört med) våra leveransvillkor.  För att returnera en beställning kan du logga in på din Coolshop-pro fi l och hitta returblanketter som ska skrivas ut och bifogas med din leverans. För mer information om returer, se våra   villkor och   FAQ .  För mer information, se   https://www.coolshop.se   – Tack för din beställning!  9/29/26, 4:45 PM   Kvitto - 16613638  https://www.coolshop.se/my/order/92682027/invoices/15613639/   2/2",
+    "expected": {
+      "supplierName": "Coolshop.se",
+      "supplierCountry": "DK",
+      "invoiceNumber": "16613638",
+      "invoiceDate": "2026-07-08",
+      "currency": "SEK",
+      "grossAmount": 340,
+      "netAmount": 272,
+      "vatAmount": 68,
+      "vatRate": 25,
+      "vatNumber": "DK26457602",
+      "fingerprintId": "coolshop_receipt",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "SALESORDER_EMAIL100780637.pdf",
+    "rawText": "PO Acknowledgement 100780637  Bill To: Ship To: Buyer: Ship From: Customer: Payment Terms: Shipping Method: Order Source: Order Date: Estimated Release Date: Line Item   Ordered   Available Qty Backordered Qty   Item Number/ Description   Unit Price  USD $  Amount  USD $  Sales   Amount Total   Sales   and   Estimated   Tariff   Amount Total General   -  All transactions with DigiKey, including its affiliates, are subject to DigiKey’s Terms of Use and Conditions of Order.  Page 1 of 1  USD $  www.digikey.com 701 Brooks Ave South, PO Box 677 Thief River Falls, MN 56701-0677 USA  EXAMPLE   BUYER EXAMPLE   STREET   10 TAEBY   18734 SWEDEN EXAMPLE   BUYER SMART   HOME   SOLUTIONS EXAMPLE   STREET   10 TAEBY   187   34 SWEDEN Example   Buyer Smart   Home   Solutions Example   Street   10 Täby   187   34 SWEDEN DIGI-KEY   ELECTRONICS 701   BROOKS   AVE.   SOUTH P.O.   BOX   677 THIEF   RIVER   FALLS   MN   56701-0677  920417935 PayPal UPS   WW   Saver INTERNET 04-AUG-2026 04-AUG-2026/A0FX  1   2   2   0   PART:   2618-UFM-02-05BP4-ND  MFG   :   SCIOSENSE   /   UFM-02-05BP4  DESC:   SEN   FLOW   LIQ   33.33L/min   61.69000   123.38  ECCN:   EAR99   HTSUS:   9026.10.2040 ROHS3   COMP   REACH   UNAFFECTED   14-JUN-2023 123.38 123.38 123.38 USD   $ INCOTERM   2020:   DDP   COLOGNE,   GERMANY INCOTERM   2020:   CPT   TAEBY,   SWEDEN WEB   ORDER   ID:   374975989 VAT   NUMBER:   SE123456789001",
+    "expected": {
+      "supplierName": "Digi-Key Electronics",
+      "supplierCountry": "US",
+      "invoiceNumber": "100780637",
+      "invoiceDate": "2026-08-04",
+      "currency": "USD",
+      "grossAmount": 123.38,
+      "netAmount": 123.38,
+      "vatAmount": null,
+      "vatRate": null,
+      "vatNumber": null,
+      "fingerprintId": "digikey_order_acknowledgement",
+      "documentType": null,
+      "dueDate": null,
+      "parserReviewRequired": true
+    }
+  },
+  {
+    "name": "ShellyVATInvoice.pdf",
+    "rawText": "INVOICE  Company Details  Address:   Global-e NL B.V  Krijn Taconiskade 430  Amsterdam, 1087 HW  Netherlands  Help Centre:   https://lp.global-e.com/#support  Company Reg. No.:   72541466  VAT Reg. No.   SE 502084287701  Invoice No.:   00000000000021932387  Date/Tax Point:   2026-07-23  EORI number:   NL859146492  Shippers address:   Global-e/Shelly Europe  Iztochna tangenta 100  Sofia  1517  Customer Details  Email:   buyer@example.com  Name:   Example Buyer  Company:   Smart Home Solutions  EU VAT No.:   SE123456789001  Order ID:   GE12990822389NL  Payment Method:   Mastercard  Billing Address   Customer Shipping Address  Address:   Example Street 10  City   Täby  Country   Sweden  Post/Zip Code   187 34  Phone   +46700000000  Address   Example Street 10  City   Täby  Country   Sweden  Post/Zip Code   187 34  Phone   +46700000000  Product   SKU   Quantity   Price/Unit   SubTotal  Shelly Hand Fan   65213845733725   1   kr 0.00   kr 0.00  Shelly H&T Gen3 Matte Black   56273481302365   4   kr 207.20   kr 828.80  Shelly Flood S Gen4   64194120417629   2   kr 158.98   kr 317.96  Shelly Stickers   65213567074653   1   kr 0.00   kr 0.00  Shelly PM Mini Gen3 x2   56273481826653   6   kr 211.20   kr 1267.20  Items Total   kr 2413.96  Delivery   kr 0.00  Order Total   kr 2413.96  Total subject to 25% VAT   kr 2413.96 \nTotal VAT   kr 603.48  Total Invoice Amount   kr 3017.44",
+    "expected": {
+      "supplierName": "Global-e NL B.V",
+      "supplierCountry": "NL",
+      "invoiceNumber": "00000000000021932387",
+      "invoiceDate": "2026-07-23",
+      "currency": "SEK",
+      "grossAmount": 3017.44,
+      "netAmount": 2413.96,
+      "vatAmount": 603.48,
+      "vatRate": 25,
+      "vatNumber": "SE 502084287701",
+      "fingerprintId": "global_e_invoice",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "Stripe Tax Invoice T41QIV6Y-2026-07.pdf",
+    "rawText": "Tax Invoice  Stripe Payments Europe, Limited One Wilton Park Wilton Place Dublin 2 D02FX04 Ireland Account Number   acct_1StAUdFat41qiV6Y Invoice Number   T41QIV6Y-2026-07 Invoice Date   Jul 31, 2026 Service Month   Jul 2026 Stripe VAT Number   IE 3206488LH Customer VAT Number   SE123456789001  Bill to Example Buyer  Example Street 10 Täby 187 34 SE buyer@example.com Reverse Charge VAT may be applicable.  Transfer Currency: SEK   Fee Amount   VAT  Billing - usage fee   0.07 kr   0.00 kr Card payments - Stripe fee   1.95 kr   0.00 kr  in SEK   in EUR  Stripe Fees   2.02 kr   €0.18 Total VAT   0.00 kr   €0.00  Total   2.02 kr   €0.18 Total VAT in EUR   €0.00 Total fees in EUR   €0.18  Questions? We're here to help. Contact us at support.stripe.com.   Jul 2026 — Page 1 of 2 \nExchange Rates (derived from average rate for period)  SEK / EUR   0.09053367736339372 EUR / SEK   11.045613401807302  No payment needed, fees and taxes will be debited from your Stripe balance.  It is the responsibility of the customer to determine the correct local treatment in respect of the receipt of these services including any reverse charge considerations. Stripe Payments Europe, Limited is registered in Ireland, company number IE513174. Registered Office: One Wilton Park, Wilton Place, Dublin 2, D02FX04, Ireland. Jul 2026 — Page 2 of 2",
+    "expected": {
+      "supplierName": "Stripe Payments Europe, Limited",
+      "supplierCountry": "IE",
+      "invoiceNumber": "T41QIV6Y-2026-07",
+      "invoiceDate": "2026-07-31",
+      "currency": "SEK",
+      "grossAmount": 2.02,
+      "netAmount": 2.02,
+      "vatAmount": 0,
+      "vatRate": 0,
+      "vatNumber": "IE 3206488LH",
+      "fingerprintId": "stripe_tax_invoice",
+      "documentType": "receipt",
+      "dueDate": null,
+      "parserReviewRequired": false
+    }
+  },
+  {
+    "name": "15175822dubelluiuyhzwfg.pdf",
+    "rawText": "Kvitto 500456139  CS MEGASTORE AB - Tel. 8-124 551 00 - www.csmegastore.se  Example Buyer Example Street 10 SE 18734 - Täby Organisationsnummer: SE1234567890 Example Buyer Example Street 10 SE 18734-Täby Example Buyer  Kvitto  Kundnummer:   1019412881  Kvittonr.:   500456139  Fakturadatum   20-07-2026  leveransmetod:   Bring - Nordic - Business Parcel Bulk  Betalingsdatum:   03-08-2026  Valuta   SEK  Betalningsmetod:   Quickpay/Billwerk  CS MEGASTORE AB * Slottsgatan 20 * SE-211 33 Malmö * Tel. 08-124 551 00 * salg@csmegastore.se * www.csmegastore.se Vat-no: SE5595229401 * BIC: SWEDSESS -Bankgironummer: 831-3082  --VIKTIGT!   Postadress för retur/reklamation: CS MEGASTORE, Tinvej 7, 4100 Ringsted, Danmark. --   Sida 1 av 1  Artikelnr.   Benämning   Antal   Pris / St.   Moms %   Pris (ex. moms)  8197962   Vår LZ3 är en intelligent Zigbee-utrustning NOU-LZ3 2   393,60   25,00   787,20 000001   Bring BusinessParcel – endast till bemannad företagsadress med fast bemanning på vardagar 1   39,20   25,00   39,20 Packat d. 20-07-2026 12:10:13 av JE   1   0,00   25,00   0,00  Totalt ex. moms   826,40 Moms   206,60 Total inkl. moms   SEK   1.033,00  Ordern är betald!  Quickpay/Billwerk",
+    "expected": {
+      "supplierName": "CS MEGASTORE AB",
+      "supplierCountry": "SE",
+      "invoiceNumber": "500456139",
+      "invoiceDate": "2026-07-20",
+      "dueDate": null,
+      "currency": "SEK",
+      "grossAmount": 1033,
+      "netAmount": 826.4,
+      "vatAmount": 206.6,
+      "vatRate": 25,
+      "vatNumber": "SE5595229401",
+      "fingerprintId": "cs_megastore_receipt",
+      "documentType": "receipt",
+      "parserReviewRequired": false
+    }
+  }
+]

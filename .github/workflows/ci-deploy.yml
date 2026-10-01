@@ -85,20 +85,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: E2E smoke (mocked backend)
-        # navigation-shell.spec.ts mocks the Supabase API via route interception,
-        # so it needs no secrets or DB — it just exercises the app shell against
-        # the built bundle served by `vite preview` (port 4173).
-        run: |
-          npx vite preview --port 4173 --host 127.0.0.1 &
-          PREVIEW_PID=$!
-          # Runs under bash -e: a test failure exits the script immediately, so
-          # clean up the preview server from a trap rather than a trailing kill.
-          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
-          for i in $(seq 1 60); do
-            curl -sf http://127.0.0.1:4173 >/dev/null && break
-            sleep 1
-          done
-          E2E_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/navigation-shell.spec.ts
+        # Uses the same mocked suites and managed preview server as local validation.
+        run: npm run test:e2e:local
 
   migrate:
     name: Apply Supabase migrations
