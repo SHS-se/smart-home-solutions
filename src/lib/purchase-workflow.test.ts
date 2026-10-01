@@ -13,13 +13,20 @@ import {
   preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
 } from './purchase-workflow.ts';
-import type { ParsedInvoice } from './invoice-parser.ts';
+import { parseInvoiceText, type ParsedInvoice } from './invoice-parser.ts';
+import q3Invoices from './fixtures/invoices-2026-q3.json' with { type: 'json' };
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
   }
 }
+
+Deno.test('DigiKey hardware invoices require VAT treatment review instead of being classified as non-EU services', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_invoice')!;
+  const parsedInvoice = parseInvoiceText(fixture.rawText);
+  assertEqual(inferVatTreatment({ parsedInvoice, extractedText: fixture.rawText }), 'needs_review', 'hardware VAT treatment');
+});
 
 const STRIPE_INVOICE: ParsedInvoice = {
   supplierName: 'Stripe Payments Europe, Limited',

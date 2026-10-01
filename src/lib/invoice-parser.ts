@@ -240,6 +240,11 @@ const KNOWN_INVOICE_FINGERPRINTS: Array<{
     match: (text) => /Coolshop\.se/i.test(text) && /Kvitto nr\.:/i.test(text) && /Kvittodatum:/i.test(text) && /Totalt inkl\. MOMS:/i.test(text),
   },
   {
+    id: 'digikey_invoice',
+    label: 'DigiKey invoice',
+    match: (text) => /Fakturanummer\s+\d+\s+Invoice\s*#/i.test(text) && /www\.digikey\.com/i.test(text) && /Completed Salesorder/i.test(text) && /Total charged to Paypal/i.test(text),
+  },
+  {
     id: 'digikey_order_acknowledgement',
     label: 'DigiKey order acknowledgement',
     match: (text) => /PO Acknowledgement\s+\d+/i.test(text) && /www\.digikey\.com/i.test(text) && /DIGI-KEY\s+ELECTRONICS/i.test(text),
@@ -683,7 +688,7 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
   if (/Supabase Pte\. Ltd\./i.test(normalizedText)) return 'Supabase Pte. Ltd.';
   if (/Coolshop\.se/i.test(normalizedText)) return 'Coolshop.se';
   if (/Global-e NL B\.V/i.test(normalizedText)) return 'Global-e NL B.V';
-  if (/DIGI-KEY\s+ELECTRONICS/i.test(normalizedText)) return 'Digi-Key Electronics';
+  if (/DIGI-KEY\s+ELECTRONICS|DIGI-KEYS momsregistreringsnr\./i.test(normalizedText)) return 'Digi-Key Electronics';
   if (/elbutik scandinavia ab/i.test(normalizedText) && /info@elbutik\.se/i.test(normalizedText)) {
     return 'Elbutik Scandinavia AB';
   }
@@ -760,7 +765,7 @@ function extractSupplierCountry(text: string): string | null {
   if (/Supabase Pte\. Ltd\./i.test(text) && /Singapore/i.test(text)) return 'SG';
   if (/Coolshop\.se/i.test(text) && /VAT No\.:\s*DK/i.test(text)) return 'DK';
   if (/Global-e NL B\.V/i.test(text) && /Netherlands/i.test(text)) return 'NL';
-  if (/DIGI-KEY\s+ELECTRONICS/i.test(text) && /USA/i.test(text)) return 'US';
+  if (/DIGI-KEY\s+ELECTRONICS|DIGI-KEYS momsregistreringsnr\./i.test(text) && /USA/i.test(text)) return 'US';
   if (/elbutik scandinavia ab/i.test(text) || /cs megastore ab/i.test(text)) return 'SE';
   if (/lunar bank a\/s/i.test(text) && /dk-8000 aarhus/i.test(text)) return 'DK';
   if (/user_feedback@z\.ai/i.test(text) && /singapore/i.test(text)) return 'SG';
@@ -794,8 +799,11 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
   if (supplierName === 'Global-e NL B.V') {
     return text.match(/VAT Reg\. No\.\s*([A-Z]{2}\s?\d+)/i)?.[1] || null;
   }
-  // These layouts only display the customer's VAT number.
-  if (supplierName === 'Digi-Key Electronics' || supplierName === 'Supabase Pte. Ltd.') return null;
+  if (supplierName === 'Digi-Key Electronics') {
+    return text.match(/DIGI-KEYS momsregistreringsnr\.\s*:\s*([A-Z]{2}\d+)/i)?.[1] || null;
+  }
+  // This layout only displays the customer's VAT number.
+  if (supplierName === 'Supabase Pte. Ltd.') return null;
   if (/cs megastore ab/i.test(text)) {
     const csMegastoreVatMatch = text.match(/\bVat-no\s*:\s*(SE\d{10,12})\b/i);
     if (csMegastoreVatMatch) return csMegastoreVatMatch[1].toUpperCase();
@@ -851,7 +859,7 @@ function extractInvoiceNumber(text: string): string | null {
   if (/Beställningssammanfattning/i.test(text) && /cs megastore ab/i.test(text)) return null;
   if (/Coolshop\.se/i.test(text)) return text.match(/Kvitto nr\.:\s*(\d+)/i)?.[1] || null;
   if (/Global-e NL B\.V/i.test(text)) return text.match(/Invoice No\.:\s*(\d+)/i)?.[1] || null;
-  if (/www\.digikey\.com/i.test(text)) return text.match(/PO Acknowledgement\s+(\d+)/i)?.[1] || null;
+  if (/www\.digikey\.com/i.test(text)) return text.match(/(?:Fakturanummer|PO Acknowledgement)\s+(\d+)/i)?.[1] || null;
   if (/Supabase Pte\. Ltd\./i.test(text)) return text.match(/Invoice number\s+(\S+)/i)?.[1] || null;
   const lunarMatch = text.match(/Invoice No\s*:\s*([A-Z0-9][A-Z0-9-]*)/i);
   if (lunarMatch && /lunar bank a\/s/i.test(text)) return lunarMatch[1];
@@ -898,6 +906,11 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
   if (fingerprintId === 'cs_megastore_order_summary') return null;
   if (fingerprintId === 'coolshop_receipt') return extractDate(text, ['Kvittodatum']);
   if (fingerprintId === 'global_e_invoice') return extractDate(text, ['Date/Tax Point']);
+  if (fingerprintId === 'digikey_invoice') {
+    // The date row is Order Source, Order Date, Invoice Date, Ship Date.
+    const match = text.match(/INTERNET\s+\d{2}-[A-Z]{3}-\d{4}\s+(\d{2}-[A-Z]{3}-\d{4})\s+\d{2}-[A-Z]{3}-\d{4}/i);
+    return match ? parseDate(match[1]) : null;
+  }
   if (fingerprintId === 'digikey_order_acknowledgement') {
     // PDF.js emits the form's labels before their values. The order date
     // follows INTERNET; later dates belong to product compliance information.
@@ -925,6 +938,7 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
  * (confirmed for these accounts) even though the document says "Amount due".
  */
 const RECEIPT_FINGERPRINTS = new Set([
+  'digikey_invoice',
   'apple_subscription_receipt',
   'coolshop_receipt',
   'cs_megastore_receipt',
@@ -990,6 +1004,10 @@ function extractDueDate(text: string, fingerprintId: string): string | null {
 }
 
 function extractProductName(text: string): string | null {
+  if (/www\.digikey\.com/i.test(text)) {
+    const match = text.match(/DESC:\s+(.+?)\s+\d+\.\d{5}\s+\d+(?:,\d{3})*\.\d{2}/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
   const elbutikMatch = text.match(
     /Product no\.\s+Description\s+Quantity\s+Price\s+Disc\. %\s+Amount\s+\S+\s+(.+?)\s+\d+\s+[\d.,]+\s+[\d.,]+/i,
   );
@@ -1122,14 +1140,21 @@ function extractKnownLayoutSummary(
           : null,
       };
     }
+    case 'digikey_invoice':
     case 'digikey_order_acknowledgement': {
-      const match = text.match(/(\d+\.\d{2})\s+(\d+\.\d{2})\s+(\d+\.\d{2})\s+USD\s+\$\s+INCOTERM/i);
-      // The columns are Sales Amount, Sales and Estimated Tariff Amount,
-      // and Total. No VAT is stated on this order acknowledgement.
+      const amount = '(\\d+(?:,\\d{3})*\\.\\d{2})';
+      const match = text.match(new RegExp(`${amount}\\s+${amount}\\s+${amount}\\s+(?:[^\\s@]+@[^\\s@]+\\s+)?USD\\s+\\$\\s+INCOTERM`, 'i'));
+      // The invoice's second column is Charges subtotal; the order's first
+      // column is Sales Amount. Both put the final total in the third column.
+      const netAmount = match ? parseAmount(match[fingerprintId === 'digikey_invoice' ? 2 : 1]) : null;
+      const grossAmount = match ? parseAmount(match[3]) : null;
+      const selfAssessedVat = /recipient is required to account for or to self-assess the intra-community acquisition VAT/i.test(text);
       return {
-        netAmount: match ? parseAmount(match[1]) : null,
-        grossAmount: match ? parseAmount(match[3]) : null,
-        vatAmount: null,
+        netAmount,
+        grossAmount,
+        // Only the invoice states that the recipient accounts for VAT.
+        // An acknowledgement or a missing tax statement cannot establish zero VAT.
+        vatAmount: fingerprintId === 'digikey_invoice' && selfAssessedVat && netAmount !== null && netAmount === grossAmount ? 0 : null,
       };
     }
     default:

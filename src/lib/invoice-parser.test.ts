@@ -46,6 +46,48 @@ Deno.test('parseInvoiceText reads changed DigiKey sales and tariff totals withou
   assertEqual(parsed.documentType, null, 'acknowledgement is not proof of payment');
 });
 
+const DIGIKEY_INVOICE_TEXT = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_invoice')!.rawText;
+
+Deno.test('parseInvoiceText uses the DigiKey invoice date rather than order, ship, or document dates', () => {
+  const text = DIGIKEY_INVOICE_TEXT
+    .replace('04-Aug-2026/AUTO', '09-Aug-2026/AUTO')
+    .replace('INTERNET   04-Aug-2026   04-Aug-2026   04-Aug-2026', 'INTERNET   01-Aug-2026   05-Aug-2026   07-Aug-2026');
+  const parsed = parseInvoiceText(text);
+  assertEqual(parsed.invoiceDate, '2026-08-05', 'invoiceDate');
+  assertEqual(parsed.invoiceNumber, '130313080', 'invoice number instead of sales-order number');
+});
+
+Deno.test('parseInvoiceText includes DigiKey charges in the subtotal and reads thousands separators', () => {
+  const text = DIGIKEY_INVOICE_TEXT.replace('123.38 123.38 123.38 buyer@example.com', '1,123.38 1,140.00 1,140.00 buyer@example.com');
+  const parsed = parseInvoiceText(text);
+  assertEqual(parsed.grossAmount, 1140, 'grossAmount');
+  assertEqual(parsed.netAmount, 1140, 'charges subtotal instead of sales amount');
+  assertEqual(parsed.vatAmount, 0, 'supplier-charged VAT');
+  assertEqual(parsed.parserReviewRequired, false, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText does not guess DigiKey invoice totals from product rows or page numbers', () => {
+  const parsed = parseInvoiceText(DIGIKEY_INVOICE_TEXT.replace('123.38 123.38 123.38 buyer@example.com', 'buyer@example.com'));
+  assertEqual(parsed.fingerprint.id, 'digikey_invoice', 'known invoice layout');
+  assertEqual(parsed.grossAmount, null, 'grossAmount');
+  assertEqual(parsed.netAmount, null, 'netAmount');
+  assertEqual(parsed.vatAmount, null, 'vatAmount');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText does not infer zero DigiKey VAT without the self-assessment statement', () => {
+  const text = DIGIKEY_INVOICE_TEXT.replace(/the\s+recipient\s+is\s+required\s+to\s+account\s+for\s+or\s+to\s+self-assess\s+the\s+intra-community\s+acquisition\s+VAT/i, 'tax statement unavailable');
+  const parsed = parseInvoiceText(text);
+  assertEqual(parsed.grossAmount, 123.38, 'grossAmount');
+  assertEqual(parsed.vatAmount, null, 'VAT amount remains unknown');
+  assertEqual(parsed.parserReviewRequired, true, 'parserReviewRequired');
+});
+
+Deno.test('parseInvoiceText leaves DigiKey supplier VAT unset when only the buyer VAT is present', () => {
+  const parsed = parseInvoiceText(DIGIKEY_INVOICE_TEXT.replaceAll('DE239975861', ''));
+  assertEqual(parsed.vatNumber, null, 'supplier VAT');
+});
+
 Deno.test('parseInvoiceText reads billed Supabase tax instead of assuming the memo means zero VAT', () => {
   const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'supabase_invoice')!;
   const parsed = parseInvoiceText(fixture.rawText.replaceAll('Amount due   $25.00', 'Amount due   $31.25'));
