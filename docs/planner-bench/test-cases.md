@@ -156,21 +156,18 @@ result records which it was.
 
 ## Scoring
 
-The score is about comfort only (`score.ts`); money is reported in kr beside it.
-Each quarter loses a point per rule that fires:
+The [scoring catalogue](scoring.md) defines comfort, physical failures and
+future-dependent economic opportunities. The headline combines 70% comfort and
+30% economic loss. The economic contribution is based on independently replayed
+alternatives, preserving service and final stores; simply consuming cheap energy
+gets no reward. A warm pool is a thermal buffer, not automatically a penalty.
 
-| Rule | Points |
-|---|---|
-| Pool more than 1 °C below target | −1 |
-| Pool more than 2 °C below target | a further −1 |
-| Pool more than 2 °C above target | −1 |
-| Car more than 50 km short of target | −1 |
-| Car more than 100 km short of target | a further −1 |
-
-A rule counts only once its level has been reachable for a day: where full
-power from the first quarter would have got the store there, plus 24 hours to
-choose the hours. A case scores its quarter sum ÷ 28.8, at worst −10 (a point
-lost every quarter); a run scores 1000 + 90 × the mean, so 1000 is no miss.
+Rule cards show where each rule applies and the evidence behind each finding.
+Known-price and hindsight savings are separated. The car is deliberately treated
+as always plugged in, with no unplugged or arrival penalty. Every planner uses
+the same rule version and the same case inputs. `--shas none` rescores every
+stored successful result in every lane and verifies coverage without requiring
+the historical planner commits.
 
 ## Results
 

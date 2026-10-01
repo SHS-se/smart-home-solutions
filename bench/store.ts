@@ -15,6 +15,7 @@ export interface StoredScenario {
   id: string;
   name: string;
   criteria: CriteriaOverrides;
+  archived: boolean;
   /** The test case; null for a scenario still held as a replay. */
   dataset: BenchScenarioData | null;
   /** What was recorded for its window; null until the window has passed. */
@@ -62,12 +63,14 @@ export interface ResultRecord extends Partial<Evaluation>, ResultKey {
 }
 
 export interface EvaluatedResult extends ResultKey {
+  status: "ok" | "error";
+  error: string | null;
   score: StoredScore | null;
   referee_version: number | null;
 }
 
 export interface BenchStore {
-  scenarios(only?: string): Promise<StoredScenario[]>;
+  scenarios(only?: string, includeArchived?: boolean): Promise<StoredScenario[]>;
   /** The stripped replay a scenario was uploaded as, for converting it once. */
   legacyReplayInput(id: string): Promise<unknown | null>;
   saveDataset(id: string, dataset: BenchScenarioData): Promise<void>;
@@ -82,7 +85,7 @@ export interface BenchStore {
   saveRun(run: RunRecord): Promise<void>;
   markCurrent(sha: string): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
-  /** Every successful result's score and referee version, for staleness checks. */
+  /** Every result, including planner errors, for complete rescore coverage checks. */
   evaluatedResults(): Promise<EvaluatedResult[]>;
   planRecord(key: ResultKey): Promise<PlanRecord | null>;
   saveEvaluation(key: ResultKey, evaluation: Evaluation): Promise<void>;
@@ -110,9 +113,22 @@ export class DbStore implements BenchStore {
     return this.request(path, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body) });
   }
 
-  async scenarios(only?: string) {
+  /** Stable ordering plus explicit pages avoids PostgREST's default row limit. */
+  private async pages<T>(path: string): Promise<T[]> {
+    const rows: T[] = [];
+    const pageSize = 500;
+    for (;;) {
+      const page = await this.request(`${path}&limit=${pageSize}&offset=${rows.length}`) as T[];
+      rows.push(...page);
+      // Ask for the next page even after a short page: the server may cap below our requested size.
+      if (!page.length) return rows;
+    }
+  }
+
+  async scenarios(only?: string, includeArchived = false) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
-    return await this.request(`bench_scenarios?select=id,name,criteria,dataset,recorded&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
+    const archived = includeArchived ? "" : "&archived=eq.false";
+    return await this.pages<StoredScenario>(`bench_scenarios?select=id,name,criteria,dataset,recorded,archived${archived}${filter}&order=captured_at,id`);
   }
 
   async legacyReplayInput(id: string) {
@@ -129,12 +145,12 @@ export class DbStore implements BenchStore {
   }
 
   async knownShas() {
-    const rows = await this.request("bench_runs?select=sha&order=committed_at") as { sha: string }[];
+    const rows = await this.pages<{ sha: string }>("bench_runs?select=sha&order=committed_at,sha");
     return rows.map(row => row.sha);
   }
 
   async runs() {
-    return await this.request("bench_runs?select=sha,committed_at,planner_version,is_current&order=committed_at") as RunSummary[];
+    return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current&order=committed_at,sha");
   }
 
   async setPlannerVersion(sha: string, version: string) {
@@ -157,7 +173,7 @@ export class DbStore implements BenchStore {
   }
 
   async resultHashes(sha: string) {
-    const rows = await this.request(`bench_results?select=scenario_id,lane,input_hash&sha=eq.${sha}`) as { scenario_id: string; lane: LaneId; input_hash: string | null }[];
+    const rows = await this.pages<{ scenario_id: string; lane: LaneId; input_hash: string | null }>(`bench_results?select=scenario_id,lane,input_hash&sha=eq.${sha}&order=scenario_id,lane`);
     return new Map(rows.map(row => [laneKey(row.scenario_id, row.lane), row.input_hash]));
   }
 
@@ -186,7 +202,7 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.request("bench_result_summaries?select=sha,scenario_id,lane,score,referee_version&status=eq.ok") as EvaluatedResult[];
+    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version&order=sha,scenario_id,lane");
   }
 
   private where = ({ sha, scenario_id, lane }: ResultKey) =>
@@ -215,18 +231,22 @@ export class LocalStore implements BenchStore {
 
   private async load(): Promise<LocalFile> {
     try { return JSON.parse(await Deno.readTextFile(this.out)); }
-    catch { return { runs: [], results: [] }; }
+    catch (error) {
+      if (error instanceof Deno.errors.NotFound) return { runs: [], results: [] };
+      throw error;
+    }
   }
   private async save(file: LocalFile) { await Deno.writeTextFile(this.out, JSON.stringify(file)); }
 
-  async scenarios(only?: string) {
+  async scenarios(only?: string, includeArchived = false) {
     const out: StoredScenario[] = [];
     for await (const entry of Deno.readDir(this.dir)) {
       if (entry.isDirectory || !entry.name.endsWith(".json")) continue;
       const id = entry.name.replace(/\.json$/, "");
       if (only && only !== id) continue;
       const file = JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`));
-      out.push({ id, name: id, criteria: {}, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
+      if (file.archived && !includeArchived) continue;
+      out.push({ id, name: id, criteria: file.criteria ?? {}, archived: file.archived === true, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
     }
     return out.sort((a, b) => (a.dataset?.start ?? "").localeCompare(b.dataset?.start ?? ""));
   }
@@ -275,8 +295,8 @@ export class LocalStore implements BenchStore {
     await this.save(file);
   }
   async evaluatedResults() {
-    return (await this.load()).results.filter(r => r.status === "ok")
-      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, score: r.score ?? null, referee_version: r.referee_version ?? null }));
+    return (await this.load()).results
+      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error, score: r.score ?? null, referee_version: r.referee_version ?? null }));
   }
   async planRecord(key: ResultKey) {
     return (await this.load()).results.find(r => same(r, key))?.record ?? null;

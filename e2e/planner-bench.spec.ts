@@ -10,6 +10,7 @@
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
+import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from '../src/lib/planner-bench/opportunities';
 import { storedScore } from '../src/lib/planner-bench/score';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
@@ -59,6 +60,23 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
+  s.carKm = new Array(n).fill(0);
+  s.comfort = { pool_target_c: 30, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
+    poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
+  // A synthetic transport fixture for the audit UI, not an optimiser correctness test.
+  const before = { poolC: s.poolC.map(v => v!), carKm: [...s.carKm], homeSoc: new Array(n).fill(50) };
+  const after = { ...before, homeSoc: before.homeSoc.map((v, i) => i >= 8 && i < 24 ? v + 2 : v) };
+  s.audit = {
+    version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
+    guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
+    avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
+    violations: [],
+    applicability: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { applicable: r.device !== 'ev', reason: r.device === 'ev' ? 'No car charging demand' : 'Timing can change' }])) as OpportunityAudit['applicability'],
+    rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: r.key === 'battery_price_spread' ? 1 : 0, kwh: r.key === 'battery_price_spread' ? 1 : 0, knownSek: r.key === 'battery_price_spread' ? 1.25 : 0, hindsightSek: 0 }])) as OpportunityAudit['rules'],
+    findings: [{ id: 'k1', rule: 'battery_price_spread', tags: ['battery_price_spread'], device: 'battery',
+      from: 24, fromEnd: 24, to: 8, toEnd: 8, kwh: 1, savingSek: 1.25, gridSavingSek: 1.3, wearSek: .05,
+      basis: 'known', transfers: 1, before, after }],
+  };
   return s;
 }
 
@@ -99,7 +117,7 @@ function fakeJwt(sub: string, email: string): string {
 
 interface Captured { verdicts: unknown[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
 
-async function mockBackend(context: BrowserContext): Promise<Captured> {
+async function mockBackend(context: BrowserContext, missingAudit = false): Promise<Captured> {
   const captured: Captured = { verdicts: [], inserted: [], updated: [], dispatched: [] };
   const nowIso = new Date().toISOString();
   const user = {
@@ -150,7 +168,7 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
           return LANES.map((lane, k) => ({
-            sha, scenario_id, lane, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: storedScore(plan),
+            sha, scenario_id, lane, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: { ...storedScore(plan), ...(missingAudit ? { version: 2 } : {}) },
             outcome: { ...OUTCOME, cost_sek: OUTCOME.cost_sek - (lane.startsWith('oracle') ? 12 : 0) + (k % 3) },
           }));
         }).flat();
@@ -158,7 +176,7 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
           return [CURRENT.sha, TEST.sha].map(sha => ({
-            sha, series: PLANS[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
+            sha, series: missingAudit ? { ...PLANS[`${sha}/${scenario}`], audit: undefined } : PLANS[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
           }));
         }
         default: return [];
@@ -197,7 +215,7 @@ test.describe('planner bench', () => {
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
 
     // Every quarter of the shown plan carries its score in a strip above the chart.
-    await expect(page.getByText(/per quarter, −2 to \+2|per kvart, −2 till \+2/)).toBeVisible();
+    await expect(page.getByText(/comfort loss per quarter|komfortförlust per kvart/)).toBeVisible();
 
     // Clicking a quarter explains its score.
     const plan = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
@@ -237,6 +255,53 @@ test.describe('planner bench', () => {
     await page.getByRole('button', { name: /^(Pass|Godkänd)$/ }).last().click();
     await expect.poll(() => captured.verdicts.length).toBe(1);
     expect(captured.verdicts[0]).toMatchObject({ sha: TEST.sha, verdict: 'pass', note: 'Heats in the cheap night, as it should' });
+  });
+
+  test('explains applicability visually, selects evidence by keyboard, and saves comfort rules', async ({ context, page }) => {
+    const captured = await mockBackend(context);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const cards = page.locator('#bench-rule-cards');
+    await expect(cards).toContainText(/Comfort 70%|Komfort 70 %/);
+    await expect(page.locator('#bench-rule-pool_low')).toContainText('< 29 °C');
+    await expect(page.locator('#bench-rule-ev_low')).toContainText('N/A');
+    await expect(page.locator('#bench-opportunity-ev_timing')).toContainText('N/A');
+    await expect(page.locator('#bench-opportunity-pool_wait_for_sun')).toContainText(/No loss found|Ingen förlust hittad/);
+    await expect(page.locator('#bench-pool_low-threshold')).not.toBeVisible();
+    const evidence = page.locator('#bench-opportunity-battery_price_spread').getByRole('button', { name: /1.00 kWh/ }).last();
+    await evidence.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#bench-witness')).toBeFocused();
+    await expect(page.locator('#bench-witness')).toContainText('1.25 SEK');
+    await expect(page.locator('#bench-witness').getByRole('img')).toBeVisible();
+    await page.locator('#bench-witness').screenshot({ path: test.info().outputPath('witness-desktop.png') });
+    await cards.screenshot({ path: test.info().outputPath('rules-desktop.png') });
+    await page.locator('#bench-witness').getByRole('button', { name: /^(To|Till):/ }).click();
+    await expect(page.locator('#bench-show-test')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.locator('#bench-advanced-rules summary').click();
+    await page.locator('#bench-pool_low-threshold').fill('1.5');
+    await expect(page.locator('#bench-rule-pool_low')).toContainText('< 28.5 °C');
+    await page.getByRole('button', { name: /Save rules for this case|Spara regler för fallet/ }).click();
+    await expect.poll(() => captured.updated.length).toBe(1);
+    expect(captured.updated[0]).toMatchObject({ criteria: { pool_low: { threshold: 1.5 } } });
+    await expect.poll(() => captured.dispatched.length).toBe(1);
+    expect(captured.dispatched[0]).toMatchObject({ shas: 'none' });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(cards).toBeVisible();
+    expect(await cards.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await cards.screenshot({ path: test.info().outputPath('rules-mobile.png') });
+  });
+
+  test('withholds mixed scores and witnesses until older results are rescored', async ({ context, page }) => {
+    await mockBackend(context, true);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-test-run')).toContainText(/— (pts|p)/);
+    await expect(page.locator('#bench-rule-cards')).toContainText(/Missing evidence|Saknar underlag/);
+    await expect(page.locator('#bench-opportunity-battery_price_spread')).toContainText(/Awaiting rescore|Väntar på omräkning/);
+    await expect(page.locator('#bench-opportunity-battery_price_spread').getByRole('button', { name: /1.00 kWh/ })).toHaveCount(0);
   });
 
   test('converts an uploaded replay to a test case and starts a run for it', async ({ context, page }) => {

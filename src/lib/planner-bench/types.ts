@@ -48,6 +48,12 @@ export interface BenchSeries {
     pool_start_c: number; ev_start_km: number;
     poolReachableC: number[]; carReachableKm: number[];
   };
+  /**
+   * What the plan could have saved by moving energy in time, with the proof
+   * for each finding (opportunities.ts). Absent only on a result from before
+   * the audit, which is stale and awaits rescoring; never filled in by the page.
+   */
+  audit?: import('./opportunities').OpportunityAudit;
 }
 
 /** Per-case totals over the whole 72-hour plan. */
@@ -137,11 +143,12 @@ export interface BenchVerdict {
   note: string | null;
 }
 
-/** Per-case changes to a default quarter rule; omitted fields keep the default. */
+/** Per-case changes to a default comfort rule; omitted fields keep the default. Checked by `criteriaErrors` (score.ts). */
 export interface CriterionOverride {
   enabled?: boolean;
+  /** How far from the target the rule fires, in the store's unit; 0 or more. */
   threshold?: number;
-  /** Signed points the rule adds to a quarter, -2..+2. */
+  /** Points the rule takes from a quarter, -2..0. */
   points?: number;
 }
 export type CriteriaOverrides = Record<string, CriterionOverride>;

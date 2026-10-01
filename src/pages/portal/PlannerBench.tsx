@@ -11,10 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -27,7 +25,7 @@ import type { CaseStartState } from '@/lib/planner-bench/case';
 import { BASE_LANE, LANES, diagnose, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import {
-  isStale, resolveRules, runScore, scoreQuarters, storedPassed, CASE_SCALE, type CaseScore,
+  isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors, type CaseScore,
 } from '@/lib/planner-bench/score';
 import type {
   BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchVerdict, CriteriaOverrides, Verdict,
@@ -36,6 +34,7 @@ import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
 import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
+import BenchRuleCards from '@/components/portal/planner-bench/BenchRuleCards';
 
 // The generated Database types describe the migrated schema; the bench tables
 // live only in the test project, outside it.
@@ -101,11 +100,12 @@ const Bench: React.FC = () => {
   const lanesFor = useMemo(() => (sha: string | undefined, scenarioId: string | undefined) => {
     const out: Partial<Record<LaneId, LaneResult>> = {};
     for (const s of summaries.data ?? []) {
-      if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score) continue;
-      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points };
+      if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score
+        || isStale(s.score, cases.find(c => c.id === scenarioId)?.criteria)) continue;
+      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points, comfort_points: s.score.comfort_points };
     }
     return out;
-  }, [summaries.data]);
+  }, [summaries.data, cases]);
   const [lane, setLane] = useState<LaneId>(BASE_LANE);
   const verdictByKey = useMemo(() => new Map((verdicts.data ?? []).map(v => [key(v.sha, v.scenario_id), v])), [verdicts.data]);
 
@@ -113,7 +113,7 @@ const Bench: React.FC = () => {
   const scoresFor = useMemo(() => (sha: string) => new Map(cases.map(c => {
     const summary = summaryByKey.get(key(sha, c.id));
     const verdict = verdictByKey.get(key(sha, c.id))?.verdict ?? null;
-    const score = summary?.status === 'ok' ? summary.score : null;
+    const score = summary?.status === 'ok' && !isStale(summary.score, c.criteria) ? summary.score : null;
     return [c.id, score ? { points: score.points, passed: storedPassed(score, verdict) } : null] as const;
   })), [cases, summaryByKey, verdictByKey]);
 
@@ -290,8 +290,8 @@ const Bench: React.FC = () => {
       {!loading && !loadError && staleCount > 0 && (
         <Alert>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Listor och summor visar de gamla poängen tills de räknats om.`,
-              `${staleCount} result${staleCount === 1 ? ' has' : 's have'} scores from an older scorer. Lists and totals show the old scores until they are recomputed.`)}</span>
+            <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Dessa poäng döljs tills de räknats om.`,
+              `${staleCount} result${staleCount === 1 ? ' has' : 's have'} scores from an older scorer. These scores are excluded until they are recomputed.`)}</span>
             <Button size="sm" variant="outline" disabled={dispatch.isPending} onClick={() => dispatch.mutate({ shas: 'none' })}>
               {t('Räkna om poäng', 'Recompute scores')}
             </Button>
@@ -472,7 +472,7 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
           {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta)})</span>}
         </div>
         <div className="font-medium">
-          {scoreTone === 'better' ? t('Testplaneraren är bättre', 'Test planner is better')
+          {scores.current === null || scores.test === null ? t('Väntar på poäng', 'Awaiting scores') : scoreTone === 'better' ? t('Testplaneraren är bättre', 'Test planner is better')
             : scoreTone === 'worse' ? t('Testplaneraren är sämre', 'Test planner is worse')
             : t('Ingen skillnad i poäng', 'No score difference')}
         </div>
@@ -530,7 +530,7 @@ const LanePanel: React.FC<{
 }> = ({ lane, onLane, lanes }) => {
   const { t } = useLanguage();
   const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
-  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.points.toFixed(1)}` : '—';
+  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.comfort_points.toFixed(1)}` : '—';
   const verdict = (d: Diagnosis | null) => d === null ? t('väntar på alla spår', 'waiting for every lane') : [
     t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
     t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
@@ -609,19 +609,21 @@ const CaseView: React.FC<CaseViewProps> = ({
   const { t } = useLanguage();
   const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
   const [selected, setSelected] = useState<number | null>(null);
-  const rules = resolveRules(draft);
-  const minC = rules.find(r => r.key === 'pool_cold')?.threshold ?? 28;
-  const comfortC = rules.find(r => r.key === 'pool_low')?.threshold ?? 29;
+  const draftErrors = criteriaErrors(draft);
+  const rules = draftErrors.length ? [] : resolveRules(draft);
+  const poolTarget = details?.test?.series?.comfort?.pool_target_c ?? details?.current?.series?.comfort?.pool_target_c ?? 30;
+  const minC = poolTarget - (rules.find(r => r.key === 'pool_cold')?.threshold ?? 2);
+  const comfortC = poolTarget - (rules.find(r => r.key === 'pool_low')?.threshold ?? 1);
   const verdictOf = (run: BenchRun | null) => (run ? verdictByKey.get(key(run.sha, scenario.id))?.verdict : null) ?? null;
 
   const series = useMemo(() => details && { current: details.current?.series ?? null, test: details.test?.series ?? null }, [details]);
   const shownDetail = shown === 'current' ? details?.current : details?.test;
 
   // Scored live with the rules being edited, so a change shows before it is saved.
-  const currentScore = useMemo(() => series?.current ? scoreQuarters(series.current, draft, verdictOf(currentRun)) : null,
+  const currentScore = useMemo(() => !draftErrors.length && series?.current ? scoreQuarters(series.current, draft, verdictOf(currentRun)) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [series?.current, draft, currentRun, verdictByKey]);
-  const testScore = useMemo(() => series?.test ? scoreQuarters(series.test, draft, verdictOf(testRun)) : null,
+  const testScore = useMemo(() => !draftErrors.length && series?.test ? scoreQuarters(series.test, draft, verdictOf(testRun)) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [series?.test, draft, testRun, verdictByKey]);
 
@@ -629,8 +631,6 @@ const CaseView: React.FC<CaseViewProps> = ({
   const shownScore = shown === 'current' ? currentScore : testScore;
   const errorFor = (run: BenchRun | null) => run ? summaryByKey.get(key(run.sha, scenario.id)) : undefined;
   const errors = [errorFor(currentRun), errorFor(testRun)].filter(s => s?.status === 'error');
-  const patch = (rule: string, field: 'enabled' | 'threshold' | 'points', value: number | boolean) =>
-    setDraft(d => ({ ...d, [rule]: { ...d[rule], [field]: value } }));
   const ruleLabel = new Map(rules.map(r => [r.key, r]));
 
   return (
@@ -661,16 +661,13 @@ const CaseView: React.FC<CaseViewProps> = ({
                 <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'} <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
-                    <span className="font-mono">{score ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
+                    <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
-                  {score && (
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs tabular-nums">
-                      {[0, -1, -2, -3, -4].filter(v => v >= -2 || score.histogram[String(v)]).map(v => (
-                        <span key={v} style={{ color: SCORE_COLOUR(v) }}>{signed(v)} × {score.histogram[String(v)] ?? 0}</span>
-                      ))}
-                      <span className="text-muted-foreground">{t('summa', 'sum')} {signed(score.sum)} ÷ {CASE_SCALE}</span>
-                    </div>
-                  )}
+                  {score && <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                    <span>{t('Komfort 70 %', 'Comfort 70%')}: {score.comfortPoints.toFixed(2)}</span>
+                    <span>{t('Energitid 30 %', 'Energy timing 30%')}: {score.economicPoints === null ? '—' : score.economicPoints.toFixed(2)}</span>
+                    {(!score.audit || score.auditPending) && <span>{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</span>}
+                  </div>}
                 </div>
               ))}
             </div>
@@ -695,7 +692,7 @@ const CaseView: React.FC<CaseViewProps> = ({
               <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
                 saving={savingStartState} onSave={onSaveStartState} />
             )}
-            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={Math.max(comfortC, 30)} />
+            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={comfortC} />
             {shownSeries ? (
               <>
                 <BenchPlanChart series={shownSeries} timeZone={TZ} quarters={shownScore?.quarters ?? null}
@@ -731,53 +728,10 @@ const CaseView: React.FC<CaseViewProps> = ({
         )}
 
         <div className="space-y-6">
-          <div className="space-y-2 min-w-0">
-            <h3 className="font-medium">{t('Regler per kvart', 'Quarter rules')}</h3>
-            <p className="text-xs text-muted-foreground max-w-3xl">
-              {t(`Poängen gäller komfort: varje kvart förlorar en poäng per regel som slår till, mätt från målet (pool 30 °C, bil 300 km om fallet inte säger annat). En regel räknas först när nivån har varit möjlig att nå i ett dygn. Fallets poäng är kvartssumman ÷ ${CASE_SCALE}, lägst −10. Kostnaden till verkliga priser visas separat.`,
-                `The score is about comfort: each quarter loses a point per rule that fires, measured from the target (pool 30 °C, car 300 km unless the case says otherwise). A rule counts only once its level has been reachable for a day. The case scores its quarter sum ÷ ${CASE_SCALE}, at worst −10. Cost at real prices is shown separately.`)}
-            </p>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('Regel', 'Rule')}</TableHead>
-                    <TableHead>{t('På', 'On')}</TableHead>
-                    <TableHead>{t('Gräns', 'Threshold')}</TableHead>
-                    <TableHead>{t('Poäng', 'Points')}</TableHead>
-                    <TableHead className="text-right">{t('Nuvarande', 'Current')}</TableHead>
-                    <TableHead className="text-right">Test</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rules.map(rule => {
-                    const cell = (score: CaseScore | null) => {
-                      if (!score) return '—';
-                      const count = score.counts[rule.key] ?? 0;
-                      return count ? `${count} × ${signed(rule.points)}` : '0';
-                    };
-                    return (
-                      <TableRow key={rule.key}>
-                        <TableCell className="text-sm min-w-[260px]">{rule.label}{rule.required ? ' *' : ''}<div className="text-xs text-muted-foreground">{rule.describe(rule.threshold)}</div></TableCell>
-                        <TableCell><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} /></TableCell>
-                        <TableCell><Input id={`bench-${rule.key}-threshold`} type="number" step="0.05" className="w-20 h-8" value={rule.threshold} onChange={e => patch(rule.key, 'threshold', Number(e.target.value))} /></TableCell>
-                        <TableCell>
-                          <Input id={`bench-${rule.key}-points`} type="number" step="1" min={-2} max={2} className="w-16 h-8" value={rule.points}
-                            onChange={e => patch(rule.key, 'points', Math.max(-2, Math.min(2, Math.round(Number(e.target.value)))))} />
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(currentScore)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">{cell(testScore)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button size="sm" onClick={() => onSaveCriteria(draft)}>{t('Spara regler för fallet', 'Save rules for this case')}</Button>
-              <span className="text-xs text-muted-foreground">{t('* slår regeln till blir fallet underkänt. Sparade ändringar räknar om fallet för alla körningar.', '* the case fails if this rule fires anywhere. Saving rescores this case for every run.')}</span>
-            </div>
-          </div>
+          {draftErrors.length > 0 ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => setDraft({})}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert> : <BenchRuleCards current={series?.current ?? null} test={series?.test ?? null}
+            currentScore={currentScore} testScore={testScore} draft={draft} onDraft={setDraft}
+            onSave={() => onSaveCriteria(draft)} timeZone={TZ}
+            onSelect={(which, quarter) => { onShown(which); setSelected(quarter); }} />}
 
           <div className="space-y-3 min-w-0">
             <h3 className="font-medium">{t('Din bedömning', 'Your verdict')}</h3>
@@ -805,13 +759,15 @@ const VerdictRow: React.FC<{
   const { t } = useLanguage();
   const [note, setNote] = useState(existing?.note ?? '');
   const auto = score
-    ? (score.requiredFired.length === 0 && score.points >= 0 ? t('godkänd', 'passes') : t('underkänd', 'fails'))
+    ? score.physicalFailed ? t('underkänd · fysisk gräns', 'fails · physical limit')
+      : !score.complete ? t('väntar på omräkning', 'awaiting rescore')
+        : score.requiredFired.length === 0 ? t('godkänd', 'passes') : t('underkänd', 'fails')
     : t('inget resultat', 'no result');
   return (
     <div className="rounded-md border p-3 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span><span className="font-medium">{label}</span> <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
-        <span className="text-xs text-muted-foreground">{existing ? t(`Din bedömning: ${existing.verdict === 'pass' ? 'godkänd' : 'underkänd'}`, `Your verdict: ${existing.verdict}`) : t(`Automatiskt: ${auto}`, `Automatic: ${auto}`)}</span>
+        <span className="text-xs text-muted-foreground">{score?.physicalFailed ? t('Automatiskt: underkänd · fysisk gräns', 'Automatic: fails · physical limit') : existing ? t(`Din bedömning: ${existing.verdict === 'pass' ? 'godkänd' : 'underkänd'}`, `Your verdict: ${existing.verdict}`) : t(`Automatiskt: ${auto}`, `Automatic: ${auto}`)}</span>
       </div>
       <Textarea id={`bench-note-${run.sha}`} rows={2} placeholder={t('Varför? (valfritt)', 'Why? (optional)')} value={note} onChange={e => setNote(e.target.value)} />
       <div className="flex gap-2">

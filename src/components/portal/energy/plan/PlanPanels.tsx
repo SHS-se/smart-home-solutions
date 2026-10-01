@@ -155,7 +155,7 @@ const PlanPanels: React.FC<{
   selectedIndex?: number;
   onQuarterClick?: (index: number) => void;
   /**
-   * Planner bench: one score per quarter, -2..+2, drawn as its own strip
+   * Planner bench: comfort loss per quarter, drawn as its own strip
    * above the price panel. The portal never passes it.
    */
   quarterScores?: readonly (number | null)[];
@@ -377,7 +377,7 @@ const PlanPanels: React.FC<{
             <g>
               <PanelHeading
                 title={t('Poäng', 'Score')}
-                unit={t('per kvart, −2 till +2', 'per quarter, −2 to +2')}
+                unit={t('komfortförlust per kvart', 'comfort loss per quarter')}
                 y={scoreStrip.top - 6}
               />
               {quarterScores.map((score, index) => {

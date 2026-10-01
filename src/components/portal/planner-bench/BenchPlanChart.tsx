@@ -6,7 +6,7 @@
 // plan a customer sees. Every quarter is on the plan side of "now". Score
 // digits need a single day's width; the three-day view shows coloured cells.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PlanPanels, { type PlanPanelRow } from '@/components/portal/energy/plan/PlanPanels';
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { formatHomeDayMonth, formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
@@ -41,6 +41,11 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
   }, [series, timeZone]);
   // Default to the first whole day, where the published prices are.
   const [window, setWindow] = useState<number | 'all'>(() => (days.length > 1 && days[0].to - days[0].from < 48 ? 1 : 0));
+  useEffect(() => {
+    if (selected === null) return;
+    const day = days.findIndex(d => selected >= d.from && selected < d.to);
+    if (day >= 0) setWindow(previous => previous === 'all' ? previous : day);
+  }, [selected, days]);
   const range = window === 'all' ? { from: 0, to: series.start.length } : days[Math.min(window, days.length - 1)];
 
   const rows = useMemo<PlanPanelRow[]>(() => {

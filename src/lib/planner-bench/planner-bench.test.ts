@@ -1,7 +1,13 @@
-import { assertAlmostEquals, assertEquals } from '@std/assert';
+import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
+import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from './opportunities.ts';
 import { planSeries } from './series.fixture.ts';
+import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
-import { CASE_SCALE, isStale, runScore, scoreQuarters, storedScore } from './score.ts';
+import {
+  CASE_SCALE, COMFORT_WEIGHT, CriteriaError, ECONOMIC_FULL_LOSS_SHARE, ECONOMIC_WEIGHT, REMOVED_RULE_KEYS,
+  criteriaErrors, criteriaFingerprint, economicPoints, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  storedPassed, storedScore, type StoredScore,
+} from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
 
 const slot = (i: number, over: Record<string, unknown> = {}) => ({
@@ -77,8 +83,23 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'] });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
-  // More than 2 °C above the target loses one; a car above its target loses nothing.
-  assertEquals(scoreQuarters(comfortSeries(() => 32.1, () => 450)).quarters[0], { score: -1, fired: ['pool_hot'] });
+  // More than 2 °C above the target is marked as a warm buffer and loses nothing; nor does a car above its target.
+  const warm = scoreQuarters(comfortSeries(() => 32.1, () => 450));
+  assertEquals(warm.quarters[0], { score: 0, fired: ['pool_hot'] });
+  assertEquals([warm.sum, warm.comfortPoints, warm.counts.pool_hot, warm.passed], [0, 0, 288, true]);
+});
+
+Deno.test('each comfort rule says whether it could fire in the case, and in how many quarters', () => {
+  const reachable = Array.from({ length: 288 }, (_, i) => 24 + i * 0.125);
+  const cold = scoreQuarters(comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: reachable }), { ev_short: { enabled: false } });
+  // 29 °C is due from quarter 136, 28 °C from 128; the car was on target from the start.
+  assertEquals(cold.applicability.pool_low, { applicable: true, eligibleQuarters: 152, reason: 'Counts in 152 of 288 quarters.' });
+  assertEquals(cold.applicability.pool_cold.eligibleQuarters, 160);
+  assertEquals(cold.applicability.ev_low.eligibleQuarters, 288);
+  assertEquals([cold.applicability.ev_short.applicable, cold.applicability.ev_short.reason], [false, 'Switched off for this case.']);
+  assertEquals(cold.applicability.pool_hot.reason, 'Marked only; loses no points.');
+  const never = scoreQuarters(comfortSeries(() => 20, () => 300, { pool_start_c: 20, poolReachableC: new Array(288).fill(21) }));
+  assertEquals(never.applicability.pool_low, { applicable: false, eligibleQuarters: 0, reason: 'This level was not reachable for a day within the window.' });
 });
 
 Deno.test('a miss counts only once its level has been reachable for a day', () => {
@@ -104,20 +125,77 @@ Deno.test('rule overrides change thresholds, points and whether a rule runs', ()
   assertEquals(scoreQuarters(series, { pool_low: { points: -2 } }).quarters[0].score, -2);
 });
 
-Deno.test('case points are the quarter sum scaled, and stored scores know when they are stale', () => {
-  // A point lost in every quarter is the worst case score.
-  const worst = scoreQuarters(comfortSeries(() => 28.5, () => 300));
-  assertEquals(worst.sum, -288);
-  assertAlmostEquals(worst.points, -288 / CASE_SCALE);
-  assertAlmostEquals(worst.points, -10);
-  const stored = storedScore(comfortSeries(() => 30, () => 300));
-  assertEquals(stored.points, 0);
-  assertEquals(isStale(stored), false);
-  assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);
-  assertEquals(isStale({ ...stored, version: 1 }), true);
+Deno.test('criteria are checked: a rule can only take points, at a real threshold, and old money rules are gone by name', () => {
+  assertEquals(criteriaErrors({}), []);
+  assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: 0 } }), []);
+  assertEquals(criteriaErrors({ pool_low: { points: 1 } }), ['pool_low: points must be between -2 and 0.']);
+  assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
+  assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
+  assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
+  const series = comfortSeries(() => 28.5, () => 300);
+  assertThrows(() => scoreQuarters(series, { pool_low: { points: 2 } }), CriteriaError);
+  assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
+  // The quarter-by-quarter money rules were replaced by the opportunity audit. An override left under their
+  // names is not an error and not applied: it changes neither the rules nor the fingerprint.
+  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'cheap_buy', 'cheapest_buy', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
+  const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
+  assertEquals(criteriaErrors(left), []);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short']);
+  assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
+  assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
+  assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
 });
 
-Deno.test('runScore is 1000 when no comfort was missed and 100 at the worst', () => {
+/** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
+const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
+  version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
+  scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
+  trials: 1, limitReached: false, findings: [], violations: [],
+  rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0 }])) as OpportunityAudit['rules'],
+  applicability: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { applicable: true, reason: 'test' }])) as OpportunityAudit['applicability'],
+  ...over,
+});
+
+Deno.test('case points are 70 % comfort and 30 % known avoidable money, and stored scores know when they are stale', () => {
+  // A point lost in every quarter is the worst comfort score.
+  const cold = comfortSeries(() => 28.5, () => 300);
+  const worst = scoreQuarters(cold);
+  assertEquals(worst.sum, -288);
+  assertAlmostEquals(worst.comfortPoints, -288 / CASE_SCALE);
+  assertAlmostEquals(worst.comfortPoints, -10);
+  // A series with no audit has no economic score, and says so: the comfort share alone, marked incomplete.
+  assertEquals([worst.audit, worst.economicPoints, worst.complete], [null, null, false]);
+  assertAlmostEquals(worst.points, -7);
+  assertThrows(() => storedScore(cold), Error, 'opportunity audit');
+
+  // With its audit: 5 kr known avoidable of 40 kr exposure is half of the quarter that scores -10.
+  const audited = scoreQuarters({ ...cold, audit: auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 }) });
+  assertAlmostEquals(audited.economicPoints!, -5);
+  assertAlmostEquals(audited.points, 0.7 * -10 + 0.3 * -5);
+  assertEquals([COMFORT_WEIGHT + ECONOMIC_WEIGHT, ECONOMIC_FULL_LOSS_SHARE, audited.complete], [1, 0.25, true]);
+  // Hindsight is never scored; a tiny exposure counts as 1 kr, so crumbs cannot sink a case.
+  assertEquals(scoreQuarters({ ...cold, audit: auditOf({ hindsightSek: 30, avoidableSek: 30 }) }).economicPoints, -0);
+  assertAlmostEquals(economicPoints(0.05, 0.2), -2);
+  // An audit of another version is not read.
+  const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }) });
+  assertEquals([dated.auditPending, dated.economicPoints], [true, null]);
+
+  const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit: auditOf({ knownSek: 2, avoidableSek: 2 }) });
+  assertEquals([stored.comfort_points, stored.economic_points, stored.physical_failed], [0, -2, false]);
+  assertAlmostEquals(stored.points, -0.6);
+  assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [2, 0, 0]);
+  assertEquals(isStale(stored), false);
+  assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);
+  assertEquals(isStale({ ...stored, version: 2 }), true);
+  assertEquals(isStale({ ...stored, audit: { ...stored.audit, version: OPPORTUNITY_AUDIT_VERSION + 1 } }), true);
+  // A score stored by the comfort-only scorer has no audit at all.
+  const { audit: _audit, comfort_points: _comfort, economic_points: _economic, physical_failed: _failed, ...v2 } = stored;
+  assertEquals(isStale({ ...v2, version: 2 } as StoredScore), true);
+  assertEquals([storedPassed(stored, null), storedPassed(stored, 'fail'), storedPassed({ ...stored, required_fired: ['pool_cold'] }, 'pass')], [true, false, true]);
+  assertEquals(storedPassed({ ...stored, physical_failed: true }, 'pass'), false);
+});
+
+Deno.test('runScore is 1000 when nothing was lost and 100 at the worst', () => {
   assertEquals(runScore([]), null);
   assertEquals(runScore([0, 0]), 1000);
   assertEquals(runScore([-10, -10]), 100);

@@ -42,8 +42,10 @@ export interface LaneResult {
   cost_sek: number;
   /** Value of the energy left in the stores at the end, SEK. */
   credit_sek: number;
-  /** Comfort points, 0 at best. */
+  /** Case points, comfort and energy timing together, 0 at best. */
   points: number;
+  /** Comfort points alone, 0 at best: what a valuation is allowed to cost. */
+  comfort_points: number;
 }
 
 export interface Diagnosis {
@@ -72,7 +74,7 @@ export function diagnose(byLane: Partial<Record<LaneId, LaneResult>>): Diagnosis
   const best = (prices: PriceLane): Variant => {
     const nominal = byLane[`${prices}/nominal`]!;
     return VARIANTS
-      .filter(variant => byLane[`${prices}/${variant}`]!.points >= nominal.points - COMFORT_TOLERANCE)
+      .filter(variant => byLane[`${prices}/${variant}`]!.comfort_points >= nominal.comfort_points - COMFORT_TOLERANCE)
       .reduce((a, b) => net(byLane[`${prices}/${b}`]!) < net(byLane[`${prices}/${a}`]!) ? b : a, 'nominal' as Variant);
   };
   const told = byLane[BASE_LANE]!, oracle = byLane['oracle/nominal']!;

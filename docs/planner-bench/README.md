@@ -55,9 +55,12 @@ The totals table compares only the cases both runs have results for.
 
 ## Scoring
 
-Comfort is scored in points against the owner's targets, and cost is reported
-in kr at real prices, with what the planner expected beside it. Both, and the
-lanes that explain a result, are described in [test-cases.md](test-cases.md).
+The score combines comfort with demonstrated opportunities to reduce cost. Physical
+violations fail the automatic verdict independently. Visual rule cards show
+applicability, current/test exposure and replayed alternatives for future-dependent
+decisions. See the [complete scoring rules](scoring.md) and
+[architecture decision](scoring-design.md). Costs remain visible in SEK at real
+prices; the six lanes separate price information from valuation strength.
 The next bench run, or **Recompute scores**, re-evaluates every stored result
 from its stored decisions when a rule or the referee changes; no planner runs.
 

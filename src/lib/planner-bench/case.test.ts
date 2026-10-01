@@ -6,6 +6,7 @@ import { referee, type Decisions } from './referee.ts';
 import type { PlanRecord } from './types.ts';
 import { evaluate } from './evaluate.ts';
 import { diagnose, laneParts, toldCase } from './lanes.ts';
+import { CriteriaError } from './score.ts';
 
 const START = Date.parse('2026-09-24T07:15:00Z');
 const quarters = <T>(make: (i: number) => T): T[] => Array.from({ length: QUARTERS }, (_, i) => make(i));
@@ -73,7 +74,8 @@ const recorded = (over: Partial<BenchRecorded> = {}): BenchRecorded => ({
 const idle = (): Decisions => ({ pool_w: quarters(() => 0), ev_w: quarters(() => 0), battery_charge_w: quarters(() => 0), battery_discharge_w: quarters(() => 0) });
 
 Deno.test('the referee prices a plan at real prices, whatever the planner believed', () => {
-  const c = loadCase(caseFromReplay(replay()).data, recorded());
+  // The car below its 80 % charge limit, so it can take the charge.
+  const c = loadCase(caseFromReplay(replay({ ev_battery: { soc: 0.5, connected: true, departure_target_soc: 0.8 } })).data, recorded());
   // Idle: 600 W of load against 800/900/1000 W of solar exports the difference at 0.5 kr.
   const nothing = referee(c, HOUSEHOLD, TARGETS, idle());
   assertAlmostEquals(nothing.cost_sek, -(200 * 97 + 300 * 96 + 400 * 95) * 0.5 * 0.25 / 1000, 1e-3);
@@ -118,10 +120,16 @@ Deno.test('the referee carries the stores with the household\'s physics and clip
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {
   const c = loadCase(caseFromReplay(replay()).data, recorded());
   const record: PlanRecord = { status: 'ready', generation: 'snapshot', valuation: { scale: 1, pool: 'none', ev: 'none', battery: 'none' }, decisions: idle(), beliefs: { import_sek_per_kwh: quarters(() => 2), grid_cost_sek: 1 }, curves: [] };
-  const first = evaluate(c, record, {}), again = evaluate(c, structuredClone(record), {});
+  const first = evaluate(c, record, {}, 'told/nominal'), again = evaluate(c, structuredClone(record), {}, 'told/nominal');
   assertEquals(first, again);
   assertEquals(first.series.believedImportPrice![0], 2);
   assertEquals(first.series.importPrice[0], 1);
+  // The audit is part of the stored account, made for the plan's own lane; the default lane is the live one.
+  assertEquals([first.series.audit!.lane, first.series.audit!.status, first.score.audit.lane], ['told/nominal', 'complete', 'told/nominal']);
+  assertEquals(evaluate(c, record, {}), first);
+  assertEquals(evaluate(c, record, {}, 'oracle/high').series.audit!.lane, 'oracle/high');
+  // Criteria that cannot be scored with are refused before anything is replayed.
+  assertThrows(() => evaluate(c, record, { pool_low: { points: 1 } }), CriteriaError);
 });
 
 Deno.test('the oracle lane tells the planner the real prices; refereeing never changes', () => {
@@ -135,11 +143,12 @@ Deno.test('the oracle lane tells the planner the real prices; refereeing never c
 });
 
 Deno.test('the diagnosis splits a plan\'s cost into the price estimate and the valuation', () => {
-  const lane = (cost_sek: number, points = 0, credit_sek = 0) => ({ cost_sek, credit_sek, points });
+  const lane = (cost_sek: number, comfort_points = 0, credit_sek = 0, points = comfort_points) => ({ cost_sek, credit_sek, points, comfort_points });
   assertEquals(diagnose({ 'told/nominal': lane(100) }), null);
   const d = diagnose({
     'told/low': lane(104), 'told/nominal': lane(100, 0, 10), 'told/high': lane(80, -3),
-    'oracle/low': lane(60), 'oracle/nominal': lane(70), 'oracle/high': lane(75),
+    // A variant is held to nominal's comfort, not to its case points, which also carry money.
+    'oracle/low': lane(60, 0, 0, -3), 'oracle/nominal': lane(70), 'oracle/high': lane(75),
   })!;
   // Net of what is left in the stores: 90. Real prices would have saved 20; a lower valuation another 10.
   assertEquals([d.net_sek, d.price_estimate_sek, d.valuation_sek], [90, 20, 10]);

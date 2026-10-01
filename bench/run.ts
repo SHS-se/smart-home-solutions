@@ -5,8 +5,8 @@
 //
 //   --shas a,b,c | all | none
 //                           commits to run (default: HEAD). `all` = every commit already on the bench,
-//                           and may be one of the list; `none` = no planner runs, only prepare cases
-//                           and recompute stale evaluations.
+//                           and may be one of the list; `none` = only rescore existing ready cases,
+//                           without case preparation or historical planner checkouts.
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases whose result is already up to date.
 //   --current <sha>         mark this commit as the planner currently deployed.
@@ -45,8 +45,7 @@ import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD, TARGETS } from "../src/lib/planner-bench/household.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
-import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
-import { isStale } from "../src/lib/planner-bench/score.ts";
+import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
 import { completeCase, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
@@ -102,11 +101,11 @@ async function worker(sha: string, root: string) {
       try {
         const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale);
         // Whatever the planner was told, its plan is judged on the case as it really was.
-        const evaluation = evaluate(c, record, scenario.criteria);
+        const evaluation = evaluate(c, record, scenario.criteria, lane);
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
         console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
           + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
-          + ` comfort ${evaluation.score.points.toFixed(1)}, pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
+          + ` score ${evaluation.score.points.toFixed(1)} (comfort ${evaluation.score.comfort_points.toFixed(1)}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
       } catch (error) {
         const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
         await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });
@@ -155,23 +154,20 @@ async function prepareCases(bench: BenchStore) {
   }
 }
 
-/**
- * Recompute every evaluation made by an older referee or scorer, or before the
- * case's criteria last changed, from the stored decisions. No planner runs.
- */
-async function reevaluateStale(bench: BenchStore) {
-  const cases = new Map(readyCases(await bench.scenarios()).map(entry => [entry.scenario.id, entry]));
-  let count = 0;
-  for (const result of await bench.evaluatedResults()) {
-    const entry = cases.get(result.scenario_id);
-    if (!entry || (result.referee_version === REFEREE_VERSION && !isStale(result.score, entry.scenario.criteria))) continue;
-    const record = await bench.planRecord(result);
-    // A result from before decisions were stored is replaced when its commit is next run.
-    if (!record) continue;
-    await bench.saveEvaluation(result, evaluate(entry.c, record, entry.scenario.criteria));
-    count++;
+/** Print and persist coverage even when some successful records could not be rescored. */
+async function rescoreAndReport(bench: BenchStore) {
+  const publish = async (report: RescoreReport) => {
+    const markdown = rescoreMarkdown(report);
+    console.log(markdown);
+    const summary = Deno.env.get("GITHUB_STEP_SUMMARY");
+    if (summary) await Deno.writeTextFile(summary, markdown, { append: true });
+  };
+  try {
+    await publish(await rescoreExisting(bench, args.scenario));
+  } catch (error) {
+    if (error instanceof RescoreIncompleteError) await publish(error.report);
+    throw error;
   }
-  console.log(`Re-evaluated ${count} stale result${count === 1 ? "" : "s"}.`);
 }
 
 const versionOf = (sha: string) => plannerVersion(commitTree(sha, harness));
@@ -206,9 +202,17 @@ async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSumma
 
 async function orchestrate() {
   const bench = store();
+  if (args.shas === "none") {
+    if (args.current) throw new Error("--shas none only rescores; omit --current to leave planner run identity unchanged.");
+    // A rescore needs an existing source file; creating an empty local bench
+    // is valid for planning, but would hide a mistyped path here.
+    if (args.local) await Deno.stat(args.out!);
+    await rescoreAndReport(bench);
+    return;
+  }
   await prepareCases(bench);
   const byVersion = await foldSameVersions(bench);
-  const listed = args.shas === "none" ? [] : (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  const listed = (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
   const requested = [...new Set((await Promise.all(listed.map(async ref => ref === "all" ? await bench.knownShas() : [ref]))).flat())];
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
@@ -252,7 +256,7 @@ async function orchestrate() {
       const sha = await git("rev-parse", args.current);
       await bench.markCurrent(byVersion.get(await versionOf(sha))?.sha ?? sha);
     }
-    await reevaluateStale(bench);
+    await rescoreAndReport(bench);
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }
