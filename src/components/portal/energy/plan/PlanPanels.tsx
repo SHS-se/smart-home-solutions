@@ -383,7 +383,7 @@ const PlanPanels: React.FC<{
               {quarterScores.map((score, index) => {
                 if (score === null || score === undefined) return null;
                 const left = x(index), width = x(index + 1) - left;
-                const colour = `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.abs(score)})`;
+                const colour = `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(score))})`;
                 // Digits need about 10 units; narrower quarters (a three-day
                 // view) fall back to a coloured cell of the same colour.
                 return width >= 9.5 ? (

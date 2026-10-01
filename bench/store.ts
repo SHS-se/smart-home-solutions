@@ -8,6 +8,7 @@
 import type { BenchRecorded, BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import type { Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
+import type { LaneId } from "../src/lib/planner-bench/lanes.ts";
 import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
 export interface StoredScenario {
@@ -40,9 +41,17 @@ export interface RunSummary {
   is_current: boolean;
 }
 
-export interface ResultRecord extends Partial<Evaluation> {
+/** One result: a planner commit, a test case and the lane it was planned under. */
+export interface ResultKey {
   sha: string;
   scenario_id: string;
+  lane: LaneId;
+}
+
+/** `${scenario_id}|${lane}`: a result's place within one commit. */
+export const laneKey = (scenarioId: string, lane: LaneId) => `${scenarioId}|${lane}`;
+
+export interface ResultRecord extends Partial<Evaluation>, ResultKey {
   status: "ok" | "error";
   error: string | null;
   cpu_ms: number | null;
@@ -52,9 +61,7 @@ export interface ResultRecord extends Partial<Evaluation> {
   record: PlanRecord | null;
 }
 
-export interface EvaluatedResult {
-  sha: string;
-  scenario_id: string;
+export interface EvaluatedResult extends ResultKey {
   score: StoredScore | null;
   referee_version: number | null;
 }
@@ -70,15 +77,15 @@ export interface BenchStore {
   setPlannerVersion(sha: string, version: string): Promise<void>;
   /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
   mergeRun(from: string, into: string): Promise<void>;
-  /** The input hash of each result this commit has, by scenario. */
+  /** The input hash of each result this commit has, by `laneKey`. */
   resultHashes(sha: string): Promise<Map<string, string | null>>;
   saveRun(run: RunRecord): Promise<void>;
   markCurrent(sha: string): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
   /** Every successful result's score and referee version, for staleness checks. */
   evaluatedResults(): Promise<EvaluatedResult[]>;
-  planRecord(sha: string, scenarioId: string): Promise<PlanRecord | null>;
-  saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation): Promise<void>;
+  planRecord(key: ResultKey): Promise<PlanRecord | null>;
+  saveEvaluation(key: ResultKey, evaluation: Evaluation): Promise<void>;
 }
 
 export class DbStore implements BenchStore {
@@ -150,8 +157,8 @@ export class DbStore implements BenchStore {
   }
 
   async resultHashes(sha: string) {
-    const rows = await this.request(`bench_results?select=scenario_id,input_hash&sha=eq.${sha}`) as { scenario_id: string; input_hash: string | null }[];
-    return new Map(rows.map(row => [row.scenario_id, row.input_hash]));
+    const rows = await this.request(`bench_results?select=scenario_id,lane,input_hash&sha=eq.${sha}`) as { scenario_id: string; lane: LaneId; input_hash: string | null }[];
+    return new Map(rows.map(row => [laneKey(row.scenario_id, row.lane), row.input_hash]));
   }
 
   async saveRun(run: RunRecord) {
@@ -168,7 +175,7 @@ export class DbStore implements BenchStore {
   }
 
   async saveResult(result: ResultRecord) {
-    await this.request("bench_results?on_conflict=sha,scenario_id", {
+    await this.request("bench_results?on_conflict=sha,scenario_id,lane", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       body: JSON.stringify({
@@ -179,18 +186,23 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.request("bench_result_summaries?select=sha,scenario_id,score,referee_version&status=eq.ok") as EvaluatedResult[];
+    return await this.request("bench_result_summaries?select=sha,scenario_id,lane,score,referee_version&status=eq.ok") as EvaluatedResult[];
   }
 
-  async planRecord(sha: string, scenarioId: string) {
-    const rows = await this.request(`bench_results?select=record&sha=eq.${sha}&scenario_id=eq.${scenarioId}`) as { record: PlanRecord | null }[];
+  private where = ({ sha, scenario_id, lane }: ResultKey) =>
+    `sha=eq.${sha}&scenario_id=eq.${scenario_id}&lane=eq.${encodeURIComponent(lane)}`;
+
+  async planRecord(key: ResultKey) {
+    const rows = await this.request(`bench_results?select=record&${this.where(key)}`) as { record: PlanRecord | null }[];
     return rows[0]?.record ?? null;
   }
 
-  async saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation) {
-    await this.patch(`bench_results?sha=eq.${sha}&scenario_id=eq.${scenarioId}`, evaluation);
+  async saveEvaluation(key: ResultKey, evaluation: Evaluation) {
+    await this.patch(`bench_results?${this.where(key)}`, evaluation);
   }
 }
+
+const same = (a: ResultKey, b: ResultKey) => a.sha === b.sha && a.scenario_id === b.scenario_id && a.lane === b.lane;
 
 interface LocalFile {
   runs: (RunRecord & { is_current?: boolean })[];
@@ -244,7 +256,7 @@ export class LocalStore implements BenchStore {
     await this.save(file);
   }
   async resultHashes(sha: string) {
-    return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [r.scenario_id, r.input_hash ?? null]));
+    return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [laneKey(r.scenario_id, r.lane), r.input_hash ?? null]));
   }
   async saveRun(run: RunRecord) {
     const file = await this.load();
@@ -259,19 +271,19 @@ export class LocalStore implements BenchStore {
   }
   async saveResult(result: ResultRecord) {
     const file = await this.load();
-    file.results = [...file.results.filter(r => !(r.sha === result.sha && r.scenario_id === result.scenario_id)), result];
+    file.results = [...file.results.filter(r => !same(r, result)), result];
     await this.save(file);
   }
   async evaluatedResults() {
     return (await this.load()).results.filter(r => r.status === "ok")
-      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, score: r.score ?? null, referee_version: r.referee_version ?? null }));
+      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, score: r.score ?? null, referee_version: r.referee_version ?? null }));
   }
-  async planRecord(sha: string, scenarioId: string) {
-    return (await this.load()).results.find(r => r.sha === sha && r.scenario_id === scenarioId)?.record ?? null;
+  async planRecord(key: ResultKey) {
+    return (await this.load()).results.find(r => same(r, key))?.record ?? null;
   }
-  async saveEvaluation(sha: string, scenarioId: string, evaluation: Evaluation) {
+  async saveEvaluation(key: ResultKey, evaluation: Evaluation) {
     const file = await this.load();
-    file.results = file.results.map(r => r.sha === sha && r.scenario_id === scenarioId ? { ...r, ...evaluation } : r);
+    file.results = file.results.map(r => same(r, key) ? { ...r, ...evaluation } : r);
     await this.save(file);
   }
 }

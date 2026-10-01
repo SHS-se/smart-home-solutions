@@ -118,7 +118,6 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
       pool_water_c: reading(pool?.water_temperature_c, DEFAULT_START_STATE.pool_water_c, 'pool_water_c'),
       ev: {
         soc: reading(car?.soc, DEFAULT_START_STATE.ev_soc, 'ev_soc'),
-        plugged_in: car?.connected === true,
         target_soc: num(car?.departure_target_soc) ?? DEFAULT_START_STATE.ev_target_soc,
       },
     },

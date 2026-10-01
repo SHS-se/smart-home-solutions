@@ -13,6 +13,7 @@ import { planStats } from '../src/lib/planner-bench/stats';
 import { storedScore } from '../src/lib/planner-bench/score';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
+import { LANES } from '../src/lib/planner-bench/lanes';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
@@ -67,12 +68,12 @@ const dataset = (start: string): BenchScenarioData => ({
   start, timezone: 'Europe/Stockholm', location: { latitude: 59.4, longitude: 18 },
   known_prices: { import_sek_per_kwh: [], export_sek_per_kwh: [] },
   solar_forecast_w: [], base_load_forecast_w: [], other_devices_w: {},
-  start_state: { battery_soc: 0.5, pool_water_c: 29.5, ev: { soc: 0.6, plugged_in: false, target_soc: 0.8 } },
+  start_state: { battery_soc: 0.5, pool_water_c: 29.5, ev: { soc: 0.6, target_soc: 0.8 } },
   comfort: null,
 });
 
 const record = (reference: number): PlanRecord => ({
-  status: 'ready', generation: 'snapshot',
+  status: 'ready', generation: 'snapshot', valuation: { scale: 1, pool: 'urgency_only', ev: 'urgency_only', battery: 'none' },
   decisions: { pool_w: [], ev_w: [], battery_charge_w: [], battery_discharge_w: [] },
   beliefs: { import_sek_per_kwh: [], grid_cost_sek: 41.5 },
   curves: [
@@ -147,8 +148,12 @@ async function mockBackend(context: BrowserContext): Promise<Captured> {
         }));
         case 'bench_result_summaries': return Object.entries(PLANS).map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
-          return { sha, scenario_id, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: storedScore(plan) };
-        });
+          // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
+          return LANES.map((lane, k) => ({
+            sha, scenario_id, lane, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: storedScore(plan),
+            outcome: { ...OUTCOME, cost_sek: OUTCOME.cost_sek - (lane.startsWith('oracle') ? 12 : 0) + (k % 3) },
+          }));
+        }).flat();
         case 'bench_verdicts': return [];
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
@@ -215,6 +220,11 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-curve-battery')).toContainText('balanced');
     await expect(page.locator('#bench-curve-ev')).toContainText(/reported no curve|rapporterade ingen kurva/);
 
+    // The lanes say why: what knowing the real prices would have saved, and which valuation did best.
+    await expect(page.locator('#bench-diagnosis-test')).toContainText(/price estimate cost 12 kr|prisgissningen kostade 12 kr/);
+    await page.locator('#bench-lane-oracle-high').click();
+    await expect(page.locator('#bench-lane-oracle-high')).toHaveAttribute('aria-pressed', 'true');
+
     // The start state belongs to the case: an edit is saved into it and the case is run again.
     await page.locator('#bench-start-pool').fill('27');
     await page.getByRole('button', { name: /Save and re-run|Spara och kör om/ }).click();
@@ -267,7 +277,7 @@ test.describe('planner bench', () => {
     expect(data.known_prices.import_sek_per_kwh.filter(v => v !== null)).toHaveLength(72);
     expect(data.solar_forecast_w[0]).toBeCloseTo(800);
     expect(data.base_load_forecast_w[0]).toBe(700);
-    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, ev: { soc: 0.7, plugged_in: true, target_soc: 0.8 } });
+    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, ev: { soc: 0.7, target_soc: 0.8 } });
     // Nothing of another planner's work or the replay's bulk is.
     expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);

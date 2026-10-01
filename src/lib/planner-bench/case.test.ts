@@ -1,9 +1,11 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { loadCase, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
 import { caseFromReplay, ReplayFormatError } from './convert-replay.ts';
-import { HOUSEHOLD } from './household.ts';
+import { HOUSEHOLD, TARGETS, poolHeaterW } from './household.ts';
 import { referee, type Decisions } from './referee.ts';
+import type { PlanRecord } from './types.ts';
 import { evaluate } from './evaluate.ts';
+import { diagnose, laneParts, toldCase } from './lanes.ts';
 
 const START = Date.parse('2026-09-24T07:15:00Z');
 const quarters = <T>(make: (i: number) => T): T[] => Array.from({ length: QUARTERS }, (_, i) => make(i));
@@ -44,7 +46,7 @@ Deno.test('a replay becomes a test case: the moment is kept, another planner\'s 
   // Devices the household plans (pool heater, car) leave the load; the rest fold into it, by key not category.
   assertEquals(data.base_load_forecast_w[0], 600);
   assertEquals(Object.keys(data.other_devices_w).sort(), ['sensor.hot_water_energy', 'sensor.pool_room_floor_heater_energy']);
-  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, ev: { soc: 0.8, plugged_in: true, target_soc: 0.8 } });
+  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, ev: { soc: 0.8, target_soc: 0.8 } });
   assertEquals(data.start_state_unread, undefined);
   assert(!/frozen|previous|another planner|value_curves/.test(JSON.stringify(data)));
 });
@@ -73,12 +75,12 @@ const idle = (): Decisions => ({ pool_w: quarters(() => 0), ev_w: quarters(() =>
 Deno.test('the referee prices a plan at real prices, whatever the planner believed', () => {
   const c = loadCase(caseFromReplay(replay()).data, recorded());
   // Idle: 600 W of load against 800/900/1000 W of solar exports the difference at 0.5 kr.
-  const nothing = referee(c, HOUSEHOLD, idle());
+  const nothing = referee(c, HOUSEHOLD, TARGETS, idle());
   assertAlmostEquals(nothing.cost_sek, -(200 * 97 + 300 * 96 + 400 * 95) * 0.5 * 0.25 / 1000, 1e-3);
   // The same 2 kW of car charging costs three times as much in the dear second half.
   const early = idle(), late = idle();
   for (let i = 0; i < 8; i++) { early.ev_w[i] = 2000; late.ev_w[200 + i] = 2000; }
-  const cheap = referee(c, HOUSEHOLD, early), dear = referee(c, HOUSEHOLD, late);
+  const cheap = referee(c, HOUSEHOLD, TARGETS, early), dear = referee(c, HOUSEHOLD, TARGETS, late);
   assert(dear.cost_sek > cheap.cost_sek + 5, `${dear.cost_sek} vs ${cheap.cost_sek}`);
   assertEquals(cheap.terminal.ev_kwh, dear.terminal.ev_kwh);
 });
@@ -86,15 +88,24 @@ Deno.test('the referee prices a plan at real prices, whatever the planner believ
 Deno.test('the referee carries the stores with the household\'s physics and clips what cannot be done', () => {
   const c = loadCase(caseFromReplay(replay()).data, recorded());
   // An unheated pool at 29.6 °C in 12 °C air cools; a heated one warms.
-  const cold = referee(c, HOUSEHOLD, idle());
+  const cold = referee(c, HOUSEHOLD, TARGETS, idle());
   assert(cold.series.poolC[287]! < 29.6 - 1);
   const heating = idle();
   heating.pool_w = quarters(() => 3078);
-  assert(referee(c, HOUSEHOLD, heating).series.poolC[287]! > 29.6 + 1);
+  const heated = referee(c, HOUSEHOLD, TARGETS, heating);
+  assert(heated.series.poolC[287]! > 29.6 + 1);
+  // The pump circulates and heats nothing: at pump power alone the pool cools exactly as when idle.
+  assertEquals(poolHeaterW(HOUSEHOLD.pool, 764), 0);
+  assertEquals(poolHeaterW(HOUSEHOLD.pool, 3078), 2314);
+  const circulating = idle();
+  circulating.pool_w = quarters(() => 764);
+  assertEquals(referee(c, HOUSEHOLD, TARGETS, circulating).series.poolC, cold.series.poolC);
+  // Full power from the start is what the scorer takes as reachable.
+  heated.series.comfort!.poolReachableC.forEach((v, i) => assertAlmostEquals(v, heated.series.poolC[i]!, 0.006));
   // A battery at 40 % of 18 kWh cannot give 9.6 kW for a day: the surplus is clipped and reported.
   const drain = idle();
   drain.battery_discharge_w = quarters(i => i < 96 ? 9600 : 0);
-  const drained = referee(c, HOUSEHOLD, drain);
+  const drained = referee(c, HOUSEHOLD, TARGETS, drain);
   assert(drained.violations.some(v => v.kind === 'battery_empty'));
   assertAlmostEquals(Math.min(...drained.series.homeSoc as number[]), 5, 0.2);
   // Energy is conserved each quarter: load + charging − discharging − solar = import − export.
@@ -106,9 +117,32 @@ Deno.test('the referee carries the stores with the household\'s physics and clip
 
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {
   const c = loadCase(caseFromReplay(replay()).data, recorded());
-  const record = { status: 'ready', generation: 'snapshot', decisions: idle(), beliefs: { import_sek_per_kwh: quarters(() => 2), grid_cost_sek: 1 }, curves: [] };
+  const record: PlanRecord = { status: 'ready', generation: 'snapshot', valuation: { scale: 1, pool: 'none', ev: 'none', battery: 'none' }, decisions: idle(), beliefs: { import_sek_per_kwh: quarters(() => 2), grid_cost_sek: 1 }, curves: [] };
   const first = evaluate(c, record, {}), again = evaluate(c, structuredClone(record), {});
   assertEquals(first, again);
   assertEquals(first.series.believedImportPrice![0], 2);
   assertEquals(first.series.importPrice[0], 1);
+});
+
+Deno.test('the oracle lane tells the planner the real prices; refereeing never changes', () => {
+  const c = loadCase(caseFromReplay(replay()).data, recorded());
+  assertEquals(toldCase(c, 'told/high'), c);
+  const oracle = toldCase(c, 'oracle/low');
+  assertEquals(publishedQuarters(oracle), QUARTERS);
+  assertEquals(oracle.known_prices.import_sek_per_kwh, c.recorded.prices.import_sek_per_kwh);
+  assertEquals(oracle.recorded, c.recorded);
+  assertAlmostEquals(laneParts('told/high').scale * laneParts('told/low').scale, 1);
+});
+
+Deno.test('the diagnosis splits a plan\'s cost into the price estimate and the valuation', () => {
+  const lane = (cost_sek: number, points = 0, credit_sek = 0) => ({ cost_sek, credit_sek, points });
+  assertEquals(diagnose({ 'told/nominal': lane(100) }), null);
+  const d = diagnose({
+    'told/low': lane(104), 'told/nominal': lane(100, 0, 10), 'told/high': lane(80, -3),
+    'oracle/low': lane(60), 'oracle/nominal': lane(70), 'oracle/high': lane(75),
+  })!;
+  // Net of what is left in the stores: 90. Real prices would have saved 20; a lower valuation another 10.
+  assertEquals([d.net_sek, d.price_estimate_sek, d.valuation_sek], [90, 20, 10]);
+  // The cheaper told variant gave up comfort, so it is not "best".
+  assertEquals(d.best, { told: 'nominal', oracle: 'low' });
 });

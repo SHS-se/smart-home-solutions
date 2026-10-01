@@ -20,7 +20,7 @@ const dataset = (): BenchScenarioData => ({
   solar_forecast_w: quarters(i => hourOf(i) >= 8 && hourOf(i) < 14 ? 5000 : 0),
   base_load_forecast_w: quarters(() => 600),
   other_devices_w: {},
-  start_state: { battery_soc: 0.3, pool_water_c: 27.5, ev: { soc: 0.3, plugged_in: true, target_soc: 0.8 } },
+  start_state: { battery_soc: 0.3, pool_water_c: 27.5, ev: { soc: 0.3, target_soc: 0.8 } },
   comfort: null,
 });
 const recorded = (): BenchRecorded => ({

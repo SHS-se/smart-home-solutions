@@ -1,15 +1,16 @@
-// The household every bench test case is planned for, and the comfort its
-// owner wants (docs/planner-bench/test-cases.md).
+// The household every bench test case is planned for, and what its owner
+// wants (docs/planner-bench/test-cases.md).
 //
-// Devices and their physics only: no money and no value curves. A planner
-// works its curves out from a case's prices, solar, temperature and history
-// together with the comfort below. The referee (referee.ts) steps the same
-// physics, so no planner version brings its own.
+// Devices and their physics only: no money and no value curves. The owner's
+// wish is one number per store. A planner works its curves out from a case's
+// prices, solar, temperature and history together with those targets. The
+// referee (referee.ts) steps the same physics, so no planner version brings
+// its own.
 //
 // Changing either constant changes every result's input, so every result is
 // run again. Adding a test case changes neither.
 
-import type { Comfort } from './case';
+import type { Targets } from './case';
 
 export interface Household {
   site: {
@@ -63,21 +64,8 @@ export const HOUSEHOLD: Household = {
   },
 };
 
-/**
- * What the owner wants, in each store's own unit, plus how much more an
- * urgently wanted unit is worth than an ordinary one. A case may override it.
- */
-export interface ComfortProfile extends Comfort {
-  pool_urgency: number;
-  ev_urgency: number;
-}
-
-export const COMFORT: ComfortProfile = {
-  pool_c: { urgent_below: 28, comfortable: 30, indifferent_above: 32 },
-  ev_km: { urgent_below: 100, comfortable: 300, indifferent_above: 400 },
-  pool_urgency: 1.8,
-  ev_urgency: 3,
-};
+/** Pool 30 °C, car 300 km. A case may override either. */
+export const TARGETS: Targets = { pool_c: 30, ev_km: 300 };
 
 export const WATER_KWH_PER_M3_K = 1.163;
 
@@ -87,10 +75,19 @@ export function poolCop(pool: Household['pool'], airC: number, waterC: number): 
   return Math.max(1, cop);
 }
 
-/** Pool water temperature after `hours` with `electricalW` drawn by the pool. */
-export function stepPool(pool: Household['pool'], waterC: number, airC: number, electricalW: number, hours: number): number {
+/**
+ * The part of the pool's draw that is the heater. The pump circulates water
+ * past the heat exchanger and heats nothing; the heater cannot run without it.
+ * So a draw up to the pump's power is circulation only, and what is above it
+ * is the heater's.
+ */
+export const poolHeaterW = (pool: Household['pool'], poolW: number): number =>
+  Math.max(0, Math.min(poolW, pool.pump_w + pool.heater_w) - pool.pump_w);
+
+/** Pool water temperature after `hours` with `poolW` drawn by pump and heater together. */
+export function stepPool(pool: Household['pool'], waterC: number, airC: number, poolW: number, hours: number): number {
   const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
-  const heatKw = electricalW > 0 ? electricalW * poolCop(pool, airC, waterC) / 1_000 : 0;
+  const heatKw = poolHeaterW(pool, poolW) * poolCop(pool, airC, waterC) / 1_000;
   const lossKw = pool.loss_kw_per_k * (waterC - airC);
   return waterC + (heatKw - lossKw) * hours / capacityKwhPerK;
 }

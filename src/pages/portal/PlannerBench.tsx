@@ -24,6 +24,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
+import { BASE_LANE, LANES, diagnose, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import {
   isStale, resolveRules, runScore, scoreQuarters, storedPassed, CASE_SCALE, type CaseScore,
@@ -93,7 +94,19 @@ const Bench: React.FC = () => {
   const selectedCase = cases.find(c => c.id === caseId) ?? cases[0] ?? null;
   const [shown, setShown] = useState<'current' | 'test'>('test');
 
-  const summaryByKey = useMemo(() => new Map((summaries.data ?? []).map(s => [key(s.sha, s.scenario_id), s])), [summaries.data]);
+  // Lists and totals show the base lane: the planner as it runs live. The other lanes explain it.
+  const baseSummaries = useMemo(() => (summaries.data ?? []).filter(s => (s.lane ?? BASE_LANE) === BASE_LANE), [summaries.data]);
+  const summaryByKey = useMemo(() => new Map(baseSummaries.map(s => [key(s.sha, s.scenario_id), s])), [baseSummaries]);
+  /** What each lane of a run came to for the selected case. */
+  const lanesFor = useMemo(() => (sha: string | undefined, scenarioId: string | undefined) => {
+    const out: Partial<Record<LaneId, LaneResult>> = {};
+    for (const s of summaries.data ?? []) {
+      if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score) continue;
+      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points };
+    }
+    return out;
+  }, [summaries.data]);
+  const [lane, setLane] = useState<LaneId>(BASE_LANE);
   const verdictByKey = useMemo(() => new Map((verdicts.data ?? []).map(v => [key(v.sha, v.scenario_id), v])), [verdicts.data]);
 
   /** Every case's stored score for one run; null where the run has no scored result. */
@@ -112,9 +125,9 @@ const Bench: React.FC = () => {
   /** Results scored by an older scorer, or before their case's rules last changed. */
   const staleCount = useMemo(() => {
     const criteria = new Map(cases.map(c => [c.id, c.criteria]));
-    return (summaries.data ?? []).filter(s => s.status === 'ok' && criteria.has(s.scenario_id)
+    return baseSummaries.filter(s => s.status === 'ok' && criteria.has(s.scenario_id)
       && isStale(s.score, criteria.get(s.scenario_id))).length;
-  }, [cases, summaries.data]);
+  }, [cases, baseSummaries]);
 
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
@@ -128,12 +141,12 @@ const Bench: React.FC = () => {
   }, [cases, currentRun, testRun, summaryByKey]);
 
   const series = useQuery({
-    queryKey: ['bench', 'series', selectedCase?.id, currentRun?.sha, testRun?.sha],
+    queryKey: ['bench', 'series', selectedCase?.id, currentRun?.sha, testRun?.sha, lane],
     enabled: Boolean(selectedCase && (currentRun || testRun)),
     queryFn: async () => {
       const shas = [currentRun?.sha, testRun?.sha].filter((s): s is string => Boolean(s));
       const data = await rows<({ sha: string } & BenchResultDetail)[]>(db.from('bench_results')
-        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).in('sha', shas));
+        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).eq('lane', lane).in('sha', shas));
       const by = new Map(data.map(r => [r.sha, r]));
       return { current: currentRun ? by.get(currentRun.sha) ?? null : null, test: testRun ? by.get(testRun.sha) ?? null : null };
     },
@@ -345,6 +358,9 @@ const Bench: React.FC = () => {
               summaryByKey={summaryByKey}
               verdictByKey={verdictByKey}
               details={series.data ?? null}
+              lane={lane}
+              onLane={setLane}
+              lanes={{ current: lanesFor(currentRun?.sha, selectedCase.id), test: lanesFor(testRun?.sha, selectedCase.id) }}
               seriesLoading={series.isLoading}
               savingStartState={saveStartState.isPending}
               onSaveStartState={state => saveStartState.mutate(state)}
@@ -499,6 +515,69 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
   );
 };
 
+const LANE_LABEL: Record<string, [string, string]> = {
+  told: ['Publicerade priser', 'Published prices'], oracle: ['Verkliga priser kända', 'Real prices known'],
+  low: ['låg', 'low'], nominal: ['nominell', 'nominal'], high: ['hög', 'high'],
+};
+
+/**
+ * Every lane the case was planned under, per planner: net cost and comfort,
+ * and what the difference between lanes says about why the plan cost what it did.
+ */
+const LanePanel: React.FC<{
+  lane: LaneId; onLane: (lane: LaneId) => void;
+  lanes: { current: Partial<Record<LaneId, LaneResult>>; test: Partial<Record<LaneId, LaneResult>> };
+}> = ({ lane, onLane, lanes }) => {
+  const { t } = useLanguage();
+  const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
+  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.points.toFixed(1)}` : '—';
+  const verdict = (d: Diagnosis | null) => d === null ? t('väntar på alla spår', 'waiting for every lane') : [
+    t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
+    t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
+    t(`bästa värdering: ${t(...LANE_LABEL[d.best.told])} med publicerade priser, ${t(...LANE_LABEL[d.best.oracle])} med verkliga`,
+      `best valuation: ${t(...LANE_LABEL[d.best.told])} on published prices, ${t(...LANE_LABEL[d.best.oracle])} on real ones`),
+  ].join(' · ');
+  return (
+    <div id="bench-lanes">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-4 text-sm">
+        <span className="font-medium">{t('Spår', 'Lanes')}</span>
+        <span className="text-xs text-muted-foreground">
+          {t('Samma fall planerat med publicerade eller verkliga priser, och med värdekurvorna värda 0,71×, 1× eller 1,41×. Nettokostnad till verkliga priser (kostnad minus det som finns kvar i lagren) · komfortpoäng.',
+            'The same case planned on published or on real prices, and with the value curves worth 0.71×, 1× or 1.41×. Net cost at real prices (cost minus what is left in the stores) · comfort points.')}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-left text-xs text-muted-foreground">
+              <th className="py-1 font-normal">{t('Spår', 'Lane')}</th>
+              <th className="py-1 text-right font-normal">{t('Nuvarande', 'Current')}</th>
+              <th className="py-1 text-right font-normal">Test</th>
+            </tr>
+          </thead>
+          <tbody>
+            {LANES.map(id => (
+              <tr key={id} className={`border-b border-border/50 ${id === lane ? 'bg-muted/60' : ''}`}>
+                <td className="py-1">
+                  <button id={`bench-lane-${id.replace('/', '-')}`} className="text-left underline-offset-2 hover:underline" aria-pressed={id === lane} onClick={() => onLane(id)}>
+                    {name(id)}{id === BASE_LANE && <span className="text-xs text-muted-foreground"> ({t('som i drift', 'as it runs live')})</span>}
+                  </button>
+                </td>
+                <td className="py-1 text-right font-mono tabular-nums">{cell(lanes.current[id])}</td>
+                <td className="py-1 text-right font-mono tabular-nums">{cell(lanes.test[id])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+        <div id="bench-diagnosis-current">{t('Nuvarande', 'Current')}: {verdict(diagnose(lanes.current))}</div>
+        <div id="bench-diagnosis-test">Test: {verdict(diagnose(lanes.test))}</div>
+      </div>
+    </div>
+  );
+};
+
 interface CaseViewProps {
   scenario: BenchScenario;
   currentRun: BenchRun | null;
@@ -506,6 +585,9 @@ interface CaseViewProps {
   summaryByKey: Map<string, BenchResultSummary>;
   verdictByKey: Map<string, BenchVerdict>;
   details: { current: BenchResultDetail | null; test: BenchResultDetail | null } | null;
+  lane: LaneId;
+  onLane: (lane: LaneId) => void;
+  lanes: { current: Partial<Record<LaneId, LaneResult>>; test: Partial<Record<LaneId, LaneResult>> };
   seriesLoading: boolean;
   savingStartState: boolean;
   onSaveStartState: (state: CaseStartState) => void;
@@ -516,12 +598,13 @@ interface CaseViewProps {
   onRerun: () => void;
 }
 
-const SCORE_COLOUR = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.abs(score)})`;
+// The palette runs −2…+2; anything worse than −2 takes the darkest red.
+const SCORE_COLOUR = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(score))})`;
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
 
 const CaseView: React.FC<CaseViewProps> = ({
   scenario, currentRun, testRun, summaryByKey, verdictByKey,
-  details, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onVerdict, onSaveCriteria, onRerun,
+  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onVerdict, onSaveCriteria, onRerun,
 }) => {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
@@ -582,8 +665,8 @@ const CaseView: React.FC<CaseViewProps> = ({
                   </div>
                   {score && (
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs tabular-nums">
-                      {[2, 1, 0, -1, -2].map(v => (
-                        <span key={v} style={{ color: SCORE_COLOUR(v) }}>{signed(v)} × {score.histogram[String(v)]}</span>
+                      {[0, -1, -2, -3, -4].filter(v => v >= -2 || score.histogram[String(v)]).map(v => (
+                        <span key={v} style={{ color: SCORE_COLOUR(v) }}>{signed(v)} × {score.histogram[String(v)] ?? 0}</span>
                       ))}
                       <span className="text-muted-foreground">{t('summa', 'sum')} {signed(score.sum)} ÷ {CASE_SCALE}</span>
                     </div>
@@ -606,6 +689,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                 ))}
               </div>
             )}
+            <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
             <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
             {scenario.dataset && (
               <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
@@ -650,8 +734,8 @@ const CaseView: React.FC<CaseViewProps> = ({
           <div className="space-y-2 min-w-0">
             <h3 className="font-medium">{t('Regler per kvart', 'Quarter rules')}</h3>
             <p className="text-xs text-muted-foreground max-w-3xl">
-              {t(`Varje kvart får summan av reglerna som slår till, begränsad till −2…+2. Fallets poäng är kvartssumman ÷ ${CASE_SCALE}, begränsad till −10…+10.`,
-                `Each quarter scores the sum of the rules that fire, limited to −2…+2. The case scores its quarter sum ÷ ${CASE_SCALE}, limited to −10…+10.`)}
+              {t(`Poängen gäller komfort: varje kvart förlorar en poäng per regel som slår till, mätt från målet (pool 30 °C, bil 300 km om fallet inte säger annat). En regel räknas först när nivån har varit möjlig att nå i ett dygn. Fallets poäng är kvartssumman ÷ ${CASE_SCALE}, lägst −10. Kostnaden till verkliga priser visas separat.`,
+                `The score is about comfort: each quarter loses a point per rule that fires, measured from the target (pool 30 °C, car 300 km unless the case says otherwise). A rule counts only once its level has been reachable for a day. The case scores its quarter sum ÷ ${CASE_SCALE}, at worst −10. Cost at real prices is shown separately.`)}
             </p>
             <div className="overflow-x-auto">
               <Table>

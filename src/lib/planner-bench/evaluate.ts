@@ -3,7 +3,7 @@
 // recomputed from them whenever the referee or the scorer changes.
 
 import type { BenchCase } from './case';
-import { HOUSEHOLD } from './household';
+import { HOUSEHOLD, TARGETS } from './household';
 import { referee, REFEREE_VERSION, type Outcome } from './referee';
 import { storedScore, type StoredScore } from './score';
 import { planStats } from './stats';
@@ -19,6 +19,6 @@ export interface Evaluation {
 
 export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOverrides): Evaluation {
   const believed = record.beliefs.import_sek_per_kwh.map(v => v ?? Number.NaN);
-  const { series, ...outcome } = referee(c, HOUSEHOLD, record.decisions, believed);
+  const { series, ...outcome } = referee(c, HOUSEHOLD, { ...TARGETS, ...(c.comfort ?? {}) }, record.decisions, believed);
   return { series, stats: planStats(series), outcome, score: storedScore(series, criteria), referee_version: REFEREE_VERSION };
 }

@@ -21,14 +21,14 @@ export type Series = number[];
 export interface CaseStartState {
   battery_soc: number;
   pool_water_c: number;
-  ev: { soc: number; plugged_in: boolean; target_soc: number };
+  /** `target_soc` is the car's own charge limit, not a wish; the car is planned whether plugged in or not. */
+  ev: { soc: number; target_soc: number };
 }
 
-/** Comfort the owner wants, in each store's own unit. Never money. */
-export interface Comfort {
-  /** Below `urgent_below` the owner really wants it dealt with; above `indifferent_above` more is worth nothing. */
-  pool_c: { urgent_below: number; comfortable: number; indifferent_above: number };
-  ev_km: { urgent_below: number; comfortable: number; indifferent_above: number };
+/** What the owner wants: one number per store, in its own unit. Never money, never a band. */
+export interface Targets {
+  pool_c: number;
+  ev_km: number;
 }
 
 export interface BenchScenarioData {
@@ -53,8 +53,8 @@ export interface BenchScenarioData {
    * runner replaces them from recorded history. An edit on the page clears it.
    */
   start_state_unread?: ('battery_soc' | 'pool_water_c' | 'ev_soc')[];
-  /** Owner comfort for this case only; null uses the bench profile's. */
-  comfort: Partial<Comfort> | null;
+  /** Owner targets for this case only; null uses the bench's. */
+  comfort: Partial<Targets> | null;
 }
 
 /** Prices before the start, oldest first, one row per quarter. */
@@ -119,7 +119,7 @@ export function parseScenarioData(raw: unknown): BenchScenarioData {
   for (const [key, values] of Object.entries(data.other_devices_w)) series(values, `other_devices_w.${key}`);
   const state = data.start_state;
   if (!isRecord(state) || !finite(state.battery_soc) || !finite(state.pool_water_c) || !isRecord(state.ev)
-    || !finite(state.ev.soc) || !finite(state.ev.target_soc) || typeof state.ev.plugged_in !== 'boolean') {
+    || !finite(state.ev.soc) || !finite(state.ev.target_soc)) {
     throw new CaseFormatError('start_state is incomplete.');
   }
   return data;

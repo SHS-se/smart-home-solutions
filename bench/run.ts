@@ -43,11 +43,12 @@ import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
 import { canonicalJson, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { COMFORT, HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { HOUSEHOLD, TARGETS } from "../src/lib/planner-bench/household.ts";
+import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 import { isStale } from "../src/lib/planner-bench/score.ts";
 import { completeCase, type HistorySource } from "./history.ts";
-import { type BenchStore, DbStore, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
+import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -82,10 +83,10 @@ async function git(...argv: string[]): Promise<string> {
 const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =>
   scenario.dataset && scenario.recorded ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
 
-/** Identity of everything a planner generation is given for a case. */
-function inputHash(c: BenchCase, generation: string): Promise<string> {
+/** Identity of everything a planner generation is given for a case under one lane. */
+function inputHash(c: BenchCase, generation: string, lane: LaneId): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, comfort: COMFORT, adapter: ADAPTER_VERSION, generation }));
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, targets: TARGETS, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
@@ -94,20 +95,23 @@ async function worker(sha: string, root: string) {
   const planner = await loadPlanner(root);
   const done = await bench.resultHashes(sha);
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
-    const hash = await inputHash(c, planner.generation);
-    if (!args.force && done.get(scenario.id) === hash) continue;
-    const base = { sha, scenario_id: scenario.id, input_hash: hash };
-    try {
-      const { record, cpuMs } = planner.plan(c, HOUSEHOLD);
-      const evaluation = evaluate(c, record, scenario.criteria);
-      await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
-      console.log(`  ${scenario.name}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
-        + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh,`
-        + ` ${evaluation.outcome.violations.length} clipped decisions`);
-    } catch (error) {
-      const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
-      await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });
-      console.log(`  ${scenario.name}: ERROR ${message.split("\n")[0]}`);
+    for (const lane of LANES) {
+      const hash = await inputHash(c, planner.generation, lane);
+      if (!args.force && done.get(laneKey(scenario.id, lane)) === hash) continue;
+      const base = { sha, scenario_id: scenario.id, lane, input_hash: hash };
+      try {
+        const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale);
+        // Whatever the planner was told, its plan is judged on the case as it really was.
+        const evaluation = evaluate(c, record, scenario.criteria);
+        await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
+        console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
+          + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
+          + ` comfort ${evaluation.score.points.toFixed(1)}, pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
+      } catch (error) {
+        const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
+        await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });
+        console.log(`  ${scenario.name} ${lane}: ERROR ${message.split("\n")[0]}`);
+      }
     }
   }
 }
@@ -161,10 +165,10 @@ async function reevaluateStale(bench: BenchStore) {
   for (const result of await bench.evaluatedResults()) {
     const entry = cases.get(result.scenario_id);
     if (!entry || (result.referee_version === REFEREE_VERSION && !isStale(result.score, entry.scenario.criteria))) continue;
-    const record = await bench.planRecord(result.sha, result.scenario_id);
+    const record = await bench.planRecord(result);
     // A result from before decisions were stored is replaced when its commit is next run.
     if (!record) continue;
-    await bench.saveEvaluation(result.sha, result.scenario_id, evaluate(entry.c, record, entry.scenario.criteria));
+    await bench.saveEvaluation(result, evaluate(entry.c, record, entry.scenario.criteria));
     count++;
   }
   console.log(`Re-evaluated ${count} stale result${count === 1 ? "" : "s"}.`);

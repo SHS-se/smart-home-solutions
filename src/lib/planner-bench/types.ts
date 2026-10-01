@@ -30,11 +30,24 @@ export interface BenchSeries {
   /** Percentages. */
   homeSoc: (number | null)[];
   carSoc: (number | null)[];
+  /** Range in the car, km. */
+  carKm?: number[];
   carConnected: number[];
   /** Pool temperature at the end of each quarter, °C; null without a pool model. */
   poolC: (number | null)[];
   /** Net grid cost of the quarter, SEK (import cost minus export revenue). */
   costSek: number[];
+  /**
+   * What the owner wanted and what was reachable, for scoring comfort: the
+   * targets, and where each store would be at the end of every quarter if it
+   * had drawn full power from the start. A comfort rule cannot fire before its
+   * level was reachable.
+   */
+  comfort?: {
+    pool_target_c: number; ev_target_km: number;
+    pool_start_c: number; ev_start_km: number;
+    poolReachableC: number[]; carReachableKm: number[];
+  };
 }
 
 /** Per-case totals over the whole 72-hour plan. */
@@ -107,6 +120,9 @@ export interface BenchResultDetail {
 export interface BenchResultSummary {
   sha: string;
   scenario_id: string;
+  /** Which prices the planner was told and which valuation it ran under (lanes.ts). */
+  lane: import('./lanes').LaneId;
+  outcome: Omit<import('./referee').Outcome, 'series'> | null;
   status: 'ok' | 'error';
   error: string | null;
   stats: BenchStats | null;
@@ -130,6 +146,8 @@ export interface CriterionOverride {
 }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
 
+export type ValuationSupport = 'scale' | 'urgency_only' | 'none';
+
 /** A value curve a planner actually planned with, as it reported it. */
 export interface UsedCurve {
   store: string;
@@ -150,6 +168,13 @@ export interface PlanRecord {
   status: string;
   /** Which input generation the adapter built for this planner (bench/adapter.ts). */
   generation: string;
+  /**
+   * The valuation scale the lane asked for, and how this planner generation
+   * could honour it per store: `scale` multiplies the derived curve exactly;
+   * `urgency_only` raises or lowers only the part of the curve below target;
+   * `none` means the planner has no handle and ran as nominal.
+   */
+  valuation: { scale: number; pool: ValuationSupport; ev: ValuationSupport; battery: ValuationSupport };
   decisions: import('./referee').Decisions;
   /** The planner's own estimates, kept beside the referee's account. */
   beliefs: { import_sek_per_kwh: (number | null)[]; grid_cost_sek: number | null };

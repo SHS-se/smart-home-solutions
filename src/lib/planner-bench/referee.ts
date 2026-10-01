@@ -11,11 +11,11 @@
 // then recognised as stale and recomputed from the stored decisions, with no
 // planner run.
 
-import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series } from './case';
+import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
 import { poolCop, stepPool, WATER_KWH_PER_M3_K, type Household } from './household';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 1;
+export const REFEREE_VERSION = 2;
 const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -55,7 +55,7 @@ const median = (values: readonly number[]) => {
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const r4 = (v: number) => Math.round(v * 10_000) / 10_000;
 
-export function referee(c: BenchCase, h: Household, d: Decisions, believedImportPrice: readonly number[] | null = null): Outcome {
+export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisions, believedImportPrice: readonly number[] | null = null): Outcome {
   for (const [name, values] of Object.entries(d)) {
     if (!Array.isArray(values) || values.length !== QUARTERS || !values.every(Number.isFinite)) {
       throw new Error(`Plan decisions are incomplete: ${name} needs ${QUARTERS} finite quarters.`);
@@ -82,9 +82,16 @@ export function referee(c: BenchCase, h: Household, d: Decisions, believedImport
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], carSoc: [], carConnected: [], poolC: [], costSek: [],
+    homeSoc: [], carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [],
+    comfort: {
+      pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
+      pool_start_c: poolC, ev_start_km: r1(evKwh / h.ev.kwh_per_km),
+      poolReachableC: [], carReachableKm: [],
+    },
   };
   let cost = 0, publishedCost = 0;
+  // Where each store could be at best: full power from the first quarter.
+  let reachPoolC = poolC, reachEvKwh = evKwh;
 
   for (let i = 0; i < QUARTERS; i++) {
     const poolW = clip(i, 'pool_power', Math.max(0, d.pool_w[i]), poolMaxW);
@@ -126,7 +133,13 @@ export function referee(c: BenchCase, h: Household, d: Decisions, believedImport
     series.batteryDischargeW.push(r1(dischargeW));
     series.homeSoc.push(r1(batteryKwh / h.battery.capacity_kwh * 100));
     series.carSoc.push(r1(evKwh / h.ev.capacity_kwh * 100));
-    series.carConnected.push(c.start_state.ev.plugged_in ? 1 : 0);
+    series.carKm!.push(r1(evKwh / h.ev.kwh_per_km));
+    // The car is planned whether plugged in or not; the bench lets it charge whenever the plan says.
+    series.carConnected.push(1);
+    reachPoolC = stepPool(h.pool, reachPoolC, c.recorded.outdoor_temperature_c[i], poolMaxW, HOURS);
+    reachEvKwh = Math.min(h.ev.capacity_kwh, reachEvKwh + evMaxW * h.ev.charge_efficiency * HOURS / 1_000);
+    series.comfort!.poolReachableC.push(Math.round(reachPoolC * 100) / 100);
+    series.comfort!.carReachableKm.push(r1(reachEvKwh / h.ev.kwh_per_km));
     series.poolC.push(Math.round(poolC * 1000) / 1000);
     series.costSek.push(r4(quarterCost));
   }
@@ -134,7 +147,8 @@ export function referee(c: BenchCase, h: Household, d: Decisions, believedImport
   // What the plan leaves behind, as the grid electricity it would take to put it there.
   const reference = median(c.recorded.prices.import_sek_per_kwh);
   const meanAir = c.recorded.outdoor_temperature_c.reduce((a, b) => a + b, 0) / QUARTERS;
-  const poolKwhPerDegree = h.pool.volume_m3 * WATER_KWH_PER_M3_K / poolCop(h.pool, meanAir, poolC);
+  // A degree of pool water costs its heat over the COP, plus the pump that must run with the heater.
+  const poolKwhPerDegree = h.pool.volume_m3 * WATER_KWH_PER_M3_K / poolCop(h.pool, meanAir, poolC) * (h.pool.pump_w + h.pool.heater_w) / h.pool.heater_w;
   const terminalGridKwh = (batteryKwh - startBatteryKwh) * h.battery.discharge_efficiency
     + (poolC - startPoolC) * poolKwhPerDegree
     + (evKwh - startEvKwh) / h.ev.charge_efficiency;

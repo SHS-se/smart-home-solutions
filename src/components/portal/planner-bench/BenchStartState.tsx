@@ -4,7 +4,6 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { CaseStartState } from '@/lib/planner-bench/case';
 
@@ -48,11 +47,7 @@ const BenchStartState: React.FC<Props> = ({ value, unread, saving, onSave }) => 
           <span className="text-muted-foreground">°C</span>
         </label>
         {percent('bench-start-ev', t('Elbil', 'Car'), draft.ev.soc, v => setDraft(d => ({ ...d, ev: { ...d.ev, soc: v } })))}
-        {percent('bench-start-ev-target', t('Elbil, mål', 'Car target'), draft.ev.target_soc, v => setDraft(d => ({ ...d, ev: { ...d.ev, target_soc: v } })))}
-        <label htmlFor="bench-start-plugged" className="flex items-center gap-2 text-sm">
-          <Switch id="bench-start-plugged" checked={draft.ev.plugged_in} onCheckedChange={v => setDraft(d => ({ ...d, ev: { ...d.ev, plugged_in: v } }))} />
-          <span className="text-muted-foreground">{t('Elbilen inkopplad', 'Car plugged in')}</span>
-        </label>
+        {percent('bench-start-ev-target', t('Elbilens laddgräns', 'Car charge limit'), draft.ev.target_soc, v => setDraft(d => ({ ...d, ev: { ...d.ev, target_soc: v } })))}
         <Button size="sm" disabled={!changed || !valid || saving} onClick={() => onSave(draft)}>
           {t('Spara och kör om', 'Save and re-run')}
         </Button>

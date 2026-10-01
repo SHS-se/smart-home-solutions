@@ -1,42 +1,50 @@
 // Quarter-by-quarter scoring of a plan, and the run score built from it.
 //
-// Every 15-minute quarter scores an integer from -2 to +2: the rules that fire
-// for the quarter add their points, and the sum is clamped. A quarter where
-// nothing notable happens scores 0, so the score is a count of good and bad
-// decisions rather than an average that ordinary quarters dilute.
+// The score is about comfort: did the plan keep the pool and the car where the
+// owner wants them. Money is not scored here; every plan's cost at real prices
+// is reported beside it (referee.ts), and a point system cannot improve on kr.
+//
+// Each quarter loses a point for each comfort rule that fires, measured from
+// the owner's target: the pool more than 1 °C below it, and again when more
+// than 2 °C below; the pool more than 2 °C above it; the car more than 50 km
+// short, and again when more than 100 km short. A rule cannot fire until its
+// level was reachable: where full power from the first quarter would have got
+// the store there, plus a day to choose the hours. So a case that starts cold
+// is not held against the planner for what no planner could do.
 //
 // A case's points are its quarter sum divided by CASE_SCALE, clamped to
-// -10..+10. The run score maps the mean case score onto 100–1000
-// (550 + 45 × mean). Scoring reads only the stored plan series, so a rule
-// change rescoring every run needs no planner re-run.
+// -10..0: -10 is a point lost in every quarter. The run score maps the mean
+// case score onto 100-1000 (1000 + 90 x mean), so 1000 is no comfort miss.
+// Scoring reads only the stored plan series, so a rule change rescoring every
+// run needs no planner re-run.
 //
 // Bump SCORER_VERSION whenever a rule or default changes, so stored scores
 // are recognised as stale and recomputed.
 
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
-export const SCORER_VERSION = 1;
-export const QUARTER_MIN = -2;
-export const QUARTER_MAX = 2;
+export const SCORER_VERSION = 2;
+export const QUARTER_MIN = -4;
+export const QUARTER_MAX = 0;
 export const CASE_MIN = -10;
-export const CASE_MAX = 10;
-/** Quarter points per case point: 10 quarter-points ≈ one case point. */
-export const CASE_SCALE = 10;
+export const CASE_MAX = 0;
+/** Quarter points per case point: a point lost in every one of 288 quarters is -10. */
+export const CASE_SCALE = 28.8;
 export const RUN_MIN = 100;
 export const RUN_MAX = 1000;
 /** Pool, battery charging and car together above this count as a flexible purchase. */
 export const FLEXIBLE_W = 500;
+/** Quarters a planner gets to choose its hours once a comfort level is reachable. */
+export const GRACE_QUARTERS = 96;
 
 /** What a rule can see about one quarter. */
 export interface QuarterView {
   s: BenchSeries;
   i: number;
-  /** Share of the plan's quarters priced strictly below this one, 0–1. */
+  /** Share of the plan's quarters priced strictly below this one, 0-1. */
   priceRank: number;
-  /** Published 25th-percentile import price, or null without published prices. */
-  publishedP25: number | null;
-  /** Pool + battery charging + car, W. */
-  flexibleW: number;
+  /** Whether a level was reachable long enough ago for missing it to count. */
+  due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
 }
 
 export interface QuarterRule {
@@ -44,60 +52,50 @@ export interface QuarterRule {
   label: string;
   describe: (threshold: number) => string;
   threshold: number;
-  /** Signed points added when the rule fires. */
+  /** Signed points added when the rule fires; 0 marks a quarter without scoring it. */
   points: number;
   /** A case in which this rule fires anywhere is shown as failed. */
   required?: boolean;
   fires: (q: QuarterView, threshold: number) => boolean;
 }
 
-const pct = (t: number) => `${Math.round(t * 100)} %`;
-const buying = (q: QuarterView) => q.flexibleW >= FLEXIBLE_W;
+const poolBelow = (q: QuarterView, t: number) => {
+  const c = q.s.comfort, now = q.s.poolC[q.i];
+  return !!c && now !== null && now < c.pool_target_c - t && q.due(c.poolReachableC, c.pool_start_c, c.pool_target_c - t);
+};
+const carBelow = (q: QuarterView, t: number) => {
+  const c = q.s.comfort, km = q.s.carKm;
+  return !!c && !!km && km[q.i] < c.ev_target_km - t && q.due(c.carReachableKm, c.ev_start_km, c.ev_target_km - t);
+};
 
 export const DEFAULT_RULES: QuarterRule[] = [
   {
-    key: 'pool_cold', label: 'Pool below minimum', describe: t => `< ${t} °C`, threshold: 28, points: -2, required: true,
-    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! < t,
+    key: 'pool_low', label: 'Pool below target', describe: t => `more than ${t} °C below`, threshold: 1, points: -1,
+    fires: poolBelow,
   },
   {
-    key: 'pool_low', label: 'Pool below comfort band', describe: t => `< ${t} °C`, threshold: 29, points: -1,
-    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! < t,
+    key: 'pool_cold', label: 'Pool far below target', describe: t => `more than ${t} °C below`, threshold: 2, points: -1, required: true,
+    fires: poolBelow,
   },
   {
-    key: 'pool_hot', label: 'Pool above maximum', describe: t => `> ${t} °C`, threshold: 32.5, points: -1,
-    fires: (q, t) => q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > t,
+    key: 'pool_hot', label: 'Pool above target', describe: t => `more than ${t} °C above`, threshold: 2, points: -1,
+    fires: (q, t) => !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t,
   },
   {
-    key: 'cheap_buy', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.25, points: 1,
-    fires: (q, t) => buying(q) && q.priceRank < t,
+    key: 'ev_low', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
+    fires: carBelow,
   },
   {
-    key: 'cheapest_buy', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 1,
-    fires: (q, t) => buying(q) && q.priceRank < t,
+    key: 'ev_short', label: 'Car far short of target range', describe: t => `more than ${t} km short`, threshold: 100, points: -1, required: true,
+    fires: carBelow,
   },
+  // Marked on the score strip, not scored: cost at real prices already says what these cost.
   {
-    key: 'dear_buy', label: 'Flexible load in a dear quarter', describe: t => `price in dearest ${pct(1 - t)}`, threshold: 0.75, points: -1,
-    fires: (q, t) => buying(q) && q.priceRank >= t,
-  },
-  {
-    key: 'dearest_buy', label: 'Flexible load in a very dear quarter', describe: t => `price in dearest ${pct(1 - t)}`, threshold: 0.9, points: -1,
-    fires: (q, t) => buying(q) && q.priceRank >= t,
-  },
-  {
-    key: 'estimated_buy', label: 'Flexible load at an estimated price above cheap published ones',
-    describe: t => `estimated price > ${t}× published 25th percentile`, threshold: 1, points: -1,
-    fires: (q, t) => buying(q) && !q.s.published[q.i] && q.publishedP25 !== null && q.s.importPrice[q.i] > q.publishedP25 * t,
-  },
-  {
-    key: 'unplugged_charge', label: 'Car charging planned while unplugged', describe: t => `> ${t} W`, threshold: 50, points: -2, required: true,
-    fires: (q, t) => q.s.carW[q.i] > t && !q.s.carConnected[q.i],
-  },
-  {
-    key: 'solar_spill', label: 'Solar exported while the home battery has room', describe: t => `battery below ${t} %`, threshold: 95, points: -1,
+    key: 'solar_spill', label: 'Solar exported while the home battery has room', describe: t => `battery below ${t} %`, threshold: 95, points: 0,
     fires: (q, t) => Math.min(q.s.solarW[q.i], q.s.gridExportW[q.i]) >= FLEXIBLE_W && q.s.homeSoc[q.i] !== null && q.s.homeSoc[q.i]! < t,
   },
   {
-    key: 'idle_battery', label: 'Very dear import while the battery sits idle', describe: t => `battery above ${t} %, dearest 10 %`, threshold: 20, points: -1,
+    key: 'idle_battery', label: 'Very dear import while the battery sits idle', describe: t => `battery above ${t} %, dearest 10 %`, threshold: 20, points: 0,
     fires: (q, t) => q.s.gridImportW[q.i] >= FLEXIBLE_W && q.priceRank >= 0.9 && q.s.homeSoc[q.i] !== null && q.s.homeSoc[q.i]! > t
       && q.s.batteryDischargeW[q.i] < 100,
   },
@@ -126,7 +124,7 @@ export interface CaseScore {
   quarters: QuarterScore[];
   /** How often each rule fired. */
   counts: Record<string, number>;
-  /** How many quarters scored each value, -2..+2. */
+  /** How many quarters scored each value, QUARTER_MIN..0. */
   histogram: Record<string, number>;
   requiredFired: string[];
   /** Your verdict when there is one, otherwise the automatic reading. */
@@ -143,18 +141,24 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < price) lo = mid + 1; else hi = mid; }
     return lo;
   };
-  const published = s.importPrice.filter((_, i) => s.published[i]).sort((a, b) => a - b);
-  const publishedP25 = published.length ? published[Math.max(0, Math.ceil(published.length * 0.25) - 1)] : null;
+  // The first quarter by which each level was reachable, found once per level.
+  const reachedAt = new Map<string, number>();
+  const due = (i: number): QuarterView['due'] => (reachable, start, level) => {
+    if (!reachable) return false;
+    if (typeof start === 'number' && start >= level) return true;
+    const id = `${reachable === s.comfort?.poolReachableC ? 'pool' : 'car'}:${level}`;
+    if (!reachedAt.has(id)) reachedAt.set(id, reachable.findIndex(v => v >= level));
+    const at = reachedAt.get(id)!;
+    return at >= 0 && i >= at + GRACE_QUARTERS;
+  };
 
   const counts: Record<string, number> = {};
-  const histogram: Record<string, number> = { '-2': 0, '-1': 0, '0': 0, '1': 0, '2': 0 };
+  const histogram: Record<string, number> = Object.fromEntries(
+    Array.from({ length: QUARTER_MAX - QUARTER_MIN + 1 }, (_, k) => [String(QUARTER_MIN + k), 0]));
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
-    const q: QuarterView = {
-      s, i, priceRank: n ? below(s.importPrice[i]) / n : 0, publishedP25,
-      flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
-    };
+    const q: QuarterView = { s, i, priceRank: n ? below(s.importPrice[i]) / n : 0, due: due(i) };
     let raw = 0;
     const fired: string[] = [];
     for (const rule of rules) {
@@ -172,7 +176,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const points = Math.max(CASE_MIN, Math.min(CASE_MAX, sum / CASE_SCALE));
   return {
     points, sum, quarters, counts, histogram, requiredFired, verdict,
-    passed: verdict ? verdict === 'pass' : requiredFired.length === 0 && points >= 0,
+    passed: verdict ? verdict === 'pass' : requiredFired.length === 0,
   };
 }
 
@@ -204,11 +208,11 @@ export const isStale = (score: StoredScore | null | undefined, overrides: Criter
 
 /** Pass/fail from a stored score and your verdict. */
 export const storedPassed = (score: StoredScore, verdict: Verdict | null) =>
-  verdict ? verdict === 'pass' : score.required_fired.length === 0 && score.points >= 0;
+  verdict ? verdict === 'pass' : score.required_fired.length === 0;
 
 /** 100–1000; null until at least one case has a result. */
 export function runScore(casePoints: readonly number[]): number | null {
   if (!casePoints.length) return null;
   const mean = casePoints.reduce((a, b) => a + b, 0) / casePoints.length;
-  return Math.round(Math.min(RUN_MAX, Math.max(RUN_MIN, 550 + 45 * mean)));
+  return Math.round(Math.min(RUN_MAX, Math.max(RUN_MIN, 1000 + 90 * mean)));
 }

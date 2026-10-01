@@ -74,6 +74,17 @@ alter table public.bench_results add column if not exists record jsonb;
 alter table public.bench_results add column if not exists outcome jsonb;
 alter table public.bench_results add column if not exists referee_version integer;
 alter table public.bench_results add column if not exists input_hash text;
+-- Each case is planned under several lanes (src/lib/planner-bench/lanes.ts):
+-- which prices the planner was told, and how much its value curves were worth.
+alter table public.bench_results add column if not exists lane text not null default 'told/nominal';
+do $$
+begin
+  if (select count(*) from information_schema.key_column_usage
+      where table_schema = 'public' and table_name = 'bench_results' and constraint_name = 'bench_results_pkey') < 3 then
+    alter table public.bench_results drop constraint bench_results_pkey;
+    alter table public.bench_results add primary key (sha, scenario_id, lane);
+  end if;
+end $$;
 
 create table if not exists public.bench_verdicts (
   sha text not null references public.bench_runs (sha) on delete cascade,
@@ -127,5 +138,5 @@ grant execute on function public.bench_set_current(text) to authenticated;
 -- Totals for every result, without the 30–40 kB plan series behind each.
 create or replace view public.bench_result_summaries
 with (security_invoker = true) as
-select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash
+select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash, lane
 from public.bench_results;
