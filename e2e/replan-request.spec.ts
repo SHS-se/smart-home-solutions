@@ -15,13 +15,11 @@
  */
 import { test, expect, type BrowserContext } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
-import { balancedBatteryCurve, generateOptimisationPlan } from '../supabase/functions/_shared/planner/energy-optimisation';
+import { generateOptimisationPlan } from '../supabase/functions/_shared/planner/energy-optimisation';
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { portalDelta } from './helpers/portal-delta';
-import { comparePreference } from '../src/lib/energy-shift/curve-preview';
-import { DEFAULT_VALUE_CURVES } from '../supabase/functions/_shared/planner/value-curves';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
@@ -183,7 +181,7 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'customers'
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
-      // The economics editor loads its snapshot on demand, separately from sync.
+      // The plan workbench loads its snapshot on demand, separately from sync.
       ? [{ snapshot: planSnapshot, plan: shown }]
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
@@ -258,7 +256,7 @@ test.describe('requesting a replan', () => {
 
   test('configuration refresh retains the plan, locks saves and recovers automatically', async ({ page }) => {
     replan.reportedPlanId = PLAN.plan_id;
-    await page.goto('/portal/energy-modeling?tab=economics');
+    await page.goto('/portal/energy-modeling?tab=thermal');
     const identity = page.locator(`code[title="${PLAN.plan_id}"]`).first();
     await expect(identity).toBeVisible();
     await expect(page.getByRole('button', { name: replanButton })).toHaveCount(0);
@@ -299,104 +297,41 @@ test.describe('requesting a replan', () => {
     await expect(identity).toBeVisible();
   });
 
-  test('battery points save exactly and blue changes only when a new plan is published', async ({ context, page }) => {
-    let saved: Record<string, unknown> | null = null;
-    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
-      if (route.request().method() === 'POST') saved = route.request().postDataJSON();
-      if (route.request().method() === 'DELETE') saved = null;
-      await route.fulfill({ json: saved ? [saved] : [] });
+  test('comfort targets are one number each, saved from the comfort tab', async ({ context, page }) => {
+    let stored: Record<string, unknown> | null = null;
+    await context.route('**/rest/v1/energy_optimisation_comfort_targets*', async route => {
+      if (route.request().method() === 'POST') {
+        stored = route.request().postDataJSON();
+        await route.fulfill({ status: 201, body: '' });
+        return;
+      }
+      // A home that has never set its targets has no row.
+      const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(single ? stored : stored ? [stored] : []) });
     });
-    await page.goto('/portal/energy-modeling?tab=economics');
-    const card = page.getByTestId('battery-curve-card');
-    const blue = card.getByTestId('battery-current-curve');
-    const before = await blue.getAttribute('data-values');
-    await card.getByRole('spinbutton', { name: /Antal punkter|Number of points/ }).fill('4');
-    await card.getByRole('button', { name: /Använd punktantal|Apply point count/ }).click();
-    await expect(card.locator('circle')).toHaveCount(4);
-    await card.getByRole('spinbutton', { name: /Punktens värde|Point value/ }).fill('10');
-    const first = card.locator('circle').first();
-    await first.focus(); await page.keyboard.press('ArrowUp');
-    const bounds = await first.boundingBox();
-    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(bounds!.x + bounds!.width / 2 + 12, bounds!.y + bounds!.height / 2 - 10, { steps: 4 });
-    await page.mouse.up();
-    await card.getByRole('button', { name: /^(Spara|Save)$/ }).click();
-    await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeDisabled();
-    expect(saved!.store_key).toBe('battery');
-    expect(saved!.generation_mode).toBe('custom');
-    const points = saved!.points as { at: number; sek_per_unit: number }[];
-    expect(points).toHaveLength(4);
-    expect(points[0].sek_per_unit).toBeGreaterThan(10);
-    expect(points[0].at).toBeGreaterThan(0);
-    await expect(blue).toHaveAttribute('data-values', before!);
-    await card.screenshot({path: test.info().outputPath('battery-curve.png')});
-    await card.getByRole('spinbutton', { name: /Punktens värde|Point value/ }).fill('20');
-    const planPage = await context.newPage();
-    await planPage.goto('/portal/energy-modeling?tab=plan');
-    await planPage.getByRole('button', { name: replanButton }).click();
-    await expect(planPage.getByRole('button', { name: replanButton })).toHaveAttribute('aria-busy', 'true');
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-      battery_value_curve: { ...PLAN.battery_value_curve!, source: 'customer', curve: { unit: 'kwh', points } } };
-    replan.row.replan_completed_request_id = REQUEST_ID;
-    await expect(blue).toHaveAttribute('data-values', JSON.stringify(points), { timeout: 4500 });
-    // A plan refresh must preserve an unsaved edit made after Save.
-    await expect(card.getByRole('spinbutton', { name: /Punktens värde|Point value/ })).toHaveValue('20');
-    await expect(card.getByRole('button', { name: /^(Spara|Save)$/ })).toBeEnabled();
-    await expect(page.getByRole('button', { name: replanButton })).toHaveCount(0);
-  });
-
-  test('the automatic battery curve and a custom one save and reload as themselves', async ({ context, page }) => {
-    const storedPoints = Array.from({ length: 10 }, (_, index) => ({ at: index * 0.6, sek_per_unit: (10 - index) * 0.073 }));
-    let saved: Record<string, unknown> | null = null;
-    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
-      if (route.request().method() === 'POST') saved = route.request().postDataJSON();
-      await route.fulfill({ json: saved ? [saved] : [] });
-    });
-    await page.goto('/portal/energy-modeling?tab=economics');
-    const card = page.getByTestId('battery-curve-card');
-    const automatic = card.getByRole('button', { name: /Använd den automatiska kurvan|Use the automatic curve/ });
+    await page.goto('/portal/energy-modeling?tab=comfort');
+    const card = page.getByTestId('comfort-targets-card');
+    const pool = card.locator('#comfort-target-pool'), car = card.locator('#comfort-target-car');
     const save = card.getByRole('button', { name: /^(Spara|Save)$/ });
-    const pointValue = card.getByRole('spinbutton', { name: /Punktens värde|Point value/ });
-    await expect(automatic).toHaveAttribute('aria-pressed', 'true');
-    const expectedBalanced = balancedBatteryCurve(snapshot(), new Date(Date.parse(CAPTURED_AT) + 60_000))!;
-    await automatic.click();
-    await expect(pointValue).toHaveValue(String(expectedBalanced.points[0].sek_per_unit));
-    await save.click();
+    // The defaults stand until the household says otherwise, and there is nothing to save.
+    await expect(pool).toHaveValue('30');
+    await expect(car).toHaveValue('300');
     await expect(save).toBeDisabled();
-    expect(saved!.generation_mode).toBe('balanced');
-    expect(saved!.points).toEqual(expectedBalanced.points);
-    // Persisted balanced points are a seed; they must not replace the fresh
-    // balanced curve when measurements are loaded for the next plan.
-    saved!.points = storedPoints;
-    await page.reload();
-    await expect(automatic).toHaveAttribute('aria-pressed', 'true');
-    await expect(pointValue).toHaveValue(String(expectedBalanced.points[0].sek_per_unit));
-    // A row saved under the removed price-only mode shows, and plans, as automatic.
-    saved!.generation_mode = 'price_only';
-    await page.reload();
-    await expect(automatic).toHaveAttribute('aria-pressed', 'true');
-    await pointValue.fill('20');
-    await expect(automatic).toHaveAttribute('aria-pressed', 'false');
-    await expect(card.getByText(/^(Egen kurva|Your curve)$/)).toBeVisible();
-    await save.click();
+    // An impossible value cannot be saved.
+    await pool.fill('55');
     await expect(save).toBeDisabled();
-    expect(saved!.generation_mode).toBe('custom');
-  });
-
-  test('an invalid stored battery curve has a direct explicit correction', async ({ context, page }) => {
-    let invalid = true;
-    await context.route('**/rest/v1/energy_optimisation_value_curves*', async route => {
-      if (route.request().method() === 'DELETE') invalid = false;
-      await route.fulfill({ json: invalid ? [{ store_key: 'battery', unit: 'kwh', points: [{ at: 0, sek_per_unit: -1 }] }] : [] });
-    });
-    await page.goto('/portal/energy-modeling?tab=economics');
-    await expect(page.getByText(/Batterikurvan kan inte användas|The battery curve cannot be used/)).toBeVisible();
-    await expect(page.getByTestId('battery-curve-card')).toHaveCount(0);
-    await page.getByRole('button', { name: /Ta bort ogiltig kurva|Remove invalid curve/ }).click();
-    await expect(page.getByTestId('battery-curve-card')).toBeVisible();
-    await expect(page.getByText(/Batterikurvan kan inte användas|The battery curve cannot be used/)).toHaveCount(0);
+    await expect(card.getByRole('alert')).toBeVisible();
+    await pool.fill('29,5');
+    await car.fill('350');
+    await save.click();
+    await expect.poll(() => stored).not.toBeNull();
+    expect(stored).toMatchObject({ home_id: HOME_ID, customer_id: CUSTOMER_ID, pool_target_c: 29.5, ev_target_km: 350 });
+    await expect(save).toBeDisabled();
+    await page.reload();
+    await expect(card.locator('#comfort-target-pool')).toHaveValue('29.5');
+    // The economics tab and its curve editors are gone.
+    await expect(page.getByRole('tab', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
   });
 
   test('recommendations are shared, expandable, and clear when the published row clears them', async ({ page }) => {
@@ -409,7 +344,7 @@ test.describe('requesting a replan', () => {
     replan.row = {...replan.row, replan_recommendations: []};
     await page.reload();
     await expect(banner).toHaveCount(0);
-    await page.goto('/portal/energy-modeling?tab=economics');
+    await page.goto('/portal/energy-modeling?tab=thermal');
     await expect(page.getByRole('button', {name: replanButton})).toHaveCount(0);
   });
 

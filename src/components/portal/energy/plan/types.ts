@@ -163,7 +163,7 @@ export const COLORS = {
  * owns empirical Home Assistant models; the remaining
  * sections each own a focused chart.
  */
-export type PlanSection = 'plan' | 'devices' | 'thermal' | 'economics';
+export type PlanSection = 'plan' | 'devices' | 'thermal';
 
 /**
  * How much of the window either chart draws. Both tabs fetch the full 72 hours

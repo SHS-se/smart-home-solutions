@@ -1,4 +1,3 @@
-import { resolveValueCurves } from "../_shared/planner/value-curves.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -118,23 +117,9 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
             "Fixed plans are not available for operating-scope plans (snapshot schema 9).",
         }, 400);
       }
-      const { data: curves, error: curveError } = await caller.from(
-        "energy_optimisation_value_curves",
-      )
-        .select(
-          "store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier",
-        ).eq("home_id", body.home_id);
-      if (curveError) throw new Error(curveError.message);
-      const saved = resolveValueCurves(curves ?? []).curves;
-      const resolved: OptimisationSnapshot = {
-        ...snapshot,
-        value_curves: {
-          ...Object.fromEntries(Object.entries(saved).map(([key, value]) => [key, value.curve])),
-        },
-      };
       // Checking a hand-built schedule needs the auction's inputs, not its
       // answer: solving the workbench took seconds of CPU on a 288-quarter home.
-      const bench = dispatchWorkbenchInputs(resolved, [], source.price_outlook, new Date(source.issued_at));
+      const bench = dispatchWorkbenchInputs(snapshot, [], source.price_outlook, new Date(source.issued_at));
       if (!bench) {
         return json(
           { error: "This home has no editable dispatch schedule." },
@@ -220,7 +205,7 @@ serve(withTrafficMetrics("energy-optimisation-fixed-plan", async (request, traff
       let candidate: OptimisationPlan;
       try {
         candidate = (await generateRemoteOptimisationPlan(
-          fixedPlanPreflightInput(resolved, source.price_outlook, fixed),
+          fixedPlanPreflightInput(snapshot, source.price_outlook, fixed),
           {
             url,
             planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",

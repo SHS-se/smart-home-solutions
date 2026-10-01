@@ -33,6 +33,7 @@ import {
   type OptimisationSnapshot,
 } from "../_shared/planner/energy-optimisation.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
+import { comfortTargets } from "../_shared/comfort-targets.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
@@ -50,7 +51,6 @@ import {
 } from "../_shared/thermal-training.ts";
 import { MIN_TRAINING_SAMPLES } from "../_shared/planner/thermal-model.ts";
 import {
-  resolveValueCurves,
   resolveValueSettings,
 } from "../_shared/planner/value-curves.ts";
 import {
@@ -1749,32 +1749,25 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         priceArchive = shapeRows ?? [];
       }
 
-      // The home's own curves, if it has edited any. Resolved here rather than
-      // inside the planner so a malformed row degrades to the shipped default
-      // with a warning instead of failing the plan.
-      const [curveResult, settingsResult] = await Promise.all([
-        supabase.from("energy_optimisation_value_curves")
-          .select("store_key, unit, points, max_value_sek_per_kwh, urgent_price_multiplier, generation_mode")
-          .eq("home_id", auth.homeId),
+      // What the owner wants is one number per store. The planner derives
+      // what a degree or a kilometre is worth from these and the plan's own
+      // prices, solar and weather, so no curve is read or sent, and the
+      // battery's curve is always the planner's own.
+      const [targetResult, settingsResult] = await Promise.all([
+        supabase.from("energy_optimisation_comfort_targets")
+          .select("pool_target_c, ev_target_km")
+          .eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
           .eq("home_id", auth.homeId).maybeSingle(),
       ]);
-      if (curveResult.error) throw new Error(curveResult.error.message);
-      const resolved = resolveValueCurves(curveResult.data ?? []);
-      for (const warning of resolved.warnings) console.warn("[ENERGY-OPTIMISATION] value curve", warning);
-      const settingsRow = settingsResult.data;
-      const batteryRow = curveResult.data?.find(row => row.store_key === "battery");
+      if (targetResult.error) throw new Error(targetResult.error.message);
+      const { value_curves: _curves, ...withoutCurves } = snapshot;
       snapshot = {
-        ...snapshot,
-        value_curves: {
-          pool: resolved.curves.pool.curve,
-          ev: resolved.curves.ev.curve,
-          ...(resolved.curves.battery ? { battery: resolved.curves.battery.curve } : {}),
-        },
-        value_settings: resolveValueSettings(settingsRow),
-        // Balanced unless the home keeps an explicit custom curve.
-        battery_curve_mode: batteryRow?.generation_mode === "custom" ? "custom" : "balanced",
+        ...withoutCurves,
+        comfort: comfortTargets(targetResult.data),
+        value_settings: resolveValueSettings(settingsResult.data),
+        battery_curve_mode: "balanced",
       };
 
       // Refit the pool alongside the rooms, then hand the planner whatever the

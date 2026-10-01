@@ -54,6 +54,11 @@ Deno.test("the current planner derives its curves from the targets, and the scal
   // The plan heads for the targets: the pool ends within a degree of 30 °C, the car within 50 km of 300 km.
   assert(Math.abs(series.poolC[287]! - 30) < 1, `pool ends at ${series.poolC[287]}`);
   assert(series.carKm![287] > 250, `car ends at ${series.carKm![287]} km`);
+  // Warmth counts through the whole horizon: once the pool has reached its
+  // target it does not drift more than about a degree below it to wait for cheaper energy.
+  const reached = series.poolC.findIndex(temperature => temperature! >= 29.5);
+  assert(reached >= 0 && Math.min(...series.poolC.slice(reached) as number[]) > 28.8,
+    `pool fell to ${Math.min(...series.poolC.slice(Math.max(0, reached)) as number[])} after reaching 29.5 at quarter ${reached}`);
   // The referee's physics and the planner's agree on what the household can do.
   assert(outcome.violations.length <= 2, JSON.stringify(outcome.violations.slice(0, 5)));
 

@@ -60,8 +60,6 @@ Deno.test('recurring paths never read whole current energy plans or snapshots', 
     'supabase/functions/energy-optimisation-fixed-plan/index.ts': ['snapshot'],
     // Explicit workbench analysis needs the complete model and result.
     'src/components/portal/energy/PlanWorkbenchTab.tsx': ['snapshot', 'plan'],
-    // User-opened value-curve analysis needs the complete model and result.
-    'src/components/portal/energy/ValueCurvesTab.tsx': ['snapshot', 'plan'],
     // User-requested replay downloads need the original input snapshot.
     'src/components/portal/energy/plan/PlanReplayDownload.tsx': ['snapshot'],
   };
