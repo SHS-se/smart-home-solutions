@@ -129,6 +129,23 @@ export interface DispatchStore {
    * still worth what the curve says.
    */
   terminal_weight?: number;
+  /**
+   * Value added energy by where it will sit, not only by where it lands.
+   *
+   * A bid is priced at the state standing in its own quarter, and energy bought
+   * later never lowers that: with the afternoon already bought, the night
+   * before it still saw a cold pool and bid as hard, quarter after quarter
+   * backwards, until one run held 61 kWh for a pool that wanted 15. Settlement
+   * then found the run under water as a whole, released all of it, and the
+   * next round bought it again: the plan that shipped heated nothing.
+   *
+   * With this set, a unit is worth at most the average of what the curve says
+   * at every state it will sit on from its quarter to the end, each hour
+   * counting alike and the time after the horizon counting as this many hours,
+   * less what leaks on the way. A dip before heat already bought still bids,
+   * for the hours the dip lasts; heat stacked on heat already bought does not.
+   */
+  sustained_value_tail_hours?: number;
   /** Physical units gained per kWh delivered, at this state and slot. */
   units_per_kwh: (state: number, index: number) => number;
   /** State one slot later with no energy delivered: losses, ambient drift. */
@@ -2058,6 +2075,34 @@ export function* dispatchAuctionSteps(
   // other candidate is costed against.
   const returnedW = checkpoint?.returnedW ?? new Array(count).fill(0);
 
+  // SEK per unit a store with `sustained_value_tail_hours` gets for a unit added
+  // in each quarter, rebuilt whenever its trajectory has moved.
+  const sustainedByKey: Record<string, { trajectory: number; marginal: number[] }> = {};
+  const sustainedMarginal = (store: DispatchStore): number[] | null => {
+    const tailHours = store.sustained_value_tail_hours;
+    if (tailHours === undefined) return null;
+    const state = stateByKey[store.key];
+    let trajectory = 0;
+    for (let index = 0; index <= count; index += 1) trajectory += state[index] * (index + 1);
+    const held = sustainedByKey[store.key];
+    if (held?.trajectory === trajectory) return held.marginal;
+    const decay = Math.min(1, Math.max(0, store.retention_per_slot));
+    const marginal = new Array(count).fill(0);
+    let value = tailHours * marginalValue(store.curve, state[count]);
+    let hours = tailHours;
+    for (let index = count - 1; index >= 0; index -= 1) {
+      // What is added in this quarter sits on every state after it.
+      marginal[index] = hours > 0
+        ? Math.pow(decay, hoursAt(store, index) / SLOT_HOURS) * value / hours
+        : 0;
+      value = hoursAt(store, index) * marginalValue(store.curve, state[index]) +
+        Math.pow(decay, hoursAt(store, index) / SLOT_HOURS) * value;
+      hours += hoursAt(store, index);
+    }
+    sustainedByKey[store.key] = { trajectory, marginal };
+    return marginal;
+  };
+
   for (const store of stores) {
     if (!checkpoint) {
       powerW[store.key] = Array.from({length: count}, (_, i) => committedPower(store, i));
@@ -2148,6 +2193,7 @@ export function* dispatchAuctionSteps(
   ): Candidate | null => {
     const state = stateByKey[store.key];
     const retention = retentionByKey[store.key];
+    const sustained = sustainedMarginal(store);
     const wear = store.wear_sek_per_kwh ?? 0;
     const startCost = startsRun ? store.start_cost_sek ?? 0 : 0;
     const startShare = startCost / indices.length;
@@ -2212,7 +2258,10 @@ export function* dispatchAuctionSteps(
         return null;
       }
       const retained = retention[index];
-      const valueSek = valueOfMove(store.curve, before, afterInput) * retained;
+      const landedSek = valueOfMove(store.curve, before, afterInput) * retained;
+      const valueSek = sustained
+        ? Math.min(landedSek, sustained[index] * (afterInput - before))
+        : landedSek;
       const valuePerKwh = valueSek / kwh;
       const sourceCost = energyCostSekPerKwh(
         slot,
@@ -2403,10 +2452,12 @@ export function* dispatchAuctionSteps(
         (store.discharge?.state_per_kwh_out(before, index) ?? 0)
       : 0;
     const after = before + gained - spent;
+    const landed = valueOfMove(store.curve, before, after) *
+      retentionByKey[store.key][index];
+    const sustained = outW > 0 ? null : sustainedMarginal(store);
     return {
       after,
-      value: valueOfMove(store.curve, before, after) *
-        retentionByKey[store.key][index],
+      value: sustained ? Math.min(landed, sustained[index] * gained) : landed,
     };
   };
 
@@ -3529,7 +3580,12 @@ export function* dispatchAuctionSteps(
                   margin += margins[to];
                   const remainingStarts = (from > 0 ? originalStart : 0) +
                     (to + 1 < run.indices.length ? startCost : 0);
-                  const net = margin + remainingStarts - originalStart;
+                  // Per quarter released, so a run that is under water as a
+                  // whole is trimmed from where it loses most and priced again
+                  // rather than dropped: the quarters that remain are worth
+                  // more once the ones stacked on them are gone.
+                  const net = (margin + remainingStarts - originalStart) /
+                    (to - from + 1);
                   if (net < -1e-9 && (worst === null || net < worst.net) &&
                       runEditValid(store, powerW[store.key], run.indices.slice(from, to + 1), 0)) {
                     worst = {

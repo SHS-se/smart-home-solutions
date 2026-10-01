@@ -2379,3 +2379,58 @@ Deno.test("discharge refinement preserves energy between unequal quarter duratio
   assert(Math.abs(after.stores[0].end_state - before.stores[0].end_state) < 1e-9);
   assert(after.billable_sek < before.billable_sek);
 });
+
+Deno.test("a pool below its target is heated once: heat already bought later stops the hours before it bidding again", () => {
+  // Two nights at 1.6 SEK/kWh around a cheap afternoon, for a pool a degree
+  // under its target and valued steeply there. Priced only where each quarter
+  // stands, the night before the afternoon kept seeing a cold pool and bought
+  // instead, and on a longer horizon went on buying backwards until the run was
+  // under water, settlement released all of it, and the plan heated nothing.
+  const count = 96;
+  const slots: DispatchSlot[] = Array.from({ length: count }, (_, index) => ({
+    pv_w: 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: index >= 48 && index < 64 ? 1 : 1.6,
+    export_price_sek_per_kwh: 0.2,
+  }));
+  const retention = 0.9995;
+  const pool = (sustained: boolean): DispatchStore => ({
+    key: "pool",
+    curve: {
+      unit: "celsius",
+      points: [
+        { at: 28, sek_per_unit: 100 },
+        { at: 29, sek_per_unit: 90 },
+        { at: 30, sek_per_unit: 22 },
+        { at: 31, sek_per_unit: 3 },
+        { at: 32, sek_per_unit: 0 },
+      ],
+    },
+    initial_state: 29.1,
+    max_state: 32,
+    min_power_w: 3_078,
+    max_power_w: 3_078,
+    start_cost_sek: 0.5,
+    retention_per_slot: retention,
+    usage_weight: new Array(count).fill(1 - retention),
+    terminal_weight: 1,
+    ...(sustained ? { sustained_value_tail_hours: 24 } : {}),
+    units_per_kwh: () => 0.0359,
+    drift: (state) => state - 0.002,
+  });
+  const heated = (store: DispatchStore) => {
+    const result = planDispatch(slots, [store], LIMITS);
+    return {
+      kwh: result.power_w.pool.reduce((sum, watts) => sum + watts, 0) / 4_000,
+      before: result.power_w.pool.filter((watts, index) => watts > 0 && index < 48).length,
+      cheap: result.power_w.pool.filter((watts, index) => watts > 0 && index >= 48 && index < 64).length,
+      after: result.power_w.pool.filter((watts, index) => watts > 0 && index >= 64).length,
+      end: result.state.pool[count],
+    };
+  };
+  // Without it the pool pays the night's price for heat the afternoon sells cheaper.
+  assert(heated(pool(false)).before > 0);
+  const plan = heated(pool(true));
+  assertEquals([plan.before, plan.cheap], [0, 16]);
+  assert(plan.end > 29.3, `ended at ${plan.end}`);
+});

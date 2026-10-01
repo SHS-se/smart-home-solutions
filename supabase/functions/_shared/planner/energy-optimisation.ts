@@ -2788,6 +2788,7 @@ function buildDispatchStores(
       // cheaper energy is never taxed beyond what physically leaks.
       usage_weight: slots.map(slot => poolMerit ? 1 - poolRetention ** (slot.duration_hours / SLOT_HOURS) : 0),
       terminal_weight: 1,
+      ...(poolMerit ? { sustained_value_tail_hours: 24 } : {}),
       retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,
       drift: (waterC, index) =>
