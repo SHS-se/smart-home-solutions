@@ -25,6 +25,16 @@ for (const { name, rawText, expected } of q3Invoices) {
   });
 }
 
+Deno.test('Coolshop seller country comes from its own Swedish organisation and address, not buyer details or VAT prefix', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'coolshop_receipt')!;
+  const parsed = parseInvoiceText(fixture.rawText.replace('5566113212', '556611-3212'));
+  assertEqual(parsed.supplierCountry, 'SE', 'seller country');
+  assertEqual(parsed.orgNumber, '556611-3212', 'organisation number');
+  assertEqual(parsed.vatNumber, 'DK26457602', 'VAT registration remains as printed');
+  const foreignSeller = parseInvoiceText(fixture.rawText.replace('Box 1063  43214 Varberg  SE  Org. Nr.: 5566113212', 'Loftbrovej 28  9400 Norresundby  DK  Org. Nr.: 26457602'));
+  assertEqual(foreignSeller.supplierCountry === 'SE', false, 'Swedish buyer cannot identify a foreign seller as Swedish');
+});
+
 Deno.test('parseInvoiceText does not treat DigiKey identifiers as amounts when the totals are missing', () => {
   const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_order_acknowledgement')!;
   const text = fixture.rawText.replace('123.38 123.38 123.38 USD', 'USD');

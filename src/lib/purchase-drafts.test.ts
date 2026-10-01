@@ -4,18 +4,26 @@ import { buildPurchaseDraftDefaults, createPurchaseDraft, type CreatePurchaseDra
 import { parseInvoiceText } from './invoice-parser.ts';
 import { buildJournalPreview, type VatTreatment } from './accounting-utils.ts';
 import fixtures from './fixtures/invoices-2026-q3.json' with { type: 'json' };
+import { PurchaseDraftError } from './purchase-draft-error.ts';
 
 function assertEqual(actual: unknown, expected: unknown, field: string): void {
   if (actual !== expected) throw new Error(`${field}: expected ${String(expected)}, got ${String(actual)}`);
 }
 
-function mockSupabase() {
+function mockSupabase(updateError: { message: string; code: string } | null = null) {
   const inserts: Record<string, Record<string, unknown>[]> = {};
+  const updates: Array<{ table: string; payload: Record<string, unknown>; id: string }> = [];
   const client = {
     from(table: string) {
       return {
         select() {
           return { eq: async () => ({ data: [], error: null }) };
+        },
+        update(payload: Record<string, unknown>) {
+          return { eq: async (_field: string, id: string) => {
+            updates.push({ table, payload, id });
+            return { error: updateError };
+          } };
         },
         insert(payload: Record<string, unknown>) {
           (inserts[table] ??= []).push(payload);
@@ -27,7 +35,7 @@ function mockSupabase() {
       };
     },
   };
-  return { client: client as unknown as CreatePurchaseDraftParams['supabase'], inserts };
+  return { client: client as unknown as CreatePurchaseDraftParams['supabase'], inserts, updates };
 }
 
 // Exercise the actual import path through persisted purchase/line payloads.
@@ -37,7 +45,7 @@ for (const fixture of fixtures) {
     Deno.test(`purchase draft imports ${fixture.name} with ${existingSupplier ? 'an existing' : 'a new'} supplier`, async () => {
       const parsedInvoice = parseInvoiceText(fixture.rawText);
       const { expected, expectedPurchase } = fixture;
-      const { client, inserts } = mockSupabase();
+      const { client, inserts, updates } = mockSupabase();
       const suppliers = existingSupplier ? [{
         id: 'existing-supplier', name: expected.supplierName, vat_number: expected.vatNumber,
         country: 'US', supplier_type: 'non_eu',
@@ -85,6 +93,46 @@ for (const fixture of fixtures) {
         assertEqual(inserts.acc_suppliers[0].vat_number, expected.vatNumber?.replace(/\s+/g, '') ?? null, 'supplier VAT, not buyer VAT');
         assertEqual(inserts.acc_suppliers[0].country, expected.supplierCountry, 'supplier country');
       }
+      if (existingSupplier && expected.fingerprintId === 'coolshop_receipt') {
+        assertEqual(updates[0].id, 'existing-supplier', 'correct supplier updated');
+        assertEqual(updates[0].payload.country, 'SE', 'persisted country correction');
+        assertEqual(updates[0].payload.supplier_type, 'domestic', 'persisted supplier type correction');
+        assertEqual(result.suppliers[0].country, 'SE', 'returned supplier country');
+        assertEqual(result.suppliers[0].vat_number, expected.vatNumber, 'original VAT registration preserved');
+      } else {
+        assertEqual(updates.length, 0, 'unrelated suppliers are not updated');
+      }
     });
   }
+}
+
+for (const scenario of ['update_failure', 'different_vat_registration', 'already_correct'] as const) {
+  Deno.test(`Coolshop supplier correction handles ${scenario}`, async () => {
+    const fixture = fixtures.find(({ expected }) => expected.fingerprintId === 'coolshop_receipt')!;
+    const parsedInvoice = parseInvoiceText(fixture.rawText);
+    const { client, inserts, updates } = mockSupabase(scenario === 'update_failure'
+      ? { message: 'Supplier update denied', code: '42501' } : null);
+    const suppliers = [{
+      id: 'coolshop-supplier', name: fixture.expected.supplierName,
+      vat_number: scenario === 'different_vat_registration' ? 'DK12345678' : fixture.expected.vatNumber,
+      country: scenario === 'already_correct' ? 'SE' : 'DK',
+      supplier_type: scenario === 'already_correct' ? 'domestic' : 'eu',
+    }] as CreatePurchaseDraftParams['suppliers'];
+    const values = buildPurchaseDraftDefaults({ parsedInvoice, extractedText: fixture.rawText, suppliers });
+    try {
+      await createPurchaseDraft({
+        supabase: client, suppliers, parsedInvoice, extractedText: fixture.rawText, values,
+        duplicateInvoiceMessage: 'Duplicate invoice', fullAmountLabel: 'Purchase',
+      });
+    } catch (error) {
+      if (scenario !== 'update_failure' || !(error instanceof PurchaseDraftError)) throw error;
+      assertEqual(error.stage, 'supplier_update', 'reported failure stage');
+      assertEqual(error.code, '42501', 'database error preserved');
+      assertEqual(inserts.acc_purchases?.length ?? 0, 0, 'failed correction does not create a draft');
+      return;
+    }
+    if (scenario === 'update_failure') throw new Error('Expected supplier update failure');
+    assertEqual(updates.length, 0, 'supplier update is unnecessary or identity does not match');
+    assertEqual(inserts.acc_purchase_lines[0].vat_treatment, 'domestic_deductible', 'receipt determines VAT independently');
+  });
 }

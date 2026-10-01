@@ -228,9 +228,20 @@ const DIGITAL_BILLING_SECTIONS: Record<string, RegExp> = {
   lovable_invoice: /Bill to\s+(.+?)(?=\s+(?:Ship to|Pay online|Description|[$€]\d))/i,
 };
 
+export function isVerifiedSwedishCoolshopSeller(invoice: ParsedInvoice | null | undefined): boolean {
+  return invoice?.fingerprint.recognized === true && invoice.fingerprint.id === 'coolshop_receipt' &&
+    invoice.supplierCountry === 'SE' && invoice.orgNumber?.replace(/-/g, '') === '5566113212';
+}
+
 function hasSwedishChargedVat(invoice: ParsedInvoice | null, text: string): boolean {
   if (normalizeVatNumber(invoice?.vatNumber)?.match(/^SE\d{10,12}$/)) return true;
   if (/vat\s*-\s*sweden/i.test(text)) return true;
+
+  // Coolshop's verified Swedish seller issues a simplified receipt for this
+  // Swedish purchase. Preserve the printed DK registration as a separate field.
+  if (isVerifiedSwedishCoolshopSeller(invoice) && invoice?.currency === 'SEK' && invoice.vatRate === 25 &&
+    invoice.grossAmount !== null && invoice.grossAmount <= 4000 &&
+    /Fakturering\s+.+?\s+SE\s+Betalningsmetod/i.test(text)) return true;
 
   // These recognised digital-service layouts charge destination VAT. Read
   // the purchaser's billing section, not the supplier's Irish/US address or
@@ -301,11 +312,11 @@ export function inferVatTreatment(params: {
   }
 
   if (vatAmount !== null && vatAmount > 0) {
-    if (hasSwedishChargedVat(params.parsedInvoice, text)) return 'domestic_deductible';
     if (/foreign VAT|VAT charged abroad/i.test(text)) return 'non_deductible';
+    if (hasSwedishChargedVat(params.parsedInvoice, text)) return 'domestic_deductible';
     // A foreign registration does not identify the jurisdiction of charged
     // VAT (destination VAT can be reported through OSS). Without that evidence,
-    // review it, including Coolshop's conflicting Swedish/Danish identity.
+    // review it rather than infer foreign VAT from the registration alone.
     if (supplierVatCountry && supplierVatCountry !== 'SE') return 'needs_review';
     return supplierType === 'domestic' ? 'domestic_deductible' : 'needs_review';
   }

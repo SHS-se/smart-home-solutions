@@ -53,14 +53,25 @@ Deno.test('Global-e Swedish supplier registration overrides foreign domicile and
   }), 'needs_review', 'buyer Swedish VAT number is not supplier VAT evidence');
 });
 
-Deno.test('Coolshop preserves DK registration and requires charged-VAT review despite Swedish address and SEK', () => {
+Deno.test('Coolshop Swedish seller identity determines input VAT independently of its DK registration', () => {
   const invoice = q3Invoice('coolshop_receipt');
   assertEqual(invoice.parsedInvoice.vatNumber, 'DK26457602', 'own VAT registration');
-  assertEqual(inferSupplierMetadata(invoice.parsedInvoice).supplierType, 'eu', 'EU registration');
-  assertEqual(inferVatTreatment({ ...invoice, supplierCountry: 'SE', supplierType: 'domestic' }),
-    'needs_review', 'conflicting receipt identity');
+  assertEqual(invoice.parsedInvoice.orgNumber, '5566113212', 'Swedish company identity');
+  assertEqual(inferSupplierMetadata(invoice.parsedInvoice).supplierType, 'domestic', 'Swedish company');
+  assertEqual(inferVatTreatment({ ...invoice, supplierCountry: 'DK', supplierType: 'eu' }),
+    'domestic_deductible', 'invoice identity overrides stale supplier country');
   assertEqual(inferVatTreatment({ ...invoice, extractedText: `${invoice.extractedText} VAT charged abroad` }),
     'non_deductible', 'explicit foreign VAT');
+});
+
+Deno.test('Coolshop input VAT requires the seller organisation number and Swedish purchase evidence', () => {
+  const invoice = q3Invoice('coolshop_receipt');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, orgNumber: null } }),
+    'needs_review', 'missing seller organisation number');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: 'Fakturering Customer DK Betalningsmetod' }),
+    'needs_review', 'foreign billing');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, grossAmount: 4001 } }),
+    'needs_review', 'full invoice requires VAT registration evidence');
 });
 
 Deno.test('DigiKey EU acquisition classification requires both its EU registration and acquisition evidence', () => {

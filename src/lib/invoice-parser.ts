@@ -763,7 +763,9 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 function extractSupplierCountry(text: string): string | null {
   if (/Apple Distribution International Ltd\./i.test(text) && /Ireland VAT Reg No\./i.test(text)) return 'IE';
   if (/Supabase Pte\. Ltd\./i.test(text) && /Singapore/i.test(text)) return 'SG';
-  if (/Coolshop\.se/i.test(text) && /VAT No\.:\s*DK/i.test(text)) return 'DK';
+  // The seller is Spelbutiken Sweden AB. Its Swedish organisation number
+  // identifies the company independently of its printed Danish VAT registration.
+  if (/Coolshop\.se\s+Box\s+\d+\s+\d{5}\s+Varberg\s+SE\s+Org\.\s*Nr\.:\s*556611-?3212\b/i.test(text)) return 'SE';
   if (/Global-e NL B\.V/i.test(text) && /Netherlands/i.test(text)) return 'NL';
   if (/DIGI-KEY\s+ELECTRONICS|DIGI-KEYS momsregistreringsnr\./i.test(text) && /USA/i.test(text)) return 'US';
   if (/elbutik scandinavia ab/i.test(text) || /cs megastore ab/i.test(text)) return 'SE';
