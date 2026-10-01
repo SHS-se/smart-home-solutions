@@ -55,44 +55,11 @@ The totals table compares only the cases both runs have results for.
 
 ## Scoring
 
-Every 15-minute quarter of a plan scores an integer from −2 to +2. The rules
-that fire for the quarter add their points, and the sum is clamped. A quarter
-where nothing notable happens scores 0.
-
-The plan chart shows these scores as a colour-coded strip above the price
-panel: dark red −2, light red −1, grey 0, light green +1, dark green +2. A
-single day shows the digits; the three-day view shows coloured cells. Click a
-quarter to see which rules fired.
-
-"Flexible load" is pool + battery charging + car of at least 500 W. Price
-ranks are over the whole 72-hour plan, as the planner saw it.
-
-| Rule | Default threshold | Points |
-|---|---|---:|
-| Pool below minimum * | < 28 °C | −2 |
-| Pool below comfort band | < 29 °C | −1 |
-| Pool above maximum | > 32.5 °C | −1 |
-| Flexible load in a cheap quarter | cheapest 25 % | +1 |
-| Flexible load in a very cheap quarter | cheapest 10 % | +1 |
-| Flexible load in a dear quarter | dearest 25 % | −1 |
-| Flexible load in a very dear quarter | dearest 10 % | −1 |
-| Flexible load at an estimated price above cheap published ones | > published 25th percentile | −1 |
-| Car charging planned while unplugged * | > 50 W | −2 |
-| Solar exported while the home battery has room | battery < 95 % | −1 |
-| Very dear import while the battery sits idle | battery > 20 %, dearest 10 % | −1 |
-
-\* If this rule fires anywhere, the case shows as failed. Your verdict
-overrides the automatic pass/fail but does not change points.
-
-- **Case points:** quarter sum ÷ 10, clamped to −10…+10.
-- **Run score:** 550 + 45 × the mean case points, which maps onto 100–1000.
-
-Every rule can be switched off, re-thresholded or re-pointed per case on the
-page. The chart and rule counts update as you edit, and saving recomputes that
-case's stored scores for every run. To change a rule for all cases, edit
-`DEFAULT_RULES` in `src/lib/planner-bench/score.ts` and bump `SCORER_VERSION`.
-The next bench run, or **Recompute scores**, rescores every stored result from
-its saved plan, without re-running any planner.
+Comfort is scored in points against the owner's targets, and cost is reported
+in kr at real prices, with what the planner expected beside it. Both, and the
+lanes that explain a result, are described in [test-cases.md](test-cases.md).
+The next bench run, or **Recompute scores**, re-evaluates every stored result
+from its stored decisions when a rule or the referee changes; no planner runs.
 
 ## Running it
 

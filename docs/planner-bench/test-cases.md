@@ -50,9 +50,9 @@ Authored part (`dataset`), made by a converter and edited on the bench page:
   "base_load_forecast_w": [ … ],             // everything the household does not plan
   "other_devices_w": { "<meter>": [ … ] },   // the devices folded into base load, kept separable
   "start_state": { "battery_soc": 0.64, "pool_water_c": 23.4,
-                   "ev": { "soc": 0.55, "plugged_in": false, "target_soc": 0.8 } },
+                   "ev": { "soc": 0.55, "target_soc": 0.8 } },  // target_soc is the car's charge limit
   "start_state_unread": [ "pool_water_c" ],  // only while a default stands in for a missing reading
-  "comfort": null                            // owner comfort for this case only; null = the bench's
+  "comfort": null                            // { pool_c, ev_km } for this case only; null = the bench's targets
 }
 ```
 
@@ -81,22 +81,22 @@ Rules:
   done by hand.
 - **Start state belongs to the case.** It comes from the source's readings, or
   from recorded history at the start where the source had none. An edit on the
-  page is saved into the case. There is no invented departure time; the car
-  keeps what the source says.
+  page is saved into the case. The car is planned whether plugged in or not and
+  has no departure time: it is a store with a target, like the pool.
 - **History is stored, not read at run time.** 60 days of prices (what the live
   planner reads) or as much as exists, and the month's grid import for planners
   that use peak tariffs.
 
-## Household and comfort
+## Household and targets
 
 Devices, in `HOUSEHOLD`: battery 18.08 kWh (8.8 kW in, 9.6 kW out, 95 % each
 way, 5–100 %); car 75.6 kWh, 0.16 kWh/km, 3 × 16 A, 92 %; pool 55 m³, 764 W
 pump + 2314 W heater, 0.13 kW/K loss, heat pump COP 4.5 at 20 °C air and
-27 °C water; site limits 13.2 kW each way, SE3.
+27 °C water; site limits 13.2 kW each way, SE3. Only the heater heats the
+pool: the pump circulates and must run with it.
 
-Comfort, in `COMFORT`: pool 28 / 30 / 32 °C and car 100 / 300 / 400 km (really
-wanted below / comfortable / no more wanted above), plus how much more an
-urgent unit is worth than an ordinary one (pool 1.8×, car 3×).
+What the owner wants, in `TARGETS`: **pool 30 °C, car 300 km.** One number per
+store; no bands, no urgency, no money.
 
 Hot water and room heaters are not planned yet; they are fixed demand inside
 base load. Taking one over later means adding it to the household and taking
@@ -104,19 +104,73 @@ its series out of base load, which `other_devices_w` keeps possible.
 
 ## Value curves
 
-What a kWh in the battery, a degree in the pool or a kilometre in the car is
-worth is planner logic, worked out per case. The bench supplies comfort levels
-only, so each version derives its own:
+A value curve says what one more unit in a store is worth at each level: a kWh
+in the battery, a degree in the pool, a kilometre in the car. It is the
+planner's own working, derived every plan, and the single place where "what is
+energy worth" meets "when to buy". It is not an input and not a customer
+setting.
 
-- **`dev` planner:** the battery curve is its *balanced* curve, from the case's
-  solar, load and prices. Pool and car curves are the comfort levels priced
-  against the horizon's cheapest-tenth price and the device's physics.
-- **Redesign branch:** the adapter lets its own code build its planning basis
-  from the case's price history, so its history-based valuation runs.
+- **Battery:** the *balanced* curve, from the case's solar, load and prices
+  (what a stored kWh will save later).
+- **Pool and car:** from the target by merit order (`planner/merit-order.ts`):
+  every quarter offers energy, surplus solar at what exporting it would earn
+  and import at its price, each worth more or less of the store depending on
+  that quarter's temperature. Cheapest first, the price of the last unit needed
+  to end the horizon on target is what a unit is worth at the target.
+- **The one control left** is a scale per store (default 1) that multiplies the
+  derived curve: an administrator's dial, not a customer's.
 
-Each result stores the curves the planner reported, and the case view shows
-them for the current and the test planner side by side. A version that reports
-none shows as such; curves are never rebuilt by the page.
+Planner versions from before single targets get the target as the comfort band
+and urgency they read (`bench/adapter.ts`), and the redesign branch builds its
+planning basis from the case's price history with its own code.
+
+Each result stores the curves the planner reported and how it derived them; the
+case view shows current and test planner side by side. Curves are never rebuilt
+by the page.
+
+## Lanes: telling why a plan cost what it did
+
+Every case is planned six times per planner (`lanes.ts`), all refereed on the
+same real prices:
+
+| | low (0.71×) | nominal (1×) | high (1.41×) |
+|---|---|---|---|
+| **told** the published prices | | the planner as it runs live | |
+| **oracle**: told the real prices | | | |
+
+From these the page works out, per case:
+
+- **what the price estimate cost:** told/nominal minus oracle/nominal;
+- **what the valuation cost:** oracle/nominal minus the best oracle variant
+  (a variant only counts as best if its comfort is not worse than nominal's);
+- **which variant did best** under each price lane. If low or high keeps
+  winning across cases, the derivation is biased and needs fixing in the
+  planner, not a dial turned per home.
+
+What is left after both, against a perfect plan, is the planner's dispatch
+logic. The bench has no perfect plan to measure that against yet.
+
+Planners without a scale input get the variant as urgency, which moves only the
+part of the pool and car curves below target and leaves the battery alone; each
+result records which it was.
+
+## Scoring
+
+The score is about comfort only (`score.ts`); money is reported in kr beside it.
+Each quarter loses a point per rule that fires:
+
+| Rule | Points |
+|---|---|
+| Pool more than 1 °C below target | −1 |
+| Pool more than 2 °C below target | a further −1 |
+| Pool more than 2 °C above target | −1 |
+| Car more than 50 km short of target | −1 |
+| Car more than 100 km short of target | a further −1 |
+
+A rule counts only once its level has been reachable for a day: where full
+power from the first quarter would have got the store there, plus 24 hours to
+choose the hours. A case scores its quarter sum ÷ 28.8, at worst −10 (a point
+lost every quarter); a run scores 1000 + 90 × the mean, so 1000 is no miss.
 
 ## Results
 
@@ -128,9 +182,10 @@ A result is up to date when its `input_hash` matches the present case,
 household, comfort and adapter. Editing a case re-runs that case; changing the
 household or comfort re-runs everything; adding a case re-runs nothing.
 
-Each result shows, per case: cost at real prices beside what the planner
-expected, the value of the energy left in the stores at the end, decisions the
-household could not carry out, and the planner's own plan status.
+Each result shows, per case: cost at real prices and, separately, what the
+planner expected it to cost; the value of the energy left in the stores at the
+end; decisions the household could not carry out; and the planner's own plan
+status.
 
 ## Where test cases come from
 
@@ -141,8 +196,11 @@ household could not carry out, and the planner's own plan status.
    2026 can become a case from the quarter tables; actual solar and load are
    then used as a perfect forecast, and unpublished prices hidden.
 
-## Decisions still open
+## Not built yet
 
-See the list handed back with this work: how curves should be derived, the
-`price_only` battery mode, the price estimator, car availability, the headline
-metric and terminal value, the pool pump's heat, and the fate of old results.
+- A perfect-foresight plan to measure dispatch logic against.
+- The portal's customer view of one number per store, and sending targets to
+  the live planner; until then the live home plans on its stored curves.
+- The car's conditional "desired" schedule when unplugged (needs the Home
+  Assistant integration).
+- Capturing market forecasts as issued, for a better price estimate.
