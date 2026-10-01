@@ -415,3 +415,43 @@ Deno.test("an unpublished day's level leaves the published one for the recent no
   const young = buildPriceOutlook(slots, archive(29).slice(-96 * 3), { timeZone: TZ, asOf });
   assertClose(young.shadowImportSekPerKwh[3], 3, "no norm, no reversion", 0.05);
 });
+
+Deno.test("with wind, an unpublished day is priced by the wind forecast for it rather than by the recent norm", () => {
+  // Thirty flat days whose level fell 0.25 SEK for every m/s of wind: 2 SEK at 2 m/s, 1 SEK at 6.
+  const asOf = Date.parse("2026-07-01T00:00:00Z");
+  const speedOn = (daysBack: number) => 2 + (daysBack * 7) % 5;
+  const dayOf = (offset: number) => new Date(asOf + offset * 86_400_000).toISOString().slice(0, 10);
+  const history: StoredPriceRow[] = [];
+  const wind = [];
+  for (let daysBack = 30; daysBack >= 1; daysBack -= 1) {
+    wind.push({ day: dayOf(-daysBack), mean_speed_m_s: speedOn(daysBack) });
+    for (let hour = 0; hour < 24; hour += 1) {
+      history.push({
+        start_ts: new Date(asOf - daysBack * 86_400_000 + hour * 3_600_000).toISOString(),
+        import_price_sek_per_kwh: 2.5 - 0.25 * speedOn(daysBack),
+      });
+    }
+  }
+  // Today is published at 4 m/s and priced as its wind says; a calm day and a gale follow.
+  wind.push({ day: dayOf(0), mean_speed_m_s: 4 }, { day: dayOf(1), mean_speed_m_s: 2 }, { day: dayOf(2), mean_speed_m_s: 6 });
+  const noon = (offset: number, price: number | null) => ({ start: new Date(asOf + offset * 86_400_000 + 12 * 3_600_000).toISOString(), import_price_sek_per_kwh: price });
+  const slots = [noon(0, 1.5), noon(1, null), noon(2, null), noon(3, null)];
+
+  const outlook = buildPriceOutlook(slots, history, { timeZone: "UTC", asOf, wind });
+  assert(outlook.levelBasis === "wind", `the level should stand on wind, not ${outlook.levelBasis}`);
+  assertClose(outlook.shadowImportSekPerKwh[1], 2, "a calm day is dear", 0.05);
+  assertClose(outlook.shadowImportSekPerKwh[2], 1, "a windy day is cheap", 0.05);
+  // A day the forecast does not reach falls back on the recent norm.
+  assertClose(outlook.shadowImportSekPerKwh[3], 1.5, "past the forecast", 0.3);
+
+  // A published day dearer than its wind explains carries part of that into the days after.
+  const dear = buildPriceOutlook([noon(0, 2.5), ...slots.slice(1)], history, { timeZone: "UTC", asOf, wind });
+  assert(dear.shadowImportSekPerKwh[1] > 2.3 && dear.shadowImportSekPerKwh[2] > 1 && dear.shadowImportSekPerKwh[2] < 1.5,
+    `the surprise should fade: ${dear.shadowImportSekPerKwh[1]}, ${dear.shadowImportSekPerKwh[2]}`);
+
+  // Too few days of wind, or prices that rose with it, are no evidence: the norm is used as before.
+  const few = buildPriceOutlook(slots, history, { timeZone: "UTC", asOf, wind: wind.slice(-10) });
+  assert(few.levelBasis === "recent_norm", `ten days should not make a fit: ${few.levelBasis}`);
+  const backwards = buildPriceOutlook(slots, history, { timeZone: "UTC", asOf, wind: wind.map((entry) => ({ ...entry, mean_speed_m_s: 10 - entry.mean_speed_m_s })) });
+  assert(backwards.levelBasis === "recent_norm", `prices rising with wind should not be used: ${backwards.levelBasis}`);
+});

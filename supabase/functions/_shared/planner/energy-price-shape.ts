@@ -118,6 +118,18 @@ export interface PriceOutlook {
   effectiveDays: number;
   /** False only when a plan carries no published price at all. */
   shaped: boolean;
+  /** What set the level of the unpublished days. */
+  levelBasis?: LevelBasis;
+}
+
+/** `wind`: recent prices explained by wind; `recent_norm`: the fortnight's median; `published`: carried forward. */
+export type LevelBasis = "wind" | "recent_norm" | "published";
+
+/** The mean wind speed over a bidding zone for one UTC calendar day, observed or forecast. */
+export interface WindDay {
+  /** YYYY-MM-DD, UTC. */
+  day: string;
+  mean_speed_m_s: number;
 }
 
 interface LocalSlot {
@@ -419,10 +431,103 @@ export function recentDailyNorm(archive: readonly StoredPriceRow[], asOf: number
   return means.length % 2 ? means[middle] : (means[middle - 1] + means[middle]) / 2;
 }
 
+/** Days of prices and wind the wind model is fitted on. */
+export const WIND_FIT_DAYS = 30;
+/** Fewer days than this with both a price and a wind speed is not a fit. */
+const WIND_FIT_MIN_DAYS = 14;
+
+const utcDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+const isWeekend = (day: string): number => {
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return weekday === 0 || weekday === 6 ? 1 : 0;
+};
+
+/**
+ * What a day's mean price is expected to be from its wind, or null without
+ * enough evidence that wind explains this home's prices.
+ *
+ * Wind is the largest thing that moves the daily level and the market does not
+ * publish it past tomorrow, while the weather forecast reaches ten days. Over
+ * 93 days of SE3 prices (July to September 2026) the mean wind speed at ten
+ * SMHI stations followed the zone's wind generation with a correlation of
+ * 0.97, and a level fitted on the last 30 days of wind and day type missed the
+ * level two days on by 22 EUR/MWh and three days on by 25, where reverting to
+ * the fortnight's median missed by 34 and 41.
+ *
+ * The fit is ordinary least squares of the daily mean price on wind speed and
+ * a weekend flag, and it is only used when more wind has meant lower prices:
+ * anything else is a coincidence in thirty points, not a market.
+ */
+export function windLevelModel(
+  archive: readonly StoredPriceRow[],
+  wind: readonly WindDay[],
+  asOf: number,
+): ((day: string) => number | null) | null {
+  const speedByDay = new Map<string, number>();
+  for (const entry of wind) {
+    if (typeof entry?.day === "string" && Number.isFinite(entry.mean_speed_m_s) && entry.mean_speed_m_s >= 0) {
+      speedByDay.set(entry.day, entry.mean_speed_m_s);
+    }
+  }
+  if (speedByDay.size === 0) return null;
+  const firstMs = asOf - WIND_FIT_DAYS * 86_400_000;
+  const prices = new Map<string, { sum: number; count: number }>();
+  for (const row of archive) {
+    const at = Date.parse(row.start_ts);
+    if (!Number.isFinite(at) || at >= asOf || at < firstMs || !Number.isFinite(row.import_price_sek_per_kwh)) continue;
+    const day = utcDay(at);
+    const held = prices.get(day) ?? { sum: 0, count: 0 };
+    held.sum += row.import_price_sek_per_kwh;
+    held.count += 1;
+    prices.set(day, held);
+  }
+  const rows: { speed: number; weekend: number; level: number }[] = [];
+  for (const [day, held] of prices) {
+    const speed = speedByDay.get(day);
+    // A day counts when most of it is on record, at quarter or hour resolution.
+    if (speed === undefined || held.count < 20) continue;
+    rows.push({ speed, weekend: isWeekend(day), level: held.sum / held.count });
+  }
+  if (rows.length < WIND_FIT_MIN_DAYS) return null;
+
+  const mean = (pick: (row: typeof rows[number]) => number) => rows.reduce((sum, row) => sum + pick(row), 0) / rows.length;
+  const speedMean = mean((row) => row.speed);
+  const weekendMean = mean((row) => row.weekend);
+  const levelMean = mean((row) => row.level);
+  let ss = 0, sw = 0, ww = 0, sy = 0, wy = 0;
+  for (const row of rows) {
+    const speed = row.speed - speedMean;
+    const weekend = row.weekend - weekendMean;
+    const level = row.level - levelMean;
+    ss += speed * speed;
+    sw += speed * weekend;
+    ww += weekend * weekend;
+    sy += speed * level;
+    wy += weekend * level;
+  }
+  if (ss < 1e-9) return null;
+  // Without both day types in the window the flag explains nothing.
+  const determinant = ss * ww - sw * sw;
+  const both = ww > 1e-9 && Math.abs(determinant) > 1e-9;
+  const perSpeed = both ? (sy * ww - wy * sw) / determinant : sy / ss;
+  const perWeekend = both ? (wy * ss - sy * sw) / determinant : 0;
+  if (!(perSpeed < 0)) return null;
+
+  const levels = rows.map((row) => row.level);
+  const lowest = Math.min(...levels) * 0.8;
+  const highest = Math.max(...levels) * 1.25;
+  return (day) => {
+    const speed = speedByDay.get(day);
+    if (speed === undefined) return null;
+    const level = levelMean + perSpeed * (speed - speedMean) + perWeekend * (isWeekend(day) - weekendMean);
+    return Math.min(highest, Math.max(lowest, level));
+  };
+}
+
 export function buildPriceOutlook(
   slots: OutlookSlot[],
   archive: StoredPriceRow[] = [],
-  options: { timeZone?: string; asOf?: number } = {},
+  options: { timeZone?: string; asOf?: number; wind?: readonly WindDay[] } = {},
 ): PriceOutlook {
   const timeZone = options.timeZone ?? "Europe/Stockholm";
   const published = slots.filter((slot) =>
@@ -483,11 +588,32 @@ export function buildPriceOutlook(
   const norm = recentDailyNorm(archive, asOf);
   const publishedUntil = Math.max(...published.map((slot) => Date.parse(slot.start)));
   const publishedDayLevel = level / publishedShapeMean;
+  // With wind, the level is what the day's wind says, plus what is left of
+  // how far the published days stand from what their own wind said.
+  const windLevel = options.wind?.length ? windLevelModel(archive, options.wind, asOf) : null;
+  let publishedWindLevel: number | null = null;
+  if (windLevel) {
+    const expected = published
+      .map((slot) => windLevel(utcDay(Date.parse(slot.start))))
+      .filter((value): value is number => value !== null);
+    // Most of the published window must have a wind of its own to stand on.
+    if (expected.length * 2 >= published.length) {
+      publishedWindLevel = expected.reduce((sum, value) => sum + value, 0) / expected.length;
+    }
+  }
+  let levelBasis: LevelBasis = "published";
   const dayLevelAt = (startMs: number): number => {
-    if (norm === null || !Number.isFinite(publishedUntil)) return publishedDayLevel;
+    if (!Number.isFinite(publishedUntil)) return publishedDayLevel;
     // Half a day in, the first unpublished day is one day of lead.
     const leadDays = Math.max(0, (startMs - publishedUntil) / 86_400_000) + 0.5;
     const weight = Math.min(1, LEVEL_REVERSION_PER_DAY * leadDays);
+    const expected = publishedWindLevel === null ? null : windLevel!(utcDay(startMs));
+    if (expected !== null) {
+      levelBasis = "wind";
+      return Math.max(0, expected + (1 - weight) * (publishedDayLevel - publishedWindLevel!));
+    }
+    if (norm === null) return publishedDayLevel;
+    if (levelBasis === "published") levelBasis = "recent_norm";
     return publishedDayLevel + weight * (norm - publishedDayLevel);
   };
 
@@ -510,5 +636,6 @@ export function buildPriceOutlook(
     observedDays: shape?.observedDays ?? 0,
     effectiveDays: shape?.effectiveDays ?? 0,
     shaped: true,
+    levelBasis,
   };
 }

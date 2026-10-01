@@ -64,6 +64,28 @@ function monthStart(ms: number, timeZone: string): number {
   return guess - offset;
 }
 
+/** Days of wind before a case's start that are kept with it: what a planner fits its prices to. */
+export const WIND_HISTORY_DAYS = 45;
+
+/**
+ * The zone's observed daily wind from weeks before a case's start to the end
+ * of its window, or null until every day of the window has been observed.
+ */
+export async function recordedWind(source: HistorySource, zone: string, caseStart: string): Promise<NonNullable<BenchRecorded["wind"]> | null> {
+  const start = Date.parse(caseStart);
+  const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const first = day(start - WIND_HISTORY_DAYS * 86_400_000), last = day(start + QUARTERS * QUARTER_MS - 1);
+  const query = `energy_market_wind_observed?select=day,mean_speed_m_s&zone=eq.${zone}&day=gte.${first}&day=lte.${last}&order=day`;
+  const response = await fetch(`${source.url}/rest/v1/${query}`, { headers: { apikey: source.key, Authorization: `Bearer ${source.key}` } });
+  // A database without the table yet has no wind to give; the case runs without it.
+  if (!response.ok) return null;
+  const days = (await response.json() as { day: string; mean_speed_m_s: number | string }[])
+    .map(row => ({ day: row.day, mean_speed_m_s: Number(row.mean_speed_m_s) }));
+  const held = new Set(days.map(entry => entry.day));
+  for (let ms = start; day(ms) <= last; ms += 86_400_000) if (!held.has(day(ms))) return null;
+  return { zone, days };
+}
+
 export interface Completion {
   /** Present when every quarter the case needs is recorded. */
   recorded: BenchRecorded | null;

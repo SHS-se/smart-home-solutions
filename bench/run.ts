@@ -46,7 +46,7 @@ import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD, TARGETS } from "../src/lib/planner-bench/household.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
-import { completeCase, type HistorySource } from "./history.ts";
+import { completeCase, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
 
@@ -140,6 +140,14 @@ async function prepareCases(bench: BenchStore) {
       await bench.saveDataset(scenario.id, dataset);
       console.log(`${scenario.name}: converted from its replay.`);
     }
+    if (scenario.recorded && source && !scenario.recorded.wind) {
+      // Wind was not kept when this case was recorded; it is added once it has been observed.
+      const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
+      if (wind) {
+        await bench.saveRecorded(scenario.id, { ...scenario.recorded, wind }, null);
+        console.log(`${scenario.name}: observed wind added.`);
+      }
+    }
     if (scenario.recorded || !source) continue;
     const done = await completeCase(source, dataset);
     if (dataset.start_state_unread?.length) {
@@ -148,6 +156,10 @@ async function prepareCases(bench: BenchStore) {
       const { start_state_unread: _unread, ...rest } = dataset;
       dataset = { ...rest, start_state: { ...dataset.start_state, ...read, ev: { ...dataset.start_state.ev, ...(ev_soc !== undefined ? { soc: ev_soc } : {}) } } };
       await bench.saveDataset(scenario.id, dataset);
+    }
+    if (done.recorded) {
+      const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
+      if (wind) done.recorded.wind = wind;
     }
     await bench.saveRecorded(scenario.id, done.recorded, done.missing);
     console.log(`${scenario.name}: ${done.recorded ? "complete, recorded data stored" : `waiting, ${done.missing}`}.`);

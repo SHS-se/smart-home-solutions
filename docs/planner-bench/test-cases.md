@@ -64,6 +64,7 @@ Recorded part (`recorded`), filled by the runner from the home's quarter tables
   "prices": { "import_sek_per_kwh": [ … ], "export_sek_per_kwh": [ … ] },  // real, all 288 quarters
   "outdoor_temperature_c": [ … ],            // measured at the house; a perfect forecast for planners
   "solar_irradiance_w_per_m2": [ … ],
+  "wind": { "zone": "SE3", "days": [ { "day": "2026-09-20", "mean_speed_m_s": 3.4 }, … ] },  // observed, 45 days before the start to the end
   "history": {
     "prices": { "start": "…", "import_sek_per_kwh": [ … ], "export_sek_per_kwh": [ … ] },  // up to 60 days before the start
     "grid_import_kwh": { "start": "…", "kwh": [ … ] }                                       // month to date
@@ -83,6 +84,14 @@ Rules:
   from recorded history at the start where the source had none. An edit on the
   page is saved into the case. The car is planned whether plugged in or not and
   has no departure time: it is a store with a target, like the pool.
+- **Wind is observed, and a perfect forecast for planners.** One mean wind
+  speed per UTC day over the price area (`energy_market_wind_observed`, filled
+  by the server from SMHI), from 45 days before the start to the end of the
+  window. Planners estimate the price level of unpublished days from it. Like
+  the temperature it is what happened, not what was forecast, so the told lane
+  flatters a planner by however wrong the wind forecast was; the forecasts as
+  issued are kept from 2026-10-02 (`energy_market_wind_forecast`) for cases
+  made later. A case recorded before wind was kept gets it added by the runner.
 - **History is stored, not read at run time.** 60 days of prices (what the live
   planner reads) or as much as exists, and the month's grid import for planners
   that use peak tariffs.
@@ -196,8 +205,7 @@ status.
 ## Not built yet
 
 - A perfect-foresight plan to measure dispatch logic against.
-- The portal's customer view of one number per store, and sending targets to
-  the live planner; until then the live home plans on its stored curves.
 - The car's conditional "desired" schedule when unplugged (needs the Home
   Assistant integration).
-- Capturing market forecasts as issued, for a better price estimate.
+- Giving cases the wind forecast as it was issued instead of the observed wind
+  (the forecasts are being kept; no case uses them yet).

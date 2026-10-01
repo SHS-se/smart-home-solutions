@@ -29,7 +29,7 @@ import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 3;
+export const ADAPTER_VERSION = 4;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -86,7 +86,7 @@ function legacyComfortCurve(unit: string, target: number, band: number, urgency:
   };
 }
 
-function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean): Json {
+function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean): Json {
   const starts = quarterStarts(c.start);
   const end = new Date(Date.parse(starts[QUARTERS - 1]) + 15 * 60_000).toISOString();
   const targets = { ...TARGETS, ...(c.comfort ?? {}) };
@@ -183,6 +183,7 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
     ],
     service_requirement_sample_days: { pool_heating: 0 },
     outdoor_temperature_c: c.recorded.outdoor_temperature_c,
+    ...(wind && c.recorded.wind ? { wind_outlook: { provider: "bench_case", zone: c.recorded.wind.zone, days: c.recorded.wind.days } } : {}),
     ...(c.recorded.solar_irradiance_w_per_m2.every(v => v !== null) ? { solar_irradiance_w_per_m2: c.recorded.solar_irradiance_w_per_m2 } : {}),
     operating_scope: {
       modes: { $battery: "controlling", $ev: "controlling", $pool: "controlling" },
@@ -272,7 +273,7 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
   return {
     generation,
     plan(c, household, scale = 1) {
-      const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort");
+      const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort", M.PLANNER_INPUTS?.includes("wind_outlook") === true);
       const archive = priceArchive(c);
       if (generation === "snapshot+basis") {
         // The planner's own code builds its basis from the case's history.

@@ -64,12 +64,24 @@ export interface PriceHistory {
   export_sek_per_kwh: (number | null)[];
 }
 
+/** Mean wind speed over the bidding zone for one UTC day. */
+export interface WindDay {
+  day: string;
+  mean_speed_m_s: number;
+}
+
 export interface BenchRecorded {
   /** What electricity really cost in every quarter of the window. */
   prices: { import_sek_per_kwh: Series; export_sek_per_kwh: Series };
   /** Measured at the house; given to planners as a perfect forecast. */
   outdoor_temperature_c: Series;
   solar_irradiance_w_per_m2: (number | null)[];
+  /**
+   * Observed daily wind over the zone, from weeks before the start to the end
+   * of the window; given to planners as a perfect forecast, as the temperature
+   * is. Absent on cases recorded before wind was kept.
+   */
+  wind?: { zone: string; days: WindDay[] };
   history: {
     prices: PriceHistory;
     /** Grid import per quarter from the start of the calendar month to the case start. */
@@ -132,6 +144,10 @@ export function parseRecorded(raw: unknown): BenchRecorded {
   series(recorded.prices.export_sek_per_kwh, 'recorded.prices.export_sek_per_kwh');
   series(recorded.outdoor_temperature_c, 'recorded.outdoor_temperature_c');
   series(recorded.solar_irradiance_w_per_m2, 'recorded.solar_irradiance_w_per_m2', true);
+  if (recorded.wind !== undefined && (!isRecord(recorded.wind) || !Array.isArray(recorded.wind.days)
+    || !recorded.wind.days.every(d => isRecord(d) && typeof d.day === 'string' && finite(d.mean_speed_m_s)))) {
+    throw new CaseFormatError('recorded.wind is malformed.');
+  }
   return recorded;
 }
 

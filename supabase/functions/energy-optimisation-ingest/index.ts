@@ -71,6 +71,7 @@ import {
   homeLocation,
   withServerOutdoorTemperature,
 } from "../_shared/outdoor-forecast.ts";
+import { withWindOutlook } from "../_shared/market-wind.ts";
 import {
   irradianceForQuarters,
   irradianceOnto,
@@ -1826,6 +1827,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         // Outdoor temperature is the server's to provide (SMHI), for the pool
         // and the rooms alike; a series from Home Assistant is replaced.
         snapshot = await withServerOutdoorTemperature(supabase, snapshot);
+        // So is the wind over the price area, which the level of the days
+        // the market has not published is estimated from.
+        snapshot = await withWindOutlook(supabase, snapshot);
         const thermal = await prepareThermalPlanning(
           supabase,
           auth.customerId,

@@ -25,8 +25,10 @@ import { dispatchWithFixedPlan, type FixedEnergyPlan } from "./fixed-energy-plan
 
 import {
   buildPriceOutlook,
+  type LevelBasis,
   type PriceOutlook,
   type StoredPriceRow,
+  type WindDay,
 } from "./energy-price-shape.ts";
 import {
   projectZoneTemperature,
@@ -473,6 +475,12 @@ export interface OptimisationSnapshot {
    */
   comfort?: { pool?: { target_c: number }; ev?: { target_km: number } } | null;
   /**
+   * Daily mean wind speed over the home's bidding zone, observed for the past
+   * weeks and forecast for the days ahead (energy-price-shape.ts). The server
+   * supplies it; the price level of unpublished days is estimated from it.
+   */
+  wind_outlook?: { provider?: string; zone?: string; days: WindDay[] } | null;
+  /**
    * An administrator's scale on what each store's derived curve is worth; 1
    * when absent. Turns a store up or down without moving its target.
    */
@@ -760,6 +768,8 @@ export interface OptimisationPlan {
    * out loud rather than drawing without comment (§1.4.3).
    */
   price_outlook: {
+    /** Present when the level of the unpublished days was estimated from the wind forecast. */
+    level_basis?: LevelBasis;
     /** False only when the plan carries no published price at all. */
     shaped: boolean;
     /** Distinct days of price history behind the shape. */
@@ -1682,10 +1692,12 @@ function preparedSlots(
       observedDays: resolvedPriceOutlook.observed_days,
       effectiveDays: resolvedPriceOutlook.effective_days,
       shaped: resolvedPriceOutlook.shaped,
+      levelBasis: resolvedPriceOutlook.level_basis,
     }
     : buildPriceOutlook(snapshot.slots, archive, {
       timeZone: snapshot.timezone,
       asOf: isoMs(snapshot.captured_at),
+      wind: Array.isArray(snapshot.wind_outlook?.days) ? snapshot.wind_outlook.days : undefined,
     });
   if (
     outlook.shadowImportSekPerKwh.length !== snapshot.slots.length ||
@@ -2296,7 +2308,7 @@ const POOL_NO_AIR_CUTOUT_C = -273.15;
  * bench's adapter builds its input from this, so an older planner is never
  * handed a field it would ignore.
  */
-export const PLANNER_INPUTS = ["comfort", "valuation"] as const;
+export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook"] as const;
 
 /** How far above its target the pool may be heated when energy is cheap, °C. */
 const POOL_OVERSHOOT_C = 2;
@@ -5171,6 +5183,7 @@ function generatePlanBody(
     pv_calibration: snapshot.pv_calibration,
     price_outlook: {
       shaped: outlook.shaped,
+      ...(outlook.levelBasis === "wind" ? { level_basis: outlook.levelBasis } : {}),
       observed_days: outlook.observedDays,
       effective_days: round(outlook.effectiveDays, 2),
       level_sek_per_kwh: outlook.levelSekPerKwh,
