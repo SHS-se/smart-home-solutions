@@ -142,6 +142,19 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
     const request = route.request();
     const url = new URL(request.url());
     const table = url.pathname.split('/').pop() || '';
+    if (table === 'get_price_estimate_accuracy') {
+      const estimate = (issued_on: string, target_day: string, basis: string, estimated: number, actual: number | null) => ({
+        home_id: 'home', issued_on, target_day, lead_days: 2, basis,
+        quarters: 96, estimated_sek_per_kwh: estimated, actual_sek_per_kwh: actual, quarter_mae_sek_per_kwh: actual === null ? null : 0.4,
+      });
+      await route.fulfill({ json: [
+        estimate('2026-10-03', '2026-10-05', 'wind', 1.5, null),
+        estimate('2026-10-02', '2026-10-04', 'wind', 2.1, 1.9),
+        estimate('2026-10-01', '2026-10-03', 'wind', 1.2, 1.6),
+        estimate('2026-09-30', '2026-10-02', 'recent_norm', 1.0, 2.0),
+      ] });
+      return;
+    }
     if (request.method() !== 'GET') {
       if (table === 'bench_verdicts') captured.verdicts.push(request.postDataJSON());
       if (table === 'bench_scenarios' && request.method() === 'POST') {
@@ -198,6 +211,18 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('shows staff how far the price estimate was from the published prices', async ({ context, page }) => {
+    await mockBackend(context);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const card = page.getByTestId('price-estimate-accuracy');
+    // Two days ahead on wind: off by 0.2 and 0.4, and too low by 0.1 on average.
+    await expect(card.getByRole('row', { name: /^2 (wind|vind) 2 0\.30 -0\.10 0\.40$/ })).toBeVisible();
+    await expect(card.getByRole('row', { name: /^2 norm 1 1\.00 -1\.00 0\.40$/ })).toBeVisible();
+    // A day the market has not published yet waits, and is left out of the means.
+    await expect(card.getByRole('row', { name: /2026-10-05 2026-10-03 (wind|vind) 1\.50 – (waiting|väntar)/ })).toBeVisible();
+  });
+
   test('compares the test planner with the current one and records a verdict', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);

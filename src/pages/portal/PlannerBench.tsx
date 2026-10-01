@@ -35,6 +35,7 @@ import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePan
 import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleCards from '@/components/portal/planner-bench/BenchRuleCards';
+import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
 
 // The generated Database types describe the migrated schema; the bench tables
 // live only in the test project, outside it.
@@ -277,6 +278,8 @@ const Bench: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      <PriceEstimateAccuracy />
 
       {loadError && (isMissingTable(loadError)
         ? <Alert><AlertDescription>

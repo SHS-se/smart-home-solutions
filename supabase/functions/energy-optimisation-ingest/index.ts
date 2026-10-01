@@ -72,6 +72,7 @@ import {
   withServerOutdoorTemperature,
 } from "../_shared/outdoor-forecast.ts";
 import { withWindOutlook } from "../_shared/market-wind.ts";
+import { priceEstimateRows } from "../_shared/price-estimate-record.ts";
 import {
   irradianceForQuarters,
   irradianceOnto,
@@ -1942,6 +1943,19 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           currentError,
         );
         return json({ error: "storage_failed" }, 500);
+      }
+
+      // What this plan estimated for the unpublished days, kept for the staff
+      // accuracy view. Losing it costs a data point, never the plan.
+      const estimateRows = priceEstimateRows({
+        homeId: auth.homeId, timezone: snapshot.timezone, issuedAt: generated.issued_at, slots: snapshot.slots,
+        shadowImportSekPerKwh: generated.price_outlook?.shadow_import_sek_per_kwh,
+        basis: generated.price_outlook?.level_basis,
+      });
+      if (estimateRows.length > 0) {
+        const { error: estimateError } = await supabase.from("energy_price_estimate_days")
+          .upsert(estimateRows, { onConflict: "home_id,issued_on,target_day" });
+        if (estimateError) console.error("[ENERGY-OPTIMISATION] price estimate not recorded", estimateError);
       }
 
       const runStarted = performance.now();
