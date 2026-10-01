@@ -2707,6 +2707,8 @@ function buildDispatchStores(
     const poolUnitsPerKwh = poolUnitsAt(pool.water_temperature_c, 0);
     const poolPower = declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
     const poolTarget = snapshot.comfort?.pool?.target_c;
+    // The share of a degree added in a quarter that is still there a quarter later.
+    const poolRetention = Math.max(0.9, 1 - model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK);
     // From a target: what the energy to hold it costs, quarter by quarter, at
     // each quarter's own air temperature and solar surplus.
     const poolMerit = poolTarget === undefined ? null : meritOrderCurve({
@@ -2716,7 +2718,9 @@ function buildDispatchStores(
       offers: slots.flatMap((slot, index) => quarterOffers({
         hours: slot.duration_hours, surplus_w: slot.pv_w - fixedLoadW(slot), max_w: poolPower.max_power_w,
         import_sek_per_kwh: slot.shadow_import_sek_per_kwh, export_sek_per_kwh: slot.shadow_export_sek_per_kwh,
-        units_per_kwh: poolUnitsAt(poolTarget, index),
+        // Heat bought early has partly leaked by the end of the horizon, which
+        // is where the dispatch values it; an early kWh is a dearer degree.
+        units_per_kwh: poolUnitsAt(poolTarget, index) * poolRetention ** (count - 1 - index),
       })),
       scale: validScale(snapshot.valuation?.pool),
     });
@@ -2750,10 +2754,7 @@ function buildDispatchStores(
       // sunniest day of a plan and the house exported it instead.
       usage_weight: new Array(count).fill(0),
       terminal_weight: 1,
-      retention_per_slot: Math.max(
-        0.9,
-        1 - model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK,
-      ),
+      retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,
       drift: (waterC, index) =>
         stepPoolTemperature(model, waterC, airAt(index), 0, 0, slots[index].duration_hours),
