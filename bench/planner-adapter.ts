@@ -31,6 +31,18 @@ async function optionalImport(path: string): Promise<Module | null> {
   return await import(`file://${path}`);
 }
 
+/**
+ * The one amendment the bench makes to every case, for every version alike:
+ * captures taken before the pool loss was fitted carry no pool model, and
+ * without one the pool cannot be planned at all. 0.1 kW/K is the loss the
+ * acceptance replays have always used for those captures.
+ */
+function amend(snapshot: Record<string, unknown>) {
+  if (snapshot.pool && !snapshot.pool_model) {
+    snapshot.pool_model = { loss_kw_per_k: 0.1, rated_cop: null, cop_per_air_c: null };
+  }
+  return snapshot;
+}
 
 export async function loadPlanner(root: string): Promise<Planner> {
   const planner = `${root}/${plannerDir(diskTree(root))}`;
@@ -42,7 +54,7 @@ export async function loadPlanner(root: string): Promise<Planner> {
   return {
     run(original, all) {
       const input = prepare ? prepare(structuredClone(original), all) : structuredClone(original);
-      const snapshot = input.snapshot as Record<string, unknown>;
+      const snapshot = amend(input.snapshot as Record<string, unknown>);
       const now = new Date(input.now);
       const solved = new Map<string, unknown>();
       const solve = typeof D.dispatchAuctionSteps === "function"

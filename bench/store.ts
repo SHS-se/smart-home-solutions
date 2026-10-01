@@ -8,15 +8,12 @@
 import { stripReplay } from "../src/lib/planner-bench/strip.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
 import type { BenchInput, BenchSeries, BenchStats, CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
-import { type BenchWeather, HOUSEHOLD_VERSION } from "./household.ts";
 
 export interface StoredScenario {
   id: string;
   name: string;
   input: BenchInput;
   criteria: CriteriaOverrides;
-  /** Archived weather, for a replay that carries none (weather.ts). */
-  weather: BenchWeather | null;
 }
 
 export interface RunRecord {
@@ -63,9 +60,8 @@ export interface BenchStore {
   setPlannerVersion(sha: string, version: string): Promise<void>;
   /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
   mergeRun(from: string, into: string): Promise<void>;
-  /** Scenario ids with a result for this commit, planned for the current household (successful or not). */
+  /** Scenario ids that already have a result for this commit (successful or not). */
   resultIds(sha: string): Promise<Set<string>>;
-  saveWeather(scenarioId: string, weather: BenchWeather): Promise<void>;
   saveRun(run: RunRecord): Promise<void>;
   markCurrent(sha: string): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
@@ -95,13 +91,7 @@ export class DbStore implements BenchStore {
 
   async scenarios(only?: string) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
-    return await this.request(`bench_scenarios?select=id,name,input,criteria,weather&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
-  }
-
-  async saveWeather(scenarioId: string, weather: BenchWeather) {
-    await this.request(`bench_scenarios?id=eq.${scenarioId}`, {
-      method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ weather }),
-    });
+    return await this.request(`bench_scenarios?select=id,name,input,criteria&archived=eq.false${filter}&order=captured_at`) as StoredScenario[];
   }
 
   async knownShas() {
@@ -135,7 +125,7 @@ export class DbStore implements BenchStore {
   }
 
   async resultIds(sha: string) {
-    const rows = await this.request(`bench_results?select=scenario_id&sha=eq.${sha}&household_version=eq.${HOUSEHOLD_VERSION}`) as { scenario_id: string }[];
+    const rows = await this.request(`bench_results?select=scenario_id&sha=eq.${sha}`) as { scenario_id: string }[];
     return new Set(rows.map(row => row.scenario_id));
   }
 
@@ -160,7 +150,7 @@ export class DbStore implements BenchStore {
     await this.request("bench_results?on_conflict=sha,scenario_id", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify({ ...result, household_version: HOUSEHOLD_VERSION, created_at: new Date().toISOString() }),
+      body: JSON.stringify({ ...result, created_at: new Date().toISOString() }),
     });
   }
 
@@ -182,8 +172,7 @@ export class DbStore implements BenchStore {
 
 interface LocalFile {
   runs: (RunRecord & { is_current?: boolean })[];
-  results: (ResultRecord & { household_version?: number })[];
-  weather?: Record<string, BenchWeather>;
+  results: ResultRecord[];
 }
 
 /** Test cases from replay files in `dir`; records in the JSON file at `out`. */
@@ -203,10 +192,8 @@ export class LocalStore implements BenchStore {
       const id = entry.name.replace(/\.json$/, "");
       if (only && only !== id) continue;
       const stripped = stripReplay(JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`)));
-      out.push({ id, name: id, input: stripped.input, criteria: {}, weather: null });
+      out.push({ id, name: id, input: stripped.input, criteria: {} });
     }
-    const weather = (await this.load()).weather ?? {};
-    for (const scenario of out) scenario.weather = weather[scenario.id] ?? null;
     return out.sort((a, b) => a.input.snapshot.captured_at.localeCompare(b.input.snapshot.captured_at));
   }
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
@@ -228,13 +215,7 @@ export class LocalStore implements BenchStore {
     await this.save(file);
   }
   async resultIds(sha: string) {
-    return new Set((await this.load()).results
-      .filter(r => r.sha === sha && r.household_version === HOUSEHOLD_VERSION).map(r => r.scenario_id));
-  }
-  async saveWeather(scenarioId: string, weather: BenchWeather) {
-    const file = await this.load();
-    file.weather = { ...file.weather, [scenarioId]: weather };
-    await this.save(file);
+    return new Set((await this.load()).results.filter(r => r.sha === sha).map(r => r.scenario_id));
   }
   async saveRun(run: RunRecord) {
     const file = await this.load();
@@ -249,8 +230,7 @@ export class LocalStore implements BenchStore {
   }
   async saveResult(result: ResultRecord) {
     const file = await this.load();
-    file.results = [...file.results.filter(r => !(r.sha === result.sha && r.scenario_id === result.scenario_id)),
-      { ...result, household_version: HOUSEHOLD_VERSION }];
+    file.results = [...file.results.filter(r => !(r.sha === result.sha && r.scenario_id === result.scenario_id)), result];
     await this.save(file);
   }
   async scoredResults() {
