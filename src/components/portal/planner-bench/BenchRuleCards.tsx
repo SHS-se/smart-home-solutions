@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { resolveRules, ECONOMIC_FULL_LOSS_SHARE, type CaseScore } from '@/lib/planner-bench/score';
+import { resolveRules, type CaseScore } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, ruleState, type OpportunityRuleKey } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -136,7 +136,7 @@ export default function BenchRuleCards({ current, test, currentScore, testScore,
   return <section id="bench-rule-cards" className="space-y-5 min-w-0" aria-label={t('Poängregler', 'Scoring rules')}>
     <div className="flex flex-wrap justify-between items-baseline gap-2">
       <h3 className="font-medium">{t('Poängregler', 'Scoring rules')}</h3>
-      <span className="text-xs text-muted-foreground">{t('Komfort 70 % + energitid 30 %', 'Comfort 70% + energy timing 30%')}</span>
+      <span className="text-xs text-muted-foreground">{t('Råpoäng: komfort + kända energi­missar', 'Raw points: comfort + known energy misses')}</span>
     </div>
 
     <div className="rounded-lg border p-4 space-y-3">
@@ -157,7 +157,7 @@ export default function BenchRuleCards({ current, test, currentScore, testScore,
     </div>
 
     <div className="space-y-3">
-      <h4 className="flex items-center gap-2 font-medium"><Thermometer aria-hidden="true" className="h-4 w-4" />{t('Komfort', 'Comfort')} <span className="text-xs font-normal text-muted-foreground">70%</span></h4>
+      <h4 className="flex items-center gap-2 font-medium"><Thermometer aria-hidden="true" className="h-4 w-4" />{t('Komfort', 'Comfort')}</h4>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {rules.map(rule => {
           const pool = rule.key.startsWith('pool');
@@ -191,23 +191,22 @@ export default function BenchRuleCards({ current, test, currentScore, testScore,
     </div>
 
     <div className="space-y-3">
-      <h4 className="flex items-center gap-2 font-medium"><ArrowLeftRight aria-hidden="true" className="h-4 w-4" />{t('Energitid', 'Energy timing')} <span className="text-xs font-normal text-muted-foreground">30%</span></h4>
+      <h4 className="flex items-center gap-2 font-medium"><ArrowLeftRight aria-hidden="true" className="h-4 w-4" />{t('Energitid', 'Energy timing')}</h4>
       <div className="grid gap-3 sm:grid-cols-2">
         {sides.map(s => {
           const audit = s.score?.audit;
           return <div key={s.side} className="rounded-lg border p-3 min-w-0 space-y-2">
-            <div className="flex flex-wrap justify-between gap-2 text-sm"><span className="font-medium">{s.label}</span><span className="font-mono">{s.score?.complete && !s.score.auditPending && audit?.status === 'complete' ? `${audit.knownSek.toFixed(2)} SEK` : '—'}</span></div>
+            <div className="flex flex-wrap justify-between gap-2 text-sm"><span className="font-medium">{s.label}</span><span className="font-mono">{s.score?.complete && !s.score.auditPending ? `${s.score.economicPoints} ${t('p', 'pts')}` : '—'}</span></div>
             {!audit || s.score?.auditPending ? <p className="text-sm text-muted-foreground">{t('Saknar underlag · räkna om poängen', 'Missing evidence · recompute scores')}</p>
               : audit.status !== 'complete' ? <p className="text-sm text-destructive">{audit.reason}</p>
               : <>
-                <div className="flex h-2 rounded overflow-hidden bg-muted" aria-hidden="true"><span className="bg-destructive/70" style={{ width: `${Math.min(100, -(s.score?.economicPoints ?? 0) * 10)}%` }} /></div>
-                <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{t('Full förlust vid', 'Full loss at')}: {(audit.scaleSek * ECONOMIC_FULL_LOSS_SHARE).toFixed(1)} SEK</span><span>{t('Efterklokhet', 'Hindsight')}: {audit.hindsightSek.toFixed(2)} SEK</span></div>
+                <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{t('Känd besparing', 'Known saving')}: {audit.knownSek.toFixed(2)} SEK</span><span>{t('Efterklokhet', 'Hindsight')}: {audit.hindsightSek.toFixed(2)} SEK</span></div>
                 <p className="text-xs text-muted-foreground">{audit.trials} {t('alternativ prövade', 'alternatives tested')} · {audit.limitReached ? t('sökgräns nådd', 'search limit reached') : t('begränsad sökning', 'bounded search')}</p>
               </>}
           </div>;
         })}
       </div>
-      <p className="text-xs text-muted-foreground">{t('Flytta energi → samma komfort och slutlager → lägre kostnad efter slitage. Varje besparing räknas en gång.', 'Move energy → preserve comfort and end stores → lower cost after wear. Each saving counts once.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Flytta energi → samma komfort och slutlager → lägre kostnad efter slitage. −1 poäng per ändrad kvart och primär regel; upprepade flyttar och etiketter räknas inte dubbelt.', 'Move energy → preserve comfort and end stores → lower cost after wear. −1 point per changed quarter and primary rule; repeated transfers and labels are not double-counted.')}</p>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {OPPORTUNITY_RULES.map(rule => <article key={rule.key} id={`bench-opportunity-${rule.key}`} className="rounded-lg border p-3 space-y-2 min-w-0">
           <h5 className="text-sm font-medium">{rule.label}</h5>
@@ -219,9 +218,9 @@ export default function BenchRuleCards({ current, test, currentScore, testScore,
             const state = audit ? ruleState(audit, rule.key) : 'unverified';
             const findings = !s.score?.auditPending ? audit?.findings.filter(f => f.tags.includes(rule.key)) ?? [] : [];
             return <div key={s.side} className="space-y-1">
-              <EventStrip label={s.label} length={s.series?.start.length ?? 0} events={[...new Set(findings.flatMap(f => [f.from, f.to]))]}
+              <EventStrip label={s.label} length={s.series?.start.length ?? 0} events={audit?.rules[rule.key].knownQuarters ?? []}
                 value={!audit || s.score?.auditPending ? t('Väntar på omräkning', 'Awaiting rescore') : audit.status !== 'complete' ? t('Ej bedömd', 'Not assessed')
-                  : state === 'not_applicable' && !findings.length ? t('N/A · inte i detta fall', 'N/A · not in this case') : findings.length ? `${findings.length} ${t('belägg', 'witnesses')}` : t('Ingen förlust hittad', 'No loss found')}
+                  : state === 'not_applicable' && !findings.length ? t('N/A · inte i detta fall', 'N/A · not in this case') : audit.rules[rule.key].knownQuarters.length ? `−${audit.rules[rule.key].knownQuarters.length} ${t('p', 'pts')}` : findings.length ? `${findings.length} ${t('belägg · 0 p', 'witnesses · 0 pts')}` : t('Ingen förlust hittad', 'No loss found')}
                 onSelect={q => { if (findings[0]) choose(s.side, findings[0].id, q); }} />
               {findings.slice(0, 1).map(f => <button type="button" key={f.id} aria-pressed={witness?.side === s.side && witness.id === f.id}
                 onClick={() => choose(s.side, f.id, f.from)}

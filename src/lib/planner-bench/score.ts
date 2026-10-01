@@ -6,27 +6,24 @@
 //     (referee.ts) fails the case, whatever its points and whatever the rules
 //     below are set to.
 //
-//   Comfort, 70 %.  Each quarter loses a point for each comfort rule that
+//   Comfort. Each quarter loses a point for each comfort rule that
 //     fires, measured from the owner's target: the pool more than 1 °C below
 //     it, and again when more than 2 °C below; the car more than 50 km short,
 //     and again when more than 100 km short. A rule cannot fire until its level
 //     was reachable: where full power from the first quarter would have got the
 //     store there, plus a day to choose the hours. A pool above its target is
 //     marked and loses nothing: warm water is a store, and heating it ahead on
-//     cheap energy is allowed. Comfort points are the quarter sum divided by
-//     CASE_SCALE, clamped to -10..0.
+//     cheap energy is allowed. Comfort points are the raw quarter sum.
 //
-//   Energy timing, 30 %.  The money the plan could have saved by moving energy
+//   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
 //     by the opportunity audit (opportunities.ts). Only what was knowable from
-//     published prices counts; what took hindsight is shown beside it. It is
-//     measured against the household's cash exposure with no store acting, the
-//     same for every planner: avoidable money worth ECONOMIC_FULL_LOSS_SHARE of
-//     that exposure scores -10. A plan whose audit could not be made (it failed
-//     the first test) gets no credit: -10.
+//     published prices counts; what took hindsight is shown beside it. Each
+//     distinct changed quarter loses one point under its primary rule. A plan
+//     whose audit could not be made is physically failed, not given invented
+//     economic points.
 //
-// Case points are 0.7 x comfort + 0.3 x energy timing, -10..0. The run score
-// maps the mean case score onto 100-1000 (1000 + 90 x mean).
+// Case points add raw comfort and energy points. Run points add case points.
 //
 // Scoring reads only the stored plan series, audit included, so the page can
 // preview a rule change without replaying anything. A stored score is never
@@ -41,19 +38,9 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 3;
+export const SCORER_VERSION = 4;
 export const QUARTER_MIN = -4;
 export const QUARTER_MAX = 0;
-export const CASE_MIN = -10;
-export const CASE_MAX = 0;
-/** Quarter points per comfort point: a point lost in every one of 288 quarters is -10. */
-export const CASE_SCALE = 28.8;
-export const RUN_MIN = 100;
-export const RUN_MAX = 1000;
-export const COMFORT_WEIGHT = 0.7;
-export const ECONOMIC_WEIGHT = 0.3;
-/** Known avoidable money worth this share of the household's passive cash exposure scores -10. */
-export const ECONOMIC_FULL_LOSS_SHARE = 0.25;
 /** The most a rule may take from a quarter. */
 export const RULE_POINTS_MIN = -2;
 
@@ -136,7 +123,7 @@ export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
     if (typeof o !== 'object' || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== 'boolean') errors.push(`${key}: enabled must be true or false.`);
     if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);
-    if (key !== 'pool_hot' && o.points !== undefined && !(Number.isFinite(o.points) && o.points <= 0 && o.points >= RULE_POINTS_MIN)) {
+    if (key !== 'pool_hot' && o.points !== undefined && !(Number.isInteger(o.points) && o.points <= 0 && o.points >= RULE_POINTS_MIN)) {
       errors.push(`${key}: points must be between ${RULE_POINTS_MIN} and 0.`);
     }
   }
@@ -161,9 +148,9 @@ export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
   return { pool: [t.pool_low, t.pool_cold], ev: [t.ev_low, t.ev_short] };
 }
 
-/** -10..0 from known avoidable money against the household's passive cash exposure. */
-export const economicPoints = (knownSek: number, scaleSek: number) =>
-  CASE_MIN * Math.min(1, Math.max(0, knownSek) / (ECONOMIC_FULL_LOSS_SHARE * Math.max(1, scaleSek)));
+/** One point per changed quarter under a primary rule; explanatory tags add no points. */
+export const economicPoints = (audit: OpportunityAudit) =>
+  -Object.values(audit.rules).reduce((sum, rule) => sum + rule.knownQuarters.length, 0);
 
 export interface QuarterScore {
   score: number;
@@ -179,7 +166,7 @@ export interface ServiceApplicability {
 }
 
 export interface CaseScore {
-  /** 0.7 x comfortPoints + 0.3 x economicPoints. While economicPoints is null, the comfort share alone. */
+  /** Raw comfort plus known economic points. While the audit is pending, comfort alone. */
   points: number;
   comfortPoints: number;
   /** Null without an audit, or while the audit awaits recomputing under these thresholds. */
@@ -192,7 +179,7 @@ export interface CaseScore {
   auditPending: boolean;
   /** The plan asked for what the household cannot do. */
   physicalFailed: boolean;
-  /** Sum of every quarter's comfort score, before scaling. */
+  /** Sum of every quarter's comfort score. */
   sum: number;
   quarters: QuarterScore[];
   /** How often each comfort rule fired. */
@@ -255,7 +242,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     quarters.push({ score, fired });
   }
   const requiredFired = rules.filter(r => r.required && counts[r.key]).map(r => r.key);
-  const comfortPoints = Math.max(CASE_MIN, Math.min(CASE_MAX, sum / CASE_SCALE));
+  const comfortPoints = sum;
 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
@@ -272,8 +259,8 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     || (audit.status === 'complete' && !witnessesHold(s, audit, serviceGuard(overrides))));
   const physicalFailed = !!audit && audit.violations.length > 0;
   const economic = !audit || auditPending ? null
-    : audit.status === 'complete' ? economicPoints(audit.knownSek, audit.scaleSek) : CASE_MIN;
-  const points = Math.max(CASE_MIN, Math.min(CASE_MAX, COMFORT_WEIGHT * comfortPoints + ECONOMIC_WEIGHT * (economic ?? 0)));
+    : audit.status === 'complete' ? economicPoints(audit) : 0;
+  const points = comfortPoints + (economic ?? 0);
   return {
     points, comfortPoints, economicPoints: economic, complete: economic !== null, audit, auditPending, physicalFailed,
     sum, quarters, counts, histogram, requiredFired, applicability, verdict,
@@ -286,7 +273,7 @@ export interface StoredScore {
   version: number;
   /** Fingerprint of the case's overrides the score was computed with. */
   criteria: string;
-  /** 0.7 x comfort_points + 0.3 x economic_points. */
+  /** Raw comfort_points + economic_points. */
   points: number;
   comfort_points: number;
   economic_points: number;
@@ -327,9 +314,8 @@ export const isStale = (score: StoredScore | null | undefined, overrides: Criter
 export const storedPassed = (score: StoredScore, verdict: Verdict | null) =>
   !score.physical_failed && (verdict ? verdict === 'pass' : score.required_fired.length === 0);
 
-/** 100–1000; null until at least one case has a result. */
+/** Sum of the displayed case points; null until at least one case has a result. */
 export function runScore(casePoints: readonly number[]): number | null {
   if (!casePoints.length) return null;
-  const mean = casePoints.reduce((a, b) => a + b, 0) / casePoints.length;
-  return Math.round(Math.min(RUN_MAX, Math.max(RUN_MIN, 1000 + 90 * mean)));
+  return casePoints.reduce((a, b) => a + b, 0);
 }

@@ -4,7 +4,7 @@ import { planSeries } from './series.fixture.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
-  CASE_SCALE, COMFORT_WEIGHT, CriteriaError, ECONOMIC_FULL_LOSS_SHARE, ECONOMIC_WEIGHT, REMOVED_RULE_KEYS,
+  CriteriaError, REMOVED_RULE_KEYS,
   criteriaErrors, criteriaFingerprint, economicPoints, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
@@ -130,6 +130,7 @@ Deno.test('criteria are checked: a rule can only take points, at a real threshol
   assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: 0 } }), []);
   assertEquals(criteriaErrors({ pool_low: { points: 1 } }), ['pool_low: points must be between -2 and 0.']);
   assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
+  assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
   assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
   const series = comfortSeries(() => 28.5, () => 300);
@@ -151,39 +152,35 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],
-  rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0 }])) as OpportunityAudit['rules'],
+  rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as OpportunityAudit['rules'],
   applicability: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { applicable: true, reason: 'test' }])) as OpportunityAudit['applicability'],
   ...over,
 });
 
-Deno.test('case points are 70 % comfort and 30 % known avoidable money, and stored scores know when they are stale', () => {
-  // A point lost in every quarter is the worst comfort score.
+Deno.test('case points add raw comfort and each known-price quarter once per economic rule', () => {
   const cold = comfortSeries(() => 28.5, () => 300);
   const worst = scoreQuarters(cold);
   assertEquals(worst.sum, -288);
-  assertAlmostEquals(worst.comfortPoints, -288 / CASE_SCALE);
-  assertAlmostEquals(worst.comfortPoints, -10);
-  // A series with no audit has no economic score, and says so: the comfort share alone, marked incomplete.
+  assertEquals(worst.comfortPoints, -288);
   assertEquals([worst.audit, worst.economicPoints, worst.complete], [null, null, false]);
-  assertAlmostEquals(worst.points, -7);
+  assertEquals(worst.points, -288);
   assertThrows(() => storedScore(cold), Error, 'opportunity audit');
 
-  // With its audit: 5 kr known avoidable of 40 kr exposure is half of the quarter that scores -10.
-  const audited = scoreQuarters({ ...cold, audit: auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 }) });
-  assertAlmostEquals(audited.economicPoints!, -5);
-  assertAlmostEquals(audited.points, 0.7 * -10 + 0.3 * -5);
-  assertEquals([COMFORT_WEIGHT + ECONOMIC_WEIGHT, ECONOMIC_FULL_LOSS_SHARE, audited.complete], [1, 0.25, true]);
-  // Hindsight is never scored; a tiny exposure counts as 1 kr, so crumbs cannot sink a case.
-  assertEquals(scoreQuarters({ ...cold, audit: auditOf({ hindsightSek: 30, avoidableSek: 30 }) }).economicPoints, -0);
-  assertAlmostEquals(economicPoints(0.05, 0.2), -2);
+  const audit = auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 });
+  audit.rules.battery_price_spread.knownQuarters = [4, 5, 8];
+  audit.rules.export_before_import.knownQuarters = [8, 12];
+  const audited = scoreQuarters({ ...cold, audit });
+  assertEquals([economicPoints(audit), audited.economicPoints, audited.points, audited.complete], [-5, -5, -293, true]);
+  // Hindsight savings have no points.
+  assertEquals(scoreQuarters({ ...cold, audit: auditOf({ hindsightSek: 30, avoidableSek: 30 }) }).economicPoints, 0);
   // An audit of another version is not read.
   const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }) });
   assertEquals([dated.auditPending, dated.economicPoints], [true, null]);
 
-  const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit: auditOf({ knownSek: 2, avoidableSek: 2 }) });
-  assertEquals([stored.comfort_points, stored.economic_points, stored.physical_failed], [0, -2, false]);
-  assertAlmostEquals(stored.points, -0.6);
-  assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [2, 0, 0]);
+  const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit });
+  assertEquals([stored.comfort_points, stored.economic_points, stored.physical_failed], [0, -5, false]);
+  assertEquals(stored.points, -5);
+  assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [5, 0, 0]);
   assertEquals(isStale(stored), false);
   assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);
   assertEquals(isStale({ ...stored, version: 2 }), true);
@@ -195,11 +192,11 @@ Deno.test('case points are 70 % comfort and 30 % known avoidable money, and stor
   assertEquals(storedPassed({ ...stored, physical_failed: true }, 'pass'), false);
 });
 
-Deno.test('runScore is 1000 when nothing was lost and 100 at the worst', () => {
+Deno.test('runScore is exactly the sum of visible integer case points', () => {
   assertEquals(runScore([]), null);
-  assertEquals(runScore([0, 0]), 1000);
-  assertEquals(runScore([-10, -10]), 100);
-  assertEquals(runScore([0, -2]), 910);
+  assertEquals(runScore([0, 0]), 0);
+  assertEquals(runScore([-10, -10]), -20);
+  assertEquals(runScore([0, -2, -5]), -7);
 });
 
 Deno.test('suiteStats sums totals and weights averages by energy', () => {

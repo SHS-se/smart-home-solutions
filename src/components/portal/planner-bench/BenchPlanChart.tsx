@@ -39,8 +39,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
     });
     return out;
   }, [series, timeZone]);
-  // Default to the first whole day, where the published prices are.
-  const [window, setWindow] = useState<number | 'all'>(() => (days.length > 1 && days[0].to - days[0].from < 48 ? 1 : 0));
+  const [window, setWindow] = useState<number | 'all'>('all');
   useEffect(() => {
     if (selected === null) return;
     const day = days.findIndex(d => selected >= d.from && selected < d.to);
@@ -106,7 +105,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
           </button>
         ))}
         <button id="bench-day-all" className={tab(window === 'all')} aria-pressed={window === 'all'} onClick={() => setWindow('all')}>
-          {t('Alla', 'All')}
+          {t('Hela 72 h', 'Full 72 h')}
         </button>
       </div>
       <PlanPanels

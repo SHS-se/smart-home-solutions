@@ -1,4 +1,4 @@
-# Planner bench v3: architecture decision
+# Planner bench v4: architecture decision
 
 ## Problem and caller
 
@@ -13,7 +13,7 @@ The runner calls `evaluate(case, record, criteria, lane)`. It invokes the refere
 | `referee.ts` | One independent physical simulation for recorded and alternative decisions; requested-action violations and recovery trajectories |
 | `service.ts` | Shared recovery policy and separate pool/car service exposure guards |
 | `opportunities.ts` | Rule catalogue, case applicability, deterministic search, cumulative transfers and known/hindsight evidence |
-| `score.ts` | Comfort rules, criteria validation, 70/30 score projection, stale-version detection |
+| `score.ts` | Comfort rules, criteria validation, raw integer point totals, stale-version detection |
 | `evaluate.ts` | The single composition point for referee, audit, statistics and stored score |
 | `bench/rescore.ts` | All-lane coverage, recomputation from decisions, persisted-version verification and report |
 | `BenchRuleCards.tsx` | Grouped visual rules, applicability, threshold bands and one reusable evidence viewer |
@@ -46,7 +46,7 @@ Independent Claude Opus 5.5 High and Codex candidates were grounded in the curre
 
 ## Policy and limits
 
-The [scoring catalogue](scoring.md) defines the numerical policy. Comfort receives 70% and known economic loss 30%. Both components remain visible, as do physical failures. These weights are benchmark choices, not physical facts.
+The [scoring catalogue](scoring.md) defines the numerical policy. Comfort and known economic misses contribute raw integer points directly. Both components remain visible, as do physical failures.
 
 Search considers hourly source/destination blocks across all three days, with fractional battery/car transfers and quarter-based pool moves. Replay checks COP, thermal losses, power, storage and grid limits. Finite trial and transfer budgets bound runtime. This finds a conservative lower bound on avoidable cost, not a globally optimal plan. Strict endpoint preservation deliberately misses some pure waste-removal opportunities.
 

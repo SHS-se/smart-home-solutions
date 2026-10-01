@@ -105,7 +105,7 @@ async function worker(sha: string, root: string) {
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
         console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
           + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
-          + ` score ${evaluation.score.points.toFixed(1)} (comfort ${evaluation.score.comfort_points.toFixed(1)}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
+          + ` score ${evaluation.score.points} (comfort ${evaluation.score.comfort_points}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
       } catch (error) {
         const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
         await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });

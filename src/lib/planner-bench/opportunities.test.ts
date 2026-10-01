@@ -7,7 +7,7 @@ import {
   findOpportunities, MAX_TRIALS, NOT_MODELLED, OPPORTUNITY_RULES, ruleState, summariseAudit, type OpportunityAudit,
 } from './opportunities.ts';
 import { referee, type Decisions } from './referee.ts';
-import { economicPoints, scoreQuarters, storedPassed, storedScore, COMFORT_WEIGHT, ECONOMIC_WEIGHT } from './score.ts';
+import { economicPoints, scoreQuarters, storedPassed, storedScore } from './score.ts';
 import { DEFAULT_SERVICE_GUARD, serviceNotWorse, type ServiceExposure, type ServiceGuard } from './service.ts';
 import type { PlanRecord } from './types.ts';
 import { clockPlan, plan, realisticWorld, within, world } from './world.fixture.ts';
@@ -326,35 +326,33 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
   assertEquals([audit.status, audit.findings, audit.knownSek, audit.trials], ['invalid', [], 0, 1]);
   assert(audit.reason!.includes('battery_empty') && audit.violations.length === failed.outcome.violations.length);
   assertEquals(ruleState(audit, 'export_before_import'), 'unverified');
-  assertEquals([failed.score.physical_failed, failed.score.economic_points], [true, -10]);
+  assertEquals([failed.score.physical_failed, failed.score.economic_points], [true, 0]);
   assertEquals([failed.score.audit.violations > 0, failed.score.audit.violationKinds.battery_empty > 0], [true, true]);
   assertEquals([storedPassed(failed.score, 'pass'), storedPassed(failed.score, null)], [false, false]);
   const live = scoreQuarters(failed.series, { pool_low: { enabled: false }, pool_cold: { enabled: false }, ev_low: { points: 0 } }, 'pass');
-  assertEquals([live.physicalFailed, live.passed, live.economicPoints], [true, false, -10]);
+  assertEquals([live.physicalFailed, live.passed, live.economicPoints], [true, false, 0]);
 });
 
-Deno.test('a case scores 70 % comfort and 30 % known avoidable money, hindsight beside it', () => {
+Deno.test('a case scores each affected known-price quarter under its primary rule, hindsight beside it', () => {
   const lost = evaluate(spilled(), record(plan()), {}, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));
   assertEquals([score.audit.findingCount, 'findings' in score.audit], [audit.findings.length, false]);
   assertEquals(score.comfort_points, 0);
-  // More than a quarter of the household's 74 kr exposure was avoidable and knowable: the worst economic score.
+  // The monetary saving is evidence; raw points count changed quarters under primary rules.
   assertAlmostEquals(audit.scaleSek, 74, 1e-6);
-  assert(audit.knownSek > 0.25 * 74);
-  assertEquals(score.economic_points, -10);
-  assertAlmostEquals(score.points, COMFORT_WEIGHT * 0 + ECONOMIC_WEIGHT * -10);
-  assertAlmostEquals(economicPoints(1.85, 74), -1);
-  assertEquals([economicPoints(0, 74), economicPoints(-3, 74), economicPoints(500, 74)], [-0, -0, -10]);
+  assert(audit.knownSek > 0);
+  assertEquals(score.economic_points, -sum(Object.values(audit.rules).map(r => r.knownQuarters.length)));
+  assertEquals([score.points, economicPoints(audit)], [score.comfort_points + score.economic_points, score.economic_points]);
   // The same miss, unknowable when planned: shown, not scored.
   const unforeseen = evaluate(spilled(40), record(plan()), {}, 'told/nominal');
   assert(unforeseen.series.audit!.hindsightSek > 15);
-  assert(unforeseen.score.economic_points > -1.5, `${unforeseen.score.economic_points}`);
-  assertEquals(evaluate(spilled(40), record(plan()), {}, 'oracle/nominal').score.economic_points, -10);
+  assertEquals(unforeseen.score.economic_points, 0);
+  assert(evaluate(spilled(40), record(plan()), {}, 'oracle/nominal').score.economic_points < 0);
   // A plan that takes the opportunity is left with next to nothing.
   const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), {}, 'told/nominal');
   assertEquals(taken.outcome.violations, []);
-  assert(taken.score.points > -1 && taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.score.points} ${taken.series.audit!.knownSek}`);
+  assert(taken.score.points > lost.score.points && taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.score.points} ${taken.series.audit!.knownSek}`);
 });
 
 Deno.test('the page scores a stored plan without replaying it, and never shows an audit its thresholds do not support', () => {
@@ -377,7 +375,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);
   assertEquals([bare.audit, bare.economicPoints, bare.complete, bare.auditPending, bare.physicalFailed], [null, null, false, false, false]);
-  assertAlmostEquals(bare.points, COMFORT_WEIGHT * bare.comfortPoints);
+  assertEquals(bare.points, bare.comfortPoints);
   assertThrows(() => storedScore(old), Error, 'opportunity audit');
 });
 

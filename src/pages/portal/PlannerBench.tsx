@@ -301,6 +301,26 @@ const Bench: React.FC = () => {
 
       {!loading && !loadError && (
         <>
+          <div className="flex flex-wrap gap-2" role="group" aria-label={t('Testfall', 'Test case')}>
+            {cases.map(c => {
+              const currentScore = currentScores?.get(c.id);
+              const testScore = testScores?.get(c.id);
+              const dot = testScore == null ? 'bg-muted-foreground/40' : testScore.passed ? 'bg-emerald-500' : 'bg-red-500';
+              const active = c.id === selectedCase?.id;
+              return (
+                <button key={c.id} id={`bench-case-${c.id}`} onClick={() => setCaseId(c.id)} aria-pressed={active}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${active ? 'bg-foreground text-background border-foreground' : 'bg-muted/40 hover:bg-muted'}`}>
+                  <span className={`h-2 w-2 rounded-full ${dot}`} />
+                  <span className="font-mono text-xs">{c.name}</span>
+                  <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
+                  {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
+                  {currentScore && <span className="font-mono text-xs opacity-70">{t('N', 'C')} {signed(currentScore.points)}</span>}
+                  {testScore && <span className="font-mono text-xs opacity-70">T {signed(testScore.points)}</span>}
+                </button>
+              );
+            })}
+          </div>
+
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
@@ -330,24 +350,6 @@ const Bench: React.FC = () => {
               {!cases.length && <p className="text-sm text-muted-foreground">{t('Inga testfall ännu. Lägg till en replay-fil.', 'No test cases yet. Add a replay file to start.')}</p>}
             </CardContent>
           </Card>
-
-          <div className="flex flex-wrap gap-2" role="group" aria-label={t('Testfall', 'Test case')}>
-            {cases.map(c => {
-              const score = testScores?.get(c.id);
-              const dot = score == null ? 'bg-muted-foreground/40' : score.passed ? 'bg-emerald-500' : 'bg-red-500';
-              const active = c.id === selectedCase?.id;
-              return (
-                <button key={c.id} id={`bench-case-${c.id}`} onClick={() => setCaseId(c.id)} aria-pressed={active}
-                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${active ? 'bg-foreground text-background border-foreground' : 'bg-muted/40 hover:bg-muted'}`}>
-                  <span className={`h-2 w-2 rounded-full ${dot}`} />
-                  <span className="font-mono text-xs">{c.name}</span>
-                  <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
-                  {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
-                  {score && <span className="font-mono text-xs opacity-70">{score.points > 0 ? '+' : ''}{score.points.toFixed(1)}</span>}
-                </button>
-              );
-            })}
-          </div>
 
           {selectedCase && (
             <CaseView
@@ -466,9 +468,9 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
       <div id="bench-total-score" className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
         <div className="flex items-baseline gap-2">
           <span className="text-xs uppercase tracking-wide opacity-80">{t('Poäng', 'Score')}</span>
-          <span className="font-mono tabular-nums text-foreground">{scores.current ?? '—'}</span>
+          <span id="bench-score-current" className="font-mono tabular-nums text-foreground">{scores.current ?? '—'}</span>
           <span className="opacity-60">→</span>
-          <span className="font-mono tabular-nums text-2xl font-semibold">{scores.test ?? '—'}</span>
+          <span id="bench-score-test" className="font-mono tabular-nums text-2xl font-semibold">{scores.test ?? '—'}</span>
           {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta)})</span>}
         </div>
         <div className="font-medium">
@@ -516,7 +518,7 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
 };
 
 const LANE_LABEL: Record<string, [string, string]> = {
-  told: ['Publicerade priser', 'Published prices'], oracle: ['Verkliga priser kända', 'Real prices known'],
+  told: ['Priser kända vid start', 'Prices known at start'], oracle: ['Alla faktiska priser (facit)', 'All actual prices (oracle)'],
   low: ['låg', 'low'], nominal: ['nominell', 'nominal'], high: ['hög', 'high'],
 };
 
@@ -530,20 +532,20 @@ const LanePanel: React.FC<{
 }> = ({ lane, onLane, lanes }) => {
   const { t } = useLanguage();
   const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
-  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.comfort_points.toFixed(1)}` : '—';
+  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.comfort_points} pts` : '—';
   const verdict = (d: Diagnosis | null) => d === null ? t('väntar på alla spår', 'waiting for every lane') : [
     t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
     t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
-    t(`bästa värdering: ${t(...LANE_LABEL[d.best.told])} med publicerade priser, ${t(...LANE_LABEL[d.best.oracle])} med verkliga`,
-      `best valuation: ${t(...LANE_LABEL[d.best.told])} on published prices, ${t(...LANE_LABEL[d.best.oracle])} on real ones`),
+    t(`bästa värdering: ${t(...LANE_LABEL[d.best.told])} vid start, ${t(...LANE_LABEL[d.best.oracle])} med facit`,
+      `best valuation: ${t(...LANE_LABEL[d.best.told])} with starting prices, ${t(...LANE_LABEL[d.best.oracle])} with oracle prices`),
   ].join(' · ');
   return (
     <div id="bench-lanes">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-4 text-sm">
         <span className="font-medium">{t('Spår', 'Lanes')}</span>
         <span className="text-xs text-muted-foreground">
-          {t('Samma fall planerat med publicerade eller verkliga priser, och med värdekurvorna värda 0,71×, 1× eller 1,41×. Nettokostnad till verkliga priser (kostnad minus det som finns kvar i lagren) · komfortpoäng.',
-            'The same case planned on published or on real prices, and with the value curves worth 0.71×, 1× or 1.41×. Net cost at real prices (cost minus what is left in the stores) · comfort points.')}
+          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Låg/nominell/hög ändrar lagrens värdekurvor (0,71×/1×/1,41×). Nettokostnad · råa komfortpoäng.',
+            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. Low/nominal/high scales store value curves (0.71×/1×/1.41×). Net cost · raw comfort points.')}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -661,11 +663,11 @@ const CaseView: React.FC<CaseViewProps> = ({
                 <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'} <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
-                    <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
+                    <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
                   {score && <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                    <span>{t('Komfort 70 %', 'Comfort 70%')}: {score.comfortPoints.toFixed(2)}</span>
-                    <span>{t('Energitid 30 %', 'Energy timing 30%')}: {score.economicPoints === null ? '—' : score.economicPoints.toFixed(2)}</span>
+                    <span>{t('Komfort', 'Comfort')}: {score.comfortPoints}</span>
+                    <span>{t('Energitid', 'Energy timing')}: {score.economicPoints ?? '—'}</span>
                     {(!score.audit || score.auditPending) && <span>{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</span>}
                   </div>}
                 </div>
@@ -685,12 +687,6 @@ const CaseView: React.FC<CaseViewProps> = ({
                   </div>
                 ))}
               </div>
-            )}
-            <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
-            <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
-            {scenario.dataset && (
-              <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
-                saving={savingStartState} onSave={onSaveStartState} />
             )}
             <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={comfortC} />
             {shownSeries ? (
@@ -724,6 +720,12 @@ const CaseView: React.FC<CaseViewProps> = ({
                 </div>
               </>
             ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
+            <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
+            <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
+            {scenario.dataset && (
+              <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
+                saving={savingStartState} onSave={onSaveStartState} />
+            )}
           </>
         )}
 

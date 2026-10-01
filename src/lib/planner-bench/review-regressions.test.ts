@@ -6,7 +6,7 @@ import { criteriaErrors, resolveRules } from './score.ts';
 import { storeExposure, storeNotWorse } from './service.ts';
 import { plan, within, world } from './world.fixture.ts';
 
-Deno.test('retired price and unplugged rules cannot penalise v3 and a saved hot-pool penalty stays diagnostic', () => {
+Deno.test('retired price and unplugged rules cannot penalise v4 and a saved hot-pool penalty stays diagnostic', () => {
   assertEquals(criteriaErrors({ cheap_buy: { points: 1 }, unplugged_charge: { points: -2 }, pool_hot: { points: -1 } }), []);
   assertEquals(resolveRules({ pool_hot: { points: -1 } }).find(r => r.key === 'pool_hot')!.points, 0);
 });

@@ -41,7 +41,7 @@ import { laneParts, type LaneId } from './lanes';
 import { assertDecisions, evLimitKwh, evMaxW, HOURS, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 1;
+export const OPPORTUNITY_AUDIT_VERSION = 2;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -156,7 +156,14 @@ export interface OpportunityFinding {
  * money, each transfer under exactly one rule. `findings` is how many findings
  * carry the rule as their own.
  */
-export interface OpportunityRuleResult { findings: number; kwh: number; knownSek: number; hindsightSek: number }
+export interface OpportunityRuleResult {
+  findings: number;
+  kwh: number;
+  knownSek: number;
+  hindsightSek: number;
+  /** Unique quarters changed by accepted transfers under this primary rule while prices were published. */
+  knownQuarters: number[];
+}
 
 interface AuditCore {
   version: number;
@@ -339,7 +346,7 @@ export function findOpportunities(
     const net = load - c.solar_forecast_w[i];
     return sum + Math.abs(net) * Math.abs(net > 0 ? buy[i] : sell[i]) * KWH;
   }, 0));
-  const emptyRules = () => Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0 }])) as AuditCore['rules'];
+  const emptyRules = () => Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as AuditCore['rules'];
   const applicability = applicabilityOf(c, h, targets);
 
   let trials = 1;
@@ -640,7 +647,7 @@ export function findOpportunities(
 
   type Group = Transfer & { transfers: number };
   const groups: Group[] = [];
-  const totals = Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { kwh: 0, known: 0, hindsight: 0 }])) as Record<OpportunityRuleKey, { kwh: number; known: number; hindsight: number }>;
+  const totals = Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { kwh: 0, known: 0, hindsight: 0, knownQuarters: new Set<number>() }])) as Record<OpportunityRuleKey, { kwh: number; known: number; hindsight: number; knownQuarters: Set<number> }>;
   let limitReached = false, wear = 0;
 
   const search = (basis: 'known' | 'hindsight') => {
@@ -672,6 +679,7 @@ export function findOpportunities(
       const saving = t.grid - t.wear, total = totals[t.rule];
       total.kwh += t.kwh;
       total[basis] += saving;
+      if (basis === 'known') for (const q of [...best.fromQ, ...best.toQ]) total.knownQuarters.add(q);
       wear += t.wear;
       const g = open[t.device];
       if (g && (g.rule === t.rule || opened >= MAX_FINDINGS)) {
@@ -701,7 +709,7 @@ export function findOpportunities(
   for (const rule of OPPORTUNITY_RULES) {
     const total = totals[rule.key];
     known += total.known; hindsight += total.hindsight;
-    rules[rule.key] = { findings: 0, kwh: r3(total.kwh), knownSek: r4(total.known), hindsightSek: r4(total.hindsight) };
+    rules[rule.key] = { findings: 0, kwh: r3(total.kwh), knownSek: r4(total.known), hindsightSek: r4(total.hindsight), knownQuarters: [...total.knownQuarters].sort((a, b) => a - b) };
   }
   const count = { known: 0, hindsight: 0 };
   const findings: OpportunityFinding[] = groups.map(g => {

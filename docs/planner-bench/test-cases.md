@@ -157,8 +157,8 @@ result records which it was.
 ## Scoring
 
 The [scoring catalogue](scoring.md) defines comfort, physical failures and
-future-dependent economic opportunities. The headline combines 70% comfort and
-30% economic loss. The economic contribution is based on independently replayed
+future-dependent economic opportunities. The headline adds raw comfort and
+known-price economic points without weighting or normalization. The economic contribution is based on independently replayed
 alternatives, preserving service and final stores; simply consuming cheap energy
 gets no reward. A warm pool is a thermal buffer, not automatically a penalty.
 

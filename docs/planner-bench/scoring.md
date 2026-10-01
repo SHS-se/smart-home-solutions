@@ -11,7 +11,7 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 - **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
 
-The headline uses 70% comfort and 30% knowable economic loss. Case points run from −10 to 0; run points remain `1000 + 90 × mean(case points)`, from 100 to 1000. These weights are explicit benchmark policy, not physical constants or a claim about the household's willingness to pay. Costs, failures and evidence stay visible beside the number.
+Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A case score is its raw comfort points plus raw economic points. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
 
 Historical scorer versions are not comparable. Rescore all successful results, including all six price/valuation lanes, whenever the scorer, referee or case criteria change.
 
@@ -73,13 +73,13 @@ The same principle applies to the battery and EV: the audit evaluates a change a
 
 This is a conservative lower bound on avoidable cost, not a perfect planner. Preserving every physical endpoint deliberately misses some pure waste-removal cases where excess terminal heat might reasonably be worth less. The old median-price terminal credit remains a displayed accounting estimate; it cannot create an economic finding or justify emptying a store.
 
-The economic scale is the sum of absolute quarter cash exposure for passive base load minus solar, using the applicable import/export price, with a minimum of 1 SEK. It is identical for every planner on that case. Known avoidable cost equal to 25% of this scale scores −10 for energy timing: `−10 × min(1, known saving / (0.25 × scale))`. A plan cannot dilute its penalty by consuming more energy. The UI displays the scale and the two score components.
+The economic scale is the sum of absolute quarter cash exposure for passive base load minus solar, using the applicable import/export price, with a minimum of 1 SEK. It remains diagnostic evidence, identical for every planner on that case. It does not normalize points.
 
 ## Known prices versus hindsight
 
-The normal **told** lane sees only prices published at the case start. A finding involving unpublished prices is shown as hindsight savings, not a knowable mistake. The **oracle** lane is told every real price, so those prices are known there. Known opportunities are searched before hindsight opportunities so the latter cannot consume the evidence for the primary economic score.
+The normal **told** lane sees only prices published at the case start and estimates later prices itself. The **oracle** lane is a hypothetical run given every later actual price in advance. Both plans are evaluated at actual prices. A finding involving unpublished prices in the normal lane is shown as hindsight savings, not a knowable mistake. Known opportunities are searched before hindsight opportunities so the latter cannot consume the evidence for the primary economic score.
 
-Solar/base-load series and outdoor temperature are shared bench inputs. This bench does not currently replay solar forecast error. The six existing lanes continue to separate price information from valuation strength; valuation comparisons use comfort-only points rather than the mixed headline score.
+Solar/base-load series and outdoor temperature are shared bench inputs. This bench does not currently replay solar forecast error. The six existing lanes continue to separate price information from valuation strength; valuation comparisons use raw comfort points so energy timing does not change the service threshold.
 
 ## Not modelled
 

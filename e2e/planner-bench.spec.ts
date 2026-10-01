@@ -72,7 +72,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],
     applicability: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { applicable: r.device !== 'ev', reason: r.device === 'ev' ? 'No car charging demand' : 'Timing can change' }])) as OpportunityAudit['applicability'],
-    rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: r.key === 'battery_price_spread' ? 1 : 0, kwh: r.key === 'battery_price_spread' ? 1 : 0, knownSek: r.key === 'battery_price_spread' ? 1.25 : 0, hindsightSek: 0 }])) as OpportunityAudit['rules'],
+    rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: r.key === 'battery_price_spread' ? 1 : 0, kwh: r.key === 'battery_price_spread' ? 1 : 0, knownSek: r.key === 'battery_price_spread' ? 1.25 : 0, hindsightSek: 0, knownQuarters: r.key === 'battery_price_spread' ? [8, 24] : [] }])) as OpportunityAudit['rules'],
     findings: [{ id: 'k1', rule: 'battery_price_spread', tags: ['battery_price_spread'], device: 'battery',
       from: 24, fromEnd: 24, to: 8, toEnd: 8, kwh: 1, savingSek: 1.25, gridSavingSek: 1.3, wearSek: .05,
       basis: 'known', transfers: 1, before, after }],
@@ -204,15 +204,23 @@ test.describe('planner bench', () => {
     await page.goto('/portal/planner-bench');
 
     // Runs are named by commit, time and score; the newest is the default test run.
-    await expect(page.locator('#bench-test-run')).toContainText(/ddddddd · .* · \d+ (pts|p)/);
-    await expect(page.getByText(/ccccccc · .* · \d+ (pts|p) · (current|nuvarande)/)).toBeVisible();
+    await expect(page.locator('#bench-test-run')).toContainText(/ddddddd · .* · -?\d+ (pts|p)/);
+    await expect(page.getByText(/ccccccc · .* · -?\d+ (pts|p) · (current|nuvarande)/)).toBeVisible();
 
     // Totals over every case, current against test.
     await expect(page.locator('#bench-total-score')).toContainText(/Test planner is (better|worse)|No score difference|Testplaneraren är (bättre|sämre)|Ingen skillnad i poäng/);
+    const caseTexts = await page.locator('[id^="bench-case-"]').allTextContents();
+    const caseTotal = (side: 'C' | 'N' | 'T') => caseTexts.reduce((sum, text) => {
+      const match = text.match(new RegExp(`${side} ([−-]?\\d+)`));
+      return sum + (match ? Number(match[1].replace('−', '-')) : 0);
+    }, 0);
+    expect(Number(await page.locator('#bench-score-current').textContent())).toBe(caseTotal('N'));
+    expect(Number(await page.locator('#bench-score-test').textContent())).toBe(caseTotal('T'));
     await expect(page.locator('#bench-total-grid_cost_sek')).toContainText(/-?\d+\.\d.*-?\d+\.\d\s*kr/);
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
+    await expect(page.locator('#bench-day-all')).toHaveAttribute('aria-pressed', 'true');
 
     // Every quarter of the shown plan carries its score in a strip above the chart.
     await expect(page.getByText(/comfort loss per quarter|komfortförlust per kvart/)).toBeVisible();
@@ -262,7 +270,7 @@ test.describe('planner bench', () => {
     await login(page);
     await page.goto('/portal/planner-bench');
     const cards = page.locator('#bench-rule-cards');
-    await expect(cards).toContainText(/Comfort 70%|Komfort 70 %/);
+    await expect(cards).toContainText(/Raw points|Råpoäng/);
     await expect(page.locator('#bench-rule-pool_low')).toContainText('< 29 °C');
     await expect(page.locator('#bench-rule-ev_low')).toContainText('N/A');
     await expect(page.locator('#bench-opportunity-ev_timing')).toContainText('N/A');
@@ -294,7 +302,7 @@ test.describe('planner bench', () => {
     await cards.screenshot({ path: test.info().outputPath('rules-mobile.png') });
   });
 
-  test('withholds mixed scores and witnesses until older results are rescored', async ({ context, page }) => {
+  test('withholds stale scores and witnesses until older results are rescored', async ({ context, page }) => {
     await mockBackend(context, true);
     await login(page);
     await page.goto('/portal/planner-bench');
