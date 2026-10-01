@@ -387,17 +387,31 @@ Deno.test("no slot in any plan is ever priced flat when prices exist", () => {
 Deno.test("a cheap published window does not drag the whole tail down", () => {
   // The day-ahead window here is entirely overnight, where the shape multiplier
   // is below 1. Without normalising that out, every daytime slot in the tail
-  // would inherit a night-time level and look far too cheap.
+  // would inherit a night-time level and look far too cheap. The night price
+  // matches the archive's, so the level has nowhere to revert to.
   const slots = [
-    { start: "2026-06-29T02:00:00+02:00", import_price_sek_per_kwh: 0.5 },
-    { start: "2026-06-29T02:15:00+02:00", import_price_sek_per_kwh: 0.5 },
+    { start: "2026-06-29T02:00:00+02:00", import_price_sek_per_kwh: 1 },
+    { start: "2026-06-29T02:15:00+02:00", import_price_sek_per_kwh: 1 },
     { start: "2026-06-30T02:00:00+02:00", import_price_sek_per_kwh: null },
+    { start: "2026-06-30T08:00:00+02:00", import_price_sek_per_kwh: null },
   ];
   const outlook = buildPriceOutlook(slots, archive(28), { timeZone: TZ, asOf: AS_OF });
-  assertClose(
-    outlook.shadowImportSekPerKwh[2],
-    0.5,
-    "the same clock hour a day later prices the same",
-    0.05,
-  );
+  assertClose(outlook.shadowImportSekPerKwh[2], 1, "the same clock hour a day later prices the same", 0.05);
+  assertClose(outlook.shadowImportSekPerKwh[3], 3, "and the morning peak is priced as a peak", 0.15);
+});
+
+Deno.test("an unpublished day's level leaves the published one for the recent norm as it gets further out", () => {
+  // A fortnight at 1 SEK through the night, then a published window at 3: a dear day, not a new normal.
+  const night = (date: string, price: number | null) => ({ start: `${date}T02:00:00+02:00`, import_price_sek_per_kwh: price });
+  const slots = [night("2026-06-30", 3), night("2026-07-01", null), night("2026-07-02", null), night("2026-07-03", null)];
+  const asOf = Date.parse("2026-06-30T02:00:00+02:00");
+  const outlook = buildPriceOutlook(slots, archive(29), { timeZone: TZ, asOf });
+  const [, one, two, three] = outlook.shadowImportSekPerKwh;
+  assert(one < 3 && one > two && two > three, `the level should fall back day by day: ${one}, ${two}, ${three}`);
+  // A day out it has moved about half way (0.35 per day, counted from mid-day); three days out it is the norm.
+  assertClose(one, 3 - 0.525 * 2, "one day out", 0.1);
+  assertClose(three, 1, "three days out", 0.05);
+  // With too little history to call anything a norm, the published level is carried forward as before.
+  const young = buildPriceOutlook(slots, archive(29).slice(-96 * 3), { timeZone: TZ, asOf });
+  assertClose(young.shadowImportSekPerKwh[3], 3, "no norm, no reversion", 0.05);
 });

@@ -378,6 +378,47 @@ export interface OutlookSlot {
  * a price-free objective that can still prefer solar and a flat draw. That is a
  * broken price source, not a young one.
  */
+/**
+ * How fast an unpublished day's level leaves the last published one for the
+ * recent norm, per day of lead.
+ *
+ * The published window says what electricity costs today; it says little about
+ * the day after tomorrow. Daily prices swing with wind and demand and come
+ * back: over 91 days of SE3 day-ahead prices (July to September 2026), carrying
+ * the published level forward missed the level two days on by 46 EUR/MWh and
+ * three days on by 55, while the median of the last fortnight missed by 38 and
+ * 39. The best blend moved a third of the way to that median one day out, two
+ * thirds two days out and all the way three days out, which is this rate.
+ */
+export const LEVEL_REVERSION_PER_DAY = 0.35;
+/** Days of archive the norm is the median of. */
+export const LEVEL_NORM_DAYS = 14;
+/** Fewer complete days than this is not a norm to revert to. */
+const LEVEL_NORM_MIN_DAYS = 5;
+
+/**
+ * The median daily mean price over the last complete days before `asOf`, or
+ * null without enough of them.
+ */
+export function recentDailyNorm(archive: readonly StoredPriceRow[], asOf: number): number | null {
+  const days = new Map<number, { sum: number; count: number }>();
+  for (const row of archive) {
+    const at = Date.parse(row.start_ts);
+    if (!Number.isFinite(at) || at >= asOf || !Number.isFinite(row.import_price_sek_per_kwh)) continue;
+    const daysBack = Math.floor((asOf - at) / 86_400_000);
+    if (daysBack >= LEVEL_NORM_DAYS) continue;
+    const day = days.get(daysBack) ?? { sum: 0, count: 0 };
+    day.sum += row.import_price_sek_per_kwh;
+    day.count += 1;
+    days.set(daysBack, day);
+  }
+  // A day counts when most of it is on record, at quarter or hour resolution.
+  const means = [...days.values()].filter(day => day.count >= 20).map(day => day.sum / day.count).sort((a, b) => a - b);
+  if (means.length < LEVEL_NORM_MIN_DAYS) return null;
+  const middle = Math.floor(means.length / 2);
+  return means.length % 2 ? means[middle] : (means[middle - 1] + means[middle]) / 2;
+}
+
 export function buildPriceOutlook(
   slots: OutlookSlot[],
   archive: StoredPriceRow[] = [],
@@ -437,17 +478,30 @@ export function buildPriceOutlook(
     }
   }
 
+  // Each unpublished quarter's level: the published one, drawn toward the
+  // recent norm the further past the published window it lies.
+  const norm = recentDailyNorm(archive, asOf);
+  const publishedUntil = Math.max(...published.map((slot) => Date.parse(slot.start)));
+  const publishedDayLevel = level / publishedShapeMean;
+  const dayLevelAt = (startMs: number): number => {
+    if (norm === null || !Number.isFinite(publishedUntil)) return publishedDayLevel;
+    // Half a day in, the first unpublished day is one day of lead.
+    const leadDays = Math.max(0, (startMs - publishedUntil) / 86_400_000) + 0.5;
+    const weight = Math.min(1, LEVEL_REVERSION_PER_DAY * leadDays);
+    return publishedDayLevel + weight * (norm - publishedDayLevel);
+  };
+
   const shadowImportSekPerKwh = slots.map((slot) => {
     if (typeof slot.import_price_sek_per_kwh === "number") {
       return slot.import_price_sek_per_kwh;
     }
-    if (!shape) return level;
     const startMs = Date.parse(slot.start);
     if (!Number.isFinite(startMs)) return level;
+    if (!shape) return Math.max(0, dayLevelAt(startMs) * publishedShapeMean);
     const local = localSlot(startMs, timeZone);
     const multiplier = shape.byDayType[local.dayType][local.quarter];
     if (!Number.isFinite(multiplier)) return level;
-    return Math.max(0, level * multiplier / publishedShapeMean);
+    return Math.max(0, dayLevelAt(startMs) * multiplier);
   });
 
   return {
