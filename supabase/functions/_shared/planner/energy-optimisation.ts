@@ -395,17 +395,6 @@ export interface ThermalZonePlanningInput {
   unplanned_power_w: number[];
 }
 
-/** A saved battery cost-curve search (battery-cost-curve.ts), read as planner input. */
-export interface CostCurveRecord {
-  key: string;
-  curve: UtilityCurve;
-  source_snapshot_id: string;
-  evaluations: number;
-  bill_before_sek: number;
-  bill_after_sek: number;
-  published_until: string;
-}
-
 export interface OptimisationSnapshot {
   battery_execution_feedback?: ExecutionFeedback;
   /** Required by schema 9; frozen before server forecast enrichment. */
@@ -468,8 +457,11 @@ export interface OptimisationSnapshot {
    */
   value_curves?: Partial<Record<ValueStoreKey, UtilityCurve>> | null;
   /** Resolved server-side; explicit points are manual unless a generation mode is stated. */
-  battery_curve_mode?: "custom" | "price_only" | "balanced";
-  battery_cost_curve?: CostCurveRecord;
+  /**
+   * `balanced` derives the curve from the forecast every plan; `custom` uses the
+   * points in `value_curves.battery`. Any other stored value plans as balanced.
+   */
+  battery_curve_mode?: "custom" | "balanced";
   /**
    * The home's scalar prices, resolved by the edge alongside the curves.
    *
@@ -537,8 +529,7 @@ export interface BatteryValueCurveDiagnostic {
   schema_version: 2;
   source: "automatic" | "customer";
   automatic_curve: UtilityCurve;
-  generation_mode?: "custom" | "price_only" | "balanced";
-  cost_selection?: CostCurveRecord;
+  generation_mode?: "custom" | "balanced";
   curve: UtilityCurve;
   state_basis: "usable_kwh_above_min_soc";
   initial_state_kwh: number;
@@ -2505,14 +2496,16 @@ function deriveBatteryValueCurve(
       sek_per_unit: Math.min(point.sek_per_unit, terminalReplacement),
     })),
   };
-  const mode = snapshot.battery_curve_mode ?? (snapshot.value_curves?.battery ? "custom" : "balanced");
-  if (mode === "price_only" && !snapshot.battery_cost_curve) throw new Error("The price-only battery curve must be resolved before planning");
+  // A snapshot stored while a since-removed mode existed plans as balanced.
+  const mode = snapshot.battery_curve_mode === undefined
+    ? (snapshot.value_curves?.battery ? "custom" : "balanced")
+    : snapshot.battery_curve_mode === "custom" ? "custom" : "balanced";
   const custom = mode === "custom" ? snapshot.value_curves?.battery : undefined;
   if (custom) {
     const invalid = validateBatteryCurve(custom);
     if (invalid) throw new Error(`Battery curve: ${invalid}`);
   }
-  const curve = mode === "price_only" ? snapshot.battery_cost_curve!.curve : custom ?? automaticCurve;
+  const curve = custom ?? automaticCurve;
   return {
     curve,
     diagnostic: {
@@ -2520,7 +2513,6 @@ function deriveBatteryValueCurve(
       source: custom ? "customer" : "automatic",
       automatic_curve: automaticCurve,
       generation_mode: mode,
-      ...(mode === "price_only" ? { cost_selection: snapshot.battery_cost_curve } : {}),
       curve,
       state_basis: "usable_kwh_above_min_soc",
       initial_state_kwh: Math.max(
@@ -4869,7 +4861,7 @@ export function dispatchWorkbenchInputs(
 
 /** Resolve the live balanced curve without running any candidate dispatch. */
 export function balancedBatteryCurve(snapshot: OptimisationSnapshot, now = new Date(snapshot.captured_at)): UtilityCurve | null {
-  return dispatchWorkbenchInputs({...snapshot, battery_curve_mode: "balanced", battery_cost_curve: undefined}, [], undefined, now, "published")?.stores.find(store => store.key === "battery")?.curve ?? null;
+  return dispatchWorkbenchInputs({...snapshot, battery_curve_mode: "balanced"}, [], undefined, now, "published")?.stores.find(store => store.key === "battery")?.curve ?? null;
 }
 
 export function generateOptimisationPlan(

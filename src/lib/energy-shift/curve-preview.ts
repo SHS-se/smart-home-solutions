@@ -58,7 +58,7 @@ export function solveWith(
 ): PlanOutcome | string {
   try {
     const input: OptimisationSnapshot = { ...snapshot, value_curves: curves,
-      ...(curves.battery ? { battery_curve_mode: 'custom', battery_cost_curve: undefined } : {}),
+      ...(curves.battery ? { battery_curve_mode: 'custom' } : {}),
     };
     const errors = validateSnapshot(input);
     if (errors.length) return errors.join('; ');

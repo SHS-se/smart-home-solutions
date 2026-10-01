@@ -86,43 +86,12 @@ interface Draft {
   edited?: boolean;
 }
 
-type BatteryMode = 'custom' | 'price_only' | 'balanced';
+type BatteryMode = 'custom' | 'balanced';
 interface BatteryDraft {
   curve: UtilityCurve | null;
   mode: BatteryMode;
   edited: boolean;
-  comparisonInput?: { snapshot: OptimisationSnapshot; now: string };
 }
-
-async function priceOnlyDraft(homeId: string): Promise<BatteryDraft> {
-  for (;;) {
-    const { data, error } = await supabase.functions.invoke('energy-optimisation-battery-curve', {
-      body: { home_id: homeId },
-    });
-    if (error) {
-      const response = (error as { context?: Response }).context;
-      if (response) {
-        const body = await response.json();
-        throw new Error(body.detail ?? body.error ?? error.message);
-      }
-      throw error;
-    }
-    if (data?.pending === true) {
-      if (!Number.isFinite(data.retry_after_ms) || data.retry_after_ms < 0) {
-        throw new Error('The cost curve response has an invalid continuation delay.');
-      }
-      await new Promise(resolve => setTimeout(resolve, data.retry_after_ms));
-      continue;
-    }
-    const curve = data?.selection?.curve as UtilityCurve | undefined;
-    if (!curve || !Array.isArray(curve.points) || validateBatteryCurve(curve)
-      || !data?.input?.snapshot || !Number.isFinite(Date.parse(data?.input?.now))) {
-      throw new Error('The cost curve response is incomplete. Try generating it again.');
-    }
-    return { curve, mode: 'price_only', edited: true, comparisonInput: data.input };
-  }
-}
-
 
 type Drafts = Partial<Record<ValueStoreKey, Draft>>;
 
@@ -255,21 +224,10 @@ const ValueCurvesTab: React.FC<Props> = ({
     const validBattery = typeof battery === 'string' || invalidBattery ? null : battery;
     if (validBattery) nextStored.battery = validBattery;
     const loadedSnapshot = source.snapshot as unknown as OptimisationSnapshot;
-    const mode: BatteryMode = batteryRow?.generation_mode ?? (batteryRow ? 'custom' : 'balanced');
-    let loadedBattery: BatteryDraft = { curve: mode === 'balanced'
+    // A row saved under a since-removed mode plans, and shows, as balanced.
+    const mode: BatteryMode = !batteryRow ? 'balanced' : batteryRow.generation_mode === 'custom' || batteryRow.generation_mode == null ? 'custom' : 'balanced';
+    const loadedBattery: BatteryDraft = { curve: mode === 'balanced'
       ? balancedBatteryCurve(loadedSnapshot, new Date((source.plan as unknown as OptimisationPlan).issued_at)) : validBattery, mode, edited: false };
-    if (mode === 'price_only' && !invalidBattery) {
-      setGeneratingBattery(true);
-      setBatteryGenerationError(null);
-      try {
-        loadedBattery = { ...await priceOnlyDraft(homeId), edited: false };
-      } catch (error) {
-        loadedBattery.curve = null;
-        setBatteryGenerationError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setGeneratingBattery(false);
-      }
-    }
     setSavedBatteryDraft(loadedBattery);
     setBatteryDraft(current => current.edited ? current : loadedBattery);
     setStored(nextStored);
@@ -360,15 +318,13 @@ const ValueCurvesTab: React.FC<Props> = ({
     void load();
   };
 
-  const generateBattery = async (mode: 'price_only' | 'balanced') => {
+  const generateBattery = async (mode: 'balanced') => {
     if (!homeId || !snapshot || generatingBattery || saving) return;
     setBatteryGenerationError(null);
     setPreview(null);
     setGeneratingBattery(true);
     try {
-      const draft = mode === 'price_only' ? await priceOnlyDraft(homeId) : {
-        curve: balancedBatteryCurve(snapshot, new Date(sourcePlan!.issued_at)), mode, edited: true,
-      };
+      const draft: BatteryDraft = { curve: balancedBatteryCurve(snapshot, new Date(sourcePlan!.issued_at)), mode, edited: true };
       if (!draft.curve) throw new Error(t('Batterimätvärden saknas.', 'Battery measurements are missing.'));
       setBatteryDraft(draft);
     } catch (error) {
@@ -415,13 +371,10 @@ const ValueCurvesTab: React.FC<Props> = ({
         edited[key] = curveOf(key, draft.preference);
       }
     }
-    const input = batteryDraft.comparisonInput;
-    const comparisonSnapshot = input?.snapshot ?? snapshot;
-    const current = { ...comparisonSnapshot.value_curves,
+    const current = { ...snapshot.value_curves,
       ...(batteryValueCurve?.curve ? { battery: batteryValueCurve.curve } : {}),
     };
-    setPreview(comparePreference(comparisonSnapshot, current, edited,
-      input ? undefined : sourcePlan.price_outlook, input ? new Date(input.now) : undefined));
+    setPreview(comparePreference(snapshot, current, edited, sourcePlan.price_outlook));
     setPreviewing(false);
   };
 
@@ -489,7 +442,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               <CardTitle className="text-base">{t('Hembatteriets värdekurva', 'Home battery value curve')}</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">{t('Ett högre värde gör lagrad energi mer värdefull att behålla. Kurvan anger inget klockslag eller laddningseffekt.', 'A higher value makes stored energy more valuable to retain. The curve does not set a time or charging power.')}</p>
             </div>
-            <Badge variant="outline">{batteryDraft.mode === 'custom' ? t('Egen kurva', 'Your curve') : batteryDraft.mode === 'price_only' ? t('Lägsta elkostnad', 'Minimum electricity cost') : t('Kostnad och lagrad energi', 'Cost and stored energy')}</Badge>
+            <Badge variant="outline">{batteryDraft.mode === 'custom' ? t('Egen kurva', 'Your curve') : t('Automatisk', 'Automatic')}</Badge>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap justify-between gap-3">
@@ -500,8 +453,7 @@ const ValueCurvesTab: React.FC<Props> = ({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" className="h-auto min-h-11 whitespace-normal" aria-pressed={batteryDraft.mode === 'price_only'} disabled={generatingBattery || saving === 'battery'} onClick={() => void generateBattery('price_only')}>{t('Minimera elkostnaden', 'Minimize electricity cost')}</Button>
-              <Button variant="outline" className="h-auto min-h-11 whitespace-normal" aria-pressed={batteryDraft.mode === 'balanced'} disabled={generatingBattery || saving === 'battery'} onClick={() => void generateBattery('balanced')}>{t('Balansera kostnad och lagrad energi', 'Balance cost and stored energy')}</Button>
+              <Button variant="outline" className="h-auto min-h-11 whitespace-normal" aria-pressed={batteryDraft.mode === 'balanced'} disabled={generatingBattery || saving === 'battery'} onClick={() => void generateBattery('balanced')}>{t('Använd den automatiska kurvan', 'Use the automatic curve')}</Button>
             </div>
             {generatingBattery && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />{t('Jämför kurvor med publicerade elpriser…', 'Comparing curves using published electricity prices…')}</p>}
             {batteryGenerationError && <Alert variant="destructive"><AlertTitle>{t('Kunde inte skapa batterikurvan', 'Could not generate the battery curve')}</AlertTitle><AlertDescription>{batteryGenerationError}</AlertDescription></Alert>}
@@ -510,12 +462,11 @@ const ValueCurvesTab: React.FC<Props> = ({
               onKeyDownCapture={event => { if ((generatingBattery || saving === 'battery') && event.key !== 'Tab') { event.preventDefault(); event.stopPropagation(); } }}>
               <PointCurveEditor current={batteryValueCurve.curve} next={batteryDraft.curve}
                 capacity={batteryValueCurve.usable_capacity_kwh} state={batteryValueCurve.initial_state_kwh}
-                onChange={curve => { if (generatingBattery || saving === 'battery') return; setBatteryDraft({ curve, mode: 'custom', edited: true, comparisonInput: batteryDraft.comparisonInput }); setBatteryGenerationError(null); setPreview(null); }} />
+                onChange={curve => { if (generatingBattery || saving === 'battery') return; setBatteryDraft({ curve, mode: 'custom', edited: true }); setBatteryGenerationError(null); setPreview(null); }} />
             </fieldset>}
             {batteryDraft.curve && validateBatteryCurve(batteryDraft.curve) && <p role="alert" className="text-sm text-destructive">{validateBatteryCurve(batteryDraft.curve)}</p>}
             <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">{t('Om kurvvalen', 'About the curve choices')}</summary>
-              <p className="mt-2">{t('Minimera elkostnaden väljer den billigaste prövade kurvan enbart efter elräkningen under kvartar med publicerade priser. Den kan lämna mindre energi i batteriet eller minska andra tjänster. Planerarens vanliga utrustnings- och tjänsteregler styr fortfarande varje provkörning. Sökningen garanterar inte ett globalt optimum. Kurvan behålls tills nya eller korrigerade elpriser publiceras.', 'Minimize electricity cost selects the cheapest tested curve by the electricity bill over published-price quarters only. It can leave less energy in the battery or reduce other services. The planner’s ordinary equipment and service rules still govern each trial. The search does not guarantee a global optimum. The curve is retained until new or corrected electricity prices are published.')}</p>
-              <p className="mt-2">{t('Balansera kostnad och lagrad energi värderar också energin som finns kvar och beräknar en ny kurva med färska mätvärden för varje plan. Redigering av punkter väljer Egen kurva. Spara och planera om för att använda valet; den blå kurvan visar alltid den nuvarande planen.', 'Balance cost and stored energy also values retained energy and derives a fresh curve from new measurements for every plan. Editing points selects Your curve. Save and replan to apply the selection; the blue curve always shows the current plan.')}</p>
+              <p className="mt-2">{t('Den automatiska kurvan räknas om för varje plan från prognoserna för sol, förbrukning och pris, och värderar också energin som finns kvar. Redigering av punkter väljer Egen kurva. Spara och planera om för att använda valet; den blå kurvan visar alltid den nuvarande planen.', 'The automatic curve is worked out afresh for every plan from the solar, load and price forecasts, and also values the energy left at the end. Editing points selects Your curve. Save and replan to apply the selection; the blue curve always shows the current plan.')}</p>
             </details>
           </CardContent>
         </Card>

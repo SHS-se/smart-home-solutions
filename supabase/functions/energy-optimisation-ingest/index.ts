@@ -1,6 +1,5 @@
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
-import { resolveCostCurve } from "../_shared/battery-cost-selection.ts";
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import type { BatteryProjection } from "../_shared/planner/battery-dispatch-projection.ts";
 import { replanReference, type ReplanPreviousPlan } from "../_shared/planner/replan-continuity.ts";
@@ -1773,8 +1772,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           ...(resolved.curves.battery ? { battery: resolved.curves.battery.curve } : {}),
         },
         value_settings: resolveValueSettings(settingsRow),
-        battery_curve_mode: batteryRow?.generation_mode ?? "balanced",
-        battery_cost_curve: undefined,
+        // Balanced unless the home keeps an explicit custom curve.
+        battery_curve_mode: batteryRow?.generation_mode === "custom" ? "custom" : "balanced",
       };
 
       // Refit the pool alongside the rooms, then hand the planner whatever the
@@ -1853,16 +1852,6 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           device_count: snapshot.device_models.length,
           thermal_zone_count: thermalZones.length,
         });
-        if (snapshot.battery_curve_mode === "price_only") {
-          const costCurve = await resolveCostCurve(supabase, auth.homeId, auth.customerId,
-            { snapshot, now: planningNow.toISOString() }, {
-              url: Deno.env.get("SUPABASE_URL") ?? "",
-              planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
-              requestId,
-            }, traffic.fetch);
-          if ("pending" in costCurve) return json(costCurve, 202);
-          snapshot = { ...snapshot, battery_cost_curve: costCurve.selection };
-        }
         const planned = await generateRemoteOptimisationPlan({
           snapshot,
           now: planningNow.toISOString(),

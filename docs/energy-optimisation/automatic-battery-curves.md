@@ -1,5 +1,10 @@
 # Battery curve generators
 
+> **Removed 2026-10-01:** the *Minimize electricity cost* (`price_only`) mode,
+> its curve search and its edge function no longer exist. The battery's curve
+> is the planner's own *balanced* derivation every plan, unless the home keeps
+> an explicit custom curve. The "Electricity cost" section below is history.
+
 The editor offers **Minimize electricity cost** and **Balance cost and stored
 energy**. Both use published prices to generate their curve. The selected
 curve then applies to the full 72-hour plan. Manual point edits select **Your
