@@ -409,6 +409,20 @@ export const LEVEL_NORM_DAYS = 14;
 const LEVEL_NORM_MIN_DAYS = 5;
 
 /**
+ * Half-life, in hours, of how far the published prices ended from the modelled
+ * day, carried into the quarters that follow.
+ *
+ * The level and the shape are both statements about a whole day. Where the
+ * market stopped is a statement about now: an evening that closed far under
+ * its day does not turn into an ordinary night at midnight. The first
+ * unpublished quarters start from where the published ones ended and relax
+ * into the modelled day.
+ */
+export const BOUNDARY_CARRY_HALF_LIFE_HOURS = 6;
+/** Published quarters the boundary is read from: the last half hour, so one odd quarter does not set it. */
+const BOUNDARY_QUARTERS = 2;
+
+/**
  * The median daily mean price over the last complete days before `asOf`, or
  * null without enough of them.
  */
@@ -617,6 +631,25 @@ export function buildPriceOutlook(
     return publishedDayLevel + weight * (norm - publishedDayLevel);
   };
 
+  // How far the published prices ended from what the model says of the quarter
+  // that follows them: what the tail starts from. Measured against the next
+  // quarter rather than the model's account of the published ones, so a shape
+  // that fits the published window badly cannot push the tail away from it.
+  const tailStart = publishedUntil + 900_000;
+  let boundaryGap = 0;
+  if (shape && Number.isFinite(tailStart)) {
+    const local = localSlot(tailStart, timeZone);
+    const modelled = dayLevelAt(tailStart) * shape.byDayType[local.dayType][local.quarter];
+    const last = published
+      .filter((slot) => publishedUntil - Date.parse(slot.start) < BOUNDARY_QUARTERS * 900_000)
+      .map((slot) => slot.import_price_sek_per_kwh as number);
+    if (Number.isFinite(modelled) && last.length > 0) {
+      boundaryGap = last.reduce((sum, price) => sum + price, 0) / last.length - modelled;
+    }
+  }
+  const carriedAt = (startMs: number): number => startMs < tailStart ? 0
+    : boundaryGap * 0.5 ** ((startMs - tailStart) / 3_600_000 / BOUNDARY_CARRY_HALF_LIFE_HOURS);
+
   const shadowImportSekPerKwh = slots.map((slot) => {
     if (typeof slot.import_price_sek_per_kwh === "number") {
       return slot.import_price_sek_per_kwh;
@@ -627,7 +660,7 @@ export function buildPriceOutlook(
     const local = localSlot(startMs, timeZone);
     const multiplier = shape.byDayType[local.dayType][local.quarter];
     if (!Number.isFinite(multiplier)) return level;
-    return Math.max(0, dayLevelAt(startMs) * multiplier);
+    return Math.max(0, dayLevelAt(startMs) * multiplier + carriedAt(startMs));
   });
 
   return {

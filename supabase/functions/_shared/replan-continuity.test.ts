@@ -314,9 +314,11 @@ Deno.test("fixed plan authority and changed store inventory exclude continuity",
     manual.plans.priority.continuity!.reason,
     "fixed_plan_authority",
   );
-  assertEquals(
+  // The plan rounds its powers; the workbench's are not rounded.
+  assertAlmostEquals(
     manual.plans.priority.slots[0].battery_discharge_w,
     fixed.slots[0].discharge_w.battery,
+    .005,
   );
   input.replan_reference!.store_keys.push("unknown");
   const changed = generateOptimisationPlan(input, new Date(input.captured_at));

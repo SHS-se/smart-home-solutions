@@ -455,3 +455,20 @@ Deno.test("with wind, an unpublished day is priced by the wind forecast for it r
   const backwards = buildPriceOutlook(slots, history, { timeZone: "UTC", asOf, wind: wind.map((entry) => ({ ...entry, mean_speed_m_s: 10 - entry.mean_speed_m_s })) });
   assert(backwards.levelBasis === "recent_norm", `prices rising with wind should not be used: ${backwards.levelBasis}`);
 });
+
+Deno.test("the unpublished tail starts where the published prices ended and relaxes into the modelled day", () => {
+  // A fortnight of ordinary days, then a published day whose last two hours collapse to 0.1.
+  const published = day("2026-06-29", 1, { hours: [7, 8, 19, 20], price: 3 })
+    .map((row, quarter) => ({ start: row.start_ts, import_price_sek_per_kwh: quarter >= 88 ? 0.1 : row.import_price_sek_per_kwh }));
+  const tail = [...day("2026-06-30", 0, { hours: [], price: 0 }), ...day("2026-07-01", 0, { hours: [], price: 0 })]
+    .map((row) => ({ start: row.start_ts, import_price_sek_per_kwh: null }));
+  const asOf = Date.parse("2026-06-29T00:00:00+02:00");
+  const outlook = buildPriceOutlook([...published, ...tail], archive(28), { timeZone: TZ, asOf });
+  const at = (quarter: number) => outlook.shadowImportSekPerKwh[96 + quarter];
+  assertClose(at(0), 0.1, "midnight continues from the last published hour", 0.1);
+  assert(at(0) < at(12) && at(12) < at(24), `the night should climb back gradually: ${at(0)}, ${at(12)}, ${at(24)}`);
+  // Six hours on, half the gap is left; a day and a half on, nothing to speak of.
+  const modelled = outlook.shadowImportSekPerKwh[96 + 96 + 48];
+  assertClose(at(24), (at(0) + modelled) / 2, "half way after six hours", 0.1);
+  assertClose(at(96 + 48), modelled, "the modelled day by the second noon", 0.02);
+});
