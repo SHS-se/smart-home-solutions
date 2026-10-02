@@ -70,9 +70,23 @@ export interface WindDay {
   mean_speed_m_s: number;
 }
 
+/** One matured day before a case: what its base load was forecast to be the day before, and what it was. */
+export interface DemandDay {
+  day: string;
+  forecast_kwh: number;
+  actual_kwh: number;
+}
+
 export interface BenchRecorded {
   /** What electricity really cost in every quarter of the window. */
   prices: { import_sek_per_kwh: Series; export_sek_per_kwh: Series };
+  /**
+   * What the house really drew and the panels really gave. Planners never see
+   * it; the referee carries the household through it instead of through the
+   * forecasts. Absent on a window the home did not measure in full, which is
+   * then refereed on the forecasts.
+   */
+  actual?: { base_load_w: Series; solar_w: Series };
   /** Measured at the house; given to planners as a perfect forecast. */
   outdoor_temperature_c: Series;
   solar_irradiance_w_per_m2: (number | null)[];
@@ -86,6 +100,12 @@ export interface BenchRecorded {
     prices: PriceHistory;
     /** Grid import per quarter from the start of the calendar month to the case start. */
     grid_import_kwh: { start: string; kwh: (number | null)[] };
+    /**
+     * The weeks before the start, day by day: base load as forecast against as
+     * drawn. What a planner may level its forecast to. Absent on cases recorded
+     * before it was kept.
+     */
+    demand_days?: DemandDay[];
   };
   recorded_at: string;
 }
@@ -144,6 +164,16 @@ export function parseRecorded(raw: unknown): BenchRecorded {
   series(recorded.prices.export_sek_per_kwh, 'recorded.prices.export_sek_per_kwh');
   series(recorded.outdoor_temperature_c, 'recorded.outdoor_temperature_c');
   series(recorded.solar_irradiance_w_per_m2, 'recorded.solar_irradiance_w_per_m2', true);
+  if (recorded.actual !== undefined) {
+    if (!isRecord(recorded.actual)) throw new CaseFormatError('recorded.actual is malformed.');
+    series(recorded.actual.base_load_w, 'recorded.actual.base_load_w');
+    series(recorded.actual.solar_w, 'recorded.actual.solar_w');
+  }
+  const demand = recorded.history.demand_days;
+  if (demand !== undefined && (!Array.isArray(demand)
+    || !demand.every(d => isRecord(d) && typeof d.day === 'string' && finite(d.forecast_kwh) && finite(d.actual_kwh)))) {
+    throw new CaseFormatError('recorded.history.demand_days is malformed.');
+  }
   if (recorded.wind !== undefined && (!isRecord(recorded.wind) || !Array.isArray(recorded.wind.days)
     || !recorded.wind.days.every(d => isRecord(d) && typeof d.day === 'string' && finite(d.mean_speed_m_s)))) {
     throw new CaseFormatError('recorded.wind is malformed.');

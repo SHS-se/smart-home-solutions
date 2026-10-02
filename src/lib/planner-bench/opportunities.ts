@@ -38,7 +38,7 @@
 import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './case';
 import { poolCop, poolHeaterW, WATER_KWH_PER_M3_K, type Household } from './household';
 import { laneParts, type LaneId } from './lanes';
-import { assertDecisions, evLimitKwh, evMaxW, HOURS, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
+import { assertDecisions, evLimitKwh, evMaxW, HOURS, householdSeries, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
 export const OPPORTUNITY_AUDIT_VERSION = 2;
@@ -230,7 +230,8 @@ function applicabilityOf(c: BenchCase, h: Household, _targets: Targets): AuditCo
   // Conservative eligibility, not a profitability test. Flexible demand, COP,
   // starting inventory and intervening actions all affect the actual opportunity.
   // In particular, flat prices do not make moving pool heat ineligible.
-  const surplus = c.base_load_forecast_w.map((load, i) => c.solar_forecast_w[i] - load > NOTABLE_W);
+  const world = householdSeries(c);
+  const surplus = world.baseW.map((load, i) => world.solarW[i] - load > NOTABLE_W);
   const anySurplus = surplus.some(Boolean);
   const battery = h.battery.capacity_kwh > 0 && h.battery.charge_max_w > 0 && h.battery.discharge_max_w > 0;
   const pool = h.pool.heater_w > 0;
@@ -342,8 +343,9 @@ export function findOpportunities(
   /** Hours for the pool to lose 63 % of its warmth over the air. */
   const poolTauH = poolKwhPerK / pool.loss_kw_per_k;
 
-  const scaleSek = Math.max(1, c.base_load_forecast_w.reduce((sum, load, i) => {
-    const net = load - c.solar_forecast_w[i];
+  const world = householdSeries(c);
+  const scaleSek = Math.max(1, world.baseW.reduce((sum, load, i) => {
+    const net = load - world.solarW[i];
     return sum + Math.abs(net) * Math.abs(net > 0 ? buy[i] : sell[i]) * KWH;
   }, 0));
   const emptyRules = () => Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as AuditCore['rules'];
@@ -355,13 +357,15 @@ export function findOpportunities(
     version: OPPORTUNITY_AUDIT_VERSION, lane, guard: { pool: [...guard.pool], ev: [...guard.ev] } as ServiceGuard,
     scaleSek: r4(scaleSek), originalCostSek: r4(original.cost), applicability,
   };
-  if (original.violations.length) {
-    const kinds = [...new Set(original.violations.map(v => v.kind))].join(', ');
+  // Asked of the household as the planner was told it; a measured day differing from its forecast is not a violation.
+  const violations = c.recorded.actual ? simulate(c, h, decisions, 'told').violations : original.violations;
+  if (violations.length) {
+    const kinds = [...new Set(violations.map(v => v.kind))].join(', ');
     return { improved: decisions, audit: {
       ...core, status: 'invalid',
-      reason: `The plan asks for what the household cannot do (${kinds}, ${original.violations.length} in all), so no alternative can be compared with it.`,
+      reason: `The plan asks for what the household cannot do (${kinds}, ${violations.length} in all), so no alternative can be compared with it.`,
       improvedCostSek: r4(original.cost), avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
-      trials, limitReached: false, rules: emptyRules(), findings: [], violations: original.violations,
+      trials, limitReached: false, rules: emptyRules(), findings: [], violations,
     } };
   }
 

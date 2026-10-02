@@ -86,6 +86,43 @@ export async function recordedWind(source: HistorySource, zone: string, caseStar
   return { zone, days };
 }
 
+/** Share of a window's quarters in which the device meters may add up to more than the house drew. */
+const MAX_MISCOUNTED_SHARE = 0.02;
+
+/**
+ * What the house drew apart from the pool and the car, and what the panels
+ * gave, for every quarter of a case's window; null unless the home measured
+ * all of it. The bench household plans the pool and the car itself, so their
+ * measured energy is taken out; everything else is the base load a planner was
+ * given a forecast of.
+ */
+export async function recordedActual(source: HistorySource, caseStart: string): Promise<NonNullable<BenchRecorded["actual"]> | null> {
+  const start = Date.parse(caseStart);
+  const rows = await quarterRows(source, "energy_optimisation_actual_slots",
+    "total_load_kwh,solar_production_kwh,pool_heating_kwh,ev_charging_kwh", start, start + QUARTERS * QUARTER_MS);
+  const total = onto(rows, "total_load_kwh", start, QUARTERS), solar = onto(rows, "solar_production_kwh", start, QUARTERS);
+  const pool = onto(rows, "pool_heating_kwh", start, QUARTERS), car = onto(rows, "ev_charging_kwh", start, QUARTERS);
+  if (total.some(v => v === null) || solar.some(v => v === null)) return null;
+  const perHour = 1_000 / (QUARTER_MS / 3_600_000);
+  const base = total.map((kwh, i) => (kwh! - (pool[i] ?? 0) - (car[i] ?? 0)) * perHour);
+  // Meters that disagree in more than the odd quarter do not describe the house.
+  if (base.filter(w => w < -200).length > MAX_MISCOUNTED_SHARE * QUARTERS) return null;
+  return { base_load_w: base.map(w => Math.round(Math.max(0, w))), solar_w: solar.map(kwh => Math.round(Math.max(0, kwh! * perHour))) };
+}
+
+/** The home's matured days before a case's start: base load as forecast the day before, and as drawn. */
+export async function recordedDemandDays(source: HistorySource, timezone: string, caseStart: string): Promise<NonNullable<BenchRecorded["history"]["demand_days"]> | null> {
+  const response = await fetch(`${source.url}/rest/v1/rpc/energy_optimisation_demand_days`, {
+    method: "POST",
+    headers: { apikey: source.key, Authorization: `Bearer ${source.key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_home_id: source.homeId, p_timezone: timezone, p_until: caseStart }),
+  });
+  // A database without the function yet has no evidence to give; the case runs without it.
+  if (!response.ok) return null;
+  return (await response.json() as { day: string; forecast_kwh: number | string; actual_kwh: number | string }[])
+    .map(row => ({ day: row.day, forecast_kwh: Number(row.forecast_kwh), actual_kwh: Number(row.actual_kwh) }));
+}
+
 export interface Completion {
   /** Present when every quarter the case needs is recorded. */
   recorded: BenchRecorded | null;

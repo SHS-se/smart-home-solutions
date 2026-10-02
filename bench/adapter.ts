@@ -86,7 +86,7 @@ function legacyComfortCurve(unit: string, target: number, band: number, urgency:
   };
 }
 
-function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean): Json {
+function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean, demand: boolean): Json {
   const starts = quarterStarts(c.start);
   const end = new Date(Date.parse(starts[QUARTERS - 1]) + 15 * 60_000).toISOString();
   const targets = { ...TARGETS, ...(c.comfort ?? {}) };
@@ -184,6 +184,7 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
     service_requirement_sample_days: { pool_heating: 0 },
     outdoor_temperature_c: c.recorded.outdoor_temperature_c,
     ...(wind && c.recorded.wind ? { wind_outlook: { provider: "bench_case", zone: c.recorded.wind.zone, days: c.recorded.wind.days } } : {}),
+    ...(demand && c.recorded.history.demand_days?.length ? { demand_outlook: { provider: "bench_case", days: c.recorded.history.demand_days } } : {}),
     ...(c.recorded.solar_irradiance_w_per_m2.every(v => v !== null) ? { solar_irradiance_w_per_m2: c.recorded.solar_irradiance_w_per_m2 } : {}),
     operating_scope: {
       modes: { $battery: "controlling", $ev: "controlling", $pool: "controlling" },
@@ -273,7 +274,8 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
   return {
     generation,
     plan(c, household, scale = 1) {
-      const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort", M.PLANNER_INPUTS?.includes("wind_outlook") === true);
+      const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort", M.PLANNER_INPUTS?.includes("wind_outlook") === true,
+        M.PLANNER_INPUTS?.includes("demand_outlook") === true);
       const archive = priceArchive(c);
       if (generation === "snapshot+basis") {
         // The planner's own code builds its basis from the case's history.

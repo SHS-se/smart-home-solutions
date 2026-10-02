@@ -46,7 +46,7 @@ import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD, TARGETS } from "../src/lib/planner-bench/household.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
-import { completeCase, recordedWind, type HistorySource } from "./history.ts";
+import { completeCase, recordedActual, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
 
@@ -148,6 +148,19 @@ async function prepareCases(bench: BenchStore) {
         console.log(`${scenario.name}: observed wind added.`);
       }
     }
+    if (scenario.recorded && source && (!scenario.recorded.actual || !scenario.recorded.history.demand_days)) {
+      // Recorded before the bench kept what the house really drew, or the days before it.
+      const recorded = { ...scenario.recorded, history: { ...scenario.recorded.history } };
+      const actual = recorded.actual ? null : await recordedActual(source, dataset.start);
+      const demand = recorded.history.demand_days ? null : await recordedDemandDays(source, dataset.timezone, dataset.start);
+      if (actual) recorded.actual = actual;
+      if (demand) recorded.history.demand_days = demand;
+      if (actual || demand) {
+        await bench.saveRecorded(scenario.id, recorded, null);
+        scenario.recorded = recorded;
+        console.log(`${scenario.name}: ${[actual && "measured load and solar", demand && "the days before it"].filter(Boolean).join(" and ")} added.`);
+      }
+    }
     if (scenario.recorded || !source) continue;
     const done = await completeCase(source, dataset);
     if (dataset.start_state_unread?.length) {
@@ -160,6 +173,10 @@ async function prepareCases(bench: BenchStore) {
     if (done.recorded) {
       const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
       if (wind) done.recorded.wind = wind;
+      const actual = await recordedActual(source, dataset.start);
+      if (actual) done.recorded.actual = actual;
+      const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
+      if (demand) done.recorded.history.demand_days = demand;
     }
     await bench.saveRecorded(scenario.id, done.recorded, done.missing);
     console.log(`${scenario.name}: ${done.recorded ? "complete, recorded data stored" : `waiting, ${done.missing}`}.`);

@@ -12,6 +12,18 @@
 // its own charge limit, a negative request, or more than the grid connection
 // carries. Any of them fails the case (score.ts).
 //
+// Where the home measured the whole window, the household is carried through
+// what it really drew and what the panels really gave, not through the
+// forecasts the planner was told. The battery then does what it does in the
+// house: a quarter it was planned to supply the house in, it follows the house,
+// giving more when more is drawn and less when less is; a quarter it was
+// planned to take surplus sun in, it takes the surplus there is. A grid charge
+// or an idle quarter stays as planned. So a plan charged for exactly the
+// forecast runs dry on a day that draws more, and pays for it at that hour's
+// price. Whether a plan asks for something the household cannot do is still
+// judged against what the planner was told: running dry because the day turned
+// out heavier is a cost, not an impossible request.
+//
 // Bump REFEREE_VERSION whenever the arithmetic changes: stored outcomes are
 // then recognised as stale and recomputed from the stored decisions, with no
 // planner run.
@@ -20,7 +32,7 @@ import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series
 import { poolCop, stepPool, WATER_KWH_PER_M3_K, type Household } from './household';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 3;
+export const REFEREE_VERSION = 4;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -76,15 +88,27 @@ export const evMaxW = (h: Household) => h.ev.voltage_v * h.ev.phase_count * h.ev
 /** The car's own charge limit, kWh: charging stops there whatever the plan asks. */
 export const evLimitKwh = (c: BenchCase, h: Household) => Math.min(1, Math.max(0, c.start_state.ev.target_soc)) * h.ev.capacity_kwh;
 
+/** The world a plan is carried through: `recorded` where the window was measured, else what the planner was told. */
+export type World = 'recorded' | 'told';
+
+/** The household's fixed load and solar in the world the referee uses for a case. */
+export function householdSeries(c: BenchCase, world: World = 'recorded'): { baseW: Series; solarW: Series } {
+  const actual = world === 'recorded' ? c.recorded.actual : undefined;
+  return { baseW: actual?.base_load_w ?? c.base_load_forecast_w, solarW: actual?.solar_w ?? c.solar_forecast_w };
+}
+
 /**
  * The one physical simulation. The stored account of a plan and every
  * alternative the opportunity audit tries (opportunities.ts) step the
  * household here, so an alternative is held to the physics the plan was.
  */
-export function simulate(c: BenchCase, h: Household, d: Decisions): Simulation {
+export function simulate(c: BenchCase, h: Household, d: Decisions, world: World = 'recorded'): Simulation {
   const violations: Violation[] = [];
-  const clip = (quarter: number, kind: ViolationKind, wanted: number, allowed: number) => {
-    if (wanted - allowed > CLIP_TOLERANCE_W) violations.push({ quarter, kind, clipped_w: r1(wanted - allowed) });
+  const { baseW, solarW } = householdSeries(c, world);
+  // Only a measured window differs from what the planner was told.
+  const measured = world === 'recorded' && c.recorded.actual !== undefined;
+  const clip = (quarter: number, kind: ViolationKind, wanted: number, allowed: number, report = true) => {
+    if (report && wanted - allowed > CLIP_TOLERANCE_W) violations.push({ quarter, kind, clipped_w: r1(wanted - allowed) });
     return Math.min(wanted, allowed);
   };
   // A negative request is not a smaller one: it is reported, and nothing is done.
@@ -116,16 +140,24 @@ export function simulate(c: BenchCase, h: Household, d: Decisions): Simulation {
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.ev.charge_efficiency * HOURS) * 1_000));
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
     let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);
-    chargeW = clip(i, 'battery_full', chargeW, Math.max(0, (Math.max(batteryMaxKwh, batteryKwh) - batteryKwh) / (h.battery.charge_efficiency * HOURS) * 1_000 + dischargeW / (h.battery.charge_efficiency * h.battery.discharge_efficiency)));
-    dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency));
+    if (measured) {
+      // How much more the house needs from elsewhere than the planner was told.
+      const shiftW = (baseW[i] - solarW[i]) - (c.base_load_forecast_w[i] - c.solar_forecast_w[i]);
+      const plannedImportW = c.base_load_forecast_w[i] + poolW + evW + chargeW - c.solar_forecast_w[i];
+      if (dischargeW > CLIP_TOLERANCE_W) dischargeW = Math.min(h.battery.discharge_max_w, Math.max(0, dischargeW + shiftW));
+      else if (chargeW > CLIP_TOLERANCE_W && plannedImportW <= CLIP_TOLERANCE_W) chargeW = Math.min(h.battery.charge_max_w, Math.max(0, chargeW - shiftW));
+    }
+    // A pack that ran dry or filled because the day differed from its forecast is not an impossible request.
+    chargeW = clip(i, 'battery_full', chargeW, Math.max(0, (Math.max(batteryMaxKwh, batteryKwh) - batteryKwh) / (h.battery.charge_efficiency * HOURS) * 1_000 + dischargeW / (h.battery.charge_efficiency * h.battery.discharge_efficiency)), !measured);
+    dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency), !measured);
 
     batteryKwh += (chargeW * h.battery.charge_efficiency - dischargeW / h.battery.discharge_efficiency) * HOURS / 1_000;
     poolC = stepPool(h.pool, poolC, air[i], poolW, HOURS);
     evKwh += evW * h.ev.charge_efficiency * HOURS / 1_000;
 
-    const netW = c.base_load_forecast_w[i] + poolW + evW + chargeW - dischargeW - c.solar_forecast_w[i];
-    if (netW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(netW - h.site.import_limit_w) });
-    if (-netW - h.site.export_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(-netW - h.site.export_limit_w) });
+    const netW = baseW[i] + poolW + evW + chargeW - dischargeW - solarW[i];
+    if (!measured && netW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(netW - h.site.import_limit_w) });
+    if (!measured && -netW - h.site.export_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(-netW - h.site.export_limit_w) });
     const quarterCost = (netW > 0 ? netW * buy[i] : netW * sell[i]) * HOURS / 1_000;
     out.cost += quarterCost;
 
@@ -166,6 +198,9 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   const starts = quarterStarts(c.start);
   const published = publishedQuarters(c);
   const sim = simulate(c, h, d);
+  // What the household cannot do is judged on what the planner was told.
+  const violations = c.recorded.actual ? simulate(c, h, d, 'told').violations : sim.violations;
+  const { baseW, solarW } = householdSeries(c);
   const reach = reachability(c, h);
 
   const series: BenchSeries = {
@@ -189,8 +224,8 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.importPrice.push(r4(c.recorded.prices.import_sek_per_kwh[i]));
     series.exportPrice.push(r4(c.recorded.prices.export_sek_per_kwh[i]));
     series.believedImportPrice!.push(believedImportPrice && Number.isFinite(believedImportPrice[i]) ? r4(believedImportPrice[i]) : null);
-    series.solarW.push(r1(c.solar_forecast_w[i]));
-    series.loadW.push(r1(c.base_load_forecast_w[i] + sim.poolW[i] + sim.evW[i]));
+    series.solarW.push(r1(solarW[i]));
+    series.loadW.push(r1(baseW[i] + sim.poolW[i] + sim.evW[i]));
     series.poolW.push(r1(sim.poolW[i]));
     series.hotWaterW.push(0);
     series.carW.push(r1(sim.evW[i]));
@@ -217,7 +252,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     + (poolC - sim.start.poolC) * poolKwhPerDegree
     + (evKwh - sim.start.evKwh) / h.ev.charge_efficiency;
   return {
-    series, violations: sim.violations,
+    series, violations,
     cost_sek: r4(sim.cost), published_cost_sek: r4(publishedCost),
     terminal: {
       battery_kwh: r4(batteryKwh - sim.start.batteryKwh), pool_c: r4(poolC - sim.start.poolC), ev_kwh: r4(evKwh - sim.start.evKwh),
