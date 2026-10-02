@@ -15,12 +15,14 @@
 // Where the home measured the whole window, the household is carried through
 // what it really drew and what the panels really gave, not through the
 // forecasts the planner was told. The battery then does what it does in the
-// house: a quarter it was planned to supply the house in, it follows the house,
-// giving more when more is drawn and less when less is; a quarter it was
-// planned to take surplus sun in, it takes the surplus there is. A grid charge
-// or an idle quarter stays as planned. So a plan charged for exactly the
-// forecast runs dry on a day that draws more, and pays for it at that hour's
-// price. Whether a plan asks for something the household cannot do is still
+// house, where a plan is carried out as a permission and not as a power: in a
+// quarter it supplies the house it follows the house, up to the limit the plan
+// set; in any quarter it is left to itself it takes the surplus sun there is. A
+// grid charge or a sale to the grid is a fixed power and stays as planned. So a
+// plan charged for exactly the forecast runs dry on a day that draws more, and
+// pays for it at that hour's price. Each quarter's permission is the planner's
+// own where its plan states one (`battery_follow`), and otherwise worked out
+// from its decisions and what it was told, by the same rule. Whether a plan asks for something the household cannot do is still
 // judged against what the planner was told: running dry because the day turned
 // out heavier is a cost, not an impossible request.
 //
@@ -43,6 +45,22 @@ export interface Decisions {
   ev_w: Series;
   battery_charge_w: Series;
   battery_discharge_w: Series;
+  /**
+   * Per quarter, how the planner's plan says the battery is to be run, where
+   * it says so. A quarter whose decision has since been changed (an alternative
+   * the audit tries) is read from the decision instead.
+   */
+  battery_follow?: BatteryFollow[];
+}
+
+export interface BatteryFollow {
+  /** False for a quarter at fixed power: a grid charge, a sale to the grid, or switched off. */
+  follows: boolean;
+  /** The limits the battery follows the house within. */
+  charge_limit_w: number;
+  discharge_limit_w: number;
+  /** The charge and discharge this was stated for. */
+  planned: [charge_w: number, discharge_w: number];
 }
 
 export type ViolationKind = 'battery_empty' | 'battery_full' | 'battery_power' | 'ev_full' | 'ev_power' | 'pool_power' | 'grid_limit' | 'negative_request';
@@ -141,11 +159,12 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
     let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);
     if (measured) {
-      // How much more the house needs from elsewhere than the planner was told.
-      const shiftW = (baseW[i] - solarW[i]) - (c.base_load_forecast_w[i] - c.solar_forecast_w[i]);
-      const plannedImportW = c.base_load_forecast_w[i] + poolW + evW + chargeW - c.solar_forecast_w[i];
-      if (dischargeW > CLIP_TOLERANCE_W) dischargeW = Math.min(h.battery.discharge_max_w, Math.max(0, dischargeW + shiftW));
-      else if (chargeW > CLIP_TOLERANCE_W && plannedImportW <= CLIP_TOLERANCE_W) chargeW = Math.min(h.battery.charge_max_w, Math.max(0, chargeW - shiftW));
+      const follow = followLimits(c, h, d, i, poolW, evW, chargeW, dischargeW);
+      if (follow) {
+        const houseW = baseW[i] + poolW + evW - solarW[i];
+        chargeW = Math.min(follow.charge_limit_w, h.battery.charge_max_w, Math.max(0, -houseW));
+        dischargeW = Math.min(follow.discharge_limit_w, h.battery.discharge_max_w, Math.max(0, houseW));
+      }
     }
     // A pack that ran dry or filled because the day differed from its forecast is not an impossible request.
     chargeW = clip(i, 'battery_full', chargeW, Math.max(0, (Math.max(batteryMaxKwh, batteryKwh) - batteryKwh) / (h.battery.charge_efficiency * HOURS) * 1_000 + dischargeW / (h.battery.charge_efficiency * h.battery.discharge_efficiency)), !measured);
@@ -166,6 +185,33 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     out.costSek[i] = quarterCost;
   }
   return out;
+}
+
+/**
+ * The limits the battery follows the house within in one quarter, or null when
+ * it runs at the fixed power the plan gives. The planner's own statement where
+ * it made one for this decision; otherwise what its decision amounts to against
+ * the household it was told about: charging on no more than the surplus, or
+ * doing nothing, leaves the battery free to take surplus; discharging no more
+ * than the house needs is supplying the house, all of it when it covers the
+ * whole need and up to the planned power when it covers a part.
+ */
+function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW: number, evW: number, chargeW: number, dischargeW: number): Pick<BatteryFollow, 'charge_limit_w' | 'discharge_limit_w'> | null {
+  const stated = d.battery_follow?.[i];
+  if (stated && Math.abs(stated.planned[0] - d.battery_charge_w[i]) <= CLIP_TOLERANCE_W
+    && Math.abs(stated.planned[1] - d.battery_discharge_w[i]) <= CLIP_TOLERANCE_W) {
+    return stated.follows ? stated : null;
+  }
+  const toldHouseW = c.base_load_forecast_w[i] + poolW + evW - c.solar_forecast_w[i];
+  if (chargeW > CLIP_TOLERANCE_W) {
+    return chargeW <= Math.max(0, -toldHouseW) + CLIP_TOLERANCE_W ? { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 } : null;
+  }
+  if (dischargeW > CLIP_TOLERANCE_W) {
+    const needW = Math.max(0, toldHouseW);
+    if (dischargeW > needW + CLIP_TOLERANCE_W) return null;
+    return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: dischargeW + CLIP_TOLERANCE_W >= needW ? h.battery.discharge_max_w : dischargeW };
+  }
+  return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 };
 }
 
 /** Where each store could be at best, at the end of every quarter: full power from the first. */

@@ -29,7 +29,7 @@ import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 4;
+export const ADAPTER_VERSION = 5;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -243,6 +243,16 @@ function recordFrom(plan: Json, generation: LoadedPlanner["generation"], scale: 
     battery_charge_w: pick(s => s.battery_charge_w),
     battery_discharge_w: slots.map(s => (num(s.battery_discharge_w) ?? 0) + (num(s.battery_export_w) ?? 0)),
   };
+  // How the plan says the battery is to be run, where it says so: operations the
+  // plant carries out itself follow the house within the plan's limits.
+  const commands = slots.map(s => s.battery_command as { operation?: string; charge_limit_w?: number; discharge_limit_w?: number } | null | undefined);
+  if (commands.every(command => typeof command?.operation === "string" && num(command.charge_limit_w) !== null && num(command.discharge_limit_w) !== null)) {
+    decisions.battery_follow = commands.map((command, i) => ({
+      follows: ["self_consumption", "solar_charge", "supply_house", "hold"].includes(command!.operation!),
+      charge_limit_w: command!.charge_limit_w!, discharge_limit_w: command!.discharge_limit_w!,
+      planned: [decisions.battery_charge_w[i], decisions.battery_discharge_w[i]],
+    }));
+  }
   const believed = slots.map(s => num(s.import_price_sek_per_kwh) ?? num(s.shadow_import_sek_per_kwh));
   const believedSell = slots.map(s => num(s.export_price_sek_per_kwh) ?? num(s.shadow_export_sek_per_kwh));
   const believedCost = slots.every((_, i) => believed[i] !== null && believedSell[i] !== null)
