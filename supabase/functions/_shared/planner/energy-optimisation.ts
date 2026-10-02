@@ -30,6 +30,7 @@ import {
   type StoredPriceRow,
   type WindDay,
 } from "./energy-price-shape.ts";
+import { type DemandDay, demandLevel, demandMargin } from "./demand-outlook.ts";
 import {
   projectZoneTemperature,
   type ThermalZoneModel,
@@ -481,6 +482,13 @@ export interface OptimisationSnapshot {
    */
   wind_outlook?: { provider?: string; zone?: string; days: WindDay[] } | null;
   /**
+   * Recent days' base-load forecasts beside what those days drew
+   * (demand-outlook.ts). The server supplies it; the base-load forecast is
+   * levelled to it, and the demand planned for sits above the forecast by what
+   * running short would cost.
+   */
+  demand_outlook?: { provider?: string; days: DemandDay[] } | null;
+  /**
    * An administrator's scale on what each store's derived curve is worth; 1
    * when absent. Turns a store up or down without moving its target.
    */
@@ -790,6 +798,12 @@ export interface OptimisationPlan {
     /** Exact unrounded series used by the solve and by deterministic replay. */
     shadow_import_sek_per_kwh: number[];
   };
+  /**
+   * How the base-load forecast was turned into the demand planned for; absent
+   * when it was planned as given. `base_w` in every slot is the planned demand:
+   * the forecast times `level_factor` times `margin_factor`.
+   */
+  demand_outlook?: DemandOutlookDiagnostic;
   /** Exact derived home-battery curve used by every scenario in this solve. */
   battery_value_curve: BatteryValueCurveDiagnostic | null;
   policy: OptimisationSnapshot["policy"];
@@ -831,6 +845,21 @@ export type OptimisationPlanV6 = Omit<OptimisationPlan, "schema_version"> & {
 export type OptimisationPlanV8 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 8 };
 
 export type OptimisationPlanV7 = Omit<OptimisationPlan, "schema_version"> & { schema_version: 7 };
+
+export interface DemandOutlookDiagnostic {
+  /** Recent draw over recent forecast. */
+  level_factor: number;
+  /** Planned demand over the levelled forecast; 1 without a battery to charge for it. */
+  margin_factor: number;
+  /** The point of the day-to-day spread planned for; 0.5 is the forecast. */
+  quantile: number;
+  /** Day-to-day spread of draw around the levelled forecast, as a share of it. */
+  spread: number;
+  short_sek_per_kwh: number;
+  over_sek_per_kwh: number;
+  solar_refill_share: number;
+  days: number;
+}
 
 interface PreparedSlot extends ForecastSlotInput {
   duration_hours: number;
@@ -1687,7 +1716,7 @@ function preparedSlots(
   archive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   effectiveAt = isoMs(snapshot.captured_at),
-): { slots: PreparedSlot[]; outlook: PriceOutlook } {
+): { slots: PreparedSlot[]; outlook: PriceOutlook; demand: DemandOutlookDiagnostic | null } {
   const captured = isoMs(snapshot.captured_at);
   const controlledCategories = new Set<string>();
   if (snapshot.capabilities.boiler) controlledCategories.add("hot_water");
@@ -1763,7 +1792,40 @@ function preparedSlots(
         exportAt(outlook.shadowImportSekPerKwh[index]),
     };
   });
-  return { slots, outlook };
+  const demand = planForDemand(slots, snapshot, localSlotTime(captured, snapshot.timezone).day);
+  return { slots, outlook, demand };
+}
+
+/**
+ * Turn the base-load forecast into the demand to plan for (demand-outlook.ts):
+ * levelled to what recent days drew against their forecasts, then raised by
+ * what being short would cost. The slots are changed in place; devices planned
+ * or forecast on their own are left as they are.
+ */
+function planForDemand(slots: PreparedSlot[], snapshot: OptimisationSnapshot, today: string): DemandOutlookDiagnostic | null {
+  const level = demandLevel(snapshot.demand_outlook?.days, today);
+  if (!level) return null;
+  for (const slot of slots) slot.base_load_forecast_w *= level.factor;
+  const battery = snapshot.capabilities.battery ? snapshot.battery : null;
+  const margin = demandMargin(level, {
+    importSekPerKwh: slots.map((slot) => slot.shadow_import_sek_per_kwh),
+    exportSekPerKwh: slots.map((slot) => slot.shadow_export_sek_per_kwh),
+    surplusKwh: slots.map((slot) => Math.max(0, slot.pv_w - fixedLoadW(slot)) / 1_000 * slot.duration_hours),
+    horizonHours: slots.reduce((sum, slot) => sum + slot.duration_hours, 0),
+    battery: {
+      usable_kwh: battery ? (battery.max_soc - battery.min_soc) * battery.capacity_kwh : 0,
+      charge_efficiency: battery?.charge_efficiency ?? 1,
+      discharge_efficiency: battery?.discharge_efficiency ?? 1,
+      degradation_sek_per_kwh: resolveValueSettings(snapshot.value_settings).battery_degradation_sek_per_kwh,
+    },
+  });
+  for (const slot of slots) slot.base_load_forecast_w *= margin.factor;
+  return {
+    level_factor: round(level.factor, 4), margin_factor: round(margin.factor, 4),
+    quantile: round(margin.quantile, 3), spread: round(level.spread, 4),
+    short_sek_per_kwh: round(margin.short_sek_per_kwh, 4), over_sek_per_kwh: round(margin.over_sek_per_kwh, 4),
+    solar_refill_share: round(margin.solar_refill_share, 3), days: level.days,
+  };
 }
 
 /**
@@ -2342,7 +2404,7 @@ const POOL_NO_AIR_CUTOUT_C = -273.15;
  * bench's adapter builds its input from this, so an older planner is never
  * handed a field it would ignore.
  */
-export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook"] as const;
+export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook", "demand_outlook"] as const;
 
 type PoolResponse = NonNullable<NonNullable<OptimisationSnapshot["pool_model"]>["response"]>;
 
@@ -5191,7 +5253,7 @@ function generatePlanBody(
   snapshot = remainingSnapshot(snapshot, effectiveAt);
   if (resolvedPriceOutlook) resolvedPriceOutlook = {...resolvedPriceOutlook,
     shadow_import_sek_per_kwh: resolvedPriceOutlook.shadow_import_sek_per_kwh.slice(originalCount - snapshot.slots.length)};
-  const { slots, outlook } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook, effectiveAt);
+  const { slots, outlook, demand } = preparedSlots(snapshot, priceArchive, resolvedPriceOutlook, effectiveAt);
   const { reservedW, protectedSoc } = batteryReservation(slots, snapshot);
   const derivedBatteryValue = snapshot.schema_version >= 6
     ? deriveBatteryValueCurve(slots, snapshot)
@@ -5291,6 +5353,7 @@ function generatePlanBody(
       level_sek_per_kwh: outlook.levelSekPerKwh,
       shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh,
     },
+    ...(demand ? { demand_outlook: demand } : {}),
     battery_value_curve: derivedBatteryValueCurve,
     resolved_value_stores: (priority.bundle?.stores ?? []).map(store => ({
       key: store.key, curve: store.curve, initial_state: store.initial_state,

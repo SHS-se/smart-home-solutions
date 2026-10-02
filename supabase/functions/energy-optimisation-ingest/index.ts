@@ -75,6 +75,7 @@ import {
   withServerOutdoorTemperature,
 } from "../_shared/outdoor-forecast.ts";
 import { withWindOutlook } from "../_shared/market-wind.ts";
+import { withDemandOutlook } from "../_shared/demand-evidence.ts";
 import { priceEstimateRows } from "../_shared/price-estimate-record.ts";
 import {
   irradianceForQuarters,
@@ -1861,6 +1862,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         // So is the wind over the price area, which the level of the days
         // the market has not published is estimated from.
         snapshot = await withWindOutlook(supabase, snapshot);
+        // And what recent days drew against their forecasts, which the
+        // base-load forecast is levelled to and the demand margin sized from.
+        snapshot = await withDemandOutlook(supabase, auth.homeId, snapshot);
         const thermal = await prepareThermalPlanning(
           supabase,
           auth.customerId,
