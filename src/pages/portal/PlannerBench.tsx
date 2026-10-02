@@ -3,7 +3,7 @@
 // (docs/planner-bench/README.md). Staff only. The bench tables exist only in
 // the TEST Supabase project, so elsewhere the page points to the test site.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Loader2, Play, Upload } from 'lucide-react';
@@ -36,6 +36,7 @@ import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
+import { useBenchJob, type BenchJobRun, type BenchTask } from '@/components/portal/planner-bench/useBenchJob';
 
 // The generated Database types describe the migrated schema; the bench tables
 // live only in the test project, outside it.
@@ -137,6 +138,13 @@ const Bench: React.FC = () => {
     return baseSummaries.filter(s => s.status === 'ok' && known.has(s.scenario_id) && isStale(s.score, savedRules)).length;
   }, [cases, baseSummaries, savedRules]);
 
+  /** The plan a rescore is on: it works through plans in sha order, so the first with a stale result. */
+  const rescoringSha = useMemo(() => {
+    const known = new Set(cases.map(c => c.id));
+    return baseSummaries.filter(s => s.status === 'ok' && known.has(s.scenario_id) && isStale(s.score, savedRules))
+      .map(s => s.sha).sort()[0] ?? null;
+  }, [cases, baseSummaries, savedRules]);
+
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
 
@@ -162,6 +170,29 @@ const Bench: React.FC = () => {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['bench'] });
 
+  const job = useBenchJob((run: BenchJobRun, task: BenchTask | null) => {
+    refresh();
+    if (run.conclusion === 'success') {
+      toast({ title: task?.kind === 'rescore' ? t('Poängen är omräknade', 'Scores recomputed') : t('Bänkkörningen är klar', 'Bench run finished') });
+    } else {
+      toast({
+        title: t('Bänkkörningen misslyckades', 'The bench run did not finish'),
+        description: t(`Öppna körningen på GitHub för att se varför: ${run.url}`, `Open the run on GitHub to see why: ${run.url}`),
+        variant: 'destructive',
+      });
+    }
+  });
+  // The workflow reports no progress; what it has stored so far is the progress.
+  const jobActive = job.active;
+  useEffect(() => {
+    if (!jobActive) return;
+    const poll = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ['bench', 'runs'] });
+      queryClient.invalidateQueries({ queryKey: ['bench', 'summaries'] });
+    }, 5_000);
+    return () => clearInterval(poll);
+  }, [jobActive, queryClient]);
+
   const dispatch = useMutation({
     mutationFn: async (body: { shas: string; scenario?: string; force?: boolean }) => {
       const { data, error } = await supabase.functions.invoke('planner-bench-dispatch', { body });
@@ -171,10 +202,7 @@ const Bench: React.FC = () => {
       }
       return data as { runs_url: string };
     },
-    onSuccess: data => toast({
-      title: t('Körning startad', 'Bench run started'),
-      description: t('Resultaten dyker upp här när GitHub Actions är klar.', `Results appear here when GitHub Actions finishes: ${data.runs_url}`),
-    }),
+    onSuccess: (_data, body) => job.begin({ kind: body.shas === 'none' ? 'rescore' : 'run', staleAtStart: staleCount }),
     onError: (error: Error) => toast({
       title: t('Kunde inte starta körningen', 'Could not start the bench run'),
       description: `${error.message}. ${t('Starta "Planner bench" manuellt i GitHub Actions.', 'Start the "Planner bench" workflow in GitHub Actions instead.')}`,
@@ -256,6 +284,27 @@ const Bench: React.FC = () => {
     return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${status}`;
   };
 
+  const shortRun = (sha: string | null) => {
+    const run = allRuns.find(r => r.sha === sha);
+    return run ? `${run.short_sha} · ${run.subject}` : null;
+  };
+  const kind = job.task?.kind ?? null;
+  const jobTitle = kind === 'rescore' ? t('Räknar om poäng', 'Recomputing scores')
+    : kind === 'run' ? t('Kör planerarbänken', 'Running the planner bench')
+    : job.run?.event === 'push' ? t('Planerarbänken körs för senaste pushen', 'The planner bench is running for the latest push')
+    : t('Planerarbänken körs', 'The planner bench is running');
+  const minutes = Math.floor(job.elapsedMs / 60_000), seconds = Math.floor(job.elapsedMs / 1000) % 60;
+  const elapsed = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  const left = job.task ? Math.max(0, job.task.staleAtStart - staleCount) : 0;
+  const jobDetail = job.waiting
+    ? t(`Väntar på att GitHub Actions ska starta · ${elapsed}`, `Waiting for GitHub Actions to start · ${elapsed}`)
+    : kind === 'rescore' && job.task!.staleAtStart > 0
+      ? t(`${left} av ${job.task!.staleAtStart} poäng omräknade · ${elapsed}`, `${left} of ${job.task!.staleAtStart} scores recomputed · ${elapsed}`)
+      : t(`Körs på GitHub Actions · ${elapsed}`, `Running on GitHub Actions · ${elapsed}`);
+  // A rescore works through the planners one after another, and a run stores each one as it starts.
+  const jobPlan = job.waiting ? null
+    : shortRun(kind === 'rescore' ? rescoringSha : allRuns.find(r => r.status === 'running')?.sha ?? null);
+
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-[1400px]">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -269,8 +318,8 @@ const Bench: React.FC = () => {
         <div className="flex flex-wrap gap-2">
           <input ref={fileInput} id="bench-replay-file" type="file" accept="application/json,.json" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
           <Button variant="outline" onClick={() => fileInput.current?.click()}><Upload className="h-4 w-4 mr-2" />{t('Lägg till testfall', 'Add test case')}</Button>
-          <Button variant="outline" disabled={dispatch.isPending} onClick={() => dispatch.mutate({ shas: 'all' })}>
-            {dispatch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
+          <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'all' })}>
+            {dispatch.isPending || job.active ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             {t('Kör saknade', 'Run missing results')}
           </Button>
         </div>
@@ -287,7 +336,23 @@ const Bench: React.FC = () => {
         : <Alert variant="destructive"><AlertDescription>{(loadError as Error).message}</AlertDescription></Alert>)}
       {loading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar…', 'Loading…')}</div>}
 
-      {!loading && !loadError && staleCount > 0 && (
+      {!loading && !loadError && job.active && (
+        <Alert role="status">
+          <AlertDescription className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+              <div className="space-y-0.5">
+                <div className="font-medium">{jobTitle}</div>
+                <div className="text-muted-foreground">{jobDetail}</div>
+                {jobPlan && <div className="font-mono text-xs">{jobPlan}</div>}
+              </div>
+            </div>
+            {job.run && <a className="text-sm underline" href={job.run.url} target="_blank" rel="noreferrer">{t('Visa på GitHub', 'View on GitHub')}</a>}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {!loading && !loadError && !job.active && staleCount > 0 && (
         <Alert>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
             <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Dessa poäng döljs tills de räknats om.`,
@@ -323,14 +388,15 @@ const Bench: React.FC = () => {
 
           <Card>
             <CardContent className="pt-6 space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5 min-w-0">
+              <div className="grid items-start gap-4 md:grid-cols-2">
+                <div className="flex flex-col gap-1.5 min-w-0">
                   <div className="text-xs text-muted-foreground">{t('Nuvarande planerare (körs på testmiljön)', 'Current planner (running on the test environment)')}</div>
-                  <div className="font-mono text-sm rounded-md border px-3 py-2 truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</div>
+                  <div id="bench-current-run" className="flex h-10 items-center font-mono text-sm rounded-md border px-3"><span className="truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</span></div>
+                  {currentRun && <div className="text-xs text-muted-foreground truncate">{currentRun.subject}</div>}
                 </div>
-                <div className="space-y-1.5 min-w-0">
+                <div className="flex flex-col gap-1.5 min-w-0">
                   <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Testplanerare', 'Test planner')}</label>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
                       <SelectContent className="max-h-80">

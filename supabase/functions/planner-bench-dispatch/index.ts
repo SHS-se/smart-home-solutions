@@ -5,6 +5,9 @@
 // Needs the PLANNER_BENCH_GITHUB_TOKEN secret: a fine-grained token for
 // SHS-se/smart-home-solutions with "Actions: read and write". It is set only in
 // the TEST project; elsewhere the function answers `not_configured`.
+//
+// `{ action: "status" }` instead reports the newest run of that workflow, so the
+// page can say whether a bench run or a rescore is queued, running or finished.
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
@@ -38,26 +41,44 @@ serve(async (request: Request): Promise<Response> => {
   if (staffError) return json({ error: "Failed to verify staff access" }, 500);
   if (!staff) return json({ error: "Staff only" }, 403);
 
-  let inputs: { shas: string; scenario: string; force: string };
+  const github = {
+    Authorization: `Bearer ${githubToken}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "shs-planner-bench",
+  };
+
+  let body: Record<string, unknown>;
   try {
-    const body = await request.json();
-    const shas = String(body?.shas ?? "all").trim();
-    const scenario = String(body?.scenario ?? "").trim();
-    if (!/^(all|none|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'all', 'none' or commit SHAs" }, 400);
-    if (scenario && !/^[0-9a-f-]{36}$/.test(scenario)) return json({ error: "scenario must be a test case id" }, 400);
-    inputs = { shas, scenario, force: body?.force ? "true" : "false" };
+    body = await request.json();
   } catch {
     return json({ error: "invalid_body" }, 400);
   }
 
+  if (body?.action === "status") {
+    const runs = await fetch(`https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}/runs?branch=dev&per_page=1`, { headers: github });
+    if (!runs.ok) {
+      console.error("[PLANNER-BENCH] status failed", runs.status, await runs.text());
+      return json({ error: "status_failed", status: runs.status }, 502);
+    }
+    const [run] = (await runs.json()).workflow_runs ?? [];
+    return json({
+      run: run ? {
+        id: run.id, status: run.status, conclusion: run.conclusion, event: run.event,
+        created_at: run.created_at, updated_at: run.updated_at, url: run.html_url,
+      } : null,
+    });
+  }
+
+  const shas = String(body?.shas ?? "all").trim();
+  const scenario = String(body?.scenario ?? "").trim();
+  if (!/^(all|none|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'all', 'none' or commit SHAs" }, 400);
+  if (scenario && !/^[0-9a-f-]{36}$/.test(scenario)) return json({ error: "scenario must be a test case id" }, 400);
+  const inputs = { shas, scenario, force: body?.force ? "true" : "false" };
+
   const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}/dispatches`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${githubToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "shs-planner-bench",
-    },
+    headers: github,
     body: JSON.stringify({ ref: "dev", inputs }),
   });
   if (!response.ok) {

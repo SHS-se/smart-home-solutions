@@ -115,10 +115,14 @@ function fakeJwt(sub: string, email: string): string {
   return [enc({ alg: 'HS256', typ: 'JWT' }), enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: now + 3600, iat: now }), 'x'.repeat(43)].join('.');
 }
 
-interface Captured { rules: Record<string, unknown>[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
+interface Captured {
+  rules: Record<string, unknown>[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[];
+  /** What GitHub reports for the newest bench workflow run; null while none exists. */
+  job: { status: string; conclusion: string | null; created_at: string } | null;
+}
 
 async function mockBackend(context: BrowserContext, missingAudit = false): Promise<Captured> {
-  const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [] };
+  const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
   const nowIso = new Date().toISOString();
   const user = {
     id: STAFF_ID, email: 'staff@example.com', aud: 'authenticated', role: 'authenticated', email_confirmed_at: nowIso,
@@ -135,7 +139,12 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
     else await route.fulfill({ json: {} });
   });
   await context.route('**/functions/v1/**', async route => {
-    captured.dispatched.push(route.request().postDataJSON());
+    const body = route.request().postDataJSON();
+    if (body?.action === 'status') {
+      await route.fulfill({ json: { run: captured.job && { id: 1, event: 'workflow_dispatch', url: 'https://github.com/example/actions/runs/1', ...captured.job } } });
+      return;
+    }
+    captured.dispatched.push(body);
     await route.fulfill({ json: { ok: true, runs_url: 'https://github.com/example/actions' } });
   });
   await context.route('**/rest/v1/**', async route => {
@@ -226,6 +235,12 @@ test.describe('planner bench', () => {
   test('compares the test planner with the current one', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
+    await page.goto('/portal/planner-bench');
+    // The two planner boxes sit side by side, level and the same height.
+    const [current, test_] = await Promise.all([page.locator('#bench-current-run').boundingBox(), page.locator('#bench-test-run').boundingBox()]);
+    expect(Math.abs(current!.y - test_!.y)).toBeLessThan(1);
+    expect(Math.abs(current!.height - test_!.height)).toBeLessThan(1);
+    await page.locator('#bench-current-run').locator('xpath=ancestor::div[contains(@class,"grid")][1]').screenshot({ path: test.info().outputPath('planner-boxes.png') });
     await page.goto('/portal/planner-bench');
 
     // Runs are named by commit, time and score; the newest is the default test run.
@@ -353,6 +368,24 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-rule-battery_price_spread')).toContainText(/Awaiting rescore|Väntar på omräkning/);
     await page.locator('#bench-rule-battery_price_spread').getByRole('button').first().click();
     await expect(page.locator('#bench-rule-battery_price_spread').getByRole('button', { name: /1.00 kWh/ })).toHaveCount(0);
+  });
+
+  test('shows a rescore queued, then running on the plan it is at, then done', async ({ context, page }) => {
+    const captured = await mockBackend(context, true);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await page.getByRole('button', { name: /Recompute scores|Räkna om poäng/ }).click();
+    const banner = page.getByRole('status').filter({ hasText: /Recomputing scores|Räknar om poäng/ });
+    await expect(banner).toContainText(/Waiting for GitHub Actions|Väntar på att GitHub Actions/);
+    await expect(page.getByRole('button', { name: /Run missing results|Kör saknade/ })).toBeDisabled();
+
+    captured.job = { status: 'in_progress', conclusion: null, created_at: new Date().toISOString() };
+    await expect(banner).toContainText(/0 of 4 scores recomputed|0 av 4 poäng omräknade/, { timeout: 10_000 });
+    await expect(banner).toContainText('ccccccc · Current planner');
+    await banner.screenshot({ path: test.info().outputPath('rescore-banner.png') });
+
+    captured.job = { ...captured.job, status: 'completed', conclusion: 'success' };
+    await expect(banner).toHaveCount(0, { timeout: 10_000 });
   });
 
   test('converts an uploaded replay to a test case and starts a run for it', async ({ context, page }) => {
