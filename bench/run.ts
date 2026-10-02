@@ -225,12 +225,22 @@ async function orchestrate() {
   await prepareCases(bench);
   const byVersion = await foldSameVersions(bench);
   const listed = (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
-  const requested = [...new Set((await Promise.all(listed.map(async ref => ref === "all" ? await bench.knownShas() : [ref]))).flat())];
+  const stored = new Set(listed.includes("all") ? await bench.knownShas() : []);
+  // A commit asked for by name must exist; one that is only stored may not.
+  for (const ref of listed) stored.delete(ref);
+  const requested = [...new Set(listed.flatMap(ref => ref === "all" ? [...stored] : [ref]))];
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
   try {
     for (const ref of requested) {
-      const [sha, shortSha, committedAt, subject] = (await git("show", "-s", "--format=%H%x09%h%x09%cI%x09%s", ref)).split("\t");
+      // A stored run may be of a commit that was never pushed; its results stay, but it cannot be run here.
+      const shown = await git("show", "-s", "--format=%H%x09%h%x09%cI%x09%s", ref).catch(error => {
+        if (!stored.has(ref)) throw error;
+        console.log(`${ref.slice(0, 7)}: not in this checkout's history; left as it is.`);
+        return null;
+      });
+      if (shown === null) continue;
+      const [sha, shortSha, committedAt, subject] = shown.split("\t");
       const version = await versionOf(sha);
       const same = byVersion.get(version);
       if (same && same.sha !== sha) {
