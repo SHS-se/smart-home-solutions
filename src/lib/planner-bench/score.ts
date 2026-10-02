@@ -9,7 +9,10 @@
 //     than 50 km short, and again when more than 100 km short. Such a rule
 //     cannot fire until its level was reachable: where full power from the
 //     first quarter would have got the store there, plus a day to choose the
-//     hours. A pool above its target is marked and loses nothing. A quarter in
+//     hours. A pool more than 2 °C above its target is judged by the day
+//     that follows (the plan's next 24 hours against the 24 it is in): heat
+//     held for dearer prices or less sun gains a point as a thermal buffer,
+//     heat held for neither loses one as overheating. A quarter in
 //     which the pool, battery charging and car together draw FLEXIBLE_W or
 //     more gains a point when its real price is among the cheapest quarter of
 //     the plan's, or two when among the cheapest tenth.
@@ -37,10 +40,14 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 5;
+export const SCORER_VERSION = 6;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
+/** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
+export const DAY_QUARTERS = 96;
+/** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
+export const AHEAD_MARGIN = 0.1;
 /** Pool, battery charging and car together at or above this count as a flexible purchase. */
 export const FLEXIBLE_W = 500;
 
@@ -52,6 +59,8 @@ export interface QuarterView {
   priceRank: number;
   /** Pool + battery charging + car, W. */
   flexibleW: number;
+  /** The plan's next day against this one; null in the last day, which has none to compare with. */
+  ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
 }
@@ -61,7 +70,7 @@ export interface QuarterRule {
   label: string;
   describe: (threshold: number) => string;
   threshold: number;
-  /** Signed points added when the rule fires; 0 marks a quarter without scoring it. */
+  /** Signed points added when the rule fires; never 0, since a rule that scores nothing says nothing. */
   points: number;
   /** What the rule measures, for explaining it; nothing in the scoring depends on it. */
   about: 'pool' | 'car' | 'price';
@@ -82,6 +91,9 @@ const carBelow = (q: QuarterView, t: number) => {
   const c = q.s.comfort, km = q.s.carKm;
   return !!c && !!km && km[q.i] < c.ev_target_km - t && q.due(c.carReachableKm, c.ev_start_km, c.ev_target_km - t);
 };
+const poolAbove = (q: QuarterView, t: number) =>
+  !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t;
+const poolAny = (s: BenchSeries) => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity;
 const poolFrom = (s: BenchSeries, t: number) =>
   s.comfort && s.poolC.some(v => v !== null) ? dueFrom(s.comfort.poolReachableC, s.comfort.pool_start_c, s.comfort.pool_target_c - t) : Infinity;
 const carFrom = (s: BenchSeries, t: number) =>
@@ -99,11 +111,14 @@ export const DEFAULT_RULES: QuarterRule[] = [
     key: 'pool_cold', about: 'pool', label: 'Pool far below target', describe: t => `more than ${t} °C below`, threshold: 2, points: -1, required: true,
     fires: poolBelow, eligibleFrom: poolFrom,
   },
-  // Marked, not scored: warm water is a thermal buffer, and heating ahead on cheap energy is allowed.
+  // Warm water is a store. Above the target it is one or the other: heat kept for a dearer or duller day, or waste.
   {
-    key: 'pool_hot', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target`, threshold: 2, points: 0,
-    fires: (q, t) => !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t,
-    eligibleFrom: s => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity,
+    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `more than ${t} °C above target, the next day neither dearer nor less sunny`, threshold: 2, points: -1,
+    fires: (q, t) => poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
+  },
+  {
+    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target, the next day dearer or less sunny`, threshold: 2, points: 1,
+    fires: (q, t) => poolAbove(q, t) && !!q.ahead && (q.ahead.dearer || q.ahead.lessSun), eligibleFrom: poolAny,
   },
   {
     key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
@@ -132,7 +147,7 @@ export const REMOVED_RULE_KEYS: readonly string[] = ['solar_spill', 'idle_batter
 
 export class CriteriaError extends Error {}
 
-/** What is wrong with a case's overrides; empty when they can be scored with. */
+/** What is wrong with the saved overrides; empty when they can be scored with. */
 export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
   const errors: string[] = [];
   const known = new Set(DEFAULT_RULES.map(r => r.key));
@@ -142,8 +157,8 @@ export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
     if (typeof o !== 'object' || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== 'boolean') errors.push(`${key}: enabled must be true or false.`);
     if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);
-    if (key !== 'pool_hot' && o.points !== undefined && !(Number.isInteger(o.points) && o.points >= RULE_POINTS_MIN && o.points <= RULE_POINTS_MAX)) {
-      errors.push(`${key}: points must be between ${RULE_POINTS_MIN} and ${RULE_POINTS_MAX}.`);
+    if (o.points !== undefined && !(Number.isInteger(o.points) && o.points !== 0 && o.points >= RULE_POINTS_MIN && o.points <= RULE_POINTS_MAX)) {
+      errors.push(`${key}: points must be between ${RULE_POINTS_MIN} and ${RULE_POINTS_MAX}, and not 0.`);
     }
   }
   return errors;
@@ -151,17 +166,17 @@ export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
 
 export type ResolvedRule = QuarterRule & { enabled: boolean };
 
-/** A case's rules: the defaults with its `enabled`, `threshold` and `points` overrides applied. */
+/** The bench's rules: the defaults with the saved `enabled`, `threshold` and `points` overrides applied. */
 export function resolveRules(overrides: CriteriaOverrides = {}): ResolvedRule[] {
   const errors = criteriaErrors(overrides);
   if (errors.length) throw new CriteriaError(errors.join(' '));
   return DEFAULT_RULES.map(rule => {
     const o = overrides[rule.key] ?? {};
-    return { ...rule, enabled: o.enabled ?? true, threshold: o.threshold ?? rule.threshold, points: rule.key === 'pool_hot' ? 0 : o.points ?? rule.points };
+    return { ...rule, enabled: o.enabled ?? true, threshold: o.threshold ?? rule.threshold, points: o.points ?? rule.points };
   });
 }
 
-/** The comfort thresholds an alternative plan is held to: the case's own, whether or not a rule is switched on. */
+/** The comfort thresholds an alternative plan is held to: the bench's own, whether or not a rule is switched on. */
 export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
   const t = Object.fromEntries(resolveRules(overrides).map(r => [r.key, r.threshold]));
   return { pool: [t.pool_low, t.pool_cold], ev: [t.ev_low, t.ev_short] };
@@ -246,13 +261,24 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     return lo;
   };
 
+  // Each plan day's mean price and solar, to judge warmth held for the day after.
+  const days = Array.from({ length: Math.ceil(n / DAY_QUARTERS) }, (_, d) => {
+    const of = (values: number[]) => values.slice(d * DAY_QUARTERS, (d + 1) * DAY_QUARTERS);
+    const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+    return { price: mean(of(s.importPrice)), solar: mean(of(s.solarW)), full: of(s.importPrice).length === DAY_QUARTERS };
+  });
+  const aheadOf = (i: number): QuarterView['ahead'] => {
+    const today = days[Math.floor(i / DAY_QUARTERS)], next = days[Math.floor(i / DAY_QUARTERS) + 1];
+    return next?.full ? { dearer: next.price > today.price * (1 + AHEAD_MARGIN), lessSun: next.solar < today.solar * (1 - AHEAD_MARGIN) } : null;
+  };
+
   const counts: Record<string, number> = {};
   const histogram: Record<string, number> = {};
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
     const q: QuarterView = {
-      s, i, due: due(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
+      s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
@@ -275,8 +301,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     const reason = !rule.enabled ? 'Switched off for this case.'
       : rule.about !== 'price' && !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
-          : rule.points === 0 ? 'Marked only; loses no points.'
-            : `Counts in ${eligibleQuarters} of ${n} quarters.`;
+          : `Counts in ${eligibleQuarters} of ${n} quarters.`;
     return [rule.key, { applicable: rule.enabled && eligibleQuarters > 0, reason, eligibleQuarters }];
   }));
 
@@ -297,7 +322,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
 /** What the bench stores per result, so run lists need no plan series. */
 export interface StoredScore {
   version: number;
-  /** Fingerprint of the case's overrides the score was computed with. */
+  /** Fingerprint of the rule overrides the score was computed with. */
   criteria: string;
   /** sum + economic_points. */
   points: number;

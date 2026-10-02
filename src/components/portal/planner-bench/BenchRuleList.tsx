@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -29,7 +29,8 @@ interface Range { from: number; to: number }
 interface Props {
   current: BenchSeries | null; test: BenchSeries | null;
   currentScore: CaseScore | null; testScore: CaseScore | null;
-  draft: CriteriaOverrides; onDraft: (draft: CriteriaOverrides) => void; onSave: () => void;
+  /** The rules, the same for every case and planner; `unsaved` while a change is only being tried here. */
+  draft: CriteriaOverrides; onDraft: (draft: CriteriaOverrides) => void; onSave: () => void; unsaved: boolean;
   timeZone: string; onSelect: (side: Side, quarter: number) => void;
   /** The quarters the plan chart shows, its label, and where a new day starts. */
   range: Range; periodLabel: string; dayStarts: number[];
@@ -108,7 +109,7 @@ function WitnessPlot({ before, after, from, to, unit, label }: {
 }
 
 export default function BenchRuleList({
-  current, test, currentScore, testScore, draft, onDraft, onSave, timeZone, onSelect, range, periodLabel, dayStarts,
+  current, test, currentScore, testScore, draft, onDraft, onSave, unsaved, timeZone, onSelect, range, periodLabel, dayStarts,
 }: Props) {
   const { t } = useLanguage();
   const sides = [
@@ -193,8 +194,9 @@ export default function BenchRuleList({
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) patch(rule.key, 'points', Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber)))); }} /></label>
-      <Button size="sm" variant="outline" onClick={onSave}>{t('Spara regler för fallet', 'Save rules for this case')}</Button>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
+      <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
   };
 
@@ -213,10 +215,11 @@ export default function BenchRuleList({
 
   const comfortDetail = (rule: ResolvedRule) => {
     if (rule.about === 'price') return priceDetail(rule);
-    const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
+    const pool = rule.about === 'pool', above = rule.key === 'pool_hot' || rule.key === 'pool_buffer';
     const comfort = test?.comfort ?? current?.comfort;
     const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;
     const unit = pool ? '°C' : 'km';
+    const margin = Math.round(AHEAD_MARGIN * 100);
     const level = target === undefined ? null : Number((target + (above ? rule.threshold : -rule.threshold)).toFixed(2));
     return <>
       {level !== null && <p>
@@ -224,7 +227,10 @@ export default function BenchRuleList({
           ? above ? t(`Poolen är varmare än ${level} ${unit}.`, `The pool is warmer than ${level} ${unit}.`) : t(`Poolen är kallare än ${level} ${unit}.`, `The pool is colder than ${level} ${unit}.`)
           : t(`Bilens räckvidd är under ${level} ${unit}.`, `The car has less than ${level} ${unit} of range.`)}
         {' '}{t(`Målet är ${target} ${unit}.`, `The target is ${target} ${unit}.`)}
-        {above && ` ${t('Markeras bara: varmt vatten är lagrad värme och kostar inga poäng.', 'Marked only: warm water is stored heat and costs no points.')}`}
+        {above && ` ${rule.key === 'pool_buffer'
+          ? t(`Nästa dygn är minst ${margin} % dyrare eller har minst ${margin} % mindre sol, så värmen sparas till det.`, `The next 24 h are at least ${margin} % dearer or have at least ${margin} % less sun, so the heat is stored for them.`)
+          : t(`Nästa dygn är varken ${margin} % dyrare eller ${margin} % solfattigare, så värmen sparas inte till något.`, `The next 24 h are neither ${margin} % dearer nor ${margin} % less sunny, so the heat is stored for nothing.`)}
+          ${t('Planens sista dygn bedöms inte: det har inget nästa dygn.', 'The plan\'s last 24 h are not judged: they have no next day.')}`}
         {rule.required && ` ${t('En enda kvart underkänner fallet.', 'A single quarter fails the case.')}`}
         {!above && ` ${t('Räknas först ett dygn efter att nivån gick att nå.', 'Counts only from a day after the level could be reached.')}`}
       </p>}
@@ -232,7 +238,7 @@ export default function BenchRuleList({
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
       })}
-      {!above && settings(rule, `${t('Avstånd från mål', 'Distance from target')} (${unit})`, '0.1')}
+      {settings(rule, `${t('Avstånd från mål', 'Distance from target')} (${unit})`, '0.1')}
     </>;
   };
 

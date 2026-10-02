@@ -92,7 +92,7 @@ function inputHash(c: BenchCase, generation: string, lane: LaneId): Promise<stri
 async function worker(sha: string, root: string) {
   const bench = store();
   const planner = await loadPlanner(root);
-  const done = await bench.resultHashes(sha);
+  const [done, rules] = await Promise.all([bench.resultHashes(sha), bench.rules()]);
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
     for (const lane of LANES) {
       const hash = await inputHash(c, planner.generation, lane);
@@ -101,7 +101,7 @@ async function worker(sha: string, root: string) {
       try {
         const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale);
         // Whatever the planner was told, its plan is judged on the case as it really was.
-        const evaluation = evaluate(c, record, scenario.criteria, lane);
+        const evaluation = evaluate(c, record, rules, lane);
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
         console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
           + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`

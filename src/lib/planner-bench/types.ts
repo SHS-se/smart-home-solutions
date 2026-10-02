@@ -105,7 +105,6 @@ export interface BenchScenario {
   name: string;
   captured_at: string;
   source_filename: string | null;
-  criteria: CriteriaOverrides;
   notes: string | null;
   archived: boolean;
   created_at: string;
@@ -143,12 +142,12 @@ export interface BenchVerdict {
   note: string | null;
 }
 
-/** Per-case changes to a default comfort rule; omitted fields keep the default. Checked by `criteriaErrors` (score.ts). */
+/** Changes to a default quarter rule, for every case and planner alike; omitted fields keep the default. Checked by `criteriaErrors` (score.ts). */
 export interface CriterionOverride {
   enabled?: boolean;
   /** How far from the target the rule fires, in the store's unit; 0 or more. */
   threshold?: number;
-  /** Points the rule takes from a quarter, -2..0. */
+  /** Points the rule gives or takes per quarter, -2..2, never 0. */
   points?: number;
 }
 export type CriteriaOverrides = Record<string, CriterionOverride>;

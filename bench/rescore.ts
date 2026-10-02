@@ -11,7 +11,7 @@ const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
 const describe = (r: ResultKey) => `${r.sha.slice(0, 12)} / ${r.scenario_id} / ${r.lane}`;
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-type RescoreStore = Pick<BenchStore, "scenarios" | "runs" | "evaluatedResults" | "planRecord" | "saveEvaluation">;
+type RescoreStore = Pick<BenchStore, "rules" | "scenarios" | "runs" | "evaluatedResults" | "planRecord" | "saveEvaluation">;
 
 export interface PlannerRescoreSummary {
   sha: string;
@@ -56,8 +56,8 @@ export class RescoreIncompleteError extends Error {
 
 /** Recompute stale successful results, then read storage again to prove coverage. */
 export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string): Promise<RescoreReport> {
-  const [scenarios, runs, before] = await Promise.all([
-    bench.scenarios(onlyScenario, true), bench.runs(), bench.evaluatedResults(),
+  const [rules, scenarios, runs, before] = await Promise.all([
+    bench.rules(), bench.scenarios(onlyScenario, true), bench.runs(), bench.evaluatedResults(),
   ]);
   const report: RescoreReport = {
     scorerVersion: SCORER_VERSION, refereeVersion: REFEREE_VERSION,
@@ -78,11 +78,9 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
       report.issues.push(`${scenario.name} (${scenario.id}): invalid ready case: ${messageOf(error)}. Correct this case before rescoring.`);
     }
   }
-  let criteria = new Map([...cases].map(([id, entry]) => [id, entry.scenario.criteria]));
-  const current = (result: EvaluatedResult) => {
-    const overrides = criteria.get(result.scenario_id);
-    return !!overrides && result.status === "ok" && result.referee_version === REFEREE_VERSION && !isStale(result.score, overrides);
-  };
+  let latestRules = rules;
+  const current = (result: EvaluatedResult) =>
+    cases.has(result.scenario_id) && result.status === "ok" && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
   const eligible = before.filter(result => result.status === "ok" && cases.has(result.scenario_id));
   report.eligible = eligible.length;
   const missing = new Set<string>();
@@ -99,7 +97,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
         continue;
       }
       if (current(result)) { report.alreadyCurrent++; continue; }
-      await bench.saveEvaluation(result, evaluate(entry.c, record, entry.scenario.criteria, result.lane));
+      await bench.saveEvaluation(result, evaluate(entry.c, record, rules, result.lane));
       report.processed++;
     } catch (error) {
       report.evaluationErrors++;
@@ -107,12 +105,9 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     }
   }
 
-  const [after, latestScenarios] = await Promise.all([
-    bench.evaluatedResults(), bench.scenarios(onlyScenario, true),
-  ]);
-  criteria = new Map(latestScenarios
-    .filter(scenario => !scenario.archived && scenario.dataset && scenario.recorded)
-    .map(scenario => [scenario.id, scenario.criteria]));
+  // Read the rules again: a rule saved while this ran must not leave results looking current.
+  const after = await bench.evaluatedResults();
+  latestRules = await bench.rules();
   const afterByKey = new Map(after.map(result => [keyOf(result), result]));
   const beforeKeys = new Set(eligible.map(keyOf));
   // Newly inserted successful results are included too; concurrent writes must
@@ -127,7 +122,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     const stored = afterByKey.get(key);
     if (!stored || !current(stored)) {
       report.verificationErrors++;
-      report.issues.push(`${describe(result)}: stored result missing or scorer/referee/criteria are not current after rescore. Retry after any concurrent case edit finishes.`);
+      report.issues.push(`${describe(result)}: stored result missing or scorer/referee/rules are not current after rescore. Retry after any concurrent rule edit finishes.`);
       continue;
     }
     if (!beforeKeys.has(key) && !(await bench.planRecord(stored))) {

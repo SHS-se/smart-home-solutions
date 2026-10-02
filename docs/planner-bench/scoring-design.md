@@ -4,7 +4,7 @@
 
 Quarter price predicates cannot judge multi-day storage. The previous comfort-only score also ignored physical violations and penalized useful pool preheating. The bench needs independent, reproducible evidence of missed opportunities without changing planner behavior.
 
-The runner calls `evaluate(case, record, criteria, lane)`. It invokes the referee and opportunity audit, stores their evidence in `BenchSeries.audit`, and derives the compact score. The UI reads this stored evidence: changing an explanation or opening a witness never runs an optimizer in the browser. Saving changed comfort criteria triggers rescoring from stored decisions.
+The runner calls `evaluate(case, record, criteria, lane)`. It invokes the referee and opportunity audit, stores their evidence in `BenchSeries.audit`, and derives the compact score. The UI reads this stored evidence: changing an explanation or opening a witness never runs an optimizer in the browser. Saving changed rules, which are global to the bench, triggers rescoring of every result from stored decisions.
 
 ## Ownership
 
@@ -30,7 +30,7 @@ Independent Claude Opus 5.5 High and Codex candidates were grounded in the curre
 - Reject scoring extra consumption merely because its price was low. (Reversed 2026-10-02 at the owner's request: scorer v5 rewards flexible load in the cheapest 25 % / 10 % of quarters with +1 / +2 All points add into one total; the lane diagnosis holds a valuation variant to nominal's total points.)
 - Reject median-price terminal credits as an optimization objective: they can manufacture savings by depleting or overfilling stores.
 - Reject fixed sunny/cloudy day thresholds: physics and opportunity cost determine whether moving heat helps.
-- Reject a blanket warm-pool penalty: a warm pool can hold useful future heat.
+- Reject a blanket warm-pool penalty: a warm pool can hold useful future heat. (Scorer v6: warmth above target +2 °C scores +1 when the next day is dearer or less sunny and −1 when it is neither.)
 - Keep hindsight separate from the headline, following the user's explicit preference.
 
 ## Invariants

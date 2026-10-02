@@ -72,7 +72,7 @@ const Bench: React.FC = () => {
   const scenarios = useQuery({
     queryKey: ['bench', 'scenarios'],
     queryFn: () => rows<BenchScenario[]>(db.from('bench_scenarios')
-      .select('id, name, captured_at, source_filename, criteria, notes, archived, created_at, pending_reason, dataset, recorded_at:recorded->>recorded_at')
+      .select('id, name, captured_at, source_filename, notes, archived, created_at, pending_reason, dataset, recorded_at:recorded->>recorded_at')
       .eq('archived', false).order('captured_at')),
   });
   const summaries = useQuery({
@@ -80,6 +80,20 @@ const Bench: React.FC = () => {
     queryFn: () => rows<BenchResultSummary[]>(db.from('bench_result_summaries').select('*')),
     refetchInterval: 30_000,
   });
+
+  // One set of rules scores every case and every planner; otherwise their points could not be compared.
+  const rules = useQuery({
+    queryKey: ['bench', 'rules'],
+    queryFn: async (): Promise<CriteriaOverrides> => {
+      const { data, error } = await db.from('bench_rules').select('criteria').maybeSingle();
+      // Before the bench workflow has created the table, the defaults apply.
+      if (error) { if (isMissingTable(error)) return {}; throw new Error(error.message); }
+      return data?.criteria ?? {};
+    },
+  });
+  const savedRules = useMemo(() => rules.data ?? {}, [rules.data]);
+  /** Rule changes being tried on the page, not yet saved. */
+  const [rulesDraft, setRulesDraft] = useState<CriteriaOverrides | null>(null);
 
   const allRuns = useMemo(() => runs.data ?? [], [runs.data]);
   const cases = useMemo(() => scenarios.data ?? [], [scenarios.data]);
@@ -98,31 +112,30 @@ const Bench: React.FC = () => {
     const out: Partial<Record<LaneId, LaneResult>> = {};
     for (const s of summaries.data ?? []) {
       if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score
-        || isStale(s.score, cases.find(c => c.id === scenarioId)?.criteria)) continue;
+        || isStale(s.score, savedRules)) continue;
       out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points };
     }
     return out;
-  }, [summaries.data, cases]);
+  }, [summaries.data, savedRules]);
   const [lane, setLane] = useState<LaneId>(BASE_LANE);
 
   /** Every case's stored score for one run; null where the run has no scored result. */
   const scoresFor = useMemo(() => (sha: string) => new Map(cases.map(c => {
     const summary = summaryByKey.get(key(sha, c.id));
-    const score = summary?.status === 'ok' && !isStale(summary.score, c.criteria) ? summary.score : null;
+    const score = summary?.status === 'ok' && !isStale(summary.score, savedRules) ? summary.score : null;
     return [c.id, score ? { points: score.points, passed: storedPassed(score, null) } : null] as const;
-  })), [cases, summaryByKey]);
+  })), [cases, summaryByKey, savedRules]);
 
   const runScores = useMemo(() => new Map(allRuns.map(run => {
     const points = [...scoresFor(run.sha).values()].filter((s): s is CaseSummary => s !== null).map(s => s.points);
     return [run.sha, runScore(points)] as const;
   })), [allRuns, scoresFor]);
 
-  /** Results scored by an older scorer, or before their case's rules last changed. */
+  /** Results scored by an older scorer, or before the rules last changed. */
   const staleCount = useMemo(() => {
-    const criteria = new Map(cases.map(c => [c.id, c.criteria]));
-    return baseSummaries.filter(s => s.status === 'ok' && criteria.has(s.scenario_id)
-      && isStale(s.score, criteria.get(s.scenario_id))).length;
-  }, [cases, baseSummaries]);
+    const known = new Set(cases.map(c => c.id));
+    return baseSummaries.filter(s => s.status === 'ok' && known.has(s.scenario_id) && isStale(s.score, savedRules)).length;
+  }, [cases, baseSummaries, savedRules]);
 
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
@@ -213,17 +226,20 @@ const Bench: React.FC = () => {
     onError: (error: Error) => toast({ title: t('Kunde inte spara starttillståndet', 'Could not save the start state'), description: error.message, variant: 'destructive' }),
   });
 
-  const saveCriteria = useMutation({
+  const saveRules = useMutation({
     mutationFn: async (criteria: CriteriaOverrides) => {
-      await rows(db.from('bench_scenarios').update({ criteria }).eq('id', selectedCase!.id));
+      await rows(db.from('bench_rules').upsert({ id: true, criteria, updated_at: new Date().toISOString() }));
+      return criteria;
     },
-    onSuccess: () => {
+    onSuccess: criteria => {
+      queryClient.setQueryData(['bench', 'rules'], criteria);
+      setRulesDraft(null);
       refresh();
-      toast({ title: t('Reglerna sparade', 'Rules saved') });
-      // Stored scores for this case are now stale; recompute them without re-running planners.
+      toast({ title: t('Reglerna sparade', 'Rules saved'), description: t('Gäller alla testfall och alla planerare.', 'They apply to every test case and every planner.') });
+      // Every stored score is now stale; recompute them without re-running planners.
       dispatch.mutate({ shas: 'none' });
     },
-    onError: (error: Error) => toast({ title: t('Kunde inte spara kriterierna', 'Could not save the criteria'), description: error.message, variant: 'destructive' }),
+    onError: (error: Error) => toast({ title: t('Kunde inte spara reglerna', 'Could not save the rules'), description: error.message, variant: 'destructive' }),
   });
 
   const makeCurrent = useMutation({
@@ -351,7 +367,10 @@ const Bench: React.FC = () => {
               onSaveStartState={state => saveStartState.mutate(state)}
               shown={shown}
               onShown={setShown}
-              onSaveCriteria={criteria => saveCriteria.mutate(criteria)}
+              draft={rulesDraft ?? savedRules}
+              unsaved={rulesDraft !== null}
+              onDraft={setRulesDraft}
+              onSaveRules={() => saveRules.mutate(rulesDraft ?? savedRules)}
               onRerun={() => dispatch.mutate({ shas: 'all', scenario: selectedCase.id, force: true })}
             />
           )}
@@ -576,7 +595,11 @@ interface CaseViewProps {
   onSaveStartState: (state: CaseStartState) => void;
   shown: 'current' | 'test';
   onShown: (value: 'current' | 'test') => void;
-  onSaveCriteria: (criteria: CriteriaOverrides) => void;
+  /** The rules being tried: the saved ones with any unsaved change. They are the same for every case. */
+  draft: CriteriaOverrides;
+  unsaved: boolean;
+  onDraft: (draft: CriteriaOverrides | null) => void;
+  onSaveRules: () => void;
   onRerun: () => void;
 }
 
@@ -586,10 +609,9 @@ const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '
 
 const CaseView: React.FC<CaseViewProps> = ({
   scenario, currentRun, testRun, summaryByKey,
-  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onSaveCriteria, onRerun,
+  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, draft, unsaved, onDraft, onSaveRules, onRerun,
 }) => {
   const { t } = useLanguage();
-  const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
   const [selected, setSelected] = useState<number | null>(null);
   const draftErrors = criteriaErrors(draft);
   const rules = draftErrors.length ? [] : resolveRules(draft);
@@ -717,10 +739,10 @@ const CaseView: React.FC<CaseViewProps> = ({
         )}
 
         {draftErrors.length > 0
-          ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => setDraft({})}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert>
+          ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => onDraft(null)}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert>
           : <BenchRuleList current={series?.current ?? null} test={series?.test ?? null}
-            currentScore={currentScore} testScore={testScore} draft={draft} onDraft={setDraft}
-            onSave={() => onSaveCriteria(draft)} timeZone={TZ}
+            currentScore={currentScore} testScore={testScore} draft={draft} onDraft={onDraft} unsaved={unsaved}
+            onSave={onSaveRules} timeZone={TZ}
             range={range} periodLabel={period === 'all' ? t('hela 72 h', 'full 72 h') : days[Math.min(period, days.length - 1)]?.label ?? ''}
             dayStarts={days.map(d => d.from)}
             onSelect={(which, quarter) => { onShown(which); select(quarter); }} />}

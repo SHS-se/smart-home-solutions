@@ -115,10 +115,10 @@ function fakeJwt(sub: string, email: string): string {
   return [enc({ alg: 'HS256', typ: 'JWT' }), enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: now + 3600, iat: now }), 'x'.repeat(43)].join('.');
 }
 
-interface Captured { inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
+interface Captured { rules: Record<string, unknown>[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
 
 async function mockBackend(context: BrowserContext, missingAudit = false): Promise<Captured> {
-  const captured: Captured = { inserted: [], updated: [], dispatched: [] };
+  const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [] };
   const nowIso = new Date().toISOString();
   const user = {
     id: STAFF_ID, email: 'staff@example.com', aud: 'authenticated', role: 'authenticated', email_confirmed_at: nowIso,
@@ -156,6 +156,7 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
       return;
     }
     if (request.method() !== 'GET') {
+      if (table === 'bench_rules') captured.rules.push(request.postDataJSON());
       if (table === 'bench_scenarios' && request.method() === 'POST') {
         captured.inserted.push(request.postDataJSON());
         await route.fulfill({ json: { id: '33333333-3333-4333-8333-333333333333' } });
@@ -168,12 +169,13 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
     const rows: unknown[] = (() => {
       switch (table) {
         case 'staff_users': return [{ role: 'admin' }];
+        case 'bench_rules': return [{ criteria: {} }];
         case 'bench_runs': return [
           { ...CURRENT, branch: 'dev', is_current: true, status: 'done', error: null, finished_at: nowIso },
           { ...TEST, branch: null, is_current: false, status: 'done', error: null, finished_at: nowIso },
         ];
         case 'bench_scenarios': return CASES.map(c => ({
-          ...c, source_filename: null, criteria: {}, notes: null, archived: false, created_at: nowIso,
+          ...c, source_filename: null, notes: null, archived: false, created_at: nowIso,
           dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
         }));
         case 'bench_result_summaries': return Object.entries(PLANS).map(([key, plan]) => {
@@ -283,7 +285,7 @@ test.describe('planner bench', () => {
 
   });
 
-  test('lists triggered rules for the shown period, explains them on click, and saves comfort rules', async ({ context, page }) => {
+  test('lists triggered rules for the shown period, explains them on click, and saves rules for every case', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
@@ -327,9 +329,11 @@ test.describe('planner bench', () => {
     await expect(row('pool_low')).toContainText('29 °C');
     await page.locator('#bench-pool_low-threshold').fill('1.5');
     await expect(row('pool_low')).toContainText('28.5 °C');
-    await row('pool_low').getByRole('button', { name: /Save rules for this case|Spara regler för fallet/ }).click();
-    await expect.poll(() => captured.updated.length).toBe(1);
-    expect(captured.updated[0]).toMatchObject({ criteria: { pool_low: { threshold: 1.5 } } });
+    // Rules are saved once for the whole bench, never into a case.
+    await row('pool_low').getByRole('button', { name: /^(Save rules|Spara regler)$/ }).click();
+    await expect.poll(() => captured.rules.length).toBe(1);
+    expect(captured.rules[0]).toMatchObject({ id: true, criteria: { pool_low: { threshold: 1.5 } } });
+    expect(captured.updated).toEqual([]);
     await expect.poll(() => captured.dispatched.length).toBe(1);
     expect(captured.dispatched[0]).toMatchObject({ shas: 'none' });
 

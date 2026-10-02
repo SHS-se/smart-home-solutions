@@ -6,9 +6,10 @@ import { criteriaErrors, resolveRules } from './score.ts';
 import { storeExposure, storeNotWorse } from './service.ts';
 import { plan, within, world } from './world.fixture.ts';
 
-Deno.test('retired price and unplugged rules cannot penalise and a saved hot-pool penalty stays diagnostic', () => {
+Deno.test('retired price and unplugged rules cannot penalise, and no rule may be saved at 0 points', () => {
   assertEquals(criteriaErrors({ dear_buy: { points: -1 }, unplugged_charge: { points: -2 }, pool_hot: { points: -1 } }), []);
-  assertEquals(resolveRules({ pool_hot: { points: -1 } }).find(r => r.key === 'pool_hot')!.points, 0);
+  assertEquals(resolveRules({ pool_hot: { points: -2 } }).find(r => r.key === 'pool_hot')!.points, -2);
+  assertEquals(criteriaErrors({ pool_buffer: { points: 0 } }), ['pool_buffer: points must be between -2 and 2, and not 0.']);
 });
 
 Deno.test('missing decision streams fail explicitly before any simulation', () => {

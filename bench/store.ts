@@ -14,7 +14,6 @@ import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/typ
 export interface StoredScenario {
   id: string;
   name: string;
-  criteria: CriteriaOverrides;
   archived: boolean;
   /** The test case; null for a scenario still held as a replay. */
   dataset: BenchScenarioData | null;
@@ -70,6 +69,8 @@ export interface EvaluatedResult extends ResultKey {
 }
 
 export interface BenchStore {
+  /** The rule overrides every case and planner is scored with. */
+  rules(): Promise<CriteriaOverrides>;
   scenarios(only?: string, includeArchived?: boolean): Promise<StoredScenario[]>;
   /** The stripped replay a scenario was uploaded as, for converting it once. */
   legacyReplayInput(id: string): Promise<unknown | null>;
@@ -125,10 +126,15 @@ export class DbStore implements BenchStore {
     }
   }
 
+  async rules() {
+    const rows = await this.request("bench_rules?select=criteria") as { criteria: CriteriaOverrides }[];
+    return rows[0]?.criteria ?? {};
+  }
+
   async scenarios(only?: string, includeArchived = false) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
     const archived = includeArchived ? "" : "&archived=eq.false";
-    return await this.pages<StoredScenario>(`bench_scenarios?select=id,name,criteria,dataset,recorded,archived${archived}${filter}&order=captured_at,id`);
+    return await this.pages<StoredScenario>(`bench_scenarios?select=id,name,dataset,recorded,archived${archived}${filter}&order=captured_at,id`);
   }
 
   async legacyReplayInput(id: string) {
@@ -223,6 +229,7 @@ const same = (a: ResultKey, b: ResultKey) => a.sha === b.sha && a.scenario_id ==
 interface LocalFile {
   runs: (RunRecord & { is_current?: boolean })[];
   results: ResultRecord[];
+  rules?: CriteriaOverrides;
 }
 
 /** Test cases from `{ dataset, recorded }` files in `dir`; records in the JSON file at `out`. */
@@ -238,6 +245,8 @@ export class LocalStore implements BenchStore {
   }
   private async save(file: LocalFile) { await Deno.writeTextFile(this.out, JSON.stringify(file)); }
 
+  async rules() { return (await this.load()).rules ?? {}; }
+
   async scenarios(only?: string, includeArchived = false) {
     const out: StoredScenario[] = [];
     for await (const entry of Deno.readDir(this.dir)) {
@@ -246,7 +255,7 @@ export class LocalStore implements BenchStore {
       if (only && only !== id) continue;
       const file = JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`));
       if (file.archived && !includeArchived) continue;
-      out.push({ id, name: id, criteria: file.criteria ?? {}, archived: file.archived === true, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
+      out.push({ id, name: id, archived: file.archived === true, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
     }
     return out.sort((a, b) => (a.dataset?.start ?? "").localeCompare(b.dataset?.start ?? ""));
   }

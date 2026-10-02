@@ -12,9 +12,11 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 - **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
 
-Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack, and each case can change the shares and the points. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
+Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
 
-Historical scorer versions are not comparable. Rescore all successful results, including all six price/valuation lanes, whenever the scorer, referee or case criteria change.
+Historical scorer versions are not comparable. Rescore all successful results, including all six price/valuation lanes, whenever the scorer, referee or rules change.
+
+The rules are one set for the whole bench (`bench_rules`, a single row of changes to the defaults): every case and every planner is scored with the same thresholds and points, so their totals can be compared. No rule scores 0.
 
 ## Rule catalogue
 
@@ -35,7 +37,8 @@ These reward where energy was bought, not that less could have been spent: a pla
 | Pool far below target | Additional severity more than 2 °C below target; automatic service failure | Same reachability policy at this lower level |
 | Car short of range | Time more than 50 km short of desired range | Always available to charge; reachability allowance applies |
 | Car far short of range | Additional severity more than 100 km short; automatic service failure | Same policy at this lower level |
-| Warm pool buffer | Temperature above target; visible diagnostic | No blanket penalty: useful preheating may store tomorrow's heat |
+| Pool overheated | More than 2 °C above target while the plan's next 24 h are neither 10 % dearer nor 10 % less sunny than the 24 h it is in: −1 | Not judged in the plan's last 24 h, which have no next day |
+| Warm thermal buffer | More than 2 °C above target while the next 24 h are at least 10 % dearer or have at least 10 % less sun: +1. Never together with “Pool overheated” | Same |
 | Device power or storage limit | Requested power or additional charge/discharge that exceeds the configured bench capability | Every requested action; initial state outside a desired target is not itself a failure |
 | Grid connection limit | Import or export above the bench site's rated connection | Every quarter |
 | Invalid decision data | Missing/nonfinite decisions or negative directional power | Incomplete results cannot claim a valid score |

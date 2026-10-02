@@ -59,7 +59,8 @@ The score combines comfort with demonstrated opportunities to reduce cost. Physi
 violations fail the automatic verdict independently. The rule list shows one row per
 rule that fired in the period the chart shows (72 h or one day), with its points per
 quarter and the quarters it fired in for each planner; a row opens its explanation,
-replayed alternatives and, for comfort rules, its settings. See the [complete scoring rules](scoring.md) and
+replayed alternatives and, for quarter rules, its settings. Rules are saved once for
+the whole bench, not per case. See the [complete scoring rules](scoring.md) and
 [architecture decision](scoring-design.md). Costs remain visible in SEK at real
 prices; the six lanes separate price information from valuation strength.
 The next bench run, or **Recompute scores**, re-evaluates every stored result

@@ -330,7 +330,7 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
   assertEquals([failed.score.physical_failed, failed.score.economic_points], [true, 0]);
   assertEquals([failed.score.audit.violations > 0, failed.score.audit.violationKinds.battery_empty > 0], [true, true]);
   assertEquals([storedPassed(failed.score, 'pass'), storedPassed(failed.score, null)], [false, false]);
-  const live = scoreQuarters(failed.series, { pool_low: { enabled: false }, pool_cold: { enabled: false }, ev_low: { points: 0 } }, 'pass');
+  const live = scoreQuarters(failed.series, { pool_low: { enabled: false }, pool_cold: { enabled: false }, ev_low: { enabled: false } }, 'pass');
   assertEquals([live.physicalFailed, live.passed, live.economicPoints], [true, false, 0]);
 });
 

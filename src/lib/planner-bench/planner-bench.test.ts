@@ -83,10 +83,30 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'] });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
-  // More than 2 °C above the target is marked as a warm buffer and loses nothing; nor does a car above its target.
-  const warm = scoreQuarters(comfortSeries(() => 32.1, () => 450));
-  assertEquals(warm.quarters[0], { score: 0, fired: ['pool_hot'] });
-  assertEquals([warm.sum, warm.counts.pool_hot, warm.passed], [0, 288, true]);
+  // A car above its target loses nothing.
+  assertEquals(scoreQuarters(comfortSeries(() => 30, () => 450)).sum, 0);
+});
+
+Deno.test('a pool well above target is a buffer when the next day is dearer or duller, and overheated when it is neither', () => {
+  const hot = (price: (day: number) => number, solar: (day: number) => number) => {
+    const series = comfortSeries(() => 32.1, () => 300);
+    series.importPrice = series.importPrice.map((_, i) => price(Math.floor(i / 96)));
+    series.solarW = series.solarW.map((_, i) => solar(Math.floor(i / 96)));
+    return scoreQuarters(series, { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false } });
+  };
+  // The same every day: nothing to hold the heat for. The last day has no next day and is not judged.
+  const waste = hot(() => 1, () => 1000);
+  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'] }, { score: 0, fired: [] }]);
+  assertEquals([waste.counts.pool_hot, waste.counts.pool_buffer, waste.sum, waste.passed], [192, undefined, -192, true]);
+  // Dearer on the second day only: day one is a buffer, day two is not.
+  const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
+  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 1, fired: ['pool_buffer'] }, { score: -1, fired: ['pool_hot'] }]);
+  assertEquals(dearer.sum, 0);
+  // Less sun the next day counts the same; a difference within the margin does not.
+  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, ['pool_buffer']);
+  assertEquals(hot(day => 1 + day * 0.05, () => 1000).quarters[0].fired, ['pool_hot']);
+  // At the target nothing fires.
+  assertEquals(scoreQuarters(comfortSeries(() => 31.9, () => 300)).counts.pool_hot, undefined);
 });
 
 Deno.test('each comfort rule says whether it could fire in the case, and in how many quarters', () => {
@@ -97,7 +117,6 @@ Deno.test('each comfort rule says whether it could fire in the case, and in how 
   assertEquals(cold.applicability.pool_cold.eligibleQuarters, 160);
   assertEquals(cold.applicability.ev_low.eligibleQuarters, 288);
   assertEquals([cold.applicability.ev_short.applicable, cold.applicability.ev_short.reason], [false, 'Switched off for this case.']);
-  assertEquals(cold.applicability.pool_hot.reason, 'Marked only; loses no points.');
   const never = scoreQuarters(comfortSeries(() => 20, () => 300, { pool_start_c: 20, poolReachableC: new Array(288).fill(21) }));
   assertEquals(never.applicability.pool_low, { applicable: false, eligibleQuarters: 0, reason: 'This level was not reachable for a day within the window.' });
 });
@@ -127,10 +146,11 @@ Deno.test('rule overrides change thresholds, points and whether a rule runs', ()
 
 Deno.test('criteria are checked: a rule gives or takes at most two points, at a real threshold, and old money rules are gone by name', () => {
   assertEquals(criteriaErrors({}), []);
-  assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: 0 } }), []);
-  assertEquals(criteriaErrors({ pool_low: { points: 3 } }), ['pool_low: points must be between -2 and 2.']);
+  assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: -1 } }), []);
+  assertEquals(criteriaErrors({ pool_low: { points: 3 } }), ['pool_low: points must be between -2 and 2, and not 0.']);
   assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
-  assertEquals(criteriaErrors({ cheap_buy: { points: 2, threshold: 0.3 }, cheapest_buy: { points: 0 } }), []);
+  assertEquals(criteriaErrors({ cheap_buy: { points: 2, threshold: 0.3 }, cheapest_buy: { points: 1 } }), []);
+  assertEquals(criteriaErrors({ cheapest_buy: { points: 0 } }).length, 1);
     assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
   assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
@@ -142,7 +162,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });

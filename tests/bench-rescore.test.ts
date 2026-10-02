@@ -6,7 +6,7 @@ import { evaluate, type Evaluation } from "../src/lib/planner-bench/evaluate.ts"
 import { LANES } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 import { SCORER_VERSION } from "../src/lib/planner-bench/score.ts";
-import type { PlanRecord } from "../src/lib/planner-bench/types.ts";
+import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
 const fill = (value: number) => Array<number>(QUARTERS).fill(value);
 const dataset: BenchScenarioData = {
@@ -34,9 +34,9 @@ const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
 
 class MemoryStore {
   cases: StoredScenario[] = [
-    { id: "ready", name: "Ready", criteria: {}, archived: false, dataset, recorded },
-    { id: "waiting", name: "Waiting", criteria: {}, archived: false, dataset, recorded: null },
-    { id: "archived", name: "Archived", criteria: {}, archived: true, dataset, recorded },
+    { id: "ready", name: "Ready", archived: false, dataset, recorded },
+    { id: "waiting", name: "Waiting", archived: false, dataset, recorded: null },
+    { id: "archived", name: "Archived", archived: true, dataset, recorded },
   ];
   rows: EvaluatedResult[] = ["old-not-in-git", "new-not-in-git"].flatMap(sha => LANES.map(lane => ({
     sha, scenario_id: "ready", lane, status: "ok" as const, error: null, score: null, referee_version: 0,
@@ -45,6 +45,7 @@ class MemoryStore {
   hashes = new Map(this.rows.map(row => [keyOf(row), `immutable-${keyOf(row)}`]));
   writes: ResultKey[] = [];
   discardWrites = false;
+  async rules(): Promise<CriteriaOverrides> { return {}; }
   async scenarios(only?: string, includeArchived = false) {
     return this.cases.filter(c => (!only || c.id === only) && (includeArchived || !c.archived));
   }
@@ -131,15 +132,10 @@ Deno.test("rescore-only CLI works with absent historical git objects, no subproc
   } finally { await Deno.remove(dir, { recursive: true }); }
 });
 
-Deno.test("a concurrent criteria edit prevents a falsely current verification", async () => {
+Deno.test("a concurrent rule edit prevents a falsely current verification", async () => {
   const store = new MemoryStore();
-  const original = store.scenarios.bind(store);
   let reads = 0;
-  store.scenarios = async (only, includeArchived) => {
-    const cases = await original(only, includeArchived);
-    if (++reads < 2) return cases;
-    return cases.map(c => ({ ...c, criteria: { pool_low: { threshold: 0.5 } } }));
-  };
+  store.rules = async () => ++reads < 2 ? {} : { pool_low: { threshold: 0.5 } };
   const error = await assertRejects(() => rescoreExisting(store), RescoreIncompleteError);
   assertEquals(error.report.verificationErrors, 12);
 });

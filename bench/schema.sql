@@ -13,7 +13,7 @@ create table if not exists public.bench_scenarios (
   input_hash text,
   -- entrypoint.arguments of the replay: everything the planner reads, nothing else.
   input jsonb not null,
-  -- Per-case changes to the default scoring criteria (src/lib/planner-bench/score.ts).
+  -- No longer read: the rules are the same for every case (bench_rules).
   criteria jsonb not null default '{}'::jsonb,
   notes text,
   archived boolean not null default false,
@@ -31,6 +31,16 @@ alter table public.bench_scenarios add column if not exists recorded jsonb;
 -- Why a case cannot be run yet, in words; null once it can.
 alter table public.bench_scenarios add column if not exists pending_reason text;
 alter table public.bench_scenarios alter column input drop not null;
+
+-- The scoring rules, as changes to the defaults in src/lib/planner-bench/score.ts.
+-- One row: every case and every planner is scored with the same rules, or
+-- their points could not be compared.
+create table if not exists public.bench_rules (
+  id boolean primary key default true check (id),
+  criteria jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+insert into public.bench_rules (id) values (true) on conflict (id) do nothing;
 
 create table if not exists public.bench_runs (
   sha text primary key,
@@ -100,18 +110,19 @@ alter table public.bench_scenarios enable row level security;
 alter table public.bench_runs enable row level security;
 alter table public.bench_results enable row level security;
 alter table public.bench_verdicts enable row level security;
+alter table public.bench_rules enable row level security;
 
--- Staff read everything and curate cases, verdicts and which run is current.
+-- Staff read everything and curate cases, rules, verdicts and which run is current.
 -- Results are written only by the runner, with the service-role key.
 do $$
 declare
   t text;
 begin
-  foreach t in array array['bench_scenarios', 'bench_runs', 'bench_results', 'bench_verdicts'] loop
+  foreach t in array array['bench_scenarios', 'bench_runs', 'bench_results', 'bench_verdicts', 'bench_rules'] loop
     execute format('drop policy if exists "staff read %1$s" on public.%1$I', t);
     execute format('create policy "staff read %1$s" on public.%1$I for select to authenticated using (public.is_staff(auth.uid()))', t);
   end loop;
-  foreach t in array array['bench_scenarios', 'bench_verdicts'] loop
+  foreach t in array array['bench_scenarios', 'bench_verdicts', 'bench_rules'] loop
     execute format('drop policy if exists "staff write %1$s" on public.%1$I', t);
     execute format('create policy "staff write %1$s" on public.%1$I for all to authenticated using (public.is_staff(auth.uid())) with check (public.is_staff(auth.uid()))', t);
   end loop;
