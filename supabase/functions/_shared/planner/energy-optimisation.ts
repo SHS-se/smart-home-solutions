@@ -522,11 +522,11 @@ export interface OptimisationSnapshot {
      * What the water temperature was measured to do, by the temperature it was
      * at (pool-training.ts `fitPoolResponse`): how fast the unheated pool's
      * reading moved, and what a kWh into the heater added to it. Where present
-     * it replaces the loss coefficient and the COP for the pool's own
-     * temperature, so a pool that stalls at one temperature is planned as it
-     * behaves.
+     * it replaces the loss coefficient and the COP: the cooling rate by the
+     * temperature the pool is at, so a pool that stalls at one temperature is
+     * planned to stall there, and the warming as one figure over all of it.
      */
-    response?: { at_c: number; idle_c_per_h: number | null; heat_c_per_kwh: number | null }[] | null;
+    response?: { at_c: number; idle_c_per_h: number | null; heat_c_per_kwh: number | null; heated_kwh?: number }[] | null;
   } | null;
   grid: {
     import_limit_w: number;
@@ -2323,15 +2323,15 @@ export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook"] as const;
 type PoolResponse = NonNullable<NonNullable<OptimisationSnapshot["pool_model"]>["response"]>;
 
 /**
- * A measured pool response at one water temperature: between two measured
- * bins the line between them, beyond the outermost the outermost. Null when
- * no bin measured it.
+ * One measured pool response as a function of water temperature: between two
+ * measured bins the line between them, beyond the outermost the outermost.
+ * Null when no bin measured it. The bins are sorted once here, because the
+ * dispatch asks this of every state it tries.
  */
 function measuredPoolResponse(
   response: PoolResponse | null | undefined,
   pick: (bin: PoolResponse[number]) => number | null,
-  waterC: number,
-): number | null {
+): ((waterC: number) => number) | null {
   const known = (response ?? [])
     .flatMap((bin) => {
       const value = pick(bin);
@@ -2339,16 +2339,42 @@ function measuredPoolResponse(
     })
     .sort((a, b) => a.at - b.at);
   if (known.length === 0) return null;
-  if (waterC <= known[0].at) return known[0].value;
-  for (let index = 1; index < known.length; index += 1) {
-    const low = known[index - 1], high = known[index];
-    if (waterC <= high.at) return low.value + (high.value - low.value) * (waterC - low.at) / (high.at - low.at);
-  }
-  return known[known.length - 1].value;
+  const last = known.length - 1;
+  return (waterC) => {
+    if (waterC <= known[0].at) return known[0].value;
+    for (let index = 1; index <= last; index += 1) {
+      const high = known[index];
+      if (waterC <= high.at) {
+        const low = known[index - 1];
+        return low.value + (high.value - low.value) * (waterC - low.at) / (high.at - low.at);
+      }
+    }
+    return known[last].value;
+  };
 }
 
-/** The least a kWh is taken to warm the pool, as a share of the best measured: a stall slows heating, it does not stop it. */
-const POOL_MIN_MEASURED_GAIN_SHARE = 0.2;
+/**
+ * What a heater kWh was measured to add to the pool's reading, °C, over every
+ * bin that measured it and weighted by the energy each saw. Null when none did.
+ *
+ * One figure, although the bins differ: Phil's pool gains half as much per kWh
+ * below 29 °C as above it. Planning on that would say a kWh is worth more the
+ * warmer the pool already is, and a dispatch that buys heat by what the next
+ * unit is worth cannot settle on a store whose returns rise: with the gain by
+ * temperature the auction ran three times as long and stopped at its cap, not
+ * at an answer. The cooling rate has no such problem and is used as measured,
+ * which is where the stall costs or saves energy over a plan.
+ */
+function measuredPoolGain(response: PoolResponse | null | undefined): number | null {
+  let gain = 0, weight = 0;
+  for (const bin of response ?? []) {
+    if (bin.heat_c_per_kwh === null || !finite(bin.heat_c_per_kwh)) continue;
+    const kwh = finite(bin.heated_kwh) && (bin.heated_kwh as number) > 0 ? bin.heated_kwh as number : 1;
+    gain += bin.heat_c_per_kwh * kwh;
+    weight += kwh;
+  }
+  return weight > 0 && gain > 0 ? gain / weight : null;
+}
 
 /** How far above its target the pool may be heated when energy is cheap, °C. */
 const POOL_OVERSHOOT_C = 2;
@@ -2782,23 +2808,16 @@ function buildDispatchStores(
     // per degree, and it is the same conversion the editor showed.
     // Only the heater's share of the pool's draw becomes heat.
     const heaterShare = poolHeaterShare(snapshot);
-    // Measured where the home has it: the reading's own cooling rate (never a
-    // warming one) and what a heater kWh added to it, by water temperature.
+    // Measured where the home has it: the reading's own cooling rate by water
+    // temperature (never a warming one), and what a heater kWh added to it.
     const response = fitted?.response;
-    const bestGain = Math.max(0, ...(response ?? []).map((bin) => bin.heat_c_per_kwh ?? 0));
-    const idleAt = (waterC: number): number | null => {
-      const rate = measuredPoolResponse(response, (bin) => bin.idle_c_per_h, waterC);
-      return rate === null ? null : Math.min(0, rate);
-    };
-    const gainAt = (waterC: number): number | null => {
-      const gain = measuredPoolResponse(response, (bin) => bin.heat_c_per_kwh, waterC);
-      return gain === null || !(bestGain > 0) ? null : Math.max(gain, bestGain * POOL_MIN_MEASURED_GAIN_SHARE);
-    };
+    const measuredIdle = measuredPoolResponse(response, (bin) => bin.idle_c_per_h);
+    const measuredGain = measuredPoolGain(response);
+    const idleAt = measuredIdle === null ? null : (waterC: number) => Math.min(0, measuredIdle(waterC));
     const poolUnitsAt = (waterC: number, index: number) => {
       const cop = poolCop(model.heat_pump, airAt(index), waterC);
-      const gain = gainAt(waterC);
       // A unit that cannot run in this air adds nothing, measured gain or not.
-      return gain === null || cop <= 0 ? cop * heaterShare / capacityKwhPerK : gain * heaterShare;
+      return measuredGain === null || cop <= 0 ? cop * heaterShare / capacityKwhPerK : measuredGain * heaterShare;
     };
     const poolUnitsPerKwh = poolUnitsAt(pool.water_temperature_c, 0);
     const poolPower = declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
@@ -2809,12 +2828,10 @@ function buildDispatchStores(
     // each quarter's own air temperature and solar surplus.
     const poolMerit = poolTarget === undefined ? null : meritOrderCurve({
       unit: "celsius", target: poolTarget, state: pool.water_temperature_c, step: MERIT_STEP.pool_c,
-      upkeep: slots.reduce((sum, slot, index) => {
-        const idle = idleAt(poolTarget);
-        return sum + (idle === null
+      upkeep: slots.reduce((sum, slot, index) =>
+        sum + (idleAt === null
           ? model.loss_kw_per_k * Math.max(0, poolTarget - airAt(index)) / capacityKwhPerK
-          : -idle) * slot.duration_hours;
-      }, 0),
+          : -idleAt(poolTarget)) * slot.duration_hours, 0),
       offers: slots.flatMap((slot, index) => quarterOffers({
         hours: slot.duration_hours, surplus_w: slot.pv_w - fixedLoadW(slot), max_w: poolPower.max_power_w,
         import_sek_per_kwh: slot.shadow_import_sek_per_kwh, export_sek_per_kwh: slot.shadow_export_sek_per_kwh,
@@ -2863,12 +2880,9 @@ function buildDispatchStores(
       ...(poolMerit ? { sustained_value_tail_hours: 24 } : {}),
       retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,
-      drift: (waterC, index) => {
-        const idle = idleAt(waterC);
-        return idle === null
-          ? stepPoolTemperature(model, waterC, airAt(index), 0, 0, slots[index].duration_hours)
-          : waterC + idle * slots[index].duration_hours;
-      },
+      drift: idleAt === null
+        ? (waterC, index) => stepPoolTemperature(model, waterC, airAt(index), 0, 0, slots[index].duration_hours)
+        : (waterC, index) => waterC + idleAt(waterC) * slots[index].duration_hours,
     });
   }
 

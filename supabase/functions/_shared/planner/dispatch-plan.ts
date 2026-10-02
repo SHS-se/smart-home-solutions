@@ -288,8 +288,15 @@ export interface DispatchResult {
   iterations: number;
 }
 
+// A store's quarter lengths do not change while it is planned, and every run
+// edit the auction tries asks for them.
+const RUN_HOURS = new WeakMap<DispatchStore, number[]>();
 function runHours(store: DispatchStore, count: number): number[] {
-  return Array.from({length: count}, (_, i) => hoursAt(store, i));
+  const held = RUN_HOURS.get(store);
+  if (held && held.length === count) return held;
+  const hours = Array.from({length: count}, (_, i) => hoursAt(store, i));
+  RUN_HOURS.set(store, hours);
+  return hours;
 }
 function runValid(store: DispatchStore, power: number[], continuesBeyondHorizon = false): boolean {
   return !store.minimum_run || validRun(power, runHours(store, power.length), store.minimum_run, continuesBeyondHorizon);

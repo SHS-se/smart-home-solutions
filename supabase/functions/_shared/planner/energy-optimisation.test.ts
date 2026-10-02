@@ -1557,7 +1557,7 @@ Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
   );
 });
 
-Deno.test("a measured pool response replaces the loss and the COP at the temperatures it measured", () => {
+Deno.test("a measured pool response replaces the loss by temperature and the COP as one figure", () => {
   // A pool that cools 0.04 °C an hour and gains 0.08 °C per heater kWh above
   // 29 °C, and does a third and a half of that below it.
   const response = [
@@ -1579,9 +1579,11 @@ Deno.test("a measured pool response replaces the loss and the COP at the tempera
   assert(Math.abs(upkeep(planAt(30, true)) - 0.04 * hours) < 0.01, `measured upkeep ${upkeep(planAt(30, true))} over ${hours} h`);
   assert(upkeep(planAt(30, false)) > upkeep(planAt(30, true)) + 0.2, `the loss coefficient asks for something else: ${upkeep(planAt(30, false))} against ${upkeep(planAt(30, true))}`);
 
-  // In the stall a kWh buys less than half the warmth it buys above it.
+  // A kWh buys the measured warmth, one figure wherever the pool is: returns
+  // that rose with temperature would leave the dispatch nothing to settle on.
   const gain = (waterC: number) => store(planAt(waterC, true)).units_per_kwh;
-  assert(gain(28.875) < gain(29.5) * 0.5, `stall ${gain(28.875)} against ${gain(29.5)}`);
+  assert(Math.abs(gain(28.875) - gain(29.5)) < 1e-9, `stall ${gain(28.875)} against ${gain(29.5)}`);
+  assert(gain(29.5) > 0.035 && gain(29.5) < 0.08, `between the measured bins: ${gain(29.5)}`);
 
   // An unheated quarter moves the pool by the measured rate: the first heated
   // quarter of a pool starting in the stall starts from a slower fall.
