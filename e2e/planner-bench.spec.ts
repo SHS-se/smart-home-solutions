@@ -273,7 +273,10 @@ test.describe('planner bench', () => {
     await expect(page.getByText(/No rule fired|Ingen regel slog till|Flexible load|Pool/).first()).toBeVisible();
 
     // Both planners are drawn for the case; the toggle swaps the full plan chart.
-    await expect(page.getByRole('img', { name: /Pool temperature|Pooltemperatur/ })).toBeVisible();
+    await expect(page.getByRole('img', { name: /Cost for both planners|Kostnad för båda planerarna/ })).toBeVisible();
+    // The pool's temperature is a panel of the plan chart itself, with the owner's target drawn in.
+    await expect(page.locator('#plan-pool-temperature')).toContainText(/°C (target|mål)/);
+    await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
     const drawn = await chart.innerHTML();

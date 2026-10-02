@@ -1,6 +1,7 @@
-// Both planners on one axis: pool temperature, when each heats, and what each
-// has spent by every point in the plan. This is the view the bench exists for,
-// so it never follows the current/test toggle.
+// Both planners on one axis: what each has spent by every point in the plan.
+// This is the view the bench exists for, so it never follows the current/test
+// toggle. The pool's temperature is in the plan chart above, as it is for a
+// customer's plan.
 
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -11,18 +12,14 @@ const W = 1160, L = 58, R = W - 92;
 const AXIS = 'fill-muted-foreground text-[10px] font-mono';
 const CURRENT = 'hsl(var(--muted-foreground))';
 const TEST = 'var(--plan-load-2)';
-const HEATING_W = 50;
 
 interface Props {
   current: BenchSeries | null;
   test: BenchSeries | null;
   timeZone: string;
-  /** Pool limits drawn as reference lines, from the case's criteria. */
-  minC: number;
-  comfortC: number;
 }
 
-const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, comfortC }) => {
+const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone }) => {
   const { t } = useLanguage();
   const [hover, setHover] = useState<number | null>(null);
   const axis = test ?? current;
@@ -36,15 +33,8 @@ const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, com
     const x0 = axis.start.map(s => X(Date.parse(s)));
     const x1 = axis.start.map((s, i) => X(Date.parse(s) + axis.hours[i] * 3.6e6));
 
-    const hasPool = [current, test].some(s => s?.poolC.some(v => v !== null));
-    const temps = [current, test].flatMap(s => s?.poolC ?? []).filter((v): v is number => v !== null);
-    const tLo = Math.floor(Math.min(minC - 0.3, ...temps) * 2) / 2;
-    const tHi = Math.ceil(Math.max(comfortC + 0.3, ...temps) * 2) / 2;
-    const temp = { top: 26, h: hasPool ? 130 : 0 };
-    const bars = { top: temp.top + temp.h + 8, h: hasPool ? 18 : 0 };
-    const cost = { top: bars.top + bars.h + (hasPool ? 42 : 0), h: 90 };
+    const cost = { top: 26, h: 90 };
     const height = cost.top + cost.h + 26;
-    const TY = (v: number) => temp.top + temp.h - (v - tLo) / (tHi - tLo) * temp.h;
 
     const cumulative = (s: BenchSeries | null) => {
       if (!s) return null;
@@ -66,12 +56,6 @@ const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, com
       });
       return d;
     };
-    const ticks = (lo: number, hi: number, count: number) => {
-      const stepSize = Math.max(0.5, Math.ceil((hi - lo) / count * 2) / 2);
-      const out: number[] = [];
-      for (let v = Math.ceil(lo / stepSize) * stepSize; v <= hi + 1e-9; v += stepSize) out.push(Math.round(v * 10) / 10);
-      return out;
-    };
     const costTicks = (() => {
       const span = cHi - cLo, raw = span / 4;
       const mag = 10 ** Math.floor(Math.log10(raw)), unit = [1, 2, 5, 10].find(m => m * mag >= raw)! * mag;
@@ -83,8 +67,8 @@ const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, com
       const { hour, minute } = homeHourMinute(s, timeZone);
       return minute === 0 && hour % 6 === 0 ? [{ i, hour }] : [];
     });
-    return { n, x0, x1, hasPool, temp, bars, cost, height, TY, CY, tLo, tHi, cc, ct, step, ticks, costTicks, sixHours };
-  }, [axis, current, test, minC, comfortC, timeZone]);
+    return { n, x0, x1, cost, height, CY, cc, ct, step, costTicks, sixHours };
+  }, [axis, current, test, timeZone]);
 
   if (!g || !axis) return null;
   const onMove = (event: React.MouseEvent<SVGSVGElement>) => {
@@ -101,43 +85,13 @@ const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, com
     <div className="space-y-2">
       <div className="overflow-x-auto">
         <svg viewBox={`0 0 ${W} ${g.height}`} className="w-full min-w-[720px]" onMouseMove={onMove} onMouseLeave={() => setHover(null)}
-          role="img" aria-label={t('Pooltemperatur och kostnad för båda planerarna', 'Pool temperature and cost for both planners')}>
+          role="img" aria-label={t('Kostnad för båda planerarna', 'Cost for both planners')}>
           {g.sixHours.map(({ i, hour }) => (
             <g key={i}>
               <line x1={g.x0[i]} x2={g.x0[i]} y1={16} y2={g.height - 20} className="stroke-border" strokeWidth={hour === 0 ? 1.4 : 0.6} />
               <text x={g.x0[i]} y={g.height - 6} textAnchor="middle" className={AXIS}>{`${String(hour).padStart(2, '0')}:00`}</text>
             </g>
           ))}
-          {g.hasPool && (
-            <>
-              <text x={L} y={g.temp.top - 10} className="fill-foreground text-[11px] font-medium">{t('Pooltemperatur', 'Pool temperature')}</text>
-              <text x={L + 110} y={g.temp.top - 10} className={AXIS}>{t('°C · båda planerarna', '°C · both planners')}</text>
-              {g.ticks(g.tLo, g.tHi, 4).map(v => (
-                <g key={v}>
-                  <line x1={L} x2={R} y1={g.TY(v)} y2={g.TY(v)} className="stroke-border" />
-                  <text x={L - 8} y={g.TY(v) + 3} textAnchor="end" className={AXIS}>{v.toFixed(1)}</text>
-                </g>
-              ))}
-              <line x1={L} x2={R} y1={g.TY(minC)} y2={g.TY(minC)} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
-              <text x={L + 4} y={g.TY(minC) - 3} className="text-[9px]" fill="hsl(var(--destructive))">{`${minC} °C ${t('lägsta', 'minimum')}`}</text>
-              <line x1={L} x2={R} y1={g.TY(comfortC)} y2={g.TY(comfortC)} stroke="var(--plan-grid)" strokeDasharray="2 3" />
-              <text x={L + 4} y={g.TY(comfortC) - 3} className="text-[9px]" fill="var(--plan-grid)">{`${comfortC} °C ${t('komfort', 'comfort')}`}</text>
-              <path d={g.step(current?.poolC ?? null, g.TY)} fill="none" stroke={CURRENT} strokeWidth={1.6} strokeDasharray="5 3" />
-              <path d={g.step(test?.poolC ?? null, g.TY)} fill="none" stroke={TEST} strokeWidth={2.2} />
-              <text x={L - 8} y={g.bars.top + 6} textAnchor="end" className={AXIS}>{t('nuv.', 'current')}</text>
-              <text x={L - 8} y={g.bars.top + 16} textAnchor="end" className={AXIS}>test</text>
-              {axis.start.map((_, i) => (
-                <g key={i}>
-                  {current && current.poolW[i] > HEATING_W && (
-                    <rect x={g.x0[i]} y={g.bars.top} width={g.x1[i] - g.x0[i] + 0.3} height={7} fill={CURRENT} />
-                  )}
-                  {test && test.poolW[i] > HEATING_W && (
-                    <rect x={g.x0[i]} y={g.bars.top + 10} width={g.x1[i] - g.x0[i] + 0.3} height={7} fill={TEST} />
-                  )}
-                </g>
-              ))}
-            </>
-          )}
           <text x={L} y={g.cost.top - 10} className="fill-foreground text-[11px] font-medium">{t('Kostnad', 'What it costs')}</text>
           <text x={L + 90} y={g.cost.top - 10} className={AXIS}>{t('kr, ackumulerad nätkostnad', 'SEK, cumulative grid cost')}</text>
           {g.costTicks.map(v => (
@@ -159,7 +113,6 @@ const BenchComparePanel: React.FC<Props> = ({ current, test, timeZone, minC, com
         {hover !== null && (
           <span>
             {formatHomeDayMonthTime(axis.start[hover], timeZone)} · {fmt(axis.importPrice[hover])} kr/kWh {axis.published[hover] ? t('publicerat', 'published') : t('uppskattat', 'estimated')}
-            {g.hasPool && ` · ${t('nuv.', 'current')} ${fmt(current?.poolC[hover])} °C · test ${fmt(test?.poolC[hover])} °C`}
           </span>
         )}
       </div>

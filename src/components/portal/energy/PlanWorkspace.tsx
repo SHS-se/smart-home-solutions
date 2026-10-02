@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useLanguage } from '@/contexts/LanguageContext';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import {
   effectivePlanningRole,
@@ -44,7 +45,9 @@ import {
   summariseTimeline,
   unpricedMeasuredQuarters,
   type DayWindow,
+  type PoolSlotRow,
 } from '@/lib/energy-shift/energy-timeline';
+import { plannedPoolTarget, plannedPoolTemperature } from '@/lib/energy-shift/pool-temperature';
 export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
 import {
@@ -80,6 +83,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [prices, setPrices] = useState<PriceSlotRow[]>([]);
   const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
   const [deviceActuals, setDeviceActuals] = useState<EmpiricalDeviceSlotMatrix[]>([]);
+  const [poolActuals, setPoolActuals] = useState<PoolSlotRow[]>([]);
   const [thermalObservations, setThermalObservations] = useState<ThermalObservationSummary>(
     EMPTY_THERMAL_OBSERVATIONS,
   );
@@ -240,6 +244,28 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     return () => window.clearInterval(timer);
   }, []);
 
+  // The pool's measured temperature for the days the chart draws. Read on its
+  // own and seldom: a reading arrives once a quarter, and a home without a
+  // pool simply has none.
+  useEffect(() => {
+    setPoolActuals([]);
+    if (!homeId) return;
+    let cancelled = false;
+    const read = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const since = new Date(Date.now() - LOADED_HISTORY_DAYS * 86_400_000).toISOString();
+      const { data, error: poolError } = await (supabase as unknown as SupabaseClient)
+        .from('energy_optimisation_pool_slots')
+        .select('start_ts, water_temperature_c')
+        .eq('home_id', homeId).gte('start_ts', since).order('start_ts');
+      // Left silent: the chart draws the planned temperature without it.
+      if (!cancelled && !poolError) setPoolActuals((data ?? []) as PoolSlotRow[]);
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), 15 * 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [homeId]);
+
   const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at
     ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
     : undefined;
@@ -345,6 +371,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           lastCheckedAt={lastCheckedAt}
           connectionLastSeenAt={activeConnection?.last_seen_at ?? null}
           deviceActuals={deviceActuals}
+          poolActuals={poolActuals}
           prices={prices}
           now={clock}
           dayWindow={dayWindow}
@@ -412,6 +439,7 @@ const PlanView: React.FC<{
    */
   connectionLastSeenAt?: string | null;
   deviceActuals: EmpiricalDeviceSlotMatrix[];
+  poolActuals: PoolSlotRow[];
   prices: PriceSlotRow[];
   now: number;
   dayWindow: DayWindow;
@@ -436,6 +464,7 @@ const PlanView: React.FC<{
   dayWindow,
   onDayWindowChange,
   deviceActuals,
+  poolActuals,
   prices,
   now,
 }) => {
@@ -486,14 +515,21 @@ const PlanView: React.FC<{
     () => new Set(model.deviceRoleView.visibleModels.map(device => device.key)),
     [model.deviceRoleView.visibleModels],
   );
+  const plannedPoolC = useMemo(() => plannedPoolTemperature(
+    active.slots,
+    plan.pool?.water_temperature_c,
+    active.store_diagnostics?.find(store => store.key === 'pool')?.end_state,
+  ), [active.slots, active.store_diagnostics, plan.pool?.water_temperature_c]);
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
     prices,
     planSlots: active.slots,
     deviceKeyById,
+    poolActuals,
+    plannedPoolC,
     nowMs,
-  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, prices]);
+  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, plannedPoolC, poolActuals, prices]);
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);
@@ -771,6 +807,7 @@ const PlanView: React.FC<{
             schedulableKeys={schedulableKeys}
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
+            poolTargetC={plannedPoolTarget(plan)}
           />
           </>
           )}

@@ -71,6 +71,8 @@ export interface TimelineRow {
    */
   shadowImportSekPerKwh: number | null;
   shadowExportSekPerKwh: number | null;
+  /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
+  poolC?: number | null;
 }
 
 export interface PriceRow {
@@ -84,6 +86,11 @@ export interface DeviceSlotRow {
   device_energy_kwh: Record<string, number>;
 }
 
+export interface PoolSlotRow {
+  start_ts: string;
+  water_temperature_c: number;
+}
+
 export interface TimelineInput {
   actuals: readonly ActualEnergySlot[];
   deviceActuals: readonly DeviceSlotRow[];
@@ -95,6 +102,10 @@ export interface TimelineInput {
    * device needs them reconciled onto the plan's key.
    */
   deviceKeyById: ReadonlyMap<string, string>;
+  /** Measured pool water temperature, when the home records one. */
+  poolActuals?: readonly PoolSlotRow[];
+  /** The plan's pool temperature at the end of each of `planSlots` (pool-temperature.ts). */
+  plannedPoolC?: readonly (number | null)[];
   nowMs: number;
 }
 
@@ -120,6 +131,8 @@ export const buildEnergyTimeline = ({
   prices,
   planSlots,
   deviceKeyById,
+  poolActuals = [],
+  plannedPoolC = [],
   nowMs,
 }: TimelineInput): TimelineRow[] => {
   const boundary = quarterFloor(nowMs);
@@ -127,6 +140,7 @@ export const buildEnergyTimeline = ({
   const deviceByStart = new Map(
     deviceActuals.map(slot => [quarterFloor(Date.parse(slot.start_ts)), slot.device_energy_kwh]),
   );
+  const poolByStart = new Map(poolActuals.map(slot => [quarterFloor(Date.parse(slot.start_ts)), Number(slot.water_temperature_c)]));
   const rows = new Map<number, TimelineRow>();
 
   for (const slot of actuals) {
@@ -178,10 +192,11 @@ export const buildEnergyTimeline = ({
       exportPriceSekPerKwh: price?.export_price_sek_per_kwh ?? null,
       shadowImportSekPerKwh: null,
       shadowExportSekPerKwh: null,
+      poolC: poolByStart.get(startMs) ?? null,
     });
   }
 
-  for (const slot of planSlots) {
+  for (const [index, slot] of planSlots.entries()) {
     const startMs = quarterFloor(Date.parse(slot.start));
     if (!Number.isFinite(startMs) || startMs < boundary || rows.has(startMs)) continue;
     rows.set(startMs, {
@@ -209,6 +224,7 @@ export const buildEnergyTimeline = ({
       shadowExportSekPerKwh: slot.export_price_sek_per_kwh === null
         ? slot.shadow_export_sek_per_kwh ?? null
         : null,
+      poolC: plannedPoolC[index] ?? null,
     });
   }
 
@@ -241,6 +257,8 @@ export const buildEnergyTimeline = ({
       exportPriceSekPerKwh: priceByStart.get(startMs)?.export_price_sek_per_kwh ?? null,
       shadowImportSekPerKwh: null,
       shadowExportSekPerKwh: null,
+      // A reading is still a reading where the electrical quarter has not arrived.
+      poolC: startMs < boundary ? poolByStart.get(startMs) ?? null : null,
     });
   }
   return timeline;

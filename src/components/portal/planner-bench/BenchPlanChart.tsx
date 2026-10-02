@@ -62,6 +62,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, sel
         importPriceQuoted: plannerKnewPrice(lane, series.published[i]),
         plannerImportPriceSekPerKwh: plannerKnewPrice(lane, series.published[i]) ? null : series.believedImportPrice?.[i] ?? null,
         cumulativeCostSek: running,
+        poolTemperatureC: series.poolC[i],
       };
     }).slice(range.from, range.to);
   }, [series, lane, timeZone, range.from, range.to]);
@@ -113,6 +114,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, sel
         hasEvBattery={series.carSoc.some(v => v !== null)}
         quarterScores={scores}
         realPrices
+        poolTargetC={series.comfort?.pool_target_c ?? null}
         selectedIndex={selectedInView}
         onQuarterClick={index => onSelect(range.from + index)}
       />

@@ -681,9 +681,6 @@ const CaseView: React.FC<CaseViewProps> = ({
   const [selected, setSelected] = useState<number | null>(null);
   const draftErrors = criteriaErrors(draft);
   const rules = draftErrors.length ? [] : resolveRules(draft);
-  const poolTarget = details?.test?.series?.comfort?.pool_target_c ?? details?.current?.series?.comfort?.pool_target_c ?? 30;
-  const minC = poolTarget - (rules.find(r => r.key === 'pool_cold')?.threshold ?? 2);
-  const comfortC = poolTarget - (rules.find(r => r.key === 'pool_low')?.threshold ?? 1);
 
   const series = useMemo(() => details && { current: details.current?.series ?? null, test: details.test?.series ?? null }, [details]);
   const shownDetail = shown === 'current' ? details?.current : details?.test;
@@ -763,7 +760,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                 ))}
               </div>
             )}
-            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={comfortC} />
+            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} />
             {shownSeries ? (
               <>
                 <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}

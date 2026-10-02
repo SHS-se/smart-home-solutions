@@ -71,6 +71,8 @@ const PowerSection: React.FC<{
   schedulableKeys: ReadonlySet<string>;
   hasBattery: boolean;
   hasEvBattery: boolean;
+  /** The owner's pool target, when the plan was made from one. */
+  poolTargetC?: number | null;
 }> = ({
   model,
   rows,
@@ -82,6 +84,7 @@ const PowerSection: React.FC<{
   schedulableKeys,
   hasBattery,
   hasEvBattery,
+  poolTargetC = null,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -110,6 +113,7 @@ const PowerSection: React.FC<{
         exportPriceSekPerKwh: priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
         importPriceQuoted: isQuoted(row.importPriceSekPerKwh),
         cumulativeCostSek: running,
+        poolTemperatureC: row.poolC ?? null,
       };
     });
   }, [homeTimeZone, view]);
@@ -195,6 +199,7 @@ const PowerSection: React.FC<{
         dividerIndex={divider}
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
+        poolTargetC={poolTargetC}
         selectedIndex={selectedIndex}
         onQuarterClick={index => {
           const row = view[index];

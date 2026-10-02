@@ -7,7 +7,7 @@
 // scales is arbitrary. Each quantity now gets its own strip and its own axis,
 // stacked over the same quarters, so reading a moment in time is reading a
 // column: what it cost, where the power came from, what used it, what was left
-// in store, what it added up to.
+// in store, and how warm the pool was.
 //
 // The consumption stack draws individual meters, never categories: the planner
 // dispatches individual devices, so a band labelled "Kitchen & cold" would
@@ -66,6 +66,8 @@ export interface PlanPanelRow {
   plannerImportPriceSekPerKwh?: number | null;
   /** Running net cost from the start of the window. */
   cumulativeCostSek: number;
+  /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
+  poolTemperatureC?: number | null;
 }
 
 const VIEW_W = 1160;
@@ -79,6 +81,8 @@ const kw = (watts: number | null): number | null =>
   watts === null || !Number.isFinite(watts) ? null : watts / 1_000;
 
 const AXIS_TEXT = 'fill-muted-foreground text-[10px] font-mono';
+/** The pool's own colour, as its band in the consumption stack usually is. */
+const POOL_COLOUR = loadColour(2);
 
 interface Panel { top: number; height: number }
 
@@ -169,9 +173,11 @@ const PlanPanels: React.FC<{
    * `importPriceQuoted` says whether the planner was given it.
    */
   realPrices?: boolean;
+  /** The pool temperature the owner asked for, drawn as a reference line. */
+  poolTargetC?: number | null;
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
-  selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false,
+  selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false, poolTargetC = null,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -192,8 +198,11 @@ const PlanPanels: React.FC<{
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
     const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
-    const cost: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: 72 };
-    const axisY = cost.top + cost.height;
+    const poolC = rows.map(row => row.poolTemperatureC ?? null);
+    const knownPoolC = poolC.filter((value): value is number => value !== null);
+    const showPool = knownPoolC.length > 0;
+    const pool: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: showPool ? 96 : 0 };
+    const axisY = showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -246,11 +255,11 @@ const PlanPanels: React.FC<{
 
     const socY = linearScale([0, 100], [soc.top + soc.height, soc.top]);
 
-    const cumulative = rows.map(row => row.missing ? null : row.cumulativeCostSek);
-    const knownCosts = cumulative.filter((value): value is number => value !== null);
-    const costMin = Math.min(0, ...knownCosts);
-    const costMax = Math.max(1, ...knownCosts) * 1.18;
-    const costY = linearScale([costMin, costMax], [cost.top + cost.height, cost.top]);
+    // Half a degree of air around the readings and the target, on whole half degrees.
+    const poolBounds = [...knownPoolC, ...(poolTargetC === null ? [] : [poolTargetC])];
+    const poolMin = Math.floor((Math.min(...poolBounds) - 0.3) * 2) / 2;
+    const poolMax = Math.ceil((Math.max(...poolBounds) + 0.3) * 2) / 2;
+    const poolY = linearScale([poolMin, poolMax], [pool.top + pool.height, pool.top]);
 
     return {
       x, axisY, height: axisY + 42, scoreStrip,
@@ -258,16 +267,16 @@ const PlanPanels: React.FC<{
       quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
-      soc, socY, cost, costY, cumulative, costMin, costMax,
+      soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
-    soc, socY, cost, costY, cumulative, costMin, costMax,
+    soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
   } = geometry;
 
   const gradientId = 'plan-price-ramp';
@@ -346,8 +355,8 @@ const PlanPanels: React.FC<{
           role="img"
           tabIndex={0}
           aria-label={t(
-            'Pris, effektflöden, förbrukning, lagernivå och kostnad över tid',
-            'Price, power flows, consumption, storage and cost over time',
+            'Pris, effektflöden, förbrukning, lagernivå och pooltemperatur över tid',
+            'Price, power flows, consumption, storage and pool temperature over time',
           )}
           onPointerMove={handleMove}
           onPointerLeave={() => { setHover(null); setPointer(null); }}
@@ -609,24 +618,37 @@ const PlanPanels: React.FC<{
             </>
           )}
 
-          {/* ----------------------------------------------------- Cost --- */}
-          <PanelHeading
-            title={t('Vad det kostar', 'What it costs')}
-            unit={t('SEK, ackumulerat', 'SEK, cumulative')}
-            y={cost.top - 14}
-          />
-          <Gridlines ticks={niceTicks(costMin, costMax, 4)} y={costY} format={tick => tick.toFixed(0)} />
-          <path
-            d={stepAreaPath(cumulative, x, costY, 0)}
-            className="fill-foreground" fillOpacity={0.07}
-          />
-          <path
-            d={stepLinePath(cumulative, x, costY)} fill="none"
-            className="stroke-foreground" strokeWidth={2}
-          />
-          <EndLabel y={costY(cumulative[n - 1] ?? 0)} colour="currentColor">
-            {`${(cumulative[n - 1] ?? 0).toFixed(2)} kr`}
-          </EndLabel>
+          {/* ----------------------------------------------------- Pool --- */}
+          {showPool && (
+            <g id="plan-pool-temperature">
+              <PanelHeading
+                title={t('Pooltemperatur', 'Pool temperature')}
+                unit={t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}
+                y={pool.top - 14}
+              />
+              <Gridlines ticks={niceTicks(poolMin, poolMax, 4)} y={poolY} format={tick => tick.toFixed(1)} />
+              {poolTargetC !== null && (
+                <>
+                  <line
+                    x1={MARGIN_LEFT} x2={RIGHT} y1={poolY(poolTargetC)} y2={poolY(poolTargetC)}
+                    stroke={PLAN_COLOURS.grid} strokeWidth={1} strokeDasharray="2 3"
+                  />
+                  <text x={MARGIN_LEFT + 4} y={poolY(poolTargetC) - 3} className="text-[9px]" fill={PLAN_COLOURS.grid}>
+                    {`${poolTargetC} °C ${t('mål', 'target')}`}
+                  </text>
+                </>
+              )}
+              <path
+                d={midpointLinePath(poolC, x, poolY)} fill="none"
+                stroke={POOL_COLOUR} strokeWidth={2} strokeLinejoin="round"
+              />
+              {poolC[n - 1] !== null && (
+                <EndLabel y={poolY(poolC[n - 1] as number)} colour={POOL_COLOUR}>
+                  {`${(poolC[n - 1] as number).toFixed(1)} °C`}
+                </EndLabel>
+              )}
+            </g>
+          )}
 
           {/* ------------------------------------------------- Chrome ----- */}
           {rows.map((row, index) => row.missing && (
@@ -852,6 +874,12 @@ const PlanTooltip: React.FC<{
               ? t('Sälj', 'Sell')
               : t('Sälj (uppskattat)', 'Sell (estimated)')}
             value={`${row.exportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+          />
+        )}
+        {row.poolTemperatureC != null && (
+          <Reading
+            name={t('Pooltemperatur', 'Pool temperature')}
+            value={`${row.poolTemperatureC.toFixed(1)} °C`}
           />
         )}
         <Reading
