@@ -422,8 +422,8 @@ const PlanPanels: React.FC<{
             title={t('Pris', 'Price')}
             unit={hasPlannerPrice
               ? t(
-                'SEK/kWh · köp, verkligt pris · streckat = vad planeraren räknade med',
-                'SEK/kWh · buy, real price · dashed = what the planner expected',
+                'SEK/kWh · köp, verkligt pris · streckat = köppriset planeraren räknade med',
+                'SEK/kWh · buy, real price · dashed = the buy price the planner expected',
               )
               : realPrices
                 ? t('SEK/kWh · köp, verkligt pris', 'SEK/kWh · buy, real price')
@@ -484,7 +484,7 @@ const PlanPanels: React.FC<{
             <path
               id="plan-planner-price"
               d={stepLinePath(plannerBuy, x, priceY)} fill="none"
-              className="stroke-foreground" strokeWidth={1.5} strokeLinejoin="round"
+              className="stroke-foreground" strokeWidth={2} strokeLinejoin="round"
               strokeDasharray="5 4"
             />
           )}
@@ -840,7 +840,7 @@ const PlanTooltip: React.FC<{
         )}
         {row.plannerImportPriceSekPerKwh != null && (
           <Reading
-            name={t('Köp (planeraren räknade med)', 'Buy (planner expected)')}
+            name={t('Köp (förväntat)', 'Buy (expected)')}
             value={`${row.plannerImportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
           />
         )}
