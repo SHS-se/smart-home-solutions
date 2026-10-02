@@ -1756,19 +1756,22 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const shapeFrom = new Date(
         Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
       ).toISOString();
-      const { data: shapeRows, error: shapeError } = await supabase
-        .from("energy_optimisation_price_slots")
-        .select("start_ts, import_price_sek_per_kwh")
-        .eq("home_id", auth.homeId)
-        .gte("start_ts", shapeFrom)
-        .order("start_ts");
-      if (shapeError) {
+      try {
+        // Read in pages. Sixty days of quarters is several times what one
+        // response returns, and one response holds the oldest rows: the shape
+        // was then drawn from prices seven weeks old, and neither the recent
+        // norm nor the wind fit found a single recent day to stand on.
+        priceArchive = await readPagedRows<StoredPriceRow>((fromRow, toRow) => supabase
+          .from("energy_optimisation_price_slots")
+          .select("start_ts, import_price_sek_per_kwh")
+          .eq("home_id", auth.homeId)
+          .gte("start_ts", shapeFrom)
+          .order("start_ts").range(fromRow, toRow));
+      } catch (shapeError) {
         console.error(
           "[ENERGY-OPTIMISATION] price shape read failed",
           shapeError,
         );
-      } else {
-        priceArchive = shapeRows ?? [];
       }
 
       // What the owner wants is one number per store. The planner derives
