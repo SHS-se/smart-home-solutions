@@ -10,7 +10,6 @@ import { Loader2, Play, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -24,17 +23,18 @@ import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/conver
 import type { CaseStartState } from '@/lib/planner-bench/case';
 import { BASE_LANE, LANES, diagnose, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
+import { benchDays, periodRange, type BenchPeriod } from '@/lib/planner-bench/days';
 import {
-  isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors, type CaseScore,
+  isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors,
 } from '@/lib/planner-bench/score';
 import type {
-  BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchVerdict, CriteriaOverrides, Verdict,
+  BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, CriteriaOverrides,
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
 import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
-import BenchRuleCards from '@/components/portal/planner-bench/BenchRuleCards';
+import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
 
 // The generated Database types describe the migrated schema; the bench tables
@@ -80,10 +80,6 @@ const Bench: React.FC = () => {
     queryFn: () => rows<BenchResultSummary[]>(db.from('bench_result_summaries').select('*')),
     refetchInterval: 30_000,
   });
-  const verdicts = useQuery({
-    queryKey: ['bench', 'verdicts'],
-    queryFn: () => rows<BenchVerdict[]>(db.from('bench_verdicts').select('sha, scenario_id, verdict, note')),
-  });
 
   const allRuns = useMemo(() => runs.data ?? [], [runs.data]);
   const cases = useMemo(() => scenarios.data ?? [], [scenarios.data]);
@@ -108,15 +104,13 @@ const Bench: React.FC = () => {
     return out;
   }, [summaries.data, cases]);
   const [lane, setLane] = useState<LaneId>(BASE_LANE);
-  const verdictByKey = useMemo(() => new Map((verdicts.data ?? []).map(v => [key(v.sha, v.scenario_id), v])), [verdicts.data]);
 
   /** Every case's stored score for one run; null where the run has no scored result. */
   const scoresFor = useMemo(() => (sha: string) => new Map(cases.map(c => {
     const summary = summaryByKey.get(key(sha, c.id));
-    const verdict = verdictByKey.get(key(sha, c.id))?.verdict ?? null;
     const score = summary?.status === 'ok' && !isStale(summary.score, c.criteria) ? summary.score : null;
-    return [c.id, score ? { points: score.points, passed: storedPassed(score, verdict) } : null] as const;
-  })), [cases, summaryByKey, verdictByKey]);
+    return [c.id, score ? { points: score.points, passed: storedPassed(score, null) } : null] as const;
+  })), [cases, summaryByKey]);
 
   const runScores = useMemo(() => new Map(allRuns.map(run => {
     const points = [...scoresFor(run.sha).values()].filter((s): s is CaseSummary => s !== null).map(s => s.points);
@@ -217,19 +211,6 @@ const Bench: React.FC = () => {
       dispatch.mutate({ shas: 'all', scenario: selectedCase!.id });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara starttillståndet', 'Could not save the start state'), description: error.message, variant: 'destructive' }),
-  });
-
-  const setVerdict = useMutation({
-    mutationFn: async ({ sha, verdict, note }: { sha: string; verdict: Verdict | null; note: string }) => {
-      if (!selectedCase) return;
-      if (verdict === null) {
-        await rows(db.from('bench_verdicts').delete().eq('sha', sha).eq('scenario_id', selectedCase.id));
-      } else {
-        await rows(db.from('bench_verdicts').upsert({ sha, scenario_id: selectedCase.id, verdict, note: note || null }));
-      }
-    },
-    onSuccess: refresh,
-    onError: (error: Error) => toast({ title: t('Kunde inte spara bedömningen', 'Could not save the verdict'), description: error.message, variant: 'destructive' }),
   });
 
   const saveCriteria = useMutation({
@@ -361,7 +342,6 @@ const Bench: React.FC = () => {
               currentRun={currentRun}
               testRun={testRun}
               summaryByKey={summaryByKey}
-              verdictByKey={verdictByKey}
               details={series.data ?? null}
               lane={lane}
               onLane={setLane}
@@ -371,7 +351,6 @@ const Bench: React.FC = () => {
               onSaveStartState={state => saveStartState.mutate(state)}
               shown={shown}
               onShown={setShown}
-              onVerdict={(sha, verdict, note) => setVerdict.mutate({ sha, verdict, note })}
               onSaveCriteria={criteria => saveCriteria.mutate(criteria)}
               onRerun={() => dispatch.mutate({ shas: 'all', scenario: selectedCase.id, force: true })}
             />
@@ -588,7 +567,6 @@ interface CaseViewProps {
   currentRun: BenchRun | null;
   testRun: BenchRun | null;
   summaryByKey: Map<string, BenchResultSummary>;
-  verdictByKey: Map<string, BenchVerdict>;
   details: { current: BenchResultDetail | null; test: BenchResultDetail | null } | null;
   lane: LaneId;
   onLane: (lane: LaneId) => void;
@@ -598,7 +576,6 @@ interface CaseViewProps {
   onSaveStartState: (state: CaseStartState) => void;
   shown: 'current' | 'test';
   onShown: (value: 'current' | 'test') => void;
-  onVerdict: (sha: string, verdict: Verdict | null, note: string) => void;
   onSaveCriteria: (criteria: CriteriaOverrides) => void;
   onRerun: () => void;
 }
@@ -608,8 +585,8 @@ const SCORE_COLOUR = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p
 const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
 
 const CaseView: React.FC<CaseViewProps> = ({
-  scenario, currentRun, testRun, summaryByKey, verdictByKey,
-  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onVerdict, onSaveCriteria, onRerun,
+  scenario, currentRun, testRun, summaryByKey,
+  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, onSaveCriteria, onRerun,
 }) => {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<CriteriaOverrides>(scenario.criteria ?? {});
@@ -619,18 +596,29 @@ const CaseView: React.FC<CaseViewProps> = ({
   const poolTarget = details?.test?.series?.comfort?.pool_target_c ?? details?.current?.series?.comfort?.pool_target_c ?? 30;
   const minC = poolTarget - (rules.find(r => r.key === 'pool_cold')?.threshold ?? 2);
   const comfortC = poolTarget - (rules.find(r => r.key === 'pool_low')?.threshold ?? 1);
-  const verdictOf = (run: BenchRun | null) => (run ? verdictByKey.get(key(run.sha, scenario.id))?.verdict : null) ?? null;
 
   const series = useMemo(() => details && { current: details.current?.series ?? null, test: details.test?.series ?? null }, [details]);
   const shownDetail = shown === 'current' ? details?.current : details?.test;
 
   // Scored live with the rules being edited, so a change shows before it is saved.
-  const currentScore = useMemo(() => !draftErrors.length && series?.current ? scoreQuarters(series.current, draft, verdictOf(currentRun)) : null,
+  const currentScore = useMemo(() => !draftErrors.length && series?.current ? scoreQuarters(series.current, draft) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [series?.current, draft, currentRun, verdictByKey]);
-  const testScore = useMemo(() => !draftErrors.length && series?.test ? scoreQuarters(series.test, draft, verdictOf(testRun)) : null,
+    [series?.current, draft]);
+  const testScore = useMemo(() => !draftErrors.length && series?.test ? scoreQuarters(series.test, draft) : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [series?.test, draft, testRun, verdictByKey]);
+    [series?.test, draft]);
+
+  // The chart and the rule list show the same period: the whole plan, or one local day.
+  const starts = (series?.test ?? series?.current)?.start;
+  const days = useMemo(() => benchDays(starts ?? [], TZ), [starts]);
+  const [period, setPeriod] = useState<BenchPeriod>('all');
+  const range = periodRange(days, period, starts?.length ?? 0);
+  /** Explain a quarter, moving a single-day view to the day it is in. */
+  const select = (quarter: number) => {
+    setSelected(quarter);
+    const day = days.findIndex(d => quarter >= d.from && quarter < d.to);
+    if (day >= 0) setPeriod(previous => previous === 'all' ? previous : day);
+  };
 
   const shownSeries = shown === 'current' ? series?.current : series?.test;
   const shownScore = shown === 'current' ? currentScore : testScore;
@@ -695,7 +683,7 @@ const CaseView: React.FC<CaseViewProps> = ({
             {shownSeries ? (
               <>
                 <BenchPlanChart series={shownSeries} timeZone={TZ} quarters={shownScore?.quarters ?? null}
-                  selected={selected} onSelect={setSelected} />
+                  selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
                 <div className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
                   {selected === null || !shownScore?.quarters[selected]
                     ? <span className="text-muted-foreground">{t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
@@ -732,55 +720,16 @@ const CaseView: React.FC<CaseViewProps> = ({
           </>
         )}
 
-        <div className="space-y-6">
-          {draftErrors.length > 0 ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => setDraft({})}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert> : <BenchRuleCards current={series?.current ?? null} test={series?.test ?? null}
+        {draftErrors.length > 0
+          ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => setDraft({})}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert>
+          : <BenchRuleList current={series?.current ?? null} test={series?.test ?? null}
             currentScore={currentScore} testScore={testScore} draft={draft} onDraft={setDraft}
             onSave={() => onSaveCriteria(draft)} timeZone={TZ}
-            onSelect={(which, quarter) => { onShown(which); setSelected(quarter); }} />}
-
-          <div className="space-y-3 min-w-0">
-            <h3 className="font-medium">{t('Din bedömning', 'Your verdict')}</h3>
-            <div className="grid gap-3 md:grid-cols-2">
-              {([['current', currentRun, currentScore] as const, ['test', testRun, testScore] as const]).map(([which, run, score]) => run && (
-                <VerdictRow key={which} label={which === 'current' ? t('Nuvarande', 'Current') : 'Test'} run={run} score={score}
-                  existing={verdictByKey.get(key(run.sha, scenario.id)) ?? null}
-                  onVerdict={(verdict, note) => onVerdict(run.sha, verdict, note)} />
-              ))}
-            </div>
-          </div>
-        </div>
+            range={range} periodLabel={period === 'all' ? t('hela 72 h', 'full 72 h') : days[Math.min(period, days.length - 1)]?.label ?? ''}
+            dayStarts={days.map(d => d.from)}
+            onSelect={(which, quarter) => { onShown(which); select(quarter); }} />}
       </CardContent>
     </Card>
-  );
-};
-
-const VerdictRow: React.FC<{
-  label: string;
-  run: BenchRun;
-  score: CaseScore | null;
-  existing: BenchVerdict | null;
-  onVerdict: (verdict: Verdict | null, note: string) => void;
-}> = ({ label, run, score, existing, onVerdict }) => {
-  const { t } = useLanguage();
-  const [note, setNote] = useState(existing?.note ?? '');
-  const auto = score
-    ? score.physicalFailed ? t('underkänd · fysisk gräns', 'fails · physical limit')
-      : !score.complete ? t('väntar på omräkning', 'awaiting rescore')
-        : score.requiredFired.length === 0 ? t('godkänd', 'passes') : t('underkänd', 'fails')
-    : t('inget resultat', 'no result');
-  return (
-    <div className="rounded-md border p-3 space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <span><span className="font-medium">{label}</span> <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
-        <span className="text-xs text-muted-foreground">{score?.physicalFailed ? t('Automatiskt: underkänd · fysisk gräns', 'Automatic: fails · physical limit') : existing ? t(`Din bedömning: ${existing.verdict === 'pass' ? 'godkänd' : 'underkänd'}`, `Your verdict: ${existing.verdict}`) : t(`Automatiskt: ${auto}`, `Automatic: ${auto}`)}</span>
-      </div>
-      <Textarea id={`bench-note-${run.sha}`} rows={2} placeholder={t('Varför? (valfritt)', 'Why? (optional)')} value={note} onChange={e => setNote(e.target.value)} />
-      <div className="flex gap-2">
-        <Button size="sm" variant={existing?.verdict === 'pass' ? 'default' : 'outline'} onClick={() => onVerdict('pass', note)}>{t('Godkänd', 'Pass')}</Button>
-        <Button size="sm" variant={existing?.verdict === 'fail' ? 'destructive' : 'outline'} onClick={() => onVerdict('fail', note)}>{t('Underkänd', 'Fail')}</Button>
-        {existing && <Button size="sm" variant="ghost" onClick={() => onVerdict(null, '')}>{t('Rensa', 'Clear')}</Button>}
-      </div>
-    </div>
   );
 };
 

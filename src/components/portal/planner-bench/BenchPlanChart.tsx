@@ -6,13 +6,14 @@
 // plan a customer sees. Every quarter is on the plan side of "now". Score
 // digits need a single day's width; the three-day view shows coloured cells.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import PlanPanels, { type PlanPanelRow } from '@/components/portal/energy/plan/PlanPanels';
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
-import { formatHomeDayMonth, formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
+import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
 import type { QuarterScore } from '@/lib/planner-bench/score';
+import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
 /** Palette slots matching the portal's usual colours for these meters. */
 const SLOTS = { pool: 2, hotWater: 1, car: 8 } as const;
@@ -24,28 +25,16 @@ interface Props {
   /** Index into the whole series of the quarter to explain, or null. */
   selected: number | null;
   onSelect: (index: number) => void;
+  /** The period shown; the rule list below the chart follows the same one. */
+  days: BenchDay[];
+  period: BenchPeriod;
+  onPeriod: (period: BenchPeriod) => void;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected, onSelect }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
   const { t } = useLanguage();
 
-  /** Local calendar days the plan touches, as [from, to) quarter ranges. */
-  const days = useMemo(() => {
-    const out: { label: string; from: number; to: number }[] = [];
-    series.start.forEach((start, i) => {
-      const label = formatHomeDayMonth(start, timeZone);
-      if (out.length && out[out.length - 1].label === label) out[out.length - 1].to = i + 1;
-      else out.push({ label, from: i, to: i + 1 });
-    });
-    return out;
-  }, [series, timeZone]);
-  const [window, setWindow] = useState<number | 'all'>('all');
-  useEffect(() => {
-    if (selected === null) return;
-    const day = days.findIndex(d => selected >= d.from && selected < d.to);
-    if (day >= 0) setWindow(previous => previous === 'all' ? previous : day);
-  }, [selected, days]);
-  const range = window === 'all' ? { from: 0, to: series.start.length } : days[Math.min(window, days.length - 1)];
+  const range = periodRange(days, period, series.start.length);
 
   const rows = useMemo<PlanPanelRow[]>(() => {
     let running = 0;
@@ -100,11 +89,11 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('Dag', 'Day')}>
         {days.map((day, index) => (
-          <button key={day.label} id={`bench-day-${index}`} className={tab(window === index)} aria-pressed={window === index} onClick={() => setWindow(index)}>
+          <button key={day.label} id={`bench-day-${index}`} className={tab(period === index)} aria-pressed={period === index} onClick={() => onPeriod(index)}>
             {day.label}
           </button>
         ))}
-        <button id="bench-day-all" className={tab(window === 'all')} aria-pressed={window === 'all'} onClick={() => setWindow('all')}>
+        <button id="bench-day-all" className={tab(period === 'all')} aria-pressed={period === 'all'} onClick={() => onPeriod('all')}>
           {t('Hela 72 h', 'Full 72 h')}
         </button>
       </div>

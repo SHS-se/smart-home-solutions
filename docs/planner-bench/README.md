@@ -3,8 +3,8 @@
 The bench decides whether a planner change is better by showing it, not by a
 gate table. Every planner version plans the same set of test cases, for the
 same household, and is scored the same way at what electricity really cost.
-You can look at each plan beside the planner that is running now, score it with
-points you control, and give your own pass/fail verdict.
+You can look at each plan beside the planner that is running now and score it with
+points you control.
 
 Page: **Planner bench** in the staff menu, on the test site
 (`https://test.smarthomesolutions.se/portal/planner-bench`).
@@ -18,7 +18,7 @@ Page: **Planner bench** in the staff menu, on the test site
 | Shared logic | `src/lib/planner-bench/` | Test case format, replay conversion, household, referee, totals, scoring. Used by both the runner and the page. |
 | CI | `.github/workflows/planner-bench.yml` | On push to `dev` that touches the planner or the bench's own input and judgement: benches the pushed commit and every stale result, and marks the pushed planner version current. On manual dispatch: runs any commits, usually `all`. |
 | Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
-| Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, criteria editor, verdicts, upload. |
+| Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, rule list, upload. |
 
 ## Test cases
 
@@ -56,9 +56,10 @@ The totals table compares only the cases both runs have results for.
 ## Scoring
 
 The score combines comfort with demonstrated opportunities to reduce cost. Physical
-violations fail the automatic verdict independently. Visual rule cards show
-applicability, current/test exposure and replayed alternatives for future-dependent
-decisions. See the [complete scoring rules](scoring.md) and
+violations fail the automatic verdict independently. The rule list shows one row per
+rule that fired in the period the chart shows (72 h or one day), with its points per
+quarter and the quarters it fired in for each planner; a row opens its explanation,
+replayed alternatives and, for comfort rules, its settings. See the [complete scoring rules](scoring.md) and
 [architecture decision](scoring-design.md). Costs remain visible in SEK at real
 prices; the six lanes separate price information from valuation strength.
 The next bench run, or **Recompute scores**, re-evaluates every stored result

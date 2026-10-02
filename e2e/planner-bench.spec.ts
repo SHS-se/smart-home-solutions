@@ -5,8 +5,8 @@
  * and stay in the test database, never in the repository. What this covers is
  * the page: runs listed by commit with their score, the current-vs-test totals,
  * both planners drawn for a case with the curves they used and their cost at
- * real prices, a verdict saved against the right commit, a start state saved
- * into its case, and an uploaded replay converted to a test case.
+ * real prices, the scoring rules listed for the period shown, a start state
+ * saved into its case, and an uploaded replay converted to a test case.
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
@@ -115,10 +115,10 @@ function fakeJwt(sub: string, email: string): string {
   return [enc({ alg: 'HS256', typ: 'JWT' }), enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: now + 3600, iat: now }), 'x'.repeat(43)].join('.');
 }
 
-interface Captured { verdicts: unknown[]; inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
+interface Captured { inserted: Record<string, unknown>[]; updated: Record<string, unknown>[]; dispatched: unknown[] }
 
 async function mockBackend(context: BrowserContext, missingAudit = false): Promise<Captured> {
-  const captured: Captured = { verdicts: [], inserted: [], updated: [], dispatched: [] };
+  const captured: Captured = { inserted: [], updated: [], dispatched: [] };
   const nowIso = new Date().toISOString();
   const user = {
     id: STAFF_ID, email: 'staff@example.com', aud: 'authenticated', role: 'authenticated', email_confirmed_at: nowIso,
@@ -156,7 +156,6 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
       return;
     }
     if (request.method() !== 'GET') {
-      if (table === 'bench_verdicts') captured.verdicts.push(request.postDataJSON());
       if (table === 'bench_scenarios' && request.method() === 'POST') {
         captured.inserted.push(request.postDataJSON());
         await route.fulfill({ json: { id: '33333333-3333-4333-8333-333333333333' } });
@@ -185,7 +184,6 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
             outcome: { ...OUTCOME, cost_sek: OUTCOME.cost_sek - (lane.startsWith('oracle') ? 12 : 0) + (k % 3) },
           }));
         }).flat();
-        case 'bench_verdicts': return [];
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
           return [CURRENT.sha, TEST.sha].map(sha => ({
@@ -223,7 +221,7 @@ test.describe('planner bench', () => {
     await expect(card.getByRole('row', { name: /2026-10-05 2026-10-03 (wind|vind) 1\.50 – (waiting|väntar)/ })).toBeVisible();
   });
 
-  test('compares the test planner with the current one and records a verdict', async ({ context, page }) => {
+  test('compares the test planner with the current one', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
@@ -283,48 +281,59 @@ test.describe('planner bench', () => {
     expect((captured.updated[0].dataset as BenchScenarioData).start_state.pool_water_c).toBe(27);
     await expect.poll(() => captured.dispatched.length).toBe(1);
 
-    // A verdict is saved against the commit it was given for.
-    await page.locator(`#bench-note-${TEST.sha}`).fill('Heats in the cheap night, as it should');
-    await page.getByRole('button', { name: /^(Pass|Godkänd)$/ }).last().click();
-    await expect.poll(() => captured.verdicts.length).toBe(1);
-    expect(captured.verdicts[0]).toMatchObject({ sha: TEST.sha, verdict: 'pass', note: 'Heats in the cheap night, as it should' });
   });
 
-  test('explains applicability visually, selects evidence by keyboard, and saves comfort rules', async ({ context, page }) => {
+  test('lists triggered rules for the shown period, explains them on click, and saves comfort rules', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
-    const cards = page.locator('#bench-rule-cards');
-    await expect(cards).toContainText(/Raw points|Råpoäng/);
-    await expect(page.locator('#bench-rule-pool_low')).toContainText('< 29 °C');
-    await expect(page.locator('#bench-rule-ev_low')).toContainText('N/A');
-    await expect(page.locator('#bench-opportunity-ev_timing')).toContainText('N/A');
-    await expect(page.locator('#bench-opportunity-pool_wait_for_sun')).toContainText(/No loss found|Ingen förlust hittad/);
-    await expect(page.locator('#bench-pool_low-threshold')).not.toBeVisible();
-    const evidence = page.locator('#bench-opportunity-battery_price_spread').getByRole('button', { name: /1.00 kWh/ }).last();
+    const rules = page.locator('#bench-rules');
+    const row = (key: string) => page.locator(`#bench-rule-${key}`);
+
+    // Triggered rules are rows with their points per quarter and the quarters they fired in.
+    await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · −2/);
+    await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
+    // Rules that did not fire are kept out of the way.
+    await expect(row('ev_low')).toHaveCount(0);
+    await page.locator('#bench-untriggered-rules > button').click();
+    await expect(row('ev_low')).toContainText('N/A');
+    await expect(row('ev_timing')).toContainText('N/A');
+
+    // The list follows the day the chart shows: the battery finding sits in the first hours only.
+    await page.locator('#bench-day-2').click();
+    await expect(row('battery_price_spread')).not.toContainText(/−2/);
+    await page.locator('#bench-day-all').click();
+
+    // A click opens the explanation; a second click closes it.
+    await row('battery_price_spread').getByRole('button').first().click();
+    await expect(row('battery_price_spread')).toContainText(/Charging from the grid when cheap/);
+    const evidence = row('battery_price_spread').getByRole('button', { name: /1.00 kWh/ }).last();
     await evidence.focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('#bench-witness')).toBeFocused();
     await expect(page.locator('#bench-witness')).toContainText('1.25 SEK');
     await expect(page.locator('#bench-witness').getByRole('img')).toBeVisible();
-    await page.locator('#bench-witness').screenshot({ path: test.info().outputPath('witness-desktop.png') });
-    await cards.screenshot({ path: test.info().outputPath('rules-desktop.png') });
+    await rules.screenshot({ path: test.info().outputPath('rules-desktop.png') });
     await page.locator('#bench-witness').getByRole('button', { name: /^(To|Till):/ }).click();
     await expect(page.locator('#bench-show-test')).toHaveAttribute('aria-pressed', 'true');
+    await row('battery_price_spread').getByRole('button').first().click();
+    await expect(row('battery_price_spread')).not.toContainText(/Charging from the grid when cheap/);
 
-    await page.locator('#bench-advanced-rules summary').click();
+    await expect(page.locator('#bench-pool_low-threshold')).toHaveCount(0);
+    await row('pool_low').getByRole('button').first().click();
+    await expect(row('pool_low')).toContainText('29 °C');
     await page.locator('#bench-pool_low-threshold').fill('1.5');
-    await expect(page.locator('#bench-rule-pool_low')).toContainText('< 28.5 °C');
-    await page.getByRole('button', { name: /Save rules for this case|Spara regler för fallet/ }).click();
+    await expect(row('pool_low')).toContainText('28.5 °C');
+    await row('pool_low').getByRole('button', { name: /Save rules for this case|Spara regler för fallet/ }).click();
     await expect.poll(() => captured.updated.length).toBe(1);
     expect(captured.updated[0]).toMatchObject({ criteria: { pool_low: { threshold: 1.5 } } });
     await expect.poll(() => captured.dispatched.length).toBe(1);
     expect(captured.dispatched[0]).toMatchObject({ shas: 'none' });
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(cards).toBeVisible();
-    expect(await cards.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await cards.screenshot({ path: test.info().outputPath('rules-mobile.png') });
+    await expect(rules).toBeVisible();
+    expect(await rules.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await rules.screenshot({ path: test.info().outputPath('rules-mobile.png') });
   });
 
   test('withholds stale scores and witnesses until older results are rescored', async ({ context, page }) => {
@@ -332,9 +341,11 @@ test.describe('planner bench', () => {
     await login(page);
     await page.goto('/portal/planner-bench');
     await expect(page.locator('#bench-test-run')).toContainText(/— (pts|p)/);
-    await expect(page.locator('#bench-rule-cards')).toContainText(/Missing evidence|Saknar underlag/);
-    await expect(page.locator('#bench-opportunity-battery_price_spread')).toContainText(/Awaiting rescore|Väntar på omräkning/);
-    await expect(page.locator('#bench-opportunity-battery_price_spread').getByRole('button', { name: /1.00 kWh/ })).toHaveCount(0);
+    await expect(page.locator('#bench-rules')).toContainText(/Missing evidence|Saknar underlag/);
+    await page.locator('#bench-untriggered-rules > button').click();
+    await expect(page.locator('#bench-rule-battery_price_spread')).toContainText(/Awaiting rescore|Väntar på omräkning/);
+    await page.locator('#bench-rule-battery_price_spread').getByRole('button').first().click();
+    await expect(page.locator('#bench-rule-battery_price_spread').getByRole('button', { name: /1.00 kWh/ })).toHaveCount(0);
   });
 
   test('converts an uploaded replay to a test case and starts a run for it', async ({ context, page }) => {
