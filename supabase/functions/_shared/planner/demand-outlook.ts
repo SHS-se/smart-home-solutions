@@ -40,8 +40,14 @@ const EVIDENCE_WINDOW_DAYS = 28;
 const LEVEL_BOUNDS = [0.75, 1.6] as const;
 /** A margin beyond this is a forecast nobody should be planning on at all. */
 const MAX_MARGIN = 1.5;
-/** The furthest point of the spread ever planned for. */
-const MAX_QUANTILE = 0.95;
+/**
+ * The furthest point of the spread ever planned for: the demand exceeded three
+ * days in ten. The two costs alone often say to go much further, but they leave
+ * out that a kWh bought for a demand that does not come may have been bought
+ * dearer than tomorrow's cheap hour turns out to be. On the planner bench,
+ * planning past this point cost more than it saved (docs/planner-bench/demand.md).
+ */
+const MAX_QUANTILE = 0.7;
 /**
  * What a kWh held one more day costs, SEK: standby loss and the chance that
  * tomorrow's cheap hour is cheaper still. Keeps "holding costs nothing" from

@@ -48,12 +48,15 @@ Deno.test("the level never replaces the forecast outright", () => {
   assertEquals(demandLevel(days(14, () => 2), TODAY)!.factor, 0.75);
 });
 
-Deno.test("a wide price spread with no sun plans well above the forecast", () => {
+Deno.test("a wide price spread with no sun plans above the forecast, as far as it ever goes", () => {
   const level = { factor: 1, spread: 0.25, days: 20, effective_days: 6 };
   const dark = demandMargin(level, market(1, 2.5));
-  assert(dark.quantile > 0.9, `quantile ${dark.quantile}`);
-  assert(dark.factor > 1.3 && dark.factor <= 1.5, `factor ${dark.factor}`);
+  assertEquals(dark.quantile, 0.7);
+  assertAlmostEquals(dark.factor, 1.131, 0.001);
   assertEquals(dark.solar_refill_share, 0);
+  // A narrower spread that still pays stops short of that.
+  const narrow = demandMargin(level, market(1, 1.26));
+  assert(narrow.quantile > 0.5 && narrow.quantile < 0.7, `quantile ${narrow.quantile}`);
 });
 
 Deno.test("sun that would fill the pack anyway keeps the plan near the forecast", () => {
@@ -61,7 +64,7 @@ Deno.test("sun that would fill the pack anyway keeps the plan near the forecast"
   const dark = demandMargin(level, market(1, 2.5));
   const sunny = demandMargin(level, market(1, 2.5, 30));
   assertEquals(sunny.solar_refill_share, 1);
-  assert(sunny.factor < dark.factor - 0.15, `sunny ${sunny.factor} dark ${dark.factor}`);
+  assert(sunny.factor < dark.factor - 0.03, `sunny ${sunny.factor} dark ${dark.factor}`);
   assert(sunny.over_sek_per_kwh > dark.over_sek_per_kwh);
 });
 
