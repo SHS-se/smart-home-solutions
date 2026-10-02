@@ -36,6 +36,9 @@ export function toldCase(c: BenchCase, lane: LaneId): BenchCase {
   return { ...c, known_prices: { import_sek_per_kwh: [...c.recorded.prices.import_sek_per_kwh], export_sek_per_kwh: [...c.recorded.prices.export_sek_per_kwh] } };
 }
 
+/** Whether a lane's planner was given a quarter's real price, or had to estimate it. */
+export const plannerKnewPrice = (lane: LaneId, published: number) => laneParts(lane).prices === 'oracle' || published === 1;
+
 /** What a lane's result came to, as the diagnosis reads it. */
 export interface LaneResult {
   /** Grid cost at real prices, SEK. */

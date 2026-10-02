@@ -3,7 +3,9 @@
 //
 // The bench stores plans as compact series (src/lib/planner-bench/referee.ts);
 // this adapts them to PlanPanels' rows so a bench plan reads exactly like the
-// plan a customer sees. Every quarter is on the plan side of "now". Score
+// plan a customer sees. Every quarter is on the plan side of "now". The price
+// drawn is the real one; where the lane's planner had to estimate it, its
+// estimate is drawn beside it. Score
 // digits need a single day's width; the three-day view shows coloured cells.
 
 import React, { useMemo } from 'react';
@@ -13,6 +15,7 @@ import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
 import type { QuarterScore } from '@/lib/planner-bench/score';
+import { plannerKnewPrice, type LaneId } from '@/lib/planner-bench/lanes';
 import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
 /** Palette slots matching the portal's usual colours for these meters. */
@@ -20,6 +23,8 @@ const SLOTS = { pool: 2, hotWater: 1, car: 8 } as const;
 
 interface Props {
   series: BenchSeries;
+  /** The lane the plan was made under: it decides which prices the planner was given. */
+  lane: LaneId;
   timeZone: string;
   quarters: QuarterScore[] | null;
   /** Index into the whole series of the quarter to explain, or null. */
@@ -31,7 +36,7 @@ interface Props {
   onPeriod: (period: BenchPeriod) => void;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
@@ -54,11 +59,12 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
         evSoc: series.carSoc[i],
         importPriceSekPerKwh: series.importPrice[i],
         exportPriceSekPerKwh: series.exportPrice[i],
-        importPriceQuoted: series.published[i] === 1,
+        importPriceQuoted: plannerKnewPrice(lane, series.published[i]),
+        plannerImportPriceSekPerKwh: plannerKnewPrice(lane, series.published[i]) ? null : series.believedImportPrice?.[i] ?? null,
         cumulativeCostSek: running,
       };
     }).slice(range.from, range.to);
-  }, [series, timeZone, range.from, range.to]);
+  }, [series, lane, timeZone, range.from, range.to]);
 
   const consumption = useMemo(() => {
     const cut = (values: number[]) => values.slice(range.from, range.to);
@@ -106,6 +112,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, timeZone, quarters, selected,
         hasBattery={series.homeSoc.some(v => v !== null)}
         hasEvBattery={series.carSoc.some(v => v !== null)}
         quarterScores={scores}
+        realPrices
         selectedIndex={selectedInView}
         onQuarterClick={index => onSelect(range.from + index)}
       />

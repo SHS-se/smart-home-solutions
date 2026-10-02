@@ -59,6 +59,11 @@ export interface PlanPanelRow {
    * horizon, so this is false for most of a plan.
    */
   importPriceQuoted: boolean;
+  /**
+   * Where the row's price is the real one and the planner planned with
+   * another: what it expected instead. Only the planner bench sets it.
+   */
+  plannerImportPriceSekPerKwh?: number | null;
   /** Running net cost from the start of the window. */
   cumulativeCostSek: number;
 }
@@ -159,9 +164,14 @@ const PlanPanels: React.FC<{
    * above the price panel. The portal never passes it.
    */
   quarterScores?: readonly (number | null)[];
+  /**
+   * Planner bench: every row's price is what the quarter really cost, and
+   * `importPriceQuoted` says whether the planner was given it.
+   */
+  realPrices?: boolean;
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
-  selectedIndex = -1, onQuarterClick, quarterScores,
+  selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -193,9 +203,11 @@ const PlanPanels: React.FC<{
     // so the two abut exactly at the changeover with no seam and no overlap.
     const quotedBuy = rows.map(row => row.importPriceQuoted ? row.importPriceSekPerKwh : null);
     const modelledBuy = rows.map(row => row.importPriceQuoted ? null : row.importPriceSekPerKwh);
-    const hasModelledPrice = modelledBuy.some(value => value !== null);
+    const plannerBuy = rows.map(row => row.plannerImportPriceSekPerKwh ?? null);
+    const hasPlannerPrice = plannerBuy.some(value => value !== null);
+    const hasModelledPrice = !realPrices && modelledBuy.some(value => value !== null);
     const bands = priceBands(buy);
-    const priceMax = Math.max(0.5, ...buy.filter((v): v is number => v !== null)) * 1.15;
+    const priceMax = Math.max(0.5, ...[...buy, ...plannerBuy].filter((v): v is number => v !== null)) * 1.15;
     const priceY = linearScale([0, priceMax], [price.top + price.height, price.top]);
 
     // --- Flows: into the house above zero, out of it below ----------------
@@ -243,16 +255,16 @@ const PlanPanels: React.FC<{
     return {
       x, axisY, height: axisY + 42, scoreStrip,
       price, priceY, priceMax, buy, sell, bands,
-      quotedBuy, modelledBuy, hasModelledPrice,
+      quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, cost, costY, cumulative, costMin, costMax,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMax, buy, sell, bands,
-    quotedBuy, modelledBuy, hasModelledPrice,
+    quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
     soc, socY, cost, costY, cumulative, costMin, costMax,
@@ -408,12 +420,19 @@ const PlanPanels: React.FC<{
           {/* ---------------------------------------------------- Price --- */}
           <PanelHeading
             title={t('Pris', 'Price')}
-            unit={hasModelledPrice
+            unit={hasPlannerPrice
               ? t(
-                'SEK/kWh · köp, fast färgskala · streckat = uppskattat, inte marknadspris',
-                'SEK/kWh · buy, fixed colour scale · dashed = estimated, not a market price',
+                'SEK/kWh · köp, verkligt pris · streckat = vad planeraren räknade med',
+                'SEK/kWh · buy, real price · dashed = what the planner expected',
               )
-              : t('SEK/kWh · köp, fast färgskala', 'SEK/kWh · buy, fixed colour scale')}
+              : realPrices
+                ? t('SEK/kWh · köp, verkligt pris', 'SEK/kWh · buy, real price')
+                : hasModelledPrice
+                  ? t(
+                    'SEK/kWh · köp, fast färgskala · streckat = uppskattat, inte marknadspris',
+                    'SEK/kWh · buy, fixed colour scale · dashed = estimated, not a market price',
+                  )
+                  : t('SEK/kWh · köp, fast färgskala', 'SEK/kWh · buy, fixed colour scale')}
             y={price.top - 14}
           />
           {bands && (
@@ -447,16 +466,28 @@ const PlanPanels: React.FC<{
             className="stroke-muted-foreground" strokeWidth={1.25}
           />
           <path
-            d={stepLinePath(quotedBuy, x, priceY)} fill="none"
+            d={stepLinePath(realPrices ? buy : quotedBuy, x, priceY)} fill="none"
             stroke={priceStroke} strokeWidth={3} strokeLinejoin="round"
           />
           {/* Same colour and same position — only the continuity differs, so a
               forecast never masquerades as a quote the market has published. */}
-          <path
-            d={stepLinePath(modelledBuy, x, priceY)} fill="none"
-            stroke={priceStroke} strokeWidth={2} strokeLinejoin="round"
-            strokeDasharray="5 4"
-          />
+          {!realPrices && (
+            <path
+              d={stepLinePath(modelledBuy, x, priceY)} fill="none"
+              stroke={priceStroke} strokeWidth={2} strokeLinejoin="round"
+              strokeDasharray="5 4"
+            />
+          )}
+          {/* On the bench the solid line is what the quarter really cost; the
+              planner's own estimate is drawn against it where it had no price. */}
+          {hasPlannerPrice && (
+            <path
+              id="plan-planner-price"
+              d={stepLinePath(plannerBuy, x, priceY)} fill="none"
+              className="stroke-foreground" strokeWidth={1.5} strokeLinejoin="round"
+              strokeDasharray="5 4"
+            />
+          )}
 
           {/* ---------------------------------------------------- Flows --- */}
           <PanelHeading
@@ -686,6 +717,7 @@ const PlanPanels: React.FC<{
           measured={(hover as number) < dividerIndex}
           hasBattery={hasBattery}
           hasEvBattery={hasEvBattery}
+          realPrices={realPrices}
           left={pointer.left}
           top={pointer.top}
           bounds={wrapRef.current?.getBoundingClientRect() ?? null}
@@ -712,11 +744,12 @@ const PlanTooltip: React.FC<{
   measured: boolean;
   hasBattery: boolean;
   hasEvBattery: boolean;
+  realPrices: boolean;
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, left, top, bounds,
+  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, left, top, bounds,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -797,15 +830,25 @@ const PlanTooltip: React.FC<{
         )}
         {row.importPriceSekPerKwh !== null && (
           <Reading
-            name={row.importPriceQuoted
-              ? t('Köp', 'Buy')
-              : t('Köp (uppskattat)', 'Buy (estimated)')}
+            name={realPrices
+              ? t('Köp (verkligt)', 'Buy (real)')
+              : row.importPriceQuoted
+                ? t('Köp', 'Buy')
+                : t('Köp (uppskattat)', 'Buy (estimated)')}
             value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+          />
+        )}
+        {row.plannerImportPriceSekPerKwh != null && (
+          <Reading
+            name={t('Köp (planeraren räknade med)', 'Buy (planner expected)')}
+            value={`${row.plannerImportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
           />
         )}
         {row.exportPriceSekPerKwh !== null && (
           <Reading
-            name={row.importPriceQuoted
+            name={realPrices
+              ? t('Sälj (verkligt)', 'Sell (real)')
+              : row.importPriceQuoted
               ? t('Sälj', 'Sell')
               : t('Sälj (uppskattat)', 'Sell (estimated)')}
             value={`${row.exportPriceSekPerKwh.toFixed(2)} SEK/kWh`}

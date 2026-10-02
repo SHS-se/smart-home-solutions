@@ -30,7 +30,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const s: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], carSoc: [], carConnected: [], poolC: [], costSek: [],
+    homeSoc: [], carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
   };
   let temp = 29.5;
   for (let i = 0; i < n; i++) {
@@ -45,6 +45,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.published.push(i < 96 ? 1 : 0);
     s.importPrice.push(price);
     s.exportPrice.push(price * 0.5);
+    s.believedImportPrice!.push(i < 96 ? price : 1.5);
     s.solarW.push(solar);
     s.loadW.push(load);
     s.poolW.push(pool);
@@ -288,8 +289,11 @@ test.describe('planner bench', () => {
 
     // The lanes say why: what knowing the real prices would have saved, and which valuation did best.
     await expect(page.locator('#bench-diagnosis-test')).toContainText(/price estimate cost 12 kr|prisgissningen kostade 12 kr/);
+    // Planned from the starting prices, the planner's own estimate is drawn against the real price; given the real prices, there is none.
+    await expect(page.locator('#plan-planner-price')).toHaveCount(1);
     await page.locator('#bench-lane-oracle-high').click();
     await expect(page.locator('#bench-lane-oracle-high')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#plan-planner-price')).toHaveCount(0);
 
     // The start state belongs to the case: an edit is saved into it and the case is run again.
     await page.locator('#bench-start-pool').fill('27');

@@ -21,7 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
-import { BASE_LANE, LANES, diagnose, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
+import { BASE_LANE, LANES, diagnose, plannerKnewPrice, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import { benchDays, periodRange, type BenchPeriod } from '@/lib/planner-bench/days';
 import {
@@ -766,7 +766,7 @@ const CaseView: React.FC<CaseViewProps> = ({
             <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} minC={minC} comfortC={comfortC} />
             {shownSeries ? (
               <>
-                <BenchPlanChart series={shownSeries} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+                <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}
                   selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
                 <div className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
                   {selected === null || !shownScore?.quarters[selected]
@@ -778,8 +778,8 @@ const CaseView: React.FC<CaseViewProps> = ({
                           <div>
                             <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
                             <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
-                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {shownSeries.published[selected]
-                              ? t('publicerat', 'published')
+                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {plannerKnewPrice(lane, shownSeries.published[selected])
+                              ? shownSeries.published[selected] ? t('publicerat', 'published') : t('verkligt, givet till planeraren', 'real, given to the planner')
                               : shownDetail?.outcome
                                 ? t(`verkligt, planeraren trodde ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`, `real, the planner expected ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`)
                                 : t('uppskattat', 'estimated')}</span>
