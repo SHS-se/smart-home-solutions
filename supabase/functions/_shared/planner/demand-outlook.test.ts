@@ -76,7 +76,7 @@ Deno.test("flat prices, no battery or no spread plan on the forecast", () => {
   assertEquals(demandMargin({ ...level, spread: 0 }, market(1, 2.5)).factor, 1);
 });
 
-Deno.test("the planner plans for the levelled, margined demand and says so", () => {
+Deno.test("the planner plans for the levelled demand and reports the margin it holds back", () => {
   // The fixture's captured_at is 2026-08-10; evidence ends the day before.
   const evidence = Array.from({ length: 10 }, (_, index) => ({
     day: new Date(Date.parse("2026-08-09T00:00:00Z") - index * 86_400_000).toISOString().slice(0, 10),
@@ -88,7 +88,8 @@ Deno.test("the planner plans for the levelled, margined demand and says so", () 
   assertEquals(plain.demand_outlook, undefined);
   const outlook = planned.demand_outlook!;
   assert(outlook.level_factor > 1.15 && outlook.margin_factor > 1, JSON.stringify(outlook));
-  assertAlmostEquals(planned.plans.priority.slots[0].base_w, 1_000 * outlook.level_factor * outlook.margin_factor, 0.5);
+  assertEquals(outlook.margin_applied, false);
+  assertAlmostEquals(planned.plans.priority.slots[0].base_w, 1_000 * outlook.level_factor, 0.5);
   assertEquals(plain.plans.priority.slots[0].base_w, 1_000);
   // More demand ahead of a dear evening is more charged for it.
   const charged = (plan: typeof plain) => plan.plans.priority.slots.reduce((sum, slot) => sum + slot.battery_charge_w, 0);

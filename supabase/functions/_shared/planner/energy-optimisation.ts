@@ -801,7 +801,7 @@ export interface OptimisationPlan {
   /**
    * How the base-load forecast was turned into the demand planned for; absent
    * when it was planned as given. `base_w` in every slot is the planned demand:
-   * the forecast times `level_factor` times `margin_factor`.
+   * the forecast times `level_factor`, and times `margin_factor` when applied.
    */
   demand_outlook?: DemandOutlookDiagnostic;
   /** Exact derived home-battery curve used by every scenario in this solve. */
@@ -849,8 +849,10 @@ export type OptimisationPlanV7 = Omit<OptimisationPlan, "schema_version"> & { sc
 export interface DemandOutlookDiagnostic {
   /** Recent draw over recent forecast. */
   level_factor: number;
-  /** Planned demand over the levelled forecast; 1 without a battery to charge for it. */
+  /** What the margin would raise the levelled forecast by; 1 without a battery to charge for it. */
   margin_factor: number;
+  /** Whether the plan was made for the margined demand, or for the levelled forecast alone. */
+  margin_applied: boolean;
   /** The point of the day-to-day spread planned for; 0.5 is the forecast. */
   quantile: number;
   /** Day-to-day spread of draw around the levelled forecast, as a share of it. */
@@ -1797,10 +1799,21 @@ function preparedSlots(
 }
 
 /**
+ * Whether the demand planned for is raised above the levelled forecast by the
+ * margin (demand-outlook.ts). Off: on the planner bench the level alone took
+ * 24 kr off the five measured cases, and the margin on top of it added nothing
+ * at its smallest and gave up to 10 of that back as it grew
+ * (docs/planner-bench/demand.md). The margin
+ * is still worked out and reported with each plan, so it can be watched before
+ * it is switched on.
+ */
+const PLAN_FOR_DEMAND_MARGIN = false;
+
+/**
  * Turn the base-load forecast into the demand to plan for (demand-outlook.ts):
- * levelled to what recent days drew against their forecasts, then raised by
- * what being short would cost. The slots are changed in place; devices planned
- * or forecast on their own are left as they are.
+ * levelled to what recent days drew against their forecasts, then, when
+ * switched on, raised by what being short would cost. The slots are changed in
+ * place; devices planned or forecast on their own are left as they are.
  */
 function planForDemand(slots: PreparedSlot[], snapshot: OptimisationSnapshot, today: string): DemandOutlookDiagnostic | null {
   const level = demandLevel(snapshot.demand_outlook?.days, today);
@@ -1819,9 +1832,9 @@ function planForDemand(slots: PreparedSlot[], snapshot: OptimisationSnapshot, to
       degradation_sek_per_kwh: resolveValueSettings(snapshot.value_settings).battery_degradation_sek_per_kwh,
     },
   });
-  for (const slot of slots) slot.base_load_forecast_w *= margin.factor;
+  if (PLAN_FOR_DEMAND_MARGIN) for (const slot of slots) slot.base_load_forecast_w *= margin.factor;
   return {
-    level_factor: round(level.factor, 4), margin_factor: round(margin.factor, 4),
+    level_factor: round(level.factor, 4), margin_factor: round(margin.factor, 4), margin_applied: PLAN_FOR_DEMAND_MARGIN,
     quantile: round(margin.quantile, 3), spread: round(level.spread, 4),
     short_sek_per_kwh: round(margin.short_sek_per_kwh, 4), over_sek_per_kwh: round(margin.over_sek_per_kwh, 4),
     solar_refill_share: round(margin.solar_refill_share, 3), days: level.days,
