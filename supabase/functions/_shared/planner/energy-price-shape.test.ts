@@ -465,7 +465,9 @@ Deno.test("the unpublished tail starts where the published prices ended and rela
   const asOf = Date.parse("2026-06-29T00:00:00+02:00");
   const outlook = buildPriceOutlook([...published, ...tail], archive(28), { timeZone: TZ, asOf });
   const at = (quarter: number) => outlook.shadowImportSekPerKwh[96 + quarter];
-  assertClose(at(0), 0.1, "midnight continues from the last published hour", 0.1);
+  assertClose(at(0), 0.1, "midnight continues from the last published price", 0.01);
+  // The night is cheaper than the evening in the model; ending below it must not price the night at nothing.
+  assert(outlook.shadowImportSekPerKwh.slice(96).every((price) => price >= 0.09), "no quarter after a low ending is priced below it");
   assert(at(0) < at(12) && at(12) < at(24), `the night should climb back gradually: ${at(0)}, ${at(12)}, ${at(24)}`);
   // Six hours on, half the gap is left; a day and a half on, nothing to speak of.
   const modelled = outlook.shadowImportSekPerKwh[96 + 96 + 48];

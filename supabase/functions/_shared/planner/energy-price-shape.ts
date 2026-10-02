@@ -415,12 +415,15 @@ const LEVEL_NORM_MIN_DAYS = 5;
  * The level and the shape are both statements about a whole day. Where the
  * market stopped is a statement about now: an evening that closed far under
  * its day does not turn into an ordinary night at midnight. The first
- * unpublished quarters start from where the published ones ended and relax
- * into the modelled day.
+ * unpublished quarter starts from the last published price and the ones after
+ * it relax into the modelled day.
+ *
+ * A price that ended above the model carries the difference in SEK. One that
+ * ended below it carries the ratio instead: a price cannot fall by more than
+ * itself, and a difference in SEK taken off a night the model already has
+ * cheaper than the evening would price that night at nothing.
  */
 export const BOUNDARY_CARRY_HALF_LIFE_HOURS = 6;
-/** Published quarters the boundary is read from: the last half hour, so one odd quarter does not set it. */
-const BOUNDARY_QUARTERS = 2;
 
 /**
  * The median daily mean price over the last complete days before `asOf`, or
@@ -538,6 +541,21 @@ export function windLevelModel(
   };
 }
 
+/**
+ * The wind model's level at a moment: each day's level holds at its noon and
+ * the hours between two noons run from one to the other, so the level does
+ * not step where one UTC day's wind hands over to the next. A neighbouring day
+ * the forecast does not reach leaves the day's own level.
+ */
+function windLevelBetweenDays(windLevel: (day: string) => number | null, startMs: number): number | null {
+  const own = windLevel(utcDay(startMs));
+  if (own === null) return null;
+  const noon = Date.parse(`${utcDay(startMs)}T12:00:00Z`);
+  const other = windLevel(utcDay(startMs < noon ? noon - 86_400_000 : noon + 86_400_000));
+  if (other === null) return own;
+  return own + (other - own) * Math.abs(startMs - noon) / 86_400_000;
+}
+
 export function buildPriceOutlook(
   slots: OutlookSlot[],
   archive: StoredPriceRow[] = [],
@@ -621,7 +639,7 @@ export function buildPriceOutlook(
     // Half a day in, the first unpublished day is one day of lead.
     const leadDays = Math.max(0, (startMs - publishedUntil) / 86_400_000) + 0.5;
     const weight = Math.min(1, LEVEL_REVERSION_PER_DAY * leadDays);
-    const expected = publishedWindLevel === null ? null : windLevel!(utcDay(startMs));
+    const expected = publishedWindLevel === null ? null : windLevelBetweenDays(windLevel!, startMs);
     if (expected !== null) {
       levelBasis = "wind";
       return Math.max(0, expected + (1 - weight) * (publishedDayLevel - publishedWindLevel!));
@@ -631,24 +649,29 @@ export function buildPriceOutlook(
     return publishedDayLevel + weight * (norm - publishedDayLevel);
   };
 
-  // How far the published prices ended from what the model says of the quarter
-  // that follows them: what the tail starts from. Measured against the next
-  // quarter rather than the model's account of the published ones, so a shape
-  // that fits the published window badly cannot push the tail away from it.
+  // How far the last published price is from what the model says of the
+  // quarter that follows it: what the tail starts from. Measured against the
+  // next quarter rather than the model's account of the published ones, so a
+  // shape that fits the published window badly cannot push the tail away from it.
   const tailStart = publishedUntil + 900_000;
-  let boundaryGap = 0;
+  let lastPublished: number | null = null;
+  let modelledNext: number | null = null;
   if (shape && Number.isFinite(tailStart)) {
     const local = localSlot(tailStart, timeZone);
     const modelled = dayLevelAt(tailStart) * shape.byDayType[local.dayType][local.quarter];
-    const last = published
-      .filter((slot) => publishedUntil - Date.parse(slot.start) < BOUNDARY_QUARTERS * 900_000)
-      .map((slot) => slot.import_price_sek_per_kwh as number);
-    if (Number.isFinite(modelled) && last.length > 0) {
-      boundaryGap = last.reduce((sum, price) => sum + price, 0) / last.length - modelled;
+    const last = published.find((slot) => Date.parse(slot.start) === publishedUntil)?.import_price_sek_per_kwh;
+    if (Number.isFinite(modelled) && modelled > 0 && typeof last === "number") {
+      lastPublished = last;
+      modelledNext = modelled;
     }
   }
-  const carriedAt = (startMs: number): number => startMs < tailStart ? 0
-    : boundaryGap * 0.5 ** ((startMs - tailStart) / 3_600_000 / BOUNDARY_CARRY_HALF_LIFE_HOURS);
+  const carried = (startMs: number, modelled: number): number => {
+    if (lastPublished === null || modelledNext === null || startMs < tailStart) return modelled;
+    const left = 0.5 ** ((startMs - tailStart) / 3_600_000 / BOUNDARY_CARRY_HALF_LIFE_HOURS);
+    return lastPublished >= modelledNext
+      ? modelled + left * (lastPublished - modelledNext)
+      : modelled * (1 + left * (lastPublished / modelledNext - 1));
+  };
 
   const shadowImportSekPerKwh = slots.map((slot) => {
     if (typeof slot.import_price_sek_per_kwh === "number") {
@@ -660,7 +683,7 @@ export function buildPriceOutlook(
     const local = localSlot(startMs, timeZone);
     const multiplier = shape.byDayType[local.dayType][local.quarter];
     if (!Number.isFinite(multiplier)) return level;
-    return Math.max(0, dayLevelAt(startMs) * multiplier + carriedAt(startMs));
+    return Math.max(0, carried(startMs, dayLevelAt(startMs) * multiplier));
   });
 
   return {
