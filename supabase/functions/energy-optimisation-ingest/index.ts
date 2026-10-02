@@ -56,10 +56,13 @@ import {
 import {
   fitPoolLoss,
   fitPoolModel,
+  fitPoolResponse,
   type PoolLossSample,
+  type PoolResponseSample,
   poolRefitIsDue,
   poolTrainingWindowStartMs,
 } from "../_shared/pool-training.ts";
+import { readPagedRows } from "../_shared/read-paged-rows.ts";
 import {
   buildComfortForecast,
   isZoneComfortSchedule,
@@ -424,29 +427,35 @@ async function refitPoolModel(
   );
   if (poolDeviceIds.length === 0) return;
 
-  const [water_, outdoor_, device_] = await Promise.all([
-    supabase.from("energy_optimisation_pool_slots")
-      .select("start_ts, water_temperature_c")
-      .eq("home_id", homeId).gte("start_ts", from).order("start_ts"),
-    supabase.from("energy_optimisation_outdoor_slots")
-      .select("start_ts, temperature_c")
-      .eq("home_id", homeId).gte("start_ts", from),
-    supabase.from("energy_optimisation_device_slots")
-      .select("start_ts, energy_kwh")
-      .eq("home_id", homeId).gte("start_ts", from)
-      .in("device_id", poolDeviceIds),
-  ]);
-  // A failed read is not a refusal to fit. Treating it as one would write a
-  // rejection that reads like a Swedish summer, stamp `fitted_at` with it, and
-  // then sit on that answer for the whole refit interval.
-  const readError = water_.error ?? outdoor_.error ?? device_.error;
-  if (readError) {
+  // Read in pages: three weeks of quarters is twice what one response
+  // returns, and a heater quarter that is cut off reads as an idle one, which
+  // turns the heating into the pool warming itself and the loss fit into a
+  // refusal.
+  type Row = Record<string, unknown>;
+  let waterRows: Row[], outdoorRows: Row[], deviceRows: Row[];
+  try {
+    [waterRows, outdoorRows, deviceRows] = await Promise.all([
+      readPagedRows<Row>((fromRow, toRow) => supabase.from("energy_optimisation_pool_slots")
+        .select("start_ts, water_temperature_c")
+        .eq("home_id", homeId).gte("start_ts", from)
+        .order("start_ts").range(fromRow, toRow)),
+      readPagedRows<Row>((fromRow, toRow) => supabase.from("energy_optimisation_outdoor_slots")
+        .select("start_ts, temperature_c")
+        .eq("home_id", homeId).gte("start_ts", from)
+        .order("start_ts").range(fromRow, toRow)),
+      readPagedRows<Row>((fromRow, toRow) => supabase.from("energy_optimisation_device_slots")
+        .select("start_ts, energy_kwh")
+        .eq("home_id", homeId).gte("start_ts", from)
+        .in("device_id", poolDeviceIds).order("start_ts").order("device_id")
+        .range(fromRow, toRow)),
+    ]);
+  } catch (readError) {
+    // A failed read is not a refusal to fit. Treating it as one would write a
+    // rejection that reads like a Swedish summer, stamp `fitted_at` with it, and
+    // then sit on that answer for the whole refit interval.
     console.error("[ENERGY-OPTIMISATION] pool training read failed", readError);
     return;
   }
-  const waterRows = water_.data;
-  const outdoorRows = outdoor_.data;
-  const deviceRows = device_.data;
 
   const outdoorByStart = new Map<number, number>(
     (outdoorRows ?? []).map((row: Record<string, unknown>) => [
@@ -468,12 +477,20 @@ async function refitPoolModel(
     c: Number(row.water_temperature_c),
   }));
   const samples: PoolLossSample[] = [];
+  // The measured response needs no air temperature, so it keeps the quarters the fits below must drop.
+  const responseSamples: PoolResponseSample[] = [];
   for (let index = 0; index + 1 < water.length; index += 1) {
     const current = water[index];
     const next = water[index + 1];
     // Only consecutive quarters describe one slot's change. A gap would put an
     // hour of cooling into a fifteen-minute rate and bias the loss upward.
     if (next.at - current.at !== SLOT_MS) continue;
+    responseSamples.push({
+      start_ms: current.at,
+      water_temperature_c: current.c,
+      next_water_temperature_c: next.c,
+      electrical_kwh: heaterByStart.get(current.at) ?? 0,
+    });
     const air = outdoorByStart.get(current.at);
     if (air === undefined || !Number.isFinite(air)) continue;
     samples.push({
@@ -487,6 +504,7 @@ async function refitPoolModel(
 
   const result = fitPoolModel(samples, volumeM3);
   const idle = fitPoolLoss(samples, volumeM3);
+  const response = fitPoolResponse(responseSamples);
   const idleRow = "fitted" in idle
     ? {
       idle_loss_kw_per_k: idle.fitted.loss_kw_per_k,
@@ -508,11 +526,13 @@ async function refitPoolModel(
       ...result.fitted,
       rejection: null,
       ...idleRow,
+      response,
     }
     : {
       home_id: homeId,
       customer_id: customerId,
       ...idleRow,
+      response,
       fitted_at: new Date(now).toISOString(),
       loss_kw_per_k: null,
       rated_cop: null,
@@ -1794,18 +1814,25 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
         const { data: poolModel } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response")
           .eq("home_id", auth.homeId)
           .maybeSingle();
         // The idle loss stands on its own; the joint fit adds the COP when it
         // has one. Either is enough to stop planning on the seeded loss.
         const copFitted = Boolean(poolModel?.loss_kw_per_k && poolModel?.rated_cop);
         const lossKwPerK = poolModel?.idle_loss_kw_per_k ?? (copFitted ? poolModel?.loss_kw_per_k : null);
-        if (lossKwPerK) {
+        // The measured response stands on its own too: it needs no air
+        // temperature, so it can exist where neither fit does. The planner's
+        // seeded loss then only fills in what the response did not measure.
+        const poolResponse = Array.isArray(poolModel?.response) && poolModel.response.length > 0
+          ? poolModel.response
+          : null;
+        if (lossKwPerK || poolResponse) {
           snapshot = {
             ...snapshot,
             pool_model: {
-              loss_kw_per_k: Number(lossKwPerK),
+              ...(poolResponse ? { response: poolResponse } : {}),
+              loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
               rated_cop: copFitted ? Number(poolModel!.rated_cop) : null,
               cop_per_air_c: copFitted ? Number(poolModel!.cop_per_air_c ?? 0) : null,
               // Null stays null: the planner reads it as "no cut-out on

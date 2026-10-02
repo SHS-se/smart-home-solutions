@@ -1557,6 +1557,43 @@ Deno.test("a fitted pool model replaces the seeded loss and COP", () => {
   );
 });
 
+Deno.test("a measured pool response replaces the loss and the COP at the temperatures it measured", () => {
+  // A pool that cools 0.04 °C an hour and gains 0.08 °C per heater kWh above
+  // 29 °C, and does a third and a half of that below it.
+  const response = [
+    { at_c: 28.875, idle_c_per_h: -0.015, heat_c_per_kwh: 0.035 },
+    { at_c: 29.125, idle_c_per_h: -0.04, heat_c_per_kwh: 0.08 },
+    { at_c: 30.125, idle_c_per_h: -0.04, heat_c_per_kwh: 0.08 },
+  ];
+  const planAt = (waterC: number, measured: boolean) => generateOptimisationPlan(horizon({
+    pool: { water_temperature_c: waterC, volume_m3: 55 },
+    comfort: { pool: { target_c: 30 } },
+    pool_model: { loss_kw_per_k: 0.35, rated_cop: null, cop_per_air_c: null, ...(measured ? { response } : {}) },
+  }), new Date(NOW));
+  const store = (plan: ReturnType<typeof generateOptimisationPlan>) =>
+    plan.resolved_value_stores!.find((entry) => entry.key === "pool")!;
+  const hours = planAt(30, true).plans.priority.slots.reduce((total, slot) => total + slot.duration_hours, 0);
+
+  // Holding 30 °C costs what the pool was measured to lose there, not what a loss coefficient says.
+  const upkeep = (plan: ReturnType<typeof generateOptimisationPlan>) => (store(plan).derivation as { upkeep: number }).upkeep;
+  assert(Math.abs(upkeep(planAt(30, true)) - 0.04 * hours) < 0.01, `measured upkeep ${upkeep(planAt(30, true))} over ${hours} h`);
+  assert(upkeep(planAt(30, false)) > upkeep(planAt(30, true)) + 0.2, `the loss coefficient asks for something else: ${upkeep(planAt(30, false))} against ${upkeep(planAt(30, true))}`);
+
+  // In the stall a kWh buys less than half the warmth it buys above it.
+  const gain = (waterC: number) => store(planAt(waterC, true)).units_per_kwh;
+  assert(gain(28.875) < gain(29.5) * 0.5, `stall ${gain(28.875)} against ${gain(29.5)}`);
+
+  // An unheated quarter moves the pool by the measured rate: the first heated
+  // quarter of a pool starting in the stall starts from a slower fall.
+  const firstHeated = (waterC: number) => planAt(waterC, true).plans.priority.slots
+    .flatMap((slot, index) => (slot.decision?.store_allocations ?? [])
+      .filter((allocation) => allocation.store_key === "pool").map((allocation) => ({ index, before: allocation.state_before })))[0];
+  const stalled = firstHeated(28.9);
+  if (stalled && stalled.index > 0) {
+    assert(28.9 - stalled.before <= 0.02 * stalled.index * 0.25 + 1e-6, `fell ${28.9 - stalled.before} °C in ${stalled.index} quarters`);
+  }
+});
+
 Deno.test("a home without the equipment stays silent about it", () => {
   // Evidence, not capability: no pool state and no vehicle means no rows, so
   // the table never invents services a household does not own.

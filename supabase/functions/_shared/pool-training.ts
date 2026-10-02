@@ -350,3 +350,100 @@ export function fitPoolLoss(
     fitted: { loss_kw_per_k: Number(lossKwPerK.toFixed(4)), ...counts },
   };
 }
+
+/** Width of the water-temperature bins the measured response is kept in, °C. */
+export const POOL_RESPONSE_BIN_C = 0.25;
+/** Settled idle hours a bin needs before its cooling rate is offered. */
+export const MIN_POOL_RESPONSE_IDLE_HOURS = 3;
+/** Heater energy a bin needs before its warming per kWh is offered. */
+export const MIN_POOL_RESPONSE_HEATED_KWH = 3;
+
+export type PoolResponseSample = Pick<
+  PoolLossSample,
+  "start_ms" | "water_temperature_c" | "next_water_temperature_c" | "electrical_kwh"
+>;
+
+export interface PoolResponseBin {
+  /** Centre of the bin, °C of water. */
+  at_c: number;
+  /** How fast the unheated pool's reading moved here, °C per hour; null with too little idle time. */
+  idle_c_per_h: number | null;
+  idle_hours: number;
+  /** What a kWh into the heater added to the reading here, over what idling would have done; null with too little heating. */
+  heat_c_per_kwh: number | null;
+  heated_kwh: number;
+}
+
+/**
+ * What the pool's water temperature was measured to do, by the temperature it
+ * was at: how fast it fell when nothing heated it, and how far a kWh raised it.
+ *
+ * A single loss coefficient says the pool cools in proportion to how much
+ * warmer it is than the air, and a COP says a kWh always buys the same heat.
+ * A real pool does neither everywhere. Phil's holds near 29 °C for half a day
+ * on its way down, and takes some thirty kWh of heat to leave it again on the
+ * way up, with both of its temperature sensors agreeing; either side of that
+ * it cools at a steady rate and warms as its heat pump's output says it
+ * should. Where the heat goes and comes back from is not known. What it does
+ * to the reading is, and that is what a plan is judged on, so it is kept as
+ * measured: one rate and one gain per quarter-degree bin, nothing assumed
+ * about the shape between them.
+ *
+ * Both are ratios of sums over every quarter that started in the bin, not
+ * averages of quarter rates, so a reading that steps a hundredth at a time
+ * weighs what it should. The quarters just after a run, while the water is
+ * still mixing, count toward the run's gain and not toward idle cooling.
+ */
+export function fitPoolResponse(samples: PoolResponseSample[]): PoolResponseBin[] {
+  const ordered = samples
+    .filter((sample) =>
+      Number.isFinite(sample.start_ms) &&
+      Number.isFinite(sample.water_temperature_c) &&
+      Number.isFinite(sample.next_water_temperature_c) &&
+      Number.isFinite(sample.electrical_kwh)
+    )
+    .sort((a, b) => a.start_ms - b.start_ms);
+  const bins = new Map<number, { idleC: number; idleHours: number; heatC: number; heatHours: number; kwh: number }>();
+  const binOf = (waterC: number) => {
+    const key = Math.floor(waterC / POOL_RESPONSE_BIN_C);
+    if (!bins.has(key)) bins.set(key, { idleC: 0, idleHours: 0, heatC: 0, heatHours: 0, kwh: 0 });
+    return bins.get(key)!;
+  };
+  // Quarters since the heater last ran; a gap in the record starts the count again.
+  let idle = 0;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const sample = ordered[index];
+    const unbroken = index > 0 &&
+      sample.start_ms - ordered[index - 1].start_ms === SLOT_HOURS * 3_600_000;
+    const heated = sample.electrical_kwh >= HEATED_SLOT_MIN_KWH;
+    if (!unbroken) idle = heated ? 0 : POOL_LOSS_SETTLE_QUARTERS + 1;
+    else idle = heated ? 0 : idle + 1;
+    const bin = binOf(sample.water_temperature_c);
+    const change = sample.next_water_temperature_c - sample.water_temperature_c;
+    if (heated || idle <= POOL_LOSS_SETTLE_QUARTERS) {
+      bin.heatC += change;
+      bin.heatHours += SLOT_HOURS;
+      bin.kwh += Math.max(0, sample.electrical_kwh);
+    } else {
+      bin.idleC += change;
+      bin.idleHours += SLOT_HOURS;
+    }
+  }
+  const settled = [...bins.values()].filter((bin) => bin.idleHours >= MIN_POOL_RESPONSE_IDLE_HOURS);
+  const idleHours = settled.reduce((sum, bin) => sum + bin.idleHours, 0);
+  // Where a bin has no idle time of its own, heating there is set against the pool's usual cooling.
+  const usualIdle = idleHours > 0 ? settled.reduce((sum, bin) => sum + bin.idleC, 0) / idleHours : 0;
+  return [...bins.entries()].sort(([a], [b]) => a - b).map(([key, bin]) => {
+    const idleRate = bin.idleHours >= MIN_POOL_RESPONSE_IDLE_HOURS ? bin.idleC / bin.idleHours : null;
+    const gain = bin.kwh >= MIN_POOL_RESPONSE_HEATED_KWH
+      ? (bin.heatC - (idleRate ?? usualIdle) * bin.heatHours) / bin.kwh
+      : null;
+    return {
+      at_c: Number(((key + 0.5) * POOL_RESPONSE_BIN_C).toFixed(3)),
+      idle_c_per_h: idleRate === null ? null : Number(idleRate.toFixed(4)),
+      idle_hours: bin.idleHours,
+      heat_c_per_kwh: gain === null ? null : Number(gain.toFixed(4)),
+      heated_kwh: Number(bin.kwh.toFixed(2)),
+    };
+  }).filter((bin) => bin.idle_c_per_h !== null || bin.heat_c_per_kwh !== null);
+}

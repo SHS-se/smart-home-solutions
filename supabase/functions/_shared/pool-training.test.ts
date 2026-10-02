@@ -3,6 +3,8 @@ import {
   COP_REFERENCE_AIR_C,
   fitPoolLoss,
   fitPoolModel,
+  fitPoolResponse,
+  type PoolResponseSample,
   POOL_LOSS_SETTLE_QUARTERS,
   type PoolLossSample,
   type PoolTrainingSample,
@@ -11,6 +13,7 @@ import {
   SLOT_HOURS,
 } from "./pool-training.ts";
 import { WATER_KWH_PER_M3_K } from "./planner/store-models.ts";
+import { POOL_HISTORY_HEATER_KWH, POOL_HISTORY_START_MS, POOL_HISTORY_WATER_C } from "./pool-history.fixture.ts";
 
 const VOLUME_M3 = 55;
 const CAPACITY = VOLUME_M3 * WATER_KWH_PER_M3_K;
@@ -245,4 +248,58 @@ Deno.test("a pool that is always heating offers no idle loss", () => {
 Deno.test("a pool that warms with nothing heating it is refused", () => {
   const result = fitPoolLoss(timed(simulate({ lossKwPerK: 0.1, backgroundKw: 5, heatFraction: 0 })), VOLUME_M3);
   assertEquals("rejected" in result && result.rejected, "unphysical");
+});
+
+/** The measured week as quarters: the hourly means joined by straight lines, each hour's energy spread over it. */
+function measuredQuarters(): PoolResponseSample[] {
+  const at = (quarter: number) => {
+    const hour = (quarter - 2) / 4;
+    const index = Math.min(POOL_HISTORY_WATER_C.length - 2, Math.max(0, Math.floor(hour)));
+    return POOL_HISTORY_WATER_C[index] + (POOL_HISTORY_WATER_C[index + 1] - POOL_HISTORY_WATER_C[index]) * (hour - index);
+  };
+  const samples: PoolResponseSample[] = [];
+  for (let quarter = 2; quarter < (POOL_HISTORY_WATER_C.length - 1) * 4 + 2; quarter += 1) {
+    samples.push({
+      start_ms: POOL_HISTORY_START_MS + quarter * 900_000,
+      water_temperature_c: at(quarter),
+      next_water_temperature_c: at(quarter + 1),
+      electrical_kwh: POOL_HISTORY_HEATER_KWH[Math.floor(quarter / 4)] / 4,
+    });
+  }
+  return samples;
+}
+
+Deno.test("the measured response finds the pool's stall below 29 °C, cooling and heating alike", () => {
+  const bins = fitPoolResponse(measuredQuarters());
+  const bin = (atC: number) => bins.find((entry) => entry.at_c === atC)!;
+  // Above 29 °C the unheated pool falls about 0.04 °C an hour, and a heater kWh adds 0.07 °C or more.
+  for (const atC of [29.125, 29.375, 29.625]) {
+    assert(bin(atC).idle_c_per_h! < -0.035 && bin(atC).idle_c_per_h! > -0.05, `${atC}: ${bin(atC).idle_c_per_h}`);
+    assert(bin(atC).heat_c_per_kwh! > 0.07, `${atC}: ${bin(atC).heat_c_per_kwh}`);
+  }
+  // Just below it the same pool falls a third as fast and a kWh adds half as much.
+  const stall = bin(28.875);
+  assert(stall.idle_hours > 24, "most of the idle time was spent here");
+  assert(stall.idle_c_per_h! > -0.02 && stall.idle_c_per_h! < 0, `stall cooling: ${stall.idle_c_per_h}`);
+  assert(stall.heat_c_per_kwh! > 0.02 && stall.heat_c_per_kwh! < 0.045, `stall heating: ${stall.heat_c_per_kwh}`);
+});
+
+Deno.test("a bin is offered only what it measured, and a gap in the record is not a stretch of cooling", () => {
+  const quarter = (index: number, waterC: number, nextC: number, kwh = 0): PoolResponseSample =>
+    ({ start_ms: index * 900_000, water_temperature_c: waterC, next_water_temperature_c: nextC, electrical_kwh: kwh });
+  // Four hours idle at 30 °C falling 0.01 °C a quarter, never heated.
+  const idle = Array.from({ length: 16 }, (_, index) => quarter(index, 30.2 - index * 0.01, 30.2 - (index + 1) * 0.01));
+  const [only] = fitPoolResponse(idle);
+  assertEquals(only.at_c, 30.125);
+  assert(Math.abs(only.idle_c_per_h! + 0.04) < 1e-6, `${only.idle_c_per_h}`);
+  assertEquals(only.heat_c_per_kwh, null);
+  // Two hours is too little to offer a rate.
+  assertEquals(fitPoolResponse(idle.slice(0, 8)), []);
+  // Heating: 1 kWh a quarter for four quarters raising 0.05 °C each, then settling, set against the usual cooling.
+  const heated = [
+    ...idle,
+    ...Array.from({ length: 4 }, (_, index) => quarter(16 + index, 30.04 + index * 0.05, 30.04 + (index + 1) * 0.05, 1)),
+  ];
+  const warm = fitPoolResponse(heated).find((entry) => entry.heat_c_per_kwh !== null)!;
+  assert(Math.abs(warm.heat_c_per_kwh! - (0.2 + 0.04) / 4) < 1e-3, `${warm.heat_c_per_kwh}`);
 });
