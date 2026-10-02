@@ -7,8 +7,9 @@
 //
 // Nothing here is another planner's work: no price outlook, no value curve in
 // money, no battery cost curve, no previous plan. A planner is told what was
-// knowable at the start (published prices, forecasts, price history, start
-// states, the owner's comfort) and works out everything else itself, so its
+// knowable at the start (published prices, forecasts, price history, how the
+// days before were forecast and what they drew, start states, the owner's
+// comfort) and works out everything else itself, so its
 // price estimate and its value curves are part of what is being compared.
 //
 // Generations, detected from the planner's own files:

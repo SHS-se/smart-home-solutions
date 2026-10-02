@@ -92,7 +92,7 @@ The economic scale is the sum of absolute quarter cash exposure for passive base
 
 The normal **told** lane sees only prices published at the case start and estimates later prices itself. The **oracle** lane is a hypothetical run given every later actual price in advance. Both plans are evaluated at actual prices. A finding involving unpublished prices in the normal lane is shown as hindsight savings, not a knowable mistake. Known opportunities are searched before hindsight opportunities so the latter cannot consume the evidence for the primary economic score.
 
-Solar/base-load series and outdoor temperature are shared bench inputs. This bench does not currently replay solar forecast error. The six existing lanes continue to separate price information from valuation strength; valuation comparisons use raw comfort points so energy timing does not change the service threshold.
+Solar/base-load series and outdoor temperature are shared bench inputs. Where the home measured a case's window, every plan and every replayed alternative is carried through the measured load and solar ([test cases](test-cases.md#measured-windows)); elsewhere through the forecasts. The six existing lanes continue to separate price information from valuation strength; valuation comparisons use raw comfort points so energy timing does not change the service threshold.
 
 ## Not modelled
 
