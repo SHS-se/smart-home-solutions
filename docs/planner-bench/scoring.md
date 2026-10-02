@@ -12,7 +12,7 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 - **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
 
-Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack, and each case can change the shares and the points (0 to +2). A case score is its raw comfort points plus cheap-quarter points plus raw economic points. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
+Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack, and each case can change the shares and the points. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
 
 Historical scorer versions are not comparable. Rescore all successful results, including all six price/valuation lanes, whenever the scorer, referee or case criteria change.
 
@@ -25,7 +25,7 @@ Historical scorer versions are not comparable. Rescore all successful results, i
 | Flexible load in a cheap quarter | Pool + battery charging + car ≥ 500 W, price in the cheapest 25 % of the plan's quarters, and not very cheap | +1 per quarter |
 | Flexible load in a very cheap quarter | The same load, price in the cheapest 10 % | +2 per quarter |
 
-These reward where energy was bought, not that less could have been spent: a plan that consumes more in cheap quarters gains points. They are stored as `price_points`, apart from `comfort_points`, so the valuation-lane diagnosis still compares comfort alone.
+These reward where energy was bought, not that less could have been spent: a plan that consumes more in cheap quarters gains points.
 
 ### Comfort and physical limits
 

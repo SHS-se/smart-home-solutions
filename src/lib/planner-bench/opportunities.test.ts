@@ -198,9 +198,10 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   // Warmer than the 30 °C target at the end of the sun, where the plan had let it cool.
   assert(Math.max(...preheat.after.poolC) > 30.1 && preheat.before.poolC[63] < 29.6);
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
-  // A warm pool is marked and loses nothing.
-  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 60 ? 3078 : 0 })).series });
-  assertEquals(warm.comfortPoints, 0);
+  // A warm pool is marked and loses nothing; the cheap-quarter rewards are set aside to show it.
+  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 60 ? 3078 : 0 })).series },
+    { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false } });
+  assertEquals(warm.sum, 0);
 });
 
 Deno.test('a dull day before a sunny one: waiting for the sun is found, as far as the comfort band allows', () => {
@@ -338,12 +339,12 @@ Deno.test('a case scores each affected known-price quarter under its primary rul
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));
   assertEquals([score.audit.findingCount, 'findings' in score.audit], [audit.findings.length, false]);
-  assertEquals(score.comfort_points, 0);
+  assertEquals(score.sum, 0);
   // The monetary saving is evidence; raw points count changed quarters under primary rules.
   assertAlmostEquals(audit.scaleSek, 74, 1e-6);
   assert(audit.knownSek > 0);
   assertEquals(score.economic_points, -sum(Object.values(audit.rules).map(r => r.knownQuarters.length)));
-  assertEquals([score.points, economicPoints(audit)], [score.comfort_points + score.economic_points, score.economic_points]);
+  assertEquals([score.points, economicPoints(audit)], [score.sum + score.economic_points, score.economic_points]);
   // The same miss, unknowable when planned: shown, not scored.
   const unforeseen = evaluate(spilled(40), record(plan()), {}, 'told/nominal');
   assert(unforeseen.series.audit!.hindsightSek > 15);
@@ -359,7 +360,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   const c = world({ ...autumn, solar: i => within(i, 136, 160) ? 5000 : 0, start: { pool_water_c: 30.6 } });
   const { series, score } = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3078 : 0 })), {}, 'told/nominal');
   const live = scoreQuarters(series);
-  assertEquals([live.points, live.comfortPoints, live.economicPoints], [score.points, score.comfort_points, score.economic_points]);
+  assertEquals([live.points, live.sum, live.economicPoints], [score.points, score.sum, score.economic_points]);
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
   // A wider band: every stored witness still holds, so the audit stands.
   assertEquals(scoreQuarters(series, { pool_low: { threshold: 1.5 } }).auditPending, false);
@@ -375,7 +376,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);
   assertEquals([bare.audit, bare.economicPoints, bare.complete, bare.auditPending, bare.physicalFailed], [null, null, false, false, false]);
-  assertEquals(bare.points, bare.comfortPoints + bare.pricePoints);
+  assertEquals(bare.points, bare.sum);
   assertThrows(() => storedScore(old), Error, 'opportunity audit');
 });
 

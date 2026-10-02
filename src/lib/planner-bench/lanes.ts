@@ -42,10 +42,8 @@ export interface LaneResult {
   cost_sek: number;
   /** Value of the energy left in the stores at the end, SEK. */
   credit_sek: number;
-  /** Case points, comfort and energy timing together, 0 at best. */
+  /** Case points: what a valuation is not allowed to cost. */
   points: number;
-  /** Comfort points alone, 0 at best: what a valuation is allowed to cost. */
-  comfort_points: number;
 }
 
 export interface Diagnosis {
@@ -55,12 +53,10 @@ export interface Diagnosis {
   price_estimate_sek: number;
   /** What a different valuation would have saved, with real prices known: oracle/nominal minus the best oracle variant. */
   valuation_sek: number;
-  /** The variant that did best under each price lane, comfort not worse than nominal's. */
+  /** The variant that did best under each price lane, its points not worse than nominal's. */
   best: Record<PriceLane, Variant>;
 }
 
-/** Comfort this much worse than nominal's disqualifies a variant from being "best". */
-const COMFORT_TOLERANCE = 0.2;
 const net = (r: LaneResult) => r.cost_sek - r.credit_sek;
 
 /**
@@ -74,7 +70,7 @@ export function diagnose(byLane: Partial<Record<LaneId, LaneResult>>): Diagnosis
   const best = (prices: PriceLane): Variant => {
     const nominal = byLane[`${prices}/nominal`]!;
     return VARIANTS
-      .filter(variant => byLane[`${prices}/${variant}`]!.comfort_points >= nominal.comfort_points - COMFORT_TOLERANCE)
+      .filter(variant => byLane[`${prices}/${variant}`]!.points >= nominal.points)
       .reduce((a, b) => net(byLane[`${prices}/${b}`]!) < net(byLane[`${prices}/${a}`]!) ? b : a, 'nominal' as Variant);
   };
   const told = byLane[BASE_LANE]!, oracle = byLane['oracle/nominal']!;

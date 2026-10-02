@@ -1,35 +1,28 @@
 // Scoring a plan, and the run score built from it.
 //
-// A case is scored on four things, kept apart:
+// Every point is worth the same and they all add up: a case's points are the
+// sum of what its rules gave and took, a run's points the sum of its cases.
 //
-//   Can it be done.  A plan that asks for what the household cannot do
-//     (referee.ts) fails the case, whatever its points and whatever the rules
-//     below are set to.
-//
-//   Comfort. Each quarter loses a point for each comfort rule that
-//     fires, measured from the owner's target: the pool more than 1 °C below
-//     it, and again when more than 2 °C below; the car more than 50 km short,
-//     and again when more than 100 km short. A rule cannot fire until its level
-//     was reachable: where full power from the first quarter would have got the
-//     store there, plus a day to choose the hours. A pool above its target is
-//     marked and loses nothing: warm water is a store, and heating it ahead on
-//     cheap energy is allowed. Comfort points are the raw quarter sum.
-//
-//   Cheap quarters. A quarter in which the pool, battery charging and car
-//     together draw FLEXIBLE_W or more gains a point when its real price is
-//     among the cheapest quarter of the plan's, and two when among the
-//     cheapest tenth. This rewards where flexible energy was bought, not that
-//     a cheaper plan was impossible; it is kept apart from comfort points.
+//   Quarter rules. Each quarter gains or loses the points of every rule that
+//     fires in it. Comfort is measured from the owner's target: the pool more
+//     than 1 °C below it, and again when more than 2 °C below; the car more
+//     than 50 km short, and again when more than 100 km short. Such a rule
+//     cannot fire until its level was reachable: where full power from the
+//     first quarter would have got the store there, plus a day to choose the
+//     hours. A pool above its target is marked and loses nothing. A quarter in
+//     which the pool, battery charging and car together draw FLEXIBLE_W or
+//     more gains a point when its real price is among the cheapest quarter of
+//     the plan's, or two when among the cheapest tenth.
 //
 //   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
 //     by the opportunity audit (opportunities.ts). Only what was knowable from
 //     published prices counts; what took hindsight is shown beside it. Each
-//     distinct changed quarter loses one point under its primary rule. A plan
-//     whose audit could not be made is physically failed, not given invented
-//     economic points.
+//     distinct changed quarter loses one point under its primary rule.
 //
-// Case points add raw comfort, cheap-quarter and energy points. Run points add case points.
+// Apart from points, a plan that asks for what the household cannot do
+// (referee.ts) fails the case, whatever its points; a plan whose audit could
+// not be made is failed the same way, not given invented points.
 //
 // Scoring reads only the stored plan series, audit included, so the page can
 // preview a rule change without replaying anything. A stored score is never
@@ -45,9 +38,7 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 export { GRACE_QUARTERS } from './service';
 
 export const SCORER_VERSION = 5;
-export const QUARTER_MIN = -4;
-export const QUARTER_MAX = 2;
-/** The most a rule may take from a quarter, and the most a rewarding rule may give. */
+/** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
 /** Pool, battery charging and car together at or above this count as a flexible purchase. */
@@ -70,10 +61,10 @@ export interface QuarterRule {
   label: string;
   describe: (threshold: number) => string;
   threshold: number;
-  /** Signed points added when the rule fires; 0 marks a quarter without scoring it. A case may change the size, not the sign. */
+  /** Signed points added when the rule fires; 0 marks a quarter without scoring it. */
   points: number;
-  /** `price` rules reward where flexible energy was bought; their points are kept apart from comfort. */
-  group: 'comfort' | 'price';
+  /** What the rule measures, for explaining it; nothing in the scoring depends on it. */
+  about: 'pool' | 'car' | 'price';
   /** Does not fire in a quarter where this other rule fired, so the two never stack. */
   unless?: string;
   /** A case in which this rule fires anywhere is shown as failed. */
@@ -101,33 +92,33 @@ const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.p
 
 export const DEFAULT_RULES: QuarterRule[] = [
   {
-    key: 'pool_low', group: 'comfort', label: 'Pool below target', describe: t => `more than ${t} °C below`, threshold: 1, points: -1,
+    key: 'pool_low', about: 'pool', label: 'Pool below target', describe: t => `more than ${t} °C below`, threshold: 1, points: -1,
     fires: poolBelow, eligibleFrom: poolFrom,
   },
   {
-    key: 'pool_cold', group: 'comfort', label: 'Pool far below target', describe: t => `more than ${t} °C below`, threshold: 2, points: -1, required: true,
+    key: 'pool_cold', about: 'pool', label: 'Pool far below target', describe: t => `more than ${t} °C below`, threshold: 2, points: -1, required: true,
     fires: poolBelow, eligibleFrom: poolFrom,
   },
   // Marked, not scored: warm water is a thermal buffer, and heating ahead on cheap energy is allowed.
   {
-    key: 'pool_hot', group: 'comfort', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target`, threshold: 2, points: 0,
+    key: 'pool_hot', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target`, threshold: 2, points: 0,
     fires: (q, t) => !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t,
     eligibleFrom: s => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity,
   },
   {
-    key: 'ev_low', group: 'comfort', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
+    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
     fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'ev_short', group: 'comfort', label: 'Car far short of target range', describe: t => `more than ${t} km short`, threshold: 100, points: -1, required: true,
+    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, threshold: 100, points: -1, required: true,
     fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'cheap_buy', group: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.25, points: 1,
+    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.25, points: 1,
     unless: 'cheapest_buy', fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'cheapest_buy', group: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 2,
+    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 2,
     fires: cheapBuy, eligibleFrom: () => 0,
   },
 ];
@@ -144,16 +135,15 @@ export class CriteriaError extends Error {}
 /** What is wrong with a case's overrides; empty when they can be scored with. */
 export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
   const errors: string[] = [];
-  const known = new Map(DEFAULT_RULES.map(r => [r.key, r]));
+  const known = new Set(DEFAULT_RULES.map(r => r.key));
   for (const [key, o] of Object.entries(overrides ?? {})) {
     if (REMOVED_RULE_KEYS.includes(key)) continue;
     if (!known.has(key)) { errors.push(`Unknown rule "${key}".`); continue; }
     if (typeof o !== 'object' || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== 'boolean') errors.push(`${key}: enabled must be true or false.`);
     if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);
-    const [lo, hi] = known.get(key)!.points > 0 ? [0, RULE_POINTS_MAX] : [RULE_POINTS_MIN, 0];
-    if (key !== 'pool_hot' && o.points !== undefined && !(Number.isInteger(o.points) && o.points >= lo && o.points <= hi)) {
-      errors.push(`${key}: points must be between ${lo} and ${hi}.`);
+    if (key !== 'pool_hot' && o.points !== undefined && !(Number.isInteger(o.points) && o.points >= RULE_POINTS_MIN && o.points <= RULE_POINTS_MAX)) {
+      errors.push(`${key}: points must be between ${RULE_POINTS_MIN} and ${RULE_POINTS_MAX}.`);
     }
   }
   return errors;
@@ -195,11 +185,8 @@ export interface ServiceApplicability {
 }
 
 export interface CaseScore {
-  /** Raw comfort, cheap-quarter and known economic points. While the audit is pending, without the economic ones. */
+  /** The quarter rules' points plus the energy-timing ones. While the audit is pending, the quarter rules' alone. */
   points: number;
-  comfortPoints: number;
-  /** What the price rules gave: flexible load bought in cheap quarters. */
-  pricePoints: number;
   /** Null without an audit, or while the audit awaits recomputing under these thresholds. */
   economicPoints: number | null;
   /** Whether `points` holds both parts. */
@@ -210,15 +197,15 @@ export interface CaseScore {
   auditPending: boolean;
   /** The plan asked for what the household cannot do. */
   physicalFailed: boolean;
-  /** Sum of every quarter's score: comfort and cheap-quarter points. */
+  /** Sum of every quarter's score: what the quarter rules gave and took. */
   sum: number;
   quarters: QuarterScore[];
   /** How often each quarter rule fired. */
   counts: Record<string, number>;
-  /** How many quarters scored each value, QUARTER_MIN..QUARTER_MAX. */
+  /** How many quarters scored each value. */
   histogram: Record<string, number>;
   requiredFired: string[];
-  /** Per comfort rule: whether it could fire in this case at all, and in how many quarters. */
+  /** Per quarter rule: whether it could fire in this case at all, and in how many quarters. */
   applicability: Record<string, ServiceApplicability>;
   /** Your verdict when there is one, otherwise the automatic reading; never passed when physicalFailed. */
   passed: boolean;
@@ -260,38 +247,33 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   };
 
   const counts: Record<string, number> = {};
-  const histogram: Record<string, number> = Object.fromEntries(
-    Array.from({ length: QUARTER_MAX - QUARTER_MIN + 1 }, (_, k) => [String(QUARTER_MIN + k), 0]));
+  const histogram: Record<string, number> = {};
   const quarters: QuarterScore[] = [];
-  let comfortPoints = 0, pricePoints = 0;
+  let sum = 0;
   for (let i = 0; i < n; i++) {
     const q: QuarterView = {
       s, i, due: due(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
-    let comfort = 0, price = 0;
+    let score = 0;
     const fired: string[] = [];
     for (const rule of firing) {
       if (rule.unless && firing.some(other => other.key === rule.unless)) continue;
-      if (rule.group === 'price') price += rule.points; else comfort += rule.points;
+      score += rule.points;
       fired.push(rule.key);
       counts[rule.key] = (counts[rule.key] ?? 0) + 1;
     }
-    comfort = Math.max(QUARTER_MIN, Math.min(0, Math.round(comfort)));
-    price = Math.max(0, Math.min(QUARTER_MAX, Math.round(price)));
-    histogram[String(comfort + price)]++;
-    comfortPoints += comfort;
-    pricePoints += price;
-    quarters.push({ score: comfort + price, fired });
+    histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
+    sum += score;
+    quarters.push({ score, fired });
   }
-  const sum = comfortPoints + pricePoints;
   const requiredFired = rules.filter(r => r.required && counts[r.key]).map(r => r.key);
 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
     const reason = !rule.enabled ? 'Switched off for this case.'
-      : rule.group === 'comfort' && !s.comfort ? 'The plan carries no targets.'
+      : rule.about !== 'price' && !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : rule.points === 0 ? 'Marked only; loses no points.'
             : `Counts in ${eligibleQuarters} of ${n} quarters.`;
@@ -306,7 +288,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     : audit.status === 'complete' ? economicPoints(audit) : 0;
   const points = sum + (economic ?? 0);
   return {
-    points, comfortPoints, pricePoints, economicPoints: economic, complete: economic !== null, audit, auditPending, physicalFailed,
+    points, economicPoints: economic, complete: economic !== null, audit, auditPending, physicalFailed,
     sum, quarters, counts, histogram, requiredFired, applicability, verdict,
     passed: !physicalFailed && (verdict ? verdict === 'pass' : requiredFired.length === 0),
   };
@@ -317,12 +299,10 @@ export interface StoredScore {
   version: number;
   /** Fingerprint of the case's overrides the score was computed with. */
   criteria: string;
-  /** Raw comfort_points + price_points + economic_points. */
+  /** sum + economic_points. */
   points: number;
-  comfort_points: number;
-  price_points: number;
   economic_points: number;
-  /** Quarter sum (comfort and cheap-quarter points), histogram and counts. */
+  /** What the quarter rules gave and took, with its histogram and counts. */
   sum: number;
   histogram: Record<string, number>;
   counts: Record<string, number>;
@@ -345,7 +325,7 @@ export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): 
   }
   return {
     version: SCORER_VERSION, criteria: criteriaFingerprint(overrides),
-    points: c.points, comfort_points: c.comfortPoints, price_points: c.pricePoints, economic_points: c.economicPoints, sum: c.sum,
+    points: c.points, economic_points: c.economicPoints, sum: c.sum,
     histogram: c.histogram, counts: c.counts, required_fired: c.requiredFired,
     physical_failed: c.physicalFailed, audit: summariseAudit(c.audit),
   };

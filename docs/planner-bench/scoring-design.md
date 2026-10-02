@@ -20,14 +20,14 @@ The runner calls `evaluate(case, record, criteria, lane)`. It invokes the refere
 
 `OpportunityAudit` holds its version, lane, service guard, applicability, physical violations, search coverage, known/hindsight money and ordered findings. Each finding owns its saving once, may have several explanatory tags, and stores before/after pool, car and battery trajectories. `StoredScore` carries a compact summary; the existing result-series JSON carries the full evidence. No database schema change is needed.
 
-`CaseScore` retains the quarter comfort breakdown and adds `comfortPoints`, nullable `economicPoints`, `complete`, `physicalFailed`, applicability and audit state. Missing or stale evidence is visibly incomplete; it cannot enter a current-version comparison. Valuation-lane diagnosis uses comfort points independently of the mixed headline.
+`CaseScore` retains the quarter breakdown and its `sum`, and adds nullable `economicPoints`, `complete`, `physicalFailed`, applicability and audit state. Missing or stale evidence is visibly incomplete; it cannot enter a current-version comparison. Valuation-lane diagnosis uses the same total points as the headline.
 
 ## Alternatives considered
 
 Independent Claude Opus 5.5 High and Codex candidates were grounded in the current design documents and bench code. The chosen design combines cumulative transfer accounting with strict physical endpoints and stored graphical evidence.
 
 - Reject standalone cheap-export/expensive-import penalties: a better use of that energy must be demonstrated.
-- Reject scoring extra consumption merely because its price was low. (Reversed 2026-10-02 at the owner's request: scorer v5 rewards flexible load in the cheapest 25 % / 10 % of quarters with +1 / +2, kept as separate price points.)
+- Reject scoring extra consumption merely because its price was low. (Reversed 2026-10-02 at the owner's request: scorer v5 rewards flexible load in the cheapest 25 % / 10 % of quarters with +1 / +2 All points add into one total; the lane diagnosis holds a valuation variant to nominal's total points.)
 - Reject median-price terminal credits as an optimization objective: they can manufacture savings by depleting or overfilling stores.
 - Reject fixed sunny/cloudy day thresholds: physics and opportunity cost determine whether moving heat helps.
 - Reject a blanket warm-pool penalty: a warm pool can hold useful future heat.

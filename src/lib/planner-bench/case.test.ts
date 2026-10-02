@@ -129,7 +129,7 @@ Deno.test('an evaluation is derived wholly from the stored decisions', () => {
   assertEquals(evaluate(c, record, {}), first);
   assertEquals(evaluate(c, record, {}, 'oracle/high').series.audit!.lane, 'oracle/high');
   // Criteria that cannot be scored with are refused before anything is replayed.
-  assertThrows(() => evaluate(c, record, { pool_low: { points: 1 } }), CriteriaError);
+  assertThrows(() => evaluate(c, record, { pool_low: { points: 3 } }), CriteriaError);
 });
 
 Deno.test('the oracle lane tells the planner the real prices; refereeing never changes', () => {
@@ -143,15 +143,14 @@ Deno.test('the oracle lane tells the planner the real prices; refereeing never c
 });
 
 Deno.test('the diagnosis splits a plan\'s cost into the price estimate and the valuation', () => {
-  const lane = (cost_sek: number, comfort_points = 0, credit_sek = 0, points = comfort_points) => ({ cost_sek, credit_sek, points, comfort_points });
+  const lane = (cost_sek: number, points = 0, credit_sek = 0) => ({ cost_sek, credit_sek, points });
   assertEquals(diagnose({ 'told/nominal': lane(100) }), null);
   const d = diagnose({
     'told/low': lane(104), 'told/nominal': lane(100, 0, 10), 'told/high': lane(80, -3),
-    // A variant is held to nominal's comfort, not to its case points, which also carry money.
-    'oracle/low': lane(60, 0, 0, -3), 'oracle/nominal': lane(70), 'oracle/high': lane(75),
+    'oracle/low': lane(60), 'oracle/nominal': lane(70), 'oracle/high': lane(75),
   })!;
   // Net of what is left in the stores: 90. Real prices would have saved 20; a lower valuation another 10.
   assertEquals([d.net_sek, d.price_estimate_sek, d.valuation_sek], [90, 20, 10]);
-  // The cheaper told variant gave up comfort, so it is not "best".
+  // The cheaper told variant scored worse, so it is not "best".
   assertEquals(d.best, { told: 'nominal', oracle: 'low' });
 });

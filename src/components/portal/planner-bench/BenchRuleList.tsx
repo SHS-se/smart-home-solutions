@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { FLEXIBLE_W, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -151,7 +151,7 @@ export default function BenchRuleList({
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        return (rule.group === 'comfort' && !s.series?.comfort) || !s.score ? nothing(t('Saknar underlag', 'Missing evidence'))
+        return (rule.about !== 'price' && !s.series?.comfort) || !s.score ? nothing(t('Saknar underlag', 'Missing evidence'))
           : !rule.enabled ? nothing(t('Av', 'Off'))
             : application && !application.applicable ? nothing('N/A')
               : counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
@@ -189,8 +189,7 @@ export default function BenchRuleList({
 
   /** A quarter rule's settings: on or off, its threshold and its points, saved for the case. */
   const settings = (rule: ResolvedRule, thresholdLabel: string, step: string) => {
-    // A case may change a rule's size, not whether it rewards or penalises.
-    const [lo, hi] = rule.group === 'price' ? [0, 2] : [-2, 0];
+    const lo = RULE_POINTS_MIN, hi = RULE_POINTS_MAX;
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
@@ -207,15 +206,14 @@ export default function BenchRuleList({
         {t(`Pool, batteriladdning och bil drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
           `Pool, battery charging and car together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
         {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
-        {' '}{t('Belönar var energin köptes, inte att planen var den billigaste möjliga.', 'Rewards where the energy was bought, not that the plan was the cheapest possible.')}
       </p>
       {settings(rule, t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
     </>;
   };
 
   const comfortDetail = (rule: ResolvedRule) => {
-    if (rule.group === 'price') return priceDetail(rule);
-    const pool = rule.key.startsWith('pool'), above = rule.key === 'pool_hot';
+    if (rule.about === 'price') return priceDetail(rule);
+    const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;
     const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;
     const unit = pool ? '°C' : 'km';

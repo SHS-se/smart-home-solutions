@@ -99,7 +99,7 @@ const Bench: React.FC = () => {
     for (const s of summaries.data ?? []) {
       if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score
         || isStale(s.score, cases.find(c => c.id === scenarioId)?.criteria)) continue;
-      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points, comfort_points: s.score.comfort_points };
+      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points };
     }
     return out;
   }, [summaries.data, cases]);
@@ -514,7 +514,7 @@ const LanePanel: React.FC<{
 }> = ({ lane, onLane, lanes }) => {
   const { t } = useLanguage();
   const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
-  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${r.comfort_points} pts` : '—';
+  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${signed(r.points)} pts` : '—';
   const verdict = (d: Diagnosis | null) => d === null ? t('väntar på alla spår', 'waiting for every lane') : [
     t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
     t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
@@ -526,8 +526,8 @@ const LanePanel: React.FC<{
       <div className="mb-2 flex flex-wrap items-baseline gap-x-4 text-sm">
         <span className="font-medium">{t('Spår', 'Lanes')}</span>
         <span className="text-xs text-muted-foreground">
-          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Låg/nominell/hög ändrar lagrens värdekurvor (0,71×/1×/1,41×). Nettokostnad · råa komfortpoäng.',
-            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. Low/nominal/high scales store value curves (0.71×/1×/1.41×). Net cost · raw comfort points.')}
+          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Låg/nominell/hög ändrar lagrens värdekurvor (0,71×/1×/1,41×). Nettokostnad · poäng.',
+            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. Low/nominal/high scales store value curves (0.71×/1×/1.41×). Net cost · points.')}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -656,12 +656,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                     <span className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'} <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
                     <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
-                  {score && <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                    <span>{t('Komfort', 'Comfort')}: {score.comfortPoints}</span>
-                    <span>{t('Billiga kvartar', 'Cheap quarters')}: {signed(score.pricePoints)}</span>
-                    <span>{t('Energitid', 'Energy timing')}: {score.economicPoints ?? '—'}</span>
-                    {(!score.audit || score.auditPending) && <span>{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</span>}
-                  </div>}
+                  {score && (!score.audit || score.auditPending) && <div className="mt-1 text-xs text-muted-foreground">{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</div>}
                 </div>
               ))}
             </div>
