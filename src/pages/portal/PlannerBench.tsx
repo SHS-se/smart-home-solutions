@@ -658,6 +658,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                   </div>
                   {score && <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                     <span>{t('Komfort', 'Comfort')}: {score.comfortPoints}</span>
+                    <span>{t('Billiga kvartar', 'Cheap quarters')}: {signed(score.pricePoints)}</span>
                     <span>{t('Energitid', 'Energy timing')}: {score.economicPoints ?? '—'}</span>
                     {(!score.audit || score.auditPending) && <span>{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</span>}
                   </div>}

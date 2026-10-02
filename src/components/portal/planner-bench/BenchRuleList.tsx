@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { FLEXIBLE_W, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -151,7 +151,7 @@ export default function BenchRuleList({
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        return !s.series?.comfort || !s.score ? nothing(t('Saknar underlag', 'Missing evidence'))
+        return (rule.group === 'comfort' && !s.series?.comfort) || !s.score ? nothing(t('Saknar underlag', 'Missing evidence'))
           : !rule.enabled ? nothing(t('Av', 'Off'))
             : application && !application.applicable ? nothing('N/A')
               : counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
@@ -187,7 +187,34 @@ export default function BenchRuleList({
 
   const stamp = (s: SideData, quarter: number) => s.series ? formatHomeDayMonthTime(s.series.start[quarter], timeZone) : '';
 
+  /** A quarter rule's settings: on or off, its threshold and its points, saved for the case. */
+  const settings = (rule: ResolvedRule, thresholdLabel: string, step: string) => {
+    // A case may change a rule's size, not whether it rewards or penalises.
+    const [lo, hi] = rule.group === 'price' ? [0, 2] : [-2, 0];
+    return <div className="flex flex-wrap items-end gap-3 pt-1">
+      <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) patch(rule.key, 'points', Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber)))); }} /></label>
+      <Button size="sm" variant="outline" onClick={onSave}>{t('Spara regler för fallet', 'Save rules for this case')}</Button>
+    </div>;
+  };
+
+  const priceDetail = (rule: ResolvedRule) => {
+    const share = Math.round(rule.threshold * 100);
+    const other = rule.unless && resolveRules(draft).find(r => r.key === rule.unless && r.enabled);
+    return <>
+      <p>
+        {t(`Pool, batteriladdning och bil drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
+          `Pool, battery charging and car together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
+        {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
+        {' '}{t('Belönar var energin köptes, inte att planen var den billigaste möjliga.', 'Rewards where the energy was bought, not that the plan was the cheapest possible.')}
+      </p>
+      {settings(rule, t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
+    </>;
+  };
+
   const comfortDetail = (rule: ResolvedRule) => {
+    if (rule.group === 'price') return priceDetail(rule);
     const pool = rule.key.startsWith('pool'), above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;
     const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;
@@ -207,20 +234,17 @@ export default function BenchRuleList({
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
       })}
-      {!above && <div className="flex flex-wrap items-end gap-3 pt-1">
-        <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
-        <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{t('Avstånd från mål', 'Distance from target')} ({unit})</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step="0.1" value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
-        <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min="-2" max="0" step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber <= 0) patch(rule.key, 'points', Math.max(-2, Math.round(e.target.valueAsNumber))); }} /></label>
-        <Button size="sm" variant="outline" onClick={onSave}>{t('Spara regler för fallet', 'Save rules for this case')}</Button>
-      </div>}
+      {!above && settings(rule, `${t('Avstånd från mål', 'Distance from target')} (${unit})`, '0.1')}
     </>;
   };
 
+  const ruleLabel = (key: string) => OPPORTUNITY_RULES.find(r => r.key === key)?.label ?? key;
   const energyDetail = (rule: OpportunityRuleMeta) => {
     const shown = witness?.rule === rule.key ? sides.find(s => s.side === witness.side) : undefined;
     const finding = shown && findingsOf(shown, rule.key).find(f => f.id === witness?.id);
     return <>
       <p>{rule.description} {t('−1 poäng för varje kvart som en billigare flytt hade ändrat, när priserna redan var publicerade.', '−1 point for each quarter a cheaper move would have changed, where prices were already published.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Efterklokhet: flytten krävde priser som inte var publicerade när planen gjordes, så den visas men kostar inga poäng. En flytt som passar flera regler ger avdrag under en enda.', 'Hindsight: the move needed prices that were not published when the plan was made, so it is shown but costs no points. A move that fits several rules is scored under one only.')}</p>
       {sides.map(s => {
         const audit = s.score?.audit;
         const application = audit?.applicability[rule.key];
@@ -234,7 +258,9 @@ export default function BenchRuleList({
             onClick={() => { setWitness({ rule: rule.key, side: s.side, id: f.id }); onSelect(s.side, f.from); }}
             className={`flex w-full flex-wrap justify-between gap-x-3 rounded-md border bg-background px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted aria-pressed:border-primary aria-pressed:bg-primary/10 ${focus}`}>
             <span>{f.kwh.toFixed(2)} kWh · {stamp(s, f.from)} → {stamp(s, f.to)}</span>
-            <span><strong>{f.savingSek.toFixed(2)} SEK</strong> · {f.basis === 'known' ? t('känt i förväg', 'known in advance') : t('efterklokhet · 0 p', 'hindsight · 0 pts')}</span>
+            <span><strong>{f.savingSek.toFixed(2)} SEK</strong> · {f.basis === 'hindsight' ? t('efterklokhet · 0 p', 'hindsight · 0 pts')
+              : f.rule === rule.key ? t('känt i förväg · ger poängavdrag här', 'known in advance · scored here')
+                : t(`känt i förväg · räknas under ”${ruleLabel(f.rule)}”`, `known in advance · scored under “${ruleLabel(f.rule)}”`)}</span>
           </button>)}
         </div>;
       })}

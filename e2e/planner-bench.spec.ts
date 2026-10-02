@@ -293,6 +293,9 @@ test.describe('planner bench', () => {
     // Triggered rules are rows with their points per quarter and the quarters they fired in.
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · −2/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
+    // Flexible load in a very cheap quarter earns two points, in a cheap one a single point.
+    await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · \+\d+/);
+    await expect(row('cheapest_buy')).toContainText('+2');
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_low')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();

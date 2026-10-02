@@ -375,7 +375,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);
   assertEquals([bare.audit, bare.economicPoints, bare.complete, bare.auditPending, bare.physicalFailed], [null, null, false, false, false]);
-  assertEquals(bare.points, bare.comfortPoints);
+  assertEquals(bare.points, bare.comfortPoints + bare.pricePoints);
   assertThrows(() => storedScore(old), Error, 'opportunity audit');
 });
 

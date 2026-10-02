@@ -125,11 +125,13 @@ Deno.test('rule overrides change thresholds, points and whether a rule runs', ()
   assertEquals(scoreQuarters(series, { pool_low: { points: -2 } }).quarters[0].score, -2);
 });
 
-Deno.test('criteria are checked: a rule can only take points, at a real threshold, and old money rules are gone by name', () => {
+Deno.test('criteria are checked: a rule keeps its sign, at a real threshold, and old money rules are gone by name', () => {
   assertEquals(criteriaErrors({}), []);
   assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: 0 } }), []);
   assertEquals(criteriaErrors({ pool_low: { points: 1 } }), ['pool_low: points must be between -2 and 0.']);
   assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
+  assertEquals(criteriaErrors({ cheap_buy: { points: 2, threshold: 0.3 }, cheapest_buy: { points: 0 } }), []);
+  assertEquals(criteriaErrors({ cheapest_buy: { points: -1 } }), ['cheapest_buy: points must be between 0 and 2.']);
   assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
   assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
@@ -138,13 +140,27 @@ Deno.test('criteria are checked: a rule can only take points, at a real threshol
   assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
   // The quarter-by-quarter money rules were replaced by the opportunity audit. An override left under their
   // names is not an error and not applied: it changes neither the rules nor the fingerprint.
-  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'cheap_buy', 'cheapest_buy', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
+  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
+});
+
+Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one two, and never both', () => {
+  const series = comfortSeries(() => 30, () => 300);
+  // Prices rise through the plan; the pool runs for the first 40 quarters, then once late at a dear price.
+  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
+  series.poolW = series.poolW.map((_, i) => i < 40 || i === 200 ? 3000 : 0);
+  const score = scoreQuarters(series);
+  // The cheapest tenth is 28.8 quarters: 29 at +2, the next 11 at +1, the dear one nothing.
+  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [29, 11]);
+  assertEquals([score.quarters[0].score, score.quarters[30].score, score.quarters[200].score], [2, 1, 0]);
+  assertEquals([score.pricePoints, score.comfortPoints, score.sum], [69, 0, 69]);
+  // Without the very cheap rule, the cheap one covers those quarters too.
+  assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).pricePoints, 40);
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
