@@ -1596,6 +1596,35 @@ Deno.test("a measured pool response replaces the loss by temperature and the COP
   }
 });
 
+Deno.test("an unpublished sale price is the published line in the import price, not a share of it", () => {
+  // Buying costs fees on top of the market and selling does not: here a sale
+  // pays 0.8 of the import price less 0.64, as it does at Phil's.
+  const sale = (buy: number) => 0.8 * buy - 0.64;
+  const base = horizon();
+  const slots = base.slots.map((slot, index) => {
+    const buy = index < 96 ? (index % 8 < 4 ? 2.4 : 0.9) : null;
+    return { ...slot, import_price_sek_per_kwh: buy, export_price_sek_per_kwh: buy === null ? null : sale(buy) };
+  });
+  const plan = generateOptimisationPlan(horizon({ slots }), new Date(NOW));
+  const estimated = plan.plans.priority.slots.slice(96);
+  assert(estimated.length > 0 && estimated.every((slot) => slot.export_price_sek_per_kwh === null));
+  for (const slot of estimated) {
+    assert(
+      // The plan rounds its prices to five decimals.
+      Math.abs(slot.shadow_export_sek_per_kwh - Math.max(0, sale(slot.shadow_import_sek_per_kwh))) < 1e-4,
+      `${slot.start}: buys at ${slot.shadow_import_sek_per_kwh}, sells at ${slot.shadow_export_sek_per_kwh}`,
+    );
+  }
+  // A share of the import price would put a cheap quarter's sale several times too high.
+  const cheapest = estimated.reduce((low, slot) => slot.shadow_import_sek_per_kwh < low.shadow_import_sek_per_kwh ? slot : low);
+  const share = (sale(2.4) / 2.4 + sale(0.9) / 0.9) / 2;
+  assert(cheapest.shadow_export_sek_per_kwh < cheapest.shadow_import_sek_per_kwh * share * 0.8, "the cheap end sells for less than a share says");
+
+  // With one import price published there is no line to read, and the share stands in.
+  const flat = generateOptimisationPlan(horizon(), new Date(NOW)).plans.priority.slots;
+  assert(flat.slice(96).every((slot) => slot.shadow_export_sek_per_kwh >= 0));
+});
+
 Deno.test("a home without the equipment stays silent about it", () => {
   // Evidence, not capability: no pool state and no vehicle means no rows, so
   // the table never invents services a household does not own.

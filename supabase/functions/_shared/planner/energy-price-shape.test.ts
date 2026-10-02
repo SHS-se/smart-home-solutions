@@ -474,3 +474,17 @@ Deno.test("the unpublished tail starts where the published prices ended and rela
   assertClose(at(24), (at(0) + modelled) / 2, "half way after six hours", 0.1);
   assertClose(at(96 + 48), modelled, "the modelled day by the second noon", 0.02);
 });
+
+Deno.test("no quarter is estimated under the cheapest price on record", () => {
+  // A month whose nights sit on a fee floor of 0.8 with days at 2.4, then a
+  // published day three times cheaper on the market than any of them: scaling
+  // the whole price by the shape would put its nights far under the fees.
+  const history = archive(28, 0.8, [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+  const published = day("2026-06-29", 0.8, { hours: [12], price: 0.85 })
+    .map((row) => ({ start: row.start_ts, import_price_sek_per_kwh: row.import_price_sek_per_kwh }));
+  const tail = day("2026-06-30", 0, { hours: [], price: 0 }).map((row) => ({ start: row.start_ts, import_price_sek_per_kwh: null }));
+  const outlook = buildPriceOutlook([...published, ...tail], history, { timeZone: TZ, asOf: Date.parse("2026-06-29T00:00:00+02:00") });
+  const estimates = outlook.shadowImportSekPerKwh.slice(96);
+  assert(estimates.every((price) => price >= 0.8 - 1e-9), `lowest estimate ${Math.min(...estimates)}`);
+  assert(Math.max(...estimates) > 0.8, "and the day keeps its shape above the floor");
+});

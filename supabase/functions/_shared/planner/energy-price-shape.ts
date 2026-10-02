@@ -673,17 +673,29 @@ export function buildPriceOutlook(
       : modelled * (1 + left * (lastPublished / modelledNext - 1));
   };
 
+  // No estimate goes under the cheapest price on record. An all-in price is
+  // fees plus the market, and a shape that scales the whole of it scales the
+  // fees too: a cheap, windy day was estimated a quarter under what this home
+  // had paid in any quarter of two months, which invites load into hours that
+  // will not be that cheap.
+  let floor = Infinity;
+  for (const row of archive) {
+    if (Number.isFinite(row.import_price_sek_per_kwh)) floor = Math.min(floor, row.import_price_sek_per_kwh);
+  }
+  for (const slot of published) floor = Math.min(floor, slot.import_price_sek_per_kwh as number);
+  floor = Number.isFinite(floor) ? Math.max(0, floor) : 0;
+
   const shadowImportSekPerKwh = slots.map((slot) => {
     if (typeof slot.import_price_sek_per_kwh === "number") {
       return slot.import_price_sek_per_kwh;
     }
     const startMs = Date.parse(slot.start);
     if (!Number.isFinite(startMs)) return level;
-    if (!shape) return Math.max(0, dayLevelAt(startMs) * publishedShapeMean);
+    if (!shape) return Math.max(floor, dayLevelAt(startMs) * publishedShapeMean);
     const local = localSlot(startMs, timeZone);
     const multiplier = shape.byDayType[local.dayType][local.quarter];
     if (!Number.isFinite(multiplier)) return level;
-    return Math.max(0, carried(startMs, dayLevelAt(startMs) * multiplier));
+    return Math.max(floor, carried(startMs, dayLevelAt(startMs) * multiplier));
   });
 
   return {

@@ -1719,21 +1719,9 @@ function preparedSlots(
   }
   // Export is not shaped separately: the archive stores an import price, and
   // the spread between them is a supplier and tariff construct rather than
-  // something the market shape says anything about. Holding the observed ratio
-  // is a weaker claim than inventing a second curve.
-  const publishedRatios = snapshot.slots
-    .filter((slot) =>
-      slot.import_price_sek_per_kwh !== null &&
-      slot.export_price_sek_per_kwh !== null &&
-      slot.import_price_sek_per_kwh !== 0
-    )
-    .map((slot) =>
-      slot.export_price_sek_per_kwh! / slot.import_price_sek_per_kwh!
-    );
-  const exportRatio = publishedRatios.length > 0
-    ? publishedRatios.reduce((total, value) => total + value, 0) /
-      publishedRatios.length
-    : 0;
+  // something the market shape says anything about. The construct is read off
+  // the published quarters themselves.
+  const exportAt = publishedExportOf(snapshot.slots);
   let priceGapSeen = false;
   const slots = snapshot.slots.map((slot, index) => {
     const epoch = isoMs(slot.start);
@@ -1772,10 +1760,46 @@ function preparedSlots(
       binding,
       shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh[index],
       shadow_export_sek_per_kwh: slot.export_price_sek_per_kwh ??
-        outlook.shadowImportSekPerKwh[index] * exportRatio,
+        exportAt(outlook.shadowImportSekPerKwh[index]),
     };
   });
   return { slots, outlook };
+}
+
+/**
+ * What a kWh sells for at a given import price, from the quarters in which the
+ * market published both.
+ *
+ * A straight line through them, not a ratio. Buying costs the market price
+ * plus fees and tax on the whole; selling pays the market price plus a little.
+ * Both are lines in the market price, so each is a line in the other, and the
+ * line does not pass through zero: at Phil's it is 0.80 of the import price
+ * less 0.64 SEK, exact to the fourth decimal. A ratio fitted to a dear day
+ * (0.38 here) puts a cheap night's sale at 0.34 SEK when it is 0.07, and the
+ * spread between buying and selling at a third less than it is.
+ *
+ * A sale is not estimated below nothing, and published quarters whose import
+ * prices are all but equal say nothing of a slope: the ratio stands in then.
+ */
+function publishedExportOf(
+  slots: readonly { import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }[],
+): (importSekPerKwh: number) => number {
+  const pairs = slots.flatMap((slot) =>
+    slot.import_price_sek_per_kwh !== null && slot.export_price_sek_per_kwh !== null &&
+      finite(slot.import_price_sek_per_kwh) && finite(slot.export_price_sek_per_kwh)
+      ? [[slot.import_price_sek_per_kwh, slot.export_price_sek_per_kwh]]
+      : []
+  );
+  if (pairs.length === 0) return () => 0;
+  const meanImport = pairs.reduce((sum, [buy]) => sum + buy, 0) / pairs.length;
+  const meanExport = pairs.reduce((sum, [, sell]) => sum + sell, 0) / pairs.length;
+  const spread = pairs.reduce((sum, [buy]) => sum + (buy - meanImport) ** 2, 0);
+  if (spread / pairs.length < 1e-6) {
+    const ratio = meanImport !== 0 ? meanExport / meanImport : 0;
+    return (importSekPerKwh) => Math.max(0, importSekPerKwh * ratio);
+  }
+  const slope = pairs.reduce((sum, [buy, sell]) => sum + (buy - meanImport) * (sell - meanExport), 0) / spread;
+  return (importSekPerKwh) => Math.max(0, meanExport + slope * (importSekPerKwh - meanImport));
 }
 
 const fixedLoadW = (slot: PreparedSlot) =>
