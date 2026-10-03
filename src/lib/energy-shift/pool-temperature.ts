@@ -1,16 +1,19 @@
 // The pool temperature a plan expects, quarter by quarter.
 //
-// A plan does not carry the pool's temperature as a series. It carries what
-// fixes one: the water temperature it started from, the temperature before and
-// after every quarter it heats in (the pool store's allocations), and the
-// temperature it ends the horizon at. Between two heated runs the pool only
-// cools, and the plan says from what to what, so the quarters in between are
-// drawn on the straight line between them. Cooling is in truth a slow
-// exponential; over the hours between two runs the difference is far below
-// what the chart can show.
+// A plan says it outright: every quarter carries the temperature the pool ends
+// it at (`pool_temperature_c`), cooling and heating included.
+//
+// Plans stored before the planner published it do not. They carry what fixes a
+// temperature only where the planner accepted a bid: the water temperature
+// the plan started from, the temperature before and after each such quarter
+// (the pool store's allocations), and the temperature the horizon ends at. The
+// quarters in between are drawn on the straight line between them. A plan that
+// kept a previous decision has no bids at all, which is why this reconstruction
+// is only the fallback: it drew such a plan's heating as one straight line.
 
 /** What the projection reads of a plan slot. */
 export interface PoolPlanSlot {
+  pool_temperature_c?: number | null;
   decision?: {
     store_allocations?: readonly { store_key: string; state_unit?: string; state_before: number; state_after: number }[];
   } | null;
@@ -29,6 +32,8 @@ export function plannedPoolTemperature(
   endC: number | null | undefined,
 ): (number | null)[] {
   const n = slots.length;
+  const published = slots.map(slot => slot.pool_temperature_c ?? null);
+  if (published.some(value => value !== null)) return published;
   if (n === 0 || startC == null || !Number.isFinite(startC)) return slots.map(() => null);
   // Temperatures at quarter boundaries: index i is the start of quarter i, n the end of the horizon.
   const known = new Map<number, number>([[0, startC]]);

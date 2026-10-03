@@ -328,6 +328,25 @@ Deno.test("fixed plan authority and changed store inventory exclude continuity",
   );
 });
 
+Deno.test("a plan that keeps the previous decision still says how warm the pool gets", () => {
+  const { input } = referencedSnapshot(true);
+  input.replan_reference!.battery!.discharge_w -= 10;
+  const plan = generateOptimisationPlan(input, new Date(input.captured_at));
+  const priority = plan.plans.priority;
+  assertEquals(priority.continuity!.selected, "direct");
+  const heated = priority.slots.filter((slot) => slot.pool_w > 0);
+  assert(heated.length > 0);
+  // A kept decision is not an auction bid, so the temperature cannot be read from one.
+  assert(heated.every((slot) => !slot.decision.store_allocations.some((a) => a.store_key === "pool")));
+  let before = plan.pool!.water_temperature_c;
+  for (const slot of priority.slots) {
+    assert(typeof slot.pool_temperature_c === "number");
+    assert(slot.pool_w > 0 ? slot.pool_temperature_c > before : slot.pool_temperature_c <= before, slot.start);
+    before = slot.pool_temperature_c;
+  }
+  assertAlmostEquals(before, priority.store_diagnostics!.find((store) => store.key === "pool")!.end_state!, .0005);
+});
+
 Deno.test("workbench uses the frozen planning time when capture preceded issuance", () => {
   const { input, previous } = referencedSnapshot(true);
   const now = new Date(input.captured_at);

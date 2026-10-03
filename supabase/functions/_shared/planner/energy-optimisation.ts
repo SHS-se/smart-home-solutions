@@ -665,6 +665,17 @@ export interface PlannedSlot {
   shadow_import_sek_per_kwh: number;
   shadow_export_sek_per_kwh: number;
   pool_w: number;
+  /**
+   * The pool water at the end of this quarter, °C, on the trajectory the
+   * selected dispatch was scored on.
+   *
+   * Published because nothing else in a plan says it. `decision` records
+   * accepted bids, and a plan that keeps a previous decision — continuity, a
+   * fixed plan — has none, so a reader rebuilding the temperature from them
+   * drew three nights of heating as one straight line. Present wherever the
+   * pool is dispatched; absent on plans stored before it was published.
+   */
+  pool_temperature_c?: number;
   boiler_expected_w: number;
   boiler_permitted: boolean;
   ev_w: number;
@@ -897,6 +908,8 @@ const PEAK_WEIGHT_SEK_PER_KW2 = 0.004;
 
 interface Schedule {
   pool: number[];
+  /** The dispatched pool's temperature at the end of each quarter, °C; null where no pool is dispatched. */
+  poolTemperatureC: (number | null)[];
   boiler: number[];
   boilerPermitted: boolean[];
   ev: number[];
@@ -1972,6 +1985,7 @@ function candidateStarts(
 function emptySchedule(length: number): Schedule {
   return {
     pool: new Array(length).fill(0),
+    poolTemperatureC: new Array(length).fill(null),
     boiler: new Array(length).fill(0),
     boilerPermitted: new Array(length).fill(true),
     ev: new Array(length).fill(0),
@@ -3349,6 +3363,12 @@ function scheduleServices(
           : "outbid",
       });
       schedule.dispatched.add(store.key);
+      if (store.key === "pool" && trajectory) {
+        // `trajectory[index]` is the state a quarter starts from.
+        for (let index = 0; index < slots.length; index += 1) {
+          schedule.poolTemperatureC[index] = trajectory[index + 1] ?? null;
+        }
+      }
       const powers = dispatched.power_w[store.key];
       const returns = dispatched.discharge_w[store.key];
       for (let index = 0; index < slots.length; index += 1) {
@@ -4524,6 +4544,9 @@ function simulate(
       shadow_import_sek_per_kwh: round(slot.shadow_import_sek_per_kwh, 5),
       shadow_export_sek_per_kwh: round(slot.shadow_export_sek_per_kwh, 5),
       pool_w: poolW,
+      ...(schedule.poolTemperatureC[slot.index] === null ? {} : {
+        pool_temperature_c: round(schedule.poolTemperatureC[slot.index]!, 3),
+      }),
       boiler_expected_w: round(boilerW, 2),
       boiler_permitted: schedule.boilerPermitted[slot.index],
       ev_w: evW,

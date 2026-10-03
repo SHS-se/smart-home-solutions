@@ -5,6 +5,13 @@ const idle: PoolPlanSlot = { decision: { store_allocations: [] } };
 const heat = (before: number, after: number): PoolPlanSlot =>
   ({ decision: { store_allocations: [{ store_key: 'battery', state_before: 1, state_after: 2 }, { store_key: 'pool', state_before: before, state_after: after }] } });
 
+Deno.test('a plan that publishes its pool temperature is drawn as published, whatever its allocations say', () => {
+  // A plan that kept a previous decision heats without recording a bid.
+  const kept = [29.2, 29.1, 29.3, 29.5, 29.4].map(pool_temperature_c => ({ ...idle, pool_temperature_c }));
+  assertEquals(plannedPoolTemperature(kept, 29.3, 29.4), [29.2, 29.1, 29.3, 29.5, 29.4]);
+  assertEquals(plannedPoolTemperature([{ ...heat(20, 21), pool_temperature_c: 29.2 }], 29.3, 25), [29.2]);
+});
+
 Deno.test('a planned pool cools between runs, warms through them and ends where the plan says', () => {
   // Two idle quarters from 30, a run from 29.8 to 30.0, then two idle quarters to 29.6.
   const temps = plannedPoolTemperature([idle, idle, heat(29.8, 29.9), heat(29.9, 30.0), idle, idle], 30, 29.6);
