@@ -19,6 +19,11 @@ import { LANES } from '../src/lib/planner-bench/lanes';
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
 const TEST = { sha: 'd'.repeat(40), short_sha: 'ddddddd', committed_at: '2026-09-29T08:26:00Z', subject: 'Test planner' };
+/** Two versions before the current one whose plans, and so whose scores, are the current planner's. */
+const REPEATS = [
+  { sha: 'a'.repeat(40), short_sha: 'aaaaaaa', committed_at: '2026-09-25T09:00:00Z', subject: 'Refactor, no change' },
+  { sha: 'b'.repeat(40), short_sha: 'bbbbbbb', committed_at: '2026-09-26T09:00:00Z', subject: 'Comments, no change' },
+];
 const CASES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Cheap night', captured_at: '2026-09-19T13:06:00Z' },
   { id: '22222222-2222-4222-8222-222222222222', name: 'Dear week', captured_at: '2026-09-24T07:25:00Z' },
@@ -122,7 +127,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, missingAudit = false): Promise<Captured> {
+async function mockBackend(context: BrowserContext, missingAudit = false, repeats = false): Promise<Captured> {
   const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
   const nowIso = new Date().toISOString();
   const user = {
@@ -181,6 +186,7 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
         case 'staff_users': return [{ role: 'admin' }];
         case 'bench_rules': return [{ criteria: {} }];
         case 'bench_runs': return [
+          ...(repeats ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, status: 'done', error: null, finished_at: nowIso })),
           { ...CURRENT, branch: 'dev', is_current: true, status: 'done', error: null, finished_at: nowIso },
           { ...TEST, branch: null, is_current: false, status: 'done', error: null, finished_at: nowIso },
         ];
@@ -188,7 +194,10 @@ async function mockBackend(context: BrowserContext, missingAudit = false): Promi
           ...c, source_filename: null, notes: null, archived: false, created_at: nowIso,
           dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
         }));
-        case 'bench_result_summaries': return Object.entries(PLANS).map(([key, plan]) => {
+        case 'bench_result_summaries': return [
+          ...Object.entries(PLANS),
+          ...(repeats ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, PLANS[`${CURRENT.sha}/${c.id}`]] as const)),
+        ].map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
           return LANES.map((lane, k) => ({
@@ -231,6 +240,16 @@ test.describe('planner bench', () => {
     await expect(card.getByRole('row', { name: /^2 norm 1 1\.00 -1\.00 0\.40$/ })).toBeVisible();
     // A day the market has not published yet waits, and is left out of the means.
     await expect(card.getByRole('row', { name: /2026-10-05 2026-10-03 (wind|vind) 1\.50 – (waiting|väntar)/ })).toBeVisible();
+  });
+
+  test('lists only the newest of consecutive versions with the same score', async ({ context, page }) => {
+    await mockBackend(context, false, true);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await page.locator('#bench-test-run').click();
+    // The two older versions scored what the current planner does, so the changes in them moved nothing.
+    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /]);
+    await page.getByRole('listbox').screenshot({ path: test.info().outputPath('planner-options.png') });
   });
 
   test('compares the test planner with the current one', async ({ context, page }) => {

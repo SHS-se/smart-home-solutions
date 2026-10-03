@@ -25,7 +25,7 @@ import { BASE_LANE, LANES, diagnose, plannerKnewPrice, type Diagnosis, type Lane
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import { benchDays, periodRange, type BenchPeriod } from '@/lib/planner-bench/days';
 import {
-  isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors,
+  distinctScoreRuns, isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors,
 } from '@/lib/planner-bench/score';
 import type {
   BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, CriteriaOverrides,
@@ -131,6 +131,14 @@ const Bench: React.FC = () => {
     const points = [...scoresFor(run.sha).values()].filter((s): s is CaseSummary => s !== null).map(s => s.points);
     return [run.sha, runScore(points)] as const;
   })), [allRuns, scoresFor]);
+
+  /** The planners offered for testing: a version that scored the same as the one after it is left out. */
+  const listedRuns = useMemo(() => distinctScoreRuns(
+    allRuns,
+    // A run still going, or one that failed, has only part of its score.
+    run => run.status === 'done' ? runScores.get(run.sha) ?? null : null,
+    run => run.is_current || run.sha === testRun?.sha,
+  ), [allRuns, runScores, testRun?.sha]);
 
   /** Results scored by an older scorer, or before the rules last changed. */
   const staleCount = useMemo(() => {
@@ -400,7 +408,7 @@ const Bench: React.FC = () => {
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
                       <SelectContent className="max-h-80">
-                        {allRuns.map(run => <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
+                        {listedRuns.map(run => <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     {testRun && !testRun.is_current && (

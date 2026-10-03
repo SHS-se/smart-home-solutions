@@ -369,3 +369,16 @@ export function runScore(casePoints: readonly number[]): number | null {
   if (!casePoints.length) return null;
   return casePoints.reduce((a, b) => a + b, 0);
 }
+
+/**
+ * The versions worth listing, oldest first. Where consecutive versions scored the same, the changes between them
+ * did not move the planner, so only the newest of them stays. A version without a score is never dropped and never
+ * counts as the same as its neighbour; neither is one `keep` names.
+ */
+export function distinctScoreRuns<T>(runs: readonly T[], scoreOf: (run: T) => number | null, keep: (run: T) => boolean = () => false): T[] {
+  return runs.filter((run, i) => {
+    if (i === runs.length - 1 || keep(run)) return true;
+    const score = scoreOf(run);
+    return score === null || score !== scoreOf(runs[i + 1]);
+  });
+}

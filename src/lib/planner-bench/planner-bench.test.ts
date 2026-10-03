@@ -5,7 +5,7 @@ import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, economicPoints, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -231,6 +231,18 @@ Deno.test('runScore is exactly the sum of visible integer case points', () => {
   assertEquals(runScore([0, 0]), 0);
   assertEquals(runScore([-10, -10]), -20);
   assertEquals(runScore([0, -2, -5]), -7);
+});
+
+Deno.test('distinctScoreRuns keeps the newest of consecutive versions with the same score', () => {
+  const runs = [['a', 383], ['b', 411], ['c', 411], ['d', 407], ['e', 407], ['f', 407], ['g', 411], ['h', 505]] as const;
+  const listed = (keep?: (run: readonly [string, number | null]) => boolean, from: readonly (readonly [string, number | null])[] = runs) =>
+    distinctScoreRuns(from, run => run[1], keep).map(run => run[0]).join('');
+  // The later 411 is not next to the earlier ones, so it is a version of its own.
+  assertEquals(listed(), 'acfgh');
+  assertEquals(listed(run => run[0] === 'd'), 'acdfgh');
+  // An unscored version stays and separates the equal scores either side of it.
+  assertEquals(listed(undefined, [['a', 407], ['b', null], ['c', 407], ['d', null], ['e', null]]), 'abcde');
+  assertEquals(listed(undefined, []), '');
 });
 
 Deno.test('suiteStats sums totals and weights averages by energy', () => {
