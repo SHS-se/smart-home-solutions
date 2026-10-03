@@ -9,6 +9,11 @@
 // No forecast of the time was kept, so what was measured is what a planner is
 // told: a perfect forecast of sun, load and temperature. Prices are hidden from
 // the first quarter the market had not published at the start, as in any case.
+//
+// Nothing finer than the hour was measured. The quarters within an hour are
+// drawn as a curve that keeps the hour's mean (`spread`): such a case tests how
+// a planner behaves under these conditions, and does not claim to be a record
+// of each quarter.
 
 import { homeDayBounds, homeHourMinute } from '@/lib/energy-shift/home-time';
 import {
@@ -57,10 +62,37 @@ function hours(value: unknown, name: string): number[] {
   return value;
 }
 
-/** An hour's value held through its four quarters. */
-const quarters = (hourly: number[]): Series => hourly.flatMap(value => [value, value, value, value]);
-/** Energy over an hour as the average power through it. */
-const watts = (kwh: number): number => Math.round(Math.max(0, kwh) * 1_000);
+/**
+ * Hourly means as four quarters each, on a curve instead of a staircase: within
+ * an hour the value runs from where it meets the hour before to where it meets
+ * the hour after, bowed so that its mean over the hour is still the hour's.
+ * Two hours meet half way between their means. A quantity that cannot be
+ * negative meets at no more than twice either mean, which keeps the whole curve
+ * at or above zero and an hour of nothing at nothing.
+ */
+export function spread(hourly: number[], nonNegative: boolean): number[] {
+  const meet = (a: number, b: number) => nonNegative ? Math.min((a + b) / 2, 2 * a, 2 * b) : (a + b) / 2;
+  return hourly.flatMap((mean, i) => {
+    const left = i > 0 ? meet(hourly[i - 1], mean) : mean;
+    const right = i < hourly.length - 1 ? meet(mean, hourly[i + 1]) : mean;
+    // The parabola from `left` to `right` whose mean is the hour's; a quarter is its mean over that quarter.
+    const bow = 6 * (mean - (left + right) / 2);
+    const area = (t: number) => left * t + (right - left) * t * t / 2 + bow * (t * t / 2 - t * t * t / 3);
+    return [0, 1, 2, 3].map(quarter => 4 * (area((quarter + 1) / 4) - area(quarter / 4)));
+  });
+}
+
+/** Energy per hour as power per quarter in whole watts, each hour's quarters adding up to exactly its energy. */
+function wattQuarters(hourlyKwh: number[]): Series {
+  const hourlyW = hourlyKwh.map(kwh => Math.round(Math.max(0, kwh) * 1_000));
+  const smooth = spread(hourlyW, true);
+  return hourlyW.flatMap((mean, hour) => {
+    const quarters = smooth.slice(hour * 4, hour * 4 + 4).map(Math.round);
+    // What rounding lost or gained goes to the hour's largest quarter.
+    quarters[quarters.indexOf(Math.max(...quarters))] += 4 * mean - quarters.reduce((sum, w) => sum + w, 0);
+    return quarters;
+  });
+}
 
 /**
  * The case a window of hourly history describes. `prices` are the real prices
@@ -98,7 +130,7 @@ export function caseFromHourlyHistory(
   const knownUntil = homeDayBounds(start, tomorrowKnown ? 1 : 0, history.timezone).endMs;
   const known = (series: (number | null)[]) => series.map((price, i) => start + i * QUARTER_MS < knownUntil ? price : null);
 
-  const baseLoad = quarters(base.map(watts)), solarW = quarters(solar.map(watts));
+  const baseLoad = wattQuarters(base), solarW = wattQuarters(solar);
   const data: BenchScenarioData = {
     format: CASE_FORMAT,
     version: CASE_VERSION,
@@ -116,7 +148,7 @@ export function caseFromHourlyHistory(
   const recorded: BenchRecorded = {
     prices: { import_sek_per_kwh: buy as number[], export_sek_per_kwh: sell as number[] },
     actual: { base_load_w: baseLoad, solar_w: solarW },
-    outdoor_temperature_c: quarters(temperature),
+    outdoor_temperature_c: spread(temperature, false).map(c => Math.round(c * 100) / 100),
     solar_irradiance_w_per_m2: new Array(QUARTERS).fill(null),
     ...(wind ? { wind } : {}),
     history: {

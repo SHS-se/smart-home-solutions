@@ -237,12 +237,16 @@ status.
 4. **Hourly history, for windows before the quarter tables.** Home Assistant
    keeps hourly statistics for good. `bench/seed-history.ts` turns 72 hours of
    them (load, solar, the pool's and the car's meters, outdoor temperature,
-   start state) into a complete case (`convert-history.ts`). Each hour's value
-   holds for its four quarters; measured solar and load are the perfect
-   forecast; prices are hidden from the end of the last day published at the
-   start. The window and the 60 days before it are priced from the day-ahead
-   spot price with the home's supplier and grid terms of the day, which gives
-   the prices recorded in August and September 2026 back to 0.00001 kr/kWh.
+   start state) into a complete case (`convert-history.ts`). Nothing finer
+   than the hour was measured, so each hour is spread over its four quarters
+   on a curve that meets the neighbouring hours and keeps the hour's mean
+   exactly: such a case tests how a planner behaves under those conditions,
+   not what the house did in each quarter. Measured solar and load are the
+   perfect forecast; prices are real quarter prices, hidden from the end of
+   the last day published at the start. The window and the 60 days before it
+   are priced from the day-ahead spot price with the home's supplier and grid
+   terms of the day, which gives the prices recorded in August and September
+   2026 back to 0.00001 kr/kWh.
    Such a case has no irradiance, no month-to-date grid import and no days of
    forecast against actual. The two summer cases were made this way, because
    no day since 12 August gave 60 kWh of sun: C-0616 (24 kWh today, 78
