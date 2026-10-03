@@ -248,9 +248,11 @@ status.
    terms of the day, which gives the prices recorded in August and September
    2026 back to 0.00001 kr/kWh.
    Such a case has no irradiance, no month-to-date grid import and no days of
-   forecast against actual. The two summer cases were made this way, because
-   no day since 12 August gave 60 kWh of sun: C-0616 (24 kWh today, 78
-   tomorrow) and C-0717 (61 kWh today, 20 and 18 on the days after).
+   forecast against actual. The summer cases were made this way, because no
+   day since 12 August gave 60 kWh of sun: C-0616 (24 kWh today, 78
+   tomorrow), C-0717 (61 kWh today, 20 and 18 on the days after, at prices
+   that fall with the sun) and C-0627 (70 kWh today, 31 tomorrow, at prices
+   that rise).
 
 ## Not built yet
 
