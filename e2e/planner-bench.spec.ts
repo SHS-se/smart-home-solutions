@@ -339,6 +339,12 @@ test.describe('planner bench', () => {
     // Flexible load in a very cheap quarter earns two points, in a cheap one a single point.
     await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · \+\d+/);
     await expect(row('cheapest_buy')).toContainText('+2');
+    // The same load in a very dear quarter loses two; the explanation names flexible loads, not the devices.
+    await expect(row('dearest_load')).toContainText(/\d+ (q|kv) · −\d+/);
+    await expect(row('dearest_load')).toContainText('−2');
+    await row('dearest_load').getByRole('button').first().click();
+    await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W .* dyraste 10 %/);
+    await row('dearest_load').getByRole('button').first().click();
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_low')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();

@@ -15,7 +15,9 @@
 //     heat held for neither loses one as overheating. A quarter in
 //     which the pool, battery charging and car together draw FLEXIBLE_W or
 //     more gains a point when its real price is among the cheapest quarter of
-//     the plan's, or two when among the cheapest tenth.
+//     the plan's, or two when among the cheapest tenth. The same load loses a
+//     point when the price is among the dearest quarter of the plan's, or two
+//     when among the dearest tenth.
 //
 //   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
@@ -40,7 +42,7 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 6;
+export const SCORER_VERSION = 7;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -57,6 +59,8 @@ export interface QuarterView {
   i: number;
   /** Share of the plan's quarters priced strictly below this one, 0-1. */
   priceRank: number;
+  /** Share of the plan's quarters priced strictly above this one, 0-1. */
+  dearRank: number;
   /** Pool + battery charging + car, W. */
   flexibleW: number;
   /** The plan's next day against this one; null in the last day, which has none to compare with. */
@@ -101,6 +105,7 @@ const carFrom = (s: BenchSeries, t: number) =>
 
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
+const dearBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.dearRank < t;
 
 export const DEFAULT_RULES: QuarterRule[] = [
   {
@@ -136,7 +141,18 @@ export const DEFAULT_RULES: QuarterRule[] = [
     key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 2,
     fires: cheapBuy, eligibleFrom: () => 0,
   },
+  {
+    key: 'dear_load', about: 'price', label: 'Flexible load in a dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.25, points: -1,
+    unless: 'dearest_load', fires: dearBuy, eligibleFrom: () => 0,
+  },
+  {
+    key: 'dearest_load', about: 'price', label: 'Flexible load in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
+    fires: dearBuy, eligibleFrom: () => 0,
+  },
 ];
+
+/** The price rules that count from the dear end of the plan's prices. */
+export const DEAR_RULE_KEYS: readonly string[] = ['dear_load', 'dearest_load'];
 
 /**
  * Rules of earlier scorers that judged money one quarter at a time. The
@@ -255,9 +271,10 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   };
 
   const sorted = [...s.importPrice].sort((a, b) => a - b);
-  const below = (price: number) => {
+  /** How many of the plan's prices are below this one; with `orEqual`, at or below it. */
+  const below = (price: number, orEqual = false) => {
     let lo = 0, hi = sorted.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < price) lo = mid + 1; else hi = mid; }
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < price || (orEqual && sorted[mid] === price)) lo = mid + 1; else hi = mid; }
     return lo;
   };
 
@@ -279,6 +296,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   for (let i = 0; i < n; i++) {
     const q: QuarterView = {
       s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
+      dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));

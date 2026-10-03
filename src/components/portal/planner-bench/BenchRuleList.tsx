@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -203,13 +203,17 @@ export default function BenchRuleList({
   const priceDetail = (rule: ResolvedRule) => {
     const share = Math.round(rule.threshold * 100);
     const other = rule.unless && resolveRules(draft).find(r => r.key === rule.unless && r.enabled);
+    const dear = DEAR_RULE_KEYS.includes(rule.key);
     return <>
       <p>
-        {t(`Pool, batteriladdning och bil drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
-          `Pool, battery charging and car together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
+        {dear
+          ? t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens dyraste ${share} %.`,
+            `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the dearest ${share} % of the plan's.`)
+          : t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
+            `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
         {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
       </p>
-      {settings(rule, t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
+      {settings(rule, dear ? t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)') : t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
     </>;
   };
 

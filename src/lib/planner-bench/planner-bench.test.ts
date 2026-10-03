@@ -162,7 +162,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
@@ -180,6 +180,27 @@ Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one t
   assertEquals([score.sum, score.points], [69, 69]);
   // Without the very cheap rule, the cheap one covers those quarters too.
   assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
+});
+
+Deno.test('flexible load in a dear quarter loses a point, in a very dear one two, and never both', () => {
+  const series = comfortSeries(() => 30, () => 300);
+  // Prices rise through the plan; the car charges once at a middling price, then through the last 40 quarters.
+  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
+  series.carW = series.carW.map((_, i) => i === 150 || i >= 248 ? 3000 : 0);
+  const score = scoreQuarters(series);
+  // The dearest tenth is 28.8 quarters: 29 at −2, the 11 before them at −1, the middling one nothing.
+  assertEquals([score.counts.dearest_load, score.counts.dear_load, score.counts.cheap_buy], [29, 11, undefined]);
+  assertEquals([score.quarters[287].score, score.quarters[250].score, score.quarters[150].score], [-2, -1, 0]);
+  assertEquals([score.sum, score.points], [-69, -69]);
+  // Without the very dear rule, the dear one covers those quarters too.
+  assertEquals(scoreQuarters(series, { dearest_load: { enabled: false } }).sum, -40);
+  // Below the flexible threshold nothing is counted, however dear the quarter.
+  series.carW = series.carW.map(w => w ? 400 : 0);
+  assertEquals(scoreQuarters(series).sum, 0);
+  // Where every quarter costs the same, each is as cheap as it is dear, and the two cancel.
+  series.importPrice = series.importPrice.map(() => 1);
+  series.carW = series.carW.map(() => 3000);
+  assertEquals([scoreQuarters(series).sum, scoreQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
