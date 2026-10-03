@@ -15,9 +15,10 @@
 //     heat held for neither loses one as overheating. A quarter in
 //     which the pool, battery charging and car together draw FLEXIBLE_W or
 //     more gains a point when its real price is among the cheapest quarter of
-//     the plan's, or two when among the cheapest tenth. The same load loses a
-//     point when the price is among the dearest quarter of the plan's, or two
-//     when among the dearest tenth.
+//     the plan's, or two when among the cheapest tenth. Where FLEXIBLE_W or
+//     more of that load is bought from the grid, the quarter loses a point
+//     when the price is among the dearest quarter of the plan's, or two when
+//     among the dearest tenth. Load the sun or the battery carries loses nothing.
 //
 //   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
@@ -42,7 +43,7 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 7;
+export const SCORER_VERSION = 8;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -63,6 +64,8 @@ export interface QuarterView {
   dearRank: number;
   /** Pool + battery charging + car, W. */
   flexibleW: number;
+  /** The part of it bought from the grid: the flexible load, up to what the quarter imported, W. */
+  flexibleGridW: number;
   /** The plan's next day against this one; null in the last day, which has none to compare with. */
   ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
@@ -105,7 +108,7 @@ const carFrom = (s: BenchSeries, t: number) =>
 
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
-const dearBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.dearRank < t;
+const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && q.dearRank < t;
 
 export const DEFAULT_RULES: QuarterRule[] = [
   {
@@ -142,11 +145,11 @@ export const DEFAULT_RULES: QuarterRule[] = [
     fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dear_load', about: 'price', label: 'Flexible load in a dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.25, points: -1,
+    key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.25, points: -1,
     unless: 'dearest_load', fires: dearBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dearest_load', about: 'price', label: 'Flexible load in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
+    key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
     fires: dearBuy, eligibleFrom: () => 0,
   },
 ];
@@ -294,10 +297,12 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
+    const flexibleW = s.poolW[i] + s.batteryChargeW[i] + s.carW[i];
     const q: QuarterView = {
       s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
-      flexibleW: s.poolW[i] + s.batteryChargeW[i] + s.carW[i],
+      // Flexible load is the load there was a choice about, so what the quarter imported is counted as its first.
+      flexibleW, flexibleGridW: Math.min(flexibleW, s.gridImportW[i]),
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
     let score = 0;

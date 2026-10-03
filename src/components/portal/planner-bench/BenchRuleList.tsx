@@ -207,8 +207,8 @@ export default function BenchRuleList({
     return <>
       <p>
         {dear
-          ? t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens dyraste ${share} %.`,
-            `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the dearest ${share} % of the plan's.`)
+          ? t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W från nätet i en kvart vars pris hör till planens dyraste ${share} %. Det som solen eller batteriet står för räknas inte.`,
+            `Flexible loads together draw at least ${FLEXIBLE_W} W from the grid in a quarter whose price is among the dearest ${share} % of the plan's. What the sun or the battery supplies is not counted.`)
           : t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
             `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
         {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}

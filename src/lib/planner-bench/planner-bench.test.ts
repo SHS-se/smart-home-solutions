@@ -182,11 +182,12 @@ Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one t
   assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
 });
 
-Deno.test('flexible load in a dear quarter loses a point, in a very dear one two, and never both', () => {
+Deno.test('flexible load bought in a dear quarter loses a point, in a very dear one two, and never both', () => {
   const series = comfortSeries(() => 30, () => 300);
   // Prices rise through the plan; the car charges once at a middling price, then through the last 40 quarters.
   series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
   series.carW = series.carW.map((_, i) => i === 150 || i >= 248 ? 3000 : 0);
+  series.gridImportW = series.carW.map(w => w + 400);
   const score = scoreQuarters(series);
   // The dearest tenth is 28.8 quarters: 29 at −2, the 11 before them at −1, the middling one nothing.
   assertEquals([score.counts.dearest_load, score.counts.dear_load, score.counts.cheap_buy], [29, 11, undefined]);
@@ -194,8 +195,14 @@ Deno.test('flexible load in a dear quarter loses a point, in a very dear one two
   assertEquals([score.sum, score.points], [-69, -69]);
   // Without the very dear rule, the dear one covers those quarters too.
   assertEquals(scoreQuarters(series, { dearest_load: { enabled: false } }).sum, -40);
-  // Below the flexible threshold nothing is counted, however dear the quarter.
+  // Only what is bought counts: with the sun or the battery carrying all but 499 W of it, the charging loses nothing.
+  series.gridImportW = series.carW.map(w => w ? 499 : 0);
+  assertEquals(scoreQuarters(series).sum, 0);
+  series.gridImportW = series.carW.map(w => w ? 500 : 0);
+  assertEquals(scoreQuarters(series).sum, -69);
+  // Below the flexible threshold nothing is counted, however dear the quarter and however much the house imports.
   series.carW = series.carW.map(w => w ? 400 : 0);
+  series.gridImportW = series.carW.map(() => 5000);
   assertEquals(scoreQuarters(series).sum, 0);
   // Where every quarter costs the same, each is as cheap as it is dear, and the two cancel.
   series.importPrice = series.importPrice.map(() => 1);

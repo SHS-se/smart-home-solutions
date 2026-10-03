@@ -343,7 +343,7 @@ test.describe('planner bench', () => {
     await expect(row('dearest_load')).toContainText(/\d+ (q|kv) · −\d+/);
     await expect(row('dearest_load')).toContainText('−2');
     await row('dearest_load').getByRole('button').first().click();
-    await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W .* dyraste 10 %/);
+    await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W from the grid .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W från nätet .* dyraste 10 %/);
     await row('dearest_load').getByRole('button').first().click();
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_low')).toHaveCount(0);

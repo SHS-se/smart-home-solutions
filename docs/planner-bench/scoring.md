@@ -7,12 +7,12 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 ## Reading the result
 
 - **Comfort:** how long the pool and car miss their target levels after those levels could have been reached.
-- **Cheap and dear quarters:** a reward for running flexible load (pool, battery charging, car) where the price was among the plan's cheapest, and the matching loss where it was among the plan's dearest.
+- **Cheap and dear quarters:** a reward for running flexible load (pool, battery charging, car) where the price was among the plan's cheapest, and the matching loss for buying it from the grid where the price was among the plan's dearest.
 - **Energy timing:** cost improvements demonstrated by a bounded search, shown in SEK and attributed to the decisions they change.
 - **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
 
-Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack. The same load loses 1 point when the price is among the dearest 25 %, or 2 points when among the dearest 10 %, likewise never both. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
+Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. A demonstrated economic miss loses one point for each distinct quarter changed by accepted transfers under its primary rule, provided those prices were published when the planner ran. Transfers that change the same quarter under the same rule do not count twice; secondary explanatory labels add no points. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters, or 2 points when among the cheapest 10 %; the two never stack. A quarter in which at least 500 W of flexible load is bought from the grid loses 1 point when the price is among the dearest 25 %, or 2 points when among the dearest 10 %, likewise never both. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
 
 Historical scorer versions are not comparable. Rescore all successful results, including all six price/valuation lanes, whenever the scorer, referee or rules change.
 
@@ -26,10 +26,10 @@ The rules are one set for the whole bench (`bench_rules`, a single row of change
 |---|---|---|
 | Flexible load in a cheap quarter | Pool + battery charging + car ≥ 500 W, price in the cheapest 25 % of the plan's quarters, and not very cheap | +1 per quarter |
 | Flexible load in a very cheap quarter | The same load, price in the cheapest 10 % | +2 per quarter |
-| Flexible load in a dear quarter | The same load, price in the dearest 25 % of the plan's quarters, and not very dear | −1 per quarter |
-| Flexible load in a very dear quarter | The same load, price in the dearest 10 % | −2 per quarter |
+| Flexible load bought in a dear quarter | Flexible load drawn from the grid ≥ 500 W, price in the dearest 25 % of the plan's quarters, and not very dear | −1 per quarter |
+| Flexible load bought in a very dear quarter | The same grid draw, price in the dearest 10 % | −2 per quarter |
 
-These judge where flexible load ran, not that less could have been spent: a plan that consumes more in cheap quarters gains points, and one that runs flexible load in a dear quarter loses them whether the energy came from the grid or the sun. A dear-quarter loss needs no proved alternative, so it can fall on the same quarter as an energy-timing finding. Quarters at the same price share a rank, so in a plan with one price throughout every quarter is both very cheap and very dear, and the two cancel.
+These judge where flexible load ran, not that less could have been spent: a plan that consumes more in cheap quarters gains points, whatever supplied it. The dear-quarter loss counts only what is bought: the flexible load, up to what the quarter imported from the grid. Flexible load is the load there was a choice about, so the quarter's import is counted as its first, and load the sun or the battery carries loses nothing. A dear-quarter loss needs no proved alternative, so it can fall on the same quarter as an energy-timing finding. Quarters at the same price share a rank, so in a plan with one price throughout every quarter is both very cheap and very dear, and the two cancel.
 
 ### Comfort and physical limits
 
