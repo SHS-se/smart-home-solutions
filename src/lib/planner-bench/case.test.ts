@@ -1,7 +1,7 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { loadCase, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
 import { caseFromReplay, ReplayFormatError } from './convert-replay.ts';
-import { HOUSEHOLD, TARGETS, poolHeaterW } from './household.ts';
+import { HOUSEHOLD, TARGETS, poolHeaterW, poolIdleCPerHour, stepPool } from './household.ts';
 import { referee, type Decisions } from './referee.ts';
 import type { PlanRecord } from './types.ts';
 import { evaluate } from './evaluate.ts';
@@ -115,6 +115,19 @@ Deno.test('the referee carries the stores with the household\'s physics and clip
   for (const i of [0, 3, 100, 287]) {
     assertAlmostEquals(s.loadW[i] + s.batteryChargeW[i] - s.batteryDischargeW[i] - s.solarW[i], s.gridImportW[i] - s.gridExportW[i], 0.2);
   }
+});
+
+Deno.test('the pool loses its heat to its own surroundings, whatever the weather; the heat pump works in the outdoor air', () => {
+  const pool = HOUSEHOLD.pool;
+  // Unheated at 30 °C it cools as fast on a frosty day as in a heat wave: about 2.1 kW, a third of a degree in ten hours.
+  assertEquals(stepPool(pool, 30, 0, 0, 1), stepPool(pool, 30, 32, 0, 1));
+  assertAlmostEquals(30 - stepPool(pool, 30, 20, 0, 1), 0.0335, 0.0005);
+  assertAlmostEquals(poolIdleCPerHour(pool, 30), stepPool(pool, 30, 20, 0, 1) - 30, 1e-12);
+  // The warmer the water, the faster; at its surroundings' temperature it holds.
+  assert(stepPool(pool, 32, 20, 0, 1) - 32 < stepPool(pool, 30, 20, 0, 1) - 30);
+  assertEquals(stepPool(pool, pool.ambient_c, 20, 0, 1), pool.ambient_c);
+  // A heated hour gains more in warm air than in cold: that is the heat pump, not the loss.
+  assert(stepPool(pool, 30, 28, 3078, 1) > stepPool(pool, 30, 8, 3078, 1) + 0.05);
 });
 
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {

@@ -133,9 +133,21 @@ the planner was told.
 
 Devices, in `HOUSEHOLD`: battery 18.08 kWh (8.8 kW in, 9.6 kW out, 95 % each
 way, 5–100 %); car 75.6 kWh, 0.16 kWh/km, 3 × 16 A, 92 %; pool 55 m³, 764 W
-pump + 2314 W heater, 0.13 kW/K loss, heat pump COP 4.5 at 20 °C air and
-27 °C water; site limits 13.2 kW each way, SE3. Only the heater heats the
-pool: the pump circulates and must run with it.
+pump + 2314 W heater, heat pump COP 4.5 at 20 °C air and 27 °C water; site
+limits 13.2 kW each way, SE3. Only the heater heats the pool: the pump
+circulates and must run with it.
+
+The pool loses 0.13 kW for every degree its water is above 13.5 °C, whatever
+the weather: 2.1 kW at 30 °C, a third of a degree in ten hours. The home's own
+pool, unheated above 29 °C, lost 2 to 3 kW on days of 13 °C and of 25 °C
+outdoors alike (June, July and September 2026), so its loss is to its room and
+the ground and does not follow the outdoor air. Losing to the outdoor air
+instead, as the bench did until October 2026, was right in September and gave a
+pool that hardly cooled in the summer cases. The outdoor air still sets the
+heat pump's COP. Planners that read a measured pool response are given this
+cooling as one (`bench/adapter.ts`); older ones plan on the coefficient and the
+outdoor temperature. Not modelled: the home's pool nearly stops cooling below
+about 29 °C for half a day at a time.
 
 What the owner wants, in `TARGETS`: **pool 30 °C, car 300 km.** One number per
 store; no bands, no urgency, no money.

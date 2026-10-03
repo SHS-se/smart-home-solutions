@@ -23,14 +23,14 @@
 // never change.
 
 import { QUARTERS, quarterStarts, type BenchCase } from "../src/lib/planner-bench/case.ts";
-import { TARGETS, type Household } from "../src/lib/planner-bench/household.ts";
+import { poolIdleCPerHour, TARGETS, type Household } from "../src/lib/planner-bench/household.ts";
 import type { Decisions } from "../src/lib/planner-bench/referee.ts";
 import type { PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
 import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 5;
+export const ADAPTER_VERSION = 6;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -54,6 +54,9 @@ export interface LoadedPlanner {
   /** `scale` multiplies what the planner's value curves are worth (lanes.ts); 1 is the planner as it runs live. */
   plan(c: BenchCase, household: Household, scale?: number): { record: PlanRecord; cpuMs: number };
 }
+
+/** Warmer than any pool is planned; the upper end of the cooling line planners are given. */
+const POOL_RESPONSE_TOP_C = 45;
 
 const POOL_PUMP = "sensor.pool_pump_energy";
 const POOL_HEATER = "sensor.pool_heater_energy";
@@ -138,7 +141,15 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
       volume_m3: h.pool.volume_m3, water_temperature_c: c.start_state.pool_water_c, heating_running: false,
       source_entity_ids: { water_temperature: "sensor.bench_pool_water_temperature" },
     },
-    pool_model: { loss_kw_per_k: h.pool.loss_kw_per_k, rated_cop: h.pool.rated_cop, cop_per_air_c: h.pool.cop_per_air_c, cutout_air_c: null },
+    pool_model: {
+      loss_kw_per_k: h.pool.loss_kw_per_k, rated_cop: h.pool.rated_cop, cop_per_air_c: h.pool.cop_per_air_c, cutout_air_c: null,
+      // The pool's cooling as a home measures it, by water temperature: it does not follow the
+      // outdoor air, which is all a loss coefficient alone can be read against. A straight line,
+      // so its two ends say all of it. Planners from before the measured response plan on the
+      // coefficient and the outdoor temperature, as they did live.
+      response: [h.pool.ambient_c, POOL_RESPONSE_TOP_C].map(waterC =>
+        ({ at_c: waterC, idle_c_per_h: poolIdleCPerHour(h.pool, waterC), heat_c_per_kwh: null })),
+    },
     ...(comfort
       ? {
         comfort: { pool: { target_c: targets.pool_c }, ev: { target_km: targets.ev_km } },

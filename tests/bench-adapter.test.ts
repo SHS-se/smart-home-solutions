@@ -69,3 +69,15 @@ Deno.test("the current planner derives its curves from the targets, and the scal
     assert(Math.abs(ratio - Math.SQRT2) < 0.01, `${store} scaled by ${ratio}`);
   }
 });
+
+Deno.test("the planner is told the pool cools whatever the weather, and keeps it warm through a heat wave", async () => {
+  const planner = await loadPlanner(root);
+  // A pool at its target in 28 °C air: by the outdoor air alone it would hardly cool at all.
+  const hot = loadCase({ ...dataset(), start_state: { ...dataset().start_state, pool_water_c: 30 } },
+    { ...recorded(), outdoor_temperature_c: quarters(() => 28) });
+  const { record } = planner.plan(hot, HOUSEHOLD);
+  const { stats, series } = evaluate(hot, record, {});
+  // Left alone it would lose 2 °C in three days; the plan buys the heat to stay within a degree of 30 °C.
+  assert(stats.pool_kwh > 15, `the pool was given ${stats.pool_kwh} kWh`);
+  assert(Math.min(...series.poolC as number[]) > 29, `pool fell to ${Math.min(...series.poolC as number[])}`);
+});

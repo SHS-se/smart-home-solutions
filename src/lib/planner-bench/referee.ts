@@ -34,7 +34,7 @@ import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series
 import { poolCop, stepPool, WATER_KWH_PER_M3_K, type Household } from './household';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 4;
+export const REFEREE_VERSION = 5;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;

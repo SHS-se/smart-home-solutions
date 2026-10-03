@@ -35,8 +35,14 @@ export interface Household {
   };
   pool: {
     volume_m3: number; pump_w: number; heater_w: number;
-    /** Heat lost per degree the water is above the air, kW/K. */
+    /** Heat lost per degree the water is above its surroundings, kW/K. */
     loss_kw_per_k: number;
+    /**
+     * What the pool loses its heat to, °C: the room and the ground around it,
+     * not the weather. The home's pool lost 2 to 3 kW at 30 °C on days of 13 °C
+     * and of 25 °C alike, so the loss does not follow the outdoor air.
+     */
+    ambient_c: number;
     /** Heat pump: COP at the rating point and how it moves with air and water temperature. */
     rated_cop: number; rated_air_c: number; rated_water_c: number; cop_per_air_c: number; cop_per_water_c: number;
     heater_minimum_run_s: number;
@@ -58,7 +64,7 @@ export const HOUSEHOLD: Household = {
     voltage_v: 230, phase_count: 3, min_current_a: 5, max_current_a: 16, current_step_a: 1,
   },
   pool: {
-    volume_m3: 55, pump_w: 764, heater_w: 2_314, loss_kw_per_k: 0.13,
+    volume_m3: 55, pump_w: 764, heater_w: 2_314, loss_kw_per_k: 0.13, ambient_c: 13.5,
     rated_cop: 4.5, rated_air_c: 20, rated_water_c: 27, cop_per_air_c: 0.045, cop_per_water_c: -0.02,
     heater_minimum_run_s: 4 * 3600,
   },
@@ -84,10 +90,17 @@ export function poolCop(pool: Household['pool'], airC: number, waterC: number): 
 export const poolHeaterW = (pool: Household['pool'], poolW: number): number =>
   Math.max(0, Math.min(poolW, pool.pump_w + pool.heater_w) - pool.pump_w);
 
-/** Pool water temperature after `hours` with `poolW` drawn by pump and heater together. */
+/** What an unheated pool's temperature changes by in an hour, °C: its loss to its surroundings. */
+export const poolIdleCPerHour = (pool: Household['pool'], waterC: number): number =>
+  -pool.loss_kw_per_k * (waterC - pool.ambient_c) / (pool.volume_m3 * WATER_KWH_PER_M3_K);
+
+/**
+ * Pool water temperature after `hours` with `poolW` drawn by pump and heater
+ * together. The outdoor air sets what the heat pump gives per watt; the loss is
+ * to the pool's own surroundings.
+ */
 export function stepPool(pool: Household['pool'], waterC: number, airC: number, poolW: number, hours: number): number {
   const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
   const heatKw = poolHeaterW(pool, poolW) * poolCop(pool, airC, waterC) / 1_000;
-  const lossKw = pool.loss_kw_per_k * (waterC - airC);
-  return waterC + (heatKw - lossKw) * hours / capacityKwhPerK;
+  return waterC + (heatKw / capacityKwhPerK + poolIdleCPerHour(pool, waterC)) * hours;
 }

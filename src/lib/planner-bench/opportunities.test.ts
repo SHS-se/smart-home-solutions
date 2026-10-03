@@ -185,7 +185,7 @@ Deno.test('a full battery in front of the sun: using it first is found as headro
   assert(first.before.homeSoc[39] === 100 && first.after.homeSoc[39] < 50);
 });
 
-// A cool autumn: the pool loses heat to 15 °C air, power is 2 kr and surplus solar earns 0.3 kr.
+// A cool autumn: the heat pump works in 15 °C air, power is 2 kr and surplus solar earns 0.3 kr.
 const autumn = { air: () => 15, buy: () => 2, sell: () => 0.3, published: 288 };
 
 Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus is found, above target if need be', () => {
@@ -196,7 +196,7 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   assert(preheat.to >= 40 && preheat.toEnd < 64 && preheat.from >= 100);
   assert(preheat.savingSek > 5, `${preheat.savingSek}`);
   // Warmer than the 30 °C target at the end of the sun, where the plan had let it cool.
-  assert(Math.max(...preheat.after.poolC) > 30.1 && preheat.before.poolC[63] < 29.6);
+  assert(Math.max(...preheat.after.poolC) > 30 && preheat.before.poolC[63] < 29.6);
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
   // A warm pool is marked and loses nothing; the price rules are set aside to show it.
   const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 60 ? 3078 : 0 })).series },
@@ -210,13 +210,13 @@ Deno.test('a dull day before a sunny one: waiting for the sun is found, as far a
   // Six hours of heat on the first evening; the sun on the second day could give all of it.
   const heatEarly = plan({ pool: i => within(i, 76, 100) ? 3078 : 0 });
   // Starting warm, the pool can coast to the sun within a degree of target.
-  const free = audited(world({ ...sunLater, start: { pool_water_c: 30.6 } }), heatEarly);
+  const free = audited(world({ ...sunLater, start: { pool_water_c: 30.8 } }), heatEarly);
   const wait = free.findings.find(f => f.rule === 'pool_wait_for_sun')!;
   assert(wait && wait.from >= 76 && wait.to >= 136 && wait.toEnd < 160 && wait.savingSek > 10, rulesFound(free).join());
   assert(free.rules.pool_wait_for_sun.kwh > 12, `${free.rules.pool_wait_for_sun.kwh}`);
   // Starting a degree cooler, most of that heat is needed before the sun: without it the pool would be
   // more than a degree short by the morning. Less can wait, and the pool stays in its band until the sun.
-  const held = audited(world({ ...sunLater, start: { pool_water_c: 29.6 } }), heatEarly);
+  const held = audited(world({ ...sunLater, start: { pool_water_c: 29.7 } }), heatEarly);
   assert(held.rules.pool_wait_for_sun.kwh < free.rules.pool_wait_for_sun.kwh - 4, `${held.rules.pool_wait_for_sun.kwh} vs ${free.rules.pool_wait_for_sun.kwh}`);
   for (const f of held.findings.filter(f => f.device === 'pool')) assert(Math.min(...f.after.poolC.slice(0, 160)) >= 29, `${f.id} leaves the band`);
 });
@@ -335,7 +335,9 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
 });
 
 Deno.test('a case scores each affected known-price quarter under its primary rule, hindsight beside it', () => {
-  const lost = evaluate(spilled(), record(plan()), {}, 'told/nominal');
+  // No plan here heats the pool, which cools all the while: its comfort is set aside to leave the battery's story.
+  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false } };
+  const lost = evaluate(spilled(), record(plan()), unheated, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));
   assertEquals([score.audit.findingCount, 'findings' in score.audit], [audit.findings.length, false]);
@@ -346,12 +348,12 @@ Deno.test('a case scores each affected known-price quarter under its primary rul
   assertEquals(score.economic_points, -sum(Object.values(audit.rules).map(r => r.knownQuarters.length)));
   assertEquals([score.points, economicPoints(audit)], [score.sum + score.economic_points, score.economic_points]);
   // The same miss, unknowable when planned: shown, not scored.
-  const unforeseen = evaluate(spilled(40), record(plan()), {}, 'told/nominal');
+  const unforeseen = evaluate(spilled(40), record(plan()), unheated, 'told/nominal');
   assert(unforeseen.series.audit!.hindsightSek > 15);
   assertEquals(unforeseen.score.economic_points, 0);
-  assert(evaluate(spilled(40), record(plan()), {}, 'oracle/nominal').score.economic_points < 0);
+  assert(evaluate(spilled(40), record(plan()), unheated, 'oracle/nominal').score.economic_points < 0);
   // A plan that takes the opportunity is left with next to nothing.
-  const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), {}, 'told/nominal');
+  const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), unheated, 'told/nominal');
   assertEquals(taken.outcome.violations, []);
   assert(taken.score.points > lost.score.points && taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.score.points} ${taken.series.audit!.knownSek}`);
 });
