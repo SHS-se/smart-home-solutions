@@ -75,6 +75,15 @@ on the bench is run for it. From the command line:
 deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-replay.json
 ```
 
+A window from before the home's quarter tables (12 August 2026) is made into a
+case from Home Assistant's hourly statistics, then added the same way
+([where test cases come from](test-cases.md#where-test-cases-come-from)):
+
+```bash
+deno run -A --sloppy-imports --config deno.json bench/seed-history.ts --market market.json --out cases NAME=path/to/history.json
+deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=cases/NAME.json
+```
+
 **Run commits by hand:** use the workflow's *Run workflow* button in GitHub
 Actions (`shas`: `all`, comma-separated SHAs, or `none` to only rescore), or
 locally:
