@@ -108,6 +108,16 @@ captured targets while rescoring existing decisions.
 CI can only run commits that are pushed. A local-only branch has to be run
 locally.
 
+## State-value experiments
+
+The [shared state-value design](state-values/design.md) and
+[replan reuse results](state-values/replan-report.md) investigate one Bellman
+engine for battery, EV and pool, with device-specific physics and shared energy
+coordination. The executable prototypes live in `bench/experiments/` and do not
+replace the live planner. Tests are part of `deno task test`. Reproduction
+commands and measured limitations are in the report; eight to ten rounds have
+not yet demonstrated sufficient search quality.
+
 ## One-time setup
 
 1. In GitHub, create a fine-grained personal access token for
