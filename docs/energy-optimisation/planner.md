@@ -217,3 +217,5 @@ optimiser or an SOC-recovery overlay. Report cost decomposition, coverage,
 projected margin before refill and sensitivity to external-demand assumptions.
 Scenarios need evidence and an explicit information/risk model before they can
 change control; unweighted stress cases remain diagnostics.
+
+Distributed planning carries each response ranking’s top eight command profiles alongside completed auctions (internal protocol 7). The ranking is computed once for the immutable planning input and reused in checkpoint replay and final assembly; its order and search budget are unchanged. A request whose ranking spends the auction-start allowance returns the ranking before starting an auction. The next-auction gate runs before replay, leaving headroom for serialization.

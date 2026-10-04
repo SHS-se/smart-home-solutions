@@ -66,13 +66,14 @@ Deno.test("scope requires complete nonnegative evidence and accepts observed zer
 Deno.test("both scope solves survive staged planning reconstruction", () => {
   const s = mixedModeSnapshot(); const now = s.captured_at;
   const input = {snapshot: s, now, price_archive: []};
-  const continuation: EnergyPlanningContinuation = { completed: [] };
+  const continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
   for (let i = 0; i < 100; i++) {
     const step = energyPlanningStep(input, continuation);
     continuation.completed.push(...step.completed);
+    continuation.rankings.push(...step.rankings);
     continuation.checkpoint = step.checkpoint;
     if (step.done) {
-      assertEquals(assembleOptimisationPlan(input, continuation.completed).plan, generateOptimisationPlan(s, new Date(now)));
+      assertEquals(assembleOptimisationPlan(input, continuation.completed, continuation.rankings).plan, generateOptimisationPlan(s, new Date(now)));
       return;
     }
   }

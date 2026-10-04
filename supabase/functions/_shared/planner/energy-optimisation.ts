@@ -53,7 +53,7 @@ import {
   type DispatchLimits,
   type DispatchResult,
   type DispatchAuctionSolver,
-  type DispatchSearchBudget,
+  type DispatchSearchBudget, type ResponsiveRanker,
   dispatchSearchBudget,
   type DispatchSchedule,
   type DispatchSlot,
@@ -5351,8 +5351,9 @@ export function generateOptimisationPlanWithBatteryProjection(
   snapshot: OptimisationSnapshot, now = new Date(), priceArchive: StoredPriceRow[] = [],
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"], fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
+  rank?: ResponsiveRanker,
 ): OptimisationResult {
-  const searchBudget = dispatchSearchBudget();
+  const searchBudget = dispatchSearchBudget(rank);
   // An impossible reading leaves out its own device before anything reads it.
   snapshot = withDevicePhysics(isolateMeasurements(snapshot));
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);

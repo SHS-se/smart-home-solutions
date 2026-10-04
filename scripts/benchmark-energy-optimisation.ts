@@ -32,7 +32,7 @@ for (const season of ["sunny", "dark"] as const) {
   });
   // One stage per call, as a worker without a budget runs them.
   const planningInput = { snapshot: input, now: CAPTURED_AT, price_archive: [] };
-  const continuation: EnergyPlanningContinuation = { completed: [] };
+  const continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
   for (let stage = 0; stage < 32; stage++) {
     const payload = JSON.stringify({ input: planningInput, continuation });
     const run = () => {
@@ -45,11 +45,12 @@ for (const season of ["sunny", "dark"] as const) {
       JSON.stringify(run());
     });
     continuation.completed.push(...result.completed);
+    continuation.rankings.push(...result.rankings);
     continuation.checkpoint = result.checkpoint;
     if (result.done) break;
   }
   // Ingest's share: the plan from the finished auctions, replayed not searched.
   Deno.bench(`72-hour ${season} ingest assembly`, () => {
-    assembleOptimisationPlan(planningInput, continuation.completed);
+    assembleOptimisationPlan(planningInput, continuation.completed, continuation.rankings);
   });
 }

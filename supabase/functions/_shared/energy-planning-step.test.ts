@@ -17,7 +17,7 @@ import {
   type EnergyPlanningInput,
   type EnergyPlanningStep,
 } from "./energy-planning-protocol.ts";
-import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
+import type { DispatchCheckpoint, DispatchResult, ResponsiveRanking } from "./planner/dispatch-plan.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import {
   EnergyPlanningError,
@@ -56,20 +56,24 @@ function assertStagesMatch(
     input.fixed_plan,
   ).plan;
   const completed: DispatchResult[] = [];
+  const rankings: ResponsiveRanking[] = [];
   let checkpoint: DispatchCheckpoint | undefined;
   const seen = new Set<string>();
-  const counts = { calls: 0, transfers: 0, refinement: 0 };
+  const counts = { calls: 0, transfers: 0, refinement: 0, rankings: 0, rankingOnly: 0 };
   for (let i = 0; i < 4096; i++) {
     counts.calls++;
     const step: EnergyPlanningStep = wire(
-      energyPlanningStep(wire(input), wire({ completed, checkpoint }), budget?.()),
+      energyPlanningStep(wire(input), wire({ completed, checkpoint, rankings }), budget?.()),
     );
     completed.push(...step.completed);
+    rankings.push(...step.rankings);
+    counts.rankings += step.rankings.length;
+    if (step.rankings.length && !step.completed.length && !step.checkpoint) counts.rankingOnly++;
     checkpoint = step.checkpoint;
     if (step.done) {
       assertEquals(checkpoint, undefined);
       assertEquals(
-        wire(assembleOptimisationPlan(wire(input), completed).plan),
+        wire(assembleOptimisationPlan(wire(input), completed, rankings).plan),
         wire(expected),
       );
       assertEquals(input, original);
@@ -359,10 +363,19 @@ Deno.test("a worker cannot finish a plan it has not solved", async () => {
           request_id: connection.requestId,
           done: true,
           completed: [],
+          rankings: [],
         }));
       }),
     EnergyPlanningError,
     "do not assemble into a plan",
   );
   assertEquals(calls, 1);
+});
+
+Deno.test("response rankings pause before an auction and survive JSON reconstruction", () => {
+  const input = seasonInput("sunny");
+  input.snapshot.slots = input.snapshot.slots.slice(0, 24);
+  const counts = assertStagesMatch(input, () => ({ spent: () => true, allowsAuction: () => false }));
+  assert(counts.rankings > 0);
+  assert(counts.rankingOnly > 0);
 });

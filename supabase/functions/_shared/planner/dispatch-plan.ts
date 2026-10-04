@@ -1811,8 +1811,13 @@ export function enforceMinimumSizedPower(
 /** Optional coupled auctions shared by every comparison in one plan generation.
  * Recreated on replay, so completed auctions consume the same allowance in order.
  */
-export interface DispatchSearchBudget { remaining: number }
-export function dispatchSearchBudget(): DispatchSearchBudget { return { remaining: 12 }; }
+export type ResponsiveCommands = Record<string, number[]>;
+export interface ResponsiveRanking { context: string; commands: ResponsiveCommands[] }
+export type ResponsiveRanker = (context: string, compute: () => ResponsiveCommands[]) => ResponsiveCommands[];
+export interface DispatchSearchBudget { remaining: number; rank?: ResponsiveRanker }
+export function dispatchSearchBudget(rank?: ResponsiveRanker): DispatchSearchBudget {
+  return { remaining: 12, rank };
+}
 
 /** A solver can execute each auction in a separate CPU budget. */
 export type DispatchAuctionSolver = (
@@ -2050,58 +2055,67 @@ function planResponsiveDispatch(
       responsive.some(store => store.key === item.store_key))) accept(solve(commands));
   }
   while (budget.remaining > 0) {
-    const trials = new Map<string, { powers: Record<string, number[]>; cost: number; bridge: boolean }>();
-    // All-off can beat a fragmented seed before any bridges are tried. Keep
-    // that seed as a search origin so startup charges cannot erase the very
-    // run combinations that repay them.
-    const origins = identity(best.power_w) === identity(seed.power_w) ? [best] : [best, seed];
-    for (const origin of origins) for (const store of responsive) {
-      const originScore = origin === seed ? seedScore : bestScore;
-      const current = origin.power_w[store.key];
-      const add = (profile: number[], bridge = false) => {
-        if (store.fixed_charge_w_by_slot?.some((fixed, i) => fixed !== null && fixed !== profile[i])) return;
-        const powers = { ...origin.power_w, [store.key]: profile };
-        const key = identity(powers);
-        if (visited.has(key) || trials.has(key)) return;
-        const score = scoreDispatchWithReuse(slots, stores, limits, { ...origin, power_w: powers }, undefined,
-          { previous: originScore, changedKey: store.key });
-        // Other stores can repair grid and battery conflicts, but cannot repair this heater's own state cap.
-        if (score.infeasibilities.some(item => item.store_key === store.key)) return;
-        trials.set(key, { powers, cost: score.total_sek, bridge });
-      };
-      const change = (from: number, to: number, watts: number, bridge = false) => {
-        const profile = [...current]; profile.fill(watts, from, to); add(profile, bridge);
-      };
-      const runs = runsOf(current).map(run => ({ ...run, end: run.start + run.slots }));
-      for (let r = 0; r < runs.length; r++) {
-        const run = runs[r];
-        change(run.start, run.end, 0);
-        if (r + 1 < runs.length) change(run.end, runs[r + 1].start, store.max_power_w, true);
-        change(run.start, run.start + 1, 0);
-        change(run.end - 1, run.end, 0);
-        if (run.start > 0) change(run.start - 1, run.start, store.max_power_w);
-        if (run.end < slots.length) change(run.end, run.end + 1, store.max_power_w);
-        for (const shift of [-1, 1]) {
-          if (run.start + shift < 0 || run.end + shift > slots.length) continue;
-          const profile = [...current]; profile.fill(0, run.start, run.end);
-          profile.fill(store.max_power_w, run.start + shift, run.end + shift); add(profile);
+    // A distributed caller keeps this ordered top-eight ledger alongside the
+    // scalar auctions. Replaying completed comparisons must not rank again.
+    const compute = (): ResponsiveCommands[] => {
+      const trials = new Map<string, { powers: Record<string, number[]>; cost: number; bridge: boolean }>();
+      // All-off can beat a fragmented seed before any bridges are tried. Keep
+      // that seed as a search origin so startup charges cannot erase the very
+      // run combinations that repay them.
+      const origins = identity(best.power_w) === identity(seed.power_w) ? [best] : [best, seed];
+      for (const origin of origins) for (const store of responsive) {
+        const originScore = origin === seed ? seedScore : bestScore;
+        const current = origin.power_w[store.key];
+        const add = (profile: number[], bridge = false) => {
+          if (store.fixed_charge_w_by_slot?.some((fixed, i) => fixed !== null && fixed !== profile[i])) return;
+          const powers = { ...origin.power_w, [store.key]: profile };
+          const key = identity(powers);
+          if (visited.has(key) || trials.has(key)) return;
+          const score = scoreDispatchWithReuse(slots, stores, limits, { ...origin, power_w: powers }, undefined,
+            { previous: originScore, changedKey: store.key });
+          // Other stores can repair grid and battery conflicts, but cannot repair this heater's own state cap.
+          if (score.infeasibilities.some(item => item.store_key === store.key)) return;
+          trials.set(key, { powers, cost: score.total_sek, bridge });
+        };
+        const change = (from: number, to: number, watts: number, bridge = false) => {
+          const profile = [...current]; profile.fill(watts, from, to); add(profile, bridge);
+        };
+        const runs = runsOf(current).map(run => ({ ...run, end: run.start + run.slots }));
+        for (let r = 0; r < runs.length; r++) {
+          const run = runs[r];
+          change(run.start, run.end, 0);
+          if (r + 1 < runs.length) change(run.end, runs[r + 1].start, store.max_power_w, true);
+          change(run.start, run.start + 1, 0);
+          change(run.end - 1, run.end, 0);
+          if (run.start > 0) change(run.start - 1, run.start, store.max_power_w);
+          if (run.end < slots.length) change(run.end, run.end + 1, store.max_power_w);
+          for (const shift of [-1, 1]) {
+            if (run.start + shift < 0 || run.end + shift > slots.length) continue;
+            const profile = [...current]; profile.fill(0, run.start, run.end);
+            profile.fill(store.max_power_w, run.start + shift, run.end + shift); add(profile);
+          }
+        }
+        // Multi-quarter insertion crosses the initial low-output interval without a hard run limit.
+        for (let start = 0; start < slots.length; start++) {
+          if (current[start] > 0) continue;
+          for (const length of [1, 2, 4, 8, 16, 32, 64]) {
+            if (start + length <= slots.length) change(start, start + length, store.max_power_w);
+          }
         }
       }
-      // Multi-quarter insertion crosses the initial low-output interval without a hard run limit.
-      for (let start = 0; start < slots.length; start++) {
-        if (current[start] > 0) continue;
-        for (const length of [1, 2, 4, 8, 16, 32, 64]) {
-          if (start + length <= slots.length) change(start, start + length, store.max_power_w);
-        }
-      }
-    }
-    const ranked = [...trials.values()].sort((a, b) => Number(b.bridge) - Number(a.bridge) || a.cost - b.cost);
+      return [...trials.values()].sort((a, b) => Number(b.bridge) - Number(a.bridge) || a.cost - b.cost)
+        .slice(0, 8).map(trial => Object.fromEntries(responsive.map(store =>
+          [store.key, trial.powers[store.key]])));
+    };
+    const context = JSON.stringify([responsive.map(store => store.key), slots.length,
+      identity(best.power_w), identity(seed.power_w), budget.remaining]);
+    const ranked = budget.rank ? budget.rank(context, compute) : compute();
     if (!ranked.length) return { ...best, responsive_search: { evaluations, stopped_because: "neighborhood_exhausted" } };
     // Rank on the exact physics with the incumbent coupling, then re-solve the best candidates jointly.
     let improved = false;
-    for (const trial of ranked.slice(0, 8)) {
+    for (const commands of ranked) {
       if (budget.remaining <= 0) break;
-      improved = accept(solve(trial.powers, true)) || improved;
+      improved = accept(solve(commands, true)) || improved;
     }
     if (!improved) break;
   }

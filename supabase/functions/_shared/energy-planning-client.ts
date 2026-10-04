@@ -47,6 +47,8 @@ export async function generateRemoteOptimisationPlan(
   const wireInput: EnergyPlanningInput = JSON.parse(inputJson);
   const completed: DispatchResult[] = [];
   const completedJson: string[] = [];
+  const rankings: NonNullable<EnergyPlanningStep["rankings"]> = [];
+  const rankingsJson: string[] = [];
   let checkpoint: DispatchCheckpoint | undefined;
   for (let index = 0; index < MAX_STEPS; index += 1) {
     let response: Response;
@@ -61,7 +63,7 @@ export async function generateRemoteOptimisationPlan(
             "x-request-id": connection.requestId,
           },
           body: `{"protocol":${ENERGY_PLANNING_PROTOCOL},"input":${inputJson},` +
-            `"continuation":{"completed":[${completedJson.join(",")}]${
+            `"continuation":{"completed":[${completedJson.join(",")}],"rankings":[${rankingsJson.join(",")}]${
               checkpoint ? `,"checkpoint":${JSON.stringify(checkpoint)}` : ""
             }}}`,
           signal,
@@ -115,7 +117,7 @@ export async function generateRemoteOptimisationPlan(
       );
     }
     if (
-      typeof body.done !== "boolean" || !Array.isArray(body.completed) ||
+      typeof body.done !== "boolean" || !Array.isArray(body.completed) || !Array.isArray(body.rankings) ||
       (body.checkpoint !== undefined &&
         (body.done || typeof body.checkpoint !== "object"))
     ) {
@@ -127,12 +129,16 @@ export async function generateRemoteOptimisationPlan(
       completed.push(auction);
       completedJson.push(JSON.stringify(auction));
     }
+    for (const ranking of body.rankings) {
+      rankings.push(ranking);
+      rankingsJson.push(JSON.stringify(ranking));
+    }
     checkpoint = body.checkpoint;
     if (body.done) {
       const assembling = performance.now();
       let result: OptimisationResult;
       try {
-        result = assembleOptimisationPlan(wireInput, completed);
+        result = assembleOptimisationPlan(wireInput, completed, rankings);
       } catch (error) {
         throw new EnergyPlanningError(
           `Planning worker's auctions do not assemble into a plan: ${

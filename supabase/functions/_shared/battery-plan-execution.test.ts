@@ -119,13 +119,14 @@ Deno.test("excluded battery cannot be resurrected by retained feedback", () => {
 Deno.test("execution feedback survives staged worker planning and repeats deterministically", () => {
   const s = captured("control_verification");
   const input = { snapshot:s, now:s.captured_at, price_archive:[] };
-  const continuation: EnergyPlanningContinuation = { completed: [] };
+  const continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
   for (let i=0;i<100;i++) {
     const step = energyPlanningStep(input, continuation);
     continuation.completed.push(...step.completed);
+    continuation.rankings.push(...step.rankings);
     continuation.checkpoint = step.checkpoint;
     if (step.done) {
-      assertEquals(assembleOptimisationPlan(input, continuation.completed).plan.battery_execution,
+      assertEquals(assembleOptimisationPlan(input, continuation.completed, continuation.rankings).plan.battery_execution,
         generateOptimisationPlanWithBatteryProjection(s,new Date(s.captured_at)).plan.battery_execution);
       return;
     }

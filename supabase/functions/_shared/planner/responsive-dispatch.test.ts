@@ -100,12 +100,12 @@ Deno.test("production materialization and JSON continuation retain an enabled ze
   assertEquals(expected.plans.priority.slots[0].pool_command_w, 3500);
   assertEquals(expected.plans.priority.slots[0].pool_w, 0);
   const request = { snapshot: input, now: input.captured_at, price_archive: [] };
-  let continuation: EnergyPlanningContinuation = { completed: [] };
+  let continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
   for (let calls = 0; calls < 128; calls++) {
     const step = energyPlanningStep(request, continuation);
-    continuation = JSON.parse(JSON.stringify({ completed: [...continuation.completed, ...step.completed], checkpoint: step.checkpoint }));
+    continuation = JSON.parse(JSON.stringify({ completed: [...continuation.completed, ...step.completed], checkpoint: step.checkpoint, rankings: [...continuation.rankings, ...step.rankings] }));
     if (step.done) {
-      assertEquals(assembleOptimisationPlan(request, continuation.completed).plan, expected);
+      assertEquals(assembleOptimisationPlan(request, continuation.completed, continuation.rankings).plan, expected);
       return;
     }
   }

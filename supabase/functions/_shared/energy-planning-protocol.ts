@@ -1,6 +1,6 @@
-import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
+import type { DispatchCheckpoint, DispatchResult, ResponsiveRanking } from "./planner/dispatch-plan.ts";
 
-export const ENERGY_PLANNING_PROTOCOL = 6;
+export const ENERGY_PLANNING_PROTOCOL = 7;
 
 export type { EnergyPlanningInput } from "./planner/fixed-energy-plan.ts";
 
@@ -8,6 +8,8 @@ export type { EnergyPlanningInput } from "./planner/fixed-energy-plan.ts";
 export interface EnergyPlanningContinuation {
   completed: DispatchResult[];
   checkpoint?: DispatchCheckpoint;
+  /** Ordered response rankings, computed once for this immutable planning input. */
+  rankings: ResponsiveRanking[];
 }
 
 /**
@@ -22,4 +24,6 @@ export interface EnergyPlanningStep {
   completed: DispatchResult[];
   /** Where the pending auction resumes; absent at an auction boundary. */
   checkpoint?: DispatchCheckpoint;
+  /** Ordered response rankings, computed once for this immutable planning input. */
+  rankings: ResponsiveRanking[];
 }
