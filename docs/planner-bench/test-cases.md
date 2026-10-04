@@ -111,6 +111,16 @@ through the forecasts. A window whose device meters add up to more than the
 house drew in more than a few quarters is not used, and that case is refereed
 on its forecasts as before.
 
+The home's own record of its car charging cannot be used for this. Through
+September 2026 `ev_charging_kwh` held twice what the charger drew, half of it an
+hour late, so taking it out of the house's draw left the base load at nothing
+while the car charged, and refused the window outright for C-0905 and C-0919.
+For the four cases whose window has car charging (C-0905, C-0919, C-0920,
+C-0927) the stored measured base load was rebuilt on 4 October 2026 with the
+car taken from the charger's power sensor in Home Assistant, hour by hour. A
+new case with car charging in its window needs the same until the recording is
+put right.
+
 The battery then does what it does in the house, where a plan is a permission
 and not a power:
 
