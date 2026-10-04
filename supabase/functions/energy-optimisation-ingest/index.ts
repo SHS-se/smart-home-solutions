@@ -33,6 +33,7 @@ import {
   type OptimisationSnapshot,
 } from "../_shared/planner/energy-optimisation.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
+import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import {
   EnergyPlanningError,
@@ -145,6 +146,8 @@ interface IncomingActualSlot {
   ev_charging_kwh?: number | null;
   battery_charge_kwh?: number | null;
   battery_discharge_kwh?: number | null;
+  battery_soc?: number | null;
+  ev_soc?: number | null;
   device_energy_kwh?: Record<string, number>;
   quality?: Record<string, unknown>;
 }
@@ -1816,11 +1819,12 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           // be planned on seeded figures if the fit itself fails.
           console.error("[ENERGY-OPTIMISATION] pool refit skipped", error);
         }
-        const { data: poolModel } = await supabase
+        const { data: poolModel, error: poolModelError } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response")
           .eq("home_id", auth.homeId)
           .maybeSingle();
+        if (poolModelError) throw new Error(poolModelError.message);
         // The idle loss stands on its own; the joint fit adds the COP when it
         // has one. Either is enough to stop planning on the seeded loss.
         const copFitted = Boolean(poolModel?.loss_kw_per_k && poolModel?.rated_cop);
@@ -1831,18 +1835,19 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         const poolResponse = Array.isArray(poolModel?.response) && poolModel.response.length > 0
           ? poolModel.response
           : null;
-        if (lossKwPerK || poolResponse) {
+        if (lossKwPerK || poolResponse || poolModel?.heater_response) {
           snapshot = {
             ...snapshot,
             pool_model: {
+              ...(poolModel?.heater_response ? { heater_response: parseHeaterResponse(poolModel.heater_response) } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
               rated_cop: copFitted ? Number(poolModel!.rated_cop) : null,
               cop_per_air_c: copFitted ? Number(poolModel!.cop_per_air_c ?? 0) : null,
               // Null stays null: the planner reads it as "no cut-out on
               // record" and applies none, which is not the same as zero.
-              cutout_air_c: poolModel.cutout_air_c === null ||
-                  poolModel.cutout_air_c === undefined
+              cutout_air_c: poolModel?.cutout_air_c === null ||
+                  poolModel?.cutout_air_c === undefined
                 ? null
                 : Number(poolModel.cutout_air_c),
             },

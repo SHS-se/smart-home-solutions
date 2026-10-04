@@ -161,6 +161,124 @@ export interface HeatPumpModel {
   control: "switch";
   /** Draw of what must run with it and heats nothing (a circulation pump), W. */
   auxiliary_w: number;
+  /** Explicit transient response where the device has one; static operating points describe steady operation. */
+  response?: HeatPumpResponse;
+}
+
+/** Provenance describes the measurement, rather than changing its physical response. */
+export interface HeatPumpResponseEvidence {
+  source: string;
+  observed_start: string;
+  heat_basis: string;
+  heat_flow_measured: boolean;
+  steady_compressor_w?: number;
+  steady_delta_c?: number;
+  sample_count?: number;
+}
+
+export interface HeatPumpStartupPoint {
+  elapsed_seconds: number;
+  electric_fraction: number;
+  heat_fraction: number;
+}
+
+export type HeatPumpResponse =
+  | { kind: "steady" }
+  | { kind: "bergvarme"; startup: HeatPumpStartupPoint[]; evidence?: HeatPumpResponseEvidence };
+
+/** Parse stored response data once; malformed dynamics never become a steady model. */
+export function parseHeaterResponse(input: unknown): HeatPumpResponse {
+  const fail = (message: string): never => { throw new DeviceModelError(message); };
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail("A heater response must be an object.");
+  const value = input as Record<string, unknown>;
+  if (value.kind === "steady") return { kind: "steady" };
+  if (value.kind !== "bergvarme") fail("Unknown kind of heater response.");
+  if (!Array.isArray(value.startup) || value.startup.length < 2) fail("A startup response needs at least two points.");
+  const fraction = (v: unknown) => finite(v) && v >= 0;
+  const startup = (value.startup as unknown[]).map((item, index): HeatPumpStartupPoint => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) fail("A startup point must be an object.");
+    const point = item as Record<string, unknown>;
+    if (!finite(point.elapsed_seconds) || point.elapsed_seconds < 0) fail("Startup ages must be finite and nonnegative.");
+    if (!fraction(point.electric_fraction) || !fraction(point.heat_fraction)) fail("Startup fractions must be finite and nonnegative.");
+    if (point.electric_fraction === 0 && point.heat_fraction !== 0) fail("A startup response cannot deliver heat without compressor electricity.");
+    if (index === 0 && point.elapsed_seconds !== 0) fail("A startup response must begin at age zero.");
+    return { elapsed_seconds: point.elapsed_seconds as number, electric_fraction: point.electric_fraction as number, heat_fraction: point.heat_fraction as number };
+  });
+  if (startup.some((point, index) => index > 0 && point.elapsed_seconds <= startup[index - 1].elapsed_seconds)) fail("Startup ages must strictly increase.");
+  const last = startup[startup.length - 1];
+  if (last.electric_fraction !== 1 || last.heat_fraction !== 1) fail("A startup response must end at steady electricity and heat.");
+  if (value.evidence === undefined) return { kind: "bergvarme", startup };
+  if (!value.evidence || typeof value.evidence !== "object" || Array.isArray(value.evidence)) fail("Response evidence must be an object.");
+  const evidence = value.evidence as Record<string, unknown>;
+  if (![evidence.source, evidence.observed_start, evidence.heat_basis].every(v => typeof v === "string" && v.length > 0) || typeof evidence.heat_flow_measured !== "boolean") fail("Response evidence needs its source, start, heat basis and flow measurement status.");
+  if (evidence.steady_compressor_w !== undefined && (!finite(evidence.steady_compressor_w) || evidence.steady_compressor_w <= 0)) fail("Evidence compressor draw must be positive.");
+  if (evidence.steady_delta_c !== undefined && !finite(evidence.steady_delta_c)) fail("Evidence temperature difference must be finite.");
+  if (evidence.sample_count !== undefined && (!Number.isInteger(evidence.sample_count) || (evidence.sample_count as number) <= 0)) fail("Evidence sample count must be a positive integer.");
+  return { kind: "bergvarme", startup, evidence: { ...evidence } as unknown as HeatPumpResponseEvidence };
+}
+
+export interface HeatPumpResponseProjection {
+  /** Interval-average electricity, including auxiliaries whenever the command is on. */
+  draw_w: number[];
+  /** Fraction of steady heat delivered over the commanded interval, independent of actual electric draw. */
+  gain_fraction: number[];
+  /** Null is off; Infinity is a confirmed steady run whose exact age is unknown. */
+  elapsed_seconds_by_boundary: (number | null)[];
+}
+
+/** Exact integral of a piecewise-linear startup fraction, followed by its steady tail. */
+function startupFractionSeconds(points: HeatPumpStartupPoint[], from: number, seconds: number, field: "electric_fraction" | "heat_fraction"): number {
+  const steadyAt = points[points.length - 1].elapsed_seconds;
+  if (from >= steadyAt) return seconds;
+  const end = Math.min(steadyAt, from + seconds);
+  let integral = Math.max(0, seconds - (steadyAt - from));
+  for (let index = 1; index < points.length; index++) {
+    const low = points[index - 1], high = points[index];
+    const start = Math.max(from, low.elapsed_seconds), stop = Math.min(end, high.elapsed_seconds);
+    if (stop <= start) continue;
+    const slope = (high[field] - low[field]) / (high.elapsed_seconds - low.elapsed_seconds);
+    const startFraction = low[field] + slope * (start - low.elapsed_seconds);
+    const endFraction = low[field] + slope * (stop - low.elapsed_seconds);
+    integral += (startFraction + endFraction) / 2 * (stop - start);
+  }
+  return integral;
+}
+
+/** Project nominal on/off commands using explicit run age; never hides state in a callback. */
+export function projectHeatPumpResponse(
+  response: HeatPumpResponse,
+  power: { compressor_w: number; auxiliary_w: number },
+  commands_w: readonly number[],
+  duration_hours: readonly number[],
+  initial_elapsed_seconds: number | null,
+): HeatPumpResponseProjection {
+  const model = parseHeaterResponse(response);
+  const nominal = power.compressor_w + power.auxiliary_w;
+  if (!finite(power.compressor_w) || power.compressor_w <= 0 || !finite(power.auxiliary_w) || power.auxiliary_w < 0 || !finite(nominal)) throw new DeviceModelError("A response needs positive compressor and nonnegative auxiliary draw.");
+  if (commands_w.length !== duration_hours.length) throw new DeviceModelError("Commands and durations must cover the same intervals.");
+  if (initial_elapsed_seconds !== null && !(initial_elapsed_seconds === Infinity || finite(initial_elapsed_seconds) && initial_elapsed_seconds >= 0)) throw new DeviceModelError("Initial run age must be nonnegative, confirmed steady, or off.");
+  let elapsed = initial_elapsed_seconds;
+  const result: HeatPumpResponseProjection = { draw_w: [], gain_fraction: [], elapsed_seconds_by_boundary: [elapsed] };
+  commands_w.forEach((command, index) => {
+    const hours = duration_hours[index], seconds = hours * 3600;
+    if (!finite(hours) || hours <= 0 || !finite(seconds)) throw new DeviceModelError("Response intervals must have finite positive durations.");
+    if (command !== 0 && command !== nominal) throw new DeviceModelError("A heat-pump command must be off or its nominal draw.");
+    if (command === 0) {
+      result.draw_w.push(0);
+      result.gain_fraction.push(0);
+      elapsed = null;
+    } else {
+      const age = elapsed ?? 0;
+      const electric = model.kind === "steady" ? 1 : startupFractionSeconds(model.startup, age, seconds, "electric_fraction") / seconds;
+      const heat = model.kind === "steady" ? 1 : startupFractionSeconds(model.startup, age, seconds, "heat_fraction") / seconds;
+      result.draw_w.push(power.compressor_w * electric + power.auxiliary_w);
+      result.gain_fraction.push(heat);
+      elapsed = age + seconds;
+      if (age !== Infinity && !finite(elapsed)) throw new DeviceModelError("Projected run age must remain finite.");
+    }
+    result.elapsed_seconds_by_boundary.push(elapsed);
+  });
+  return result;
 }
 
 /** A level that also delivers heat. */
@@ -244,6 +362,7 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
     });
     if (heater.control !== "switch") fail("A heat pump the planner sets the power of is not modelled yet.");
     if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0) fail("A heat pump's auxiliary draw cannot be negative.");
+    if (heater.response !== undefined) heater.response = parseHeaterResponse(heater.response);
     operatingPoint(heater, heater.selected_setting);
   }
   return models;

@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "marginal-value-planner-v46",
+    "model_version": "marginal-value-planner-v47",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -2433,7 +2433,7 @@
             "state": 26.3,
             "marginal_value_sek_per_kwh": 2.15,
             "cheapest_energy_sek_per_kwh": 0.1,
-            "planned_kwh": 8.4,
+            "planned_kwh": 8.365,
             "returned_kwh": 0,
             "end_state": 26.361,
             "reason": "scheduled"
@@ -4439,7 +4439,7 @@
             "state": 26.3,
             "marginal_value_sek_per_kwh": 2.15,
             "cheapest_energy_sek_per_kwh": 0.1,
-            "planned_kwh": 8.4,
+            "planned_kwh": 8.365,
             "returned_kwh": 0,
             "end_state": 26.361,
             "reason": "scheduled"
@@ -6445,7 +6445,7 @@
             "state": 26.3,
             "marginal_value_sek_per_kwh": 2.15,
             "cheapest_energy_sek_per_kwh": 0.1,
-            "planned_kwh": 8.4,
+            "planned_kwh": 8.365,
             "returned_kwh": 0,
             "end_state": 26.361,
             "reason": "scheduled"
@@ -6540,7 +6540,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "marginal-value-planner-v46",
+      "model_version": "marginal-value-planner-v47",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -8961,7 +8961,7 @@
               "state": 26.3,
               "marginal_value_sek_per_kwh": 2.15,
               "cheapest_energy_sek_per_kwh": 0.1,
-              "planned_kwh": 8.4,
+              "planned_kwh": 8.365,
               "returned_kwh": 0,
               "end_state": 26.361,
               "reason": "scheduled"
@@ -10967,7 +10967,7 @@
               "state": 26.3,
               "marginal_value_sek_per_kwh": 2.15,
               "cheapest_energy_sek_per_kwh": 0.1,
-              "planned_kwh": 8.4,
+              "planned_kwh": 8.365,
               "returned_kwh": 0,
               "end_state": 26.361,
               "reason": "scheduled"
@@ -12973,7 +12973,7 @@
               "state": 26.3,
               "marginal_value_sek_per_kwh": 2.15,
               "cheapest_energy_sek_per_kwh": 0.1,
-              "planned_kwh": 8.4,
+              "planned_kwh": 8.365,
               "returned_kwh": 0,
               "end_state": 26.361,
               "reason": "scheduled"

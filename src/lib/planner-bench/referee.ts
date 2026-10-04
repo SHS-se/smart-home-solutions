@@ -32,12 +32,12 @@
 
 import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
 import {
-  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, stepThermalStore, type Level, type Levels,
+  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, projectHeatPumpResponse, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 9;
+export const REFEREE_VERSION = 10;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -157,6 +157,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   // The start state is what was read, also where it lies outside a device's limits.
   let batteryKwh = c.start_state.battery_soc * h.battery.capacity_kwh;
   let poolC = c.start_state.pool_water_c;
+  let heaterElapsed: number | null = null;
   let evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
   const buy = c.recorded.prices.import_sek_per_kwh, sell = c.recorded.prices.export_sek_per_kwh;
   const air = c.recorded.outdoor_temperature_c;
@@ -170,7 +171,11 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   for (let i = 0; i < QUARTERS; i++) {
     // The heat pump is on at its setting or off; the charger holds whole amps, below the lowest not at all.
     const heating = onLevel(i, 'pool_step', heatLevels, clip(i, 'pool_power', asked(i, d.pool_w[i]), poolMaxW));
-    const poolW = heating.draw_w;
+    const projected = projectHeatPumpResponse(h.pool.heater.response ?? { kind: 'steady' },
+      { compressor_w: poolMaxW - h.pool.heater.auxiliary_w, auxiliary_w: h.pool.heater.auxiliary_w },
+      [heating.draw_w], [HOURS], heaterElapsed);
+    heaterElapsed = projected.elapsed_seconds_by_boundary[1];
+    const poolW = projected.draw_w[0];
     let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
@@ -188,7 +193,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency), !measured);
 
     batteryKwh += (chargeW * h.battery.charge_efficiency - dischargeW / h.battery.discharge_efficiency) * HOURS / 1_000;
-    poolC = stepThermalStore(h.pool.store, poolC, heating.heat_w, air[i], HOURS);
+    poolC = stepThermalStore(h.pool.store, poolC, heating.heat_w * projected.gain_fraction[0], air[i], HOURS);
     evKwh += evW * h.car.battery.charge_efficiency * HOURS / 1_000;
 
     const netW = baseW[i] + poolW + evW + chargeW - dischargeW - solarW[i];
@@ -234,12 +239,15 @@ function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW
 /** Where each store could be at best, at the end of every quarter: full power from the first. */
 export function reachability(c: BenchCase, h: Household): { poolC: number[]; carKm: number[] } {
   const poolMax = poolLevels(h).at(-1)!, carMaxW = evMaxW(h);
+  const response = projectHeatPumpResponse(h.pool.heater.response ?? { kind: 'steady' },
+    { compressor_w: poolMax.draw_w - h.pool.heater.auxiliary_w, auxiliary_w: h.pool.heater.auxiliary_w },
+    new Array(QUARTERS).fill(poolMax.draw_w), new Array(QUARTERS).fill(HOURS), null);
   let poolC = c.start_state.pool_water_c, evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
   // A car already past its charge limit stays where it is: it cannot be charged further.
   const ceilingKwh = Math.max(evKwh, evLimitKwh(c, h));
   const out = { poolC: [] as number[], carKm: [] as number[] };
   for (let i = 0; i < QUARTERS; i++) {
-    poolC = stepThermalStore(h.pool.store, poolC, poolMax.heat_w, c.recorded.outdoor_temperature_c[i], HOURS);
+    poolC = stepThermalStore(h.pool.store, poolC, poolMax.heat_w * response.gain_fraction[i], c.recorded.outdoor_temperature_c[i], HOURS);
     evKwh = Math.min(ceilingKwh, evKwh + carMaxW * h.car.battery.charge_efficiency * HOURS / 1_000);
     out.poolC.push(Math.round(poolC * 100) / 100);
     out.carKm.push(r1(evKwh / h.car.battery.kwh_per_km));

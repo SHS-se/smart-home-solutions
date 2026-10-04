@@ -262,8 +262,9 @@ function recordFrom(plan: Json, generation: LoadedPlanner["generation"], scale: 
   const slots = (plan.plans as { priority?: { slots?: Json[] } } | undefined)?.priority?.slots ?? [];
   if (slots.length !== QUARTERS) throw new Error(`The planner returned ${slots.length} quarters, not ${QUARTERS}; status ${String(plan.status)}.`);
   const pick = (read: (slot: Json) => unknown) => slots.map(slot => num(read(slot)) ?? 0);
+  const response = (plan.pool as { heater_response?: { kind: string } } | null)?.heater_response;
   const decisions: Decisions = {
-    pool_w: pick(s => s.pool_w),
+    pool_w: pick(s => response?.kind === "bergvarme" ? s.pool_command_w : s.pool_w),
     ev_w: pick(s => s.ev_w),
     battery_charge_w: pick(s => s.battery_charge_w),
     // A plan's discharge is all the battery gives, the house's share and what it sells; `battery_export_w` is the part of it sold.

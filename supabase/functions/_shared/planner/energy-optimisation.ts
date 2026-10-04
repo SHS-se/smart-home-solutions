@@ -8,6 +8,8 @@ import {
   heatPumpLevels,
   idleCPerHour,
   parseDeviceModels,
+  parseHeaterResponse,
+  type HeatPumpResponse,
   stepThermalStore,
   thermalTimeConstantH,
   type DeviceModels,
@@ -81,6 +83,7 @@ import {
 } from "./value-preferences.ts";
 import { meritOrderCurve, quarterOffers, type MeritOrderEvidence } from "./merit-order.ts";
 import { poolHeaters } from "./pool-devices.ts";
+import { heaterInputResponse } from "./heat-pump-dispatch.ts";
 
 /**
  * Snapshot versions this planner can read, and the plan version it emits.
@@ -145,7 +148,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v46";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v47";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -253,6 +256,9 @@ export interface PoolStateInput {
   volume_m3: number;
   /** Confirmed actuator continuation, null when its state could not be read. */
   heating_running?: boolean | null;
+  /** Enabled run age at captured_at, measured from confirmed switch history. */
+  heating_elapsed_seconds?: number | null;
+  heating_elapsed_basis?: "confirmed_transition" | "observed_on_lower_bound";
   source_entity_ids?: Record<string, string>;
 }
 
@@ -534,6 +540,7 @@ export interface OptimisationSnapshot {
    * the seeded figures then, and says so through `forecast_method`.
    */
   pool_model?: {
+    heater_response?: HeatPumpResponse;
     /** Null while only the measured response exists; the seeded loss stands in then. */
     loss_kw_per_k: number | null;
     /** Null while only the idle loss is fitted; the seeded COP stands then. */
@@ -683,6 +690,8 @@ export interface PlannedSlot {
   shadow_import_sek_per_kwh: number;
   shadow_export_sek_per_kwh: number;
   pool_w: number;
+  /** Relay command at nominal input; required for a transient heater response. */
+  pool_command_w?: number;
   /**
    * The pool water at the end of this quarter, °C, on the trajectory the
    * selected dispatch was scored on.
@@ -839,7 +848,7 @@ export interface OptimisationPlan {
   battery: BatteryInput | null;
   ev_battery: EvBatteryInput | null;
   /** Measured planning state plus the website-owned upper temperature for execution. */
-  pool: (PoolStateInput & { stop_temperature_c: number | null }) | null;
+  pool: (PoolStateInput & { stop_temperature_c: number | null; heater_response?: HeatPumpResponse }) | null;
   grid: OptimisationSnapshot["grid"];
   /**
    * The shaping constants this solve used (§8.16).
@@ -926,6 +935,7 @@ const PEAK_WEIGHT_SEK_PER_KW2 = 0.004;
 
 interface Schedule {
   pool: number[];
+  poolCommand: number[];
   /** The dispatched pool's temperature at the end of each quarter, °C; null where no pool is dispatched. */
   poolTemperatureC: (number | null)[];
   boiler: number[];
@@ -2007,6 +2017,7 @@ function candidateStarts(
 function emptySchedule(length: number): Schedule {
   return {
     pool: new Array(length).fill(0),
+    poolCommand: new Array(length).fill(0),
     poolTemperatureC: new Array(length).fill(null),
     boiler: new Array(length).fill(0),
     boilerPermitted: new Array(length).fill(true),
@@ -2463,6 +2474,7 @@ export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook", "demand_o
 function withDevicePhysics(snapshot: OptimisationSnapshot): OptimisationSnapshot {
   const given = snapshot.device_physics;
   if (!given) return snapshot;
+  if (given.pool?.heater.response) parseHeaterResponse(given.pool.heater.response);
   let physics: Partial<DeviceModels>;
   try {
     physics = parseDeviceModels(given);
@@ -2564,10 +2576,24 @@ const validScale = (value: unknown): number =>
  * heater's power alone while the pool is billed for both.
  */
 function poolHeaterShare(snapshot: OptimisationSnapshot): number {
+  const heater = snapshot.device_physics?.pool?.heater;
+  if (heater) {
+    const running = heatPumpLevels(heater).at(-1)!;
+    return (running.draw_w - heater.auxiliary_w) / running.draw_w;
+  }
   const devices = snapshot.device_models.filter(model => model.planning_service === "pool" && (model.active_power_w ?? 0) > 0);
   const total = devices.reduce((sum, model) => sum + model.active_power_w!, 0);
   if (devices.length < 2 || total <= 0) return 1;
   return poolHeaters(devices).reduce((sum, model) => sum + model.active_power_w!, 0) / total;
+}
+
+const heaterResponseCache = new WeakMap<OptimisationSnapshot, HeatPumpResponse | null>();
+function poolHeaterResponse(snapshot: OptimisationSnapshot): HeatPumpResponse | null {
+  if (heaterResponseCache.has(snapshot)) return heaterResponseCache.get(snapshot)!;
+  const configured = snapshot.device_physics?.pool?.heater.response ?? snapshot.pool_model?.heater_response;
+  const response = configured ? parseHeaterResponse(configured) : null;
+  heaterResponseCache.set(snapshot, response);
+  return response;
 }
 
 const SEEDED_POOL_HEAT_PUMP = {
@@ -3000,6 +3026,17 @@ function buildDispatchStores(
     const poolUnitsPerKwh = poolUnitsAt(pool.water_temperature_c, 0);
     // A heat pump switched at its setting is one power or off.
     const poolPower = running ? relayEnvelope(running.draw_w) : declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
+    const heaterResponse = poolHeaterResponse(snapshot);
+    const elapsed = pool.heating_running === true ? pool.heating_elapsed_seconds : null;
+    if (heaterResponse?.kind === "bergvarme" && pool.heating_running === true && !(typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0)) {
+      throw new Error("An enabled bergvärme heater requires elapsed run time from switch history");
+    }
+    const boundaryMs = slots[0].epoch_ms + SLOT_MS - slots[0].duration_hours * 3_600_000;
+    const inputResponse = heaterResponse?.kind === "bergvarme" ? heaterInputResponse(
+      heaterResponse,
+      { compressor_w: poolPower.max_power_w * heaterShare, auxiliary_w: poolPower.max_power_w * (1 - heaterShare) },
+      elapsed == null ? null : elapsed + Math.max(0, boundaryMs - isoMs(snapshot.captured_at)) / 1000,
+    ) : undefined;
     const poolTarget = snapshot.comfort?.pool?.target_c;
     // The share of a degree added in a quarter that is still there a quarter later.
     const poolRetention = Math.max(0.9, 1 - (physics
@@ -3025,6 +3062,7 @@ function buildDispatchStores(
     });
     stores.push({
       key: "pool",
+      input_response: inputResponse,
       curve: poolMerit && poolTarget !== undefined
         ? withComfortPremium(poolMerit.curve, poolTarget, POOL_COMFORT_BAND_C, poolMerit.evidence.dearest_sek_per_unit * poolMerit.evidence.scale)
         : anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
@@ -3376,13 +3414,14 @@ function scheduleServices(
     const dispatchStores = dispatchBundle.stores;
     const dispatched = dispatchBundle.result;
     const dispatchSlots = dispatchBundle.slots;
+    const physicalDraw = scoreDispatch(dispatchSlots, dispatchStores, dispatchBundle.limits, dispatched).draw_w;
     if (dispatched.stopped_because === "iteration_cap") {
       errors.push("store dispatch reached its iteration cap");
     }
     for (const store of dispatchStores) {
       // Record the comparison that decided this store, whichever way it went.
-      const plannedKwh = dispatched.power_w[store.key]
-        .reduce((total, watts) => total + watts, 0) / 4_000;
+      const plannedKwh = physicalDraw[store.key]
+        .reduce((total, watts, i) => total + watts * dispatchSlots[i].duration_hours! / 1000, 0);
       const returnedKwh = dispatched.discharge_w[store.key]
         .reduce((total, watts) => total + watts, 0) / 4_000;
       const value = marginalValue(store.curve, store.initial_state) *
@@ -3428,7 +3467,7 @@ function scheduleServices(
           schedule.poolTemperatureC[index] = trajectory[index + 1] ?? null;
         }
       }
-      const powers = dispatched.power_w[store.key];
+      const powers = physicalDraw[store.key];
       const returns = dispatched.discharge_w[store.key];
       for (let index = 0; index < slots.length; index += 1) {
         const powerW = round(powers[index], 2);
@@ -3441,8 +3480,11 @@ function scheduleServices(
           schedule.batteryDischargeW[index] = returns[index];
           continue;
         }
+        if (store.key === "pool") schedule.poolCommand[index] = dispatched.power_w.pool[index];
         if (powerW <= 0) continue;
-        if (store.key === "pool") schedule.pool[index] = powerW;
+        if (store.key === "pool") {
+          schedule.pool[index] = powerW;
+        }
         if (store.key === "ev") {
           schedule.ev[index] = powerW;
           const evControl = evCurrentControl(snapshot);
@@ -4292,6 +4334,7 @@ function simulate(
   for (const slot of slots) {
     const locked = frozen.get(slot.epoch_ms)?.targets;
     const poolW = schedule.pool[slot.index];
+    const poolCommandW = schedule.poolCommand[slot.index];
     const boilerW = schedule.boiler[slot.index];
     const evW = schedule.ev[slot.index];
     const evConnected = snapshot.ev_battery?.connected === true &&
@@ -4318,9 +4361,21 @@ function simulate(
       pool: poolW,
       ev: evW,
     }, roomHeating);
+    if (poolHeaterResponse(snapshot)?.kind === "bergvarme") {
+      const heaters = new Set(poolHeaters(snapshot.device_models).map(model => model.key));
+      const poolDevices = snapshot.device_models.filter(model => model.planning_service === "pool");
+      const auxiliary = poolCommandW > 0 ? poolCommandW * (1 - poolHeaterShare(snapshot)) : 0;
+      const allocate = (heating: boolean, watts: number) => {
+        const group = poolDevices.filter(model => heaters.has(model.key) === heating);
+        const total = group.reduce((sum, model) => sum + (model.active_power_w ?? 0), 0);
+        for (const model of group) deviceLoads[model.key] = round(total > 0 ? watts * (model.active_power_w ?? 0) / total : 0, 2);
+      };
+      allocate(false, auxiliary); allocate(true, Math.max(0, poolW - auxiliary));
+    }
     for (const [key, powers] of Object.entries(schedule.roomDevicePower)) deviceLoads[key] = powers[slot.index];
     if (locked && Object.keys(locked.device_loads_w).sort().join('|') !== snapshot.device_models.map(m => m.key).sort().join('|')) throw new Error('Fixed plan device inventory changed; rescind the plan.');
     if (locked) for (const model of snapshot.device_models) {
+      if (model.planning_service === "pool" && poolHeaterResponse(snapshot)?.kind === "bergvarme") continue;
       if (model.planning_service === "pool" && Math.abs(locked.pool_w - poolW) > 0.01) continue;
       if (model.category === "ev_charging" && Math.abs(locked.ev_w - evW) > 0.01) continue;
       if (!(model.key in locked.device_loads_w)) throw new Error(`Fixed plan device ${model.key} changed; rescind the plan.`);
@@ -4601,6 +4656,7 @@ function simulate(
       shadow_import_sek_per_kwh: round(slot.shadow_import_sek_per_kwh, 5),
       shadow_export_sek_per_kwh: round(slot.shadow_export_sek_per_kwh, 5),
       pool_w: poolW,
+      ...(poolHeaterResponse(snapshot)?.kind === "bergvarme" ? { pool_command_w: poolCommandW } : {}),
       ...(schedule.poolTemperatureC[slot.index] === null ? {} : {
         pool_temperature_c: round(schedule.poolTemperatureC[slot.index]!, 3),
       }),
@@ -4617,7 +4673,7 @@ function simulate(
       ...(snapshot.schema_version >= 7 ? { device_commands: locked && Math.abs(locked.ev_w - evW) < 0.01 ? locked.device_commands : deviceCommands(snapshot, {
         index: slot.index, roomHeating: schedule.roomHeating,
         boilerPermitted: schedule.boilerPermitted[slot.index],
-        poolW, evCurrentA: schedule.evTargetCurrentA[slot.index], relayPower: schedule.roomDevicePower,
+        poolW: poolHeaterResponse(snapshot)?.kind === "bergvarme" ? poolCommandW : poolW, evCurrentA: schedule.evTargetCurrentA[slot.index], relayPower: schedule.roomDevicePower,
       }) } : {}),
       ev_target_current_a: schedule.evTargetCurrentA[slot.index],
       ev_min_current_a: schedule.evMinCurrentA[slot.index],
@@ -5168,6 +5224,7 @@ function workbenchSetup(
   return {
     snapshot: remaining,
     slots,
+    stores: buildDispatchStores(slots, remaining, derivedBatteryValue),
     buildPriority: (
       dispatchCache: Map<string, DispatchBundle | null>,
       solveAuction?: DispatchAuctionSolver,
@@ -5249,7 +5306,10 @@ export function dispatchWorkbenchInputs(
     if (error !== captured) throw error;
   }
   if (!problem) return null;
-  const [slots, stores, limits] = problem;
+  const [slots, scalarStores, limits] = problem;
+  const stores = scalarStores.map(store => ({ ...store,
+    input_response: setup.stores?.find(original => original.key === store.key)?.input_response,
+  }));
   return {
     snapshot_id: setup.snapshot.snapshot_id,
     captured_at: setup.snapshot.captured_at,
@@ -5460,7 +5520,7 @@ function generatePlanBody(
     battery_supply_scope: {kind:"whole_house"},
       battery: snapshot.battery,
     ev_battery: snapshot.ev_battery ?? null,
-    pool: snapshot.pool ? { ...snapshot.pool, stop_temperature_c: snapshot.comfort?.pool ? snapshot.comfort.pool.target_c + POOL_OVERSHOOT_C
+    pool: snapshot.pool ? { ...snapshot.pool, ...(poolHeaterResponse(snapshot) ? { heater_response: poolHeaterResponse(snapshot)! } : {}), stop_temperature_c: snapshot.comfort?.pool ? snapshot.comfort.pool.target_c + POOL_OVERSHOOT_C
       : poolStopTemperature(snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool) } : null,
     grid: snapshot.grid,
     peak_shaping: derivePeakShaping(snapshot),

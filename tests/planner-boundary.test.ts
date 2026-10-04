@@ -54,7 +54,7 @@ Deno.test("a code change is a new planner version", async () => {
 
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
 /** The referee version and the device models' code it judges with. */
-const DEVICE_MODELS_PIN = "9:fccb0bc2a6c627cc";
+const DEVICE_MODELS_PIN = "10:9eeb79c59e7ba576";
 
 Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);

@@ -167,6 +167,8 @@ export function dispatchWithPrefix(
     initially_charging: schedule.power_w[s.key][end - 1] > 0,
     usage_weight: s.usage_weight.slice(end),
     slot_hours: s.slot_hours?.slice(end),
+    fixed_charge_w_by_slot: s.fixed_charge_w_by_slot?.slice(end),
+    input_response: s.input_response?.afterPrefix(schedule.power_w[s.key].slice(0, end), slots.slice(0, end).map(slot => slot.duration_hours ?? 0.25)),
     units_per_kwh: (state: number, i: number) =>
       s.units_per_kwh(state, i + end),
     drift: (state: number, i: number) => s.drift(state, i + end),

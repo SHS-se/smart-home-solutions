@@ -78,11 +78,12 @@ export type ReplanPreviousPlan = Pick<OptimisationPlan,
   "status" | "schema_version" | "plan_id" | "fixed_plan" | "mode" |
   "capabilities" | "issued_at" | "valid_until"
 > & {
+  pool?: OptimisationPlan["pool"];
   plans: { priority: Pick<OptimisationPlan["plans"]["priority"],
     "status" | "dispatched_devices"
   > & {
     slots: Pick<OptimisationPlan["plans"]["priority"]["slots"][number],
-      "start" | "binding" | "pool_w" | "battery_command" |
+      "start" | "binding" | "pool_w" | "pool_command_w" | "battery_command" |
       "battery_charge_w" | "battery_discharge_w"
     >[];
   } };
@@ -112,7 +113,8 @@ export function replanReference(
   const slot = previousSlots[index];
   if (!slot?.binding || previous.plans.priority.status !== "ready") return null;
   let poolRun = 0;
-  while (previousSlots[index + poolRun]?.binding && previousSlots[index + poolRun].pool_w > 0) poolRun += 1;
+  const poolOn = (s: typeof slot) => previous.pool?.heater_response?.kind === "bergvarme" ? s.pool_command_w! > 0 : s.pool_w > 0;
+  while (previousSlots[index + poolRun]?.binding && poolOn(previousSlots[index + poolRun])) poolRun += 1;
   const batteryDispatched = previous.plans.priority.dispatched_devices.includes("battery");
   const command = slot.battery_command;
   // Forecast watts alone cannot preserve which source or destination was authorized.
@@ -126,7 +128,7 @@ export function replanReference(
     slot_start: slot.start,
     store_keys: previous.plans.priority.dispatched_devices,
     pool_heat: previous.plans.priority.dispatched_devices.includes("pool")
-      ? slot.pool_w > 0
+      ? poolOn(slot)
       : null,
     pool_run_quarters: previous.plans.priority.dispatched_devices.includes("pool")
       ? poolRun

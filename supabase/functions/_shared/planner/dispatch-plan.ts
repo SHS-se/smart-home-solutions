@@ -64,7 +64,14 @@ export interface DispatchSlot {
   published_price?: boolean;
 }
 
+/** Immutable response of an executable command profile, owned by its device model. */
+export interface DispatchInputResponse {
+  project(commands: number[], hours: number[]): { draw_w: number[]; gain_fraction: number[] };
+  afterPrefix(commands: number[], hours: number[]): DispatchInputResponse;
+}
+
 export interface DispatchStore {
+  input_response?: DispatchInputResponse;
   /** How the curve was derived, carried through to the plan for whoever inspects it; the dispatch does not read it. */
   derivation?: unknown;
   /** Aligned physical durations, including a partially elapsed first quarter. */
@@ -271,6 +278,7 @@ export interface DispatchBatteryDiagnostic {
 }
 
 export interface DispatchResult {
+  responsive_search?: { evaluations: number; stopped_because: "work_budget" | "neighborhood_exhausted" };
   power_w: Record<string, number[]>;
   /** Energy returned to the house, per store. Zero for a pure sink. */
   discharge_w: Record<string, number[]>;
@@ -785,6 +793,8 @@ export interface DispatchScoreStore {
 }
 
 export interface DispatchScore {
+  /** Physical interval-average electricity; schedule.power_w remains executable commands. */
+  draw_w: Record<string, number[]>;
   /**
    * The objective. **Lower is better** — it is a cost net of service delivered,
    * and it is routinely negative on a plan that delivers more than it spends.
@@ -908,6 +918,7 @@ function scoreDispatchWithReuse(
   const zeros = () => new Array<number>(count).fill(0);
   const infeasibilities: DispatchInfeasibility[] = [];
   const powerByKey: Record<string, number[]> = {};
+  const drawByKey: Record<string, number[]> = {};
   const dischargeByKey: Record<string, number[]> = {};
   const stateByKey: Record<string, number[]> = {};
 
@@ -928,6 +939,8 @@ function scoreDispatchWithReuse(
       }
     });
     powerByKey[store.key] = power;
+    const response = store.input_response?.project(power, slots.map((slot) => slot.duration_hours ?? SLOT_HOURS));
+    drawByKey[store.key] = response?.draw_w ?? power;
     dischargeByKey[store.key] = discharge;
     if (reuse && store.key !== reuse.changedKey) {
       stateByKey[store.key] = reuse.previous.state[store.key];
@@ -945,7 +958,7 @@ function scoreDispatchWithReuse(
       const next = nextState(
         store,
         state[index],
-        power[index],
+        power[index] * (response?.gain_fraction[index] ?? 1),
         discharge[index],
         index,
       );
@@ -1027,7 +1040,7 @@ function scoreDispatchWithReuse(
   const returnedW = zeros();
   for (const store of stores) {
     for (let index = 0; index < count; index += 1) {
-      occupiedW[index] += powerByKey[store.key][index];
+      occupiedW[index] += drawByKey[store.key][index];
       returnedW[index] += dischargeByKey[store.key][index];
     }
   }
@@ -1177,6 +1190,7 @@ function scoreDispatchWithReuse(
     const power = powerByKey[store.key];
     const discharge = dischargeByKey[store.key];
     const state = stateByKey[store.key];
+    const draw = drawByKey[store.key];
     let storeValue = to === count
       ? (store.terminal_weight ?? 0) *
         valueOfMove(store.curve, store.initial_state, state[count])
@@ -1191,14 +1205,14 @@ function scoreDispatchWithReuse(
           valueOfMove(store.curve, store.initial_state, state[index]);
       }
       storeWear += hoursAt(store, index) / 1_000 *
-        ((power[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
+        ((draw[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
           (discharge[index] > 0 &&
               (store.discharge?.cycling_cost_sek_per_unit ?? 0) !== 0
             ? discharge[index] *
               store.discharge!.state_per_kwh_out(state[index], index) *
               store.discharge!.cycling_cost_sek_per_unit!
             : 0));
-      chargedKwh += power[index] / 1_000 * hoursAt(store, index);
+      chargedKwh += draw[index] / 1_000 * hoursAt(store, index);
       dischargedKwh += discharge[index] / 1_000 * hoursAt(store, index);
     }
     const runs = runsOf(power).filter(
@@ -1227,6 +1241,7 @@ function scoreDispatchWithReuse(
   }
 
   return {
+    draw_w: drawByKey,
     total_sek: importSek + peakSek + continuitySek - exportSek + startSek +
       wearSek -
       serviceValueSek,
@@ -1826,6 +1841,9 @@ export function planDispatch(
   options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver } =
     {},
 ): DispatchResult {
+  if (stores.some(store => store.input_response)) {
+    return planResponsiveDispatch(slots, stores, limits, options);
+  }
   // Resolve source getters once; searches and scoring reuse immutable slot data.
   slots = slots.map((slot) => ({ ...slot }));
   const solveAuction = options.solveAuction ?? dispatchAuction;
@@ -1923,6 +1941,131 @@ export function planDispatch(
     }
   }
   return best;
+}
+
+/** Adapt complete command profiles to immutable physical inputs for the scalar solver. */
+export function physicalDispatchStores(
+  slots: DispatchSlot[], stores: DispatchStore[], commands: Record<string, number[]>,
+): DispatchStore[] {
+  const hours = slots.map(slot => slot.duration_hours ?? SLOT_HOURS);
+  return stores.map(store => {
+    if (!store.input_response) return store;
+    const profile = commands[store.key];
+    const projection = store.input_response.project(profile, hours);
+    return {
+      ...store, input_response: undefined,
+      fixed_charge_w_by_slot: projection.draw_w,
+      max_power_w: Math.max(store.max_power_w, ...projection.draw_w),
+      min_power_w: 0, power_step_w: 0, start_cost_sek: 0,
+      units_per_kwh: (state, index) => {
+        const draw = projection.draw_w[index];
+        const heatInput = profile[index] * projection.gain_fraction[index];
+        if (draw === 0 && heatInput !== 0) throw new Error("A scalar physical profile cannot deliver heat without electricity");
+        return draw > 0 ? store.units_per_kwh(state, index) * heatInput / draw : 0;
+      },
+    };
+  });
+}
+
+/** Whole-run response economics around the scalar auction, with exact coupled acceptance.
+ * The bounded neighborhood is a heuristic, not a minimum runtime or convergence guarantee.
+ */
+function planResponsiveDispatch(
+  slots: DispatchSlot[], stores: DispatchStore[], limits: DispatchLimits,
+  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver },
+): DispatchResult {
+  const responsive = stores.filter(store => store.input_response);
+  // A steady proposal has internally consistent trajectories and costs; it is never accepted without projection.
+  const proposal = (options.solveAuction ?? dispatchAuction)(slots,
+    stores.map(store => ({ ...store, input_response: undefined })), limits, options);
+  const visited = new Set<string>();
+  let evaluations = 0;
+  // Keep coupled results within the worker's 16 MB continuation and CPU envelope.
+  const budget = 16;
+  const identity = (powers: Record<string, number[]>) => responsive.map(s => powers[s.key].join(",")).join("|");
+  const solve = (commands: Record<string, number[]>): DispatchResult => {
+    visited.add(identity(commands));
+    evaluations += 1;
+    const result = planDispatch(slots, physicalDispatchStores(slots, stores, commands), limits, options);
+    for (const store of responsive) result.power_w[store.key] = [...commands[store.key]];
+    const scored = scoreDispatch(slots, stores, limits, result);
+    for (const store of responsive) {
+      for (const run of runsOf(result.power_w[store.key])) {
+        const parts = result.allocations.slice(run.start, run.start + run.slots)
+          .flatMap(slot => slot.filter(part => part.store_key === store.key && part.direction === "charge"));
+        const fee = run.start === 0 && store.initially_charging ? 0 : store.start_cost_sek ?? 0;
+        for (const part of parts) {
+          const share = fee / parts.length;
+          part.net_value_sek += part.start_cost_sek - share;
+          part.start_cost_sek = share; part.run_start_index = run.start; part.run_slots = run.slots;
+        }
+        const net = parts.reduce((sum, part) => sum + part.net_value_sek, 0);
+        for (const part of parts) part.run_net_value_sek = net;
+      }
+    }
+    return { ...result, state: scored.state, import_w: scored.import_w, export_w: scored.export_w };
+  };
+  let best = solve(proposal.power_w);
+  let bestScore = scoreDispatch(slots, stores, limits, best);
+  const accept = (candidate: DispatchResult) => {
+    const score = scoreDispatch(slots, stores, limits, candidate);
+    if (!score.infeasibilities.length && (bestScore.infeasibilities.length || score.total_sek < bestScore.total_sek - 1e-9)) {
+      best = candidate; bestScore = score; return true;
+    }
+    return false;
+  };
+  const allOff = { ...best.power_w };
+  for (const store of responsive) allOff[store.key] = slots.map((_, i) => store.fixed_charge_w_by_slot?.[i] ?? 0);
+  if (!visited.has(identity(allOff))) accept(solve(allOff));
+  while (evaluations < budget) {
+    const trials = new Map<string, { powers: Record<string, number[]>; cost: number; bridge: boolean }>();
+    for (const store of responsive) {
+      const current = best.power_w[store.key];
+      const add = (profile: number[], bridge = false) => {
+        if (store.fixed_charge_w_by_slot?.some((fixed, i) => fixed !== null && fixed !== profile[i])) return;
+        const powers = { ...best.power_w, [store.key]: profile };
+        const key = identity(powers);
+        if (visited.has(key) || trials.has(key)) return;
+        const score = scoreDispatchWithReuse(slots, stores, limits, { ...best, power_w: powers }, undefined,
+          { previous: bestScore, changedKey: store.key });
+        // Other stores can repair grid and battery conflicts, but cannot repair this heater's own state cap.
+        if (score.infeasibilities.some(item => item.store_key === store.key)) return;
+        trials.set(key, { powers, cost: score.total_sek, bridge });
+      };
+      const change = (from: number, to: number, watts: number, bridge = false) => {
+        const profile = [...current]; profile.fill(watts, from, to); add(profile, bridge);
+      };
+      const runs = runsOf(current).map(run => ({ ...run, end: run.start + run.slots }));
+      for (let r = 0; r < runs.length; r++) {
+        const run = runs[r];
+        change(run.start, run.end, 0);
+        if (r + 1 < runs.length) change(run.end, runs[r + 1].start, store.max_power_w, true);
+        change(run.start, run.start + 1, 0);
+        change(run.end - 1, run.end, 0);
+        if (run.start > 0) change(run.start - 1, run.start, store.max_power_w);
+        if (run.end < slots.length) change(run.end, run.end + 1, store.max_power_w);
+        for (const shift of [-1, 1]) {
+          if (run.start + shift < 0 || run.end + shift > slots.length) continue;
+          const profile = [...current]; profile.fill(0, run.start, run.end);
+          profile.fill(store.max_power_w, run.start + shift, run.end + shift); add(profile);
+        }
+      }
+      // Multi-quarter insertion crosses the initial low-output interval without a hard run limit.
+      for (let start = 0; start < slots.length; start++) {
+        if (current[start] > 0) continue;
+        for (const length of [1, 2, 4, 8, 16]) {
+          if (start + length <= slots.length) change(start, start + length, store.max_power_w);
+        }
+      }
+    }
+    const ranked = [...trials.values()].sort((a, b) => Number(b.bridge) - Number(a.bridge) || a.cost - b.cost);
+    if (!ranked.length) return { ...best, responsive_search: { evaluations, stopped_because: "neighborhood_exhausted" } };
+    // Rank on the exact physics with the incumbent coupling, then re-solve the best candidates jointly.
+    let improved = false;
+    for (const trial of ranked.slice(0, Math.min(8, budget - evaluations))) improved = accept(solve(trial.powers)) || improved;
+    if (!improved) break;
+  }
+  return { ...best, responsive_search: { evaluations, stopped_because: "work_budget" } };
 }
 
 /** Minimum-cost placement of a fixed amount at executable current settings. */

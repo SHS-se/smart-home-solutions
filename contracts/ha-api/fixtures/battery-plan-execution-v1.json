@@ -9,7 +9,7 @@
     "generation": 1,
     "mode": "controlling",
     "scope_revision": "fixture-whole-house",
-    "model_revision": "marginal-value-planner-v46:ac-constant-efficiency:0.95:0.95",
+    "model_revision": "marginal-value-planner-v47:ac-constant-efficiency:0.95:0.95",
     "energy_basis": "stored_energy_mwh",
     "capacity_mwh": 18080000,
     "minimum_mwh": 904000,

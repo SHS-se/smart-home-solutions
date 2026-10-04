@@ -27,8 +27,9 @@ type Replay =
 
 /**
  * Rebuild the deterministic planner's inputs, reusing completed auctions, up
- * to the first auction still missing. Rebuilding is cheap, no search is
- * repeated, and no functions need serializing.
+ * to the first auction still missing. Device-response profile selection is
+ * reconstructed deterministically; completed scalar searches are not repeated.
+ * No functions need serializing.
  */
 function replay(
   input: EnergyPlanningInput,
@@ -66,8 +67,8 @@ function replay(
 }
 
 /**
- * The plan from a finished chain's auctions. This replays, it never searches:
- * a missing auction is an error, not work to do here.
+ * The plan from a finished chain's auctions. This reconstructs profile selection:
+ * a missing scalar auction is an error, not work to do here.
  */
 export function assembleOptimisationPlan(
   input: EnergyPlanningInput,
