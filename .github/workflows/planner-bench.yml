@@ -34,6 +34,10 @@ on:
         description: "Re-run cases that already have a result"
         type: boolean
         default: false
+      rerecord:
+        description: "Read each case's measured load and the days before it again from the home's tables (after they were corrected)"
+        type: boolean
+        default: false
 
 concurrency:
   group: planner-bench
@@ -126,6 +130,7 @@ jobs:
           INPUT_SHAS: ${{ inputs.shas }}
           INPUT_SCENARIO: ${{ inputs.scenario }}
           INPUT_FORCE: ${{ inputs.force }}
+          INPUT_RERECORD: ${{ inputs.rerecord }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -135,6 +140,7 @@ jobs:
             extra=()
             [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")
             [ "$INPUT_FORCE" = "true" ] && extra+=(--force)
+            [ "$INPUT_RERECORD" = "true" ] && extra+=(--rerecord)
             deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
               --shas "$INPUT_SHAS" "${extra[@]}"
           fi

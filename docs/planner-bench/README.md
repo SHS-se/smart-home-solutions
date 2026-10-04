@@ -88,6 +88,11 @@ deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=cases/NAME.js
 Actions (`shas`: `all`, comma-separated SHAs, or `none` to only rescore), or
 locally:
 
+After the home's quarter tables have been corrected, run it with `rerecord`
+(`--rerecord`, together with `shas` `all`): every case not made from an hourly
+history file reads what the house drew and the days before it again, replacing
+what is stored. Only cases whose input changed are planned again.
+
 ```bash
 deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas all
 ```

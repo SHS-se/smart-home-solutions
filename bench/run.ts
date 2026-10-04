@@ -9,6 +9,9 @@
 //                           without case preparation or historical planner checkouts.
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases whose result is already up to date.
+//   --rerecord              read again, from the home's tables, what each case's house drew and the
+//                           days before it, replacing what is stored (after those tables were corrected).
+//                           Cases made from an hourly history file keep theirs.
 //   --current <sha>         mark this commit as the planner currently deployed.
 //   --branch <name>         recorded against the run (CI passes the pushed branch).
 //   --local <dir> --out <file.json>
@@ -54,10 +57,11 @@ import { commitTree, currentVersionMethod, plannerVersion } from "./planner-vers
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 const VALUED = ["shas", "scenario", "current", "branch", "local", "out", "worker", "root"] as const;
-const args: Partial<Record<(typeof VALUED)[number], string>> & { force?: boolean } = {};
+const args: Partial<Record<(typeof VALUED)[number], string>> & { force?: boolean; rerecord?: boolean } = {};
 for (let i = 0; i < Deno.args.length; i++) {
   const name = Deno.args[i].replace(/^--/, "");
   if (name === "force") args.force = true;
+  else if (name === "rerecord") args.rerecord = true;
   else if ((VALUED as readonly string[]).includes(name) && Deno.args[i + 1] !== undefined) {
     args[name as (typeof VALUED)[number]] = Deno.args[++i];
   } else throw new Error(`Unknown or incomplete option: ${Deno.args[i]}`);
@@ -159,6 +163,23 @@ async function prepareCases(bench: BenchStore) {
         console.log(`${scenario.name}: observed wind added.`);
       }
     }
+    if (args.rerecord && scenario.recorded && source && dataset.origin?.kind !== "history") {
+      // The home's tables were put right after this case was recorded, so what it stores is read again.
+      // Nothing is kept from before: a window that no longer measures cleanly is refereed on its forecasts.
+      const actual = await recordedActual(source, dataset.start);
+      const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
+      const { actual: _stored, ...rest } = scenario.recorded;
+      const recorded = {
+        ...rest, ...(actual ? { actual } : {}),
+        history: { ...scenario.recorded.history, ...(demand ? { demand_days: demand } : {}) },
+      };
+      const changed = canonicalJson(recorded) !== canonicalJson(scenario.recorded);
+      if (changed) {
+        await bench.saveRecorded(scenario.id, recorded, null);
+        scenario.recorded = recorded;
+      }
+      console.log(`${scenario.name}: re-recorded${changed ? "" : ", unchanged"}; ${actual ? "window measured" : "window not measured, refereed on its forecasts"}.`);
+    }
     if (scenario.recorded && source && (!scenario.recorded.actual || !scenario.recorded.history.demand_days)) {
       // Recorded before the bench kept what the house really drew, or the days before it.
       const recorded = { ...scenario.recorded, history: { ...scenario.recorded.history } };
@@ -244,6 +265,7 @@ async function orchestrate() {
   const bench = store();
   if (args.shas === "none") {
     if (args.current) throw new Error("--shas none only rescores; omit --current to leave planner run identity unchanged.");
+    if (args.rerecord) throw new Error("--shas none only rescores; --rerecord needs case preparation, so run it with --shas all.");
     // A rescore needs an existing source file; creating an empty local bench
     // is valid for planning, but would hide a mistyped path here.
     if (args.local) await Deno.stat(args.out!);

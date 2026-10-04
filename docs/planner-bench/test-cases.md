@@ -112,15 +112,17 @@ through the forecasts. A window whose device meters add up to more than the
 house drew in more than a few quarters is not used, and that case is refereed
 on its forecasts as before.
 
-The home's own record of its car charging cannot be used for this. Through
-September 2026 `ev_charging_kwh` held twice what the charger drew, half of it an
-hour late, so taking it out of the house's draw left the base load at nothing
-while the car charged, and refused the window outright for C-0905 and C-0919.
-For the four cases whose window has car charging (C-0905, C-0919, C-0920,
-C-0927) the stored measured base load was rebuilt on 4 October 2026 with the
-car taken from the charger's power sensor in Home Assistant, hour by hour. A
-new case with car charging in its window needs the same until the recording is
-put right.
+From 17 August to 3 October 2026 the home recorded its car charging twice
+(`ev_charging_kwh`): the charger's dashboard meter plus a second meter for the
+same charger left in the integration's settings, one of them an hour late.
+Taking that out of the house's draw left the base load at nothing while the car
+charged, refused the window outright for C-0905 and C-0919, and understated the
+days before every case of that period. On 4 October 2026 the integration was
+fixed to count each load once and the recorded quarters were put right: from
+8 September from the dashboard meter, before that from the hourly statistics of
+the charger's power integral, spread evenly over each hour. The cases were then
+read again from the tables (`rerecord`), replacing a hand repair of C-0905,
+C-0919, C-0920 and C-0927 made earlier that day.
 
 The battery then does what it does in the house, where a plan is a permission
 and not a power:
