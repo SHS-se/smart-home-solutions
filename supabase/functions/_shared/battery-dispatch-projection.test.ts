@@ -264,8 +264,9 @@ Deno.test("production captures exact execution demand and partial interval witho
       counting,
     );
   assertEquals(calls, normalCalls);
-  assertEquals(calls, 1);
-  // One authoritative auction supplies both presentation and execution.
+  assert(calls > 0);
+  // Whole-run comparisons may use several auctions; projection adds no solve
+  // and the selected schedule supplies both presentation and execution.
   assertEquals(plan, normal);
   assertEquals(s, before);
   assert(p.status === "ready", JSON.stringify(p));

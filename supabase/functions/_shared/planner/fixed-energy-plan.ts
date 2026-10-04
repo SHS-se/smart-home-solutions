@@ -1,5 +1,6 @@
 import {
   type DispatchAuctionSolver,
+  type DispatchSearchBudget,
   type DispatchLimits,
   type DispatchResult,
   type DispatchSchedule,
@@ -98,6 +99,7 @@ export function dispatchWithFixedPlan(
   starts: number[],
   fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): DispatchResult {
   const matching = new Map(
     fixed?.slots.map((s) => [Date.parse(s.start), s]) ?? [],
@@ -106,11 +108,11 @@ export function dispatchWithFixedPlan(
   for (let i = 0; i < starts.length; i++) {
     if (matching.has(starts[i])) end = i + 1;
   }
-  if (!end) return planDispatch(slots, stores, limits, { solveAuction });
+  if (!end) return planDispatch(slots, stores, limits, { solveAuction, searchBudget });
   const keys = stores.map((s) => s.key).sort().join("|");
   const before = matching.has(starts[0])
     ? null
-    : planDispatch(slots, stores, limits, { solveAuction });
+    : planDispatch(slots, stores, limits, { solveAuction, searchBudget });
   const schedule: DispatchSchedule = {
     power_w: {},
     discharge_w: {},
@@ -131,7 +133,7 @@ export function dispatchWithFixedPlan(
       });
     }
   }
-  return dispatchWithPrefix(slots, stores, limits, schedule, end, solveAuction);
+  return dispatchWithPrefix(slots, stores, limits, schedule, end, solveAuction, searchBudget);
 }
 
 /** Expected constraint rejection, distinct from worker continuation and solver errors. */
@@ -145,6 +147,8 @@ export function dispatchWithPrefix(
   allocation: DispatchSchedule,
   end: number,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
+  commandProposal?: Record<string, number[]>,
 ): DispatchResult {
   const schedule = structuredClone(allocation);
   const prefix = scoreDispatch(
@@ -182,7 +186,8 @@ export function dispatchWithPrefix(
       : undefined,
   }));
   const suffix = end < slots.length
-    ? planDispatch(slots.slice(end), suffixStores, limits, { solveAuction })
+    ? planDispatch(slots.slice(end), suffixStores, limits, { solveAuction, searchBudget,
+      commandProposal: commandProposal ? Object.fromEntries(Object.entries(commandProposal).map(([key, values]) => [key, values.slice(end)])) : undefined })
     : null;
   for (const field of ["power_w", "discharge_w"] as const) {
     for (const store of stores) {
@@ -229,13 +234,15 @@ export function dispatchWithStoreProfile(
   key: string,
   profile: (number | null)[],
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
+  commandProposal?: Record<string, number[]>,
 ): DispatchResult {
   if (!stores.some(store => store.key === key) || profile.length !== slots.length) {
     throw new Error("Store profile must name a store and cover the horizon");
   }
   const solved = planDispatch(slots,
     stores.map(store => store.key === key ? { ...store, fixed_charge_w_by_slot: profile } : store),
-    limits, { solveAuction });
+    limits, { solveAuction, searchBudget, commandProposal });
   const score = scoreDispatch(slots, stores, limits, solved);
   if (score.infeasibilities.length || !Number.isFinite(score.total_sek)) {
     throw new DispatchPrefixInfeasible(`Store profile cannot execute: ${score.infeasibilities.map(item => item.message).join("; ")}`);

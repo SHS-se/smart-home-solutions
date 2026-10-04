@@ -68,7 +68,7 @@ The default soft preferences are:
 
 - Grid shaping: `0.1 SEK/kWh/kW`, applied from zero import, integrated as `0.5 × rate × import_kW² × 0.25 h` per quarter.
 - Import changes: `0.05 SEK/kW` of absolute change between adjacent quarters, without inventing an initial or final zero-load boundary.
-- Heat-pump starts: `0.25 SEK` per run in refinement, in addition to the pool’s `0.50 SEK` equipment start cost. Batteries, including EV batteries, are excluded.
+- Heat-pump starts: `0.25 SEK` per run in refinement, in addition to the pool’s `3 SEK` equipment start cost. Batteries, including EV batteries, are excluded.
 
 These are scheduling preferences, not billed charges or measured equipment wear. They are published in `peak_shaping`; the scorer reports continuity separately in `continuity_sek`, and neither preference enters `billable_sek`. No Ellevio demand charge is assumed while the household has none. A future tariff requires its actual measurement windows and carried billing state.
 
@@ -79,6 +79,8 @@ Replay comparison: `deno run --allow-read scripts/compare-planner-replay.ts caps
 ## Heat-pump run settlement (v26)
 
 Settlement rebuilds continuous heat-pump runs from the actual power schedule and accounts for one equipment start per run. Confirmed operation at the first quarter waives that continuation’s start. Settlement considers trimming or removing any contiguous portion of a run, including the cost of any restart the cut creates. A slightly losing quarter therefore cannot be removed in isolation and leave its neighbour incorrectly priced as a free continuation. Diagnostics describe these actual runs and their combined net value, including after cost refinement.
+
+Update, 2026-10-04: the pool equipment startup cost is now 3 SEK at the household’s request, alongside the existing 0.25 SEK run preference. There is no separate stop cost.
 
 Decision, 2026-09-10: fix this accounting defect first, without adding a minimum runtime or changing the existing start cost. If isolated short heating runs recur, prefer adding a separate stopping cost (discussed at 0.50 SEK), rather than increasing the start cost. A new run would need to justify its start and eventual stop across the whole run. This is a future option, not an implemented penalty; any such start/stop costs apply only to heat pumps, never home or EV batteries.
 

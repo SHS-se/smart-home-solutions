@@ -53,6 +53,8 @@ import {
   type DispatchLimits,
   type DispatchResult,
   type DispatchAuctionSolver,
+  type DispatchSearchBudget,
+  dispatchSearchBudget,
   type DispatchSchedule,
   type DispatchSlot,
   type DispatchStore,
@@ -148,7 +150,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v47";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v48";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -3027,13 +3029,18 @@ function buildDispatchStores(
     // A heat pump switched at its setting is one power or off.
     const poolPower = running ? relayEnvelope(running.draw_w) : declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
     const heaterResponse = poolHeaterResponse(snapshot);
+    if (heaterResponse?.kind === "bergvarme" && poolPower.min_power_w !== poolPower.max_power_w) {
+      throw new Error("Bergvärme startup dynamics require a fixed-setting heater envelope");
+    }
     const elapsed = pool.heating_running === true ? pool.heating_elapsed_seconds : null;
     if (heaterResponse?.kind === "bergvarme" && pool.heating_running === true && !(typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0)) {
       throw new Error("An enabled bergvärme heater requires elapsed run time from switch history");
     }
     const boundaryMs = slots[0].epoch_ms + SLOT_MS - slots[0].duration_hours * 3_600_000;
-    const inputResponse = heaterResponse?.kind === "bergvarme" ? heaterInputResponse(
-      heaterResponse,
+    // Fixed-setting steady heaters use the same whole-run economics as
+    // bergvärme; a modulating envelope remains with the scalar dispatcher.
+    const inputResponse = poolPower.min_power_w === poolPower.max_power_w ? heaterInputResponse(
+      heaterResponse ?? { kind: "steady" },
       { compressor_w: poolPower.max_power_w * heaterShare, auxiliary_w: poolPower.max_power_w * (1 - heaterShare) },
       elapsed == null ? null : elapsed + Math.max(0, boundaryMs - isoMs(snapshot.captured_at)) / 1000,
     ) : undefined;
@@ -3073,7 +3080,7 @@ function buildDispatchStores(
       // can hold more than one. §8.13 is enforced inside `powerEnvelope`, for
       // every store that has a band, rather than restated beside each one.
       ...poolPower,
-      start_cost_sek: 0.5,
+      start_cost_sek: 3,
       initially_charging: pool.heating_running === true,
       // Heat is valued as state carried to the horizon edge, discounted by
       // what leaks on the way — the same construction as the battery below,
@@ -3335,6 +3342,7 @@ function scheduleServices(
   derivedBatteryValue: DerivedBatteryValueCurve | null,
   fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): { schedule: Schedule; errors: string[] } {
   const schedule = emptySchedule(slots.length);
   const occupiedW = new Array(slots.length).fill(0);
@@ -3402,7 +3410,7 @@ function scheduleServices(
       };
       dispatchBundle = {
         stores, slots: dispatchSlots, limits,
-        result: dispatchWithFixedPlan(dispatchSlots, stores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction),
+        result: dispatchWithFixedPlan(dispatchSlots, stores, limits, slots.map(s => s.epoch_ms), fixed, solveAuction, searchBudget),
       };
     } else {
       if (slots.some(slot => frozen.has(slot.epoch_ms))) throw new Error("Fixed plan stores are no longer available; rescind the fixed plan.");
@@ -4998,6 +5006,7 @@ function buildPlan(
   derivedBatteryValue: DerivedBatteryValueCurve | null,
   fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): MaterializedPlan {
   const scheduled = scheduleServices(
     key,
@@ -5008,6 +5017,7 @@ function buildPlan(
     derivedBatteryValue,
     fixed,
     solveAuction,
+    searchBudget,
   );
   const thermalErrors = scheduleRoomHeating(
     key,
@@ -5056,9 +5066,10 @@ function buildPriorityPlan(
   protectedSoc: (number | null)[], dispatchCache: Map<string, DispatchBundle | null>,
   derived: DerivedBatteryValueCurve | null, now: Date,
   fixed?: FixedEnergyPlan | null, solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): MaterializedPlan {
   const materialize = (cache: Map<string, DispatchBundle | null>) =>
-    buildPlan("priority", slots, snapshot, reservedW, protectedSoc, cache, derived, fixed, solveAuction);
+    buildPlan("priority", slots, snapshot, reservedW, protectedSoc, cache, derived, fixed, solveAuction, searchBudget);
   const proposed = materialize(dispatchCache);
   const reference = snapshot.replan_reference;
   if (!reference) return proposed;
@@ -5084,7 +5095,7 @@ function buildPriorityPlan(
   const proposedAncillary = ancillary(proposed.plan);
   // A pool that is already heating keeps its previous run unless stopping it
   // saves a real amount; the quarter deadband below is for everything else.
-  const held = heldRunCandidate(bundle, reference, snapshot.pool?.heating_running === true, solveAuction);
+  const held = heldRunCandidate(bundle, reference, snapshot.pool?.heating_running === true, solveAuction, searchBudget);
   if (held) {
     decision.held_run = {
       quarters: reference.pool_run_quarters ?? 0,
@@ -5101,13 +5112,12 @@ function buildPriorityPlan(
           ...decision, selected: "held", reason: "running_load_held",
           reference_sek: held.objective_sek, deadband_sek: HELD_RUN_RELEASE_SEK,
         };
-        dispatchCache.set(cacheKey, selectedBundle);
         return plan;
       }
       decision.held_run.released = true;
     }
   }
-  const alternatives = continuityCandidates(bundle, reference, solveAuction);
+  const alternatives = continuityCandidates(bundle, reference, solveAuction, searchBudget);
   decision.reason = alternatives.reason;
   for (const candidate of alternatives.candidates) {
     decision.reference_sek ??= candidate.objective_sek;
@@ -5121,7 +5131,6 @@ function buildPriorityPlan(
     }
     if (ancillary(plan.plan) !== proposedAncillary) { decision.reason = "ancillary_divergence"; continue; }
     plan.plan.continuity = { ...decision, selected: candidate.construction, reason: "within_deadband", reference_sek: candidate.objective_sek };
-    dispatchCache.set(cacheKey, selectedBundle);
     return plan;
   }
   return proposed;
@@ -5210,6 +5219,7 @@ function workbenchSetup(
   now: Date,
   publishedOnly = false,
 ) {
+  const searchBudget = dispatchSearchBudget();
   const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
   // Stored plan outlooks are already aligned to the remaining horizon. The
   // workbench leaves out the same devices the plan did.
@@ -5230,7 +5240,7 @@ function workbenchSetup(
       solveAuction?: DispatchAuctionSolver,
     ) =>
       buildPriorityPlan(slots, remaining, reservedW, protectedSoc, dispatchCache,
-                        derivedBatteryValue, now, undefined, solveAuction),
+                        derivedBatteryValue, now, undefined, solveAuction, searchBudget),
   };
 }
 
@@ -5244,8 +5254,7 @@ export function dispatchWorkbench(
 ): DispatchWorkbench | null {
   const setup = workbenchSetup(snapshot, priceArchive, resolvedPriceOutlook, now, horizon === "published");
   const dispatchCache = new Map<string, DispatchBundle | null>();
-  setup.buildPriority(dispatchCache, solveAuction);
-  const bundle = [...dispatchCache.values()].find((entry) => entry !== null);
+  const bundle = setup.buildPriority(dispatchCache, solveAuction).bundle;
   if (!bundle) return null;
   const peakShaping = derivePeakShaping(setup.snapshot);
   return {
@@ -5306,10 +5315,11 @@ export function dispatchWorkbenchInputs(
     if (error !== captured) throw error;
   }
   if (!problem) return null;
-  const [slots, scalarStores, limits] = problem;
-  const stores = scalarStores.map(store => ({ ...store,
-    input_response: setup.stores?.find(original => original.key === store.key)?.input_response,
-  }));
+  const [slots, , limits] = problem;
+  // Proposal stores omit response dynamics and startup fees. Hand-built
+  // schedules must be judged against the original device economics instead.
+  const stores = setup.stores;
+  if (!stores) throw new Error("Captured dispatch inputs require resolved stores");
   return {
     snapshot_id: setup.snapshot.snapshot_id,
     captured_at: setup.snapshot.captured_at,
@@ -5342,11 +5352,12 @@ export function generateOptimisationPlanWithBatteryProjection(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"], fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
 ): OptimisationResult {
+  const searchBudget = dispatchSearchBudget();
   // An impossible reading leaves out its own device before anything reads it.
   snapshot = withDevicePhysics(isolateMeasurements(snapshot));
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   if (snapshot.schema_version !== 9) {
-    const { plan, battery_projection } = generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction);
+    const { plan, battery_projection } = generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction, searchBudget);
     return { plan, battery_projection };
   }
   validateOperatingScope(snapshot);
@@ -5356,7 +5367,7 @@ export function generateOptimisationPlanWithBatteryProjection(
   const planningInput = { ...snapshot, schema_version: 8 as const };
   delete planningInput.operating_scope;
   const operatingScope = remainingSnapshot(snapshot, Math.max(now.getTime(), isoMs(snapshot.captured_at))).operating_scope;
-  const execution = generatePlanBody(planningInput, now, priceArchive, resolvedPriceOutlook, null, solveAuction, operatingScope);
+  const execution = generatePlanBody(planningInput, now, priceArchive, resolvedPriceOutlook, null, solveAuction, searchBudget, operatingScope);
   const feedback = snapshot.battery_execution_feedback;
   const mode = snapshot.operating_scope?.modes.$battery;
   const contract = feedback && snapshot.battery && execution.plan.status === "ready" &&
@@ -5387,6 +5398,7 @@ function generatePlanBody(
   resolvedPriceOutlook?: OptimisationPlan["price_outlook"],
   fixed?: FixedEnergyPlan | null,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
   operatingScope?: OperatingScope,
   projectionBranch: "execution" | "priority" | "battery_verification" = operatingScope ? "execution" : "priority",
   frozenDemand?: BatteryProjectionRow[],
@@ -5413,6 +5425,9 @@ function generatePlanBody(
     ? deriveBatteryValueCurve(slots, snapshot)
     : null;
   const dispatchCache = new Map<string, DispatchBundle | null>();
+  // Spend optional coupled search on the schedule sent to devices first.
+  const priority = buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
+                                    derivedBatteryValue, now, fixed, solveAuction, searchBudget);
   const baseline = buildPlan(
     "baseline",
     slots,
@@ -5423,6 +5438,7 @@ function generatePlanBody(
     derivedBatteryValue,
     fixed,
     solveAuction,
+    searchBudget,
   );
   const cost = buildPlan(
     "cost",
@@ -5434,9 +5450,8 @@ function generatePlanBody(
     derivedBatteryValue,
     fixed,
     solveAuction,
+    searchBudget,
   );
-  const priority = buildPriorityPlan(slots, snapshot, reservedW, protectedSoc, dispatchCache,
-                                    derivedBatteryValue, now, fixed, solveAuction);
   const plans = { baseline: baseline.plan, priority: priority.plan, cost: cost.plan };
   const batteryCurveWasUsed = [...dispatchCache.values()].some((bundle) =>
     bundle?.stores.some((store) => store.key === "battery")

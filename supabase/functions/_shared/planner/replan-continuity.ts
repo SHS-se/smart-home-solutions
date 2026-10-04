@@ -5,6 +5,7 @@ import type {
 } from "./energy-optimisation.ts";
 import {
   type DispatchAuctionSolver,
+  type DispatchSearchBudget,
   type DispatchLimits,
   type DispatchResult,
   type DispatchSlot,
@@ -199,6 +200,7 @@ export function continuityCandidates(
   problem: ContinuityProblem,
   reference: ReplanReference,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): {
   candidates: ContinuityCandidate[];
   reason: string;
@@ -271,7 +273,7 @@ export function continuityCandidates(
   try {
     add(
       "repaired",
-      dispatchWithPrefix(slots, stores, limits, prefix, 1, solveAuction),
+      dispatchWithPrefix(slots, stores, limits, prefix, 1, solveAuction, searchBudget, result.power_w),
     );
   } catch (error) {
     // A continuation sentinel or unexpected solver defect must reach its caller.
@@ -300,6 +302,7 @@ export function heldRunCandidate(
   reference: ReplanReference,
   poolRunning: boolean,
   solveAuction?: DispatchAuctionSolver,
+  searchBudget?: DispatchSearchBudget,
 ): ContinuityCandidate | null {
   const { slots, stores, limits, result } = problem;
   const quarters = Math.min(reference.pool_run_quarters ?? 0, slots.length);
@@ -311,7 +314,7 @@ export function heldRunCandidate(
   );
   let solved: DispatchResult;
   try {
-    solved = dispatchWithStoreProfile(slots, stores, limits, pool.key, profile, solveAuction);
+    solved = dispatchWithStoreProfile(slots, stores, limits, pool.key, profile, solveAuction, searchBudget, result.power_w);
   } catch (error) {
     if (!(error instanceof DispatchPrefixInfeasible)) throw error;
     return null;

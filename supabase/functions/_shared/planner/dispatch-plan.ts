@@ -1808,6 +1808,12 @@ export function enforceMinimumSizedPower(
   return adjusted;
 }
 
+/** Optional coupled auctions shared by every comparison in one plan generation.
+ * Recreated on replay, so completed auctions consume the same allowance in order.
+ */
+export interface DispatchSearchBudget { remaining: number }
+export function dispatchSearchBudget(): DispatchSearchBudget { return { remaining: 12 }; }
+
 /** A solver can execute each auction in a separate CPU budget. */
 export type DispatchAuctionSolver = (
   slots: DispatchSlot[],
@@ -1838,16 +1844,28 @@ export function planDispatch(
   slots: DispatchSlot[],
   stores: DispatchStore[],
   limits: DispatchLimits,
-  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver } =
+  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver; searchBudget?: DispatchSearchBudget; commandProposal?: Record<string, number[]> } =
     {},
 ): DispatchResult {
   if (stores.some(store => store.input_response)) {
     return planResponsiveDispatch(slots, stores, limits, options);
   }
+  return planScalarDispatch(slots, stores, limits, { ...options, searchBudget: undefined });
+}
+
+/** A projected optional candidate spends credits here, including EV alternatives.
+ * Ordinary and mandatory scalar solves are never limited by responsive search.
+ */
+function planScalarDispatch(
+  slots: DispatchSlot[], stores: DispatchStore[], limits: DispatchLimits,
+  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver; searchBudget?: DispatchSearchBudget; commandProposal?: Record<string, number[]> },
+): DispatchResult {
   // Resolve source getters once; searches and scoring reuse immutable slot data.
   slots = slots.map((slot) => ({ ...slot }));
   const solveAuction = options.solveAuction ?? dispatchAuction;
-  let best = solveAuction(slots, stores, limits, options);
+  const auctionOptions = { maxIterations: options.maxIterations };
+  if (options.searchBudget) options.searchBudget.remaining -= 1;
+  let best = solveAuction(slots, stores, limits, auctionOptions);
   // Selection runs through the same scorer a hand-built plan is judged by, so
   // "the planner picked this" and "this scored better" are the same claim.
   const objective = (result: DispatchResult): number =>
@@ -1857,7 +1875,7 @@ export function planDispatch(
     }).total_sek;
   let bestCost = objective(best);
   for (const store of stores) {
-    if (store.fixed_charge_w_by_slot) continue;
+    if (store.fixed_charge_w_by_slot || (options.searchBudget && options.searchBudget.remaining <= 0)) continue;
     const profile = cheapestDiscreteProfile(
       slots,
       store,
@@ -1867,6 +1885,7 @@ export function planDispatch(
     if (!profile) continue;
     // Let the battery and other stores respond to the new car schedule; keeping
     // their old allocations would reserve tomorrow's solar against moving it.
+    if (options.searchBudget) options.searchBudget.remaining -= 1;
     const candidate = solveAuction(
       slots.map((slot, i) => ({
         ...slot,
@@ -1874,7 +1893,7 @@ export function planDispatch(
       })),
       stores.filter((other) => other !== store),
       limits,
-      options,
+      auctionOptions,
     );
     const state = new Array(slots.length + 1).fill(store.initial_state);
     const discharge = new Array(slots.length).fill(0);
@@ -1972,21 +1991,22 @@ export function physicalDispatchStores(
  */
 function planResponsiveDispatch(
   slots: DispatchSlot[], stores: DispatchStore[], limits: DispatchLimits,
-  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver },
+  options: { maxIterations?: number; solveAuction?: DispatchAuctionSolver; searchBudget?: DispatchSearchBudget; commandProposal?: Record<string, number[]> },
 ): DispatchResult {
   const responsive = stores.filter(store => store.input_response);
   // A steady proposal has internally consistent trajectories and costs; it is never accepted without projection.
   const proposal = (options.solveAuction ?? dispatchAuction)(slots,
-    stores.map(store => ({ ...store, input_response: undefined })), limits, options);
+    stores.map(store => ({ ...store, input_response: undefined })), limits, { maxIterations: options.maxIterations });
   const visited = new Set<string>();
   let evaluations = 0;
-  // Keep coupled results within the worker's 16 MB continuation and CPU envelope.
-  const budget = 16;
+  // Mandatory projected comparisons always run; optional auctions have one
+  // generation-wide allowance, including discrete-store alternatives.
+  const budget = options.searchBudget ?? dispatchSearchBudget();
   const identity = (powers: Record<string, number[]>) => responsive.map(s => powers[s.key].join(",")).join("|");
-  const solve = (commands: Record<string, number[]>): DispatchResult => {
+  const solve = (commands: Record<string, number[]>, optional = false): DispatchResult => {
     visited.add(identity(commands));
     evaluations += 1;
-    const result = planDispatch(slots, physicalDispatchStores(slots, stores, commands), limits, options);
+    const result = planScalarDispatch(slots, physicalDispatchStores(slots, stores, commands), limits, { ...options, searchBudget: optional ? budget : undefined });
     for (const store of responsive) result.power_w[store.key] = [...commands[store.key]];
     const scored = scoreDispatch(slots, stores, limits, result);
     for (const store of responsive) {
@@ -2005,8 +2025,10 @@ function planResponsiveDispatch(
     }
     return { ...result, state: scored.state, import_w: scored.import_w, export_w: scored.export_w };
   };
-  let best = solve(proposal.power_w);
-  let bestScore = scoreDispatch(slots, stores, limits, best);
+  const seed = solve(proposal.power_w);
+  const seedScore = scoreDispatch(slots, stores, limits, seed);
+  let best = seed;
+  let bestScore = seedScore;
   const accept = (candidate: DispatchResult) => {
     const score = scoreDispatch(slots, stores, limits, candidate);
     if (!score.infeasibilities.length && (bestScore.infeasibilities.length || score.total_sek < bestScore.total_sek - 1e-9)) {
@@ -2017,17 +2039,32 @@ function planResponsiveDispatch(
   const allOff = { ...best.power_w };
   for (const store of responsive) allOff[store.key] = slots.map((_, i) => store.fixed_charge_w_by_slot?.[i] ?? 0);
   if (!visited.has(identity(allOff))) accept(solve(allOff));
-  while (evaluations < budget) {
+  if (options.commandProposal) {
+    const commands = { ...options.commandProposal };
+    for (const store of responsive) commands[store.key] = slots.map((_, i) =>
+      store.fixed_charge_w_by_slot?.[i] ?? options.commandProposal![store.key][i]);
+    const check = scoreDispatch(slots, stores, limits, {
+      power_w: commands, discharge_w: best.discharge_w,
+    });
+    if (!visited.has(identity(commands)) && !check.infeasibilities.some(item =>
+      responsive.some(store => store.key === item.store_key))) accept(solve(commands));
+  }
+  while (budget.remaining > 0) {
     const trials = new Map<string, { powers: Record<string, number[]>; cost: number; bridge: boolean }>();
-    for (const store of responsive) {
-      const current = best.power_w[store.key];
+    // All-off can beat a fragmented seed before any bridges are tried. Keep
+    // that seed as a search origin so startup charges cannot erase the very
+    // run combinations that repay them.
+    const origins = identity(best.power_w) === identity(seed.power_w) ? [best] : [best, seed];
+    for (const origin of origins) for (const store of responsive) {
+      const originScore = origin === seed ? seedScore : bestScore;
+      const current = origin.power_w[store.key];
       const add = (profile: number[], bridge = false) => {
         if (store.fixed_charge_w_by_slot?.some((fixed, i) => fixed !== null && fixed !== profile[i])) return;
-        const powers = { ...best.power_w, [store.key]: profile };
+        const powers = { ...origin.power_w, [store.key]: profile };
         const key = identity(powers);
         if (visited.has(key) || trials.has(key)) return;
-        const score = scoreDispatchWithReuse(slots, stores, limits, { ...best, power_w: powers }, undefined,
-          { previous: bestScore, changedKey: store.key });
+        const score = scoreDispatchWithReuse(slots, stores, limits, { ...origin, power_w: powers }, undefined,
+          { previous: originScore, changedKey: store.key });
         // Other stores can repair grid and battery conflicts, but cannot repair this heater's own state cap.
         if (score.infeasibilities.some(item => item.store_key === store.key)) return;
         trials.set(key, { powers, cost: score.total_sek, bridge });
@@ -2053,7 +2090,7 @@ function planResponsiveDispatch(
       // Multi-quarter insertion crosses the initial low-output interval without a hard run limit.
       for (let start = 0; start < slots.length; start++) {
         if (current[start] > 0) continue;
-        for (const length of [1, 2, 4, 8, 16]) {
+        for (const length of [1, 2, 4, 8, 16, 32, 64]) {
           if (start + length <= slots.length) change(start, start + length, store.max_power_w);
         }
       }
@@ -2062,7 +2099,10 @@ function planResponsiveDispatch(
     if (!ranked.length) return { ...best, responsive_search: { evaluations, stopped_because: "neighborhood_exhausted" } };
     // Rank on the exact physics with the incumbent coupling, then re-solve the best candidates jointly.
     let improved = false;
-    for (const trial of ranked.slice(0, Math.min(8, budget - evaluations))) improved = accept(solve(trial.powers)) || improved;
+    for (const trial of ranked.slice(0, 8)) {
+      if (budget.remaining <= 0) break;
+      improved = accept(solve(trial.powers, true)) || improved;
+    }
     if (!improved) break;
   }
   return { ...best, responsive_search: { evaluations, stopped_because: "work_budget" } };

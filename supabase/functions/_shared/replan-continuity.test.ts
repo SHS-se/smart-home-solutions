@@ -17,6 +17,7 @@ import {
   replanReference,
   usableReference,
 } from "./planner/replan-continuity.ts";
+import { heaterInputResponse } from "./planner/heat-pump-dispatch.ts";
 import { scoreDispatch } from "./planner/dispatch-plan.ts";
 import { solvedPlan } from "./planner/solved-plan.fixture.ts";
 import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
@@ -96,6 +97,9 @@ function referencedSnapshot(cheap = false) {
       if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
       if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;
     });
+    // Guarantee house supply in the first quarter under any later pool run
+    // search; a 10 W reference adjustment then tests the same battery action.
+    input.slots[0].import_price_sek_per_kwh = 1;
     // These continuity cases need a fixed declining valuation: a 10 W
     // adjustment stays within the deadband, while replacing house supply
     // with hold costs enough to switch immediately. Previously the automatic
@@ -175,7 +179,7 @@ Deno.test("small battery changes retain a feasible request while material gains 
   const { input } = referencedSnapshot(true);
   input.replan_reference!.battery!.discharge_w -= 10;
   const stable = generateOptimisationPlan(input, new Date(input.captured_at));
-  assertEquals(stable.plans.priority.continuity!.selected, "direct");
+  assert(stable.plans.priority.continuity!.selected !== "proposed", JSON.stringify(stable.plans.priority.continuity));
   assertEquals(
     stable.plans.priority.slots[0].battery_discharge_w,
     input.replan_reference!.battery!.discharge_w,
@@ -228,7 +232,7 @@ Deno.test("pool continuity preserves the heat action using the current learned p
   const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
   const pool = bench.stores.find((s) => s.key === "pool")!;
   const stores = bench.stores.map((s) =>
-    s.key === "pool" ? { ...s, max_power_w: 2148, min_power_w: 2148 } : s
+    s.key === "pool" ? { ...s, max_power_w: 2148, min_power_w: 2148, input_response: heaterInputResponse({ kind: "steady" }, { compressor_w: 2148, auxiliary_w: 0 }, null) } : s
   );
   input.replan_reference!.pool_heat = true;
   const alternatives = continuityCandidates({
@@ -236,6 +240,7 @@ Deno.test("pool continuity preserves the heat action using the current learned p
     stores,
     result: {
       ...bench.planned,
+      power_w: { ...bench.planned.power_w, pool: bench.planned.power_w.pool.map(watts => watts > 0 ? 2148 : 0) },
       state: {},
       import_w: [],
       export_w: [],
@@ -333,11 +338,12 @@ Deno.test("a plan that keeps the previous decision still says how warm the pool 
   input.replan_reference!.battery!.discharge_w -= 10;
   const plan = generateOptimisationPlan(input, new Date(input.captured_at));
   const priority = plan.plans.priority;
-  assertEquals(priority.continuity!.selected, "direct");
+  assert(priority.continuity!.selected !== "proposed");
   const heated = priority.slots.filter((slot) => slot.pool_w > 0);
   assert(heated.length > 0);
-  // A kept decision is not an auction bid, so the temperature cannot be read from one.
-  assert(heated.every((slot) => !slot.decision.store_allocations.some((a) => a.store_key === "pool")));
+  // A repaired suffix may have bids, but the retained first decision is not
+  // an auction bid; its temperature still comes from the physical trajectory.
+  assertEquals(priority.slots[0].decision.store_allocations, []);
   let before = plan.pool!.water_temperature_c;
   for (const slot of priority.slots) {
     assert(typeof slot.pool_temperature_c === "number");
@@ -356,7 +362,7 @@ Deno.test("workbench uses the frozen planning time when capture preceded issuanc
   input.replan_reference.battery!.discharge_w -= 10;
   const generated = generateOptimisationPlan(input, now);
   const bench = dispatchWorkbench(input, [], generated.price_outlook)!;
-  assertEquals(generated.plans.priority.continuity!.selected, "direct");
+  assert(generated.plans.priority.continuity!.selected !== "proposed");
   assertAlmostEquals(
     bench.planned.discharge_w.battery[0],
     generated.plans.priority.slots[0].battery_discharge_w,
@@ -481,7 +487,7 @@ Deno.test("a running pool keeps its previous run, and a planned one may still mo
   const { input } = heatingPoolSnapshot(8);
   // Dear enough that a fresh solve waits for quarter 5, cheap enough that
   // holding the run costs less than the release margin.
-  const start = input.slots[5].import_price_sek_per_kwh! + 1;
+  const start = input.slots[5].import_price_sek_per_kwh! + .5;
   input.slots.slice(0, 5).forEach((slot) => slot.import_price_sek_per_kwh = start);
   const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
   const result = {

@@ -1,9 +1,9 @@
 import { assertAlmostEquals, assertEquals } from "@std/assert";
 import { heaterInputResponse } from "./heat-pump-dispatch.ts";
-import { physicalDispatchStores, planDispatch, scoreDispatch, type DispatchStore, type DispatchSlot } from "./dispatch-plan.ts";
+import { dispatchAuctionSteps, physicalDispatchStores, planDispatch, scoreDispatch, type DispatchStore, type DispatchSlot } from "./dispatch-plan.ts";
 import { dispatchWithPrefix } from "./fixed-energy-plan.ts";
 import { snapshotV8 } from "../../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
-import { generateOptimisationPlan } from "./energy-optimisation.ts";
+import { dispatchWorkbenchInputs, generateOptimisationPlan } from "./energy-optimisation.ts";
 import { assembleOptimisationPlan, energyPlanningStep } from "../energy-planning-step.ts";
 import type { EnergyPlanningContinuation } from "../energy-planning-protocol.ts";
 
@@ -62,8 +62,8 @@ Deno.test("fixed-prefix continuation carries startup age and preserves the speci
   assertEquals(scored.start_sek, 0.5);
 });
 
-Deno.test("responsive whole-run search matches exhaustive command oracle on a small horizon", () => {
-  const s = store();
+Deno.test("responsive whole-run search prices a 3 SEK start against an exhaustive command oracle", () => {
+  const s = { ...store(), start_cost_sek: 3 };
   let oracle = Infinity;
   for (let mask = 0; mask < 16; mask++) {
     const power = slots.map((_, i) => mask & (1 << i) ? 3600 : 0);
@@ -75,6 +75,7 @@ Deno.test("responsive whole-run search matches exhaustive command oracle on a sm
   assertEquals(score.infeasibilities, []);
   assertAlmostEquals(score.total_sek, oracle);
   assertEquals(result.power_w.heater, [3600, 3600, 3600, 3600]);
+  assertEquals(score.start_sek, 3);
 });
 
 Deno.test("production materialization and JSON continuation retain an enabled zero-draw startup", () => {
@@ -93,6 +94,7 @@ Deno.test("production materialization and JSON continuation retain an enabled ze
   input.valuation = { pool: 4 };
   input.pool_model = { loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null, heater_response: model };
   const now = new Date(input.captured_at);
+  assertEquals(dispatchWorkbenchInputs(input, [], undefined, now)!.stores.find(s => s.key === "pool")!.start_cost_sek, 3);
   const expected = generateOptimisationPlan(input, now);
   assertEquals(expected.status, "ready");
   assertEquals(expected.plans.priority.slots[0].pool_command_w, 3500);
@@ -108,4 +110,31 @@ Deno.test("production materialization and JSON continuation retain an enabled ze
     }
   }
   throw new Error("Responsive continuation did not finish");
+});
+
+Deno.test("a shared generation budget limits optional auctions across responsive comparisons", () => {
+  const budget = { remaining: 1 };
+  let auctions = 0;
+  const solveAuction: import("./dispatch-plan.ts").DispatchAuctionSolver = (...args) => {
+    auctions++;
+    const steps = dispatchAuctionSteps(...args);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    return step.value;
+  };
+  const first = planDispatch(slots, [store()], limits, { searchBudget: budget, solveAuction });
+  assertEquals(budget.remaining, 0);
+  const afterFirst = auctions;
+  const second = planDispatch(slots, [store()], limits, { searchBudget: budget, solveAuction });
+  // Mandatory steady proposal, projected seed and all-off remain comparable
+  // even after an earlier scenario consumed the optional allowance.
+  assertEquals(auctions - afterFirst, 3);
+  assertEquals(budget.remaining, 0);
+  assertEquals(first.responsive_search?.stopped_because, "work_budget");
+  assertEquals(second.responsive_search?.stopped_because, "work_budget");
+  assertEquals(scoreDispatch(slots, [store()], limits, second).infeasibilities, []);
+  const beforeStatic = auctions;
+  planDispatch(slots, [{ ...store(), input_response: undefined }], limits, { searchBudget: budget, solveAuction });
+  assertEquals(auctions - beforeStatic, 1);
+  assertEquals(budget.remaining, 0);
 });

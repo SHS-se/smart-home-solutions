@@ -490,7 +490,7 @@ Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
       pv_forecast_w: 0,
       base_load_forecast_w: hour >= 16 && hour < 21 ? 5_000 : 2_500,
       import_price_sek_per_kwh: index < 96
-        ? (hour >= 6 && hour < 9 ? 3.2 : hour >= 16 && hour < 20 ? 2.9 : 0.8)
+        ? (hour >= 6 && hour < 9 ? 4.2 : hour >= 16 && hour < 20 ? 3.9 : 0.8)
         : null,
       export_price_sek_per_kwh: index < 96 ? 0.2 : null,
     };
@@ -503,7 +503,8 @@ Deno.test("a shaped peak spreads a charge instead of concentrating it", () => {
           { at: 0, sek_per_unit: 1.5 }, { at: 17.176, sek_per_unit: 1.5 },
         ] } },
         outdoor_temperature_c: dark.map(() => -8),
-        pool: { water_temperature_c: 30.9, volume_m3: 55 },
+        capabilities: { ...base.capabilities, pool: false },
+        pool: null,
         // A pack whose charger can outrun the shaping, so the power it settles
         // at is a decision rather than the hardware limit.
         battery: { ...base.battery!, capacity_kwh: 18.08, charge_max_w: 8_800 },

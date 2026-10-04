@@ -300,7 +300,8 @@ test.describe('plan workbench', () => {
     expect(payload.quarters).toHaveLength(288);
     expect(payload.scores.planner.total_sek).toBeLessThan(0);
     // The bill travels with the plan, separately from the objective.
-    expect(payload.scores.planner.billable_sek).toBeGreaterThan(0);
+    expect(payload.scores.planner.billable_sek).toBeCloseTo(
+      payload.scores.planner.import_sek - payload.scores.planner.export_sek, 8);
     expect(payload.scores.planner.billable_sek).not.toBe(payload.scores.planner.total_sek);
     // The permit travels with the plan, so a schedule can be read back whole.
     expect(payload.quarters.filter((q: { allow_store_export: boolean }) => q.allow_store_export))

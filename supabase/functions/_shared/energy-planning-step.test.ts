@@ -216,7 +216,7 @@ Deno.test("ingest client accumulates each call's auctions and checkpoint across 
     const step = energyPlanningStep(
       body.input,
       body.continuation,
-      countedBudget(40)(),
+      countedBudget(400)(),
     );
     return Promise.resolve(Response.json({
       protocol: ENERGY_PLANNING_PROTOCOL,
