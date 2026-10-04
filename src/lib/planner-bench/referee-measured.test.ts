@@ -1,8 +1,8 @@
 import { assert, assertAlmostEquals, assertEquals } from '@std/assert';
 import { QUARTERS, parseRecorded } from './case.ts';
-import { HOUSEHOLD, TARGETS } from './household.ts';
+import { HOUSEHOLD } from './household.ts';
 import { referee, simulate, type Decisions } from './referee.ts';
-import { plan, quarters, within, world } from './world.fixture.ts';
+import { TARGETS, plan, quarters, within, world } from './world.fixture.ts';
 
 /** A dear evening (quarters 68 to 84 of each day) the battery is planned to carry, told 1 kW of load there. */
 const told = () => world({ load: i => within(i % 96, 68, 84) ? 1000 : 0, buy: i => within(i % 96, 68, 84) ? 3 : 1, start: { battery_soc: 0.5 } });

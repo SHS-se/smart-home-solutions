@@ -3,8 +3,8 @@
 // beside the decisions and recomputed from them whenever the referee or the
 // scorer changes.
 
-import type { BenchCase } from './case';
-import { HOUSEHOLD, TARGETS } from './household';
+import { caseTargets, type BenchCase } from './case';
+import { HOUSEHOLD } from './household';
 import { BASE_LANE, type LaneId } from './lanes';
 import { auditOpportunities } from './opportunities';
 import { referee, REFEREE_VERSION, type Outcome } from './referee';
@@ -26,7 +26,7 @@ export interface Evaluation {
  */
 export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOverrides, lane: LaneId = BASE_LANE): Evaluation {
   const believed = record.beliefs.import_sek_per_kwh.map(v => v ?? Number.NaN);
-  const targets = { ...TARGETS, ...(c.comfort ?? {}) };
+  const targets = caseTargets(c);
   // Checked first, so a case with unusable criteria is not replayed at all.
   const guard = serviceGuard(criteria);
   const { series, ...outcome } = referee(c, HOUSEHOLD, targets, record.decisions, believed);

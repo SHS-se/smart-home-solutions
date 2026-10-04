@@ -1,10 +1,10 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
-import { HOUSEHOLD, TARGETS } from './household.ts';
+import { HOUSEHOLD } from './household.ts';
 import { findOpportunities, ruleState } from './opportunities.ts';
 import { assertDecisions, simulate, type Decisions } from './referee.ts';
 import { criteriaErrors, resolveRules } from './score.ts';
 import { storeExposure, storeNotWorse } from './service.ts';
-import { plan, within, world } from './world.fixture.ts';
+import { TARGETS, plan, within, world } from './world.fixture.ts';
 
 Deno.test('retired price and unplugged rules cannot penalise, and no rule may be saved at 0 points', () => {
   assertEquals(criteriaErrors({ dear_buy: { points: -1 }, unplugged_charge: { points: -2 }, pool_hot: { points: -1 } }), []);

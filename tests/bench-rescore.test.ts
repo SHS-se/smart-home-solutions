@@ -15,7 +15,7 @@ const dataset: BenchScenarioData = {
   start: "2026-09-24T00:00:00Z", timezone: "Europe/Stockholm", location: { latitude: 59.4, longitude: 18 },
   known_prices: { import_sek_per_kwh: fill(1), export_sek_per_kwh: fill(0.4) },
   solar_forecast_w: fill(0), base_load_forecast_w: fill(500), other_devices_w: {},
-  start_state: { battery_soc: 0.5, pool_water_c: 30, ev: { soc: 0.7, target_soc: 0.8 } }, comfort: null,
+  start_state: { battery_soc: 0.5, pool_water_c: 30, ev: { soc: 0.7, target_soc: 0.8 } }, comfort: { pool_c: 30, ev_km: 300 },
 };
 const recorded: BenchRecorded = {
   prices: { import_sek_per_kwh: fill(1), export_sek_per_kwh: fill(0.4) },

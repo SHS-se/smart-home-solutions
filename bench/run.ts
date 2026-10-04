@@ -40,10 +40,11 @@
 // cannot take the others with it.
 
 import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
-import { canonicalJson, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
+import { canonicalJson, caseTargets, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { HOUSEHOLD, TARGETS } from "../src/lib/planner-bench/household.ts";
+import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { homeComfortTargets } from "./comfort.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
 import { completeCase, recordedActual, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
@@ -85,7 +86,7 @@ const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =
 /** Identity of everything a planner generation is given for a case under one lane. */
 function inputHash(c: BenchCase, generation: string, lane: LaneId): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, targets: TARGETS, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane) }));
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
@@ -123,14 +124,18 @@ async function historySource(): Promise<HistorySource | null> {
   if (!homeId) {
     const response = await fetch(`${url}/rest/v1/energy_optimisation_outdoor_slots?select=home_id&order=start_ts.desc&limit=1`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-    homeId = response.ok ? (await response.json())[0]?.home_id : undefined;
+    if (!response.ok) throw new Error(`Could not identify the bench home: ${response.status} ${await response.text()}`);
+    homeId = (await response.json())[0]?.home_id;
   }
-  return homeId ? { url, key, homeId } : null;
+  if (!homeId) throw new Error('No bench home found. Set BENCH_HOME_ID to the home whose history and comfort preferences the bench should use.');
+  return { url, key, homeId };
 }
 
 /** Convert scenarios still held as replays, and complete cases whose window has since been recorded. */
 async function prepareCases(bench: BenchStore) {
   const source = await historySource();
+  const targets = source ? await homeComfortTargets(source) : null;
+  if (targets) console.log(`Home ${source!.homeId}: pool target ${targets.pool_c} °C, car target ${targets.ev_km} km.`);
   for (const scenario of await bench.scenarios(args.scenario)) {
     let dataset = scenario.dataset;
     if (!dataset) {
@@ -140,6 +145,12 @@ async function prepareCases(bench: BenchStore) {
       await bench.saveDataset(scenario.id, dataset);
       console.log(`${scenario.name}: converted from its replay.`);
     }
+    if (targets && canonicalJson(dataset.comfort) !== canonicalJson(targets)) {
+      dataset = { ...dataset, comfort: targets };
+      await bench.saveDataset(scenario.id, dataset);
+      console.log(`${scenario.name}: current home comfort preferences captured.`);
+    }
+    caseTargets(dataset);
     if (scenario.recorded && source && !scenario.recorded.wind) {
       // Wind was not kept when this case was recorded; it is added once it has been observed.
       const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);

@@ -1,7 +1,8 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { loadCase, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
 import { caseFromReplay, ReplayFormatError } from './convert-replay.ts';
-import { HOUSEHOLD, TARGETS } from './household.ts';
+import { HOUSEHOLD } from './household.ts';
+import { TARGETS } from './world.fixture.ts';
 import { poolLevels, referee, type Decisions } from './referee.ts';
 import type { PlanRecord } from './types.ts';
 import { evaluate } from './evaluate.ts';
@@ -136,7 +137,7 @@ Deno.test('the pool cools and is heated the same whatever the weather', () => {
 });
 
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {
-  const c = loadCase(caseFromReplay(replay()).data, recorded());
+  const c = loadCase({ ...caseFromReplay(replay()).data, comfort: TARGETS }, recorded());
   const record: PlanRecord = { status: 'ready', generation: 'snapshot', valuation: { scale: 1, pool: 'none', ev: 'none', battery: 'none' }, decisions: idle(), beliefs: { import_sek_per_kwh: quarters(() => 2), grid_cost_sek: 1 }, curves: [] };
   const first = evaluate(c, record, {}, 'told/nominal'), again = evaluate(c, structuredClone(record), {}, 'told/nominal');
   assertEquals(first, again);

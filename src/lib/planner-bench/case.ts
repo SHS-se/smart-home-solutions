@@ -53,7 +53,7 @@ export interface BenchScenarioData {
    * runner replaces them from recorded history. An edit on the page clears it.
    */
   start_state_unread?: ('battery_soc' | 'pool_water_c' | 'ev_soc')[];
-  /** Owner targets for this case only; null uses the bench's. */
+  /** Home's targets captured by the runner; null until the first planning run. */
   comfort: Partial<Targets> | null;
 }
 
@@ -119,6 +119,14 @@ export class CaseFormatError extends Error {}
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Planning and evaluation use the same captured targets, never internal defaults. */
+export function caseTargets(data: Pick<BenchScenarioData, 'comfort'>): Targets {
+  if (!finite(data.comfort?.pool_c) || !finite(data.comfort?.ev_km)) {
+    throw new CaseFormatError('Comfort targets are missing. Run the bench with the home settings; local cases must supply comfort.pool_c and comfort.ev_km.');
+  }
+  return { pool_c: data.comfort.pool_c, ev_km: data.comfort.ev_km };
+}
 
 function series(value: unknown, name: string, nullable = false): void {
   if (!Array.isArray(value) || value.length !== QUARTERS) throw new CaseFormatError(`${name} must have ${QUARTERS} quarters.`);

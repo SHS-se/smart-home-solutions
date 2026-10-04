@@ -2,8 +2,11 @@
 // score tests. Every quarter is given by a function of its index, so a test
 // states only what makes its world different.
 
-import { CASE_FORMAT, CASE_VERSION, QUARTERS, type BenchCase, type CaseStartState } from './case';
+import { CASE_FORMAT, CASE_VERSION, QUARTERS, type BenchCase, type CaseStartState, type Targets } from './case';
 import type { Decisions } from './referee';
+
+/** Synthetic preferences for tests only; the runner reads the home's settings. */
+export const TARGETS: Targets = { pool_c: 30, ev_km: 300 };
 
 export const quarters = <T>(make: (i: number) => T): T[] => Array.from({ length: QUARTERS }, (_, i) => make(i));
 /** Whether quarter i lies in [from, to). */
@@ -40,7 +43,7 @@ export function world(spec: WorldSpec = {}): BenchCase {
       pool_water_c: spec.start?.pool_water_c ?? 30,
       ev: { soc: spec.start?.ev?.soc ?? 0.7, target_soc: spec.start?.ev?.target_soc ?? 0.8 },
     },
-    comfort: spec.comfort ?? null,
+    comfort: { ...TARGETS, ...spec.comfort },
     recorded: {
       prices: { import_sek_per_kwh: buy, export_sek_per_kwh: sell },
       outdoor_temperature_c: quarters(spec.air ?? (() => 30)),

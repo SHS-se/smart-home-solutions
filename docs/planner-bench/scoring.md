@@ -45,7 +45,7 @@ These judge where flexible load ran, not that less could have been spent: a plan
 | Grid connection limit | Import or export above the bench site's rated connection | Every quarter |
 | Invalid decision data | Missing/nonfinite decisions or negative directional power | Incomplete results cannot claim a valid score |
 
-The default targets are pool 30 °C and car 300 km; a case can override them. A cold initial state is not charged against a planner before recovery was possible. The allowance is 24 hours after an independently calculated full-power trajectory first reaches the scored level. This is a benchmark recovery policy, not a new planner constraint or a promise of jointly optimal recovery. A level never reachable in the horizon is N/A, not a successful recovery.
+Comfort is scored against the home’s saved targets captured in the case by the planning run, the same targets every planner is given. A cold initial state is not charged against a planner before recovery was possible. The allowance is 24 hours after an independently calculated full-power trajectory first reaches the scored level. This is a benchmark recovery policy, not a new planner constraint or a promise of jointly optimal recovery. A level never reachable in the horizon is N/A, not a successful recovery.
 
 ### Energy timing
 

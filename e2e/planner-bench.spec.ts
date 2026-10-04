@@ -67,7 +67,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
   s.carKm = new Array(n).fill(0);
-  s.comfort = { pool_target_c: 30, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
+  s.comfort = { pool_target_c: 30.5, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
     poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
   // A synthetic transport fixture for the audit UI, not an optimiser correctness test.
   const before = { poolC: s.poolC.map(v => v!), carKm: [...s.carKm], homeSoc: new Array(n).fill(50) };
@@ -93,7 +93,7 @@ const dataset = (start: string): BenchScenarioData => ({
   known_prices: { import_sek_per_kwh: [], export_sek_per_kwh: [] },
   solar_forecast_w: [], base_load_forecast_w: [], other_devices_w: {},
   start_state: { battery_soc: 0.5, pool_water_c: 29.5, ev: { soc: 0.6, target_soc: 0.8 } },
-  comfort: null,
+  comfort: { pool_c: 30.5, ev_km: 300 },
 });
 
 const record = (reference: number): PlanRecord => ({
@@ -101,7 +101,7 @@ const record = (reference: number): PlanRecord => ({
   decisions: { pool_w: [], ev_w: [], battery_charge_w: [], battery_discharge_w: [] },
   beliefs: { import_sek_per_kwh: [], grid_cost_sek: 41.5 },
   curves: [
-    { store: 'pool', unit: 'celsius', points: [{ at: 28, sek_per_unit: 30 }, { at: 30, sek_per_unit: 15 }, { at: 32, sek_per_unit: 0 }], initial_state: 29.5, max_state: 32, units_per_kwh: 0.07, reference_sek_per_kwh: reference, mode: null },
+    { store: 'pool', unit: 'celsius', points: [{ at: 28.5, sek_per_unit: 30 }, { at: 30.5, sek_per_unit: 15 }, { at: 32.5, sek_per_unit: 0 }], initial_state: 29.5, max_state: 32.5, units_per_kwh: 0.07, reference_sek_per_kwh: reference, mode: null },
     { store: 'battery', unit: 'kwh', points: [{ at: 0, sek_per_unit: 2 }, { at: 17, sek_per_unit: 0.4 }], initial_state: 8, max_state: 17, units_per_kwh: 1, reference_sek_per_kwh: null, mode: 'balanced' },
   ],
 });
@@ -294,7 +294,7 @@ test.describe('planner bench', () => {
     // Both planners are drawn for the case; the toggle swaps the full plan chart.
     await expect(page.getByRole('img', { name: /Cost for both planners|Kostnad för båda planerarna/ })).toBeVisible();
     // The pool's temperature is a panel of the plan chart itself, with the owner's target drawn in.
-    await expect(page.locator('#plan-pool-temperature')).toContainText(/°C (target|mål)/);
+    await expect(page.locator('#plan-pool-temperature')).toContainText(/30\.5 °C (target|mål)/);
     await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
@@ -373,9 +373,9 @@ test.describe('planner bench', () => {
 
     await expect(page.locator('#bench-pool_low-threshold')).toHaveCount(0);
     await row('pool_low').getByRole('button').first().click();
-    await expect(row('pool_low')).toContainText('29 °C');
+    await expect(row('pool_low')).toContainText('29.5 °C');
     await page.locator('#bench-pool_low-threshold').fill('1.5');
-    await expect(row('pool_low')).toContainText('28.5 °C');
+    await expect(row('pool_low')).toContainText('29 °C');
     // Rules are saved once for the whole bench, never into a case.
     await row('pool_low').getByRole('button', { name: /^(Save rules|Spara regler)$/ }).click();
     await expect.poll(() => captured.rules.length).toBe(1);

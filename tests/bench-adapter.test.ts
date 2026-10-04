@@ -22,7 +22,7 @@ const dataset = (): BenchScenarioData => ({
   base_load_forecast_w: quarters(() => 600),
   other_devices_w: {},
   start_state: { battery_soc: 0.3, pool_water_c: 27.5, ev: { soc: 0.3, target_soc: 0.8 } },
-  comfort: null,
+  comfort: { pool_c: 30, ev_km: 300 },
 });
 const recorded = (): BenchRecorded => ({
   prices: { import_sek_per_kwh: quarters(i => hourOf(i) >= 16 && hourOf(i) < 20 ? 3 : 1), export_sek_per_kwh: quarters(() => 0.4) },

@@ -26,8 +26,8 @@
 // A planner that needs a different input adds a generation here; test cases
 // never change.
 
-import { QUARTERS, quarterStarts, type BenchCase } from "../src/lib/planner-bench/case.ts";
-import { TARGETS, type Household } from "../src/lib/planner-bench/household.ts";
+import { caseTargets, QUARTERS, quarterStarts, type BenchCase } from "../src/lib/planner-bench/case.ts";
+import type { Household } from "../src/lib/planner-bench/household.ts";
 import { chargerLevels, cop, heatPumpLevels, idleCPerHour, operatingPoint, WATER_KWH_PER_M3_K } from "../supabase/functions/_shared/planner/device-models.ts";
 import type { Decisions } from "../src/lib/planner-bench/referee.ts";
 import type { PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
@@ -100,7 +100,7 @@ function legacyComfortCurve(unit: string, target: number, band: number, urgency:
 export function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean, demand: boolean, devicePhysics: boolean): Json {
   const starts = quarterStarts(c.start);
   const end = new Date(Date.parse(starts[QUARTERS - 1]) + 15 * 60_000).toISOString();
-  const targets = { ...TARGETS, ...(c.comfort ?? {}) };
+  const targets = caseTargets(c);
   const provenance = (entity: string, quality: string, extra: Json = {}) =>
     ({ provider: "bench_case", entity_ids: [`bench:${entity}`], issued_at: c.start, valid_until: end, quality, sample_count: QUARTERS, ...extra });
   const market = { location: { market_area: h.site.market_area } };

@@ -13,15 +13,16 @@ hand edit) does not matter once it is a test case.
 
 The bench lives its own life: its test cases, household, adapter, referee and
 scores are owned by `bench/` and `src/lib/planner-bench/`, with their own
-tables. The only thing it takes from the rest of the codebase is the planner,
-one version at a time.
+tables. It takes the planner one version at a time, plus the history home’s current
+saved comfort preferences before each planning run.
 
-## The four parts
+## The parts
 
 | Part | Where | What it owns |
 |---|---|---|
 | **Test case** | `src/lib/planner-bench/case.ts`, `bench_scenarios.dataset` + `.recorded` | 288 quarters of what a planner is told, plus what was recorded for the same window afterwards. |
-| **Household and comfort** | `src/lib/planner-bench/household.ts` | The devices planned in every case and their physics; what the owner wants, in °C and km. No money. |
+| **Household** | `src/lib/planner-bench/household.ts` | The devices planned in every case and their physics. |
+| **Comfort** | `energy_optimisation_comfort_targets`, `bench/comfort.ts` | The history home’s saved pool temperature and car range, captured in each case before planning. No money. |
 | **Adapter** | `bench/adapter.ts` | Builds a planner version's input from case + household, and reads its plan back as decisions. The only bench code that knows planner schemas. |
 | **Referee** | `src/lib/planner-bench/referee.ts` | Carries the battery, pool and car forward with the household's physics, through the load and solar the home measured, and prices every quarter at what electricity really cost. |
 
@@ -52,7 +53,7 @@ Authored part (`dataset`), made by a converter and edited on the bench page:
   "start_state": { "battery_soc": 0.64, "pool_water_c": 23.4,
                    "ev": { "soc": 0.55, "target_soc": 0.8 } },  // target_soc is the car's charge limit
   "start_state_unread": [ "pool_water_c" ],  // only while a default stands in for a missing reading
-  "comfort": null                            // { pool_c, ev_km } for this case only; null = the bench's targets
+  "comfort": null                            // runner captures { pool_c, ev_km } from the home before planning
 }
 ```
 
@@ -177,8 +178,18 @@ temperature, and what a kWh of the compressor adds to it, which is the COP over
 the pool's heat capacity. A test holds the planner's own figure for a kWh of
 pool draw to the referee's.
 
-What the owner wants, in `TARGETS`: **pool 30 °C, car 300 km.** One number per
-store; no bands, no urgency, no money.
+Before each planning run, the runner reads the history home’s saved preferences
+from `energy_optimisation_comfort_targets` and captures them as `dataset.comfort`
+for every selected case. These are the same settings edited in the home’s
+Comfort preferences card. Every planner and the referee use those captured
+targets. A change alters the input hash and replans the affected results.
+There are no internal default targets or case overrides in database runs.
+Local case files must supply both comfort targets explicitly.
+
+The home is selected by `BENCH_HOME_ID`, or by the most recent recorded outdoor
+quarter when it is unset, as for history. Missing saved preferences fail the run.
+`--shas none` only rescores existing decisions using the case’s captured targets;
+it does not load new preferences or replan.
 
 Hot water and room heaters are not planned yet; they are fixed demand inside
 base load. Taking one over later means adding it to the household and taking

@@ -1,5 +1,5 @@
-// The household every bench test case is planned for, and what its owner
-// wants (docs/planner-bench/test-cases.md).
+// The household every bench test case is planned for
+// (docs/planner-bench/test-cases.md).
 //
 // Numbers only: no physics, no money and no value curves. What a device does
 // with its numbers is the planner's device models
@@ -8,11 +8,11 @@
 // number per store; a planner works its curves out from a case's prices,
 // solar, temperature and history together with those targets.
 //
-// Changing either constant changes every result's input, so every result is
-// run again. Adding a test case changes neither.
+// Changing the household changes every result's input, so every result is
+// run again. Comfort targets are read from the history home's saved settings
+// by the runner and captured in each case. Adding a test case changes neither.
 
 import { parseDeviceModels, type DeviceModels } from '../../../supabase/functions/_shared/planner/device-models';
-import type { Targets } from './case';
 
 export interface Household extends DeviceModels {
   site: {
@@ -65,6 +65,3 @@ export const HOUSEHOLD: Household = {
     },
   }),
 };
-
-/** Pool 30 °C, car 300 km. A case may override either. */
-export const TARGETS: Targets = { pool_c: 30, ev_km: 300 };

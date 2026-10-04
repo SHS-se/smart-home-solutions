@@ -114,7 +114,7 @@ Who owns what afterwards:
 | `planner/device-models.ts` | model types, validation, every device kernel | |
 | `planner/energy-optimisation.ts` | reads `snapshot.device_physics` (listed in `PLANNER_INPUTS`); pool and car stores from the kernels | the seeded heat pump and loss, `poolHeaterShare`, the air-following COP |
 | `planner/store-models.ts` | vehicle range | its pool COP and pool stepping |
-| `src/lib/planner-bench/household.ts` | `HOUSEHOLD` (numbers), `TARGETS` | `poolCop`, `stepPool`, `poolIdleCPerHour` |
+| `src/lib/planner-bench/household.ts` | `HOUSEHOLD` (numbers); comfort captured in the case | `poolCop`, `stepPool`, `poolIdleCPerHour` |
 | `referee.ts` | the loop, clipping and reporting, measured worlds, pricing, the battery | all pool arithmetic |
 | `step-moves.ts`, `opportunities.ts` | whole-step moves for car and pool | fractional car and pool moves |
 | `bench/adapter.ts` | one projection of the household into each planner generation | reading device fields ad hoc |

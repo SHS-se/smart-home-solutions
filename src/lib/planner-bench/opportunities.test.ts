@@ -1,7 +1,7 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import type { BenchCase } from './case.ts';
 import { evaluate } from './evaluate.ts';
-import { HOUSEHOLD, TARGETS } from './household.ts';
+import { HOUSEHOLD } from './household.ts';
 import { LANES, type LaneId } from './lanes.ts';
 import {
   findOpportunities, MAX_TRIALS, NOT_MODELLED, OPPORTUNITY_RULES, ruleState, summariseAudit, type OpportunityAudit,
@@ -10,7 +10,7 @@ import { referee, type Decisions } from './referee.ts';
 import { economicPoints, scoreQuarters, storedPassed, storedScore } from './score.ts';
 import { DEFAULT_SERVICE_GUARD, serviceNotWorse, type ServiceExposure, type ServiceGuard } from './service.ts';
 import type { PlanRecord } from './types.ts';
-import { clockPlan, plan, realisticWorld, within, world } from './world.fixture.ts';
+import { TARGETS, clockPlan, plan, realisticWorld, within, world } from './world.fixture.ts';
 
 const END = 287;
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);

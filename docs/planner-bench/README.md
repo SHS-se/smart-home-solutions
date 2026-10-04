@@ -94,7 +94,11 @@ deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas a
 
 Database mode needs `BENCH_SUPABASE_URL` and `BENCH_SERVICE_ROLE_KEY`. Without
 a database, `--local <dir-of-case-files> --out <file.json>` (each file `{ dataset, recorded }`) writes the same
-records to a file.
+records to a file. Local cases must supply both `comfort.pool_c` and `comfort.ev_km`;
+there are no internal bench defaults. Database planning runs capture the history
+home’s current saved comfort preferences into each selected case before planning,
+and changed preferences invalidate the input hash. `--shas none` keeps those
+captured targets while rescoring existing decisions.
 
 CI can only run commits that are pushed. A local-only branch has to be run
 locally.
