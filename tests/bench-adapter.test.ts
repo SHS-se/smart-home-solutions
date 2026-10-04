@@ -122,8 +122,7 @@ Deno.test("the planner plans every device from its device model, whatever the ol
   };
   assertEquals(decided(misleading), plan);
   // Without its models the planner believes those fields, and plans another household.
-  const { device_physics: _models, ...believed } = misleading;
-  const other = decided(believed);
+  const other = decided({ ...misleading, device_physics: null });
   assert(JSON.stringify(other) !== JSON.stringify(plan));
   assert(other.some((slot: number[]) => slot[0] === 1500) && other.every((slot: number[]) => slot[0] === 0 || slot[0] === 1500), "the pool is not planned at the power the older fields give");
 });
