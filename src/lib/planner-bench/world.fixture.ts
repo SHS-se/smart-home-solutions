@@ -73,7 +73,7 @@ export function realisticWorld(published = 100): BenchCase {
 
 /** A plan by the clock, blind to price and sun: pool at night, car in the evening, a daily battery cycle. */
 export const clockPlan = (): Decisions => plan({
-  pool: i => within(i % 96, 0, 30) ? 3078 : 0,
+  pool: i => within(i % 96, 0, 30) ? 3764 : 0,
   ev: i => within(i, 76, 92) ? 6210 : 0,
   charge: i => within(i % 96, 8, 20) ? 3000 : 0,
   discharge: i => within(i % 96, 70, 82) ? 2500 : 0,

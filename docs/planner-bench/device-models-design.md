@@ -1,7 +1,7 @@
 # Shared device models: design
 
-Status: proposed, 4 October 2026. Step 1 below is built; the rest waits for a
-go-ahead. Two independent candidates (Claude and Codex) were compared; where
+Status: steps 1 to 3 below are built (4 October 2026); the planner reading the
+models itself, the live side and Home Assistant are next. Two independent candidates (Claude and Codex) were compared; where
 they differed is in [Synthesis](#synthesis-decision).
 
 ## Problem
@@ -33,7 +33,7 @@ The bench household holds the numbers and no physics:
 ```ts
 export const HOUSEHOLD: Household = {
   site: { /* as today */ },
-  devices: parseDeviceModels({
+  ...parseDeviceModels({
     battery: { capacity_kwh: 18.08, /* as today */ },
     car: {
       battery: { capacity_kwh: 75.6, kwh_per_km: 0.16, charge_efficiency: 0.92 },
@@ -178,9 +178,7 @@ battery arithmetic now.
 
 ## Open questions and risks
 
-- **Which setting the bench household runs at.** 12 kW is what the house runs
-  now (3.0 kW compressor, COP 4.15); 10 kW is closest to today's bench heater
-  (2.3 kW, COP 4.68). Proposed: 12.
+- **Decided:** the bench household runs at 12 kW, as the house does now.
 - **Does COP move with water or brine temperature?** The four points carry
   neither. If the fit shows it does, `OperatingPoint` gains an axis.
 - **The car's last quarter.** In whole amps a plan cannot land exactly on the
@@ -196,12 +194,14 @@ battery arithmetic now.
    reports `ev_step`; the audit's car alternatives are whole-step moves
    (`step-moves.ts`). No stored plan of any version had a car quarter off its
    steps, so no result fails on it. Rescore only.
-2. Heat pump, thermal store and `parseDeviceModels` in `device-models.ts`, with
-   tests pinned to the four measured points and to today's pool cooling.
-3. World change, one re-plan: `HOUSEHOLD.devices`, referee and audit on the
-   kernels, `pool_step`, whole-quarter pool moves, the adapter's projection,
-   bench physics deleted. Every stored pool quarter of the current versions is
-   already off or full power.
+2. **Built (4 October):** heat pump, thermal store and `parseDeviceModels` in
+   `device-models.ts`, with tests pinned to the four measured points.
+3. **Built (4 October), one re-plan:** the household as numbers (`HOUSEHOLD`
+   holds `battery`, `car`, `pool` directly, without a `devices` level), the
+   heat pump at its 12 kW setting, referee and audit on the kernels,
+   `pool_step`, whole-quarter pool moves, the adapter's projection, the bench's
+   own physics deleted. The audit's pool alternatives may end up to one running
+   quarter (0.05 °C) warmer than the plan, never colder.
 4. Server resolver fills `snapshot.device_physics`; then the planner reads it
    and its seeded pool physics goes (a new planner version).
 5. `household-physics.ts` adopts the kernels.

@@ -1,8 +1,9 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadPlanner } from "../bench/adapter.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { poolLevels } from "../src/lib/planner-bench/referee.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const START = Date.parse("2026-09-24T07:15:00Z");
@@ -46,6 +47,10 @@ Deno.test("the current planner derives its curves from the targets, and the scal
   assertEquals(record.curves.map(candidate => candidate.store).sort(), ["battery", "ev", "pool"]);
   assertEquals([curve("battery").mode, curve("pool").mode, curve("ev").mode], ["balanced", "merit order", "merit order"]);
   assert(Number(curve("pool").derivation!.need) > 2.5, "the pool starts 2.5 °C short and also loses heat");
+  // The planner believes what the referee carries out: a kWh drawn by the pool, pump included, warms it
+  // by the heat pump's heat at its setting over the pool's heat capacity.
+  const poolOn = poolLevels(HOUSEHOLD).at(-1)!;
+  assertAlmostEquals(curve("pool").units_per_kwh!, poolOn.heat_w / poolOn.draw_w / HOUSEHOLD.pool.store.capacity_kwh_per_c, 1e-9);
   // And it estimates the unpublished prices itself.
   assert(record.beliefs.import_sek_per_kwh.every(price => typeof price === "number" && price > 0));
 

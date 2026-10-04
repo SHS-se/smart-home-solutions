@@ -36,13 +36,14 @@
 // search or its guards change.
 
 import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './case';
-import { poolCop, poolHeaterW, WATER_KWH_PER_M3_K, type Household } from './household';
+import { thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
+import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
-import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
+import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 3;
+export const OPPORTUNITY_AUDIT_VERSION = 4;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -61,8 +62,6 @@ const MIN_SAVING_SEK = 0.05;
 const MIN_KWH = 0.05;
 /** Battery and car must end where the plan ended them, to rounding. */
 const END_TOLERANCE_KWH = 1e-6;
-/** The pool may end this much warmer than the plan, never colder. */
-const POOL_END_TOLERANCE_C = 1e-4;
 const SCALES = [1, 0.5, 0.25];
 /** Power below this is not a surplus or an import worth naming. */
 const NOTABLE_W = 100;
@@ -235,8 +234,8 @@ function applicabilityOf(c: BenchCase, h: Household, _targets: Targets): AuditCo
   const surplus = world.baseW.map((load, i) => world.solarW[i] - load > NOTABLE_W);
   const anySurplus = surplus.some(Boolean);
   const battery = h.battery.capacity_kwh > 0 && h.battery.charge_max_w > 0 && h.battery.discharge_max_w > 0;
-  const pool = h.pool.heater_w > 0;
-  const car = h.ev.capacity_kwh > 0 && evMaxW(h) > 0 && c.start_state.ev.soc < c.start_state.ev.target_soc;
+  const pool = poolLevels(h).at(-1)!.heat_w > 0;
+  const car = h.car.battery.capacity_kwh > 0 && evMaxW(h) > 0 && c.start_state.ev.soc < c.start_state.ev.target_soc;
   const when = (applicable: boolean, yes: string, no: string) => ({ applicable, reason: applicable ? yes : no });
   const batteryRule = () => when(battery, 'The battery can store and release energy; the replay tests whether changing its timing saves money.', 'No usable battery in this case.');
   const solarBattery = () => when(battery && anySurplus, 'Surplus solar and a battery are present; the replay tests their timing together.', !anySurplus ? 'No surplus solar in this case.' : 'No usable battery in this case.');
@@ -249,7 +248,7 @@ function applicabilityOf(c: BenchCase, h: Household, _targets: Targets): AuditCo
     battery_price_spread: batteryRule(),
     battery_preserve: batteryRule(),
     high_value_export: batteryRule(),
-    pool_cheaper_heating: when(pool, 'Pool heat can move between hours; prices, COP and heat loss determine whether it helps.', 'No pool heater in this case.'),
+    pool_cheaper_heating: when(pool, 'Pool heat can move between hours; prices and heat loss determine whether it helps.', 'No pool heater in this case.'),
     ev_timing: when(car, 'The car is always available to charge and starts below its charge limit.', 'The car has no charging capacity or starts at its charge limit.'),
     uneconomic_cycling: batteryRule(),
   };
@@ -339,10 +338,14 @@ export function findOpportunities(
   const etaC = h.battery.charge_efficiency, etaD = h.battery.discharge_efficiency;
   const batteryMinKwh = h.battery.min_soc * h.battery.capacity_kwh, batteryMaxKwh = h.battery.max_soc * h.battery.capacity_kwh;
   const carLevels = evLevels(h), carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
-  const pool = h.pool;
-  const poolKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
-  /** Hours for the pool to lose 63 % of its warmth over the air. */
-  const poolTauH = poolKwhPerK / pool.loss_kw_per_k;
+  // The heat pump is on at its setting or off, so pool heat moves in whole quarters of it.
+  const poolOn = poolLevels(h).at(-1)!;
+  /** Heat one running quarter puts into the pool, and what that warms it by. */
+  const quarterHeatKwh = poolOn.heat_w * KWH, quarterC = quarterHeatKwh / h.pool.store.capacity_kwh_per_c;
+  /** Hours for the pool to lose 63 % of a surplus of warmth. */
+  const poolTauH = thermalTimeConstantH(h.pool.store, targets.pool_c, air.reduce((a, b) => a + b, 0) / QUARTERS);
+  /** The pool may end up to one running quarter warmer than the plan, never colder: it cannot be heated by less. */
+  const POOL_END_TOLERANCE_C = quarterC;
 
   const world = householdSeries(c);
   const scaleSek = Math.max(1, world.baseW.reduce((sum, load, i) => {
@@ -373,10 +376,10 @@ export function findOpportunities(
   const reach = reachability(c, h);
   const comfort: Comfort = {
     pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
-    pool_start_c: original.start.poolC, ev_start_km: original.start.evKwh / h.ev.kwh_per_km,
+    pool_start_c: original.start.poolC, ev_start_km: original.start.evKwh / h.car.battery.kwh_per_km,
     poolReachableC: reach.poolC, carReachableKm: reach.carKm,
   };
-  const carKmOf = (sim: Simulation) => Array.from(sim.evKwh, v => v / h.ev.kwh_per_km);
+  const carKmOf = (sim: Simulation) => Array.from(sim.evKwh, v => v / h.car.battery.kwh_per_km);
   const exposureOf = (sim: Simulation) => serviceExposure(comfort, sim.poolC, carKmOf(sim), guard);
   const dischargedOf = (sim: Simulation) => sim.dischargeW.reduce((sum, w) => sum + w * KWH, 0);
   const planOf = (d: Decisions, sim: Simulation): Plan => ({ d, sim, exposure: exposureOf(sim), dischargedKwh: dischargedOf(sim) });
@@ -461,7 +464,7 @@ export function findOpportunities(
       if (!carFrom[f].length) continue;
       for (let t = 0; t < BLOCKS; t++) {
         if (t === f || !carTo[t].length) continue;
-        const limit = t < f ? carRoom[t * BLOCKS + f - 1] / h.ev.charge_efficiency : Infinity;
+        const limit = t < f ? carRoom[t * BLOCKS + f - 1] / h.car.battery.charge_efficiency : Infinity;
         for (const a of carFrom[f]) for (const b of carTo[t]) {
           const kwh = Math.min(a.kwh, b.kwh, limit);
           if (kwh >= MIN_KWH) offer('ev_move', a, b, kwh / a.kwh, kwh / b.kwh, -(a.dSek * kwh / a.kwh + b.dSek * kwh / b.kwh));
@@ -469,25 +472,19 @@ export function findOpportunities(
       }
     }
 
-    // Pool: the heater off for an hour, and on in another for as long as it takes to end as warm.
-    const heaterOn = (q: number) => poolHeaterW(pool, d.pool_w[q]) > 1;
-    const waterAt = (q: number) => q === 0 ? sim.start.poolC : sim.poolC[q - 1];
-    const heatOf = (q: number, heaterW: number) => heaterW * poolCop(pool, air[q], waterAt(q)) * KWH;
+    // Pool: the heat pump off for quarters of one hour, and on in another hour for as many as it takes to end as warm.
+    const heaterOn = (q: number) => d.pool_w[q] >= poolOn.draw_w - 1;
     const poolFrom = offersOf(q => heaterOn(q) ? d.pool_w[q] : 0, -1).map(list => list.filter(o => o.variant === 1 || list.length === 1));
-    const poolTo = offersOf(q => {
-      const heater = poolHeaterW(pool, d.pool_w[q]);
-      return pool.heater_w - heater > 1 ? pool.pump_w + pool.heater_w - d.pool_w[q] : 0;
-    }, 1).map(list => list.filter(o => o.variant === 1 || list.length === 1));
+    const poolTo = offersOf(q => d.pool_w[q] < 1 ? poolOn.draw_w : 0, 1).map(list => list.filter(o => o.variant === 1 || list.length === 1));
+    const running = (o: Offer) => o.w.filter(w => w > 0).length;
     for (let f = 0; f < BLOCKS; f++) {
       const a = poolFrom[f][0];
       if (!a) continue;
-      let heat = 0;
-      for (let k = 0; k < BLOCK; k++) if (a.w[k] > 0) heat += heatOf(f * BLOCK + k, poolHeaterW(pool, d.pool_w[f * BLOCK + k]));
+      const heat = running(a) * quarterHeatKwh;
       for (let t = 0; t < BLOCKS; t++) {
         const b = poolTo[t][0];
         if (t === f || !b) continue;
-        let capacity = 0;
-        for (let k = 0; k < BLOCK; k++) if (b.w[k] > 0) capacity += heatOf(t * BLOCK + k, pool.heater_w - poolHeaterW(pool, d.pool_w[t * BLOCK + k]));
+        const capacity = running(b) * quarterHeatKwh;
         // Heat put in earlier leaks for longer, so more of it is needed; later, less.
         const needed = heat * Math.exp((f - t) * BLOCK * HOURS / poolTauH);
         if (capacity <= 0 || needed <= 0) continue;
@@ -559,62 +556,40 @@ export function findOpportunities(
 
   const attemptPool = (cand: Candidate, scale: number, previous: number): { attempt: Attempt | null; quarters: number } => {
     const { a, b } = cand, net = plan.sim.netW;
-    // Whole heater quarters come off, the dearest first.
+    // Whole running quarters come off, the dearest first.
     const heating = quartersOf(a).sort((x, y) => (gridCost(y, net[y]) - gridCost(y, net[y] - plan.d.pool_w[y])) / plan.d.pool_w[y]
       - (gridCost(x, net[x]) - gridCost(x, net[x] - plan.d.pool_w[x])) / plan.d.pool_w[x] || x - y);
     const count = Math.max(1, Math.ceil(heating.length * cand.fa * scale));
     if (count === previous) return { attempt: null, quarters: count };
     const off = heating.slice(0, count).sort((x, y) => x - y);
     const base = [...plan.d.pool_w];
-    let removedKwh = 0, heatKwh = 0;
-    for (const q of off) {
-      removedKwh += base[q] * KWH;
-      heatKwh += poolHeaterW(pool, base[q]) * poolCop(pool, air[q], q === 0 ? plan.sim.start.poolC : plan.sim.poolC[q - 1]) * KWH;
-      base[q] = 0;
-    }
+    let removedKwh = 0;
+    for (const q of off) { removedKwh += base[q] * KWH; base[q] = 0; }
     const target = quartersOf(b);
-    const roomOf = (q: number) => pool.heater_w - poolHeaterW(pool, base[q]);
-    const capacityKwh = target.reduce((sum, q) => sum + roomOf(q) * KWH, 0);
-    /** The heater on in the target hour, packed from its first quarter, for `kwh` of heater electricity. */
-    const fill = (kwh: number) => {
-      const values = [...base], used: number[] = [];
-      let left = kwh;
-      for (const q of target) {
-        const add = Math.min(roomOf(q), left / KWH);
-        if (add <= 1e-6) continue;
-        values[q] = pool.pump_w + poolHeaterW(pool, base[q]) + add;
-        used.push(q);
-        left -= add * KWH;
-      }
+    /** The heat pump on for the first `quarters` of the target hour that are free. */
+    const fill = (quarters: number) => {
+      const values = [...base], used = target.slice(0, quarters);
+      for (const q of used) values[q] = poolOn.draw_w;
       return { values, used };
     };
-    const first = target[0];
-    const cop = poolCop(pool, air[first], first === 0 ? plan.sim.start.poolC : plan.sim.poolC[first - 1]);
-    // °C at the end per kWh of heater electricity in the target hour.
-    const guess = cop / poolKwhPerK * Math.exp(-(QUARTERS - first) * HOURS / poolTauH);
-    const aim = POOL_END_TOLERANCE_C / 4;
-    let kwh = Math.min(capacityKwh, heatKwh * Math.exp((off[0] - first) * HOURS / poolTauH) / cop);
-    let before: { kwh: number; miss: number } | null = null;
-    for (let step = 0; step < 6 && trials < MAX_TRIALS; step++) {
-      const { values, used } = fill(kwh);
+    // Whole quarters on in the target hour: as many as the heat taken out is still worth there, then one
+    // more or fewer until the pool ends no colder than the plan and less than a running quarter warmer.
+    let quarters = Math.min(target.length, Math.max(1, Math.round(count * Math.exp((off[0] - target[0]) * HOURS / poolTauH))));
+    const tried = new Set<number>();
+    while (quarters >= 1 && quarters <= target.length && !tried.has(quarters) && trials < MAX_TRIALS) {
+      tried.add(quarters);
+      const { values, used } = fill(quarters);
       const d = { ...plan.d, pool_w: values };
       const sim = run(d);
       const miss = sim.poolC[last] - original.poolC[last];
-      if (miss >= 0 && miss <= POOL_END_TOLERANCE_C) {
+      if (miss >= -1e-9 && miss <= POOL_END_TOLERANCE_C) {
         const verdict = judge(sim);
-        if (!verdict || !used.length) return { attempt: null, quarters: count };
+        if (!verdict) return { attempt: null, quarters: count };
         const share = used.reduce((sum, q) => sum + Math.min(values[q] - base[q], Math.max(0, -net[q] - (base[q] - plan.d.pool_w[q]))), 0)
           / used.reduce((sum, q) => sum + values[q] - base[q], 0);
         return { attempt: { d, sim, ...verdict, saving: verdict.grid - verdict.wear, cand, fromQ: off, toQ: used, kwh: removedKwh, toShare: share }, quarters: count };
       }
-      const slope = before && Math.abs(kwh - before.kwh) > 1e-9 ? (miss - before.miss) / (kwh - before.kwh) : guess;
-      let next = kwh - (miss - aim) / (slope > 0 ? slope : guess);
-      // The target hour cannot hold enough heat to end as warm.
-      if (next > capacityKwh && kwh >= capacityKwh - 1e-9) break;
-      next = Math.min(capacityKwh, Math.max(0, next));
-      if (Math.abs(next - kwh) < 1e-12) break;
-      before = { kwh, miss };
-      kwh = next;
+      quarters += miss < 0 ? 1 : -1;
     }
     return { attempt: null, quarters: count };
   };
@@ -721,7 +696,7 @@ export function findOpportunities(
   // A finding changes its own device's store and no other, so that is the trace it keeps.
   const trace = (sim: Simulation, device: OpportunityDevice): OpportunityTrace => ({
     poolC: device === 'pool' ? Array.from(sim.poolC, r3) : [],
-    carKm: device === 'ev' ? Array.from(sim.evKwh, v => r1(v / h.ev.kwh_per_km)) : [],
+    carKm: device === 'ev' ? Array.from(sim.evKwh, v => r1(v / h.car.battery.kwh_per_km)) : [],
     homeSoc: device === 'battery' ? Array.from(sim.batteryKwh, v => r1(v / h.battery.capacity_kwh * 100)) : [],
   });
   const rules = emptyRules();

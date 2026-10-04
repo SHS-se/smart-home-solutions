@@ -141,30 +141,40 @@ the planner was told.
 
 ## Household and targets
 
-Devices, in `HOUSEHOLD`: battery 18.08 kWh (8.8 kW in, 9.6 kW out, 95 % each
-way, 5–100 %); car 75.6 kWh, 0.16 kWh/km, 3 × 16 A, 92 %; pool 55 m³, 764 W
-pump + 2314 W heater, heat pump COP 4.5 at 20 °C air and 27 °C water; site
-limits 13.2 kW each way, SE3. Only the heater heats the pool: the pump
-circulates and must run with it.
+Devices, in `HOUSEHOLD`, as numbers only: battery 18.08 kWh (8.8 kW in, 9.6 kW
+out, 95 % each way, 5–100 %); car 75.6 kWh, 0.16 kWh/km, 92 %, charged at whole
+amps from 5 to 16 on three phases; pool 55 m³ with the home's ground-source
+heat pump and a 764 W circulation pump; site limits 13.2 kW each way, SE3. What
+a device does with its numbers is the planner's own device models
+(`planner/device-models.ts`), which the referee steps for every planner version
+alike ([design](device-models-design.md)).
 
-The charger holds whole amps, 5 to 16 on three phases (3450 to 11 040 W) or
-off. A plan that asks for a power between two of them is carried out at the
-lower, below 5 A not at all, and the difference is a violation (`ev_step`).
-The levels come from the planner's own device model
-(`planner/device-models.ts`), the first of the models the bench and the planner
-are to share ([design](device-models-design.md)).
+The heat pump is on at its setting or off. Its numbers are what the home's
+machine was measured to take and give at the four settings it has run at
+(September 2026, rounded): 6 kW 1.25 kW in and 5.9 kW of heat out, 8 kW 1.65
+and 7.8, 10 kW 2.25 and 10.5, 12 kW 3.0 and 12.45. COP is never stated; it is
+heat over electricity, 4.7 at the lower settings and 4.15 at 12 kW, and it does
+not follow the weather. The bench runs it at 12 kW, as the house does now: on,
+the pool draws 3764 W with its pump, which heats nothing, and gains 12.45 kW.
+A plan that asks for a power between off and on is carried out as off, and the
+difference is a violation (`pool_step`).
+
+The charger holds whole amps (3450 to 11 040 W) or is off. A plan that asks for
+a power between two of them is carried out at the lower, below 5 A not at all,
+and the difference is a violation (`ev_step`).
 
 The pool loses 0.13 kW for every degree its water is above 13.5 °C, whatever
 the weather: 2.1 kW at 30 °C, a third of a degree in ten hours. The home's own
 pool, unheated above 29 °C, lost 2 to 3 kW on days of 13 °C and of 25 °C
 outdoors alike (June, July and September 2026), so its loss is to its room and
-the ground and does not follow the outdoor air. Losing to the outdoor air
-instead, as the bench did until October 2026, was right in September and gave a
-pool that hardly cooled in the summer cases. The outdoor air still sets the
-heat pump's COP. Planners that read a measured pool response are given this
-cooling as one (`bench/adapter.ts`); older ones plan on the coefficient and the
-outdoor temperature. Not modelled: the home's pool nearly stops cooling below
-about 29 °C for half a day at a time.
+the ground and does not follow the outdoor air. Not modelled: the home's pool
+nearly stops cooling below about 29 °C for half a day at a time.
+
+Planners on the bench are told the same household in the fields they read
+(`bench/adapter.ts`): the pool's draw as its one power, its cooling by water
+temperature, and what a kWh of the compressor adds to it, which is the COP over
+the pool's heat capacity. A test holds the planner's own figure for a kWh of
+pool draw to the referee's.
 
 What the owner wants, in `TARGETS`: **pool 30 °C, car 300 km.** One number per
 store; no bands, no urgency, no money.

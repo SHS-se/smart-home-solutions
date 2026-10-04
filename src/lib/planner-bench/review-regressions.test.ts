@@ -38,13 +38,15 @@ Deno.test('equal cold-quarter counts and worst depth cannot hide a larger comfor
   assertEquals(storeNotWorse(before, after), false);
 });
 
-Deno.test('flat prices still allow COP and thermal timing findings, with identical applicability for every planner', () => {
+Deno.test('flat prices do not make pool timing inapplicable, and applicability is identical for every planner', () => {
   const c = world({ air: i => i < 96 ? 25 : 5, buy: () => 1, sell: () => 0.4, published: 288 });
   const idle = findOpportunities(c, HOUSEHOLD, TARGETS, plan(), 'told/nominal').audit;
-  const late = findOpportunities(c, HOUSEHOLD, TARGETS, plan({ pool: i => within(i, 200, 204) ? 3078 : 0 }), 'told/nominal').audit;
+  const late = findOpportunities(c, HOUSEHOLD, TARGETS, plan({ pool: i => within(i, 200, 204) ? 3764 : 0 }), 'told/nominal').audit;
   assertEquals(late.applicability, idle.applicability);
   assertEquals(idle.applicability.pool_cheaper_heating.applicable, true);
-  assert(late.knownSek > 0);
+  // The heat pump's COP is its own, not the weather's, so at one price an hour of heat costs the same in
+  // warm air as in cold: nothing is found for moving it between them.
+  assertEquals(late.rules.pool_cheaper_heating.findings, 0);
 });
 
 Deno.test('one solar-storage saving explains dear import too without counting the money twice', () => {

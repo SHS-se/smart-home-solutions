@@ -43,7 +43,7 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 9;
+export const SCORER_VERSION = 10;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;

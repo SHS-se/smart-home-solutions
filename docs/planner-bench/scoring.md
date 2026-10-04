@@ -49,7 +49,7 @@ The default targets are pool 30 °C and car 300 km; a case can override them. A 
 
 ### Energy timing
 
-These labels explain shared evidence. Multiple labels on one opportunity do not multiply its penalty. Eligibility is conservative and identical for every planner on a case: for example, solar rules are N/A without surplus solar, and car timing is N/A when charging is unavailable at its initial charge limit. Flat prices alone do not make a rule inapplicable because COP, losses and the timing of other loads still matter.
+These labels explain shared evidence. Multiple labels on one opportunity do not multiply its penalty. Eligibility is conservative and identical for every planner on a case: for example, solar rules are N/A without surplus solar, and car timing is N/A when charging is unavailable at its initial charge limit. Flat prices alone do not make a rule inapplicable because losses and the timing of other loads still matter.
 
 | Rule family | What the alternative demonstrates |
 |---|---|
@@ -60,7 +60,7 @@ These labels explain shared evidence. Multiple labels on one opportunity do not 
 | Space for incoming solar | Useful earlier discharge followed by solar capture improves the full schedule |
 | Pool preheat before scarce energy | Earlier heat survives thermal loss and replaces more costly later heat |
 | Pool wait for sun | Delayed heat is cheaper while the pool coasts without worsening service |
-| Better-priced pool heating | Moving heat accounts for the heat pump's air/water-dependent COP, pump power and retained heat |
+| Better-priced pool heating | Heat moves in whole running quarters of the heat pump, pump power and retained heat counted; the alternative ends no colder than the plan and less than one running quarter warmer, so its saving is a lower bound |
 | Car charging timing | Shift charging to better-priced grid energy or solar while preserving service and final range; the charge moves in whole amps, so every alternative is one the charger can carry out |
 | High-value export | Move battery discharge to a better export opportunity; pool/car timing also accounts for forgone export |
 | Losing battery cycle | Remove or move a cycle whose full cost exceeds its benefit, including wear |

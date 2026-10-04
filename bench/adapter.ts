@@ -23,14 +23,15 @@
 // never change.
 
 import { QUARTERS, quarterStarts, type BenchCase } from "../src/lib/planner-bench/case.ts";
-import { poolIdleCPerHour, TARGETS, type Household } from "../src/lib/planner-bench/household.ts";
+import { TARGETS, type Household } from "../src/lib/planner-bench/household.ts";
+import { chargerLevels, cop, heatPumpLevels, idleCPerHour, operatingPoint, WATER_KWH_PER_M3_K } from "../supabase/functions/_shared/planner/device-models.ts";
 import type { Decisions } from "../src/lib/planner-bench/referee.ts";
 import type { PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
 import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 6;
+export const ADAPTER_VERSION = 7;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -55,7 +56,8 @@ export interface LoadedPlanner {
   plan(c: BenchCase, household: Household, scale?: number): { record: PlanRecord; cpuMs: number };
 }
 
-/** Warmer than any pool is planned; the upper end of the cooling line planners are given. */
+/** Colder and warmer than any pool is planned: the ends of the cooling line planners are given. */
+const POOL_RESPONSE_BOTTOM_C = 10;
 const POOL_RESPONSE_TOP_C = 45;
 
 const POOL_PUMP = "sensor.pool_pump_energy";
@@ -97,7 +99,12 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
   const provenance = (entity: string, quality: string, extra: Json = {}) =>
     ({ provider: "bench_case", entity_ids: [`bench:${entity}`], issued_at: c.start, valid_until: end, quality, sample_count: QUARTERS, ...extra });
   const market = { location: { market_area: h.site.market_area } };
-  const poolW = h.pool.pump_w + h.pool.heater_w;
+  // The household's devices, in the fields these planners read. The pool's heat pump runs at its
+  // setting or not at all: its compressor is the heater, what must run with it the pump.
+  const { store, heater } = h.pool, charger = h.car.charger;
+  const running = operatingPoint(heater, heater.selected_setting), poolW = heatPumpLevels(heater).at(-1)!.draw_w;
+  const carMaxW = chargerLevels(charger).at(-1)!.draw_w;
+  const linear = store.loss.kind === "linear" ? store.loss : null;
   return {
     schema_version: 9,
     mode: "live",
@@ -128,9 +135,9 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
     battery: { ...h.battery, soc: c.start_state.battery_soc },
     ev_battery: {
       // The car is planned whether plugged in or not, so the bench presents it as available.
-      name: "Car", connected: true, capacity_kwh: h.ev.capacity_kwh,
+      name: "Car", connected: true, capacity_kwh: h.car.battery.capacity_kwh,
       soc: c.start_state.ev.soc, departure_target_soc: c.start_state.ev.target_soc,
-      charge_efficiency: h.ev.charge_efficiency, kwh_per_km: h.ev.kwh_per_km,
+      charge_efficiency: h.car.battery.charge_efficiency, kwh_per_km: h.car.battery.kwh_per_km,
       available_from: c.start, departure: null, priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.bench_ev_cable", soc: "sensor.bench_ev_soc", target_soc: "number.bench_ev_target",
@@ -138,17 +145,18 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
       },
     },
     pool: {
-      volume_m3: h.pool.volume_m3, water_temperature_c: c.start_state.pool_water_c, heating_running: false,
+      volume_m3: store.capacity_kwh_per_c / WATER_KWH_PER_M3_K, water_temperature_c: c.start_state.pool_water_c, heating_running: false,
       source_entity_ids: { water_temperature: "sensor.bench_pool_water_temperature" },
     },
     pool_model: {
-      loss_kw_per_k: h.pool.loss_kw_per_k, rated_cop: h.pool.rated_cop, cop_per_air_c: h.pool.cop_per_air_c, cutout_air_c: null,
-      // The pool's cooling as a home measures it, by water temperature: it does not follow the
-      // outdoor air, which is all a loss coefficient alone can be read against. A straight line,
-      // so its two ends say all of it. Planners from before the measured response plan on the
-      // coefficient and the outdoor temperature, as they did live.
-      response: [h.pool.ambient_c, POOL_RESPONSE_TOP_C].map(waterC =>
-        ({ at_c: waterC, idle_c_per_h: poolIdleCPerHour(h.pool, waterC), heat_c_per_kwh: null })),
+      // The heat pump's COP at its setting, whatever the outdoor air.
+      loss_kw_per_k: linear?.kw_per_c ?? null, rated_cop: cop(running), cop_per_air_c: 0, cutout_air_c: null,
+      // The pool as a home measures it, by water temperature: how fast it cools unheated, which
+      // does not follow the outdoor air, and what a kWh of the compressor adds to it. The cooling
+      // is a straight line, so its two ends say all of it.
+      response: [linear?.surroundings_c ?? POOL_RESPONSE_BOTTOM_C, POOL_RESPONSE_TOP_C].map(waterC => ({
+        at_c: waterC, idle_c_per_h: idleCPerHour(store, waterC, POOL_RESPONSE_BOTTOM_C), heat_c_per_kwh: cop(running) / store.capacity_kwh_per_c,
+      })),
     },
     ...(comfort
       ? {
@@ -171,11 +179,11 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
       battery_export_min_price_sek_per_kwh: h.site.battery_export_min_price_sek_per_kwh,
     },
     device_models: [
-      deviceModel(EV_METER, "Car charging", "ev_charging", "variable_power", h.ev.voltage_v * h.ev.phase_count * h.ev.max_current_a),
-      deviceModel(POOL_PUMP, "Pool pump", "pool_heating", "switch_schedule", h.pool.pump_w, { planning_service: "pool", pool_role: "circulation" }),
-      deviceModel(POOL_HEATER, "Pool heater", "pool_heating", "variable_power", h.pool.heater_w, {
+      deviceModel(EV_METER, "Car charging", "ev_charging", "variable_power", carMaxW),
+      deviceModel(POOL_PUMP, "Pool pump", "pool_heating", "switch_schedule", heater.auxiliary_w, { planning_service: "pool", pool_role: "circulation" }),
+      deviceModel(POOL_HEATER, "Pool heater", "pool_heating", "variable_power", running.electric_w, {
         planning_service: "pool", pool_role: "heater",
-        minimum_run: { running: false, minimum_seconds: h.pool.heater_minimum_run_s, remaining_seconds: 0 },
+        minimum_run: { running: false, minimum_seconds: heater.minimum_run_s, remaining_seconds: 0 },
       }),
     ],
     services: [
@@ -187,8 +195,8 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
       {
         id: `ev:${end}`, device: "ev", priority: 3, required_kwh: 0,
         control: {
-          type: "discrete_current", voltage_v: h.ev.voltage_v, phase_count: h.ev.phase_count,
-          max_current_a: h.ev.max_current_a, min_current_a: h.ev.min_current_a, current_step_a: h.ev.current_step_a,
+          type: "discrete_current", voltage_v: charger.voltage_v, phase_count: charger.phase_count,
+          max_current_a: charger.max_current_a, min_current_a: charger.min_current_a, current_step_a: charger.current_step_a,
         },
         earliest_start: c.start, baseline_preferred_start: c.start, deadline: end,
       },

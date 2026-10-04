@@ -1,8 +1,8 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { loadCase, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
 import { caseFromReplay, ReplayFormatError } from './convert-replay.ts';
-import { HOUSEHOLD, TARGETS, poolHeaterW, poolIdleCPerHour, stepPool } from './household.ts';
-import { referee, type Decisions } from './referee.ts';
+import { HOUSEHOLD, TARGETS } from './household.ts';
+import { poolLevels, referee, type Decisions } from './referee.ts';
 import type { PlanRecord } from './types.ts';
 import { evaluate } from './evaluate.ts';
 import { diagnose, laneParts, toldCase } from './lanes.ts';
@@ -71,6 +71,8 @@ const recorded = (over: Partial<BenchRecorded> = {}): BenchRecorded => ({
   recorded_at: '2026-09-28T00:00:00Z',
   ...over,
 });
+/** The pool's heat pump on: its compressor at the 12 kW setting and the circulation pump. */
+const POOL_W = 3764;
 const idle = (): Decisions => ({ pool_w: quarters(() => 0), ev_w: quarters(() => 0), battery_charge_w: quarters(() => 0), battery_discharge_w: quarters(() => 0) });
 
 Deno.test('the referee prices a plan at real prices, whatever the planner believed', () => {
@@ -93,15 +95,18 @@ Deno.test('the referee carries the stores with the household\'s physics and clip
   const cold = referee(c, HOUSEHOLD, TARGETS, idle());
   assert(cold.series.poolC[287]! < 29.6 - 1);
   const heating = idle();
-  heating.pool_w = quarters(() => 3078);
+  heating.pool_w = quarters(() => POOL_W);
   const heated = referee(c, HOUSEHOLD, TARGETS, heating);
   assert(heated.series.poolC[287]! > 29.6 + 1);
-  // The pump circulates and heats nothing: at pump power alone the pool cools exactly as when idle.
-  assertEquals(poolHeaterW(HOUSEHOLD.pool, 764), 0);
-  assertEquals(poolHeaterW(HOUSEHOLD.pool, 3078), 2314);
+  assertEquals(heated.violations, []);
+  // The heat pump is on at its setting, with the pump that circulates and heats nothing, or it is off. Asked
+  // for the pump's power alone it does not run: that is reported, and the pool cools exactly as when idle.
+  assertEquals(poolLevels(HOUSEHOLD), [{ setting: 0, draw_w: 0, heat_w: 0 }, { setting: 12, draw_w: 3764, heat_w: 12_450 }]);
   const circulating = idle();
-  circulating.pool_w = quarters(() => 764);
-  assertEquals(referee(c, HOUSEHOLD, TARGETS, circulating).series.poolC, cold.series.poolC);
+  circulating.pool_w = quarters(i => i === 0 ? 764 : 0);
+  const circulated = referee(c, HOUSEHOLD, TARGETS, circulating);
+  assertEquals(circulated.violations, [{ quarter: 0, kind: 'pool_step', clipped_w: 764 }]);
+  assertEquals(circulated.series.poolC, cold.series.poolC);
   // Full power from the start is what the scorer takes as reachable.
   heated.series.comfort!.poolReachableC.forEach((v, i) => assertAlmostEquals(v, heated.series.poolC[i]!, 0.006));
   // A battery at 40 % of 18 kWh cannot give 9.6 kW for a day: the surplus is clipped and reported.
@@ -117,17 +122,17 @@ Deno.test('the referee carries the stores with the household\'s physics and clip
   }
 });
 
-Deno.test('the pool loses its heat to its own surroundings, whatever the weather; the heat pump works in the outdoor air', () => {
-  const pool = HOUSEHOLD.pool;
-  // Unheated at 30 °C it cools as fast on a frosty day as in a heat wave: about 2.1 kW, a third of a degree in ten hours.
-  assertEquals(stepPool(pool, 30, 0, 0, 1), stepPool(pool, 30, 32, 0, 1));
-  assertAlmostEquals(30 - stepPool(pool, 30, 20, 0, 1), 0.0335, 0.0005);
-  assertAlmostEquals(poolIdleCPerHour(pool, 30), stepPool(pool, 30, 20, 0, 1) - 30, 1e-12);
-  // The warmer the water, the faster; at its surroundings' temperature it holds.
-  assert(stepPool(pool, 32, 20, 0, 1) - 32 < stepPool(pool, 30, 20, 0, 1) - 30);
-  assertEquals(stepPool(pool, pool.ambient_c, 20, 0, 1), pool.ambient_c);
-  // A heated hour gains more in warm air than in cold: that is the heat pump, not the loss.
-  assert(stepPool(pool, 30, 28, 3078, 1) > stepPool(pool, 30, 8, 3078, 1) + 0.05);
+Deno.test('the pool cools and is heated the same whatever the weather', () => {
+  const inAir = (airC: number, d: Decisions) => referee(loadCase(caseFromReplay(replay({ pool: { water_temperature_c: 30 } })).data,
+    recorded({ outdoor_temperature_c: quarters(() => airC) })), HOUSEHOLD, TARGETS, d).series.poolC as number[];
+  // Unheated at 30 °C it loses about 2.1 kW to its surroundings, a third of a degree in ten hours, in frost as in a heat wave.
+  assertEquals(inAir(-5, idle()), inAir(32, idle()));
+  assertAlmostEquals(30 - inAir(12, idle())[39], 0.333, 0.005);
+  // An hour of the heat pump gives 12.45 kWh of heat for 3.76 kWh from the grid, in any air: COP is the machine's, at its setting.
+  const hour = idle();
+  for (let i = 0; i < 4; i++) hour.pool_w[i] = POOL_W;
+  assertEquals(inAir(-5, hour), inAir(32, hour));
+  assertAlmostEquals(inAir(12, hour)[3] - inAir(12, idle())[3], 12.45 / 63.965, 0.001);
 });
 
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {

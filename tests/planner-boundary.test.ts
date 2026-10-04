@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { diskTree, resolve, specifiers, type SourceTree } from "../scripts/module-graph.ts";
 import { PLANNER_DIR, plannerVersion } from "../bench/planner-version.ts";
+import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const tree = diskTree(root);
@@ -49,4 +50,36 @@ Deno.test("a code change is a new planner version", async () => {
   const changed = await plannerVersion(memoryTree(PLANNER_DIR, { ...PLANNER, "dispatch-plan.ts": `export function plan(x: number): number {\n  return x * 3;\n}\n` }));
   assertNotEquals(changed, base);
   assert(changed.startsWith("v2-esbuild"));
+});
+
+const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
+/** The referee version and the device models' code it judges with. */
+const DEVICE_MODELS_PIN = "7:4b9a11e528261ce6";
+
+Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
+  assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);
+  const fromPlanner = new Set<string>();
+  for (const entry of Deno.readDirSync(`${root}/src/lib/planner-bench`)) {
+    if (!entry.isFile || !/\.tsx?$/.test(entry.name) || /\.(test|fixture)\.ts$/.test(entry.name)) continue;
+    const file = `src/lib/planner-bench/${entry.name}`;
+    for (const specifier of specifiers(tree.read(file)!, { types: true })) {
+      const local = resolve(tree, file, specifier);
+      if (local?.startsWith(`${PLANNER_DIR}/`)) fromPlanner.add(local);
+    }
+  }
+  // Every planner version on the bench is judged in this one world, whatever models its own code carries.
+  assertEquals([...fromPlanner], [DEVICE_MODELS]);
+});
+
+Deno.test("a change to the device models is a change to how every plan is judged", async () => {
+  const { transform, stop } = await import("npm:esbuild");
+  try {
+    const { code } = await transform(tree.read(DEVICE_MODELS)!, { loader: "ts", minifyWhitespace: true, minifySyntax: true, format: "esm" });
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code));
+    const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+    assertEquals(`${REFEREE_VERSION}:${hash}`, DEVICE_MODELS_PIN,
+      "device-models.ts no longer does what the referee version was pinned to: bump REFEREE_VERSION in src/lib/planner-bench/referee.ts so stored results are judged again, then pin the new pair here.");
+  } finally {
+    stop();
+  }
 });

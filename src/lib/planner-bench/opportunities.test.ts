@@ -34,11 +34,14 @@ function audited(c: BenchCase, d: Decisions, lane: LaneId = 'told/nominal', guar
   assertEquals(after.violations, []);
   assertAlmostEquals(after.cost_sek, audit.improvedCostSek, 1e-3);
   assertAlmostEquals(before.cost_sek, audit.originalCostSek, 1e-3);
-  // Every store ends where the plan ended it; the pool at most a hair warmer, never colder.
+  // Every store ends where the plan ended it; the pool never colder, and warmer by less than one running
+  // quarter of its heat pump (12.45 kW into 64 kWh per degree), which is the least it can be heated by.
   assertAlmostEquals(after.terminal.battery_kwh, before.terminal.battery_kwh, 1e-4);
   assertAlmostEquals(after.terminal.ev_kwh, before.terminal.ev_kwh, 1e-4);
   const warmer = after.series.poolC[END]! - before.series.poolC[END]!;
-  assert(warmer >= -0.0011 && warmer <= 0.0011, `pool ends ${warmer} °C off`);
+  assert(warmer >= -0.0011 && warmer <= 12.45 / 4 / 63.965 + 0.0011, `pool ends ${warmer} °C off`);
+  // Whatever the audit moved, the heat pump is on at its setting or off in every quarter.
+  assert(improved.pool_w.every(w => w === 0 || w === 3764), `the pool runs between off and on: ${[...new Set(improved.pool_w)]}`);
   // Comfort is no worse, rule by rule, so store by store.
   const was = scoreQuarters(before.series).counts, is = scoreQuarters(after.series).counts;
   for (const key of ['pool_low', 'pool_cold', 'ev_low', 'ev_short']) assert((is[key] ?? 0) <= (was[key] ?? 0), `${key} got worse`);
@@ -190,7 +193,7 @@ const autumn = { air: () => 15, buy: () => 2, sell: () => 0.3, published: 288 };
 
 Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus is found, above target if need be', () => {
   const c = world({ ...autumn, solar: i => within(i, 40, 64) ? 5000 : 0 });
-  const audit = audited(c, plan({ pool: i => within(i, 100, 140) ? 3078 : 0 }));
+  const audit = audited(c, plan({ pool: i => within(i, 100, 140) ? 3764 : 0 }));
   const preheat = audit.findings.find(f => f.rule === 'pool_solar_preheat')!;
   assert(preheat, rulesFound(audit).join());
   assert(preheat.to >= 40 && preheat.toEnd < 64 && preheat.from >= 100);
@@ -199,7 +202,7 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   assert(Math.max(...preheat.after.poolC) > 30 && preheat.before.poolC[63] < 29.6);
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
   // A warm pool is marked and loses nothing; the price rules are set aside to show it.
-  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 60 ? 3078 : 0 })).series },
+  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 30 ? 3764 : 0 })).series },
     { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false }, dear_load: { enabled: false }, dearest_load: { enabled: false } });
   assertEquals(warm.sum, 0);
 });
@@ -208,7 +211,7 @@ Deno.test('a dull day before a sunny one: waiting for the sun is found, as far a
   // Enough sun on the second day for the battery and the pool both.
   const sunLater = { ...autumn, solar: (i: number) => within(i, 136, 160) ? 12_000 : 0 };
   // Six hours of heat on the first evening; the sun on the second day could give all of it.
-  const heatEarly = plan({ pool: i => within(i, 76, 100) ? 3078 : 0 });
+  const heatEarly = plan({ pool: i => within(i, 76, 100) ? 3764 : 0 });
   // Starting warm, the pool can coast to the sun within a degree of target.
   const free = audited(world({ ...sunLater, start: { pool_water_c: 30.8 } }), heatEarly);
   const wait = free.findings.find(f => f.rule === 'pool_wait_for_sun')!;
@@ -370,20 +373,20 @@ Deno.test('a case scores each affected known-price quarter under its primary rul
 
 Deno.test('the page scores a stored plan without replaying it, and never shows an audit its thresholds do not support', () => {
   const c = world({ ...autumn, solar: i => within(i, 136, 160) ? 5000 : 0, start: { pool_water_c: 30.6 } });
-  const { series, score } = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3078 : 0 })), {}, 'told/nominal');
+  const { series, score } = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3764 : 0 })), {}, 'told/nominal');
   const live = scoreQuarters(series);
   assertEquals([live.points, live.sum, live.economicPoints], [score.points, score.sum, score.economic_points]);
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
   // A wider band: every stored witness still holds, so the audit stands.
   assertEquals(scoreQuarters(series, { pool_low: { threshold: 1.5 } }).auditPending, false);
-  // A band of 0.2 °C: the alternative lets the pool sag further than that, so the audit must be made again.
-  const tight = scoreQuarters(series, { pool_low: { threshold: 0.2 } });
+  // A band of 0.05 °C: the alternative lets the pool sag further than that, so the audit must be made again.
+  const tight = scoreQuarters(series, { pool_low: { threshold: 0.05 } });
   assertEquals([tight.auditPending, tight.economicPoints, tight.complete], [true, null, false]);
-  assertThrows(() => storedScore(series, { pool_low: { threshold: 0.2 } }), Error, 'other comfort thresholds');
+  assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'other comfort thresholds');
   // Evaluated under the tight band, the audit holds itself to it.
-  const strict = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3078 : 0 })), { pool_low: { threshold: 0.2 } }, 'told/nominal');
-  assertEquals(strict.series.audit!.guard, { pool: [0.2, 2], ev: [50, 100] });
-  assertEquals(scoreQuarters(strict.series, { pool_low: { threshold: 0.2 } }).auditPending, false);
+  const strict = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3764 : 0 })), { pool_low: { threshold: 0.05 } }, 'told/nominal');
+  assertEquals(strict.series.audit!.guard, { pool: [0.05, 2], ev: [50, 100] });
+  assertEquals(scoreQuarters(strict.series, { pool_low: { threshold: 0.05 } }).auditPending, false);
   // A series from before the audit: no economic score, said so, and no stored score to be had.
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);
@@ -393,7 +396,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
 });
 
 Deno.test('real-sized audits stay within their deterministic replay budget', () => {
-  const plans: [string, Decisions][] = [['by the clock', clockPlan()], ['idle', plan()], ['pool only', plan({ pool: i => within(i % 96, 0, 30) ? 3078 : 0 })]];
+  const plans: [string, Decisions][] = [['by the clock', clockPlan()], ['idle', plan()], ['pool only', plan({ pool: i => within(i % 96, 0, 30) ? 3764 : 0 })]];
   const lines: string[] = [];
   for (const [name, d] of plans) {
     for (const lane of ['told/nominal', 'oracle/nominal'] as LaneId[]) {
