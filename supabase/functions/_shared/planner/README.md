@@ -15,9 +15,11 @@ portal and the bench all import it from here.
   or a type here is not a new version; changing code is.
 - **Device models:** `device-models.ts` says what a device can be told to do and
   what it then does. It is a leaf (it imports nothing) and states no number:
-  the numbers come with the household or the snapshot. The bench referee and
-  its audit import it, so a plan is judged by the models it was made with
-  (`docs/planner-bench/device-models-design.md`).
+  the numbers come in `snapshot.device_physics`. The planner plans a device
+  that has a model there with it; the bench referee and its audit import the
+  same file, so a plan is judged by the models it was made with
+  (`docs/planner-bench/device-models-design.md`). A home without models yet is
+  planned from the older snapshot fields.
 
 Tests (`*.test.ts`) and fixtures (`*.fixture.ts`) that exercise only the
 planner live here too. Tests that also need other shared modules stay in

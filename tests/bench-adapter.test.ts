@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { loadPlanner } from "../bench/adapter.ts";
+import { loadPlanner, snapshotFor } from "../bench/adapter.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
@@ -85,4 +85,45 @@ Deno.test("the planner is told the pool cools whatever the weather, and keeps it
   // Left alone it would lose 2 °C in three days; the plan buys the heat to stay within a degree of 30 °C.
   assert(stats.pool_kwh > 15, `the pool was given ${stats.pool_kwh} kWh`);
   assert(Math.min(...series.poolC as number[]) > 29, `pool fell to ${Math.min(...series.poolC as number[])}`);
+});
+
+Deno.test("the planner plans every device from its device model, whatever the older fields say", async () => {
+  const M = await import(`${root}supabase/functions/_shared/planner/energy-optimisation.ts`);
+  assert(M.PLANNER_INPUTS.includes("device_physics"));
+  const c = loadCase(dataset(), recorded());
+  const decided = (snapshot: unknown) => {
+    const plan = M.generateOptimisationPlan(snapshot, new Date(c.start), []);
+    assertEquals(plan.status, "ready");
+    return plan.plans.priority.slots.map((slot: Record<string, number>) => [slot.pool_w, slot.ev_w, slot.battery_charge_w, slot.battery_discharge_w]);
+  };
+  const snapshot = snapshotFor(c, HOUSEHOLD, 1, true, false, false, true) as unknown as {
+    [field: string]: unknown;
+    pool: Record<string, unknown>; battery: Record<string, unknown>; ev_battery: Record<string, unknown>;
+    device_models: { pool_role?: string }[]; services: { device: string; control: Record<string, unknown> }[];
+  };
+  const plan = decided(snapshot);
+  // The heat pump is on at its 12 kW setting, pump included, or off; the car charges at whole amps.
+  assertEquals([...new Set(plan.map((slot: number[]) => slot[0]))].sort(), [0, 3764]);
+  assert(plan.every((slot: number[]) => slot[1] === 0 || (slot[1] >= 3450 && slot[1] % 690 === 0)), "the car is planned between two amp steps");
+
+  // The same case with every older field saying something else about the devices: a small pool that
+  // leaks into the weather behind a weak heater, a small battery, a thirsty car on a slow charger.
+  const misleading = {
+    ...snapshot,
+    pool: { ...snapshot.pool, volume_m3: 20 },
+    pool_model: { loss_kw_per_k: 0.5, rated_cop: 2, cop_per_air_c: 0.05, cutout_air_c: null, response: null },
+    battery: { ...snapshot.battery, capacity_kwh: 6, charge_max_w: 2_000 },
+    ev_battery: { ...snapshot.ev_battery, capacity_kwh: 40, kwh_per_km: 0.3 },
+    device_models: snapshot.device_models.map(device =>
+      device.pool_role ? { ...device, active_power_w: device.pool_role === "heater" ? 1_000 : 500 } : device),
+    services: snapshot.services.map(service =>
+      service.device === "ev" ? { ...service, control: { ...service.control, max_current_a: 8 } }
+        : { ...service, control: { type: "fixed_power", power_w: 1_500 } }),
+  };
+  assertEquals(decided(misleading), plan);
+  // Without its models the planner believes those fields, and plans another household.
+  const { device_physics: _models, ...believed } = misleading;
+  const other = decided(believed);
+  assert(JSON.stringify(other) !== JSON.stringify(plan));
+  assert(other.some((slot: number[]) => slot[0] === 1500) && other.every((slot: number[]) => slot[0] === 0 || slot[0] === 1500), "the pool is not planned at the power the older fields give");
 });

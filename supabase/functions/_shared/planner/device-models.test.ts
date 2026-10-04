@@ -88,4 +88,8 @@ Deno.test("device models are checked once and never filled in", () => {
   assertThrows(broken(m => { m.car.charger.max_current_a = 15.5; }), DeviceModelError, "whole number of steps");
   assertThrows(broken(m => { m.battery.min_soc = 1; }), DeviceModelError, "in order");
   assertThrows(broken(m => { m.pool.store.capacity_kwh_per_c = 0; }), DeviceModelError, "heat capacity");
+  // A snapshot carries the devices the home has: what is there is checked, what is not is not asked for.
+  assertEquals(parseDeviceModels({ pool: models().pool }), { pool: models().pool });
+  assertEquals(parseDeviceModels({}), {});
+  assertThrows(() => parseDeviceModels({ car: { ...models().car, charger: { ...charger, min_current_a: 0 } } }), DeviceModelError);
 });

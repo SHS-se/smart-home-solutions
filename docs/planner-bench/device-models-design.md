@@ -1,7 +1,8 @@
 # Shared device models: design
 
-Status: steps 1 to 3 below are built (4 October 2026); the planner reading the
-models itself, the live side and Home Assistant are next. Two independent candidates (Claude and Codex) were compared; where
+Status: steps 1 to 4 below are built (4 October 2026): the bench and the
+planner both plan and judge with the device models. The live side and Home
+Assistant are next. Two independent candidates (Claude and Codex) were compared; where
 they differed is in [Synthesis](#synthesis-decision).
 
 ## Problem
@@ -202,8 +203,17 @@ battery arithmetic now.
    `pool_step`, whole-quarter pool moves, the adapter's projection, the bench's
    own physics deleted. The audit's pool alternatives may end up to one running
    quarter (0.05 °C) warmer than the plan, never colder.
-4. Server resolver fills `snapshot.device_physics`; then the planner reads it
-   and its seeded pool physics goes (a new planner version).
+4. **Built (4 October), a new planner version:** the planner reads
+   `snapshot.device_physics` (listed in `PLANNER_INPUTS`). Where a device has a
+   model there, the pool's store is built from the heat pump's operating point
+   and the shared thermal step, and the battery's, the car's and the charger's
+   numbers come from their models; the older fields are not read for it. The
+   bench adapter hands the household's models to planners that list the input.
+   A test plans the same case with every older field saying something else and
+   gets the same plan.
+   Still to do here: a server resolver that fills `device_physics` for live
+   homes. Until it does, a live snapshot carries no models, the planner plans
+   it from `pool_model` and its seeded pool physics as before, and those stay.
 5. `household-physics.ts` adopts the kernels.
 6. Home Assistant sends heat, compressor electricity and the setting; the
    fitted curve replaces the bench's assumed one for the live home.

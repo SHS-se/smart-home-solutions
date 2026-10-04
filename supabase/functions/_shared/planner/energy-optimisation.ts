@@ -2,8 +2,17 @@ import { type MinimumRun, validMinimumRun, validRun, requiredRunSlots } from "./
 import {
   powerEnvelope,
   powerEnvelopeError,
+  relayEnvelope,
   type PowerEnvelope,
 } from "./power-envelope.ts";
+import {
+  heatPumpLevels,
+  idleCPerHour,
+  parseDeviceModels,
+  stepThermalStore,
+  thermalTimeConstantH,
+  type DeviceModels,
+} from "./device-models.ts";
 import { validateBatteryCurve } from "./value-curves.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback, type ExecutionFeedback, type BatteryExecutionContract } from "./battery-plan-execution.ts";
 import { projectBatteryDispatch, type BatteryProjection, type BatteryProjectionRow } from "./battery-dispatch-projection.ts";
@@ -508,6 +517,16 @@ export interface OptimisationSnapshot {
    * carries — including the replay capsules.
    */
   value_settings?: ValueSettings | null;
+  /**
+   * The home's device models (device-models.ts), for the devices that have
+   * one: what each can be told to do and what it then does. Where a device has
+   * a model here, the planner plans it with that and reads none of its numbers
+   * from anywhere else: a pool's `pool_model`, the volume beside its reading
+   * and its declared power, a car's capacity, consumption and charger control,
+   * a battery's capacity, limits and efficiencies. A device without one is
+   * planned from those older fields, as before.
+   */
+  device_physics?: Partial<DeviceModels> | null;
   /**
    * The pool's fitted loss and COP, when the fit was accepted.
    *
@@ -1110,6 +1129,13 @@ function completedLocalDays(
 
 export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
   const errors: string[] = [];
+  if (snapshot?.device_physics) {
+    try {
+      parseDeviceModels(snapshot.device_physics);
+    } catch (error) {
+      errors.push(`device_physics: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (
     !SUPPORTED_SNAPSHOT_VERSIONS.includes(
       snapshot?.schema_version as 5 | 6 | 7 | 8 | 9,
@@ -2431,7 +2457,42 @@ const POOL_NO_AIR_CUTOUT_C = -273.15;
  * bench's adapter builds its input from this, so an older planner is never
  * handed a field it would ignore.
  */
-export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook", "demand_outlook"] as const;
+export const PLANNER_INPUTS = ["comfort", "valuation", "wind_outlook", "demand_outlook", "device_physics"] as const;
+
+/**
+ * The snapshot with its device models' numbers where the rest of the planner
+ * reads them: the battery's and the car's own, and the charger's current
+ * range on the car's service. The pool's store is built from its model
+ * directly (`buildDispatchStores`). A snapshot without models is returned as
+ * it came; one whose models no device could have is too, and
+ * `validateSnapshot` says why.
+ */
+function withDevicePhysics(snapshot: OptimisationSnapshot): OptimisationSnapshot {
+  const given = snapshot.device_physics;
+  if (!given) return snapshot;
+  let physics: Partial<DeviceModels>;
+  try {
+    physics = parseDeviceModels(given);
+  } catch {
+    return { ...snapshot, device_physics: null };
+  }
+  const { battery, car } = physics;
+  return {
+    ...snapshot,
+    device_physics: physics,
+    ...(battery && snapshot.battery ? { battery: { ...snapshot.battery, ...battery } } : {}),
+    ...(car && snapshot.ev_battery ? { ev_battery: { ...snapshot.ev_battery, ...car.battery } } : {}),
+    ...(car
+      ? {
+        services: snapshot.services.map((service) =>
+          isDispatchableService(service) && isDiscreteCurrentService(service)
+            ? { ...service, control: { type: "discrete_current" as const, ...car.charger } }
+            : service
+        ),
+      }
+      : {}),
+  };
+}
 
 type PoolResponse = NonNullable<NonNullable<OptimisationSnapshot["pool_model"]>["response"]>;
 
@@ -2915,7 +2976,11 @@ function buildDispatchStores(
         cutout_air_c: fitted?.cutout_air_c ?? POOL_NO_AIR_CUTOUT_C,
       },
     };
-    const capacityKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
+    // The pool's own model, where the home has one: the heat pump at its
+    // setting and the store it heats. Everything below asks it first.
+    const physics = snapshot.device_physics?.pool ?? null;
+    const running = physics ? heatPumpLevels(physics.heater).at(-1)! : null;
+    const capacityKwhPerK = physics ? physics.store.capacity_kwh_per_c : pool.volume_m3 * WATER_KWH_PER_M3_K;
     const airAt = (index: number) => outdoor?.[index] ?? 15;
     // The COP at the pool's current state is what converts a price into a value
     // per degree, and it is the same conversion the editor showed.
@@ -2927,24 +2992,31 @@ function buildDispatchStores(
     const measuredIdle = measuredPoolResponse(response, (bin) => bin.idle_c_per_h);
     const measuredGain = measuredPoolGain(response);
     const idleAt = measuredIdle === null ? null : (waterC: number) => Math.min(0, measuredIdle(waterC));
+    // What the unheated pool's temperature does in an hour at one temperature, °C.
+    const idlePerHour = (waterC: number, index: number) =>
+      physics ? idleCPerHour(physics.store, waterC, airAt(index))
+        : idleAt !== null ? idleAt(waterC)
+        : -model.loss_kw_per_k * (waterC - airAt(index)) / capacityKwhPerK;
     const poolUnitsAt = (waterC: number, index: number) => {
+      // The model's heat at its setting over all it draws there, whatever the air: the pump is in the draw and not in the heat.
+      if (running) return running.heat_w / running.draw_w / capacityKwhPerK;
       const cop = poolCop(model.heat_pump, airAt(index), waterC);
       // A unit that cannot run in this air adds nothing, measured gain or not.
       return measuredGain === null || cop <= 0 ? cop * heaterShare / capacityKwhPerK : measuredGain * heaterShare;
     };
     const poolUnitsPerKwh = poolUnitsAt(pool.water_temperature_c, 0);
-    const poolPower = declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
+    // A heat pump switched at its setting is one power or off.
+    const poolPower = running ? relayEnvelope(running.draw_w) : declaredPowerEnvelope("pool", SEEDED_POOL_HEAT_PUMP.rated_power_w);
     const poolTarget = snapshot.comfort?.pool?.target_c;
     // The share of a degree added in a quarter that is still there a quarter later.
-    const poolRetention = Math.max(0.9, 1 - model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK);
+    const poolRetention = Math.max(0.9, 1 - (physics
+      ? SLOT_HOURS / thermalTimeConstantH(physics.store, poolTarget ?? pool.water_temperature_c, airAt(0))
+      : model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK));
     // From a target: what the energy to hold it costs, quarter by quarter, at
     // each quarter's own air temperature and solar surplus.
     const poolMerit = poolTarget === undefined ? null : meritOrderCurve({
       unit: "celsius", target: poolTarget, state: pool.water_temperature_c, step: MERIT_STEP.pool_c,
-      upkeep: slots.reduce((sum, slot, index) =>
-        sum + (idleAt === null
-          ? model.loss_kw_per_k * Math.max(0, poolTarget - airAt(index)) / capacityKwhPerK
-          : -idleAt(poolTarget)) * slot.duration_hours, 0),
+      upkeep: slots.reduce((sum, slot, index) => sum + Math.max(0, -idlePerHour(poolTarget, index)) * slot.duration_hours, 0),
       offers: slots.flatMap((slot, index) => quarterOffers({
         hours: slot.duration_hours, surplus_w: slot.pv_w - fixedLoadW(slot), max_w: poolPower.max_power_w,
         import_sek_per_kwh: slot.shadow_import_sek_per_kwh, export_sek_per_kwh: slot.shadow_export_sek_per_kwh,
@@ -2993,7 +3065,9 @@ function buildDispatchStores(
       ...(poolMerit ? { sustained_value_tail_hours: 24 } : {}),
       retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,
-      drift: idleAt === null
+      drift: physics
+        ? (waterC, index) => stepThermalStore(physics.store, waterC, 0, airAt(index), slots[index].duration_hours)
+        : idleAt === null
         ? (waterC, index) => stepPoolTemperature(model, waterC, airAt(index), 0, 0, slots[index].duration_hours)
         : (waterC, index) => waterC + idleAt(waterC) * slots[index].duration_hours,
     });
@@ -5070,6 +5144,7 @@ export function plannerValueStores(
   snapshot: OptimisationSnapshot,
   priceOutlook: OptimisationPlan["price_outlook"],
 ): PlannerValueStore[] {
+  snapshot = withDevicePhysics(snapshot);
   const { slots } = preparedSlots(snapshot, [], priceOutlook);
   const stores: PlannerValueStore[] = (buildDispatchStores(slots, snapshot, null) ?? [])
     .map(store => ({ ...store, active: true }));
@@ -5099,7 +5174,7 @@ function workbenchSetup(
   const effectiveAt = Math.max(now.getTime(), isoMs(snapshot.captured_at));
   // Stored plan outlooks are already aligned to the remaining horizon. The
   // workbench leaves out the same devices the plan did.
-  const remaining = remainingSnapshot(isolateMeasurements(snapshot), effectiveAt);
+  const remaining = remainingSnapshot(withDevicePhysics(isolateMeasurements(snapshot)), effectiveAt);
   const prepared = preparedSlots(remaining, priceArchive, resolvedPriceOutlook, effectiveAt);
   const slots = publishedOnly ? prepared.slots.filter(slot => slot.binding) : prepared.slots;
   if (!slots.length) throw new Error("No published prices are available for comparison");
@@ -5225,7 +5300,7 @@ export function generateOptimisationPlanWithBatteryProjection(
   solveAuction?: DispatchAuctionSolver,
 ): OptimisationResult {
   // An impossible reading leaves out its own device before anything reads it.
-  snapshot = isolateMeasurements(snapshot);
+  snapshot = withDevicePhysics(isolateMeasurements(snapshot));
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   if (snapshot.schema_version !== 9) {
     const { plan, battery_projection } = generatePlanBody(snapshot, now, priceArchive, resolvedPriceOutlook, fixed, solveAuction);

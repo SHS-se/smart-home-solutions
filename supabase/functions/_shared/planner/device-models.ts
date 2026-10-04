@@ -207,40 +207,45 @@ export interface DeviceModels {
 }
 
 /**
- * A household's device models, checked once so that nothing that steps them
- * has to. Throws on a model no device could have; fills nothing in.
+ * Device models, checked once so that nothing that steps them has to: the
+ * whole household's, or the ones a snapshot carries. Throws on a model no
+ * device could have; fills nothing in.
  */
-export function parseDeviceModels(input: DeviceModels): DeviceModels {
-  const models: DeviceModels = JSON.parse(JSON.stringify(input));
+export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T {
+  const models: T = JSON.parse(JSON.stringify(input));
   const fail = (message: string): never => { throw new DeviceModelError(message); };
   const positive = (value: unknown) => finite(value) && value > 0;
   const share = (value: unknown) => finite(value) && value > 0 && value <= 1;
 
   const { battery, car, pool } = models;
-  if (!positive(battery.capacity_kwh) || !positive(battery.charge_max_w) || !positive(battery.discharge_max_w)) fail("A battery needs a capacity and charge and discharge powers.");
-  if (!finite(battery.min_soc) || !finite(battery.max_soc) || battery.min_soc < 0 || battery.max_soc > 1 || battery.min_soc >= battery.max_soc) fail("A battery's limits must lie in order between empty and full.");
-  if (!share(battery.charge_efficiency) || !share(battery.discharge_efficiency)) fail("A battery's efficiencies are shares between zero and one.");
+  if (battery) {
+    if (!positive(battery.capacity_kwh) || !positive(battery.charge_max_w) || !positive(battery.discharge_max_w)) fail("A battery needs a capacity and charge and discharge powers.");
+    if (!finite(battery.min_soc) || !finite(battery.max_soc) || battery.min_soc < 0 || battery.max_soc > 1 || battery.min_soc >= battery.max_soc) fail("A battery's limits must lie in order between empty and full.");
+    if (!share(battery.charge_efficiency) || !share(battery.discharge_efficiency)) fail("A battery's efficiencies are shares between zero and one.");
+  }
+  if (car) {
+    if (!car.battery || !positive(car.battery.capacity_kwh) || !positive(car.battery.kwh_per_km) || !share(car.battery.charge_efficiency)) fail("A car needs a capacity, a consumption and a charge efficiency.");
+    chargerLevels(car.charger);
+  }
+  if (pool) {
+    const { store, heater } = pool;
+    if (!store || !positive(store.capacity_kwh_per_c)) fail("A thermal store needs a heat capacity.");
+    if (store.loss?.kind === "linear") {
+      if (!finite(store.loss.kw_per_c) || store.loss.kw_per_c < 0 || !(store.loss.surroundings_c === null || finite(store.loss.surroundings_c))) fail("A linear loss needs a rate and its surroundings.");
+    } else if (store.loss?.kind === "measured") {
+      const { points } = store.loss;
+      if (!Array.isArray(points) || !points.length || !points.every((p, i) => finite(p.at_c) && finite(p.c_per_h) && (i === 0 || p.at_c > points[i - 1].at_c))) fail("A measured loss needs points at rising temperatures.");
+    } else fail("Unknown kind of standing loss.");
 
-  if (!positive(car.battery.capacity_kwh) || !positive(car.battery.kwh_per_km) || !share(car.battery.charge_efficiency)) fail("A car needs a capacity, a consumption and a charge efficiency.");
-  chargerLevels(car.charger);
-
-  const { store, heater } = pool;
-  if (!positive(store.capacity_kwh_per_c)) fail("A thermal store needs a heat capacity.");
-  if (store.loss.kind === "linear") {
-    if (!finite(store.loss.kw_per_c) || store.loss.kw_per_c < 0 || !(store.loss.surroundings_c === null || finite(store.loss.surroundings_c))) fail("A linear loss needs a rate and its surroundings.");
-  } else if (store.loss.kind === "measured") {
-    const { points } = store.loss;
-    if (!points.length || !points.every((p, i) => finite(p.at_c) && finite(p.c_per_h) && (i === 0 || p.at_c > points[i - 1].at_c))) fail("A measured loss needs points at rising temperatures.");
-  } else fail("Unknown kind of standing loss.");
-
-  const points = heater.operating_points;
-  if (!Array.isArray(points) || !points.length) fail("A heat pump needs at least one measured operating point.");
-  points.forEach((point, i) => {
-    if (!positive(point.setting) || !positive(point.electric_w) || !positive(point.heat_w)) fail("An operating point needs a setting, electricity and heat.");
-    if (i > 0 && !(point.setting > points[i - 1].setting && point.electric_w > points[i - 1].electric_w)) fail("Operating points must rise in setting and in electricity.");
-  });
-  if (heater.control !== "switch") fail("A heat pump the planner sets the power of is not modelled yet.");
-  if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0 || !finite(heater.minimum_run_s) || heater.minimum_run_s < 0) fail("A heat pump's auxiliary draw and minimum run cannot be negative.");
-  operatingPoint(heater, heater.selected_setting);
+    const points = heater?.operating_points;
+    if (!Array.isArray(points) || !points.length) fail("A heat pump needs at least one measured operating point.");
+    points.forEach((point, i) => {
+      if (!positive(point.setting) || !positive(point.electric_w) || !positive(point.heat_w)) fail("An operating point needs a setting, electricity and heat.");
+      if (i > 0 && !(point.setting > points[i - 1].setting && point.electric_w > points[i - 1].electric_w)) fail("Operating points must rise in setting and in electricity.");
+    });
+    if (heater.control !== "switch") fail("A heat pump the planner sets the power of is not modelled yet.");
+    if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0 || !finite(heater.minimum_run_s) || heater.minimum_run_s < 0) fail("A heat pump's auxiliary draw and minimum run cannot be negative.");
+    operatingPoint(heater, heater.selected_setting);
+  }
   return models;
 }

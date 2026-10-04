@@ -12,6 +12,10 @@
 // comfort) and works out everything else itself, so its
 // price estimate and its value curves are part of what is being compared.
 //
+// The household's devices reach a planner twice over: as its device models,
+// for a planner that lists `device_physics` among its inputs, and as the older
+// snapshot fields saying the same, which every planner on the bench reads.
+//
 // Generations, detected from the planner's own files:
 //   snapshot          the schema-9 snapshot, with the owner's targets turned
 //                     into the comfort bands and urgency older planners read.
@@ -92,7 +96,8 @@ function legacyComfortCurve(unit: string, target: number, band: number, urgency:
   };
 }
 
-function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean, demand: boolean): Json {
+/** The snapshot one planner generation is handed for a case; exported for the adapter's tests. */
+export function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean, wind: boolean, demand: boolean, devicePhysics: boolean): Json {
   const starts = quarterStarts(c.start);
   const end = new Date(Date.parse(starts[QUARTERS - 1]) + 15 * 60_000).toISOString();
   const targets = { ...TARGETS, ...(c.comfort ?? {}) };
@@ -203,6 +208,8 @@ function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: boolean
     ],
     service_requirement_sample_days: { pool_heating: 0 },
     outdoor_temperature_c: c.recorded.outdoor_temperature_c,
+    // A planner that plans with the device models is handed the household's own; the fields above say the same to the others.
+    ...(devicePhysics ? { device_physics: { battery: h.battery, car: h.car, pool: h.pool } } : {}),
     ...(wind && c.recorded.wind ? { wind_outlook: { provider: "bench_case", zone: c.recorded.wind.zone, days: c.recorded.wind.days } } : {}),
     ...(demand && c.recorded.history.demand_days?.length ? { demand_outlook: { provider: "bench_case", days: c.recorded.history.demand_days } } : {}),
     ...(c.recorded.solar_irradiance_w_per_m2.every(v => v !== null) ? { solar_irradiance_w_per_m2: c.recorded.solar_irradiance_w_per_m2 } : {}),
@@ -305,7 +312,7 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
     generation,
     plan(c, household, scale = 1) {
       const snapshot = snapshotFor(c, household, scale, generation === "snapshot+comfort", M.PLANNER_INPUTS?.includes("wind_outlook") === true,
-        M.PLANNER_INPUTS?.includes("demand_outlook") === true);
+        M.PLANNER_INPUTS?.includes("demand_outlook") === true, M.PLANNER_INPUTS?.includes("device_physics") === true);
       const archive = priceArchive(c);
       if (generation === "snapshot+basis") {
         // The planner's own code builds its basis from the case's history.
