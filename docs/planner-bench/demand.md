@@ -52,10 +52,14 @@ the limits the plan set, taking surplus that was not forecast, and keeping a
 grid charge as planned (test-cases.md, "Measured windows"). Planners get the
 days before a case (`recorded.history.demand_days`).
 
-Five of the seven cases were measured in full. C-0905 and C-0919 were not (the
-device meters add up to more than the house drew for hours at a time) and are
-still refereed on their forecasts, where planning for more than the forecast
-can only cost.
+When the table below was made, five of the seven cases were measured in full.
+C-0905 and C-0919 were not: the home had recorded its car charging twice, so
+the device meters added up to more than the house drew for hours at a time,
+and they were refereed on their forecasts. Since the recording was corrected
+and the cases read again on 4 October 2026 (test-cases.md, "Measured windows"),
+every case from the home's tables is measured, C-0905 and C-0919 included, and
+the days before each case no longer take the car out twice. The table has not
+been redone since.
 
 ## What the bench said
 
