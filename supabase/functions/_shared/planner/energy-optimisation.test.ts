@@ -3,6 +3,61 @@ import { projectZoneTemperature } from "./thermal-model.ts";
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 import { NOW, assert, input, horizon, routedEvService, splitHorizon, poolKwhBetween } from "./energy-optimisation.fixture.ts";
 
+Deno.test("hot-water forecasts above running power remain usable demand", () => {
+  const snapshot = input({
+    capabilities: { pv: true, battery: true, pool: false, boiler: true, ev: false },
+  });
+  snapshot.slots = snapshot.slots.slice(0, 4);
+  snapshot.services = [{
+    id: "boiler:forecast", device: "boiler", priority: 1,
+    earliest_start: snapshot.slots[0].start,
+    deadline: new Date(Date.parse(snapshot.slots.at(-1)!.start) + 900_000).toISOString(),
+    required_kwh: 3.4,
+    control: {
+      type: "duty_cycle", rated_power_w: 3062.1,
+      expected_power_w_by_slot: snapshot.slots.map(() => 3400),
+      max_consecutive_inhibit_slots: 4,
+    },
+  }];
+  assertEquals(validateSnapshot(snapshot), []);
+  const result = generateOptimisationPlan(snapshot, new Date(NOW));
+  assertEquals(result.status, "ready");
+  for (const plan of Object.values(result.plans)) {
+    assertEquals(plan.slots.map(slot => slot.boiler_expected_w), [3400, 3400, 3400, 3400]);
+    assertEquals(plan.service_inhibited_slots["boiler:forecast"], []);
+  }
+  // Connection pressure must still account for the full forecast, rather
+  // than using the smaller running-power estimate to declare spare capacity.
+  const constrained = structuredClone(snapshot);
+  constrained.capabilities.battery = false;
+  constrained.battery = null;
+  constrained.sources.battery = null;
+  constrained.policy = {
+    ...constrained.policy, battery_target_is_hard: false,
+    battery_end_of_solar_target_soc: 0, terminal_soc_min: 0,
+    terminal_energy_value_sek_per_kwh: 0, battery_export_enabled: false,
+    battery_export_reserve_soc: 0, battery_export_min_price_sek_per_kwh: 0,
+  };
+  constrained.grid.import_limit_w = 3800;
+  const limitedControl = constrained.services[0].control;
+  assert(limitedControl.type === "duty_cycle", "expected a duty-cycle service");
+  limitedControl.expected_power_w_by_slot = [3400, 0, 0, 0];
+  constrained.services[0].required_kwh = .85;
+  assertEquals(validateSnapshot(constrained), []);
+  const limited = generateOptimisationPlan(constrained, new Date(NOW)).plans.priority;
+  assert(limited.service_inhibited_slots["boiler:forecast"].includes(0), "forecast pressure was ignored");
+  assertEquals(limited.slots[0].boiler_expected_w, 0);
+  assert(limited.slots.every(slot => slot.grid_import_w <= 3800), "connection limit exceeded");
+  assertAlmostEquals(limited.slots.reduce((sum, slot) => sum + slot.boiler_expected_w / 4000, 0), .85, 1e-6);
+  const control = snapshot.services[0].control;
+  assert(control.type === "duty_cycle", "expected a duty-cycle service");
+  for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    control.expected_power_w_by_slot[0] = value;
+    assert(validateSnapshot(snapshot).some(error => error.includes("invalid duty-cycle")),
+      "invalid forecast accepted");
+  }
+});
+
 Deno.test("base-load forecasts need no confidence bounds to produce a plan", () => {
   const snapshot = input();
   snapshot.slots.forEach((slot, index) => {
@@ -1325,7 +1380,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v48");
+  assertEquals(plan.model_version, "marginal-value-planner-v49");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1607,7 +1662,8 @@ Deno.test("an unpublished sale price is the published line in the import price, 
   });
   const plan = generateOptimisationPlan(horizon({ slots }), new Date(NOW));
   const estimated = plan.plans.priority.slots.slice(96);
-  assert(estimated.length > 0 && estimated.every((slot) => slot.export_price_sek_per_kwh === null));
+  assert(estimated.length > 0 && estimated.every((slot) => slot.export_price_sek_per_kwh === null),
+    "the unpriced export tail must retain its unknown raw prices");
   for (const slot of estimated) {
     assert(
       // The plan rounds its prices to five decimals.
@@ -1622,7 +1678,8 @@ Deno.test("an unpublished sale price is the published line in the import price, 
 
   // With one import price published there is no line to read, and the share stands in.
   const flat = generateOptimisationPlan(horizon(), new Date(NOW)).plans.priority.slots;
-  assert(flat.slice(96).every((slot) => slot.shadow_export_sek_per_kwh >= 0));
+  assert(flat.slice(96).every((slot) => slot.shadow_export_sek_per_kwh >= 0),
+    "the neutral export outlook must stay nonnegative");
 });
 
 Deno.test("a home without the equipment stays silent about it", () => {

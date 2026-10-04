@@ -150,7 +150,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v48";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v49";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -1579,6 +1579,8 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
         errors.push(`services[${index}] has invalid discrete current control`);
       }
     } else if (control.type === "duty_cycle") {
+      // Expected demand is a forecast, not a command or a physical power limit.
+      // A difference from running/rated watts must not reject household planning.
       if (
         service.device !== "boiler" ||
         !inRange(control.rated_power_w, 100, 100_000) ||
@@ -1587,7 +1589,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
         !Array.isArray(control.expected_power_w_by_slot) ||
         control.expected_power_w_by_slot.length !== snapshot.slots.length ||
         control.expected_power_w_by_slot.some((value) =>
-          !inRange(value, 0, control.rated_power_w)
+          !finite(value) || value < 0
         )
       ) {
         errors.push(`services[${index}] has invalid duty-cycle control`);
@@ -2351,7 +2353,7 @@ function applyDutyCycleServices(
         // Permission changes interrupt a real thermostat/heat pump. Concurrent
         // charging alone is not a reason to inhibit it; only connection pressure is.
         const relativelyHighLoad =
-          nonBoilerLoad + service.control.rated_power_w -
+          nonBoilerLoad + Math.max(service.control.rated_power_w, schedule.boiler[index]) -
               slots[index].pv_w > snapshot.grid.import_limit_w;
         if (
           !relativelyHighLoad ||
