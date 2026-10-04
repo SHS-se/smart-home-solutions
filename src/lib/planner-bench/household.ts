@@ -61,7 +61,6 @@ export const HOUSEHOLD: Household = {
         ],
         // The circulation pump: it must run with the heat pump and heats nothing.
         auxiliary_w: 764,
-        minimum_run_s: 4 * 3600,
       },
     },
   }),

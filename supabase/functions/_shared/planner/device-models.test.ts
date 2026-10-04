@@ -33,7 +33,7 @@ Deno.test("a request between two levels is carried out at the lower one", () => 
 
 // The S1256 pool function as measured in September 2026: heat delivered against compressor electricity.
 const heater = {
-  setting_unit: "kw_thermal", control: "switch" as const, selected_setting: 12, auxiliary_w: 764, minimum_run_s: 4 * 3600,
+  setting_unit: "kw_thermal", control: "switch" as const, selected_setting: 12, auxiliary_w: 764,
   operating_points: [
     { setting: 6, electric_w: 1_250, heat_w: 5_875 },
     { setting: 8, electric_w: 1_650, heat_w: 7_755 },

@@ -51,7 +51,6 @@ export const HOUSEHOLD: Household = {
           { setting: 12, electric_w: 3_000, heat_w: 12_450 },  // 4.15
         ],
         auxiliary_w: 764,                   // the circulation pump: runs with it, heats nothing
-        minimum_run_s: 4 * 3600,
       },
     },
   }),
@@ -90,7 +89,6 @@ export interface HeatPumpModel {
   selected_setting: number;               // what the owner set
   control: 'switch';                      // 'setting' when the planner chooses the power
   auxiliary_w: number;
-  minimum_run_s: number;
 }
 export type StandingLoss =
   | { kind: 'linear'; kw_per_c: number; surroundings_c: number | null }   // null = the outdoor air

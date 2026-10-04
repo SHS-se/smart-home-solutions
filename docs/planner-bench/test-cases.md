@@ -157,7 +157,8 @@ heat over electricity, 4.7 at the lower settings and 4.15 at 12 kW, and it does
 not follow the weather. The bench runs it at 12 kW, as the house does now: on,
 the pool draws 3764 W with its pump, which heats nothing, and gains 12.45 kW.
 A plan that asks for a power between off and on is carried out as off, and the
-difference is a violation (`pool_step`).
+difference is a violation (`pool_step`). No device has a minimum run: a quarter
+is the least anything runs for.
 
 The charger holds whole amps (3450 to 11 040 W) or is off. A plan that asks for
 a power between two of them is carried out at the lower, below 5 A not at all,

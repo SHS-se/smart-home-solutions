@@ -161,7 +161,6 @@ export interface HeatPumpModel {
   control: "switch";
   /** Draw of what must run with it and heats nothing (a circulation pump), W. */
   auxiliary_w: number;
-  minimum_run_s: number;
 }
 
 /** A level that also delivers heat. */
@@ -244,7 +243,7 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
       if (i > 0 && !(point.setting > points[i - 1].setting && point.electric_w > points[i - 1].electric_w)) fail("Operating points must rise in setting and in electricity.");
     });
     if (heater.control !== "switch") fail("A heat pump the planner sets the power of is not modelled yet.");
-    if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0 || !finite(heater.minimum_run_s) || heater.minimum_run_s < 0) fail("A heat pump's auxiliary draw and minimum run cannot be negative.");
+    if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0) fail("A heat pump's auxiliary draw cannot be negative.");
     operatingPoint(heater, heater.selected_setting);
   }
   return models;

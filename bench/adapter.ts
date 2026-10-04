@@ -35,7 +35,7 @@ import { diskTree } from "../scripts/module-graph.ts";
 import { plannerDir } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 7;
+export const ADAPTER_VERSION = 8;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -186,10 +186,8 @@ export function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: 
     device_models: [
       deviceModel(EV_METER, "Car charging", "ev_charging", "variable_power", carMaxW),
       deviceModel(POOL_PUMP, "Pool pump", "pool_heating", "switch_schedule", heater.auxiliary_w, { planning_service: "pool", pool_role: "circulation" }),
-      deviceModel(POOL_HEATER, "Pool heater", "pool_heating", "variable_power", running.electric_w, {
-        planning_service: "pool", pool_role: "heater",
-        minimum_run: { running: false, minimum_seconds: heater.minimum_run_s, remaining_seconds: 0 },
-      }),
+      // No minimum run: the household states none, and a quarter is the least any device runs for.
+      deviceModel(POOL_HEATER, "Pool heater", "pool_heating", "variable_power", running.electric_w, { planning_service: "pool", pool_role: "heater" }),
     ],
     services: [
       {
@@ -268,7 +266,8 @@ function recordFrom(plan: Json, generation: LoadedPlanner["generation"], scale: 
     pool_w: pick(s => s.pool_w),
     ev_w: pick(s => s.ev_w),
     battery_charge_w: pick(s => s.battery_charge_w),
-    battery_discharge_w: slots.map(s => (num(s.battery_discharge_w) ?? 0) + (num(s.battery_export_w) ?? 0)),
+    // A plan's discharge is all the battery gives, the house's share and what it sells; `battery_export_w` is the part of it sold.
+    battery_discharge_w: pick(s => s.battery_discharge_w),
   };
   // How the plan says the battery is to be run, where it says so: operations the
   // plant carries out itself follow the house within the plan's limits.
