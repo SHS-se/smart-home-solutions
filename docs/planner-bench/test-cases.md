@@ -147,6 +147,13 @@ pump + 2314 W heater, heat pump COP 4.5 at 20 °C air and 27 °C water; site
 limits 13.2 kW each way, SE3. Only the heater heats the pool: the pump
 circulates and must run with it.
 
+The charger holds whole amps, 5 to 16 on three phases (3450 to 11 040 W) or
+off. A plan that asks for a power between two of them is carried out at the
+lower, below 5 A not at all, and the difference is a violation (`ev_step`).
+The levels come from the planner's own device model
+(`planner/device-models.ts`), the first of the models the bench and the planner
+are to share ([design](device-models-design.md)).
+
 The pool loses 0.13 kW for every degree its water is above 13.5 °C, whatever
 the weather: 2.1 kW at 30 °C, a third of a degree in ten hours. The home's own
 pool, unheated above 29 °C, lost 2 to 3 kW on days of 13 °C and of 25 °C

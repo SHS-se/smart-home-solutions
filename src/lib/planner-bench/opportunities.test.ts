@@ -229,21 +229,26 @@ Deno.test('comfort is guarded store by store: a warmer pool never pays for a sho
   // The same count, deeper: still worse.
   assertEquals(serviceNotWorse(exposure(10, 0), { ...exposure(10, 0), pool: { ...exposure(10, 0).pool, worst: 3 } }), false);
 
-  // A car 100 km short that the plan charges, 10 kWh, at a dear time. Power is cheapest on the last day,
+  // A car 100 km short that the plan charges at 7 A for two hours, 9.66 kWh, at a dear time. Power is cheapest on the last day,
   // but waiting for it leaves the car short for a day and more: the charge may move earlier, not there.
   // (The battery starts empty and the spread is too thin for it, so the car is the only thing to move.)
   const prices = { buy: (i: number) => within(i, 90, 98) ? 1.8 : i >= 200 ? 0.5 : 1.5, published: 288 };
-  const short = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.42 } } }), plan({ ev: i => within(i, 90, 98) ? 5000 : 0 }));
+  const short = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.42 } } }), plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   const car = (audit: OpportunityAudit) => audit.findings.filter(f => f.device === 'ev');
   assert(car(short).length > 0 && car(short).every(f => f.rule === 'ev_timing'));
   // 250 km counts from a day after it was reachable; the car is never below it there, as in the plan.
   for (const f of car(short)) assert(Math.min(...f.after.carKm.slice(100)) >= 250, `${f.id} leaves the car short`);
-  // 10 kWh at 0.3 kr less, and the 6 km the plan had to spare may wait for the 0.5 kr day.
-  assert(short.rules.ev_timing.knownSek >= 3 - 1e-3 && short.rules.ev_timing.knownSek < 4.5, `${short.rules.ev_timing.knownSek}`);
+  // 9.66 kWh at 0.3 kr less; a whole 5 A quarter more could wait for the 0.5 kr day only if the car had that to spare.
+  assert(short.rules.ev_timing.knownSek >= 9.66 * 0.3 - 1e-3 && short.rules.ev_timing.knownSek < 4.5, `${short.rules.ev_timing.knownSek}`);
   // The same charge for a car already within 50 km of target can all wait for the cheap day.
-  const fine = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), plan({ ev: i => within(i, 90, 98) ? 5000 : 0 }));
+  const fine = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   assert(car(fine).some(f => f.to >= 200), JSON.stringify(car(fine).map(f => [f.rule, f.to])));
-  assertAlmostEquals(fine.rules.ev_timing.knownSek, 10 * 1.3, 0.01);
+  assertAlmostEquals(fine.rules.ev_timing.knownSek, 9.66 * 1.3, 0.01);
+  // Every alternative the audit made for the car is one the charger can carry out.
+  const levels = new Set(Array.from({ length: 12 }, (_, i) => (5 + i) * 690).concat(0));
+  const moved = findOpportunities(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), HOUSEHOLD, TARGETS, plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }), 'told/nominal').improved;
+  assert(moved.ev_w.every(w => levels.has(w)), `the car is charged between two amp steps: ${[...new Set(moved.ev_w)]}`);
+  assertAlmostEquals(sum(moved.ev_w), 8 * 4830, 1e-6);
 });
 
 Deno.test('what took hindsight is found and kept apart, and cannot use up what was knowable', () => {
@@ -309,17 +314,22 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
 
   // The car stops at its own charge limit: 70 % to 80 % of 75.6 kWh is 7.56 kWh, 8.2 kWh at the wall.
   const car = world({ start: { ev: { soc: 0.7, target_soc: 0.8 } } });
-  const within80 = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 3 ? 10_950 : 0 }));
+  const within80 = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 2 ? 11_040 : i === 2 ? 10_350 : 0 }));
   assertEquals(within80.violations, []);
-  assertAlmostEquals(within80.series.carSoc[END]!, 80, 0.1);
-  const past = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 8 ? 11_000 : 0 }));
+  assertAlmostEquals(within80.series.carSoc[END]!, 80, 0.15);
+  const past = referee(car, HOUSEHOLD, TARGETS, plan({ ev: i => i < 8 ? 11_040 : 0 }));
   assert(past.violations.length > 0 && past.violations.every(v => v.kind === 'ev_full'));
   assertAlmostEquals(Math.max(...past.series.carSoc as number[]), 80, 0.05);
   // What it can reach is bounded the same way: 80 % is 378 km.
   assertAlmostEquals(Math.max(...past.series.comfort!.carReachableKm), 378, 0.1);
   // A car read above its limit is taken as read, and cannot be charged.
-  const over = referee(world({ start: { ev: { soc: 0.85, target_soc: 0.8 } } }), HOUSEHOLD, TARGETS, plan({ ev: i => i === 0 ? 2000 : 0 }));
+  const over = referee(world({ start: { ev: { soc: 0.85, target_soc: 0.8 } } }), HOUSEHOLD, TARGETS, plan({ ev: i => i === 0 ? 3450 : 0 }));
   assertEquals([over.violations[0].kind, over.series.carSoc[END]], ['ev_full', 85]);
+
+  // The charger holds whole amps from 5 to 16 on three phases: between two it runs at the lower, below 5 A not at all.
+  const offStep = referee(world({ start: { ev: { soc: 0.3 } } }), HOUSEHOLD, TARGETS, plan({ ev: i => i === 0 ? 4000 : i === 1 ? 2000 : i === 2 ? 4830 : 0 }));
+  assertEquals(offStep.violations, [{ quarter: 0, kind: 'ev_step', clipped_w: 550 }, { quarter: 1, kind: 'ev_step', clipped_w: 2000 }]);
+  assertEquals(offStep.series.carW!.slice(0, 3), [3450, 0, 4830]);
 
   // The failed plan: no alternative is compared, the case fails whatever the verdict, and it gets no economic credit.
   const failed = evaluate(spilled(), record(plan({ discharge: i => i < 96 ? 9600 : 0 })), {}, 'told/nominal');

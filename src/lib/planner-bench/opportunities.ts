@@ -38,10 +38,11 @@
 import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './case';
 import { poolCop, poolHeaterW, WATER_KWH_PER_M3_K, type Household } from './household';
 import { laneParts, type LaneId } from './lanes';
-import { assertDecisions, evLimitKwh, evMaxW, HOURS, householdSeries, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
+import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
+import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 2;
+export const OPPORTUNITY_AUDIT_VERSION = 3;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -337,7 +338,7 @@ export function findOpportunities(
   const wearRate = h.site.battery_degradation_sek_per_kwh;
   const etaC = h.battery.charge_efficiency, etaD = h.battery.discharge_efficiency;
   const batteryMinKwh = h.battery.min_soc * h.battery.capacity_kwh, batteryMaxKwh = h.battery.max_soc * h.battery.capacity_kwh;
-  const carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
+  const carLevels = evLevels(h), carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
   const pool = h.pool;
   const poolKwhPerK = pool.volume_m3 * WATER_KWH_PER_M3_K;
   /** Hours for the pool to lose 63 % of its warmth over the air. */
@@ -539,10 +540,21 @@ export function findOpportunities(
     return { d, sim, ...verdict, saving: verdict.grid - verdict.wear, cand, fromQ: quartersOf(from), toQ: quartersOf(to), kwh, toShare: to.share };
   };
 
-  const attemptCar = (cand: Candidate, scale: number): Attempt | null => {
-    const d = { ...plan.d, ev_w: shift(shift(plan.d.ev_w, cand.a, cand.fa * scale, -1), cand.b, cand.fb * scale, 1) };
+  /** The charger holds whole amps, so the charge moves in whole steps: the dearest quarters give it up first, the cheapest take it. */
+  const attemptCar = (cand: Candidate, scale: number, previous: number): { attempt: Attempt | null; movedW: number } => {
+    const net = plan.sim.netW, ev = plan.d.ev_w, stepW = carLevels[1].draw_w;
+    const perW = (q: number, w: number) => (gridCost(q, net[q] + w) - gridCost(q, net[q])) / w;
+    const from = quartersOf(cand.a).sort((x, y) => perW(y, -ev[y]) - perW(x, -ev[x]) || x - y);
+    const to = quartersOf(cand.b).sort((x, y) => perW(x, stepW) - perW(y, stepW) || x - y);
+    const move = stepMove(ev, from, to, carLevels, cand.a.kwh * cand.fa * scale / KWH);
+    // No whole-step move of this size, or the one a larger scale already tried.
+    if (!move || move.moved_w === previous) return { attempt: null, movedW: move?.moved_w ?? previous };
+    const d = { ...plan.d, ev_w: move.values };
     const sim = run(d), verdict = judge(sim);
-    return verdict && { d, sim, ...verdict, saving: verdict.grid - verdict.wear, cand, fromQ: quartersOf(cand.a), toQ: quartersOf(cand.b), kwh: cand.a.kwh * cand.fa * scale, toShare: cand.b.share };
+    return {
+      attempt: verdict && { d, sim, ...verdict, saving: verdict.grid - verdict.wear, cand, fromQ: move.fromQ, toQ: move.toQ, kwh: move.moved_w * KWH, toShare: cand.b.share },
+      movedW: move.moved_w,
+    };
   };
 
   const attemptPool = (cand: Candidate, scale: number, previous: number): { attempt: Attempt | null; quarters: number } => {
@@ -608,15 +620,19 @@ export function findOpportunities(
   };
 
   const attempt = (cand: Candidate): Attempt | null => {
-    let quarters = -1;
+    let quarters = -1, carW = -1;
     for (const scale of SCALES) {
       if (trials >= MAX_TRIALS) return null;
       if (cand.kind === 'pool_move') {
         const result = attemptPool(cand, scale, quarters);
         if (result.attempt) return result.attempt;
         quarters = result.quarters;
+      } else if (cand.kind === 'ev_move') {
+        const result = attemptCar(cand, scale, carW);
+        if (result.attempt) return result.attempt;
+        carW = result.movedW;
       } else {
-        const result = cand.kind === 'ev_move' ? attemptCar(cand, scale) : attemptBattery(cand, scale);
+        const result = attemptBattery(cand, scale);
         if (result) return result;
       }
     }

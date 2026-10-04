@@ -31,13 +31,16 @@
 // planner run.
 
 import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
+import { carryOut, chargerLevels } from '../../../supabase/functions/_shared/planner/device-models';
 import { poolCop, stepPool, WATER_KWH_PER_M3_K, type Household } from './household';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 5;
+export const REFEREE_VERSION = 6;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
+/** A power this close below one of a device's levels is that level; anything further off is between two. */
+const STEP_TOLERANCE_W = 1;
 
 /** What the planner chose to do, quarter by quarter, W on the AC side. */
 export interface Decisions {
@@ -63,7 +66,7 @@ export interface BatteryFollow {
   planned: [charge_w: number, discharge_w: number];
 }
 
-export type ViolationKind = 'battery_empty' | 'battery_full' | 'battery_power' | 'ev_full' | 'ev_power' | 'pool_power' | 'grid_limit' | 'negative_request';
+export type ViolationKind = 'battery_empty' | 'battery_full' | 'battery_power' | 'ev_full' | 'ev_power' | 'ev_step' | 'pool_power' | 'grid_limit' | 'negative_request';
 export interface Violation { quarter: number; kind: ViolationKind; clipped_w: number }
 
 export interface Outcome {
@@ -102,7 +105,9 @@ const median = (values: readonly number[]) => {
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const r4 = (v: number) => Math.round(v * 10_000) / 10_000;
 
-export const evMaxW = (h: Household) => h.ev.voltage_v * h.ev.phase_count * h.ev.max_current_a;
+/** What the charger can be told: off, or a whole number of amps between its limits (the planner's device model). */
+export const evLevels = (h: Household) => chargerLevels(h.ev);
+export const evMaxW = (h: Household) => evLevels(h).at(-1)!.draw_w;
 /** The car's own charge limit, kWh: charging stops there whatever the plan asks. */
 export const evLimitKwh = (c: BenchCase, h: Household) => Math.min(1, Math.max(0, c.start_state.ev.target_soc)) * h.ev.capacity_kwh;
 
@@ -137,7 +142,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
 
   const batteryMinKwh = h.battery.min_soc * h.battery.capacity_kwh;
   const batteryMaxKwh = h.battery.max_soc * h.battery.capacity_kwh;
-  const carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
+  const carLevels = evLevels(h), carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
   const poolMaxW = h.pool.pump_w + h.pool.heater_w;
   // The start state is what was read, also where it lies outside a device's limits.
   let batteryKwh = c.start_state.battery_soc * h.battery.capacity_kwh;
@@ -155,6 +160,10 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   for (let i = 0; i < QUARTERS; i++) {
     const poolW = clip(i, 'pool_power', asked(i, d.pool_w[i]), poolMaxW);
     let evW = clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW);
+    // The charger holds whole amps: a power between two of them runs at the lower, below the lowest not at all.
+    const charging = carryOut(carLevels, evW, STEP_TOLERANCE_W);
+    if (charging.refused_w > STEP_TOLERANCE_W) violations.push({ quarter: i, kind: 'ev_step', clipped_w: r1(charging.refused_w) });
+    evW = Math.min(evW, charging.run.draw_w);
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.ev.charge_efficiency * HOURS) * 1_000));
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
     let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);

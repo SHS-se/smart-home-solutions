@@ -79,9 +79,9 @@ Deno.test('the referee prices a plan at real prices, whatever the planner believ
   // Idle: 600 W of load against 800/900/1000 W of solar exports the difference at 0.5 kr.
   const nothing = referee(c, HOUSEHOLD, TARGETS, idle());
   assertAlmostEquals(nothing.cost_sek, -(200 * 97 + 300 * 96 + 400 * 95) * 0.5 * 0.25 / 1000, 1e-3);
-  // The same 2 kW of car charging costs three times as much in the dear second half.
+  // The same 5 A of car charging costs three times as much in the dear second half.
   const early = idle(), late = idle();
-  for (let i = 0; i < 8; i++) { early.ev_w[i] = 2000; late.ev_w[200 + i] = 2000; }
+  for (let i = 0; i < 8; i++) { early.ev_w[i] = 3450; late.ev_w[200 + i] = 3450; }
   const cheap = referee(c, HOUSEHOLD, TARGETS, early), dear = referee(c, HOUSEHOLD, TARGETS, late);
   assert(dear.cost_sek > cheap.cost_sek + 5, `${dear.cost_sek} vs ${cheap.cost_sek}`);
   assertEquals(cheap.terminal.ev_kwh, dear.terminal.ev_kwh);

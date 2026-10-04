@@ -61,7 +61,7 @@ These labels explain shared evidence. Multiple labels on one opportunity do not 
 | Pool preheat before scarce energy | Earlier heat survives thermal loss and replaces more costly later heat |
 | Pool wait for sun | Delayed heat is cheaper while the pool coasts without worsening service |
 | Better-priced pool heating | Moving heat accounts for the heat pump's air/water-dependent COP, pump power and retained heat |
-| Car charging timing | Shift charging to better-priced grid energy or solar while preserving service and final range |
+| Car charging timing | Shift charging to better-priced grid energy or solar while preserving service and final range; the charge moves in whole amps, so every alternative is one the charger can carry out |
 | High-value export | Move battery discharge to a better export opportunity; pool/car timing also accounts for forgone export |
 | Losing battery cycle | Remove or move a cycle whose full cost exceeds its benefit, including wear |
 
