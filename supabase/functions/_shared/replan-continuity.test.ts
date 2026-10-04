@@ -496,7 +496,7 @@ Deno.test("a running pool keeps its previous run, and a planned one may still mo
   const held = heldRunCandidate(problem, input.replan_reference!, true)!;
   assertEquals(held.construction, "held");
   assert(held.result.power_w.pool.slice(0, 8).every((watts) => watts > 0));
-  assertEquals(bench.stores.find((s) => s.key === "pool")!.minimum_run, undefined);
+  assertEquals("minimum_run" in bench.stores.find((s) => s.key === "pool")!, false);
   const agreeing = { ...problem, result: { ...result, power_w: { ...result.power_w, pool: held.result.power_w.pool } } };
   assertEquals(heldRunCandidate(agreeing, input.replan_reference!, true, () => {
     throw new Error("unnecessary solve");

@@ -9,12 +9,12 @@ import {
   type DispatchResult,
   type DispatchSlot,
   type DispatchStore,
-  planDispatch,
   scoreDispatch,
 } from "./dispatch-plan.ts";
 import {
   DispatchPrefixInfeasible,
   dispatchWithPrefix,
+  dispatchWithStoreProfile,
   QUARTER_MS,
 } from "./fixed-energy-plan.ts";
 
@@ -287,10 +287,9 @@ export function continuityCandidates(
  *
  * A running load is held, a planned one is not: until the pool has actually
  * switched on, moving its start costs nothing physical, so the proposal stands.
- * Once it is on, the rest of the run the previous plan gave it is committed the
- * same way a user minimum run is — through the store's `minimum_run` — and the
- * auction re-plans every other store around it. Pinning the whole prefix, as
- * `dispatchWithPrefix` does, would also freeze the battery for hours.
+ * Once it is on, construct an alternative holding only the pool profile and
+ * re-plan the other stores around it. This alternative is compared economically
+ * with the free proposal; it creates no runtime obligation.
  *
  * Returns null when there is nothing to hold or the proposal already holds it.
  */
@@ -305,18 +304,16 @@ export function heldRunCandidate(
   const pool = stores.find((store) => store.key === "pool");
   if (!poolRunning || !pool || quarters < 1) return null;
   if (result.power_w.pool.slice(0, quarters).every((watts) => watts > 0)) return null;
-  const heldSeconds = slots.slice(0, quarters)
-    .reduce((total, slot) => total + (slot.duration_hours ?? 0.25) * 3600, 0);
-  const held = stores.map((store) => store !== pool ? store : {
-    ...store,
-    initially_charging: true,
-    minimum_run: {
-      minimum_seconds: store.minimum_run?.minimum_seconds ?? 0,
-      remaining_seconds: Math.max(store.minimum_run?.remaining_seconds ?? 0, heldSeconds),
-      running: true,
-    },
-  });
-  const solved = planDispatch(slots, held, limits, { solveAuction });
+  const profile = result.power_w.pool.map((_, index) =>
+    index < quarters ? pool.max_power_w : null
+  );
+  let solved: DispatchResult;
+  try {
+    solved = dispatchWithStoreProfile(slots, stores, limits, pool.key, profile, solveAuction);
+  } catch (error) {
+    if (!(error instanceof DispatchPrefixInfeasible)) throw error;
+    return null;
+  }
   // Judged by the same stores as the proposal, so the comparison is only the
   // schedule, never a different objective.
   const score = scoreDispatch(slots, stores, limits, solved);

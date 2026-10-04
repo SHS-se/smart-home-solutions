@@ -1,4 +1,3 @@
-import { type MinimumRun, validMinimumRun, validRun, requiredRunSlots } from "./minimum-run.ts";
 import {
   powerEnvelope,
   powerEnvelopeError,
@@ -142,10 +141,11 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
  * v11 integrates every sizeable curve move, applies configured EV curves,
  * prices executable setpoints and records exact quarter evidence.
  */
+// v46 retires hard minimum runtimes; economic continuity uses a candidate profile.
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v45";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v46";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -365,7 +365,6 @@ type DispatchableServiceInput =
   | DiscreteCurrentServiceInput;
 
 export interface EmpiricalDeviceModelInput {
-  minimum_run?: MinimumRun;
   key: string;
   name: string;
   statistic_id: string;
@@ -1394,9 +1393,6 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       errors.push(`device_models[${index}].key is missing or duplicated`);
     }
     deviceModelKeys.add(model?.key);
-    if (model?.minimum_run !== undefined && !validMinimumRun(model.minimum_run)) {
-      errors.push(`device_models[${index}].minimum_run is invalid`);
-    }
     if (
       !model?.name || !model?.statistic_id || !model?.category ||
       !loadTypes.has(model?.suggested_load_type) ||
@@ -2352,9 +2348,6 @@ function applyDutyCycleServices(
             service.control.max_consecutive_inhibit_slots,
           )
         ) continue;
-        const proposed = schedule.boilerPermitted.map((on, i) => i === index ? 0 : Number(on));
-        if (snapshot.device_models.some(m => m.category === "hot_water" && m.minimum_run &&
-          !validRun(proposed, slots.map(s => s.duration_hours), m.minimum_run))) continue;
         schedule.boilerPermitted[index] = false;
         schedule.boiler[index] -= expected[index];
         inhibited.push(index);
@@ -3192,14 +3185,6 @@ function buildDispatchStores(
 
   for (const store of stores) {
     store.slot_hours = slots.map(slot => slot.duration_hours);
-    const members = snapshot.device_models.filter(m => store.key === "pool" ? m.planning_service === "pool" :
-      store.key === "ev" && m.category === "ev_charging");
-    const runs = members.flatMap(m => m.minimum_run ? [m.minimum_run] : []);
-    if (runs.length) {
-      store.minimum_run = {minimum_seconds: Math.max(...runs.map(r => r.minimum_seconds)),
-        remaining_seconds: Math.max(...runs.map(r => r.remaining_seconds)), running: runs.some(r => r.running)};
-      store.initially_charging = store.minimum_run.running;
-    }
   }
   return stores.length > 0 ? stores : null;
 }
@@ -3890,8 +3875,6 @@ function scheduleRoomHeating(
       }
     }
     const powers = schedule.roomHeating[zone.key];
-    const forcedUntil = Math.max(0, ...zone.device_keys.map(key => requiredRunSlots(
-      snapshot.device_models.find(m => m.key === key)?.minimum_run, slots.map(s => s.duration_hours))));
     const temperatures = projectZoneTemperature(
       zone.model,
       zone.start_temperature_c,
@@ -3902,7 +3885,7 @@ function scheduleRoomHeating(
     for (let index = 0; index < slots.length; index += 1) {
       if (
         powers[index] < -0.01 ||
-        (index >= forcedUntil && powers[index] > zone.maximum_power_w_by_slot[index] + 0.01)
+        powers[index] > zone.maximum_power_w_by_slot[index] + 0.01
       ) {
         errors.push(`${zone.name}: heating power is outside its envelope`);
         break;

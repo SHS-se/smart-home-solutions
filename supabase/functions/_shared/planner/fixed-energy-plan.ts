@@ -1,4 +1,3 @@
-import { continuedRun } from "./minimum-run.ts";
 import {
   type DispatchAuctionSolver,
   type DispatchLimits,
@@ -153,8 +152,6 @@ export function dispatchWithPrefix(
     stores.map((s) => ({ ...s, usage_weight: s.usage_weight.slice(0, end) })),
     limits,
     schedule,
-    undefined,
-    { continuesBeyondHorizon: end < slots.length },
   );
   // Do not silently clamp an invalid fixed trajectory and then optimise from it.
   if (prefix.infeasibilities.length) {
@@ -167,8 +164,6 @@ export function dispatchWithPrefix(
   const suffixStores = stores.map((s) => ({
     ...s,
     initial_state: prefix.state[s.key][end],
-    minimum_run: continuedRun(s.minimum_run, schedule.power_w[s.key].slice(0, end),
-      slots.slice(0, end).map(slot => slot.duration_hours ?? 0.25)),
     initially_charging: schedule.power_w[s.key][end - 1] > 0,
     usage_weight: s.usage_weight.slice(end),
     slot_hours: s.slot_hours?.slice(end),
@@ -220,4 +215,28 @@ export function dispatchWithPrefix(
     stopped_because: suffix?.stopped_because ?? "no_profitable_candidate",
     iterations: suffix?.iterations ?? 0,
   };
+}
+
+/** Solve the other stores around one specified profile, then validate jointly.
+ * Used to price an economic continuity alternative; it is not an actuator lock.
+ */
+export function dispatchWithStoreProfile(
+  slots: DispatchSlot[],
+  stores: DispatchStore[],
+  limits: DispatchLimits,
+  key: string,
+  profile: (number | null)[],
+  solveAuction?: DispatchAuctionSolver,
+): DispatchResult {
+  if (!stores.some(store => store.key === key) || profile.length !== slots.length) {
+    throw new Error("Store profile must name a store and cover the horizon");
+  }
+  const solved = planDispatch(slots,
+    stores.map(store => store.key === key ? { ...store, fixed_charge_w_by_slot: profile } : store),
+    limits, { solveAuction });
+  const score = scoreDispatch(slots, stores, limits, solved);
+  if (score.infeasibilities.length || !Number.isFinite(score.total_sek)) {
+    throw new DispatchPrefixInfeasible(`Store profile cannot execute: ${score.infeasibilities.map(item => item.message).join("; ")}`);
+  }
+  return { ...solved, state: score.state, import_w: score.import_w, export_w: score.export_w };
 }

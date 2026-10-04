@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "marginal-value-planner-v45",
+    "model_version": "marginal-value-planner-v46",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -6540,7 +6540,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "marginal-value-planner-v45",
+      "model_version": "marginal-value-planner-v46",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
