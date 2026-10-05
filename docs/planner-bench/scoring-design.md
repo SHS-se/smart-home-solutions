@@ -14,6 +14,7 @@ The runner calls `evaluate(case, record, criteria, lane)`. It invokes the refere
 | `service.ts` | Shared recovery policy and separate pool/car service exposure guards |
 | `opportunities.ts` | Rule catalogue, case applicability, deterministic search, cumulative transfers and known/hindsight evidence |
 | `score.ts` | Comfort rules, criteria validation, raw integer point totals, stale-version detection |
+| `large-load-overlap.ts` | Direct legal transfers out of quarters containing multiple large workloads; price-ordered destination search, one witness per source |
 | `evaluate.ts` | The single composition point for referee, audit, statistics and stored score |
 | `bench/rescore.ts` | All-lane coverage, recomputation from decisions, persisted-version verification and report |
 | `BenchRuleCards.tsx` | Grouped visual rules, applicability, threshold bands and one reusable evidence viewer |
@@ -31,6 +32,7 @@ Independent Claude Opus 5.5 High and Codex candidates were grounded in the curre
 - Reject median-price terminal credits as an optimization objective: they can manufacture savings by depleting or overfilling stores.
 - Reject fixed sunny/cloudy day thresholds: physics and opportunity cost determine whether moving heat helps.
 - Reject a blanket warm-pool penalty: a warm pool can hold useful future heat. (Scorer v6: warmth above target +2 °C scores +1 when the next day is dearer or less sunny and −1 when it is neither.)
+- Scorer v11, audit v5: the owner's overlap rule deducts −1 per quarter with at least two flexible workloads each strictly above 2 kW, only with a feasible move to a strictly cheaper quarter across the full 72 h. Stored independent witnesses preserve service and final inventories and obey equipment limits. This is a separate price-order heuristic, including unpublished actual prices; its points do not claim additional SEK savings or multiply the energy audit's savings.
 - Keep hindsight separate from the headline, following the user's explicit preference.
 
 ## Invariants

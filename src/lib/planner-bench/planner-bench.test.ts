@@ -162,7 +162,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'large_load_overlap']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
@@ -213,6 +213,7 @@ Deno.test('flexible load bought in a dear quarter loses a point, in a very dear 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
 const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
+  overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],
   rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as OpportunityAudit['rules'],

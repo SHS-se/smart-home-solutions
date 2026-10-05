@@ -19,6 +19,9 @@
 //     more of that load is bought from the grid, the quarter loses a point
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
+//     Two large workloads in one quarter lose one point when the stored audit
+//     proves one can move to a strictly cheaper quarter without worse service,
+//     final inventory or equipment limits. This uses price order across 72 h.
 //
 //   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
@@ -31,7 +34,8 @@
 // not be made is failed the same way, not given invented points.
 //
 // Scoring reads only the stored plan series, audit included, so the page can
-// preview a rule change without replaying anything. A stored score is never
+// preview points and enabled changes without replaying anything. Threshold
+// changes that need new witnesses are marked pending. A stored score is never
 // made without its audit.
 //
 // Bump SCORER_VERSION whenever a rule or default changes, so stored scores
@@ -40,10 +44,11 @@
 import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type OpportunityAuditSummary } from './opportunities';
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
+import { LARGE_WORKLOAD_W } from './large-load-overlap';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 10;
+export const SCORER_VERSION = 11;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -70,6 +75,8 @@ export interface QuarterView {
   ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
+  /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
+  avoidableOverlap: boolean;
 }
 
 export interface QuarterRule {
@@ -151,6 +158,13 @@ export const DEFAULT_RULES: QuarterRule[] = [
   {
     key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
     fires: dearBuy, eligibleFrom: () => 0,
+  },
+  {
+    key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',
+    describe: t => `at least two flexible workloads each above ${t} W, with a feasible move to a strictly cheaper quarter`,
+    threshold: LARGE_WORKLOAD_W, points: -1,
+    fires: q => q.avoidableOverlap,
+    eligibleFrom: () => 0,
   },
 ];
 
@@ -252,6 +266,7 @@ const sameGuard = (a: ServiceGuard, b: ServiceGuard) =>
 /** Whether every stored witness still holds under other comfort thresholds, from its stored traces. */
 function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGuard): boolean {
   if (sameGuard(audit.guard, guard)) return true;
+  if (audit.overlap.overlappingQuarters.length) return false;
   const comfort = s.comfort;
   if (!comfort) return false;
   // A finding moves only its own device's store; the battery has no comfort level.
@@ -265,6 +280,12 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const resolved = resolveRules(overrides);
   const rules = resolved.filter(r => r.enabled);
   const n = s.start.length;
+  const audit = s.audit ?? null;
+  const overlapRule = resolved.find(r => r.key === 'large_load_overlap')!;
+  const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
+    || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
+      || audit.overlap.thresholdW !== overlapRule.threshold)));
+  const overlapQuarters = new Set(audit && !auditPending ? audit.overlap.moves.map(m => m.from) : []);
   // The first quarter from which each level counts, found once per level.
   const dueAt = new Map<string, number>();
   const due = (i: number): QuarterView['due'] => (reachable, start, level) => {
@@ -303,6 +324,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       // Flexible load is the load there was a choice about, so what the quarter imported is counted as its first.
       flexibleW, flexibleGridW: Math.min(flexibleW, s.gridImportW[i]),
+      avoidableOverlap: overlapQuarters.has(i),
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
     let score = 0;
@@ -328,9 +350,6 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     return [rule.key, { applicable: rule.enabled && eligibleQuarters > 0, reason, eligibleQuarters }];
   }));
 
-  const audit = s.audit ?? null;
-  const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
-    || (audit.status === 'complete' && !witnessesHold(s, audit, serviceGuard(overrides))));
   const physicalFailed = !!audit && audit.violations.length > 0;
   const economic = !audit || auditPending ? null
     : audit.status === 'complete' ? economicPoints(audit) : 0;
@@ -368,7 +387,7 @@ export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): 
   const c = scoreQuarters(s, overrides);
   if (!c.audit || c.economicPoints === null) {
     throw new Error(c.audit
-      ? 'The plan\'s opportunity audit was made under other comfort thresholds; evaluate the plan again (evaluate.ts).'
+      ? 'The plan\'s opportunity audit needs recomputing for these rule thresholds or this audit version; evaluate the plan again (evaluate.ts).'
       : 'A score needs the plan\'s opportunity audit; evaluate the plan (evaluate.ts) rather than scoring a bare series.');
   }
   return {

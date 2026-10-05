@@ -74,6 +74,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const after = { ...before, homeSoc: before.homeSoc.map((v, i) => i >= 8 && i < 24 ? v + 2 : v) };
   s.audit = {
     version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
+    overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
     guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],

@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
-import { loadCase, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
+import { loadCase, parseScenarioData, publishedQuarters, QUARTERS, type BenchRecorded } from './case.ts';
 import { caseFromReplay, ReplayFormatError } from './convert-replay.ts';
 import { HOUSEHOLD } from './household.ts';
 import { TARGETS } from './world.fixture.ts';
@@ -62,6 +62,20 @@ Deno.test('a reading the replay lacks holds a default and is marked for recorded
 Deno.test('a file that is not a 72-hour replay is refused', () => {
   assertThrows(() => caseFromReplay({ format: 'something-else' }), ReplayFormatError);
   assertThrows(() => caseFromReplay(replay({ slots: [] })), ReplayFormatError);
+});
+
+Deno.test('C-1005 preserves the downloaded replay as a 72-hour bench case awaiting measured results', async () => {
+  const file = JSON.parse(await Deno.readTextFile(new URL('../../../bench/cases/C-1005.json', import.meta.url)));
+  const data = parseScenarioData(file.dataset);
+  assertEquals(data.start, '2026-10-05T10:15:00.000Z');
+  assertEquals(publishedQuarters(data), 47);
+  assertEquals(data.start_state, { battery_soc: 0.139, pool_water_c: 30.01, ev: { soc: 0.66, target_soc: 0.8 } });
+  assertEquals(data.known_prices.import_sek_per_kwh[0], 1.10176);
+  assertEquals(data.solar_forecast_w.length, QUARTERS);
+  assertEquals(data.base_load_forecast_w.length, QUARTERS);
+  assertEquals(file.recorded, null);
+  assertEquals(data.comfort, null);
+  assert(!/resolved_price_outlook|replan_reference|planner_output/.test(JSON.stringify(data)));
 });
 
 const recorded = (over: Partial<BenchRecorded> = {}): BenchRecorded => ({

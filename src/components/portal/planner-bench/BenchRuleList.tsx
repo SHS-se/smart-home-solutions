@@ -201,6 +201,19 @@ export default function BenchRuleList({
   };
 
   const priceDetail = (rule: ResolvedRule) => {
+    if (rule.key === 'large_load_overlap') return <>
+      <p>{t(`Minst två av poolvärme, billaddning och hembatteriladdning överstiger vardera ${rule.threshold} W i samma kvart. Avdrag ges bara när en av lasterna kan flyttas till en strikt billigare kvart inom 72 timmar utan sämre komfort, mindre slutlager eller överskridna utrustningsgränser. Billigare kvartar prövas i prisordning; en fylld kvart ger inget avdrag.`,
+        `At least two of pool heating, EV charging and home battery charging each exceed ${rule.threshold} W in the same quarter. A point is deducted only when one can move to a strictly cheaper quarter within 72 hours without worsening comfort, final stores or equipment limits. Cheaper quarters are tested in price order; a filled quarter causes no penalty.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per överlappande kvart, även med tre laster. Bedöms vid verkliga priser, även när de inte var publicerade. Flyttarna prövas var för sig mot originalplanen och bevisar inte en gemensam omplanering.',
+        'At most one deduction per overlapping quarter, even with three loads. Judged at actual prices, including unpublished prices. Moves are tested separately against the original plan and do not prove a joint reschedule.')}</p>
+      {sides.map(s => s.score && !s.score.auditPending && s.score.audit?.overlap.moves.filter(m => inRange(m.from)).map(m => <div key={`${s.side}-${m.from}`} className="flex flex-wrap items-center gap-2 text-xs">
+        <span>{s.label} · {m.device} · {(m.movedW / 1000).toFixed(2)} kW</span>
+        <Button size="sm" variant="outline" onClick={() => onSelect(s.side, m.from)}>{stamp(s, m.from)}</Button>
+        <span>→</span>
+        <Button size="sm" variant="outline" onClick={() => onSelect(s.side, m.to)}>{stamp(s, m.to)}</Button>
+      </div>))}
+      {settings(rule, t('Effekt per stor last (W)', 'Power per large workload (W)'), '100')}
+    </>;
     const share = Math.round(rule.threshold * 100);
     const other = rule.unless && resolveRules(draft).find(r => r.key === rule.unless && r.enabled);
     const dear = DEAR_RULE_KEYS.includes(rule.key);

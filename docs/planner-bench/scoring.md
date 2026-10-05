@@ -8,6 +8,7 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 
 - **Comfort:** how long the pool and car miss their target levels after those levels could have been reached.
 - **Cheap and dear quarters:** a reward for running flexible load (pool, battery charging, car) where the price was among the plan's cheapest, and the matching loss for buying it from the grid where the price was among the plan's dearest.
+- **Large workload overlap:** −1 when two loads each exceed 2 kW in the same quarter and a legal move to a cheaper quarter is demonstrated.
 - **Energy timing:** cost improvements demonstrated by a bounded search, shown in SEK and attributed to the decisions they change.
 - **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
@@ -28,8 +29,13 @@ The rules are one set for the whole bench (`bench_rules`, a single row of change
 | Flexible load in a very cheap quarter | The same load, price in the cheapest 10 % | +2 per quarter |
 | Flexible load bought in a dear quarter | Flexible load drawn from the grid ≥ 500 W, price in the dearest 25 % of the plan's quarters, and not very dear | −1 per quarter |
 | Flexible load bought in a very dear quarter | The same grid draw, price in the dearest 10 % | −2 per quarter |
+| Large workloads overlap with cheaper capacity available | At least two of pool heating, EV charging and home battery charging each strictly exceed 2 kW; one has a demonstrated feasible move to a strictly cheaper quarter anywhere in the 72 h | −1 per overlapping source quarter |
 
 These judge where flexible load ran, not that less could have been spent: a plan that consumes more in cheap quarters gains points, whatever supplied it. The dear-quarter loss counts only what is bought: the flexible load, up to what the quarter imported from the grid. Flexible load is the load there was a choice about, so the quarter's import is counted as its first, and load the sun or the battery carries loses nothing. A dear-quarter loss needs no proved alternative, so it can fall on the same quarter as an energy-timing finding. Quarters at the same price share a rank, so in a plan with one price throughout every quarter is both very cheap and very dear, and the two cancel.
+
+The overlap rule uses **price order, not a percentile band**. It tries strictly cheaper quarters cheapest first against the original bookings. A cheaper quarter is filled when no tested legal transfer can fit without worsening service, reducing any final store or exceeding equipment or grid limits. Charger moves stay on whole amps, pool moves use whole running quarters, and battery transfers respect intervening inventory. A partially filled quarter can take a partial legal booking. The source loses one point if a witness is found, even with three large loads; the destination loses no overlap point. A lone large load, two loads of exactly 2 kW and equal-price quarters are exempt. Base load, hot water and battery discharge are excluded.
+
+Overlap is evaluated at actual import prices across all 72 hours, including prices unpublished at planning time, like the percentile rules. The witness proves a feasible cheaper-priced booking, not net bill savings after solar opportunity cost. It may stack with other rules. Each witness is checked independently against the original schedule, so several witnesses can share destination capacity; they are not a jointly executable reschedule. The search tests direct quarter-to-quarter transfers and reports a conservative set of demonstrated moves, not proof that all other transfers are impossible. In particular, earlier pool heat that would reduce final warmth needs a compensating transfer and is outside this direct search. Changing the power or comfort thresholds requires recomputing these witnesses from stored decisions; the browser never runs the search.
 
 ### Comfort and physical limits
 

@@ -41,9 +41,10 @@ import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
 import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
+import { auditLargeLoadOverlap, LARGE_WORKLOAD_W, type LargeLoadOverlapAudit } from './large-load-overlap';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 4;
+export const OPPORTUNITY_AUDIT_VERSION = 5;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -173,6 +174,8 @@ interface AuditCore {
   reason: string | null;
   /** The comfort thresholds every alternative was held to. */
   guard: ServiceGuard;
+  /** Independent feasible cheaper-quarter witnesses; their source quarters score once each. */
+  overlap: LargeLoadOverlapAudit;
   /** The household's cash exposure with no store acting, at absolute prices; at least 1. */
   scaleSek: number;
   originalCostSek: number;
@@ -321,13 +324,15 @@ function rangeMin(perQuarter: (q: number) => number): Float64Array {
 
 export function auditOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
+  largeWorkloadW = LARGE_WORKLOAD_W,
 ): OpportunityAudit {
-  return findOpportunities(c, h, targets, decisions, lane, guard).audit;
+  return findOpportunities(c, h, targets, decisions, lane, guard, largeWorkloadW).audit;
 }
 
 /** The audit together with the improved plan its findings add up to, so one can be checked against the other. */
 export function findOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
+  largeWorkloadW = LARGE_WORKLOAD_W,
 ): { audit: OpportunityAudit; improved: Decisions } {
   assertDecisions(decisions);
   const buy = c.recorded.prices.import_sek_per_kwh, sell = c.recorded.prices.export_sek_per_kwh;
@@ -359,6 +364,7 @@ export function findOpportunities(
   const original = simulate(c, h, decisions);
   const core = {
     version: OPPORTUNITY_AUDIT_VERSION, lane, guard: { pool: [...guard.pool], ev: [...guard.ev] } as ServiceGuard,
+    overlap: { thresholdW: largeWorkloadW, overlappingQuarters: [], moves: [] } as LargeLoadOverlapAudit,
     scaleSek: r4(scaleSek), originalCostSek: r4(original.cost), applicability,
   };
   // Asked of the household as the planner was told it; a measured day differing from its forecast is not a violation.
@@ -372,6 +378,8 @@ export function findOpportunities(
       trials, limitReached: false, rules: emptyRules(), findings: [], violations,
     } };
   }
+
+  core.overlap = auditLargeLoadOverlap(c, h, targets, decisions, original, guard, largeWorkloadW);
 
   const reach = reachability(c, h);
   const comfort: Comfort = {
