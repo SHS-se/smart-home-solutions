@@ -333,8 +333,6 @@ const Bench: React.FC = () => {
         </div>
       </div>
 
-      <PriceEstimateAccuracy />
-
       {loadError && (isMissingTable(loadError)
         ? <Alert><AlertDescription>
             {t('Bänken finns bara på testsajten, eftersom testfallen ligger i testdatabasen.',
@@ -450,6 +448,8 @@ const Bench: React.FC = () => {
           )}
         </>
       )}
+
+      <PriceEstimateAccuracy />
 
       <Dialog open={pending !== null} onOpenChange={open => { if (!open) setPending(null); }}>
         <DialogContent>
@@ -768,7 +768,6 @@ const CaseView: React.FC<CaseViewProps> = ({
                 ))}
               </div>
             )}
-            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} />
             {shownSeries ? (
               <>
                 <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}
@@ -806,6 +805,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                 </div>
               </>
             ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
+            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} />
             <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
             <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
             {scenario.dataset && (
