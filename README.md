@@ -88,7 +88,8 @@ live values (Supabase project, `VITE_APP_ENV`, Stripe key). Local dev overrides 
 secret ships in the bundle.
 
 **Automated CI/CD:** [`.github/workflows/ci-deploy.yml`](.github/workflows/ci-deploy.yml)
-runs lint + unit tests + build on every push and pull request. After the gate passes, a
+runs lint/typecheck, four balanced unit-test shards, and the frontend build/browser
+tests in parallel. The `Lint, test & build` gate requires all their results before a
 push to `dev` deploys to the `test-smart-home-solutions` project
 (https://test-smart-home-solutions.pages.dev) and a push to `main` deploys to
 `prod-smart-home-solutions` (https://prod-smart-home-solutions.pages.dev); each deploy then
@@ -97,6 +98,13 @@ under *Settings → Secrets and variables → Actions* to enable the deploy step
 
 - `CLOUDFLARE_API_TOKEN` — a token with the *Cloudflare Pages: Edit* permission
 - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account ID
+
+Run the complete unit suite locally with `deno task test`. To reproduce one CI
+shard, use `deno task test --shard 1/4` (indices 1–4). The shared runner discovers
+all test files, keeps the expensive planner modules apart using measured CI
+costs, and assigns each file to exactly one shard. Newly added tests are included
+automatically. Full local validation also requires `npm run lint`,
+`npm run typecheck`, `npm run build:test` on `dev`, and `npm run test:e2e:local`.
 
 ## Can I connect a custom domain to my Lovable project?
 

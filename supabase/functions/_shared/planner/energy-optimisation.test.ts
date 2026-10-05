@@ -1,4 +1,5 @@
 import { generateOptimisationPlan, dispatchWorkbench, dispatchWorkbenchInputs, poolStopTemperature, type OptimisationSnapshot, validateSnapshot } from "./energy-optimisation.ts";
+import { solvedPlan } from "./solved-plan.fixture.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 import { NOW, assert, input, horizon, routedEvService, splitHorizon, poolKwhBetween } from "./energy-optimisation.fixture.ts";
@@ -1620,11 +1621,11 @@ Deno.test("a measured pool response replaces the loss by temperature and the COP
     { at_c: 29.125, idle_c_per_h: -0.04, heat_c_per_kwh: 0.08 },
     { at_c: 30.125, idle_c_per_h: -0.04, heat_c_per_kwh: 0.08 },
   ];
-  const planAt = (waterC: number, measured: boolean) => generateOptimisationPlan(horizon({
+  const planAt = (waterC: number, measured: boolean) => solvedPlan(horizon({
     pool: { water_temperature_c: waterC, volume_m3: 55 },
     comfort: { pool: { target_c: 30 } },
     pool_model: { loss_kw_per_k: 0.35, rated_cop: null, cop_per_air_c: null, ...(measured ? { response } : {}) },
-  }), new Date(NOW));
+  }), new Date(NOW)).plan;
   const store = (plan: ReturnType<typeof generateOptimisationPlan>) =>
     plan.resolved_value_stores!.find((entry) => entry.key === "pool")!;
   // Comfort valuation no longer contains a guessed upkeep demand. Its physical

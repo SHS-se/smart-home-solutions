@@ -1,6 +1,6 @@
 name: CI & Deploy
 
-# Runs lint + unit tests + build on every push/PR.
+# Runs lint, four unit-test shards and frontend validation in parallel on push/PR.
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
 # project, then (2) deploys the Supabase edge functions to that project, then (3) deploys the
 # frontend to a per-environment Cloudflare Pages project and (4) prunes that project's old
@@ -89,8 +89,8 @@ jobs:
         id: detect
         run: deno run -A --no-check scripts/ci-changes.ts --base "${{ steps.base.outputs.sha }}" --workflow ci-deploy.yml
 
-  ci:
-    name: Lint, test & build
+  quality:
+    name: Lint & typecheck
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -119,14 +119,56 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Unit tests
-        run: deno task test
-
       - name: Check isolated edge-function dependencies
         run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
 
+  unit:
+    name: Unit tests (${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Unit tests
+        run: deno task test --shard ${{ matrix.shard }}/4
+
+  frontend:
+    name: Build & browser tests
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build
-        if: needs.changes.outputs.frontend == 'true'
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then
@@ -136,7 +178,6 @@ jobs:
           fi
 
       - name: Upload build output
-        if: needs.changes.outputs.frontend == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -144,13 +185,34 @@ jobs:
           retention-days: 7
 
       - name: Install Playwright browser
-        if: needs.changes.outputs.frontend == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests (mocked backend)
-        if: needs.changes.outputs.frontend == 'true'
         # Same command locally and in CI; Playwright owns the preview server.
         run: npm run test:e2e:local
+
+  ci:
+    name: Lint, test & build
+    needs: [changes, quality, unit, frontend]
+    # Run the gate even after a failed dependency, so its required status fails
+    # explicitly. Frontend validation may skip only when no frontend changed.
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validation result
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+        run: |
+          test "$QUALITY_RESULT" = success
+          test "$UNIT_RESULT" = success
+          if [ "$FRONTEND_CHANGED" = true ]; then
+            test "$FRONTEND_RESULT" = success
+          else
+            test "$FRONTEND_RESULT" = skipped
+          fi
 
   migrate:
     name: Apply Supabase migrations

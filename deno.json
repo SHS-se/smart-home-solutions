@@ -1,6 +1,6 @@
 {
   "tasks": {
-    "test": "deno test --parallel --no-check --sloppy-imports --allow-read --allow-write --allow-run --allow-env tests/ src/lib/ supabase/functions/",
+    "test": "deno run --allow-read --allow-run scripts/run-unit-tests.ts",
     "generate:ha-contract-fixture": "deno run --allow-write scripts/generate-ha-plan-fixture.ts"
   },
   "imports": {
