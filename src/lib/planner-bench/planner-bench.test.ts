@@ -5,7 +5,7 @@ import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, evBatterySupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -162,7 +162,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'large_load_overlap']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'large_load_overlap', 'ev_from_home_battery']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
@@ -208,6 +208,33 @@ Deno.test('flexible load bought in a dear quarter loses a point, in a very dear 
   series.importPrice = series.importPrice.map(() => 1);
   series.carW = series.carW.map(() => 3000);
   assertEquals([scoreQuarters(series).sum, scoreQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
+});
+
+Deno.test('EV battery supply is charged only after battery exports and other household demand', () => {
+  const series = planSeries([
+    // Battery supplies base load and pool while grid or solar supplies the EV: allowed.
+    slot(0, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 5000 }),
+    // One tenth of a watt beyond non-EV demand counts; no arbitrary minimum EV load.
+    slot(1, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 5000.1 }),
+    slot(2, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 9000 }),
+    // Hot water is already included in total household consumption, not added a second time.
+    slot(3, { load_w: 9000, boiler_expected_w: 2000, ev_w: 4000, battery_discharge_w: 6000 }),
+    // Battery export alongside EV charging does not mean the battery supplies the EV.
+    slot(4, { load_w: 9000, ev_w: 4000, battery_discharge_w: 5000, battery_export_w: 3000, grid_export_w: 3000 }),
+    // Simultaneous charging is netted out before attributing battery supply.
+    slot(5, { load_w: 9000, ev_w: 4000, battery_discharge_w: 6000, battery_charge_w: 1000 }),
+    slot(6, { load_w: 5000, ev_w: 0, battery_discharge_w: 6000 }),
+    slot(7, { load_w: 9000, ev_w: 4000, pv_w: 9000, battery_discharge_w: 1000, grid_export_w: 1000 }),
+    // Fractional stored powers at the exact allowance must not fire from floating-point subtraction noise.
+    slot(8, { load_w: 9000.3, ev_w: 4000.2, battery_discharge_w: 5000.1 }),
+  ], null);
+  assertEquals(series.start.map((_, i) => evBatterySupplyW(series, i)), [0, 0.1, 4000, 1000, 0, 0, 0, 0, 0]);
+  const score = scoreQuarters(series);
+  assertEquals(score.counts.ev_from_home_battery, 3);
+  assertEquals(score.quarters.flatMap((q, i) => q.fired.includes('ev_from_home_battery') ? [i] : []), [1, 2, 3]);
+  assertEquals(scoreQuarters(series, { ev_from_home_battery: { enabled: false } }).sum, score.sum + 3);
+  assertEquals(scoreQuarters(series, { ev_from_home_battery: { threshold: 1000 } }).counts.ev_from_home_battery, 1);
+  assertEquals(scoreQuarters(series, { ev_from_home_battery: { points: -2 } }).sum, score.sum - 3);
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */

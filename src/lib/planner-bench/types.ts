@@ -19,6 +19,7 @@ export interface BenchSeries {
   /** What the planner believed the import price would be; null where it gave none. */
   believedImportPrice?: (number | null)[];
   solarW: number[];
+  /** Total household consumption including EV and pool; excludes battery charging. */
   loadW: number[];
   poolW: number[];
   hotWaterW: number[];

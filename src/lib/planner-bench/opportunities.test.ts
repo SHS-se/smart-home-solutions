@@ -382,7 +382,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   // A band of 0.05 °C: the alternative lets the pool sag further than that, so the audit must be made again.
   const tight = scoreQuarters(series, { pool_low: { threshold: 0.05 } });
   assertEquals([tight.auditPending, tight.economicPoints, tight.complete], [true, null, false]);
-  assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'other comfort thresholds');
+  assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'needs recomputing for these rule thresholds or this audit version');
   // Evaluated under the tight band, the audit holds itself to it.
   const strict = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3764 : 0 })), { pool_low: { threshold: 0.05 } }, 'told/nominal');
   assertEquals(strict.series.audit!.guard, { pool: [0.05, 2], ev: [50, 100] });

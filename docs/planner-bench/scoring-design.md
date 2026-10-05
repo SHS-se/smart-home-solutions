@@ -33,6 +33,7 @@ Independent Claude Opus 5.5 High and Codex candidates were grounded in the curre
 - Reject fixed sunny/cloudy day thresholds: physics and opportunity cost determine whether moving heat helps.
 - Reject a blanket warm-pool penalty: a warm pool can hold useful future heat. (Scorer v6: warmth above target +2 °C scores +1 when the next day is dearer or less sunny and −1 when it is neither.)
 - Scorer v11, audit v5: the owner's overlap rule deducts −1 per quarter with at least two flexible workloads each strictly above 2 kW, only with a feasible move to a strictly cheaper quarter across the full 72 h. Stored independent witnesses preserve service and final inventories and obey equipment limits. This is a separate price-order heuristic, including unpublished actual prices; its points do not claim additional SEK savings or multiply the energy audit's savings.
+- Scorer v12: the owner's EV supply preference deducts −1 when home-battery discharge remains available to the EV after netting simultaneous battery charging, exports and all non-EV household consumption. Other loads receive battery supply first; simultaneous EV charging and battery discharge alone is allowed. It needs no economic witness and uses existing stored power series.
 - Keep hindsight separate from the headline, following the user's explicit preference.
 
 ## Invariants

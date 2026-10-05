@@ -201,6 +201,13 @@ export default function BenchRuleList({
   };
 
   const priceDetail = (rule: ResolvedRule) => {
+    if (rule.key === 'ev_from_home_battery') return <>
+      <p>{t(`En kvart ger avdrag när mer än ${rule.threshold} W från hembatteriet tillskrivs billaddning. Batteriet får försörja baslast, pool och andra laster samtidigt som bilen laddas. Vi räknar först bort samtidig batteriladdning och export, och tilldelar sedan batteriets effekt till alla andra hushållslaster före bilen. Bara det som återstår för bilen ger avdrag.`,
+        `A quarter loses a point when more than ${rule.threshold} W from the home battery is attributed to EV charging. The battery may supply base load, pool and other loads while the car charges. We first subtract simultaneous battery charging and exports, then assign battery power to all other household loads before the car. Only the remainder supplying the car triggers the rule.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Ett avdrag per kvart, oavsett energimängd, pris eller om en billigare flytt finns. Detta är en fördelningsregel för hushållets gemensamma elanslutning.',
+        'One deduction per quarter, regardless of energy amount, price or whether a cheaper move exists. This is an allocation convention for the shared house connection.')}</p>
+      {settings(rule, t('Batterieffekt till bilen över (W)', 'Battery power to EV above (W)'), '100')}
+    </>;
     if (rule.key === 'large_load_overlap') return <>
       <p>{t(`Minst två av poolvärme, billaddning och hembatteriladdning överstiger vardera ${rule.threshold} W i samma kvart. Avdrag ges bara när en av lasterna kan flyttas till en strikt billigare kvart inom 72 timmar utan sämre komfort, mindre slutlager eller överskridna utrustningsgränser. Billigare kvartar prövas i prisordning; en fylld kvart ger inget avdrag.`,
         `At least two of pool heating, EV charging and home battery charging each exceed ${rule.threshold} W in the same quarter. A point is deducted only when one can move to a strictly cheaper quarter within 72 hours without worsening comfort, final stores or equipment limits. Cheaper quarters are tested in price order; a filled quarter causes no penalty.`)}</p>

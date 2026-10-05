@@ -48,7 +48,7 @@ import { LARGE_WORKLOAD_W } from './large-load-overlap';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 11;
+export const SCORER_VERSION = 12;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -77,6 +77,8 @@ export interface QuarterView {
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
   avoidableOverlap: boolean;
+  /** Home-battery power left for EV charging after exports and other household loads, W. */
+  evBatteryW: number;
 }
 
 export interface QuarterRule {
@@ -116,6 +118,19 @@ const carFrom = (s: BenchSeries, t: number) =>
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
 const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && q.dearRank < t;
+
+/**
+ * Supply attribution on the shared house bus: allocate battery exports and
+ * non-EV demand first. Only the remainder can be attributed to the EV.
+ * loadW already includes the pool, hot water and all other household loads.
+ * Net simultaneous battery charging out of its discharge before allocating it.
+ */
+export function evBatterySupplyW(s: BenchSeries, i: number): number {
+  const nonEvW = Math.max(0, s.loadW[i] - s.carW[i]);
+  const batteryForHouseW = Math.max(0, s.batteryDischargeW[i] - s.batteryChargeW[i] - s.gridExportW[i]);
+  // Stored power has 0.1 W precision; subtraction noise is not battery energy.
+  return Math.round(Math.min(s.carW[i], Math.max(0, batteryForHouseW - nonEvW)) * 10) / 10;
+}
 
 export const DEFAULT_RULES: QuarterRule[] = [
   {
@@ -164,6 +179,13 @@ export const DEFAULT_RULES: QuarterRule[] = [
     describe: t => `at least two flexible workloads each above ${t} W, with a feasible move to a strictly cheaper quarter`,
     threshold: LARGE_WORKLOAD_W, points: -1,
     fires: q => q.avoidableOverlap,
+    eligibleFrom: () => 0,
+  },
+  {
+    key: 'ev_from_home_battery', about: 'price', label: 'EV supplied by home battery',
+    describe: t => `more than ${t} W of home-battery power supplies the EV after other loads and exports`,
+    threshold: 0, points: -1,
+    fires: (q, t) => q.evBatteryW > t,
     eligibleFrom: () => 0,
   },
 ];
@@ -325,6 +347,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       // Flexible load is the load there was a choice about, so what the quarter imported is counted as its first.
       flexibleW, flexibleGridW: Math.min(flexibleW, s.gridImportW[i]),
       avoidableOverlap: overlapQuarters.has(i),
+      evBatteryW: evBatterySupplyW(s, i),
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
     let score = 0;

@@ -357,6 +357,10 @@ test.describe('planner bench', () => {
     await page.locator('#bench-untriggered-rules > button').click();
     await expect(row('ev_low')).toContainText('N/A');
     await expect(row('ev_timing')).toContainText('N/A');
+    await row('ev_from_home_battery').getByRole('button').first().click();
+    await expect(row('ev_from_home_battery')).toContainText(/battery may supply base load, pool and other loads|Batteriet får försörja baslast, pool och andra laster/);
+    await expect(page.locator('#bench-ev_from_home_battery-threshold')).toHaveValue('0');
+    await row('ev_from_home_battery').getByRole('button').first().click();
 
     // The list follows the day the chart shows: the battery finding sits in the first hours only.
     await page.locator('#bench-day-2').click();
