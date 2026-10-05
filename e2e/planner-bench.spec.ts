@@ -75,6 +75,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   s.audit = {
     version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
     overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
+    shortGaps: { priceTolerance: { pool: 0.05, ev: 0.05 }, candidates: [], gaps: [] },
     guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],
@@ -128,13 +129,30 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, missingAudit = false, repeats = false, overlap = false): Promise<Captured> {
-  const plans = overlap ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps ? structuredClone(PLANS) : PLANS;
   if (overlap) {
     for (const [key, plan] of Object.entries(plans)) {
       plan.audit!.overlap = { thresholdW: 2000, overlappingQuarters: [24], moves: [
         { from: 24, to: key.startsWith(TEST.sha) ? 104 : 200, device: 'battery', movedW: 3000 },
       ] };
+    }
+  }
+  if (gaps) {
+    for (const plan of Object.values(plans)) {
+      plan.audit!.shortGaps = {
+        priceTolerance: { pool: 0.05, ev: 0.05 },
+        candidates: [{ device: 'ev', from: 24, to: 26 }, { device: 'pool', from: 28, to: 29 }],
+        gaps: [
+          { device: 'ev', from: 24, to: 26, changes: [
+            { quarter: 23, beforeW: 3450, afterW: 0 }, { quarter: 24, beforeW: 0, afterW: 3450 },
+            { quarter: 25, beforeW: 0, afterW: 3450 }, { quarter: 26, beforeW: 3450, afterW: 0 },
+          ] },
+          { device: 'pool', from: 28, to: 29, changes: [
+            { quarter: 27, beforeW: 3764, afterW: 0 }, { quarter: 28, beforeW: 0, afterW: 3764 },
+          ] },
+        ],
+      };
     }
   }
   const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
@@ -239,8 +257,33 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('explains short EV and pool gaps with their times and feasible continuous schedules', async ({ context, page }) => {
+    await mockBackend(context, { gaps: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const explanation = page.locator('#bench-quarter-explanation');
+    for (const [device, label, start, end, power] of [
+      ['ev', 'EV charging', '08:00', '08:30', '3.45'], ['pool', 'pool heating', '09:00', '09:15', '3.76'],
+    ]) {
+      const row = page.locator(`#bench-rule-${device}_short_gap`);
+      await expect(row).toContainText(/1 (q|kv) · −1/);
+      await row.getByRole('button').first().click();
+      await expect(row).toContainText(/both bordering running quarters|båda angränsande driftkvartarna/);
+      await row.getByRole('button', { name: /^Test: 1 / }).click();
+      await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
+      await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
+      await expect(explanation).toContainText(/5 .*öre/);
+      await row.locator('details').last().locator('summary').click();
+      await expect(row.locator('details').last()).toContainText(`0.00 → ${power} kW`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(explanation).toBeVisible();
+    expect(await explanation.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await explanation.screenshot({ path: test.info().outputPath('short-gap-mobile.png') });
+  });
+
   test('names the cheaper quarter for an overlap in the selected planner', async ({ context, page }) => {
-    await mockBackend(context, false, false, true);
+    await mockBackend(context, { overlap: true });
     await login(page);
     await page.goto('/portal/planner-bench');
     const rule = page.locator('#bench-rule-large_load_overlap');
@@ -273,7 +316,7 @@ test.describe('planner bench', () => {
   });
 
   test('lists only the newest of consecutive versions with the same score', async ({ context, page }) => {
-    await mockBackend(context, false, true);
+    await mockBackend(context, { repeats: true });
     await login(page);
     await page.goto('/portal/planner-bench');
     await page.locator('#bench-test-run').click();
@@ -431,7 +474,7 @@ test.describe('planner bench', () => {
   });
 
   test('withholds stale scores and witnesses until older results are rescored', async ({ context, page }) => {
-    await mockBackend(context, true);
+    await mockBackend(context, { missingAudit: true });
     await login(page);
     await page.goto('/portal/planner-bench');
     await expect(page.locator('#bench-test-run')).toContainText(/— (pts|p)/);
@@ -443,7 +486,7 @@ test.describe('planner bench', () => {
   });
 
   test('shows a rescore queued, then running on the plan it is at, then done', async ({ context, page }) => {
-    const captured = await mockBackend(context, true);
+    const captured = await mockBackend(context, { missingAudit: true });
     await login(page);
     await page.goto('/portal/planner-bench');
     await page.getByRole('button', { name: /Recompute scores|Räkna om poäng/ }).click();

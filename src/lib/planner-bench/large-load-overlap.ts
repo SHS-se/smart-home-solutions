@@ -3,8 +3,9 @@
 // one feasible witness per overlapping quarter, never one point per pair.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
-import { evLevels, evMaxW, poolLevels, reachability, simulate, type Decisions, type Simulation } from './referee';
-import { serviceExposure, serviceNotWorse, type Comfort, type ServiceGuard } from './service';
+import { evLevels, evMaxW, poolLevels, simulate, type Decisions, type Simulation } from './referee';
+import type { ServiceGuard } from './service';
+import { scheduleWitness } from './schedule-witness';
 import { stepMove } from './step-moves';
 
 export const LARGE_WORKLOAD_W = 2000;
@@ -23,17 +24,7 @@ export function auditLargeLoadOverlap(
   if (!overlapping.length) return out;
   const prices = c.recorded.prices.import_sek_per_kwh;
   const cheapest = prices.map((_, i) => i).sort((a, b) => prices[a] - prices[b] || a - b);
-  const reach = reachability(c, h);
-  const comfort: Comfort = {
-    pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
-    pool_start_c: original.start.poolC, ev_start_km: original.start.evKwh / h.car.battery.kwh_per_km,
-    poolReachableC: reach.poolC, carReachableKm: reach.carKm,
-  };
-  const exposure = (s: Simulation) => serviceExposure(comfort, s.poolC, Array.from(s.evKwh, kwh => kwh / h.car.battery.kwh_per_km), guard);
-  const before = exposure(original);
-  const last = prices.length - 1;
-  const terminalNotWorse = (s: Simulation) => s.batteryKwh[last] >= original.batteryKwh[last] - 1e-6
-    && s.evKwh[last] >= original.evKwh[last] - 1e-6 && s.poolC[last] >= original.poolC[last] - 1e-6;
+  const witness = scheduleWitness(c, h, targets, original, guard);
   const told = c.recorded.actual ? simulate(c, h, d, 'told') : original;
 
   for (const from of overlapping) {
@@ -68,13 +59,7 @@ export function auditLargeLoadOverlap(
           const shifted = move?.values ?? [...values];
           if (!levels) { shifted[from] -= power; shifted[to] += power; }
           const candidate = { ...d, [device === 'pool' ? 'pool_w' : device === 'ev' ? 'ev_w' : 'battery_charge_w']: shifted };
-          const legal = simulate(c, h, candidate, 'told');
-          if (legal.violations.length) continue;
-          const after = c.recorded.actual ? simulate(c, h, candidate) : legal;
-          const delivered = device === 'pool' ? after.poolW : device === 'ev' ? after.evW : after.chargeW;
-          // Measured-world clipping cannot supply evidence for a booking that never ran.
-          if (Math.abs(delivered[from] - shifted[from]) > 1 || Math.abs(delivered[to] - shifted[to]) > 1) continue;
-          if (!terminalNotWorse(after) || !serviceNotWorse(before, exposure(after))) continue;
+          if (!witness(candidate, device, [from, to])) continue;
           out.moves.push({ from, to, device, movedW: move?.moved_w ?? power });
           break search;
         }

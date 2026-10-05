@@ -45,10 +45,11 @@ import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type 
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 import { LARGE_WORKLOAD_W } from './large-load-overlap';
+import { SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 12;
+export const SCORER_VERSION = 13;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -77,6 +78,8 @@ export interface QuarterView {
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
   avoidableOverlap: boolean;
+  /** Devices with an avoidable short gap beginning in this quarter. */
+  shortGapDevices: ReadonlySet<GapDevice>;
   /** Home-battery power left for EV charging after exports and other household loads, W. */
   evBatteryW: number;
 }
@@ -188,6 +191,13 @@ export const DEFAULT_RULES: QuarterRule[] = [
     fires: (q, t) => q.evBatteryW > t,
     eligibleFrom: () => 0,
   },
+  ...(['ev', 'pool'] as const).map((device): QuarterRule => ({
+    key: `${device}_short_gap`, about: 'price',
+    label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
+    describe: t => `an avoidable 1–4-quarter gap, each gap price within ${Math.round(t * 100)} öre/kWh of both bordering running quarters`,
+    threshold: SHORT_GAP_PRICE_TOLERANCE, points: -1,
+    fires: q => q.shortGapDevices.has(device), eligibleFrom: () => 0,
+  })),
 ];
 
 /** The price rules that count from the dear end of the plan's prices. */
@@ -288,7 +298,7 @@ const sameGuard = (a: ServiceGuard, b: ServiceGuard) =>
 /** Whether every stored witness still holds under other comfort thresholds, from its stored traces. */
 function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGuard): boolean {
   if (sameGuard(audit.guard, guard)) return true;
-  if (audit.overlap.overlappingQuarters.length) return false;
+  if (audit.overlap.overlappingQuarters.length || audit.shortGaps.candidates.length) return false;
   const comfort = s.comfort;
   if (!comfort) return false;
   // A finding moves only its own device's store; the battery has no comfort level.
@@ -304,10 +314,14 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const n = s.start.length;
   const audit = s.audit ?? null;
   const overlapRule = resolved.find(r => r.key === 'large_load_overlap')!;
+  const gapThresholds = Object.fromEntries(resolved.map(r => [r.key, r.threshold]));
   const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
-      || audit.overlap.thresholdW !== overlapRule.threshold)));
+      || audit.overlap.thresholdW !== overlapRule.threshold
+      || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
+      || audit.shortGaps.priceTolerance.pool !== gapThresholds.pool_short_gap)));
   const overlapQuarters = new Set(audit && !auditPending ? audit.overlap.moves.map(m => m.from) : []);
+  const shortGaps = audit && !auditPending ? audit.shortGaps.gaps : [];
   // The first quarter from which each level counts, found once per level.
   const dueAt = new Map<string, number>();
   const due = (i: number): QuarterView['due'] => (reachable, start, level) => {
@@ -347,6 +361,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       // Flexible load is the load there was a choice about, so what the quarter imported is counted as its first.
       flexibleW, flexibleGridW: Math.min(flexibleW, s.gridImportW[i]),
       avoidableOverlap: overlapQuarters.has(i),
+      shortGapDevices: new Set(shortGaps.filter(gap => gap.from === i).map(gap => gap.device)),
       evBatteryW: evBatterySupplyW(s, i),
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));

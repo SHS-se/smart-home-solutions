@@ -201,6 +201,28 @@ export default function BenchRuleList({
   };
 
   const priceDetail = (rule: ResolvedRule) => {
+    const gapDevice = rule.key === 'ev_short_gap' ? 'ev' : rule.key === 'pool_short_gap' ? 'pool' : null;
+    if (gapDevice) return <>
+      <p>{t(`Ett avdrag per avbrott på 1–4 kvartar i ${gapDevice === 'ev' ? 'billaddning' : 'poolvärme'}. Lasten måste vara igång direkt före och efter avbrottet. Varje pris under avbrottet ska ligga inom ${Math.round(rule.threshold * 100)} öre/kWh från båda angränsande driftkvartarna.`,
+        `One deduction per 1–4-quarter interruption in ${gapDevice === 'ev' ? 'EV charging' : 'pool heating'}. The device must run immediately before and after the gap. Each gap price must be within ${Math.round(rule.threshold * 100)} öre/kWh of both bordering running quarters.`)}</p>
+      <p>{t('Avdrag ges bara när befintlig energi kan flyttas inom de två angränsande driftperioderna och avbrottet till en sammanhängande period, med tillåtna effektnivåer, oförsämrad service och oförminskade slutlager. Detta är en preferens för sammanhängande drift, inte ett påstående om lägre elkostnad. Alternativen prövas var för sig mot originalplanen vid verkliga priser.',
+        'A penalty requires an alternative that rearranges existing energy within the two adjacent runs and their gap into one continuous run, with legal power levels, unchanged or better service and no reduction in final stores. This is a preference for continuous operation, not a claim of bill savings. Alternatives are tested independently against the original plan at actual prices.')}</p>
+      {sides.map(s => auditOf(s)?.shortGaps.gaps.filter(g => g.device === gapDevice && inRange(g.from)).map(g => <div key={`${s.side}-${g.from}`} className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span>{s.label} · {g.to - g.from} {t('kvartar', 'quarters')}</span>
+          <Button size="sm" variant="outline" onClick={() => onSelect(s.side, g.from)}>{stamp(s, g.from)}</Button>
+          <span>→</span>
+          <Button size="sm" variant="outline" onClick={() => onSelect(s.side, g.to)}>{stamp(s, g.to)}</Button>
+        </div>
+        <details className="text-xs">
+          <summary className="cursor-pointer">{t('Möjlig sammanhängande drift', 'Feasible continuous run')}</summary>
+          <ul className="mt-1 space-y-1 font-mono">{g.changes.map(change => <li key={change.quarter}>
+            {stamp(s, change.quarter)}: {(change.beforeW / 1000).toFixed(2)} → {(change.afterW / 1000).toFixed(2)} kW
+          </li>)}</ul>
+        </details>
+      </div>))}
+      {settings(rule, t('Prisskillnad högst (SEK/kWh)', 'Maximum price difference (SEK/kWh)'), '0.01')}
+    </>;
     if (rule.key === 'ev_from_home_battery') return <>
       <p>{t(`En kvart ger avdrag när mer än ${rule.threshold} W från hembatteriet tillskrivs billaddning. Batteriet får försörja baslast, pool och andra laster samtidigt som bilen laddas. Vi räknar först bort samtidig batteriladdning och export, och tilldelar sedan batteriets effekt till alla andra hushållslaster före bilen. Bara det som återstår för bilen ger avdrag.`,
         `A quarter loses a point when more than ${rule.threshold} W from the home battery is attributed to EV charging. The battery may supply base load, pool and other loads while the car charges. We first subtract simultaneous battery charging and exports, then assign battery power to all other household loads before the car. Only the remainder supplying the car triggers the rule.`)}</p>

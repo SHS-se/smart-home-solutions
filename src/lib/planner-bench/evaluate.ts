@@ -30,7 +30,8 @@ export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOve
   // Checked first, so a case with unusable criteria is not replayed at all.
   const guard = serviceGuard(criteria);
   const { series, ...outcome } = referee(c, HOUSEHOLD, targets, record.decisions, believed);
-  const largeWorkloadW = resolveRules(criteria).find(r => r.key === 'large_load_overlap')!.threshold;
-  series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard, largeWorkloadW);
+  const thresholds = Object.fromEntries(resolveRules(criteria).map(r => [r.key, r.threshold]));
+  series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard, thresholds.large_load_overlap,
+    { pool: thresholds.pool_short_gap, ev: thresholds.ev_short_gap });
   return { series, stats: planStats(series), outcome, score: storedScore(series, criteria), referee_version: REFEREE_VERSION };
 }

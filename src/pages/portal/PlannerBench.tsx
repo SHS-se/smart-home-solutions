@@ -793,9 +793,14 @@ const CaseView: React.FC<CaseViewProps> = ({
                               const move = k === 'large_load_overlap'
                                 ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
                                 : null;
+                              const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
+                                ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from === selected)!
+                                : null;
                               return <li key={k} className="font-mono">
                                 {signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}
                                 {move && <> · {t('billigare kvart', 'cheaper quarter')}: {formatHomeDayMonthTime(shownSeries.start[move.to], TZ)}</>}
+                                {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
+                                  {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('priser inom', 'prices within')} {Math.round(ruleLabel.get(k)!.threshold * 100)} {t('öre från båda angränsande driftkvartarna', 'öre of both bordering running quarters')}</>}
                               </li>;
                             })}</ul>
                             : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
