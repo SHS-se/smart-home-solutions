@@ -1,5 +1,6 @@
 export type PurchaseDraftErrorStage =
   | 'supplier_create'
+  | 'supplier_update'
   | 'duplicate_check'
   | 'exchange_rate_lookup'
   | 'document_upload'

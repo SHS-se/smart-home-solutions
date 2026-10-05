@@ -60,6 +60,8 @@ const PurchaseUpload: React.FC = () => {
     switch (stage) {
       case 'supplier_create':
         return t('Leverantör skapades inte', 'Supplier creation failed');
+      case 'supplier_update':
+        return t('Leverantören kunde inte uppdateras', 'Supplier update failed');
       case 'duplicate_check':
         return t('Dublettkontroll misslyckades', 'Duplicate check failed');
       case 'exchange_rate_lookup':

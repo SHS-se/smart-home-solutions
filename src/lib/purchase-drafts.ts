@@ -10,7 +10,6 @@ import {
   parseAmount,
   type ExchangeRateLookupResult,
 } from './accounting-fx';
-import { fetchSingleEcbExchangeRate } from './ecb-rates';
 import { PurchaseDraftError, toPurchaseDraftError } from './purchase-draft-error';
 import {
   buildInvoiceNumberNote,
@@ -19,7 +18,9 @@ import {
   findDuplicatePurchaseId,
   inferSupplierMetadata,
   inferVatTreatment,
+  isVerifiedSwedishCoolshopSeller,
   normalizeEuReverseChargeOriginalAmounts,
+  normalizeVatNumber,
   normalizeSupplierInvoiceNumber,
   preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
@@ -217,6 +218,28 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
     }
   }
 
+  // Earlier Coolshop imports inferred Denmark from the VAT prefix. Reuploading
+  // the verified Swedish seller receipt also repairs that matching supplier.
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === supplierId);
+  if (selectedSupplier && parsedInvoice && isVerifiedSwedishCoolshopSeller(parsedInvoice) &&
+    !parsedInvoice.parserReviewRequired && normalizeVatNumber(parsedInvoice.vatNumber) &&
+    normalizeVatNumber(selectedSupplier.vat_number) === normalizeVatNumber(parsedInvoice.vatNumber) &&
+    (selectedSupplier.country !== 'SE' || selectedSupplier.supplier_type !== 'domestic')) {
+    const correctedMetadata = { country: 'SE', supplier_type: 'domestic' as const };
+    try {
+      const { error } = await supabase.from('acc_suppliers').update(correctedMetadata).eq('id', selectedSupplier.id);
+      if (error) throw error;
+    } catch (error) {
+      throw toPurchaseDraftError(error, {
+        stage: 'supplier_update',
+        fallbackMessage: 'Could not correct supplier country for purchase draft',
+      });
+    }
+    suppliers = suppliers.map((supplier) => supplier.id === selectedSupplier.id ? { ...supplier, ...correctedMetadata } : supplier);
+    supplierCountry = correctedMetadata.country;
+    supplierType = correctedMetadata.supplier_type;
+  }
+
   const inferredVatTreatment = inferVatTreatment({
     parsedInvoice: parsedInvoice || null,
     extractedText: extractedText || null,
@@ -242,6 +265,7 @@ export async function createPurchaseDraft(params: CreatePurchaseDraftParams): Pr
       }
     : params.exchangeRateLookup ?? await (async () => {
         try {
+          const { fetchSingleEcbExchangeRate } = await import('./ecb-rates');
           return await fetchSingleEcbExchangeRate({ currency: normalizedCurrency, documentDate });
         } catch (error) {
           throw toPurchaseDraftError(error, {

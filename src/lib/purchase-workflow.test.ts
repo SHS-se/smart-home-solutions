@@ -13,13 +13,94 @@ import {
   preserveSupplierInvoiceNumber,
   resolveSavedPurchaseId,
 } from './purchase-workflow.ts';
-import type { ParsedInvoice } from './invoice-parser.ts';
+import { parseInvoiceText, type ParsedInvoice } from './invoice-parser.ts';
+import q3Invoices from './fixtures/invoices-2026-q3.json' with { type: 'json' };
 
 function assertEqual<T>(actual: T, expected: T, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label}: expected ${String(expected)}, got ${String(actual)}`);
   }
 }
+
+Deno.test('DigiKey invoices use the EU registration and acquisition statement instead of the US mailing address', () => {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === 'digikey_invoice')!;
+  const parsedInvoice = parseInvoiceText(fixture.rawText);
+  assertEqual(inferVatTreatment({ parsedInvoice, extractedText: fixture.rawText }), 'reverse_charge_eu_goods', 'hardware VAT treatment');
+});
+
+function q3Invoice(fingerprintId: string) {
+  const fixture = q3Invoices.find(({ expected }) => expected.fingerprintId === fingerprintId)!;
+  return { parsedInvoice: parseInvoiceText(fixture.rawText), extractedText: fixture.rawText };
+}
+
+Deno.test('Apple destination VAT requires Swedish billing and the Swedish rate, not just its brand', () => {
+  const invoice = q3Invoice('apple_subscription_receipt');
+  assertEqual(inferVatTreatment(invoice), 'domestic_deductible', 'Swedish billing');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: 'Apple Distribution International Ltd. Ireland Shipping address Sweden' }),
+    'needs_review', 'brand and shipping address alone');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: 'Billing and Payment Customer Ireland Subtotal Shipping Sweden' }),
+    'needs_review', 'Irish billing');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, vatRate: 23 } }),
+    'needs_review', 'non-Swedish rate');
+});
+
+Deno.test('Global-e Swedish supplier registration overrides foreign domicile and stale supplier metadata', () => {
+  const invoice = q3Invoice('global_e_invoice');
+  assertEqual(inferVatTreatment({ ...invoice, supplierCountry: 'US', supplierType: 'non_eu' }),
+    'domestic_deductible', 'supplier Swedish VAT registration');
+  assertEqual(inferVatTreatment({
+    ...invoice, parsedInvoice: { ...invoice.parsedInvoice, vatNumber: 'NL123456789B01' },
+  }), 'needs_review', 'buyer Swedish VAT number is not supplier VAT evidence');
+});
+
+Deno.test('Coolshop Swedish seller identity determines input VAT independently of its DK registration', () => {
+  const invoice = q3Invoice('coolshop_receipt');
+  assertEqual(invoice.parsedInvoice.vatNumber, 'DK26457602', 'own VAT registration');
+  assertEqual(invoice.parsedInvoice.orgNumber, '5566113212', 'Swedish company identity');
+  assertEqual(inferSupplierMetadata(invoice.parsedInvoice).supplierType, 'domestic', 'Swedish company');
+  assertEqual(inferVatTreatment({ ...invoice, supplierCountry: 'DK', supplierType: 'eu' }),
+    'domestic_deductible', 'invoice identity overrides stale supplier country');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: `${invoice.extractedText} VAT charged abroad` }),
+    'non_deductible', 'explicit foreign VAT');
+});
+
+Deno.test('Coolshop input VAT requires the seller organisation number and Swedish purchase evidence', () => {
+  const invoice = q3Invoice('coolshop_receipt');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, orgNumber: null } }),
+    'needs_review', 'missing seller organisation number');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: 'Fakturering Customer DK Betalningsmetod' }),
+    'needs_review', 'foreign billing');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, grossAmount: 4001 } }),
+    'needs_review', 'full invoice requires VAT registration evidence');
+});
+
+Deno.test('DigiKey EU acquisition classification requires both its EU registration and acquisition evidence', () => {
+  const invoice = q3Invoice('digikey_invoice');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, vatNumber: null } }),
+    'needs_review', 'missing EU registration');
+  assertEqual(inferVatTreatment({ ...invoice, extractedText: 'Completed Salesorder US hardware paid by Paypal' }),
+    'needs_review', 'missing acquisition statement');
+});
+
+Deno.test('foreign supplier domicile without tax-jurisdiction evidence cannot establish non-deductible VAT', () => {
+  const invoice = q3Invoice('supabase_invoice');
+  assertEqual(inferVatTreatment({
+    ...invoice, parsedInvoice: { ...invoice.parsedInvoice, grossAmount: 31.25, netAmount: 25, vatAmount: 6.25, vatRate: 25 },
+  }), 'needs_review', 'unknown charged-VAT jurisdiction');
+});
+
+Deno.test('parser-review documents never receive automatic VAT treatment', () => {
+  const invoice = q3Invoice('global_e_invoice');
+  assertEqual(inferVatTreatment({ ...invoice, parsedInvoice: { ...invoice.parsedInvoice, parserReviewRequired: true } }),
+    'needs_review', 'incomplete invoice even with Swedish registration');
+});
+
+Deno.test('reverse-charge text cannot turn non-EU physical goods into imported services', () => {
+  const invoice = q3Invoice('digikey_invoice');
+  assertEqual(inferVatTreatment({
+    ...invoice, parsedInvoice: { ...invoice.parsedInvoice, vatNumber: null }, extractedText: 'Reverse charge US hardware',
+  }), 'needs_review', 'goods need import review');
+});
 
 const STRIPE_INVOICE: ParsedInvoice = {
   supplierName: 'Stripe Payments Europe, Limited',
@@ -311,18 +392,26 @@ Deno.test('inferVatTreatment treats Amazon marketplace invoices under 4000 SEK a
   assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
 });
 
-Deno.test('inferVatTreatment keeps Amazon marketplace invoices at or above 4000 SEK out of domestic deductible treatment', () => {
+Deno.test('inferVatTreatment requires review of Amazon marketplace invoice evidence above 4000 SEK', () => {
   const vatTreatment = inferVatTreatment({
     parsedInvoice: {
       ...AMAZON_MARKETPLACE_INVOICE,
-      grossAmount: 4000,
-      netAmount: 3200,
-      vatAmount: 800,
+      grossAmount: 4001,
+      netAmount: 3200.8,
+      vatAmount: 800.2,
     },
     extractedText: 'Moms deklarerat av Amazon i leveranslandet',
   });
 
-  assertEqual(vatTreatment, 'non_deductible', 'vatTreatment');
+  assertEqual(vatTreatment, 'needs_review', 'vatTreatment');
+});
+
+Deno.test('inferVatTreatment includes exactly 4000 SEK in the simplified-invoice limit', () => {
+  const vatTreatment = inferVatTreatment({
+    parsedInvoice: { ...AMAZON_MARKETPLACE_INVOICE, grossAmount: 4000, netAmount: 3200, vatAmount: 800 },
+    extractedText: 'Moms deklarerat av Amazon i leveranslandet',
+  });
+  assertEqual(vatTreatment, 'domestic_deductible', 'vatTreatment');
 });
 
 Deno.test('inferVatTreatment treats Anthropic invoices with Swedish VAT as domestic deductible', () => {

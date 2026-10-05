@@ -209,11 +209,51 @@ const COUNTRY_NAME_TO_CODE: Array<[string, string]> = [
   ['united kingdom', 'GB'],
 ];
 
+const ORDER_DOCUMENT_FINGERPRINTS = new Set([
+  'cs_megastore_order_summary',
+  'digikey_order_acknowledgement',
+]);
+
 const KNOWN_INVOICE_FINGERPRINTS: Array<{
   id: string;
   label: string;
   match: (text: string) => boolean;
 }> = [
+  {
+    id: 'apple_subscription_receipt',
+    label: 'Apple subscription receipt',
+    match: (text) => /Apple Distribution International Ltd\./i.test(text) && /Apple Account:/i.test(text) && /Billing and Payment/i.test(text) && /Document:/i.test(text),
+  },
+  {
+    id: 'cs_megastore_order_summary',
+    label: 'CS Megastore order summary',
+    match: (text) => /cs megastore ab/i.test(text) && /Beställningssammanfattning/i.test(text) && /Ordernr\.:/i.test(text) && /Total inkl\. moms/i.test(text),
+  },
+  {
+    id: 'supabase_invoice',
+    label: 'Supabase invoice',
+    match: (text) => /Supabase Pte\. Ltd\./i.test(text) && /Invoice number/i.test(text) && /Invoice date/i.test(text) && /Amount due/i.test(text),
+  },
+  {
+    id: 'coolshop_receipt',
+    label: 'Coolshop receipt',
+    match: (text) => /Coolshop\.se/i.test(text) && /Kvitto nr\.:/i.test(text) && /Kvittodatum:/i.test(text) && /Totalt inkl\. MOMS:/i.test(text),
+  },
+  {
+    id: 'digikey_invoice',
+    label: 'DigiKey invoice',
+    match: (text) => /Fakturanummer\s+\d+\s+Invoice\s*#/i.test(text) && /www\.digikey\.com/i.test(text) && /Completed Salesorder/i.test(text) && /Total charged to Paypal/i.test(text),
+  },
+  {
+    id: 'digikey_order_acknowledgement',
+    label: 'DigiKey order acknowledgement',
+    match: (text) => /PO Acknowledgement\s+\d+/i.test(text) && /www\.digikey\.com/i.test(text) && /DIGI-KEY\s+ELECTRONICS/i.test(text),
+  },
+  {
+    id: 'global_e_invoice',
+    label: 'Global-e VAT invoice',
+    match: (text) => /Global-e NL B\.V/i.test(text) && /Date\/Tax Point:/i.test(text) && /Total Invoice Amount/i.test(text),
+  },
   {
     id: 'elbutik_scandinavia_invoice',
     label: 'Elbutik Scandinavia invoice',
@@ -363,6 +403,9 @@ function collectParserReviewReasons(params: {
   if (!params.fingerprint.recognized) {
     reasons.push('Unknown invoice layout');
   }
+  if (ORDER_DOCUMENT_FINGERPRINTS.has(params.fingerprint.id)) {
+    reasons.push('Order document only — confirm against a supplier invoice or receipt');
+  }
   if (!params.supplierName) reasons.push('Supplier was not extracted');
   if (!params.invoiceNumber) reasons.push('Invoice number was not extracted');
   if (!params.invoiceDate) reasons.push('Invoice date was not extracted');
@@ -419,6 +462,8 @@ function parseAmount(text: string): number | null {
 }
 
 function parseDate(text: string): string | null {
+  // DigiKey prints dates as 04-AUG-2026.
+  text = text.replace(/\b(\d{1,2})-([A-Za-z]{3})-(\d{4})\b/g, '$1 $2 $3');
   let m = text.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
 
@@ -581,7 +626,10 @@ function extractMoneyForLabel(text: string, labels: string[], stops: string[], p
     const section = tail.slice(0, end).trim();
     if (!section) continue;
 
-    const amount = selectAmount(parseMoneyValues(section), preferredCurrency);
+    // Only read a monetary value immediately after the label. Looking farther
+    // ahead can interpret dates or quantities in a table header as totals.
+    const money = section.match(/^(?:SEK|EUR|USD|kr|€|\$)?\s*-?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)*\s*(?:kr|SEK|EUR|USD|€|\$)?/i);
+    const amount = money ? selectAmount(parseMoneyValues(money[0]), preferredCurrency) : null;
     if (amount !== null) return amount;
   }
 
@@ -636,6 +684,11 @@ function inferCurrency(text: string): string | null {
 }
 
 function extractSupplierName(lines: string[], normalizedText: string): string | null {
+  if (/Apple Distribution International Ltd\./i.test(normalizedText)) return 'Apple Distribution International Ltd.';
+  if (/Supabase Pte\. Ltd\./i.test(normalizedText)) return 'Supabase Pte. Ltd.';
+  if (/Coolshop\.se/i.test(normalizedText)) return 'Coolshop.se';
+  if (/Global-e NL B\.V/i.test(normalizedText)) return 'Global-e NL B.V';
+  if (/DIGI-KEY\s+ELECTRONICS|DIGI-KEYS momsregistreringsnr\./i.test(normalizedText)) return 'Digi-Key Electronics';
   if (/elbutik scandinavia ab/i.test(normalizedText) && /info@elbutik\.se/i.test(normalizedText)) {
     return 'Elbutik Scandinavia AB';
   }
@@ -708,6 +761,13 @@ function extractSupplierName(lines: string[], normalizedText: string): string | 
 }
 
 function extractSupplierCountry(text: string): string | null {
+  if (/Apple Distribution International Ltd\./i.test(text) && /Ireland VAT Reg No\./i.test(text)) return 'IE';
+  if (/Supabase Pte\. Ltd\./i.test(text) && /Singapore/i.test(text)) return 'SG';
+  // The seller is Spelbutiken Sweden AB. Its Swedish organisation number
+  // identifies the company independently of its printed Danish VAT registration.
+  if (/Coolshop\.se\s+Box\s+\d+\s+\d{5}\s+Varberg\s+SE\s+Org\.\s*Nr\.:\s*556611-?3212\b/i.test(text)) return 'SE';
+  if (/Global-e NL B\.V/i.test(text) && /Netherlands/i.test(text)) return 'NL';
+  if (/DIGI-KEY\s+ELECTRONICS|DIGI-KEYS momsregistreringsnr\./i.test(text) && /USA/i.test(text)) return 'US';
   if (/elbutik scandinavia ab/i.test(text) || /cs megastore ab/i.test(text)) return 'SE';
   if (/lunar bank a\/s/i.test(text) && /dk-8000 aarhus/i.test(text)) return 'DK';
   if (/user_feedback@z\.ai/i.test(text) && /singapore/i.test(text)) return 'SG';
@@ -735,6 +795,17 @@ function extractSupplierCountry(text: string): string | null {
 }
 
 function extractSupplierVatNumber(text: string, supplierName: string | null): string | null {
+  if (supplierName === 'Apple Distribution International Ltd.') {
+    return text.match(/Ireland VAT Reg No\.\s*(IE[A-Z0-9]+)/i)?.[1] || null;
+  }
+  if (supplierName === 'Global-e NL B.V') {
+    return text.match(/VAT Reg\. No\.\s*([A-Z]{2}\s?\d+)/i)?.[1] || null;
+  }
+  if (supplierName === 'Digi-Key Electronics') {
+    return text.match(/DIGI-KEYS momsregistreringsnr\.\s*:\s*([A-Z]{2}\d+)/i)?.[1] || null;
+  }
+  // This layout only displays the customer's VAT number.
+  if (supplierName === 'Supabase Pte. Ltd.') return null;
   if (/cs megastore ab/i.test(text)) {
     const csMegastoreVatMatch = text.match(/\bVat-no\s*:\s*(SE\d{10,12})\b/i);
     if (csMegastoreVatMatch) return csMegastoreVatMatch[1].toUpperCase();
@@ -786,6 +857,12 @@ function extractSupplierVatNumber(text: string, supplierName: string | null): st
 }
 
 function extractInvoiceNumber(text: string): string | null {
+  if (/Apple Distribution International Ltd\./i.test(text)) return text.match(/Document:\s*(\d+)/i)?.[1] || null;
+  if (/Beställningssammanfattning/i.test(text) && /cs megastore ab/i.test(text)) return null;
+  if (/Coolshop\.se/i.test(text)) return text.match(/Kvitto nr\.:\s*(\d+)/i)?.[1] || null;
+  if (/Global-e NL B\.V/i.test(text)) return text.match(/Invoice No\.:\s*(\d+)/i)?.[1] || null;
+  if (/www\.digikey\.com/i.test(text)) return text.match(/(?:Fakturanummer|PO Acknowledgement)\s+(\d+)/i)?.[1] || null;
+  if (/Supabase Pte\. Ltd\./i.test(text)) return text.match(/Invoice number\s+(\S+)/i)?.[1] || null;
   const lunarMatch = text.match(/Invoice No\s*:\s*([A-Z0-9][A-Z0-9-]*)/i);
   if (lunarMatch && /lunar bank a\/s/i.test(text)) return lunarMatch[1];
 
@@ -824,6 +901,24 @@ function extractDate(text: string, labels: string[]): string | null {
 }
 
 function extractInvoiceDate(text: string, fingerprintId: string): string | null {
+  if (fingerprintId === 'apple_subscription_receipt') {
+    const match = text.match(/Invoice\s+(.+?)\s+Sequence:/i);
+    return match ? parseDate(match[1]) : null;
+  }
+  if (fingerprintId === 'cs_megastore_order_summary') return null;
+  if (fingerprintId === 'coolshop_receipt') return extractDate(text, ['Kvittodatum']);
+  if (fingerprintId === 'global_e_invoice') return extractDate(text, ['Date/Tax Point']);
+  if (fingerprintId === 'digikey_invoice') {
+    // The date row is Order Source, Order Date, Invoice Date, Ship Date.
+    const match = text.match(/INTERNET\s+\d{2}-[A-Z]{3}-\d{4}\s+(\d{2}-[A-Z]{3}-\d{4})\s+\d{2}-[A-Z]{3}-\d{4}/i);
+    return match ? parseDate(match[1]) : null;
+  }
+  if (fingerprintId === 'digikey_order_acknowledgement') {
+    // PDF.js emits the form's labels before their values. The order date
+    // follows INTERNET; later dates belong to product compliance information.
+    const match = text.match(/INTERNET\s+(\d{2}-[A-Z]{3}-\d{4})/i);
+    return match ? parseDate(match[1]) : null;
+  }
   if (fingerprintId === 'elbutik_scandinavia_invoice') {
     const match = text.match(/Faktura nr\s+Datum\s+Kund nr\s+Ordernr\s+Sida\s+\d+\s+(\d{2}\.\d{2}\.\d{4})/i);
     return match ? parseDate(match[1]) : null;
@@ -833,6 +928,7 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
     'Invoice Date',
     'Fakturadatum',
     'Fakturadatum/Leveransdatum',
+    'Date of issue',
     'Date paid',
     'Date',
   ]);
@@ -844,6 +940,9 @@ function extractInvoiceDate(text: string, fingerprintId: string): string | null 
  * (confirmed for these accounts) even though the document says "Amount due".
  */
 const RECEIPT_FINGERPRINTS = new Set([
+  'digikey_invoice',
+  'apple_subscription_receipt',
+  'coolshop_receipt',
   'cs_megastore_receipt',
   'zai_receipt',
   'openai_invoice',
@@ -865,7 +964,7 @@ const PAID_SIGNALS: RegExp[] = [
   /debited from your (?:stripe )?balance/i,
   /payment received|paid in full|thank you for your payment/i,
   /payment status\s*:?\s*(?:paid|authorized|captured)/i,
-  /(?:payment method|betalningsmetod)\s*:?\s*(?:credit ?card|card|klarna|paypal|swish|quickpay)/i,
+  /(?:payment method|betalningsmetod)\s*:?\s*(?:credit ?card|card|mastercard|visa|klarna|paypal|swish|quickpay)/i,
   /betalning\s*:?\s*\S*checkout/i,
 ];
 
@@ -883,6 +982,9 @@ function detectDocumentType(fingerprintId: string, text: string): {
   documentType: 'receipt' | null;
   paymentStatusConflict: boolean;
 } {
+  if (ORDER_DOCUMENT_FINGERPRINTS.has(fingerprintId)) {
+    return { documentType: null, paymentStatusConflict: false };
+  }
   if (RECEIPT_FINGERPRINTS.has(fingerprintId)) {
     return { documentType: 'receipt', paymentStatusConflict: false };
   }
@@ -904,6 +1006,30 @@ function extractDueDate(text: string, fingerprintId: string): string | null {
 }
 
 function extractProductName(text: string): string | null {
+  if (/Apple Distribution International Ltd\./i.test(text)) {
+    const match = text.match(/Apple Account:\s+\S+\s+ChatGPT\s+(.+?)\s+Renews/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
+  if (/Coolshop\.se/i.test(text)) {
+    const match = text.match(/SKU\s+BESKRIVNING\s+EAN\s+KVANTITET\s+PRIS\s+SUMMA\s+\d+\s+(.+?)\s+(?:\d{8,14}\s+)?\d+\s+\d+(?:[.,]\d+)?\s*kr/i);
+    return match ? cleanProductName(match[1]).replace(/\s+-$/, '') : null;
+  }
+  if (/Global-e NL B\.V/i.test(text)) {
+    const items = text.match(/Product\s+SKU\s+Quantity\s+Price\/Unit\s+SubTotal\s+(.+?)\s+Items Total/i)?.[1];
+    if (!items) return null;
+    const products = [...items.matchAll(/(.+?)\s+\d{8,20}\s+\d+\s+kr\s+[\d.,]+\s+kr\s+([\d.,]+)/gi)]
+      .filter((match) => (parseAmount(match[2]) ?? 0) > 0)
+      .map((match) => cleanProductName(match[1]));
+    return products.join(', ') || null;
+  }
+  if (/Supabase Pte\. Ltd\./i.test(text)) {
+    const match = text.match(/Description\s+Quantity\s+Rate\s+Amount\s+(.+?)\s+\d+\s+\$/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
+  if (/www\.digikey\.com/i.test(text)) {
+    const match = text.match(/DESC:\s+(.+?)\s+\d+\.\d{5}\s+\d+(?:,\d{3})*\.\d{2}/i);
+    return match ? cleanProductName(match[1]) : null;
+  }
   const elbutikMatch = text.match(
     /Product no\.\s+Description\s+Quantity\s+Price\s+Disc\. %\s+Amount\s+\S+\s+(.+?)\s+\d+\s+[\d.,]+\s+[\d.,]+/i,
   );
@@ -992,7 +1118,7 @@ function extractSwedishSimpleInvoiceSummary(text: string): { vatRate: number | n
 
 function extractInclusiveVatSummary(text: string): { vatRate: number | null; netAmount: number | null; vatAmount: number | null } | null {
   const match = text.match(
-    /VAT(?:\s*-\s*[A-Za-zÅÄÖåäö]+)?\s+\(?\s*(\d{1,2})%\s*(?:incl\.?\s*)?on\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)\s*\)?\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)/i,
+    /(?:VAT|Tax)(?:\s*-\s*[A-Za-zÅÄÖåäö]+)?\s+\(?\s*(\d{1,2})%\s*(?:incl\.?\s*)?on\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)\s*\)?\s+((?:€|\$)?[\d\s.,]+(?:\s*(?:kr|sek|eur|usd))?)/i,
   );
   if (!match) return null;
 
@@ -1007,6 +1133,62 @@ function extractKnownLayoutSummary(
   text: string,
   fingerprintId: string,
 ): { grossAmount: number | null; netAmount: number | null; vatAmount: number | null } | null {
+  const money = '(\\d+(?:[ .]\\d{3})*(?:[.,]\\d{2}))';
+  let summaryMatch: RegExpMatchArray | null = null;
+  switch (fingerprintId) {
+    case 'apple_subscription_receipt':
+      summaryMatch = text.match(new RegExp(`Subtotal\\s+${money}\\s*kr\\s+VAT charged at\\s+\\d+\\s*%\\s+${money}\\s*kr\\s+(?:Mastercard|Visa|American Express)\\s+[^\\d]*\\d{4}\\s+${money}\\s*kr`, 'i'));
+      break;
+    case 'cs_megastore_order_summary':
+      // This explicitly disclaims being an order confirmation or invoice.
+      // Do not populate invoice fields from its provisional order totals.
+      return { netAmount: null, vatAmount: null, grossAmount: null };
+    case 'coolshop_receipt':
+      summaryMatch = text.match(new RegExp(`Totalt exkl\\. MOMS:\\s+${money}\\s*kr\\.\\s+MOMS:\\s+${money}\\s*kr\\.\\s+Totalt inkl\\. MOMS:\\s+${money}\\s*kr`, 'i'));
+      break;
+    case 'global_e_invoice':
+      summaryMatch = text.match(new RegExp(`Total subject to \\d+% VAT\\s+kr\\s+${money}\\s+Total VAT\\s+kr\\s+${money}\\s+Total Invoice Amount\\s+kr\\s+${money}`, 'i'));
+      break;
+    case 'supabase_invoice': {
+      const netAmount = extractMoneyForLabel(text, ['Subtotal'], ['Amount due'], 'USD');
+      const grossAmount = extractMoneyForLabel(text, ['Amount due'], ['Description'], 'USD');
+      return {
+        netAmount,
+        grossAmount,
+        // The memo explains several tax regimes; use the actual billed
+        // difference, rather than interpreting the generic reverse-charge text.
+        vatAmount: netAmount !== null && grossAmount !== null
+          ? Math.round((grossAmount - netAmount) * 100) / 100
+          : null,
+      };
+    }
+    case 'digikey_invoice':
+    case 'digikey_order_acknowledgement': {
+      const amount = '(\\d+(?:,\\d{3})*\\.\\d{2})';
+      const match = text.match(new RegExp(`${amount}\\s+${amount}\\s+${amount}\\s+(?:[^\\s@]+@[^\\s@]+\\s+)?USD\\s+\\$\\s+INCOTERM`, 'i'));
+      // The invoice's second column is Charges subtotal; the order's first
+      // column is Sales Amount. Both put the final total in the third column.
+      const netAmount = match ? parseAmount(match[fingerprintId === 'digikey_invoice' ? 2 : 1]) : null;
+      const grossAmount = match ? parseAmount(match[3]) : null;
+      const selfAssessedVat = /recipient is required to account for or to self-assess the intra-community acquisition VAT/i.test(text);
+      return {
+        netAmount,
+        grossAmount,
+        // Only the invoice states that the recipient accounts for VAT.
+        // An acknowledgement or a missing tax statement cannot establish zero VAT.
+        vatAmount: fingerprintId === 'digikey_invoice' && selfAssessedVat && netAmount !== null && netAmount === grossAmount ? 0 : null,
+      };
+    }
+    default:
+      break;
+  }
+  if (['apple_subscription_receipt', 'coolshop_receipt', 'global_e_invoice'].includes(fingerprintId)) {
+    return {
+      netAmount: summaryMatch ? parseAmount(summaryMatch[1]) : null,
+      vatAmount: summaryMatch ? parseAmount(summaryMatch[2]) : null,
+      grossAmount: summaryMatch ? parseAmount(summaryMatch[3]) : null,
+    };
+  }
   if (fingerprintId === 'elbutik_scandinavia_invoice') {
     const match = text.match(
       /Summa\s+(\d[\d ]*[.,]\d+)\s+Moms %\s+(\d[\d ]*[.,]\d+).*?Att betala\s+(\d[\d ]*[.,]\d+)/i,
@@ -1180,7 +1362,7 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     }
   }
 
-  if (grossAmount === null || vatAmount === null || netAmount === null) {
+  if (!knownLayoutSummary && (grossAmount === null || vatAmount === null || netAmount === null)) {
     for (const line of lines) {
       const amounts = line.match(AMOUNT_RE);
       if (!amounts) continue;

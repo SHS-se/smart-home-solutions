@@ -417,16 +417,8 @@ const PurchaseDetail: React.FC = () => {
   if (supplierType && lines && lines.length > 0) {
     for (const line of lines) {
       if (line.vat_treatment === 'needs_review') continue;
-      if ((supplierType === 'eu' || supplierType === 'non_eu') && line.vat_treatment === 'domestic_deductible') {
-        warnings.push({
-          type: 'warning',
-          message: t(
-            `Leverantören är ${supplierType === 'eu' ? 'EU' : 'utom-EU'} men momsbehandlingen är "Ingående moms 25%". Bör den vara "Omvänd skattskyldighet"?`,
-            `Supplier is ${supplierType === 'eu' ? 'EU' : 'non-EU'} but VAT treatment is "Input VAT 25%". Should it be "Reverse charge"?`,
-          ),
-        });
-        break;
-      }
+      // Foreign suppliers can charge Swedish VAT through a Swedish
+      // registration or destination taxation. Domicile alone is no conflict.
       if (supplierType === 'domestic' && isReverseChargeTreatment(line.vat_treatment)) {
         warnings.push({
           type: 'warning',

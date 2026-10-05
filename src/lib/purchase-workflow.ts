@@ -192,6 +192,12 @@ export function inferSupplierMetadata(parsedInvoice: ParsedInvoice | null): {
 
 /** Fingerprints known to represent physical goods */
 const GOODS_FINGERPRINTS = new Set([
+  'elbutik_scandinavia_invoice',
+  'cs_megastore_receipt',
+  'coolshop_receipt',
+  'global_e_invoice',
+  'mnu_invoice',
+  'digikey_invoice',
   'ubiquiti_receipt_invoice',
   'bbqkees_invoice',
   'amazon_sweden_invoice',
@@ -209,8 +215,41 @@ function pickReverseChargeTreatment(supplierType: SupplierType, goodsOrServices:
   if (supplierType === 'eu') {
     return goodsOrServices === 'goods' ? 'reverse_charge_eu_goods' : 'reverse_charge_eu_services';
   }
-  // Non-EU purchases of goods would be imports (Box 50) — but for services it's Box 22
-  return 'reverse_charge_non_eu_services';
+  // Goods cannot be classified as imported services, even when a document
+  // mentions reverse charge. A domestic supplier also needs explicit review.
+  return supplierType === 'non_eu' && goodsOrServices === 'services'
+    ? 'reverse_charge_non_eu_services'
+    : 'needs_review';
+}
+
+const DIGITAL_BILLING_SECTIONS: Record<string, RegExp> = {
+  apple_subscription_receipt: /Billing and Payment\s+(.+?)\s+Subtotal/i,
+  anthropic_invoice: /Bill to\s+(.+?)(?=\s+(?:Ship to|Pay online|Description|[$€]\d))/i,
+  lovable_invoice: /Bill to\s+(.+?)(?=\s+(?:Ship to|Pay online|Description|[$€]\d))/i,
+};
+
+export function isVerifiedSwedishCoolshopSeller(invoice: ParsedInvoice | null | undefined): boolean {
+  return invoice?.fingerprint.recognized === true && invoice.fingerprint.id === 'coolshop_receipt' &&
+    invoice.supplierCountry === 'SE' && invoice.orgNumber?.replace(/-/g, '') === '5566113212';
+}
+
+function hasSwedishChargedVat(invoice: ParsedInvoice | null, text: string): boolean {
+  if (normalizeVatNumber(invoice?.vatNumber)?.match(/^SE\d{10,12}$/)) return true;
+  if (/vat\s*-\s*sweden/i.test(text)) return true;
+
+  // Coolshop's verified Swedish seller issues a simplified receipt for this
+  // Swedish purchase. Preserve the printed DK registration as a separate field.
+  if (isVerifiedSwedishCoolshopSeller(invoice) && invoice?.currency === 'SEK' && invoice.vatRate === 25 &&
+    invoice.grossAmount !== null && invoice.grossAmount <= 4000 &&
+    /Fakturering\s+.+?\s+SE\s+Betalningsmetod/i.test(text)) return true;
+
+  // These recognised digital-service layouts charge destination VAT. Read
+  // the purchaser's billing section, not the supplier's Irish/US address or
+  // a Swedish shipping address elsewhere in the document.
+  const billingPattern = DIGITAL_BILLING_SECTIONS[invoice?.fingerprint.id || ''];
+  const billingSection = billingPattern?.exec(text)?.[1];
+  return invoice?.fingerprint.recognized === true && invoice.vatRate === 25 &&
+    !!billingSection && /\b(?:Sweden|Sverige)\b/i.test(billingSection);
 }
 
 function isEuReverseChargeTreatment(vatTreatment: string | null | undefined): boolean {
@@ -243,43 +282,53 @@ export function inferVatTreatment(params: {
   const vatAmount = params.parsedInvoice?.vatAmount ?? null;
   const grossAmount = params.parsedInvoice?.grossAmount ?? null;
   const currency = params.parsedInvoice?.currency ?? null;
-  const normalizedCountry = params.supplierCountry?.toUpperCase() || inferSupplierMetadata(params.parsedInvoice).country;
-  const supplierType = (params.supplierType as SupplierType | null) || getSupplierTypeFromCountry(normalizedCountry);
-  const text = `${params.extractedText || ''} ${params.parsedInvoice?.vatNumber || ''}`.toLowerCase();
+  const invoiceSupplier = inferSupplierMetadata(params.parsedInvoice);
+  const hasInvoiceSupplierIdentity = params.parsedInvoice?.fingerprint.recognized &&
+    !!(params.parsedInvoice.supplierCountry || params.parsedInvoice.vatNumber);
+  // Reuploading must use the invoice's evidence even when an existing supplier
+  // record still has country/type defaults from a previous bad import.
+  const normalizedCountry = hasInvoiceSupplierIdentity
+    ? invoiceSupplier.country
+    : params.supplierCountry?.toUpperCase() || invoiceSupplier.country;
+  const supplierType = hasInvoiceSupplierIdentity
+    ? invoiceSupplier.supplierType
+    : (params.supplierType as SupplierType | null) || getSupplierTypeFromCountry(normalizedCountry);
+  const text = `${params.extractedText || ''} ${params.parsedInvoice?.vatNumber || ''}`.replace(/\s+/g, ' ').toLowerCase();
   const fingerprintId = params.parsedInvoice?.fingerprint.id;
   const goodsOrServices = inferGoodsOrServices(fingerprintId);
+  const supplierVatCountry = getCountryFromVatNumber(params.parsedInvoice?.vatNumber);
+
+  if (params.parsedInvoice?.parserReviewRequired) return 'needs_review';
 
   if (
     (fingerprintId === 'amazon_sweden_invoice' || fingerprintId === 'amazon_marketplace_invoice') &&
     vatAmount !== null &&
     vatAmount > 0 &&
     grossAmount !== null &&
-    grossAmount < 4000 &&
+    grossAmount <= 4000 &&
     currency === 'SEK'
   ) {
     return 'domestic_deductible';
   }
 
-  if (
-    fingerprintId === 'anthropic_invoice' &&
-    vatAmount !== null &&
-    vatAmount > 0 &&
-    /vat\s*-\s*sweden/i.test(text)
-  ) {
-    return 'domestic_deductible';
-  }
-
-  if (
-    fingerprintId === 'lovable_invoice' &&
-    vatAmount !== null &&
-    vatAmount > 0 &&
-    /vat\s*-\s*sweden/i.test(text)
-  ) {
-    return 'domestic_deductible';
-  }
-
   if (vatAmount !== null && vatAmount > 0) {
-    return supplierType === 'domestic' ? 'domestic_deductible' : 'non_deductible';
+    if (/foreign VAT|VAT charged abroad/i.test(text)) return 'non_deductible';
+    if (hasSwedishChargedVat(params.parsedInvoice, text)) return 'domestic_deductible';
+    // A foreign registration does not identify the jurisdiction of charged
+    // VAT (destination VAT can be reported through OSS). Without that evidence,
+    // review it rather than infer foreign VAT from the registration alone.
+    if (supplierVatCountry && supplierVatCountry !== 'SE') return 'needs_review';
+    return supplierType === 'domestic' ? 'domestic_deductible' : 'needs_review';
+  }
+
+  if (
+    vatAmount === 0 && goodsOrServices === 'goods' &&
+    supplierVatCountry && EU_COUNTRY_CODES.has(supplierVatCountry) && supplierVatCountry !== 'SE' &&
+    /intra-community acquisition|gemenskapsinterna förvärv/i.test(text)
+  ) {
+    // DigiKey invoices identify their EU VAT registration and triangulated
+    // acquisition explicitly, despite the supplier's US mailing address.
+    return 'reverse_charge_eu_goods';
   }
 
   if (/(reverse charge|omvänd skattskyldighet|intra-community supply|vat exempt)/i.test(text)) {
