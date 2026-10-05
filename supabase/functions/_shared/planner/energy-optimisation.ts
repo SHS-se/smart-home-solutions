@@ -149,7 +149,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v50";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v51";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -1901,8 +1901,9 @@ function planForDemand(slots: PreparedSlot[], snapshot: OptimisationSnapshot, to
  * (0.38 here) puts a cheap night's sale at 0.34 SEK when it is 0.07, and the
  * spread between buying and selling at a third less than it is.
  *
- * A sale is not estimated below nothing, and published quarters whose import
- * prices are all but equal say nothing of a slope: the ratio stands in then.
+ * Negative sale prices mean exporting costs money and retain their sign.
+ * Published quarters whose import prices are all but equal say nothing of a
+ * slope: the ratio stands in then.
  */
 function publishedExportOf(
   slots: readonly { import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }[],
@@ -1919,10 +1920,10 @@ function publishedExportOf(
   const spread = pairs.reduce((sum, [buy]) => sum + (buy - meanImport) ** 2, 0);
   if (spread / pairs.length < 1e-6) {
     const ratio = meanImport !== 0 ? meanExport / meanImport : 0;
-    return (importSekPerKwh) => Math.max(0, importSekPerKwh * ratio);
+    return (importSekPerKwh) => importSekPerKwh * ratio;
   }
   const slope = pairs.reduce((sum, [buy, sell]) => sum + (buy - meanImport) * (sell - meanExport), 0) / spread;
-  return (importSekPerKwh) => Math.max(0, meanExport + slope * (importSekPerKwh - meanImport));
+  return (importSekPerKwh) => meanExport + slope * (importSekPerKwh - meanImport);
 }
 
 const fixedLoadW = (slot: PreparedSlot) =>

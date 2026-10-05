@@ -21,6 +21,16 @@ export interface Scale {
   readonly range: readonly [number, number];
 }
 
+/** One axis for every price line, including negative sales and planner estimates. */
+export const priceDomain = (
+  ...series: ReadonlyArray<readonly (number | null)[]>
+): [number, number] => {
+  const prices = series.flat().filter(
+    (value): value is number => value !== null && Number.isFinite(value),
+  );
+  return [Math.min(0, ...prices) * 1.15, Math.max(0.5, ...prices) * 1.15];
+};
+
 export const linearScale = (
   domain: readonly [number, number],
   range: readonly [number, number],

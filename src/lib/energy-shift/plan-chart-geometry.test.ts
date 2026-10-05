@@ -4,6 +4,7 @@ import {
   midpointLinePath,
   niceTicks,
   placeBandLabels,
+  priceDomain,
   spansOf,
   stackBands,
   stepAreaPath,
@@ -13,6 +14,21 @@ import {
 
 const x = linearScale([0, 4], [0, 400]);
 const y = linearScale([0, 10], [100, 0]);
+
+Deno.test('negative sell prices stay inside the price panel below zero', () => {
+  const domain = priceDomain([0.7656], [-0.02352], [0.8]);
+  const scale = linearScale(domain, [98, 30]);
+  assert(scale(-0.02352) < 98, 'negative sale ran below the panel');
+  assert(scale(-0.02352) > scale(0), 'negative sale must draw below zero');
+  assert(scale(0.8) > 30, 'planner estimate ran above the panel');
+});
+
+Deno.test('the price axis includes high sale prices and negative buy prices', () => {
+  const [min, max] = priceDomain([-0.06, null], [3], [NaN, Infinity]);
+  assert(min < -0.06);
+  assert(max > 3);
+  assertEquals(priceDomain([null, NaN]), [0, 0.575]);
+});
 
 Deno.test('a scale maps its domain onto its range', () => {
   assertEquals(x(0), 0);

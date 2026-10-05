@@ -103,6 +103,36 @@ test.describe('plan workbench', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
+  test('shows negative sale prices below zero inside the price panel', async ({ context, page }) => {
+    const input = snapshot();
+    for (const slot of input.slots) {
+      if (slot.import_price_sek_per_kwh !== null) {
+        slot.import_price_sek_per_kwh = 0.7656;
+        slot.export_price_sek_per_kwh = -0.02352;
+      }
+    }
+    await context.route('**/rest/v1/energy_optimisation_current*', route => route.fulfill({
+      json: [{ home_id: HOME_ID, snapshot: input }],
+    }));
+    await page.goto('/portal/energy-modeling?tab=workbench');
+    await page.getByRole('button', { name: /Load the planner|Läs in planerarens/ }).click();
+    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    const sale = chart.locator('#plan-sell-price');
+    // A flat SVG path has zero bounding-box height even when its stroke is drawn.
+    await expect(sale).toHaveAttribute('d', /^M/, { timeout: 30_000 });
+    const zero = chart.locator('line.stroke-foreground[stroke-width="1.25"]').first();
+    const zeroY = Number(await zero.getAttribute('y1'));
+    const bounds = await sale.evaluate((path: SVGPathElement) => {
+      const box = path.getBBox();
+      return { top: box.y, bottom: box.y + box.height };
+    });
+    expect(bounds.top).toBeGreaterThan(zeroY);
+    expect(bounds.bottom).toBeLessThan(98);
+    await chart.hover({ position: { x: 100, y: 50 } });
+    await expect(page.getByText('-0.02 SEK/kWh', { exact: true })).toBeVisible();
+    await chart.screenshot({ path: 'test-results/negative-sell-price.png' });
+  });
+
   test('solves the snapshot in the browser and scores an edit', async ({ page }) => {
     await page.goto('/portal/energy-modeling?tab=workbench');
 

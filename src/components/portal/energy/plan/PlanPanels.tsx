@@ -18,7 +18,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
-  linearScale, midpointLinePath, niceTicks, placeBandLabels, stackBands,
+  linearScale, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
   stepAreaPath, stepBandPath, stepLinePath, type BandLabelPlacement, type Scale,
 } from '@/lib/energy-shift/plan-chart-geometry';
 import {
@@ -216,8 +216,8 @@ const PlanPanels: React.FC<{
     const hasPlannerPrice = plannerBuy.some(value => value !== null);
     const hasModelledPrice = !realPrices && modelledBuy.some(value => value !== null);
     const bands = priceBands(buy);
-    const priceMax = Math.max(0.5, ...[...buy, ...plannerBuy].filter((v): v is number => v !== null)) * 1.15;
-    const priceY = linearScale([0, priceMax], [price.top + price.height, price.top]);
+    const [priceMin, priceMax] = priceDomain(buy, sell, plannerBuy);
+    const priceY = linearScale([priceMin, priceMax], [price.top + price.height, price.top]);
 
     // --- Flows: into the house above zero, out of it below ----------------
     const flows = powerFlowMagnitudes(rows);
@@ -263,7 +263,7 @@ const PlanPanels: React.FC<{
 
     return {
       x, axisY, height: axisY + 42, scoreStrip,
-      price, priceY, priceMax, buy, sell, bands,
+      price, priceY, priceMin, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
@@ -272,7 +272,7 @@ const PlanPanels: React.FC<{
   }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC]);
 
   const {
-    x, axisY, height, scoreStrip, price, priceY, priceMax, buy, sell, bands,
+    x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
@@ -465,13 +465,22 @@ const PlanPanels: React.FC<{
               </text>
             </g>
           )}
-          <Gridlines ticks={niceTicks(0, priceMax, 3)} y={priceY} format={tick => tick.toFixed(1)} />
+          <Gridlines
+            ticks={niceTicks(priceMin, priceMax, 3)} y={priceY}
+            format={tick => tick.toFixed(tick !== 0 && Math.abs(tick) < 0.1 ? 2 : 1)}
+          />
+          {priceMin < 0 && (
+            <line
+              x1={MARGIN_LEFT} x2={RIGHT} y1={priceY(0)} y2={priceY(0)}
+              className="stroke-foreground" strokeWidth={1.25}
+            />
+          )}
           {/* A thinner wash under the estimated stretch, so the difference is
               legible from across the room rather than only on hover. */}
           <path d={stepAreaPath(quotedBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
           <path d={stepAreaPath(modelledBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.08} />
           <path
-            d={stepLinePath(sell, x, priceY)} fill="none"
+            id="plan-sell-price" d={stepLinePath(sell, x, priceY)} fill="none"
             className="stroke-muted-foreground" strokeWidth={1.25}
           />
           <path

@@ -1381,7 +1381,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v50");
+  assertEquals(plan.model_version, "marginal-value-planner-v51");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1661,7 +1661,7 @@ Deno.test("an unpublished sale price is the published line in the import price, 
   const sale = (buy: number) => 0.8 * buy - 0.64;
   const base = horizon();
   const slots = base.slots.map((slot, index) => {
-    const buy = index < 96 ? (index % 8 < 4 ? 2.4 : 0.9) : null;
+    const buy = index < 96 ? (index % 8 < 4 ? 2.4 : 0.6) : null;
     return { ...slot, import_price_sek_per_kwh: buy, export_price_sek_per_kwh: buy === null ? null : sale(buy) };
   });
   const plan = generateOptimisationPlan(horizon({ slots }), new Date(NOW));
@@ -1671,19 +1671,27 @@ Deno.test("an unpublished sale price is the published line in the import price, 
   for (const slot of estimated) {
     assert(
       // The plan rounds its prices to five decimals.
-      Math.abs(slot.shadow_export_sek_per_kwh - Math.max(0, sale(slot.shadow_import_sek_per_kwh))) < 1e-4,
+      Math.abs(slot.shadow_export_sek_per_kwh - sale(slot.shadow_import_sek_per_kwh)) < 1e-4,
       `${slot.start}: buys at ${slot.shadow_import_sek_per_kwh}, sells at ${slot.shadow_export_sek_per_kwh}`,
     );
   }
   // A share of the import price would put a cheap quarter's sale several times too high.
   const cheapest = estimated.reduce((low, slot) => slot.shadow_import_sek_per_kwh < low.shadow_import_sek_per_kwh ? slot : low);
-  const share = (sale(2.4) / 2.4 + sale(0.9) / 0.9) / 2;
+  assert(cheapest.shadow_export_sek_per_kwh < 0, 'negative estimated sales must not be floored at zero');
+  for (const slot of plan.plans.priority.slots.slice(0, 96)) {
+    assertAlmostEquals(slot.shadow_export_sek_per_kwh, sale(slot.import_price_sek_per_kwh!), 1e-4);
+  }
+  const share = (sale(2.4) / 2.4 + sale(0.6) / 0.6) / 2;
   assert(cheapest.shadow_export_sek_per_kwh < cheapest.shadow_import_sek_per_kwh * share * 0.8, "the cheap end sells for less than a share says");
 
   // With one import price published there is no line to read, and the share stands in.
-  const flat = generateOptimisationPlan(horizon(), new Date(NOW)).plans.priority.slots;
-  assert(flat.slice(96).every((slot) => slot.shadow_export_sek_per_kwh >= 0),
-    "the neutral export outlook must stay nonnegative");
+  const flatSlots = base.slots.map((slot, index) => ({
+    ...slot, import_price_sek_per_kwh: index < 96 ? 0.6 : null,
+    export_price_sek_per_kwh: index < 96 ? -0.16 : null,
+  }));
+  const flat = generateOptimisationPlan(horizon({ slots: flatSlots }), new Date(NOW)).plans.priority.slots;
+  assert(flat.slice(96).every((slot) => slot.shadow_export_sek_per_kwh < 0),
+    "negative sales must also survive a flat published import window");
 });
 
 Deno.test("a home without the equipment stays silent about it", () => {

@@ -279,6 +279,10 @@ const PanelLegend: React.FC<{
         </span>
         {t('Köppris, billigt → dyrt', 'Buy price, cheap → dear')}
       </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-px w-3.5 bg-muted-foreground" aria-hidden="true" />
+        {t('Säljpris · under noll kostar export', 'Sell price · below zero, exporting costs money')}
+      </span>
     </div>
   );
 };
