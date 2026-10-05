@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
@@ -202,6 +202,37 @@ export default function BenchRuleList({
   };
 
   const priceDetail = (rule: ResolvedRule) => {
+    if (rule.key === 'arbitrage_no_export' || rule.key === 'arbitrage_not_full') {
+      const preparationRule = rule.key === 'arbitrage_not_full';
+      return <>
+        <p>{preparationRule
+          ? t(`Varje kvart med säljpris över ${rule.threshold} SEK/kWh ger avdrag om den sista laddningen före den första sådana kvarten inte slutade på 100%. Om ingen laddning gjordes räknas ett fullt batteri vid testfallets början. Urladdning efter den fulla laddningen är tillåten.`,
+            `Every quarter with a sale price above ${rule.threshold} SEK/kWh loses a point if the last charge before the first such quarter did not finish at 100%. If there was no charge, a full battery at the case start counts. Discharge after that full charge is allowed.`)
+          : t(`Varje kvart med säljpris över ${rule.threshold} SEK/kWh ger avdrag om ingen energi exporteras till nätet. All positiv export räknas, från batteriet eller solen, utan minsta energimängd.`,
+            `Every quarter with a sale price above ${rule.threshold} SEK/kWh loses a point if no energy is exported to the grid. Any positive export counts, from battery or solar, with no minimum energy amount.`)}</p>
+        <p className="text-xs text-muted-foreground">{preparationRule
+          ? t('Förberedelsen bedöms en gång före den första möjligheten i hela testfallet. En senare delvis full laddning före den första möjligheten ersätter en tidigare full laddning. Laddning under eller efter den första möjligheten tar inte bort avdragen. Även åtskilda senare högpriskvartar räknas.',
+            'Preparation is assessed once before the first opportunity in the whole case. A later partial charge before that opportunity replaces an earlier full charge. Charging during or after the first opportunity does not remove the penalties. Separated later high-price quarters also count.')
+          : t('Exporten behöver inte vara lika stor i varje kvart. Den mest lönsamma kvarten kan få mest energi.',
+            'Export does not have to be equal across quarters. The most profitable quarter can receive the most energy.')}</p>
+        <p className="text-xs text-muted-foreground">{t('Verkliga säljpriser används, även opublicerade. De två arbitrageavdragen är oberoende och kan tillsammans ge −2 per kvart.',
+          'Actual sale prices are used, including unpublished prices. The two arbitrage deductions are independent and can total −2 per quarter.')}</p>
+        {preparationRule && sides.map(s => {
+          if (!s.series) return null;
+          const preparation = arbitragePreparation(s.series, rule.threshold);
+          if (preparation.firstQuarter < 0) return null;
+          const soc = preparation.lastChargeQuarter === null ? s.series.homeStartSoc : s.series.homeSoc[preparation.lastChargeQuarter];
+          return <div key={s.side} className="flex flex-wrap items-center gap-2 text-xs">
+            <span>{s.label} · {preparation.prepared ? t('Förberett', 'Prepared') : t('Inte förberett', 'Not prepared')} · {soc === null ? '—' : `${soc}%`}</span>
+            <span>{preparation.lastChargeQuarter === null ? t('Testfallets början', 'Case start') : t('Sista laddning', 'Last charge')}</span>
+            {preparation.lastChargeQuarter !== null && <Button size="sm" variant="outline" onClick={() => onSelect(s.side, preparation.lastChargeQuarter!)}>{stamp(s, preparation.lastChargeQuarter)}</Button>}
+            <span>→ {t('Första möjlighet', 'First opportunity')}</span>
+            <Button size="sm" variant="outline" onClick={() => onSelect(s.side, preparation.firstQuarter)}>{stamp(s, preparation.firstQuarter)}</Button>
+          </div>;
+        })}
+        {settings(rule, t('Säljpris över (SEK/kWh)', 'Sale price above (SEK/kWh)'), '0.01')}
+      </>;
+    }
     if (rule.key === 'missed_cheap_quarter') return <>
       <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen last under målet drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
         `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no below-target device draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>

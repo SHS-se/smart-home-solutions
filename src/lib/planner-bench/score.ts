@@ -21,6 +21,9 @@
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
 //     A quarter below 1 SEK/kWh loses one point when a flexible store is below
 //     target but none of the below-target devices draws at least FLEXIBLE_W.
+//     Each quarter with a sale price above 4 SEK/kWh loses a point without
+//     export, and another if the last charge before the first such quarter
+//     did not finish full. Discharge after that charge does not undo preparation.
 //     Two large workloads in one quarter lose one point when the stored audit
 //     proves one can move to a strictly cheaper quarter without worse service,
 //     final inventory or equipment limits. This uses price order across 72 h.
@@ -51,7 +54,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 16;
+export const SCORER_VERSION = 17;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -63,6 +66,8 @@ export const AHEAD_MARGIN = 0.1;
 export const FLEXIBLE_W = 500;
 /** The home battery's target for taking a cheap charging opportunity, percent SOC. */
 export const CHEAP_CHARGE_BATTERY_SOC = 100;
+/** Sale-price threshold for the two arbitrage preferences, SEK/kWh. */
+export const ARBITRAGE_SALE_PRICE = 4;
 
 /** What a rule can see about one quarter. */
 export interface QuarterView {
@@ -86,6 +91,8 @@ export interface QuarterView {
   shortGapDevices: ReadonlySet<GapDevice>;
   /** Home-battery power left for EV charging after exports and other household loads, W. */
   evBatteryW: number;
+  /** The last charge before the first high-sale quarter ended full, or the case started full without a later charge. */
+  arbitragePrepared: boolean;
 }
 
 export interface QuarterRule {
@@ -136,6 +143,19 @@ const missedCheapQuarter = (q: QuarterView, price: number) => {
   ].filter(device => device.below);
   return belowTarget.length > 0 && !belowTarget.some(device => device.watts >= FLEXIBLE_W);
 };
+
+/** Preparation is fixed before the first opportunity for the entire case, including separated later spikes. */
+export function arbitragePreparation(s: BenchSeries, salePrice: number): {
+  firstQuarter: number; lastChargeQuarter: number | null; prepared: boolean;
+} {
+  const firstQuarter = s.exportPrice.findIndex(price => price > salePrice);
+  let lastChargeQuarter: number | null = null;
+  for (let i = 0; i < firstQuarter; i++) {
+    if (s.batteryChargeW[i] > 0) lastChargeQuarter = i;
+  }
+  const soc = lastChargeQuarter === null ? s.homeStartSoc : s.homeSoc[lastChargeQuarter];
+  return { firstQuarter, lastChargeQuarter, prepared: firstQuarter >= 0 && soc !== null && soc >= 100 };
+}
 
 /**
  * Supply attribution on the shared house bus: allocate battery exports and
@@ -197,6 +217,20 @@ export const DEFAULT_RULES: QuarterRule[] = [
     describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no below-target device drawing at least ${FLEXIBLE_W} W`,
     threshold: 1, points: -1,
     fires: missedCheapQuarter, eligibleFrom: () => 0,
+  },
+  {
+    key: 'arbitrage_no_export', about: 'price', label: 'No export during a high sale-price quarter',
+    describe: t => `sale price above ${t} SEK/kWh and no energy exported to the grid`,
+    threshold: ARBITRAGE_SALE_PRICE, points: -1,
+    fires: (q, t) => q.s.exportPrice[q.i] > t && q.s.gridExportW[q.i] <= 0,
+    eligibleFrom: () => 0,
+  },
+  {
+    key: 'arbitrage_not_full', about: 'price', label: 'Battery not fully charged before arbitrage',
+    describe: t => `sale price above ${t} SEK/kWh and the last charge before the first opportunity did not finish at 100% SOC`,
+    threshold: ARBITRAGE_SALE_PRICE, points: -1,
+    fires: (q, t) => q.s.exportPrice[q.i] > t && !q.arbitragePrepared,
+    eligibleFrom: () => 0,
   },
   {
     key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',
@@ -336,6 +370,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const audit = s.audit ?? null;
   const overlapRule = resolved.find(r => r.key === 'large_load_overlap')!;
   const gapThresholds = Object.fromEntries(resolved.map(r => [r.key, r.threshold]));
+  const preparation = arbitragePreparation(s, gapThresholds.arbitrage_not_full);
   const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
@@ -384,6 +419,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       avoidableOverlap: overlapQuarters.has(i),
       shortGapDevices: new Set(shortGaps.filter(gap => gap.from === i).map(gap => gap.device)),
       evBatteryW: evBatterySupplyW(s, i),
+      arbitragePrepared: preparation.prepared,
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
     let score = 0;

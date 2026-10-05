@@ -30,6 +30,8 @@ export interface BenchSeries {
   batteryDischargeW: number[];
   /** Percentages. */
   homeSoc: (number | null)[];
+  /** Home-battery SOC at the case start, percent; null when the series has no initial reading. */
+  homeStartSoc: number | null;
   carSoc: (number | null)[];
   /** Range in the car, km. */
   carKm?: number[];

@@ -9,6 +9,7 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 - **Comfort:** how long the pool and car miss their target levels after those levels could have been reached.
 - **Cheap and dear quarters:** a reward for running flexible load (pool, battery charging, car) where the price was among the plan's cheapest, and the matching loss for buying it from the grid where the price was among the plan's dearest.
 - **Missed cheap quarters:** −1 when purchase price is below 1 SEK/kWh and a flexible store is below target, but no below-target device draws at least 500 W.
+- **High-sale arbitrage:** two independent losses per quarter with sale price strictly above 4 SEK/kWh: −1 for no grid export and −1 for missing full-charge preparation before the first opportunity.
 - **Large workload overlap:** −1 when two loads each exceed 2 kW in the same quarter and a legal move to a cheaper quarter is demonstrated.
 - **Short interruptions:** −1 per avoidable 1–4-quarter gap in EV charging or pool heating when each gap price differs from both bordering running quarters by at most the larger of 10 öre/kWh or 10% of its own absolute price.
 - **Energy timing:** cost improvements demonstrated by a bounded search, shown in SEK and attributed to the decisions they change.
@@ -32,6 +33,8 @@ The rules are one set for the whole bench (`bench_rules`, a single row of change
 | Flexible load bought in a dear quarter | Flexible load drawn from the grid ≥ 500 W, price in the dearest 25 % of the plan's quarters, and not very dear | −1 per quarter |
 | Flexible load bought in a very dear quarter | The same grid draw, price in the dearest 10 % | −2 per quarter |
 | Missed cheap charging or heating quarter | Purchase price < 1 SEK/kWh; battery < 100% SOC, EV below desired range or pool below desired temperature; none of those below-target devices draws ≥ 500 W | −1 per quarter |
+| No export during a high sale-price quarter | Actual sale price > 4 SEK/kWh and grid export is zero | −1 per quarter |
+| Battery not fully charged before arbitrage | Actual sale price > 4 SEK/kWh and the last battery charge before the first qualifying quarter did not finish at 100% SOC | −1 per quarter |
 | Large workloads overlap with cheaper capacity available | At least two of pool heating, EV charging and home battery charging each strictly exceed 2 kW; one has a demonstrated feasible move to a strictly cheaper quarter anywhere in the 72 h | −1 per overlapping source quarter |
 | EV supplied by home battery | Positive home-battery power attributed to EV charging after supplying all non-EV household demand and excluding battery exports and simultaneous battery charging | −1 per quarter |
 | Short interruption in EV charging | A feasible continuous alternative exists for a bracketed 1–4-quarter charging gap; each gap price differs from both bordering running quarters by at most max(0.10 SEK/kWh, 10% of its own absolute price) | −1 at the first gap quarter |
@@ -40,6 +43,28 @@ The rules are one set for the whole bench (`bench_rules`, a single row of change
 These judge where flexible load ran, not that less could have been spent: a plan that consumes more in cheap quarters gains points, whatever supplied it. The dear-quarter loss counts only what is bought: the flexible load, up to what the quarter imported from the grid. Flexible load is the load there was a choice about, so the quarter's import is counted as its first, and load the sun or the battery carries loses nothing. A dear-quarter loss needs no proved alternative, so it can fall on the same quarter as an energy-timing finding. Quarters at the same price share a rank, so in a plan with one price throughout every quarter is both very cheap and very dear, and the two cancel.
 
 The missed-cheap-quarter rule applies to single quarters, including the first quarter and isolated low-price slots. It compares end-of-quarter store levels with the exact comfort targets, without the comfort rules’ shortfall bands or recovery grace period. The home battery target is full (100% SOC). At least one store must be below target; any one below-target device drawing at least 500 W avoids the penalty. Power from devices already at or above target does not count, and several draws below 500 W are not added together. Multiple idle stores still lose only one point per quarter. Actual purchase prices are used across all 72 hours, including unpublished prices, like the percentile rules; zero and negative prices qualify. This is a charging/heating preference with no alternative-schedule search, and can stack with other rules. The price threshold, points and enabled state use the shared bench rule settings.
+
+### High-sale arbitrage
+
+For each rule, a qualifying quarter has an **actual sale price strictly above 4 SEK/kWh** by default. Exactly 4 does not qualify. These use the sale price, not the purchase price, across the whole case, including unpublished prices.
+
+1. **Export participation:** deduct one point in each qualifying quarter with no grid export. Any positive export satisfies the rule, from solar or the battery. There is no minimum energy amount and no requirement to export equally in each quarter, so the best-priced quarter can receive most energy.
+2. **Full-charge preparation:** find the first qualifying quarter in the case. Look strictly before it for the last quarter with positive battery charging. Preparation succeeds if the battery ended that charging quarter at 100% SOC. If there was no prior charging, preparation succeeds only if the battery started the case full. An earlier full charge does not count when followed by a later partial recharge before the first opportunity. Discharge after the qualifying full charge is allowed: SOC need not still be 100% when high sale prices begin.
+
+Preparation is assessed once for the whole case. If it failed before the first opportunity, every qualifying quarter loses one point under the preparation rule, even if the battery charges fully during or after that first opportunity. Separated later price spikes do not reset preparation. A qualifying first quarter is assessed against the initial battery SOC. No qualifying quarters means neither rule fires.
+
+The rules are independent and can stack with each other and existing rules. With three qualifying quarters:
+
+| Prepared beforehand | Export in every qualifying quarter | Export penalty | Preparation penalty | Total arbitrage penalty |
+|---|---|---|---|---|
+| Yes | Yes | 0 | 0 | 0 |
+| Yes | No export in any | −3 | 0 | −3 |
+| No | Yes | 0 | −3 | −3 |
+| No | No export in any | −3 | −3 | −6 |
+
+Each rule has its own shared enabled state, price threshold and points setting. Editing the preparation threshold also changes which quarter is its first opportunity. These are benchmark preferences; they require no alternative-schedule witness, profit calculation or additional physical constraint. The referee stores the initial battery SOC so both stored and browser-preview scores use the same preparation evidence.
+
+### Workload overlap
 
 The overlap rule uses **price order, not a percentile band**. It tries strictly cheaper quarters cheapest first against the original bookings. A cheaper quarter is filled when no tested legal transfer can fit without worsening service, reducing any final store or exceeding equipment or grid limits. Charger moves stay on whole amps, pool moves use whole running quarters, and battery transfers respect intervening inventory. A partially filled quarter can take a partial legal booking. The source loses one point if a witness is found, even with three large loads; the destination loses no overlap point. A lone large load, two loads of exactly 2 kW and equal-price quarters are exempt. Base load, hot water and battery discharge are excluded.
 

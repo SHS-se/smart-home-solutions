@@ -9,7 +9,7 @@ function series(): BenchSeries {
     start: ['2026-10-05T00:00:00Z'], hours: [0.25], published: [1],
     importPrice: [0.9999], exportPrice: [0], solarW: [0], loadW: [500],
     poolW: [0], hotWaterW: [0], carW: [0], gridImportW: [500], gridExportW: [0],
-    batteryChargeW: [0], batteryDischargeW: [0], homeSoc: [100],
+    batteryChargeW: [0], batteryDischargeW: [0], homeSoc: [100], homeStartSoc: 100,
     carSoc: [80], carKm: [300], carConnected: [1], poolC: [30], costSek: [0],
     comfort: { pool_target_c: 30, ev_target_km: 300, pool_start_c: 30, ev_start_km: 300,
       poolReachableC: [35], carReachableKm: [470] },

@@ -36,7 +36,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const s: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
+    homeSoc: [], homeStartSoc: 50, carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
   };
   let temp = 29.5;
   for (let i = 0; i < n; i++) {
@@ -130,8 +130,20 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || arbitrage ? structuredClone(PLANS) : PLANS;
+  if (arbitrage) {
+    for (const [key, plan] of Object.entries(plans)) {
+      for (const i of [24, 25, 27]) {
+        plan.exportPrice[i] = i === 25 ? 6 : 4.25;
+        plan.gridExportW[i] = key.startsWith(TEST.sha) ? (i === 25 ? 5000 : 0.1) : 0;
+      }
+      if (key.startsWith(TEST.sha)) {
+        plan.batteryChargeW[8] = 2000;
+        plan.homeSoc[8] = 100;
+      }
+    }
+  }
   if (overlap) {
     for (const [key, plan] of Object.entries(plans)) {
       plan.audit!.overlap = { thresholdW: 2000, overlappingQuarters: [24], moves: [
@@ -407,6 +419,31 @@ test.describe('planner bench', () => {
     expect((captured.updated[0].dataset as BenchScenarioData).start_state.pool_water_c).toBe(27);
     await expect.poll(() => captured.dispatched.length).toBe(1);
 
+  });
+
+  test('shows independent high-sale export and full-charge preparation penalties', async ({ context, page }) => {
+    await mockBackend(context, { arbitrage: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const row = (key: string) => page.locator(`#bench-rule-${key}`);
+    for (const key of ['arbitrage_no_export', 'arbitrage_not_full']) {
+      await expect(row(key)).toContainText(/3 (q|kv) · −3/);
+      await row(key).getByRole('button').first().click();
+      await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue('4');
+      await expect(row(key).getByLabel(/Sale price above \(SEK\/kWh\)|Säljpris över \(SEK\/kWh\)/)).toBeVisible();
+      if (key === 'arbitrage_no_export') {
+        await expect(row(key)).toContainText(/Any positive export counts|All positiv export räknas/);
+      } else {
+        await expect(row(key)).toContainText(/Discharge after that full charge is allowed|Urladdning efter den fulla laddningen är tillåten/);
+        await expect(row(key)).toContainText(/Prepared · 100%|Förberett · 100%/);
+        await expect(row(key)).toContainText(/Not prepared · 50%|Inte förberett · 50%/);
+        await page.locator('#bench-rules').screenshot({ path: test.info().outputPath('arbitrage-rules-desktop.png') });
+        await page.setViewportSize({ width: 390, height: 844 });
+        expect(await row(key).evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+        await row(key).screenshot({ path: test.info().outputPath('arbitrage-rule-mobile.png') });
+      }
+      await row(key).getByRole('button').first().click();
+    }
   });
 
   test('lists triggered rules for the shown period, explains them on click, and saves rules for every case', async ({ context, page }) => {

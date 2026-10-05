@@ -278,7 +278,8 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [],
+    homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
+    carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [],
     comfort: {
       pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
       pool_start_c: sim.start.poolC, ev_start_km: r1(sim.start.evKwh / h.car.battery.kwh_per_km),

@@ -40,7 +40,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
     start: [], hours: [], published: [], importPrice: [], exportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], carSoc: [], carConnected: [], poolC: [], costSek: [],
+    homeSoc: [], homeStartSoc: null, carSoc: [], carConnected: [], poolC: [], costSek: [],
   };
   slots.forEach((slot, i) => {
     const hours = slot.duration_hours ?? 0.25;
