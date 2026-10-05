@@ -9,11 +9,16 @@ import type { ServiceGuard } from './service';
 
 export const SHORT_GAP_MAX_QUARTERS = 4;
 export const SHORT_GAP_PRICE_TOLERANCE = 0.1;
+export const SHORT_GAP_PRICE_FRACTION = 0.1;
+/** Absolute prices make the relative tolerance meaningful at negative prices. */
+export const shortGapPriceTolerance = (gapPrice: number, minimum: number) =>
+  Math.max(minimum, SHORT_GAP_PRICE_FRACTION * Math.abs(gapPrice));
 export type GapDevice = 'pool' | 'ev';
 export interface ShortGap { device: GapDevice; from: number; /** Exclusive: the restart quarter. */ to: number }
 export interface GapChange { quarter: number; beforeW: number; afterW: number }
 export interface ShortGapWitness extends ShortGap { changes: GapChange[] }
 export interface ShortGapAudit {
+  /** Configured minima; each gap quarter also allows 10% of its absolute price. */
   priceTolerance: Record<GapDevice, number>;
   /** All bracketed 1–4-quarter gaps, before the price and feasibility checks. */
   candidates: ShortGap[];
@@ -41,8 +46,11 @@ export function auditShortGaps(
       if (to === values.length || length > SHORT_GAP_MAX_QUARTERS) continue;
       const gap = { device, from, to };
       out.candidates.push(gap);
-      if (prices.slice(from, to).some(p => Math.abs(p - prices[from - 1]) > priceTolerance[device] + 1e-9
-        || Math.abs(p - prices[to]) > priceTolerance[device] + 1e-9)) continue;
+      if (prices.slice(from, to).some(p => {
+        const tolerance = shortGapPriceTolerance(p, priceTolerance[device]);
+        return Math.abs(p - prices[from - 1]) > tolerance + 1e-9
+          || Math.abs(p - prices[to]) > tolerance + 1e-9;
+      })) continue;
       let left = from - 1, right = to + 1;
       while (left > 0 && values[left - 1] > 0) left--;
       while (right < values.length && values[right] > 0) right++;

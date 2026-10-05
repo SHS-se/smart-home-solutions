@@ -273,7 +273,10 @@ test.describe('planner bench', () => {
       await row.getByRole('button', { name: /^Test: 1 / }).click();
       await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
       await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
-      await expect(explanation).toContainText(/10 .*öre/);
+      await expect(explanation).toContainText(/(?:larger of|större av) 10 .*öre/);
+      await expect(explanation).toContainText(/10% (?:of each gap quarter's absolute price|av varje avbrottskvarts absoluta pris)/);
+      await expect(row).toContainText(/Zero prices use the öre threshold|Nollpris använder öresgränsen/);
+      await expect(row).toContainText(/negative prices use their magnitude|vid negativa priser används prisets storlek/);
       await row.locator('details').last().locator('summary').click();
       await expect(row.locator('details').last()).toContainText(`0.00 → ${power} kW`);
     }

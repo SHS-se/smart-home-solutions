@@ -52,21 +52,40 @@ Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous 
   }
 });
 
-Deno.test('short gaps compare every gap price with both bordering prices, including negative prices and exactly 10 öre', () => {
-  const d = interrupted('ev', 2);
-  for (const price of [-1, 0, 1]) {
-    assertEquals(audit(world({ buy: i => within(i, 8, 10) ? price + 0.1 : price }), d).gaps.length, 1);
-    assertEquals(audit(world({ buy: i => i === 9 ? price + 0.1001 : price }), d).gaps.length, 0);
-    // Similar to the preceding quarter alone is insufficient.
-    assertEquals(audit(world({ buy: i => i === 10 ? price + 0.2 : price }), d).gaps.length, 0);
+Deno.test('gap prices use the larger of 10 öre and 10% of their own magnitude, inclusive at both boundaries', () => {
+  for (const device of ['ev', 'pool'] as const) {
+    const d = interrupted(device, 2);
+    for (const price of [-3, -1, -0.05, 0, 0.05, 1, 3]) {
+      const tolerance = Math.max(0.1, Math.abs(price) * 0.1);
+      const buy = (i: number) => within(i, 8, 10) ? price : i < 8 ? price - tolerance : price + tolerance;
+      assertEquals(audit(world({ buy }), d).gaps.length, 1, `${device}, ${price}`);
+      // Either bordering running price can disqualify the whole gap.
+      for (const border of [7, 10]) {
+        assertEquals(audit(world({ buy: i => i === border ? buy(i) + (border === 7 ? -0.0001 : 0.0001) : buy(i) }), d).gaps.length, 0);
+      }
+    }
   }
 });
 
-Deno.test('the default 10 öre tolerance accepts gaps 6–8 öre above adjacent running quarters for both devices', () => {
-  const c = world({ buy: i => i === 7 ? 1.8122 : i === 8 ? 1.88665 : i === 9 ? 1.82131 : 1.8 });
+Deno.test('each idle quarter uses its own tolerance, not the maximum or average price of the gap', () => {
   for (const device of ['ev', 'pool'] as const) {
-    const result = evaluate(c, recordOf(c, interrupted(device, 1)), {});
-    assertEquals(result.score.counts[`${device}_short_gap`], 1);
+    const c = world({ buy: i => i === 8 ? 2 : i === 9 ? 1.63 : 1.8 });
+    assertEquals(audit(c, interrupted(device, 2)).gaps, []);
+  }
+});
+
+Deno.test('the combined tolerance accepts the discussed 1-, 2- and 4-quarter gap price windows for both devices', () => {
+  const windows = [
+    [1.8122, 1.88665, 1.82131],
+    [1.8122, 1.88665, 1.82131, 1.70208],
+    [1.68275, 1.76646, 1.7636, 1.72264, 1.68929, 1.63933],
+  ];
+  for (const prices of windows) {
+    const c = world({ buy: i => i >= 7 && i < 7 + prices.length ? prices[i - 7] : 1.8 });
+    for (const device of ['ev', 'pool'] as const) {
+      const result = evaluate(c, recordOf(c, interrupted(device, prices.length - 2)), {});
+      assertEquals(result.score.counts[`${device}_short_gap`], 1);
+    }
   }
 });
 
@@ -105,7 +124,7 @@ Deno.test('gap witnesses must preserve service; a colder pool cannot trade servi
 });
 
 Deno.test('price and comfort threshold edits require recomputing gap witnesses; stale audits supply no penalties', () => {
-  const c = world({ buy: i => i === 8 ? 1.04 : 1 }), d = interrupted('ev', 1);
+  const c = world({ buy: i => i === 8 ? 0.04 : 0 }), d = interrupted('ev', 1);
   const record = recordOf(c, d);
   const result = evaluate(c, record, {});
   assertEquals(result.score.counts.ev_short_gap, 1);

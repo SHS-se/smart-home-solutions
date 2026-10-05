@@ -45,11 +45,11 @@ import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type 
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 import { LARGE_WORKLOAD_W } from './large-load-overlap';
-import { SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
+import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 14;
+export const SCORER_VERSION = 15;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -194,7 +194,7 @@ export const DEFAULT_RULES: QuarterRule[] = [
   ...(['ev', 'pool'] as const).map((device): QuarterRule => ({
     key: `${device}_short_gap`, about: 'price',
     label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
-    describe: t => `an avoidable 1–4-quarter gap, each gap price within ${Math.round(t * 100)} öre/kWh of both bordering running quarters`,
+    describe: t => `an avoidable 1–4-quarter gap, each gap price within the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price, compared with both bordering running quarters`,
     threshold: SHORT_GAP_PRICE_TOLERANCE, points: -1,
     fires: q => q.shortGapDevices.has(device), eligibleFrom: () => 0,
   })),

@@ -12,6 +12,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { AHEAD_MARGIN, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
+import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
 const focus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
@@ -203,8 +204,8 @@ export default function BenchRuleList({
   const priceDetail = (rule: ResolvedRule) => {
     const gapDevice = rule.key === 'ev_short_gap' ? 'ev' : rule.key === 'pool_short_gap' ? 'pool' : null;
     if (gapDevice) return <>
-      <p>{t(`Ett avdrag per avbrott på 1–4 kvartar i ${gapDevice === 'ev' ? 'billaddning' : 'poolvärme'}. Lasten måste vara igång direkt före och efter avbrottet. Varje pris under avbrottet ska ligga inom ${Math.round(rule.threshold * 100)} öre/kWh från båda angränsande driftkvartarna.`,
-        `One deduction per 1–4-quarter interruption in ${gapDevice === 'ev' ? 'EV charging' : 'pool heating'}. The device must run immediately before and after the gap. Each gap price must be within ${Math.round(rule.threshold * 100)} öre/kWh of both bordering running quarters.`)}</p>
+      <p>{t(`Ett avdrag per avbrott på 1–4 kvartar i ${gapDevice === 'ev' ? 'billaddning' : 'poolvärme'}. Lasten måste vara igång direkt före och efter avbrottet. Varje avbrottskvart jämförs med båda angränsande driftkvartarna. Tillåten prisskillnad är det större av ${Math.round(rule.threshold * 100)} öre/kWh eller ${SHORT_GAP_PRICE_FRACTION * 100}% av avbrottskvartens absoluta pris. Nollpris använder öresgränsen; vid negativa priser används prisets storlek utan minustecknet.`,
+        `One deduction per 1–4-quarter interruption in ${gapDevice === 'ev' ? 'EV charging' : 'pool heating'}. The device must run immediately before and after the gap. Each gap quarter is compared with both bordering running quarters. The allowed price difference is the larger of ${Math.round(rule.threshold * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of that gap quarter's absolute price. Zero prices use the öre threshold; negative prices use their magnitude without the minus sign.`)}</p>
       <p>{t('Avdrag ges bara när befintlig energi kan flyttas inom de två angränsande driftperioderna och avbrottet till en sammanhängande period, med tillåtna effektnivåer, oförsämrad service och oförminskade slutlager. Detta är en preferens för sammanhängande drift, inte ett påstående om lägre elkostnad. Alternativen prövas var för sig mot originalplanen vid verkliga priser.',
         'A penalty requires an alternative that rearranges existing energy within the two adjacent runs and their gap into one continuous run, with legal power levels, unchanged or better service and no reduction in final stores. This is a preference for continuous operation, not a claim of bill savings. Alternatives are tested independently against the original plan at actual prices.')}</p>
       {sides.map(s => auditOf(s)?.shortGaps.gaps.filter(g => g.device === gapDevice && inRange(g.from)).map(g => <div key={`${s.side}-${g.from}`} className="space-y-2">
@@ -221,7 +222,7 @@ export default function BenchRuleList({
           </li>)}</ul>
         </details>
       </div>))}
-      {settings(rule, t('Prisskillnad högst (SEK/kWh)', 'Maximum price difference (SEK/kWh)'), '0.01')}
+      {settings(rule, t('Minsta pristolerans (SEK/kWh)', 'Minimum price tolerance (SEK/kWh)'), '0.01')}
     </>;
     if (rule.key === 'ev_from_home_battery') return <>
       <p>{t(`En kvart ger avdrag när mer än ${rule.threshold} W från hembatteriet tillskrivs billaddning. Batteriet får försörja baslast, pool och andra laster samtidigt som bilen laddas. Vi räknar först bort samtidig batteriladdning och export, och tilldelar sedan batteriets effekt till alla andra hushållslaster före bilen. Bara det som återstår för bilen ger avdrag.`,
