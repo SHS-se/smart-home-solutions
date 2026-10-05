@@ -12,6 +12,7 @@ import { test, expect, type BrowserContext, type Page } from '../playwright-fixt
 import { planStats } from '../src/lib/planner-bench/stats';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from '../src/lib/planner-bench/opportunities';
 import { storedScore } from '../src/lib/planner-bench/score';
+import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { LANES } from '../src/lib/planner-bench/lanes';
@@ -75,7 +76,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   s.audit = {
     version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
     overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
-    shortGaps: { priceTolerance: { pool: 0.05, ev: 0.05 }, candidates: [], gaps: [] },
+    shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
     guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],
@@ -141,7 +142,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
   if (gaps) {
     for (const plan of Object.values(plans)) {
       plan.audit!.shortGaps = {
-        priceTolerance: { pool: 0.05, ev: 0.05 },
+        priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE },
         candidates: [{ device: 'ev', from: 24, to: 26 }, { device: 'pool', from: 28, to: 29 }],
         gaps: [
           { device: 'ev', from: 24, to: 26, changes: [
@@ -272,7 +273,7 @@ test.describe('planner bench', () => {
       await row.getByRole('button', { name: /^Test: 1 / }).click();
       await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
       await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
-      await expect(explanation).toContainText(/5 .*öre/);
+      await expect(explanation).toContainText(/10 .*öre/);
       await row.locator('details').last().locator('summary').click();
       await expect(row.locator('details').last()).toContainText(`0.00 → ${power} kW`);
     }

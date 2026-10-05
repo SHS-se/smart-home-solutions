@@ -1,3 +1,4 @@
+import { SHORT_GAP_PRICE_TOLERANCE } from './short-gaps.ts';
 import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from './opportunities.ts';
 import { planSeries } from './series.fixture.ts';
@@ -241,7 +242,7 @@ Deno.test('EV battery supply is charged only after battery exports and other hou
 const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
   overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
-  shortGaps: { priceTolerance: { pool: 0.05, ev: 0.05 }, candidates: [], gaps: [] },
+  shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],
   rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as OpportunityAudit['rules'],

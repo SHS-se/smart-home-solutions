@@ -8,7 +8,7 @@ import { scheduleWitness } from './schedule-witness';
 import type { ServiceGuard } from './service';
 
 export const SHORT_GAP_MAX_QUARTERS = 4;
-export const SHORT_GAP_PRICE_TOLERANCE = 0.05;
+export const SHORT_GAP_PRICE_TOLERANCE = 0.1;
 export type GapDevice = 'pool' | 'ev';
 export interface ShortGap { device: GapDevice; from: number; /** Exclusive: the restart quarter. */ to: number }
 export interface GapChange { quarter: number; beforeW: number; afterW: number }

@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals } from '@std/assert';
-import { auditShortGaps, type ShortGapWitness } from './short-gaps.ts';
+import { auditShortGaps, SHORT_GAP_PRICE_TOLERANCE, type ShortGapWitness } from './short-gaps.ts';
 import { HOUSEHOLD } from './household.ts';
 import { simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
@@ -10,7 +10,7 @@ import type { BenchCase } from './case.ts';
 import type { PlanRecord } from './types.ts';
 
 const audit = (c: BenchCase, d: Decisions) => auditShortGaps(c, HOUSEHOLD, TARGETS, d,
-  simulate(c, HOUSEHOLD, d), DEFAULT_SERVICE_GUARD, { pool: 0.05, ev: 0.05 });
+  simulate(c, HOUSEHOLD, d), DEFAULT_SERVICE_GUARD, { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE });
 const interrupted = (device: 'pool' | 'ev', length: number) => plan({
   [device]: (i: number) => within(i, 5, 8) || within(i, 8 + length, 11 + length) ? device === 'pool' ? 3764 : 3450 : 0,
 });
@@ -52,13 +52,21 @@ Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous 
   }
 });
 
-Deno.test('short gaps compare every gap price with both bordering prices, including negative prices and exactly 5 öre', () => {
+Deno.test('short gaps compare every gap price with both bordering prices, including negative prices and exactly 10 öre', () => {
   const d = interrupted('ev', 2);
   for (const price of [-1, 0, 1]) {
-    assertEquals(audit(world({ buy: i => within(i, 8, 10) ? price + 0.05 : price }), d).gaps.length, 1);
-    assertEquals(audit(world({ buy: i => i === 9 ? price + 0.0501 : price }), d).gaps.length, 0);
+    assertEquals(audit(world({ buy: i => within(i, 8, 10) ? price + 0.1 : price }), d).gaps.length, 1);
+    assertEquals(audit(world({ buy: i => i === 9 ? price + 0.1001 : price }), d).gaps.length, 0);
     // Similar to the preceding quarter alone is insufficient.
-    assertEquals(audit(world({ buy: i => i === 10 ? price + 0.1 : price }), d).gaps.length, 0);
+    assertEquals(audit(world({ buy: i => i === 10 ? price + 0.2 : price }), d).gaps.length, 0);
+  }
+});
+
+Deno.test('the default 10 öre tolerance accepts gaps 6–8 öre above adjacent running quarters for both devices', () => {
+  const c = world({ buy: i => i === 7 ? 1.8122 : i === 8 ? 1.88665 : i === 9 ? 1.82131 : 1.8 });
+  for (const device of ['ev', 'pool'] as const) {
+    const result = evaluate(c, recordOf(c, interrupted(device, 1)), {});
+    assertEquals(result.score.counts[`${device}_short_gap`], 1);
   }
 });
 

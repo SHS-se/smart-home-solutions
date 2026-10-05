@@ -49,7 +49,7 @@ import { SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 13;
+export const SCORER_VERSION = 14;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
