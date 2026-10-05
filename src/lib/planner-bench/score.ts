@@ -19,6 +19,8 @@
 //     more of that load is bought from the grid, the quarter loses a point
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
+//     A quarter below 1 SEK/kWh loses one point when a flexible store is below
+//     target but none of the below-target devices draws at least FLEXIBLE_W.
 //     Two large workloads in one quarter lose one point when the stored audit
 //     proves one can move to a strictly cheaper quarter without worse service,
 //     final inventory or equipment limits. This uses price order across 72 h.
@@ -49,7 +51,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 15;
+export const SCORER_VERSION = 16;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -59,6 +61,8 @@ export const DAY_QUARTERS = 96;
 export const AHEAD_MARGIN = 0.1;
 /** Pool, battery charging and car together at or above this count as a flexible purchase. */
 export const FLEXIBLE_W = 500;
+/** The home battery's target for taking a cheap charging opportunity, percent SOC. */
+export const CHEAP_CHARGE_BATTERY_SOC = 100;
 
 /** What a rule can see about one quarter. */
 export interface QuarterView {
@@ -122,6 +126,17 @@ const pct = (t: number) => `${Math.round(t * 100)} %`;
 const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
 const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && q.dearRank < t;
 
+const missedCheapQuarter = (q: QuarterView, price: number) => {
+  if (q.s.importPrice[q.i] >= price) return false;
+  const s = q.s, i = q.i, c = s.comfort;
+  const belowTarget = [
+    { below: s.homeSoc[i] !== null && s.homeSoc[i] < CHEAP_CHARGE_BATTERY_SOC, watts: s.batteryChargeW[i] },
+    { below: !!c && !!s.carKm && s.carKm[i] < c.ev_target_km, watts: s.carW[i] },
+    { below: !!c && s.poolC[i] !== null && s.poolC[i] < c.pool_target_c, watts: s.poolW[i] },
+  ].filter(device => device.below);
+  return belowTarget.length > 0 && !belowTarget.some(device => device.watts >= FLEXIBLE_W);
+};
+
 /**
  * Supply attribution on the shared house bus: allocate battery exports and
  * non-EV demand first. Only the remainder can be attributed to the EV.
@@ -176,6 +191,12 @@ export const DEFAULT_RULES: QuarterRule[] = [
   {
     key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
     fires: dearBuy, eligibleFrom: () => 0,
+  },
+  {
+    key: 'missed_cheap_quarter', about: 'price', label: 'Missed cheap charging or heating quarter',
+    describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no below-target device drawing at least ${FLEXIBLE_W} W`,
+    threshold: 1, points: -1,
+    fires: missedCheapQuarter, eligibleFrom: () => 0,
   },
   {
     key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',

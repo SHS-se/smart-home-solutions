@@ -428,6 +428,13 @@ test.describe('planner bench', () => {
     await row('dearest_load').getByRole('button').first().click();
     await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W from the grid .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W från nätet .* dyraste 10 %/);
     await row('dearest_load').getByRole('button').first().click();
+    await expect(row('missed_cheap_quarter')).toContainText(/\d+ (q|kv) · −\d+/);
+    await row('missed_cheap_quarter').getByRole('button').first().click();
+    await expect(row('missed_cheap_quarter')).toContainText(/purchase price is below 1 SEK\/kWh|inköpspriset är under 1 SEK\/kWh/);
+    await expect(row('missed_cheap_quarter')).toContainText(/home battery target is 100%|hembatteriets mål är 100%/);
+    await expect(page.locator('#bench-missed_cheap_quarter-threshold')).toHaveValue('1');
+    await expect(page.getByLabel(/Purchase price below \(SEK\/kWh\)|Inköpspris under \(SEK\/kWh\)/)).toBeVisible();
+    await row('missed_cheap_quarter').getByRole('button').first().click();
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_low')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();

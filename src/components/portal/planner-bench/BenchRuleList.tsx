@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
@@ -202,6 +202,13 @@ export default function BenchRuleList({
   };
 
   const priceDetail = (rule: ResolvedRule) => {
+    if (rule.key === 'missed_cheap_quarter') return <>
+      <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen last under målet drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
+        `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no below-target device draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per kvart. Även en ensam billig kvart räknas, från planens början och vid verkliga priser, även opublicerade. Lagernivåer mäts vid kvartens slut. En enda last under målet med tillräcklig effekt undviker avdraget.',
+        'At most one deduction per quarter. Isolated cheap quarters count from the start of the plan, at actual prices including unpublished prices. Store levels are measured at the end of the quarter. One below-target device drawing enough power avoids the deduction.')}</p>
+      {settings(rule, t('Inköpspris under (SEK/kWh)', 'Purchase price below (SEK/kWh)'), '0.01')}
+    </>;
     const gapDevice = rule.key === 'ev_short_gap' ? 'ev' : rule.key === 'pool_short_gap' ? 'pool' : null;
     if (gapDevice) return <>
       <p>{t(`Ett avdrag per avbrott på 1–4 kvartar i ${gapDevice === 'ev' ? 'billaddning' : 'poolvärme'}. Lasten måste vara igång direkt före och efter avbrottet. Varje avbrottskvart jämförs med båda angränsande driftkvartarna. Tillåten prisskillnad är det större av ${Math.round(rule.threshold * 100)} öre/kWh eller ${SHORT_GAP_PRICE_FRACTION * 100}% av avbrottskvartens absoluta pris. Nollpris använder öresgränsen; vid negativa priser används prisets storlek utan minustecknet.`,
