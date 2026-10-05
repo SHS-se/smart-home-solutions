@@ -1,4 +1,4 @@
-import { generateOptimisationPlan, dispatchWorkbench, poolStopTemperature, type OptimisationSnapshot, validateSnapshot } from "./energy-optimisation.ts";
+import { generateOptimisationPlan, dispatchWorkbench, dispatchWorkbenchInputs, poolStopTemperature, type OptimisationSnapshot, validateSnapshot } from "./energy-optimisation.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 import { NOW, assert, input, horizon, routedEvService, splitHorizon, poolKwhBetween } from "./energy-optimisation.fixture.ts";
@@ -1380,7 +1380,7 @@ Deno.test("schema 6 with pool state dispatches by temperature, not by budget", (
   const plan = generateOptimisationPlan(snapshot, new Date(NOW));
 
   assertEquals(plan.schema_version, 6);
-  assertEquals(plan.model_version, "marginal-value-planner-v49");
+  assertEquals(plan.model_version, "marginal-value-planner-v50");
   // Asserted explicitly: an earlier version of this test checked the pool
   // energy but not the status, and so passed while every schema 6 plan was
   // reported infeasible by validations that still assumed fixed blocks.
@@ -1627,12 +1627,15 @@ Deno.test("a measured pool response replaces the loss by temperature and the COP
   }), new Date(NOW));
   const store = (plan: ReturnType<typeof generateOptimisationPlan>) =>
     plan.resolved_value_stores!.find((entry) => entry.key === "pool")!;
-  const hours = planAt(30, true).plans.priority.slots.reduce((total, slot) => total + slot.duration_hours, 0);
-
-  // Holding 30 °C costs what the pool was measured to lose there, not what a loss coefficient says.
-  const upkeep = (plan: ReturnType<typeof generateOptimisationPlan>) => (store(plan).derivation as { upkeep: number }).upkeep;
-  assert(Math.abs(upkeep(planAt(30, true)) - 0.04 * hours) < 0.01, `measured upkeep ${upkeep(planAt(30, true))} over ${hours} h`);
-  assert(upkeep(planAt(30, false)) > upkeep(planAt(30, true)) + 0.2, `the loss coefficient asks for something else: ${upkeep(planAt(30, false))} against ${upkeep(planAt(30, true))}`);
+  // Comfort valuation no longer contains a guessed upkeep demand. Its physical
+  // transition still uses the measured rate and preserves the cooling stall.
+  const physical = dispatchWorkbenchInputs(horizon({
+    pool: { water_temperature_c: 30, volume_m3: 55 },
+    comfort: { pool: { target_c: 30 } },
+    pool_model: { loss_kw_per_k: 0.35, rated_cop: null, cop_per_air_c: null, response },
+  }), [], undefined, new Date(NOW))!.stores.find(entry => entry.key === "pool")!;
+  assert(Math.abs(physical.drift(30, 0) - (30 - 0.04 * .25)) < 1e-9, "measured cooling was replaced");
+  assert(Math.abs(physical.drift(28.875, 0) - (28.875 - 0.015 * .25)) < 1e-9, "measured stall was replaced");
 
   // A kWh buys the measured warmth, one figure wherever the pool is: returns
   // that rose with temperature would leave the dispatch nothing to settle on.

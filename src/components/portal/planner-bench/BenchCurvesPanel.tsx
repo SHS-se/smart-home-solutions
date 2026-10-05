@@ -9,6 +9,7 @@
 import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { UsedCurve } from '@/lib/planner-bench/types';
+import { curvePlotPoints } from '@/lib/planner-bench/curve-plot';
 
 const W = 280, H = 120, PAD = { l: 34, r: 8, t: 8, b: 18 };
 const STORES: { key: string; sv: string; en: string }[] = [
@@ -39,12 +40,12 @@ const BenchCurvesPanel: React.FC<Props> = ({ current, test }) => {
           const b = test?.find(c => c.store === store.key) ?? null;
           const all = [a, b].filter((c): c is UsedCurve => c !== null && c.points.length > 0);
           const unit = UNIT[all[0]?.unit ?? ''] ?? all[0]?.unit ?? '';
-          const xs = all.flatMap(c => [...c.points.map(p => p.at), ...(c.initial_state !== null ? [c.initial_state] : [])]);
+          const xs = all.flatMap(c => [...curvePlotPoints(c).map(p => p.at), ...(c.initial_state !== null ? [c.initial_state] : [])]);
           const ys = all.flatMap(c => c.points.map(p => p.sek_per_unit));
           const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys, 1e-9);
           const sx = (x: number) => PAD.l + (x1 === x0 ? 0.5 : (x - x0) / (x1 - x0)) * (W - PAD.l - PAD.r);
           const sy = (y: number) => H - PAD.b - (y / y1) * (H - PAD.t - PAD.b);
-          const path = (c: UsedCurve) => c.points.map((p, i) => `${i ? 'L' : 'M'}${sx(p.at).toFixed(1)},${sy(p.sek_per_unit).toFixed(1)}`).join(' ');
+          const path = (c: UsedCurve) => curvePlotPoints(c).map((p, i) => `${i ? 'L' : 'M'}${sx(p.at).toFixed(1)},${sy(p.sek_per_unit).toFixed(1)}`).join(' ');
           const note = (c: UsedCurve | null) => c && [
             c.mode,
             c.initial_state !== null ? `${t('start', 'start')} ${c.initial_state.toFixed(1)} ${unit}` : null,

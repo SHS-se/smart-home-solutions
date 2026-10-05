@@ -6,7 +6,6 @@ import {
 } from "./power-envelope.ts";
 import {
   heatPumpLevels,
-  idleCPerHour,
   parseDeviceModels,
   parseHeaterResponse,
   type HeatPumpResponse,
@@ -83,7 +82,7 @@ import {
   horizonReferenceSekPerKwh,
   preferenceFromCurve,
 } from "./value-preferences.ts";
-import { meritOrderCurve, quarterOffers, type MeritOrderEvidence } from "./merit-order.ts";
+import { targetEconomics, type TargetEconomicsEvidence } from "./target-economics.ts";
 import { poolHeaters } from "./pool-devices.ts";
 import { heaterInputResponse } from "./heat-pump-dispatch.ts";
 
@@ -150,7 +149,7 @@ export const SUPPORTED_SNAPSHOT_VERSIONS = [5, 6, 7, 8, 9] as const;
 // v28 emits battery operations and enforces export eligibility and reserves in dispatch.
 // v43 plans measured state beyond a bound as it is, and leaves out only the
 // device whose reading could not be real (`measurement_issues`).
-export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v49";
+export const OPTIMISATION_MODEL_VERSION = "marginal-value-planner-v50";
 /** Schema 5 service sizing also no longer pads energy to a minimum runtime. */
 export const LEGACY_MODEL_VERSION = "thermal-room-planner-v10";
 /**
@@ -486,8 +485,8 @@ export interface OptimisationSnapshot {
   /** Resolved server-side; explicit points are manual unless a generation mode is stated. */
   /**
    * What the owner wants: one number per store. Present, the planner derives
-   * the pool's and the car's value curves itself, from what the energy to hold
-   * these targets costs over the horizon (merit-order.ts), and `value_curves`
+   * the pool's and the car's service utility with target-economics.ts, using
+   * the import reference and the existing urgency policy; `value_curves`
    * for those stores is not read.
    */
   comfort?: { pool?: { target_c: number }; ev?: { target_km: number } } | null;
@@ -782,7 +781,7 @@ export interface OptimisationPlan {
     key: string; curve: UtilityCurve; initial_state: number; max_state?: number;
     units_per_kwh: number; reference_sek_per_kwh: number;
     /** How the curve was derived, when the planner derived it from a target. */
-    derivation?: MeritOrderEvidence;
+    derivation?: TargetEconomicsEvidence;
   }>;
   battery_execution?: BatteryExecutionContract;
   /** Explicit default planning intent: all household consumption is eligible. */
@@ -2561,14 +2560,8 @@ function measuredPoolGain(response: PoolResponse | null | undefined): number | n
 
 /** How far above its target the pool may be heated when energy is cheap, °C. */
 const POOL_OVERSHOOT_C = 2;
-/**
- * How far below its target the pool may drift before it buys heat at any price
- * the horizon offers, °C. Between the target and this, it grows steadily more
- * willing, so it dips a little when energy is dear and never far.
- */
-const POOL_COMFORT_BAND_C = 1;
 /** Spacing of a derived curve's points below the target. */
-const MERIT_STEP = { pool_c: 1, ev_km: 50 };
+const TARGET_CURVE_STEP = { pool_c: 1, ev_km: 50 };
 /** A scale an administrator may set on a derived curve. */
 const validScale = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(4, Math.max(0.25, value)) : 1;
@@ -2886,28 +2879,6 @@ function anchorPreferenceCurve(stored: UtilityCurve, unitsPerKwh: number, refere
   });
 }
 
-/**
- * A merit-order curve with comfort priced in below the target.
- *
- * The merit order says what a degree costs to supply. Left alone it lets the
- * store drift as far below its target as prices make worthwhile, and a pool
- * the owner wants at 30 °C should not sit at 28 °C for a day to save a few
- * kronor. So the value rises over `band` below the target until, a full band
- * down, a unit is worth what the dearest offer in the horizon charges: there
- * the store buys whatever the hour costs. The dispatch bids on the state in
- * each quarter, so this holds through the whole horizon, not just at its end.
- */
-function withComfortPremium(curve: UtilityCurve, target: number, band: number, dearestSekPerUnit: number): UtilityCurve {
-  const floor = target - band;
-  const premiumAtFloor = Math.max(0, dearestSekPerUnit - marginalValue(curve, floor));
-  const premium = (at: number) => premiumAtFloor * Math.min(1, Math.max(0, (target - at) / band));
-  const ats = [...new Set([...curve.points.map(point => point.at), floor, target])].sort((a, b) => a - b);
-  return {
-    ...curve,
-    points: ats.map(at => ({ at, sek_per_unit: Number((marginalValue(curve, at) + premium(at)).toFixed(6)) })),
-  };
-}
-
 /** Valuation needs vehicle measurements, independently of charger control availability. */
 function vehicleValueState(vehicle: EvBatteryInput, stored: UtilityCurve, reference: number, derived?: UtilityCurve) {
   const perKm = vehicleKwhPerKm(vehicle);
@@ -2975,9 +2946,6 @@ function buildDispatchStores(
   const outdoor = snapshot.outdoor_temperature_c as number[] | null;
   const reference = horizonReferenceSekPerKwh(slots.map(slot => slot.shadow_import_sek_per_kwh));
 
-  // Solar surplus a store's need has already claimed, so the next store is not offered it twice.
-  const surplusTakenW = new Array(count).fill(0);
-
   const curves = {
     pool: snapshot.value_curves?.pool ?? DEFAULT_VALUE_CURVES.pool,
     ev: snapshot.value_curves?.ev ?? DEFAULT_VALUE_CURVES.ev,
@@ -3015,11 +2983,6 @@ function buildDispatchStores(
     const measuredIdle = measuredPoolResponse(response, (bin) => bin.idle_c_per_h);
     const measuredGain = measuredPoolGain(response);
     const idleAt = measuredIdle === null ? null : (waterC: number) => Math.min(0, measuredIdle(waterC));
-    // What the unheated pool's temperature does in an hour at one temperature, °C.
-    const idlePerHour = (waterC: number, index: number) =>
-      physics ? idleCPerHour(physics.store, waterC, airAt(index))
-        : idleAt !== null ? idleAt(waterC)
-        : -model.loss_kw_per_k * (waterC - airAt(index)) / capacityKwhPerK;
     const poolUnitsAt = (waterC: number, index: number) => {
       // The model's heat at its setting over all it draws there, whatever the air: the pump is in the draw and not in the heat.
       if (running) return running.heat_w / running.draw_w / capacityKwhPerK;
@@ -3051,31 +3014,18 @@ function buildDispatchStores(
     const poolRetention = Math.max(0.9, 1 - (physics
       ? SLOT_HOURS / thermalTimeConstantH(physics.store, poolTarget ?? pool.water_temperature_c, airAt(0))
       : model.loss_kw_per_k * SLOT_HOURS / capacityKwhPerK));
-    // From a target: what the energy to hold it costs, quarter by quarter, at
-    // each quarter's own air temperature and solar surplus.
-    const poolMerit = poolTarget === undefined ? null : meritOrderCurve({
-      unit: "celsius", target: poolTarget, state: pool.water_temperature_c, step: MERIT_STEP.pool_c,
-      upkeep: slots.reduce((sum, slot, index) => sum + Math.max(0, -idlePerHour(poolTarget, index)) * slot.duration_hours, 0),
-      offers: slots.flatMap((slot, index) => quarterOffers({
-        hours: slot.duration_hours, surplus_w: slot.pv_w - fixedLoadW(slot), max_w: poolPower.max_power_w,
-        import_sek_per_kwh: slot.shadow_import_sek_per_kwh, export_sek_per_kwh: slot.shadow_export_sek_per_kwh,
-        // Heat bought early has partly leaked by the end of the horizon, which
-        // is where the dispatch values it; an early kWh is a dearer degree.
-        units_per_kwh: poolUnitsAt(poolTarget, index) * poolRetention ** (count - 1 - index),
-      })),
+    const economics = poolTarget === undefined ? null : targetEconomics({
+      unit: "celsius", target: poolTarget, step: TARGET_CURVE_STEP.pool_c,
+      units_per_kwh: Math.max(...slots.map((_, index) => poolUnitsAt(poolTarget, index))),
+      reference_sek_per_kwh: reference,
       scale: validScale(snapshot.valuation?.pool),
-    });
-    // quarterOffers gives two offers per quarter, surplus first: what the pool's need takes of it.
-    poolMerit?.cleared_kwh.forEach((kwh, offer) => {
-      if (offer % 2 === 0) surplusTakenW[offer / 2] += kwh / slots[offer / 2].duration_hours * 1_000;
+      timing: { kind: "held", slot_hours: slots.map(slot => slot.duration_hours) },
     });
     stores.push({
       key: "pool",
       input_response: inputResponse,
-      curve: poolMerit && poolTarget !== undefined
-        ? withComfortPremium(poolMerit.curve, poolTarget, POOL_COMFORT_BAND_C, poolMerit.evidence.dearest_sek_per_unit * poolMerit.evidence.scale)
-        : anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
-      ...(poolMerit ? { derivation: poolMerit.evidence } : {}),
+      curve: economics?.curve ?? anchorPreferenceCurve(curves.pool, poolUnitsPerKwh, reference),
+      ...(economics ? { derivation: economics.derivation } : {}),
       initial_state: pool.water_temperature_c,
       max_state: poolTarget !== undefined ? poolTarget + POOL_OVERSHOOT_C : poolStopTemperature(curves.pool) ?? undefined,
       // One power and off for a relay; the declared band for a heat pump that
@@ -3084,25 +3034,8 @@ function buildDispatchStores(
       ...poolPower,
       start_cost_sek: 3,
       initially_charging: pool.heating_running === true,
-      // Heat is valued as state carried to the horizon edge, discounted by
-      // what leaks on the way — the same construction as the battery below,
-      // with a real decay instead of one.
-      //
-      // The previous weighting spread usage uniformly across the horizon and
-      // ended it there, which made `retentionBySlot` count *remaining
-      // occasions*: 0.81 at the start against 0.08 at the end. That is a
-      // tenfold tax on waiting, larger than any price difference in the
-      // horizon, and it is levied on exactly the decision §8.13 needs the pool
-      // to be able to make. A pool at 27.4 °C — below the household's own
-      // "really want heat" threshold — refused 30 kWh of surplus on the
-      // sunniest day of a plan and the house exported it instead.
-      // Warmth counts in every quarter, not only at the end. The share of heat
-      // that leaks in a quarter is the share that quarter used, and what is
-      // left counts at the end; the two always sum to one, so waiting for
-      // cheaper energy is never taxed beyond what physically leaks.
-      usage_weight: slots.map(slot => poolMerit ? 1 - poolRetention ** (slot.duration_hours / SLOT_HOURS) : 0),
-      terminal_weight: 1,
-      ...(poolMerit ? { sustained_value_tail_hours: 24 } : {}),
+      usage_weight: economics?.usage_weight ?? slots.map(() => 0),
+      terminal_weight: economics?.terminal_weight ?? 1,
       retention_per_slot: poolRetention,
       units_per_kwh: poolUnitsAt,
       drift: physics
@@ -3149,23 +3082,20 @@ function buildDispatchStores(
         const envelope = powerEnvelope(control);
         const evTarget = snapshot.comfort?.ev?.target_km;
         const perKwh = vehicle.charge_efficiency / vehicleKwhPerKm(vehicle);
-        // From a target: what the energy to reach it costs. The car is not
-        // modelled as driving within the horizon, so it needs no upkeep.
-        const evMerit = evTarget === undefined ? null : meritOrderCurve({
-          unit: "km", target: evTarget, state: vehicle.soc * vehicle.capacity_kwh / vehicleKwhPerKm(vehicle),
-          step: MERIT_STEP.ev_km, upkeep: 0, floor: 0,
-          offers: slots.flatMap((slot, index) => quarterOffers({
-            hours: slot.duration_hours, surplus_w: slot.pv_w - fixedLoadW(slot) - surplusTakenW[index], max_w: envelope.max_power_w,
-            import_sek_per_kwh: slot.shadow_import_sek_per_kwh, export_sek_per_kwh: slot.shadow_export_sek_per_kwh,
-            units_per_kwh: perKwh,
-          })),
+        const economics = evTarget === undefined ? null : targetEconomics({
+          unit: "km", target: evTarget, step: TARGET_CURVE_STEP.ev_km,
+          units_per_kwh: perKwh, reference_sek_per_kwh: reference,
           scale: validScale(snapshot.valuation?.ev),
+          timing: departure === null
+            ? { kind: "held", slot_hours: slots.map(slot => slot.duration_hours) }
+            : { kind: "event", slot: usage.findIndex(weight => weight > 0), slots: count },
         });
         stores.push({
-          ...vehicleValueState(vehicle, curves.ev, reference, evMerit?.curve),
-          ...(evMerit ? { derivation: evMerit.evidence } : {}),
+          ...vehicleValueState(vehicle, curves.ev, reference, economics?.curve),
+          ...(economics ? { derivation: economics.derivation } : {}),
           ...envelope,
-          usage_weight: usage,
+          usage_weight: economics?.usage_weight ?? usage,
+          terminal_weight: economics?.terminal_weight ?? 0,
           retention_per_slot: 1,
           drift: (state) => state,
         });
@@ -3193,10 +3123,10 @@ function buildDispatchStores(
         // absolute kWh offset every lookup by the reserve, which mattered
         // little against a step function and mis-prices every unit once the
         // curve is interpolated.
-        initial_state: Math.max(
-          0,
-          (battery.soc - battery.min_soc) * battery.capacity_kwh,
-        ),
+        // A raised cut-off can put the measured pack below zero in this
+        // coordinate. Keep that deficit: clamping it invents usable energy
+        // after the next charge and can permit discharge below the cut-off.
+        initial_state: (battery.soc - battery.min_soc) * battery.capacity_kwh,
         min_state: 0,
         max_state: derivedBatteryValue.diagnostic.usable_capacity_kwh,
         max_power_w: battery.charge_max_w,
@@ -5531,7 +5461,7 @@ function generatePlanBody(
       key: store.key, curve: store.curve, initial_state: store.initial_state,
       ...(store.max_state === undefined ? {} : { max_state: store.max_state }),
       units_per_kwh: store.units_per_kwh(store.initial_state, 0),
-      ...(store.derivation ? { derivation: store.derivation as MeritOrderEvidence } : {}),
+      ...(store.derivation ? { derivation: store.derivation as TargetEconomicsEvidence } : {}),
       reference_sek_per_kwh: horizonReferenceSekPerKwh(slots.map(slot => slot.shadow_import_sek_per_kwh)),
     })),
     policy: snapshot.policy,

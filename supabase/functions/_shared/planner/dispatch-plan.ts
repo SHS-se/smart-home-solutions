@@ -34,6 +34,8 @@ import {
   valueOfMove,
 } from "./store-value.ts";
 
+import { serviceValue, marginalServiceValues } from "./dispatch-service-value.ts";
+
 export const SLOT_HOURS = 0.25;
 
 /**
@@ -138,23 +140,6 @@ export interface DispatchStore {
    * still worth what the curve says.
    */
   terminal_weight?: number;
-  /**
-   * Value added energy by where it will sit, not only by where it lands.
-   *
-   * A bid is priced at the state standing in its own quarter, and energy bought
-   * later never lowers that: with the afternoon already bought, the night
-   * before it still saw a cold pool and bid as hard, quarter after quarter
-   * backwards, until one run held 61 kWh for a pool that wanted 15. Settlement
-   * then found the run under water as a whole, released all of it, and the
-   * next round bought it again: the plan that shipped heated nothing.
-   *
-   * With this set, a unit is worth at most the average of what the curve says
-   * at every state it will sit on from its quarter to the end, each hour
-   * counting alike and the time after the horizon counting as this many hours,
-   * less what leaks on the way. A dip before heat already bought still bids,
-   * for the hours the dip lasts; heat stacked on heat already bought does not.
-   */
-  sustained_value_tail_hours?: number;
   /** Physical units gained per kWh delivered, at this state and slot. */
   units_per_kwh: (state: number, index: number) => number;
   /** State one slot later with no energy delivered: losses, ambient drift. */
@@ -515,6 +500,8 @@ function boundedState(
   return Math.min(ceiling, Math.max(floor, next));
 }
 
+const trajectoryRevisions = new WeakMap<number[], number>();
+
 /** Project a store's state through the horizon under a power schedule. */
 function project(
   store: DispatchStore,
@@ -533,6 +520,7 @@ function project(
     );
     state[index + 1] = boundedState(store, state[index], next, index);
   }
+  trajectoryRevisions.set(state, (trajectoryRevisions.get(state) ?? 0) + 1);
 }
 
 /**
@@ -1191,19 +1179,11 @@ function scoreDispatchWithReuse(
     const discharge = dischargeByKey[store.key];
     const state = stateByKey[store.key];
     const draw = drawByKey[store.key];
-    let storeValue = to === count
-      ? (store.terminal_weight ?? 0) *
-        valueOfMove(store.curve, store.initial_state, state[count])
-      : 0;
+    const storeValue = serviceValue(store, state, from, to);
     let storeWear = 0;
     let chargedKwh = 0;
     let dischargedKwh = 0;
     for (let index = from; index < to; index += 1) {
-      const usageWeight = store.usage_weight[index] ?? 0;
-      if (usageWeight !== 0) {
-        storeValue += usageWeight *
-          valueOfMove(store.curve, store.initial_state, state[index]);
-      }
       storeWear += hoursAt(store, index) / 1_000 *
         ((draw[index] + discharge[index]) * (store.wear_sek_per_kwh ?? 0) +
           (discharge[index] > 0 &&
@@ -1816,7 +1796,7 @@ export interface ResponsiveRanking { context: string; commands: ResponsiveComman
 export type ResponsiveRanker = (context: string, compute: () => ResponsiveCommands[]) => ResponsiveCommands[];
 export interface DispatchSearchBudget { remaining: number; rank?: ResponsiveRanker }
 export function dispatchSearchBudget(rank?: ResponsiveRanker): DispatchSearchBudget {
-  return { remaining: 12, rank };
+  return { remaining: 10, rank };
 }
 
 /** A solver can execute each auction in a separate CPU budget. */
@@ -2122,7 +2102,10 @@ function planResponsiveDispatch(
   return { ...best, responsive_search: { evaluations, stopped_because: "work_budget" } };
 }
 
-/** Minimum-cost placement of a fixed amount at executable current settings. */
+/** Best supported-current proposal under the same service account as selection.
+ * Dense integer energy states keep both quantity and timing bounded by the
+ * physical charge ceiling; no repeated full planner calls are needed.
+ */
 function cheapestDiscreteProfile(
   slots: DispatchSlot[],
   store: DispatchStore,
@@ -2132,58 +2115,41 @@ function cheapestDiscreteProfile(
   const step = store.power_step_w ?? 0;
   const minimum = store.min_power_w ?? 0;
   const units = store.units_per_kwh(store.initial_state, 0);
+  const hours = Math.max(...slots.map((_, i) => hoursAt(store, i)));
   if (
-    store.discharge || step <= 0 || store.retention_per_slot !== 1 ||
-    (store.start_cost_sek ?? 0) !== 0 ||
+    store.discharge || step <= 0 || units <= 0 || store.retention_per_slot !== 1 ||
+    store.max_state === undefined || (store.start_cost_sek ?? 0) !== 0 ||
     Math.abs(minimum / step - Math.round(minimum / step)) > 1e-9 ||
-    store.usage_weight.filter((weight) => weight > 0).length > 1 ||
-    slots.some((_slot, i) =>
-      hoursAt(store, i) !== hoursAt(store, 0) ||
-      store.units_per_kwh(store.initial_state, i) !== units ||
-      store.drift(store.initial_state, i) !== store.initial_state
-    )
+    slots.some((_slot, i) => store.units_per_kwh(store.initial_state, i) !== units ||
+      store.drift(store.initial_state, i) !== store.initial_state)
   ) return null;
-  const target = Math.round(
-    original.reduce((sum, watts) => sum + watts, 0) / step,
-  );
-  if (
-    target === 0 ||
-    original.some((watts) =>
-      Math.abs(watts / step - Math.round(watts / step)) > 1e-6
-    )
-  ) return null;
-  const retention = retentionBySlot(store, slots.length);
-  const wanted = Math.max(...retention);
-  if (original.some((watts, i) => watts > 0 && retention[i] !== wanted)) {
-    return null;
-  }
-  let costs = new Float64Array(target + 1).fill(Infinity);
+  const quantum = step / 1000 * hours * units;
+  const maximumSteps = Math.max(0, Math.floor((store.max_state - store.initial_state) / quantum + 1e-9));
+  if (maximumSteps === 0) return null;
+  const states = Array.from({ length: maximumSteps + 1 }, (_, total) => store.initial_state + total * quantum);
+  const utility = states.map(state => valueOfMove(store.curve, store.initial_state, state));
+  let costs = new Float64Array(maximumSteps + 1).fill(Infinity);
   costs[0] = 0;
   const previous: Int32Array[] = [];
-  for (let i = 0; i < slots.length; i += 1) {
-    const maximum = retention[i] === wanted
-      ? Math.min(store.max_power_w, headroomW(slots[i], limits, 0, 0))
-      : 0;
+  for (let i = 0; i < slots.length; i++) {
+    // A partial quarter has a different energy quantum. It remains available
+    // to the main auction; this integer-lattice proposal uses whole quarters.
+    const maximum = hoursAt(store, i) === hours
+      ? Math.min(store.max_power_w, headroomW(slots[i], limits, 0, 0)) : 0;
     const choices = [{ steps: 0, cost: 0 }];
-    for (
-      let watts = Math.max(step, minimum);
-      watts <= maximum + 1e-9;
-      watts += step
-    ) {
-      choices.push({
-        steps: Math.round(watts / step),
-        cost: watts / 1_000 * hoursAt(store, i) *
-          energyCostSekPerKwh(slots[i], 0, watts, limits),
-      });
+    for (let watts = Math.max(step, minimum); watts <= maximum + 1e-9; watts += step) {
+      choices.push({ steps: Math.round(watts / step),
+        cost: watts / 1000 * hours * energyCostSekPerKwh(slots[i], 0, watts, limits) });
     }
-    const next = new Float64Array(target + 1).fill(Infinity);
-    const picked = new Int32Array(target + 1).fill(-1);
-    for (let total = 0; total <= target; total += 1) {
+    const next = new Float64Array(maximumSteps + 1).fill(Infinity);
+    const picked = new Int32Array(maximumSteps + 1).fill(-1);
+    for (let total = 0; total <= maximumSteps; total++) {
       if (!Number.isFinite(costs[total])) continue;
+      const heldValue = (store.usage_weight[i] ?? 0) * utility[total];
       for (const choice of choices) {
         const after = total + choice.steps;
-        if (after > target) continue;
-        const cost = costs[total] + choice.cost;
+        if (after > maximumSteps) continue;
+        const cost = costs[total] + choice.cost - heldValue;
         if (cost < next[after] - 1e-9) {
           next[after] = cost;
           picked[after] = choice.steps;
@@ -2193,27 +2159,19 @@ function cheapestDiscreteProfile(
     previous.push(picked);
     costs = next;
   }
-  if (!Number.isFinite(costs[target])) return null;
+  let selected = 0, best = Infinity;
+  for (let total = 0; total <= maximumSteps; total++) {
+    const cost = costs[total] - (store.terminal_weight ?? 0) * utility[total];
+    if (cost < best - 1e-9) { best = cost; selected = total; }
+  }
   const replacement = new Array<number>(slots.length).fill(0);
-  let remaining = target;
-  for (let i = slots.length - 1; i >= 0; i -= 1) {
-    const chosen = previous[i][remaining];
+  for (let i = slots.length - 1; i >= 0; i--) {
+    const chosen = previous[i][selected];
     if (chosen < 0) throw new Error("discrete charge schedule is unreachable");
     replacement[i] = chosen * step;
-    remaining -= chosen;
+    selected -= chosen;
   }
-  // Validate the full physical trajectory, not just the integer energy total.
-  const before = new Array(slots.length + 1).fill(store.initial_state);
-  project(store, original, new Array(slots.length).fill(0), 0, before);
-  let projected = store.initial_state;
-  for (let i = 0; i < slots.length; i += 1) {
-    projected = nextState(store, projected, replacement[i], 0, i);
-    if (
-      projected < (store.min_state ?? -Infinity) - 1e-9 ||
-      projected > (store.max_state ?? Infinity) + 1e-9
-    ) return null;
-  }
-  return Math.abs(projected - before.at(-1)!) < 1e-9 ? replacement : null;
+  return replacement.every((watts, i) => Math.abs(watts - original[i]) < 1e-9) ? null : replacement;
 }
 
 function dispatchAuction(
@@ -2254,32 +2212,33 @@ export function* dispatchAuctionSteps(
   // other candidate is costed against.
   const returnedW = checkpoint?.returnedW ?? new Array(count).fill(0);
 
-  // SEK per unit a store with `sustained_value_tail_hours` gets for a unit added
-  // in each quarter, rebuilt whenever its trajectory has moved.
-  const sustainedByKey: Record<string, { trajectory: number; marginal: number[] }> = {};
-  const sustainedMarginal = (store: DispatchStore): number[] | null => {
-    const tailHours = store.sustained_value_tail_hours;
-    if (tailHours === undefined) return null;
+  // One derivative of the exact time-weighted service account, rebuilt when
+  // a physical trajectory changes. Inventory-only battery bids keep their
+  // existing finite-move valuation and arbitrage accounting.
+  const marginalCache = new Map<string, { state: number[]; revision: number; values: number[] }>();
+  const serviceMarginal = (store: DispatchStore): number[] | null => {
+    if (!store.usage_weight.some(weight => weight !== 0)) return null;
     const state = stateByKey[store.key];
-    let trajectory = 0;
-    for (let index = 0; index <= count; index += 1) trajectory += state[index] * (index + 1);
-    const held = sustainedByKey[store.key];
-    if (held?.trajectory === trajectory) return held.marginal;
-    const decay = Math.min(1, Math.max(0, store.retention_per_slot));
-    const marginal = new Array(count).fill(0);
-    let value = tailHours * marginalValue(store.curve, state[count]);
-    let hours = tailHours;
-    for (let index = count - 1; index >= 0; index -= 1) {
-      // What is added in this quarter sits on every state after it.
-      marginal[index] = hours > 0
-        ? Math.pow(decay, hoursAt(store, index) / SLOT_HOURS) * value / hours
-        : 0;
-      value = hoursAt(store, index) * marginalValue(store.curve, state[index]) +
-        Math.pow(decay, hoursAt(store, index) / SLOT_HOURS) * value;
-      hours += hoursAt(store, index);
+    const revision = trajectoryRevisions.get(state) ?? 0;
+    const held = marginalCache.get(store.key);
+    if (held?.state === state && held.revision === revision) return held.values;
+    const stateToNext = new Array<number>(count);
+    const inputToNext = new Array<number>(count);
+    // Numerical derivative only: it does not change the physical transition or
+    // impose a bound on measured cooling, gain, or predicted state.
+    const delta = 1e-4;
+    for (let index = 0; index < count; index++) {
+      const current = state[index];
+      const power = powerW[store.key][index], out = dischargeW[store.key][index];
+      const next = nextState(store, current, power, out, index);
+      stateToNext[index] = (nextState(store, current + delta, power, out, index) - next) / delta;
+      const input = current + power / 1000 * hoursAt(store, index) * store.units_per_kwh(current, index) -
+        (out > 0 ? out / 1000 * hoursAt(store, index) * store.discharge!.state_per_kwh_out(current, index) : 0);
+      inputToNext[index] = (store.drift(input + delta, index) - store.drift(input, index)) / delta;
     }
-    sustainedByKey[store.key] = { trajectory, marginal };
-    return marginal;
+    const values = marginalServiceValues(store, state, stateToNext, inputToNext);
+    marginalCache.set(store.key, { state, revision, values });
+    return values;
   };
 
   for (const store of stores) {
@@ -2373,7 +2332,7 @@ export function* dispatchAuctionSteps(
     if (indices.some(index => store.fixed_charge_w_by_slot?.[index] != null)) return null;
     const state = stateByKey[store.key];
     const retention = retentionByKey[store.key];
-    const sustained = sustainedMarginal(store);
+    const service = serviceMarginal(store);
     const wear = store.wear_sek_per_kwh ?? 0;
     const startCost = startsRun ? store.start_cost_sek ?? 0 : 0;
     const startShare = startCost / indices.length;
@@ -2439,8 +2398,8 @@ export function* dispatchAuctionSteps(
       }
       const retained = retention[index];
       const landedSek = valueOfMove(store.curve, before, afterInput) * retained;
-      const valueSek = sustained
-        ? Math.min(landedSek, sustained[index] * (afterInput - before))
+      const valueSek = service
+        ? service[index] * (afterInput - before)
         : landedSek;
       const valuePerKwh = valueSek / kwh;
       const sourceCost = energyCostSekPerKwh(
@@ -2633,10 +2592,10 @@ export function* dispatchAuctionSteps(
     const after = before + gained - spent;
     const landed = valueOfMove(store.curve, before, after) *
       retentionByKey[store.key][index];
-    const sustained = outW > 0 ? null : sustainedMarginal(store);
+    const service = outW > 0 ? null : serviceMarginal(store);
     return {
       after,
-      value: sustained ? Math.min(landed, sustained[index] * gained) : landed,
+      value: service ? service[index] * gained : landed,
     };
   };
 

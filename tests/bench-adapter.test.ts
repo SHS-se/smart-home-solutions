@@ -42,11 +42,11 @@ Deno.test("the current planner derives its curves from the targets, and the scal
   const { record } = planner.plan(c, HOUSEHOLD);
   assertEquals(record.status, "ready");
   assertEquals(record.valuation, { scale: 1, pool: "scale", ev: "scale", battery: "scale" });
-  // Battery from the forecast; pool and car from what holding the target costs.
+  // Battery from the forecast; pool and car from target service willingness.
   const curve = (store: string, from = record) => from.curves.find(candidate => candidate.store === store)!;
   assertEquals(record.curves.map(candidate => candidate.store).sort(), ["battery", "ev", "pool"]);
-  assertEquals([curve("battery").mode, curve("pool").mode, curve("ev").mode], ["balanced", "merit order", "merit order"]);
-  assert(Number(curve("pool").derivation!.need) > 2.5, "the pool starts 2.5 °C short and also loses heat");
+  assertEquals([curve("battery").mode, curve("pool").mode, curve("ev").mode], ["balanced", "comfort target", "comfort target"]);
+  assertEquals(curve("pool").derivation!.target, 30);
   // The planner believes what the referee carries out: a kWh drawn by the pool, pump included, warms it
   // by the heat pump's heat at its setting over the pool's heat capacity.
   const poolOn = poolLevels(HOUSEHOLD).at(-1)!;
@@ -58,12 +58,8 @@ Deno.test("the current planner derives its curves from the targets, and the scal
   assert(stats.pool_kwh > 1 && stats.battery_charge_kwh > 1, JSON.stringify(stats));
   // The plan heads for the pool's target: it ends within a degree of 30 °C.
   assert(Math.abs(series.poolC[287]! - 30) < 1, `pool ends at ${series.poolC[287]}`);
-  // Not asserted, because it does not hold: the car starts 158 km short of its 300 km and this planner
-  // charges it nothing here. With every hour it could buy at one price, the car's derived value is that
-  // price, a bid worth exactly what it costs is never placed, and the pool has taken the surplus sun. Until
-  // the bench household lost its pool minimum run (4 October 2026) the pool's runs happened to leave the car
-  // some sun. A planner that heads for the car's target should make this assertion possible again:
-  //   assert(stats.ev_kwh > 1 && series.carKm![287] > 250)
+  assert(stats.ev_kwh > 1 && series.carKm![287]! >= 300,
+    `car failed to reach its affordable target: ${series.carKm![287]}`);
   // Warmth counts through the whole horizon: once the pool has reached its
   // target it does not drift more than about a degree below it to wait for cheaper energy.
   const reached = series.poolC.findIndex(temperature => temperature! >= 29.5);
@@ -136,7 +132,7 @@ Deno.test("a plan's battery discharge is read once: what it sells is part of it,
   const planner = await loadPlanner(root);
   // Evenings at 3 kr to sell: the battery is planned to export, the house drawing 600 W of what it gives.
   const evening = (i: number) => hourOf(i) >= 16 && hourOf(i) < 20;
-  const told = { ...dataset(), start_state: { ...dataset().start_state, battery_soc: 0.95 }, known_prices: { import_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 4 : 1) : null), export_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 3 : 0.4) : null) } };
+  const told = { ...dataset(), comfort: { pool_c: 20, ev_km: 100 }, start_state: { ...dataset().start_state, battery_soc: 0.95 }, known_prices: { import_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 4 : 1) : null), export_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 3 : 0.4) : null) } };
   const c = loadCase(told, { ...recorded(), prices: { import_sek_per_kwh: quarters(i => evening(i) ? 4 : 1), export_sek_per_kwh: quarters(i => evening(i) ? 3 : 0.4) } });
   const { record } = planner.plan(c, HOUSEHOLD);
   const { outcome, series } = evaluate(c, record, {});

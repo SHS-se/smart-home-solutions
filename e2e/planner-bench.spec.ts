@@ -101,7 +101,7 @@ const record = (reference: number): PlanRecord => ({
   decisions: { pool_w: [], ev_w: [], battery_charge_w: [], battery_discharge_w: [] },
   beliefs: { import_sek_per_kwh: [], grid_cost_sek: 41.5 },
   curves: [
-    { store: 'pool', unit: 'celsius', points: [{ at: 28.5, sek_per_unit: 30 }, { at: 30.5, sek_per_unit: 15 }, { at: 32.5, sek_per_unit: 0 }], initial_state: 29.5, max_state: 32.5, units_per_kwh: 0.07, reference_sek_per_kwh: reference, mode: null },
+    { store: 'pool', unit: 'celsius', points: [{ at: 28.5, sek_per_unit: 30 }, { at: 30.5, sek_per_unit: 30 }], initial_state: 29.5, max_state: 32.5, units_per_kwh: 0.07, reference_sek_per_kwh: reference, mode: 'comfort target' },
     { store: 'battery', unit: 'kwh', points: [{ at: 0, sek_per_unit: 2 }, { at: 17, sek_per_unit: 0.4 }], initial_state: 8, max_state: 17, units_per_kwh: 1, reference_sek_per_kwh: null, mode: 'balanced' },
   ],
 });
@@ -305,7 +305,13 @@ test.describe('planner bench', () => {
     // Each planner's cost at real prices, beside what it expected, and the curves it planned with.
     await expect(page.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
     await expect(page.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
-    await expect(page.locator('#bench-curve-pool').getByRole('img')).toBeVisible();
+    const poolCurve = page.locator('#bench-curve-pool').getByRole('img');
+    await expect(poolCurve).toBeVisible();
+    await expect(page.locator('#bench-curve-pool')).toContainText('comfort target');
+    // The positive target endpoint drops vertically, then stays at zero to the
+    // reachable ceiling. A sloping line would invent utility above the target.
+    await expect(poolCurve.locator('path').last()).toHaveAttribute('d', /L153\.0,8\.0 L153\.0,102\.0 L272\.0,102\.0$/);
+    await poolCurve.screenshot({ path: test.info().outputPath('target-value-curve.png') });
     await expect(page.locator('#bench-curve-battery')).toContainText('balanced');
     await expect(page.locator('#bench-curve-ev')).toContainText(/reported no curve|rapporterade ingen kurva/);
 

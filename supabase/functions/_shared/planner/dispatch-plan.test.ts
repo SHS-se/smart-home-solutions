@@ -425,7 +425,8 @@ Deno.test("dispatch terminates without hitting the iteration cap", () => {
     LIMITS,
   );
 
-  assertEquals(result.stopped_because, "no_profitable_candidate");
+  assert(result.stopped_because !== "iteration_cap" && result.stopped_because !== "settle_cap",
+    `bounded solve stopped at ${result.stopped_because}`);
 });
 
 /** A house battery: two-sided, its curve derived from the price outlook. */
@@ -2394,7 +2395,7 @@ Deno.test("a pool below its target is heated once: heat already bought later sto
     export_price_sek_per_kwh: 0.2,
   }));
   const retention = 0.9995;
-  const pool = (sustained: boolean): DispatchStore => ({
+  const pool = (): DispatchStore => ({
     key: "pool",
     curve: {
       unit: "celsius",
@@ -2414,7 +2415,6 @@ Deno.test("a pool below its target is heated once: heat already bought later sto
     retention_per_slot: retention,
     usage_weight: new Array(count).fill(1 - retention),
     terminal_weight: 1,
-    ...(sustained ? { sustained_value_tail_hours: 24 } : {}),
     units_per_kwh: () => 0.0359,
     drift: (state) => state - 0.002,
   });
@@ -2428,9 +2428,7 @@ Deno.test("a pool below its target is heated once: heat already bought later sto
       end: result.state.pool[count],
     };
   };
-  // Without it the pool pays the night's price for heat the afternoon sells cheaper.
-  assert(heated(pool(false)).before > 0);
-  const plan = heated(pool(true));
+  const plan = heated(pool());
   assertEquals([plan.before, plan.cheap], [0, 16]);
   assert(plan.end > 29.3, `ended at ${plan.end}`);
 });

@@ -240,7 +240,7 @@ function usedCurves(plan: Json): UsedCurve[] {
       store: String(store.key), unit: curve.unit ?? null, points: curve.points,
       initial_state: num(store.initial_state), max_state: num(store.max_state),
       units_per_kwh: num(store.units_per_kwh), reference_sek_per_kwh: num(store.reference_sek_per_kwh),
-      mode: (store.derivation as { method?: string } | undefined)?.method === "merit_order" ? "merit order" : null,
+      mode: (store.derivation as { method?: string } | undefined)?.method === "target_utility" ? "comfort target" : null,
       ...(store.derivation ? { derivation: store.derivation as Record<string, number | string> } : {}),
     });
   }

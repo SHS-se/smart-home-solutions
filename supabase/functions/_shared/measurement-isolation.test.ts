@@ -192,8 +192,16 @@ Deno.test("realistic states beyond a target are planned as they are", () => {
   const low = generateOptimisationPlan(pack, now(pack));
   assertEquals(low.status, "ready", JSON.stringify(low.validation_errors));
   assertEquals(low.measurement_issues, []);
-  assert(low.plans.priority.slots.every((slot) => slot.battery_discharge_w === 0),
-    "a pack below its cut-off is not discharged");
+  const lowBench = dispatchWorkbench(pack, [], undefined, now(pack))!;
+  const batteryStates = scoreDispatch(lowBench.slots, lowBench.stores, lowBench.limits, lowBench.planned).state.battery;
+  assertEquals(batteryStates[0], (pack.battery!.soc - pack.battery!.min_soc) * pack.battery!.capacity_kwh);
+  let measuredKwh = pack.battery!.soc * pack.battery!.capacity_kwh;
+  for (const slot of low.plans.priority.slots) {
+    assert(slot.battery_discharge_w === 0 || measuredKwh >= pack.battery!.min_soc * pack.battery!.capacity_kwh - 1e-5,
+      "a pack below its cut-off must recharge before discharging");
+    measuredKwh += slot.duration_hours / 1000 * (slot.battery_charge_w * pack.battery!.charge_efficiency -
+      slot.battery_discharge_w / pack.battery!.discharge_efficiency);
+  }
 
   // Warmer than its stop temperature: no heat is bought.
   const warm = household();

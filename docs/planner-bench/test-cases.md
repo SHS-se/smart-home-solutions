@@ -207,11 +207,15 @@ setting.
 
 - **Battery:** the *balanced* curve, from the case's solar, load and prices
   (what a stored kWh will save later).
-- **Pool and car:** from the target by merit order (`planner/merit-order.ts`):
-  every quarter offers energy, surplus solar at what exporting it would earn
-  and import at its price, each worth more or less of the store depending on
-  that quarter's temperature. Cheapest first, the price of the last unit needed
-  to end the horizon on target is what a unit is worth at the target.
+- **Pool and car:** target service utility (`planner/target-economics.ts`). A
+  reachable unit below the target is worth the existing urgency multiplier
+  times the positive import reference, converted to the device's physical
+  units. Utility saturates at the target; free solar changes procurement cost,
+  not willingness. Pool comfort and a car without a departure count throughout
+  the horizon in service days. A declared car departure counts once at that
+  event. Bids read the marginal value along the physical future trajectory;
+  whole-run selection uses the same fixed service account. See
+  [comfort target economics](../energy-optimisation/comfort-target-economics.md).
 - **The one control left** is a scale per store (default 1) that multiplies the
   derived curve: an administrator's dial, not a customer's.
 
