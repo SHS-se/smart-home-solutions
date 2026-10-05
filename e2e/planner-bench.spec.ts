@@ -128,7 +128,15 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, missingAudit = false, repeats = false): Promise<Captured> {
+async function mockBackend(context: BrowserContext, missingAudit = false, repeats = false, overlap = false): Promise<Captured> {
+  const plans = overlap ? structuredClone(PLANS) : PLANS;
+  if (overlap) {
+    for (const [key, plan] of Object.entries(plans)) {
+      plan.audit!.overlap = { thresholdW: 2000, overlappingQuarters: [24], moves: [
+        { from: 24, to: key.startsWith(TEST.sha) ? 104 : 200, device: 'battery', movedW: 3000 },
+      ] };
+    }
+  }
   const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
   const nowIso = new Date().toISOString();
   const user = {
@@ -196,8 +204,8 @@ async function mockBackend(context: BrowserContext, missingAudit = false, repeat
           dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
         }));
         case 'bench_result_summaries': return [
-          ...Object.entries(PLANS),
-          ...(repeats ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, PLANS[`${CURRENT.sha}/${c.id}`]] as const)),
+          ...Object.entries(plans),
+          ...(repeats ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${CURRENT.sha}/${c.id}`]] as const)),
         ].map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
@@ -209,7 +217,7 @@ async function mockBackend(context: BrowserContext, missingAudit = false, repeat
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
           return [CURRENT.sha, TEST.sha].map(sha => ({
-            sha, series: missingAudit ? { ...PLANS[`${sha}/${scenario}`], audit: undefined } : PLANS[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
+            sha, series: missingAudit ? { ...plans[`${sha}/${scenario}`], audit: undefined } : plans[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
           }));
         }
         default: return [];
@@ -231,6 +239,27 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('names the cheaper quarter for an overlap in the selected planner', async ({ context, page }) => {
+    await mockBackend(context, false, false, true);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const rule = page.locator('#bench-rule-large_load_overlap');
+    await rule.getByRole('button').first().click();
+    await rule.getByRole('button', { name: /^Test: 1 / }).click();
+    const explanation = page.locator('#bench-quarter-explanation');
+    const overlap = explanation.getByRole('listitem').filter({ hasText: 'Large workloads overlap' });
+    await expect(overlap).toContainText(/−1 Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
+    // The destination is on the next day, in the home's time zone. Switching
+    // planners must explain that planner's own witness for the same source.
+    await page.locator('#bench-show-current').click();
+    await expect(overlap).toContainText(/(cheaper quarter|billigare kvart): 26\/09 04:00/);
+    await expect(overlap).not.toContainText('25/09');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(overlap).toBeVisible();
+    expect(await explanation.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await explanation.screenshot({ path: test.info().outputPath('overlap-quarter-mobile.png') });
+  });
+
   test('shows staff how far the price estimate was from the published prices', async ({ context, page }) => {
     await mockBackend(context);
     await login(page);

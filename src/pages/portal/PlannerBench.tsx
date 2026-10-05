@@ -773,7 +773,7 @@ const CaseView: React.FC<CaseViewProps> = ({
               <>
                 <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}
                   selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
-                <div className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
+                <div id="bench-quarter-explanation" className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
                   {selected === null || !shownScore?.quarters[selected]
                     ? <span className="text-muted-foreground">{t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
                     : (() => {
@@ -790,9 +790,15 @@ const CaseView: React.FC<CaseViewProps> = ({
                                 : t('uppskattat', 'estimated')}</span>
                           </div>
                           {q.fired.length
-                            ? <ul className="text-xs space-y-0.5">{q.fired.map(k => (
-                              <li key={k} className="font-mono">{signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}</li>
-                            ))}</ul>
+                            ? <ul className="text-xs space-y-0.5">{q.fired.map(k => {
+                              const move = k === 'large_load_overlap'
+                                ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
+                                : null;
+                              return <li key={k} className="font-mono">
+                                {signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}
+                                {move && <> · {t('billigare kvart', 'cheaper quarter')}: {formatHomeDayMonthTime(shownSeries.start[move.to], TZ)}</>}
+                              </li>;
+                            })}</ul>
                             : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
                         </div>
                       );
