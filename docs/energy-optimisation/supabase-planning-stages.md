@@ -23,7 +23,7 @@ order submissions or constrain measurement or forecast validity.
 Cloud publication does not complete a website request. Only acknowledgement
 that HA accepted the matching published plan completes it. Rejection reports
 HA's actual error. The website polls content deltas every second while waiting.
-The requirement is **ten seconds from website click through HA acceptance to
+The revised requirement is **twelve seconds from website click through HA acceptance to
 the website displaying completion**. The attempt deadline is a resource bound,
 not evidence that this successful end-to-end requirement has been achieved.
 

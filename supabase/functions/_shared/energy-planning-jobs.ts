@@ -11,6 +11,7 @@ import { priceEstimateRows } from "./price-estimate-record.ts";
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 export const PLANNING_EXCHANGE_VERSION = 2;
+export const PLANNING_REQUEST_BUDGET_MS = 12_000;
 
 type PublishedPlan = OptimisationPlan & { thermal_projection?: NonNullable<ReturnType<typeof buildThermalProjection>> };
 

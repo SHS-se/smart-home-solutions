@@ -51,7 +51,10 @@ async function database(restore = true) {
   const jobsMigration = await migration('20261006120000_durable_energy_planning_jobs');
   await db.exec(jobsMigration.replace(/^ALTER TABLE private\.energy_planning_(jobs|parts) ALTER COLUMN \w+ SET COMPRESSION lz4;$/gm, ''));
   await db.exec(await migration('20261006150000_lease_safe_energy_planning_claims'));
-  if (restore) await db.exec(await migration('20261006170000_restore_two_function_energy_planning'));
+  if (restore) {
+    await db.exec(await migration('20261006170000_restore_two_function_energy_planning'));
+    await db.exec(await migration('20261006190000_use_planning_request_deadline_message'));
+  }
   else await db.exec("UPDATE private.energy_planning_credentials SET function_url='https://example.supabase.co/functions/v1/energy-optimisation-planning-worker'");
   return db;
 }
@@ -134,7 +137,7 @@ Deno.test('expired and interrupted owners fail terminally without restarting com
     assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { job_id: owned.id, fence: owned.fence, current: currentRow(),run:runRow() })).state, 'failed');
     assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM net.wakes')).rows[0].n,0);
     assertEquals((await db.query<{ id: string }>('SELECT plan_id id FROM energy_optimisation_current')).rows[0].id,other);
-    assert((await db.query<{ error: string }>('SELECT replan_error error FROM energy_optimisation_current')).rows[0].error.includes('10-second'));
+    assertEquals((await db.query<{ error: string }>('SELECT replan_error error FROM energy_optimisation_current')).rows[0].error, 'Replanning exceeded its request deadline.');
     const expired = await rpc<Receipt>(db, 'accept_energy_planning_job', { ...submission(other, { observed_replan_request_id:manual }), deadline_at: new Date(Date.now()-1).toISOString() });
     assertEquals(expired.code,'planning_deadline_exceeded');
   } finally { await db.close(); }

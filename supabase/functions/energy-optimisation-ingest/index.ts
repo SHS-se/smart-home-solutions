@@ -33,7 +33,7 @@ import {
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
-import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
+import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, PLANNING_REQUEST_BUDGET_MS, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
 import {
   fitZones,
@@ -912,8 +912,8 @@ async function prepareThermalPlanning(
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const ingestStarted = performance.now();
-  let deadline = ingestStarted + 10_000;
-  let deadlineAt = new Date(Date.now() + 10_000).toISOString();
+  let deadline = ingestStarted + PLANNING_REQUEST_BUDGET_MS;
+  let deadlineAt = new Date(Date.now() + PLANNING_REQUEST_BUDGET_MS).toISOString();
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
@@ -1671,7 +1671,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     // The website request's server receipt starts the manual budget. HA capture,
     // transport and input preparation must not reset it when ingest begins.
     if (portalReplanId && portalReplanId === accepted?.replan_request_id) {
-      deadlineAt = new Date(Date.parse(accepted.replan_requested_at) + 10_000).toISOString();
+      deadlineAt = new Date(Date.parse(accepted.replan_requested_at) + PLANNING_REQUEST_BUDGET_MS).toISOString();
       deadline = Math.min(deadline, performance.now() + Date.parse(deadlineAt) - Date.now());
     }
     const recommend = async (key: string, reason: string, at = new Date().toISOString()) => {
