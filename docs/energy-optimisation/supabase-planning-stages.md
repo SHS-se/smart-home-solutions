@@ -1,57 +1,64 @@
 # Planning within Supabase CPU limits
 
-Household replanning runs in two Edge Functions. `energy-optimisation-ingest`
-authenticates the device, writes telemetry and prepares one frozen input. It
-accepts a snapshot-scoped job receipt, then drives the secret-only
-`energy-optimisation-plan-step` endpoint inline. The caller holds completed
-auctions, rankings and the unfinished cursor in memory. Each step uses the
-900ms elapsed-time execution budget without reducing the planner's economic
-search. An explicit operation limit remains available for deterministic
-checkpoint tests; ordinary execution does not pause after two million checks
-while time remains in its slice. Progress is exchanged between Edge Functions;
-it is never written or repeatedly downloaded as a database result ledger.
+Current implementation: 6 October 2026, commit `0db98cc`.
+See the [measured improvements and scaling handoff](replanning-handoff-2026-10.md)
+for evidence and future investigation priorities.
 
-The job owner claims the input once and publishes once. The transaction checks
-received-order ownership, its fence, fixed-plan revision and manual request
-identity. It writes current plan, run summary and terminal publication receipt
-atomically. A single operational deadline spans input preparation and solve;
-website requests use the server's request receipt time rather than resetting
-the budget at ingest, acceptance or each step. The execution timeout is
-120 seconds: cancelling at the latency target prevented valid solves from
-finishing. A deadline crossed during
-publication rolls back the entire new plan. Device/source timestamps never
-order submissions or constrain measurement or forecast validity.
+Household replanning uses two Edge Functions. `energy-optimisation-ingest`
+authenticates the device, writes telemetry and prepares one frozen input. It
+admits a snapshot-scoped durable job and returns a pending receipt. HA's existing
+status polls then advance bounded batches through ingest and the secret-only
+`energy-optimisation-plan-step` endpoint. No new hosting or HA-hosted solver was
+introduced.
+
+Each poll claims a home-scoped 60-second lease and fence, downloads the immutable
+input and ordered completed-auction/ranking ledger once, and makes at most eight
+worker calls within a 25-second exchange budget. Worker calls use a cooperative
+900ms elapsed-time allowance. The batch appends new results and saves its active
+cursor atomically, then returns pending. A completed solve records the assembling
+phase; a fresh poll reconstructs, assembles and publishes the plan.
+
+The job has no overall 120-second deadline or 512-call limit. Those former
+household limits rejected valid work that was still advancing. Per-exchange
+budgets and leases bound individual ownership periods; expiry permits takeover
+rather than discarding progress. An unchanged fence can save valid progress
+after lease expiry if no takeover has occurred. A new owner fences stale writes.
+Real worker/protocol/input failures remain explicit failures.
+
+Atomic publication writes the current plan, run summary and terminal job receipt.
+It checks home ownership, received-order head revision, fence, successful step
+count, fixed-plan revision and manual request identity. Device/source timestamps
+do not order submissions or introduce measurement/forecast validity constraints.
+A lost storage reply is recovered from the authoritative home-scoped receipt.
 
 Cloud publication does not complete a website request. Only acknowledgement
-that HA accepted the matching published plan completes it. Rejection reports
-HA's actual error. The website polls content deltas every second while waiting.
-The revised requirement is **twelve seconds from website click through HA acceptance to
-the website displaying completion**. The attempt deadline is a resource bound,
-not evidence that this successful end-to-end requirement has been achieved.
+that HA accepted the matching published plan completes it. The existing plan
+and controls remain retained during pending or failed replanning. The website
+polls content deltas every second while waiting. The user withdrew the earlier
+10/12-second target for this remediation and required successful completion.
 
-The app retains exchange-version2 journals and exact job/snapshot status
-lookup, so a response lost after acceptance or publication can be recovered.
-A killed ingest invocation does not restart computation. The ten-second cron
-sweep only expires overdue receipts and prunes bounded terminal history; it
-never starts a solve. The existing HA schedule and controls remain retained
-when planning fails. There are no planning-worker wakes or checkpoint tables.
+The existing cron sweep prunes bounded terminal history; it never solves a job
+or expires healthy pending work. HA receipt polling currently drives progress,
+so disconnecting HA pauses advancement. Automatic replanning on newly published
+prices remains enabled; unchanged price refreshes do not trigger a full solve.
 
-Fixed-plan activation retains its existing preflight call through the same
-remote client and plan-step endpoint. Its separate120-second activation budget
-is unchanged. Household/manual attempts supply their explicit remaining budget.
+Fixed-plan activation retains its synchronous preflight through the same batch
+transport/parser, with its separate 120-second and 512-call bounds. Those are
+not household/manual job limits.
 
 ## Validation and limitations
 
-Run `deno task test`, migration-version validation, frontend lint/build and
-all local E2E suites before committing. SQL tests cover permissions,
-idempotency, exclusive claim, supersession, terminal expiry without retries,
-publication rollback, exact receipt recovery, and completion after matching HA
-acceptance. Pure solver tests compare full canonical output across serialized
-steps, including sunny/dark, responsive, discrete-EV and fixed schedules.
+The final live test completed 282 worker calls and 22 auctions, published once,
+received matching HA acceptance and appeared as the same plan in the portal.
+Click to HA acceptance took about 6m58s; exact website render latency was not
+captured. Full canonical output and contract tests passed. New lifecycle tests
+cover ordered appends, duplicate/lost replies, lease takeover, stale writes,
+home isolation, durable assembly and completion only after matching HA acceptance.
 
-Returning to caller-held progress removes the database amplification observed
-in the checkpoint chain. It still resends completed progress between Edge
-requests and reconstructs prior planner context. Local canonical288-quarter
-fixtures measured roughly5–10seconds of computation alone. Hosted profiling
-must establish the full click-to-confirmation target; neither a fast error nor
-a quick queued response counts as success.
+This fixes completion across bounded requests, not transport amplification.
+Completed state is downloaded once per batch and resent/replayed on every
+worker call. The successful live run sent approximately 997 MB of worker request
+bodies and downloaded 133 MB through batch-load RPCs. These are uncompressed
+application payload counts, not billed traffic or a fleet capacity guarantee.
+Final assembly also remains a synchronous Edge CPU section; the measured live
+assembly took 184ms, which does not guarantee the same margin for larger homes.

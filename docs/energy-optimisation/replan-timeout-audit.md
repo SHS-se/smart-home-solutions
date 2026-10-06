@@ -1,5 +1,10 @@
 # Replanning timeout audit — 24 September 2026
 
+Current status, 6 October: the latest durable batch implementation and successful
+live evidence are recorded in the [replanning handoff](replanning-handoff-2026-10.md).
+The historical inventories and timeout requirements below describe earlier
+implementations and are superseded where they differ from that status.
+
 ## Follow-up — 6 October 2026
 
 The TEST portal RPC `get_energy_portal_delta` and durable worker claim
