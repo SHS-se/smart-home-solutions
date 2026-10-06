@@ -1,6 +1,5 @@
-// A quarter is filled only when another legal booking cannot fit there.
-// Test cheaper quarters in price order against the original schedule; keep
-// one feasible witness per overlapping quarter, never one point per pair.
+// Apply moves cumulatively, reserving a distinct cheaper destination for each
+// overlapping source quarter; never award one point per pair.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
 import { evLevels, evMaxW, poolLevels, simulate, type Decisions, type Simulation } from './referee';
@@ -17,21 +16,26 @@ export function auditLargeLoadOverlap(
   c: BenchCase, h: Household, targets: Targets, d: Decisions, original: Simulation,
   guard: ServiceGuard, thresholdW: number,
 ): LargeLoadOverlapAudit {
-  const streams = { pool: d.pool_w, ev: d.ev_w, battery: d.battery_charge_w };
+  const fields = { pool: 'pool_w', ev: 'ev_w', battery: 'battery_charge_w' } as const;
+  const deliveredFields = { pool: 'poolW', ev: 'evW', battery: 'chargeW' } as const;
   const devices: Device[] = ['pool', 'ev', 'battery'];
-  const overlapping = d.pool_w.flatMap((_, i) => devices.filter(device => streams[device][i] > thresholdW).length >= 2 ? [i] : []);
+  const overlapping = d.pool_w.flatMap((_, i) => devices.filter(device => d[fields[device]][i] > thresholdW).length >= 2 ? [i] : []);
   const out: LargeLoadOverlapAudit = { thresholdW, overlappingQuarters: overlapping, moves: [] };
   if (!overlapping.length) return out;
   const prices = c.recorded.prices.import_sek_per_kwh;
   const cheapest = prices.map((_, i) => i).sort((a, b) => prices[a] - prices[b] || a - b);
   const witness = scheduleWitness(c, h, targets, original, guard);
-  const told = c.recorded.actual ? simulate(c, h, d, 'told') : original;
+  let booked = d;
+  let measured = original;
+  let told = c.recorded.actual ? simulate(c, h, d, 'told') : original;
+  const destinations = new Set<number>();
 
   for (const from of overlapping) {
     search: for (const to of cheapest) {
       if (prices[to] >= prices[from]) break;
+      if (destinations.has(to)) continue;
       for (const device of devices) {
-        const values = streams[device];
+        const values = booked[fields[device]];
         if (values[from] <= thresholdW) continue;
         const headroom = Math.max(0, h.site.import_limit_w - told.netW[to]);
         const cap = device === 'pool' ? poolLevels(h).at(-1)!.draw_w : device === 'ev' ? evMaxW(h) : h.battery.charge_max_w;
@@ -39,7 +43,7 @@ export function auditLargeLoadOverlap(
         if (device === 'battery') {
           // A moved charge changes inventory only between its old and new quarter.
           // Limit the transfer by the tightest intervening storage margin in both worlds.
-          for (const state of c.recorded.actual ? [original, told] : [original]) {
+          for (const state of c.recorded.actual ? [measured, told] : [measured]) {
             for (let i = Math.min(from, to); i < Math.max(from, to); i++) {
               const margin = to < from ? h.battery.max_soc * h.battery.capacity_kwh - state.batteryKwh[i]
                 : state.batteryKwh[i] - h.battery.min_soc * h.battery.capacity_kwh;
@@ -58,9 +62,18 @@ export function auditLargeLoadOverlap(
           if (levels && !move) continue;
           const shifted = move?.values ?? [...values];
           if (!levels) { shifted[from] -= power; shifted[to] += power; }
-          const candidate = { ...d, [device === 'pool' ? 'pool_w' : device === 'ev' ? 'ev_w' : 'battery_charge_w']: shifted };
-          if (!witness(candidate, device, [from, to])) continue;
+          const candidate = { ...booked, [fields[device]]: shifted };
+          const after = witness(candidate, device, [from, to]);
+          if (!after) continue;
+          // Later edits must not curtail any earlier accepted booking in the
+          // measured world, including bookings belonging to another device.
+          if (out.moves.some(m => [m.from, m.to].some(i =>
+            Math.abs(after[deliveredFields[m.device]][i] - candidate[fields[m.device]][i]) > 1))) continue;
           out.moves.push({ from, to, device, movedW: move?.moved_w ?? power });
+          destinations.add(to);
+          booked = candidate;
+          measured = after;
+          told = c.recorded.actual ? simulate(c, h, booked, 'told') : after;
           break search;
         }
       }

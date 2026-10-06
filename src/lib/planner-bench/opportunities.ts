@@ -45,7 +45,7 @@ import { auditLargeLoadOverlap, LARGE_WORKLOAD_W, type LargeLoadOverlapAudit } f
 import { auditShortGaps, SHORT_GAP_PRICE_TOLERANCE, type GapDevice, type ShortGapAudit } from './short-gaps';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 7;
+export const OPPORTUNITY_AUDIT_VERSION = 8;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;

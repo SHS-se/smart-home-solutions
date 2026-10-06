@@ -54,7 +54,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 19;
+export const SCORER_VERSION = 20;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -244,7 +244,7 @@ export const DEFAULT_RULES: QuarterRule[] = [
   },
   {
     key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',
-    describe: t => `at least two flexible workloads each above ${t} W, with a feasible move to a strictly cheaper quarter`,
+    describe: t => `at least two flexible workloads each above ${t} W, with jointly feasible moves to distinct strictly cheaper quarters`,
     threshold: LARGE_WORKLOAD_W, points: -1,
     fires: q => q.avoidableOverlap,
     eligibleFrom: () => 0,

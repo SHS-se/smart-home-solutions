@@ -5,7 +5,7 @@ import { referee, simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { scoreQuarters } from './score.ts';
 import { evaluate } from './evaluate.ts';
-import { TARGETS, plan, world } from './world.fixture.ts';
+import { TARGETS, plan, within, world } from './world.fixture.ts';
 import type { BenchCase } from './case.ts';
 
 const audit = (c: BenchCase, d: Decisions, h = HOUSEHOLD) =>
@@ -33,6 +33,67 @@ Deno.test('filled cheapest quarter is skipped for the next cheapest with feasibl
   assertEquals(audit(c, d).moves.map(m => m.to), [1]);
   c.base_load_forecast_w[1] = HOUSEHOLD.site.import_limit_w;
   assertEquals(audit(c, d).moves, []);
+});
+
+Deno.test('seven variable EV bookings use distinct cheaper quarters in price order and execute together', () => {
+  const c = world({ buy: i => i < 7 ? 0.1 + i / 10 : 2 });
+  c.recorded.actual = { base_load_w: new Array(288).fill(500), solar_w: new Array(288).fill(0) };
+  const d = plan({
+    pool: i => within(i, 100, 107) ? 3764 : 0,
+    ev: i => within(i, 100, 107) ? 3450 + 690 * ((i - 100) % 4) : 0,
+  });
+  const evidence = audit(c, d);
+  assertEquals(evidence.moves.map(m => [m.from, m.to, m.device, m.movedW]),
+    Array.from({ length: 7 }, (_, i) => [100 + i, i, 'ev', d.ev_w[100 + i]]));
+  const altered = structuredClone(d);
+  for (const move of evidence.moves) {
+    altered.ev_w[move.from] -= move.movedW;
+    altered.ev_w[move.to] += move.movedW;
+  }
+  for (const mode of ['told', 'recorded'] as const) {
+    const before = simulate(c, HOUSEHOLD, d, mode), after = simulate(c, HOUSEHOLD, altered, mode);
+    assertEquals(after.violations, []);
+    assert(after.evKwh[287] >= before.evKwh[287] - 1e-6);
+    assert(after.poolC[287] >= before.poolC[287] - 1e-6);
+    assert(after.batteryKwh[287] >= before.batteryKwh[287] - 1e-6);
+    for (const move of evidence.moves) assertEquals(after.evW[move.to], move.movedW);
+  }
+});
+
+Deno.test('one cheaper destination justifies only one penalty even with spare charger capacity', () => {
+  const c = world({ buy: i => i === 0 ? 0.1 : 2 });
+  const d = plan({
+    pool: i => within(i, 100, 107) ? 3764 : 0,
+    ev: i => within(i, 100, 107) ? 3450 : 0,
+  });
+  assertEquals(audit(c, d).moves.map(m => [m.from, m.to]), [[100, 0]]);
+  const record = { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } };
+  assertEquals(evaluate(c, record, {}).score.counts.large_load_overlap, 1);
+});
+
+Deno.test('a destination is reserved across devices, not just for the moved device', () => {
+  const c = world({ buy: i => i === 0 ? 0.1 : 2 });
+  const d = plan({
+    pool: i => within(i, 100, 102) ? 3764 : 0,
+    ev: i => i === 100 ? 3450 : 0,
+    charge: i => i === 101 ? 3000 : 0,
+  });
+  assertEquals(audit(c, d).moves.map(m => [m.from, m.to, m.device]), [[100, 0, 'ev']]);
+});
+
+Deno.test('distinct battery destinations cannot reuse the same intervening storage margin', () => {
+  const h = structuredClone(HOUSEHOLD);
+  h.battery.max_soc = 0.6;
+  const c = world({ start: { battery_soc: 0.6 - 0.01 / h.battery.capacity_kwh }, buy: i => i < 2 ? 0.1 + i / 10 : 2 });
+  const d = plan({
+    pool: i => within(i, 100, 102) ? 3764 : 0,
+    charge: i => within(i, 100, 102) ? 3000 : 0,
+    discharge: i => within(i, 99, 101) ? 3000 : 0,
+  });
+  assertEquals(simulate(c, h, d).violations, []);
+  const moves = audit(c, d, h).moves;
+  assertEquals(moves.map(m => [m.from, m.to, m.device]), [[100, 0, 'battery']]);
+  assert(moves[0].movedW > 0 && moves[0].movedW < 100);
 });
 
 Deno.test('pool, EV and battery pairs count, while one large load and exactly 2 kW do not', () => {
