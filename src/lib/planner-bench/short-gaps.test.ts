@@ -26,7 +26,7 @@ function alternative(d: Decisions, gap: ShortGapWitness) {
   return changed;
 }
 
-Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous witnesses and score once per gap', () => {
+Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous witnesses and score every gap quarter', () => {
   const c = world();
   for (const device of ['ev', 'pool'] as const) {
     for (let length = 1; length <= 4; length++) {
@@ -42,12 +42,12 @@ Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous 
       assertEquals(after.violations, []);
       for (const store of ['batteryKwh', 'evKwh', 'poolC'] as const) assert(after[store][287] >= before[store][287] - 1e-6);
       const evaluated = evaluate(c, recordOf(c, d), {});
-      assertEquals(evaluated.score.counts[`${device}_short_gap`], 1);
+      assertEquals(evaluated.score.counts[`${device}_short_gap`], length);
       assertEquals(evaluated.series.audit!.shortGaps.gaps.length, 1);
       assert(evaluated.series.audit!.shortGaps.gaps[0].changes.length > 0);
       const scored = scoreQuarters(evaluated.series);
-      assertEquals(scored.quarters.flatMap((q, i) => q.fired.includes(`${device}_short_gap`) ? [i] : []), [8]);
-      assertEquals(scoreQuarters(evaluated.series, { [`${device}_short_gap`]: { enabled: false } }).sum, scored.sum + 1);
+      assertEquals(scored.quarters.flatMap((q, i) => q.fired.includes(`${device}_short_gap`) ? [i] : []), Array.from({ length }, (_, i) => 8 + i));
+      assertEquals(scoreQuarters(evaluated.series, { [`${device}_short_gap`]: { enabled: false } }).sum, scored.sum + length);
     }
   }
 });
@@ -84,9 +84,20 @@ Deno.test('the combined tolerance accepts the discussed 1-, 2- and 4-quarter gap
     const c = world({ buy: i => i >= 7 && i < 7 + prices.length ? prices[i - 7] : 1.8 });
     for (const device of ['ev', 'pool'] as const) {
       const result = evaluate(c, recordOf(c, interrupted(device, prices.length - 2)), {});
-      assertEquals(result.score.counts[`${device}_short_gap`], 1);
+      assertEquals(result.score.counts[`${device}_short_gap`], prices.length - 2);
     }
   }
+});
+
+Deno.test('a price-qualified four-quarter EV gap cannot use more energy than its adjacent runs booked', () => {
+  // C-0616 told/low: both border prices pass every gap quarter's 10% envelope.
+  const prices = [1.68275, 1.76646, 1.7636, 1.72264, 1.68929, 1.63933];
+  const c = world({ buy: i => i >= 11 && i <= 16 ? prices[i - 11] : 1.8 });
+  const d = plan({ ev: i => i === 10 ? 4140 : i === 11 || i === 16 ? 3450 : 0 });
+  const result = audit(c, d);
+  assertEquals(result.candidates, [{ device: 'ev', from: 12, to: 16 }]);
+  assertAlmostEquals(d.ev_w.reduce((sum, w) => sum + w * 0.25 / 1000, 0), 2.76);
+  assertEquals(result.gaps, []);
 });
 
 Deno.test('five-quarter gaps, leading/trailing idle time and continuous runs are exempt', () => {

@@ -287,14 +287,14 @@ test.describe('planner bench', () => {
     await login(page);
     await page.goto('/portal/planner-bench');
     const explanation = page.locator('#bench-quarter-explanation');
-    for (const [device, label, start, end, power] of [
-      ['ev', 'EV charging', '08:00', '08:30', '3.45'], ['pool', 'pool heating', '09:00', '09:15', '3.76'],
+    for (const [device, label, start, end, power, quarters] of [
+      ['ev', 'EV charging', '08:00', '08:30', '3.45', 2], ['pool', 'pool heating', '09:00', '09:15', '3.76', 1],
     ]) {
       const row = page.locator(`#bench-rule-${device}_short_gap`);
-      await expect(row).toContainText(/1 (q|kv) · −1/);
+      await expect(row).toContainText(new RegExp(`${quarters} (q|kv) · −${quarters}`));
       await row.getByRole('button').first().click();
       await expect(row).toContainText(/both bordering running quarters|båda angränsande driftkvartarna/);
-      await row.getByRole('button', { name: /^Test: 1 / }).click();
+      await row.getByRole('button', { name: new RegExp(`^Test: ${quarters} `) }).click();
       await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
       await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
       await expect(explanation).toContainText(/(?:larger of|större av) 10 .*öre/);
@@ -304,6 +304,15 @@ test.describe('planner bench', () => {
       await row.locator('details').last().locator('summary').click();
       await expect(row.locator('details').last()).toContainText(`0.00 → ${power} kW`);
     }
+    // Selecting the second gap quarter must retain the full gap explanation.
+    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await chart.scrollIntoViewIfNeeded();
+    const box = (await chart.boundingBox())!;
+    await page.mouse.click(box.x + box.width * (58 + (25.5 / 288) * 1010) / 1160, box.y + 150);
+    await expect(explanation).toContainText('24/09 08:15');
+    await expect(explanation).toContainText('−1 Short interruption in EV charging');
+    await expect(explanation).toContainText('24/09 08:00 → 24/09 08:30');
+    await expect(explanation).toContainText(/2 (quarters|kvartar)/);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(explanation).toBeVisible();
     expect(await explanation.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);

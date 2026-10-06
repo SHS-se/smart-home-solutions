@@ -805,7 +805,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                                 ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
                                 : null;
                               const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
-                                ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from === selected)!
+                                ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
                                 : null;
                               return <li key={k} className="font-mono">
                                 {signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}

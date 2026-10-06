@@ -54,7 +54,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 18;
+export const SCORER_VERSION = 19;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -87,7 +87,7 @@ export interface QuarterView {
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
   avoidableOverlap: boolean;
-  /** Devices with an avoidable short gap beginning in this quarter. */
+  /** Devices whose avoidable short gap includes this quarter. */
   shortGapDevices: ReadonlySet<GapDevice>;
   /** Home-battery power left for EV charging after exports and other household loads, W. */
   evBatteryW: number;
@@ -426,7 +426,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       flexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
       avoidableOverlap: overlapQuarters.has(i),
-      shortGapDevices: new Set(shortGaps.filter(gap => gap.from === i).map(gap => gap.device)),
+      shortGapDevices: new Set(shortGaps.filter(gap => gap.from <= i && i < gap.to).map(gap => gap.device)),
       evBatteryW: evBatterySupplyW(s, i),
       arbitragePrepared: preparation.prepared,
     };
