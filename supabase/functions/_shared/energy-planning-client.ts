@@ -9,6 +9,8 @@ import { assembleOptimisationPlan } from "./energy-planning-step.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 
 const MAX_STEPS = 512;
+/** Resource bound, separate from the measured website completion target. */
+export const PLANNING_EXECUTION_TIMEOUT_MS = 120_000;
 
 export class EnergyPlanningError extends Error {
   constructor(message: string, readonly status: 400 | 502 = 502, readonly code = "planning_failed") {
@@ -42,7 +44,7 @@ export async function generateRemoteOptimisationPlan(
   const started = performance.now();
   // A price arrival also runs the bounded daily curve search. Individual
   // worker calls retain their existing CPU budget.
-  const deadline = connection.deadline ?? started + 120_000;
+  const deadline = connection.deadline ?? started + PLANNING_EXECUTION_TIMEOUT_MS;
   const checkDeadline = () => {
     if (performance.now() >= deadline) {
       throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");

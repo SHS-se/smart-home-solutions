@@ -16,7 +16,9 @@ received-order ownership, its fence, fixed-plan revision and manual request
 identity. It writes current plan, run summary and terminal publication receipt
 atomically. A single operational deadline spans input preparation and solve;
 website requests use the server's request receipt time rather than resetting
-the budget at ingest, acceptance or each step. A deadline crossed during
+the budget at ingest, acceptance or each step. The execution timeout is
+120 seconds: cancelling at the latency target prevented valid solves from
+finishing. A deadline crossed during
 publication rolls back the entire new plan. Device/source timestamps never
 order submissions or constrain measurement or forecast validity.
 
