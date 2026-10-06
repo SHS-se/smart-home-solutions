@@ -21,7 +21,7 @@ const onlyMissedCheap = { cheap_buy: { enabled: false }, cheapest_buy: { enabled
 const missed: QuarterScore = { score: -1, fired: ['missed_cheap_quarter'] };
 const taken: QuarterScore = { score: 0, fired: [] };
 
-Deno.test('each flexible store below its exact target must take at least 500 W in a cheap quarter', () => {
+Deno.test('a flexible store below its exact target needs charging or heating of at least 500 W in a cheap quarter', () => {
   for (const [state, watts, below, target] of [
     ['homeSoc', 'batteryChargeW', 99.9, 100],
     ['carKm', 'carW', 299.9, 300],
@@ -41,7 +41,7 @@ Deno.test('each flexible store below its exact target must take at least 500 W i
   }
 });
 
-Deno.test('one below-target device taking 500 W avoids the single penalty; unrelated or combined small draws do not', () => {
+Deno.test('one charging or heating device taking 500 W avoids the single penalty; unrelated or combined small draws do not', () => {
   const s = series();
   s.homeSoc[0] = 50; s.carKm![0] = 299; s.poolC[0] = 29.5;
   assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], missed);
@@ -50,10 +50,38 @@ Deno.test('one below-target device taking 500 W avoids the single penalty; unrel
   s.carW[0] = 500;
   assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], taken);
   s.carKm![0] = 300;
+  assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], taken);
+  s.carW[0] = 0;
   s.hotWaterW[0] = 2000; s.loadW[0] = 5000; s.batteryDischargeW[0] = 1000;
   assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], missed);
   s.batteryChargeW[0] = 500;
   assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], taken);
+});
+
+Deno.test('running pool heating counts throughout its cycle, including at and above target with an idle short battery', () => {
+  const s = series();
+  s.homeSoc[0] = 46;
+  s.importPrice[0] = 0.95;
+  s.poolW[0] = 3764;
+  for (const temperature of [29.99, 30, 30.5, 31.2, 31.5]) {
+    s.poolC[0] = temperature;
+    assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], taken);
+  }
+  s.poolW[0] = 0;
+  assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], missed);
+});
+
+Deno.test('charging at or above its own target counts when another flexible store is short', () => {
+  for (const watts of ['carW', 'batteryChargeW', 'poolW'] as const) {
+    const s = series();
+    // Only a different store is short; the running device is at/above target.
+    if (watts === 'batteryChargeW') s.poolC[0] = 29.99;
+    else s.homeSoc[0] = 50;
+    for (const power of [499.9, 500]) {
+      s[watts][0] = power;
+      assertEquals(scoreQuarters(s, onlyMissedCheap).quarters[0], power < 500 ? missed : taken);
+    }
+  }
 });
 
 Deno.test('the cheap price boundary is strict, zero and negative prices count, and rule settings apply', () => {

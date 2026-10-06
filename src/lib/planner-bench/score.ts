@@ -20,7 +20,7 @@
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
 //     A quarter below 1 SEK/kWh loses one point when a flexible store is below
-//     target but none of the below-target devices draws at least FLEXIBLE_W.
+//     target but no charging or pool heating draws at least FLEXIBLE_W.
 //     Each quarter with a sale price above 4 SEK/kWh loses a point without
 //     export, and another if the last charge before the first such quarter
 //     did not finish full. Discharge after that charge does not undo preparation.
@@ -54,7 +54,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 20;
+export const SCORER_VERSION = 21;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -136,12 +136,12 @@ const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && 
 const missedCheapQuarter = (q: QuarterView, price: number) => {
   if (q.s.importPrice[q.i] >= price) return false;
   const s = q.s, i = q.i, c = s.comfort;
-  const belowTarget = [
+  const devices = [
     { below: s.homeSoc[i] !== null && s.homeSoc[i] < CHEAP_CHARGE_BATTERY_SOC, watts: s.batteryChargeW[i] },
     { below: !!c && !!s.carKm && s.carKm[i] < c.ev_target_km, watts: s.carW[i] },
     { below: !!c && s.poolC[i] !== null && s.poolC[i] < c.pool_target_c, watts: s.poolW[i] },
-  ].filter(device => device.below);
-  return belowTarget.length > 0 && !belowTarget.some(device => device.watts >= FLEXIBLE_W);
+  ];
+  return devices.some(device => device.below) && !devices.some(device => device.watts >= FLEXIBLE_W);
 };
 
 /** Preparation is fixed before the first opportunity for the entire case, including separated later spikes. */
@@ -224,7 +224,7 @@ export const DEFAULT_RULES: QuarterRule[] = [
   },
   {
     key: 'missed_cheap_quarter', about: 'price', label: 'Missed cheap charging or heating quarter',
-    describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no below-target device drawing at least ${FLEXIBLE_W} W`,
+    describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no charging or pool heating drawing at least ${FLEXIBLE_W} W`,
     threshold: 1, points: -1,
     fires: missedCheapQuarter, eligibleFrom: () => 0,
   },
@@ -244,7 +244,7 @@ export const DEFAULT_RULES: QuarterRule[] = [
   },
   {
     key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',
-    describe: t => `at least two flexible workloads each above ${t} W, with jointly feasible moves to distinct strictly cheaper quarters`,
+    describe: t => `at least two workloads each above ${t} W, with jointly feasible EV or home-battery charging moves to distinct strictly cheaper quarters; pool heating stays fixed`,
     threshold: LARGE_WORKLOAD_W, points: -1,
     fires: q => q.avoidableOverlap,
     eligibleFrom: () => 0,

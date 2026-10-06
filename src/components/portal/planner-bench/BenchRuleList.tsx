@@ -8,6 +8,7 @@ import { ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import BenchOverlapMove from './BenchOverlapMove';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { AHEAD_MARGIN, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
@@ -234,10 +235,10 @@ export default function BenchRuleList({
       </>;
     }
     if (rule.key === 'missed_cheap_quarter') return <>
-      <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen last under målet drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
-        `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no below-target device draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per kvart. Även en ensam billig kvart räknas, från planens början och vid verkliga priser, även opublicerade. Lagernivåer mäts vid kvartens slut. En enda last under målet med tillräcklig effekt undviker avdraget.',
-        'At most one deduction per quarter. Isolated cheap quarters count from the start of the plan, at actual prices including unpublished prices. Store levels are measured at the end of the quarter. One below-target device drawing enough power avoids the deduction.')}</p>
+      <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen billaddning, hembatteriladdning eller poolvärme drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
+        `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no EV charging, home battery charging or pool heating draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per kvart. Även en ensam billig kvart räknas, från planens början och vid verkliga priser, även opublicerade. Lagernivåer mäts vid kvartens slut. Pågående laddning eller poolvärme med tillräcklig effekt undviker avdraget även när dess eget lager redan är vid eller över målet.',
+        'At most one deduction per quarter. Isolated cheap quarters count from the start of the plan, at actual prices including unpublished prices. Store levels are measured at the end of the quarter. Running charging or pool heating with enough power avoids the deduction even when its own store is already at or above target.')}</p>
       {settings(rule, t('Inköpspris under (SEK/kWh)', 'Purchase price below (SEK/kWh)'), '0.01')}
     </>;
     const gapDevice = rule.key === 'ev_short_gap' ? 'ev' : rule.key === 'pool_short_gap' ? 'pool' : null;
@@ -270,15 +271,13 @@ export default function BenchRuleList({
       {settings(rule, t('Batterieffekt till bilen över (W)', 'Battery power to EV above (W)'), '100')}
     </>;
     if (rule.key === 'large_load_overlap') return <>
-      <p>{t(`Minst två av poolvärme, billaddning och hembatteriladdning överstiger vardera ${rule.threshold} W i samma kvart. Avdrag ges bara när en av lasterna kan flyttas till en strikt billigare kvart inom 72 timmar utan sämre komfort, mindre slutlager eller överskridna utrustningsgränser. Billigare kvartar prövas i prisordning; en fylld kvart ger inget avdrag.`,
-        `At least two of pool heating, EV charging and home battery charging each exceed ${rule.threshold} W in the same quarter. A point is deducted only when one can move to a strictly cheaper quarter within 72 hours without worsening comfort, final stores or equipment limits. Cheaper quarters are tested in price order; a filled quarter causes no penalty.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per överlappande kvart, även med tre laster. Bedöms vid verkliga priser, även när de inte var publicerade. Flyttarna prövas var för sig mot originalplanen och bevisar inte en gemensam omplanering.',
-        'At most one deduction per overlapping quarter, even with three loads. Judged at actual prices, including unpublished prices. Moves are tested separately against the original plan and do not prove a joint reschedule.')}</p>
-      {sides.map(s => s.score && !s.score.auditPending && s.score.audit?.overlap.moves.filter(m => inRange(m.from)).map(m => <div key={`${s.side}-${m.from}`} className="flex flex-wrap items-center gap-2 text-xs">
-        <span>{s.label} · {m.device} · {(m.movedW / 1000).toFixed(2)} kW</span>
-        <Button size="sm" variant="outline" onClick={() => onSelect(s.side, m.from)}>{stamp(s, m.from)}</Button>
-        <span>→</span>
-        <Button size="sm" variant="outline" onClick={() => onSelect(s.side, m.to)}>{stamp(s, m.to)}</Button>
+      <p>{t(`Minst två av poolvärme, billaddning och hembatteriladdning överstiger vardera ${rule.threshold} W i samma kvart. Avdrag ges bara när billaddning eller hembatteriladdning kan flyttas till en strikt billigare kvart inom 72 timmar utan sämre komfort, mindre slutlager eller överskridna utrustningsgränser. Poolens värmecykel hålls oförändrad. Billigare kvartar prövas i prisordning.`,
+        `At least two of pool heating, EV charging and home battery charging each exceed ${rule.threshold} W in the same quarter. A point is deducted only when EV charging or home battery charging can move to a strictly cheaper quarter within 72 hours without worsening comfort, final stores or equipment limits. The pool heating cycle stays fixed. Cheaper quarters are tested in price order.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per överlappande kvart, även med tre laster. Bedöms vid verkliga priser, även när de inte var publicerade. Varje flytt reserverar en egen billigare kvart. Flyttarna tillämpas tillsammans och måste vara genomförbara som en gemensam omplanering.',
+        'At most one deduction per overlapping quarter, even with three loads. Judged at actual prices, including unpublished prices. Each move reserves a distinct cheaper quarter. Moves accumulate and must remain feasible as one joint reschedule.')}</p>
+      {sides.map(s => s.series && s.score && !s.score.auditPending && s.score.audit?.overlap.moves.filter(m => inRange(m.from)).map(m => <div key={`${s.side}-${m.from}`} className="space-y-1 text-xs">
+        <span>{s.label}</span>
+        <BenchOverlapMove move={m} series={s.series} timeZone={timeZone} onSelect={quarter => onSelect(s.side, quarter)} />
       </div>))}
       {settings(rule, t('Effekt per stor last (W)', 'Power per large workload (W)'), '100')}
     </>;

@@ -130,8 +130,17 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, batterySupplied = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || arbitrage || batterySupplied ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || arbitrage || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
+  if (heatingAtTarget) {
+    for (const plan of Object.values(plans)) {
+      plan.importPrice = plan.importPrice.map((_, i) => i >= 24 && i < 44 ? 0.95 : 1.5);
+      plan.poolW = plan.poolW.map((_, i) => i >= 24 && i < 40 ? 3764 : 0);
+      plan.poolC.fill(31.2);
+      plan.homeSoc.fill(46);
+      plan.carKm!.fill(300);
+    }
+  }
   if (batterySupplied) {
     for (const plan of Object.values(plans)) {
       plan.importPrice = plan.importPrice.map((_, i) => 1 + i / 1000);
@@ -158,8 +167,17 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
   }
   if (overlap) {
     for (const [key, plan] of Object.entries(plans)) {
+      const testPlan = key.startsWith(TEST.sha);
+      const to = testPlan ? 104 : 200;
+      plan.importPrice[24] = 0.94;
+      plan.importPrice[to] = testPlan ? 0.84 : 0.74;
+      plan.poolW[24] = 3764;
+      plan.batteryChargeW[24] = testPlan ? 3000 : 0;
+      plan.carW[24] = testPlan ? 0 : 3450;
+      plan.loadW[24] = 900 + plan.poolW[24] + plan.carW[24];
+      plan.gridImportW[24] = Math.max(0, plan.loadW[24] + plan.batteryChargeW[24] - plan.solarW[24]);
       plan.audit!.overlap = { thresholdW: 2000, overlappingQuarters: [24], moves: [
-        { from: 24, to: key.startsWith(TEST.sha) ? 104 : 200, device: 'battery', movedW: 3000 },
+        { from: 24, to, device: testPlan ? 'battery' : 'ev', movedW: testPlan ? 3000 : 3450 },
       ] };
     }
   }
@@ -319,7 +337,28 @@ test.describe('planner bench', () => {
     await explanation.screenshot({ path: test.info().outputPath('short-gap-mobile.png') });
   });
 
-  test('names the cheaper quarter for an overlap in the selected planner', async ({ context, page }) => {
+  test('running pool heating above target takes the cheap quarter even while the battery is short', async ({ context, page }) => {
+    await mockBackend(context, { heatingAtTarget: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const missed = page.locator('#bench-rule-missed_cheap_quarter');
+    // Sixteen heating quarters avoid a penalty; only the four idle cheap
+    // quarters after the run are missed, despite the battery staying at 46%.
+    await expect(missed).toContainText(/4 (q|kv) · −4/);
+    await missed.getByRole('button').first().click();
+    await expect(missed).toContainText(/already at or above target|redan är vid eller över målet/);
+    await missed.getByRole('button', { name: /^Test: 4 / }).click();
+    const explanation = page.locator('#bench-quarter-explanation');
+    await expect(explanation).toContainText('24/09 12:00');
+    await expect(explanation).toContainText('Missed cheap charging or heating quarter');
+    const taken = page.locator('#bench-rule-cheapest_buy');
+    await taken.getByRole('button').first().click();
+    await taken.getByRole('button', { name: /^Test: 16 / }).click();
+    await expect(explanation).toContainText('24/09 08:00');
+    await expect(explanation).not.toContainText('Missed cheap charging or heating quarter');
+  });
+
+  test('explains the moved load and both real prices, and opens its cheaper destination day', async ({ context, page }) => {
     await mockBackend(context, { overlap: true });
     await login(page);
     await page.goto('/portal/planner-bench');
@@ -329,10 +368,26 @@ test.describe('planner bench', () => {
     const explanation = page.locator('#bench-quarter-explanation');
     const overlap = explanation.getByRole('listitem').filter({ hasText: 'Large workloads overlap' });
     await expect(overlap).toContainText(/−1 Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
+    await expect(overlap).toContainText(/Home battery charging.*3.00 kW|Hembatteriladdning.*3.00 kW/);
+    await expect(overlap).toContainText(/24\/09 08:00 · (real price|verkligt pris): 0.94 SEK\/kWh/);
+    await expect(overlap).toContainText(/25\/09 04:00 · (real price|verkligt pris): 0.84 SEK\/kWh/);
+    await expect(rule).toContainText(/pool heating cycle stays fixed|Poolens värmecykel hålls oförändrad/);
+    await expect(rule).toContainText(/distinct cheaper quarter|egen billigare kvart/);
+    // Start on the source day. The destination button must switch days and
+    // select the actual destination rather than the same clock time today.
+    await page.locator('#bench-day-0').click();
+    await overlap.getByRole('button', { name: /(?:Show cheaper quarter|Visa billigare kvart): 25\/09 04:00/ }).click();
+    await expect(page.locator('#bench-day-1')).toHaveAttribute('aria-pressed', 'true');
+    await expect(explanation).toContainText('25/09 04:00');
+    await expect(explanation).toContainText('0.84 kr/kWh');
+    await page.locator('#bench-day-0').click();
+    await rule.getByRole('button', { name: /(?:Show source quarter|Visa från kvart): 24\/09 08:00/ }).last().click();
     // The destination is on the next day, in the home's time zone. Switching
     // planners must explain that planner's own witness for the same source.
     await page.locator('#bench-show-current').click();
     await expect(overlap).toContainText(/(cheaper quarter|billigare kvart): 26\/09 04:00/);
+    await expect(overlap).toContainText(/EV charging.*3.45 kW|Billaddning.*3.45 kW/);
+    await expect(overlap).toContainText(/26\/09 04:00 · (real price|verkligt pris): 0.74 SEK\/kWh/);
     await expect(overlap).not.toContainText('25/09');
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(overlap).toBeVisible();

@@ -2,13 +2,13 @@
 // overlapping source quarter; never award one point per pair.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
-import { evLevels, evMaxW, poolLevels, simulate, type Decisions, type Simulation } from './referee';
+import { evLevels, evMaxW, simulate, type Decisions, type Simulation } from './referee';
 import type { ServiceGuard } from './service';
 import { scheduleWitness } from './schedule-witness';
 import { stepMove } from './step-moves';
 
 export const LARGE_WORKLOAD_W = 2000;
-type Device = 'pool' | 'ev' | 'battery';
+type Device = 'ev' | 'battery';
 export interface OverlapMove { from: number; to: number; device: Device; movedW: number }
 export interface LargeLoadOverlapAudit { thresholdW: number; overlappingQuarters: number[]; moves: OverlapMove[] }
 
@@ -16,10 +16,12 @@ export function auditLargeLoadOverlap(
   c: BenchCase, h: Household, targets: Targets, d: Decisions, original: Simulation,
   guard: ServiceGuard, thresholdW: number,
 ): LargeLoadOverlapAudit {
-  const fields = { pool: 'pool_w', ev: 'ev_w', battery: 'battery_charge_w' } as const;
-  const deliveredFields = { pool: 'poolW', ev: 'evW', battery: 'chargeW' } as const;
-  const devices: Device[] = ['pool', 'ev', 'battery'];
-  const overlapping = d.pool_w.flatMap((_, i) => devices.filter(device => d[fields[device]][i] > thresholdW).length >= 2 ? [i] : []);
+  const fields = { ev: 'ev_w', battery: 'battery_charge_w' } as const;
+  const deliveredFields = { ev: 'evW', battery: 'chargeW' } as const;
+  const devices: Device[] = ['ev', 'battery'];
+  // Pool heating contributes to overlap, but its heating cycle stays fixed.
+  const overlapping = d.pool_w.flatMap((pool, i) =>
+    [pool, d.ev_w[i], d.battery_charge_w[i]].filter(w => w > thresholdW).length >= 2 ? [i] : []);
   const out: LargeLoadOverlapAudit = { thresholdW, overlappingQuarters: overlapping, moves: [] };
   if (!overlapping.length) return out;
   const prices = c.recorded.prices.import_sek_per_kwh;
@@ -38,7 +40,7 @@ export function auditLargeLoadOverlap(
         const values = booked[fields[device]];
         if (values[from] <= thresholdW) continue;
         const headroom = Math.max(0, h.site.import_limit_w - told.netW[to]);
-        const cap = device === 'pool' ? poolLevels(h).at(-1)!.draw_w : device === 'ev' ? evMaxW(h) : h.battery.charge_max_w;
+        const cap = device === 'ev' ? evMaxW(h) : h.battery.charge_max_w;
         let want = Math.min(values[from], cap - values[to], headroom);
         if (device === 'battery') {
           // A moved charge changes inventory only between its old and new quarter.
@@ -52,8 +54,8 @@ export function auditLargeLoadOverlap(
           }
         }
         if (want <= 0) continue;
-        // Whole heater quarters and charger amps; battery charging is continuous.
-        const levels = device === 'pool' ? poolLevels(h) : device === 'ev' ? evLevels(h) : null;
+        // Charger amps stay whole; battery charging is continuous.
+        const levels = device === 'ev' ? evLevels(h) : null;
         const powers = levels
           ? levels.map(level => values[from] - level.draw_w).filter(w => w > 0 && w <= want + 1e-6).sort((a, b) => b - a)
           : [want];

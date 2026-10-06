@@ -3,6 +3,7 @@ import { auditLargeLoadOverlap } from './large-load-overlap.ts';
 import { HOUSEHOLD } from './household.ts';
 import { referee, simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
+import { scheduleWitness } from './schedule-witness.ts';
 import { scoreQuarters } from './score.ts';
 import { evaluate } from './evaluate.ts';
 import { TARGETS, plan, within, world } from './world.fixture.ts';
@@ -17,6 +18,7 @@ Deno.test('two large bookings incur one penalty with a feasible cheaper quarter,
   const evidence = audit(c, d);
   assertEquals(evidence.moves.length, 1);
   assertEquals([evidence.moves[0].from, evidence.moves[0].to], [100, 287]);
+  assertEquals(evidence.moves[0].device, 'ev');
   const record = { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } };
   const evaluated = evaluate(c, record, {});
   assertEquals(evaluated.score.counts.large_load_overlap, 1);
@@ -25,6 +27,30 @@ Deno.test('two large bookings incur one penalty with a feasible cheaper quarter,
   // Threshold changes require new witnesses; the browser never invents a move.
   assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { threshold: 5000 } }).auditPending, true);
   assertEquals(evaluate(c, record, { large_load_overlap: { threshold: 5000 } }).score.counts.large_load_overlap, undefined);
+});
+
+Deno.test('a cheaper isolated pool quarter cannot justify splitting a heating cycle when battery charging cannot move', () => {
+  const c = world({
+    start: { battery_soc: HOUSEHOLD.battery.min_soc, pool_water_c: 35 },
+    buy: i => i === 200 ? 0.5 : 2,
+  });
+  const d = plan({
+    pool: i => within(i, 96, 112) ? 3764 : 0,
+    charge: i => i === 100 ? 3000 : 0,
+    discharge: i => i === 101 ? 2707.5 : 0,
+  });
+  const original = simulate(c, HOUSEHOLD, d);
+  assertEquals(original.violations, []);
+  // A quarter-level replay alone accepts the isolated pool move, but the
+  // owner's rule keeps this continuous heating cycle fixed.
+  const splitPool = structuredClone(d);
+  splitPool.pool_w[100] = 0;
+  splitPool.pool_w[200] = 3764;
+  assert(scheduleWitness(c, HOUSEHOLD, TARGETS, original, DEFAULT_SERVICE_GUARD)(splitPool, 'pool', [100, 200]));
+  const evidence = audit(c, d);
+  assertEquals(evidence.overlappingQuarters, [100]);
+  assertEquals(evidence.moves, []);
+  assertEquals(evaluate(c, { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } }, {}).score.counts.large_load_overlap, undefined);
 });
 
 Deno.test('filled cheapest quarter is skipped for the next cheapest with feasible room', () => {
@@ -150,9 +176,10 @@ Deno.test('a partial EV move must stay on charger levels and preserve the origin
   const evidence = audit(c, d);
   assertEquals(evidence.moves.length, 1);
   const move = evidence.moves[0];
+  assertEquals(move.device, 'ev');
   const altered = structuredClone(d);
-  altered[move.device === 'ev' ? 'ev_w' : 'pool_w'][move.from] -= move.movedW;
-  altered[move.device === 'ev' ? 'ev_w' : 'pool_w'][move.to] += move.movedW;
+  altered.ev_w[move.from] -= move.movedW;
+  altered.ev_w[move.to] += move.movedW;
   assertEquals(simulate(c, HOUSEHOLD, altered).violations, []);
   const before = referee(c, HOUSEHOLD, TARGETS, d), after = referee(c, HOUSEHOLD, TARGETS, altered);
   assert(after.terminal.ev_kwh >= before.terminal.ev_kwh - 1e-6);

@@ -14,7 +14,7 @@ The runner calls `evaluate(case, record, criteria, lane)`. It invokes the refere
 | `service.ts` | Shared recovery policy and separate pool/car service exposure guards |
 | `opportunities.ts` | Rule catalogue, case applicability, deterministic search, cumulative transfers and known/hindsight evidence |
 | `score.ts` | Comfort rules, criteria validation, raw integer point totals, stale-version detection |
-| `large-load-overlap.ts` | Cumulative legal transfers out of quarters containing multiple large workloads; price-ordered destination search, one distinct destination per source |
+| `large-load-overlap.ts` | Cumulative legal EV/home-battery charging transfers out of quarters containing multiple large workloads, keeping pool heating fixed; price-ordered destination search, one distinct destination per source |
 | `evaluate.ts` | The single composition point for referee, audit, statistics and stored score |
 | `bench/rescore.ts` | All-lane coverage, recomputation from decisions, persisted-version verification and report |
 | `BenchRuleCards.tsx` | Grouped visual rules, applicability, threshold bands and one reusable evidence viewer |
@@ -34,6 +34,7 @@ Independent Claude Opus 5.5 High and Codex candidates were grounded in the curre
 - Reject a blanket warm-pool penalty: a warm pool can hold useful future heat. (Scorer v6: warmth above target +2 °C scores +1 when the next day is dearer or less sunny and −1 when it is neither.)
 - Scorer v11, audit v5: the owner's overlap rule deducts −1 per quarter with at least two flexible workloads each strictly above 2 kW, only with a feasible move to a strictly cheaper quarter across the full 72 h. Stored independent witnesses preserve service and final inventories and obey equipment limits. This is a separate price-order heuristic, including unpublished actual prices; its points do not claim additional SEK savings or multiply the energy audit's savings.
 - Scorer v20, audit v8: overlap moves accumulate into one feasible schedule and reserve a distinct cheaper destination per penalized source quarter, across all devices. Seven overlapping quarters require seven distinct available destinations; neither grid headroom nor intervening storage margins can be reused by independent witnesses.
+- Scorer v21, audit v9: pool heating cycles stay fixed in the overlap rule; only EV and home battery charging may move. Running pool heating or charging counts as taking a cheap quarter even when its own store is already at/above target and another store remains short. Shared move evidence names the device, power, source/destination dates and actual prices, with chart navigation from either explanation.
 - Scorer v12: the owner's EV supply preference deducts −1 when home-battery discharge remains available to the EV after netting simultaneous battery charging, exports and all non-EV household consumption. Other loads receive battery supply first; simultaneous EV charging and battery discharge alone is allowed. It needs no economic witness and uses existing stored power series.
 - Keep hindsight separate from the headline, following the user's explicit preference.
 
