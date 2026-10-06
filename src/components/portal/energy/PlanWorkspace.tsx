@@ -246,13 +246,14 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   // The pool's measured temperature for the days the chart draws. Read on its
   // own and seldom: a reading arrives once a quarter, and a home without a
-  // pool simply has none.
+  // pool simply has none. Resume immediately when the tab becomes visible,
+  // just like the main chart sync, so skipped background polls leave no gap.
   useEffect(() => {
     setPoolActuals([]);
     if (!homeId) return;
     let cancelled = false;
     const read = async () => {
-      if (document.visibilityState !== 'visible') return;
+      if (cancelled || document.visibilityState !== 'visible') return;
       const since = new Date(Date.now() - LOADED_HISTORY_DAYS * 86_400_000).toISOString();
       const { data, error: poolError } = await (supabase as unknown as SupabaseClient)
         .from('energy_optimisation_pool_slots')
@@ -263,7 +264,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     };
     void read();
     const timer = window.setInterval(() => void read(), 15 * 60_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    const resume = () => { void read(); };
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', resume);
+    };
   }, [homeId]);
 
   const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at

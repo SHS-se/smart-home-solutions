@@ -71,6 +71,7 @@ interface MockPlanState {
   readError?: boolean;
   history?: Array<{ start_ts: string; total_load_kwh: number }>;
   deviceHistory?: Array<{ start_ts: string; device_energy_kwh: Record<string, number> }>;
+  poolHistory?: Array<{ start_ts: string; water_temperature_c: number }>;
   devices?: Array<Record<string, unknown>>;
 }
 
@@ -186,6 +187,8 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'energy_optimisation_current'
       // The plan workbench loads its snapshot on demand, separately from sync.
       ? [{ snapshot: planSnapshot, plan: shown }]
+      : table === 'energy_optimisation_pool_slots'
+      ? replan.poolHistory ?? []
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -239,6 +242,35 @@ test.describe('requesting a replan', () => {
     await expect(tooltip).toContainText('2.60 kW');
     await expect(tooltip).not.toContainText('NaN');
     await page.screenshot({ path: testInfo.outputPath('partial-consumption.png') });
+  });
+
+  test('returning to a hidden tab refreshes measured pool temperature immediately', async ({ page }) => {
+    const start = Date.parse(CAPTURED_AT);
+    replan.history = [2, 1].map(quartersAgo => ({
+      start_ts: new Date(start - quartersAgo * 900_000).toISOString(),
+      total_load_kwh: 0.65,
+    }));
+    replan.poolHistory = [{ start_ts: replan.history[0].start_ts, water_temperature_c: 31.7 }];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    await expect(chart).toBeVisible();
+    await chart.focus();
+    await chart.press('ArrowLeft');
+    await expect(page.getByRole('tooltip')).not.toContainText('31.6 °C');
+    await chart.press('ArrowLeft');
+    await expect(page.getByRole('tooltip')).toContainText('31.7 °C');
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    replan.poolHistory.push({ start_ts: replan.history[1].start_ts, water_temperature_c: 31.64 });
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await chart.press('ArrowRight');
+    await expect(page.getByRole('tooltip')).toContainText('31.6 °C');
   });
 
   for (const samePlan of [true, false]) {
