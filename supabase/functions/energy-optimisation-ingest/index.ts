@@ -1134,8 +1134,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     if (deviceRows.length > 0) {
       const { error } = await supabase
         .from("energy_optimisation_devices")
-        .upsert(deviceRows, { onConflict: "home_id,device_key" })
-        .select("id");
+        .upsert(deviceRows, { onConflict: "home_id,device_key" });
       if (error) {
         console.error("[ENERGY-OPTIMISATION] device upsert failed", error);
         return json({ error: "storage_failed" }, 500);
@@ -1737,39 +1736,33 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // this those slots price flat and the planner has no reason to prefer one
       // hour over another (§1.4.3). A read failure is not fatal: no shape means
       // a flat tail, which is the behaviour before this existed.
-      let priceArchive: StoredPriceRow[] = [];
       const shapeFrom = new Date(
         Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
       ).toISOString();
-      try {
-        // Read in pages. Sixty days of quarters is several times what one
-        // response returns, and one response holds the oldest rows: the shape
-        // was then drawn from prices seven weeks old, and neither the recent
-        // norm nor the wind fit found a single recent day to stand on.
-        priceArchive = await readPagedRows<StoredPriceRow>((fromRow, toRow) => supabase
-          .from("energy_optimisation_price_slots")
-          .select("start_ts, import_price_sek_per_kwh")
-          .eq("home_id", auth.homeId)
-          .gte("start_ts", shapeFrom)
-          .order("start_ts").range(fromRow, toRow));
-      } catch (shapeError) {
-        console.error(
-          "[ENERGY-OPTIMISATION] price shape read failed",
-          shapeError,
-        );
-      }
+      // Start the archive read alongside settings: neither depends on the other.
+      // Paging still preserves every quarter rather than truncating the archive.
+      const priceArchivePromise = readPagedRows<StoredPriceRow>((fromRow, toRow) => supabase
+        .from("energy_optimisation_price_slots")
+        .select("start_ts, import_price_sek_per_kwh")
+        .eq("home_id", auth.homeId)
+        .gte("start_ts", shapeFrom)
+        .order("start_ts").range(fromRow, toRow)).catch((shapeError): StoredPriceRow[] => {
+          console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
+          return [];
+        });
 
       // What the owner wants is one number per store. The planner derives
       // what a degree or a kilometre is worth from these and the plan's own
       // prices, solar and weather, so no curve is read or sent, and the
       // battery's curve is always the planner's own.
-      const [targetResult, settingsResult] = await Promise.all([
+      const [targetResult, settingsResult, priceArchive] = await Promise.all([
         supabase.from("energy_optimisation_comfort_targets")
           .select("pool_target_c, ev_target_km")
           .eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
           .eq("home_id", auth.homeId).maybeSingle(),
+        priceArchivePromise,
       ]);
       if (targetResult.error) throw new Error(targetResult.error.message);
       const { value_curves: _curves, ...withoutCurves } = snapshot;
@@ -1842,15 +1835,20 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       let thermalZones: ProjectionZoneInput[] = [];
       try {
-        // Outdoor temperature is the server's to provide (SMHI), for the pool
-        // and the rooms alike; a series from Home Assistant is replaced.
-        snapshot = await withServerOutdoorTemperature(supabase, snapshot);
-        // So is the wind over the price area, which the level of the days
-        // the market has not published is estimated from.
-        snapshot = await withWindOutlook(supabase, snapshot);
-        // And what recent days drew against their forecasts, which the
-        // base-load forecast is levelled to and the demand margin sized from.
-        snapshot = await withDemandOutlook(supabase, auth.homeId, snapshot);
+        // These independent sources own disjoint fields. Fetch together, then
+        // compose only their fields so one cannot restore client-supplied evidence
+        // removed by another. Thermal preparation still follows outdoor weather.
+        const [weather, wind, demand] = await Promise.all([
+          withServerOutdoorTemperature(supabase, snapshot),
+          withWindOutlook(supabase, snapshot),
+          withDemandOutlook(supabase, auth.homeId, snapshot),
+        ]);
+        const { wind_outlook: _wind, demand_outlook: _demand, ...weatherSnapshot } = weather;
+        snapshot = {
+          ...weatherSnapshot,
+          ...(wind.wind_outlook ? { wind_outlook: wind.wind_outlook } : {}),
+          ...(demand.demand_outlook ? { demand_outlook: demand.demand_outlook } : {}),
+        };
         const thermal = await prepareThermalPlanning(
           supabase,
           auth.customerId,
@@ -1897,8 +1895,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             deadline,
           }, traffic.fetch) ?? await jobs.readForHome(auth.homeId, planningReceipt.job_id) ?? planningReceipt;
         }
-        console.info("[ENERGY-OPTIMISATION] planning completed", {
-          request_id: requestId, job_id: planningReceipt.job_id,
+        console.info("[ENERGY-OPTIMISATION] planning response", {
+          request_id: requestId, job_id: planningReceipt.job_id, state: planningReceipt.state,
           elapsed_ms: Math.round(performance.now() - planningStarted),
         });
       } catch (error) {
