@@ -4,6 +4,8 @@ import {
 } from "./planner/energy-optimisation.ts";
 import {
   type DispatchAuctionSolver,
+  createDispatchWorkCounts,
+  type DispatchWorkCounts,
   dispatchAuctionSteps,
   type DispatchResult,
   type ResponsiveRanking,
@@ -19,6 +21,7 @@ import type {
 export interface PlanningBudget {
   spent: () => boolean;
   allowsAuction: () => boolean;
+  work?: DispatchWorkCounts;
 }
 
 /** Leave CPU headroom for reconstruction, checkpoint encoding and storage. */
@@ -31,6 +34,7 @@ export function createPlanningBudget(durationMs = 900, primitiveLimit = Number.M
   const spent = () => ++primitives > primitiveLimit || performance.now() - started >= durationMs;
   return {
     spent,
+    work: createDispatchWorkCounts(),
     allowsAuction: () => primitives < primitiveLimit && performance.now() - started < durationMs,
   };
 }
@@ -53,6 +57,7 @@ function replay(
   budget?: PlanningBudget,
   allowNewRankings = true,
   rankingState: { checkpoint?: ResponsiveRankingCheckpoint } = {},
+  solveMissing?: (problem: Parameters<DispatchAuctionSolver>) => DispatchResult | null,
 ): Replay {
   let index = 0;
   let rankIndex = 0;
@@ -66,7 +71,18 @@ function replay(
       return structuredClone(completed[index++]);
     }
     problem = args;
-    throw pending;
+    if (!solveMissing) throw pending;
+    const result = solveMissing(args);
+    if (!result) throw pending;
+    completed.push(result);
+    index += 1;
+    // Keep the completed-auction boundary: its caller may build another
+    // response neighborhood or assemble the plan, so stop before that work
+    // when this slice has spent its allowance.
+    if (budget && !budget.allowsAuction()) throw pending;
+    // The planner adds profile diagnostics to the value it consumes. Preserve
+    // the pristine scalar result that the next slice will reconstruct from.
+    return structuredClone(result);
   };
   try {
     const result = generateOptimisationPlanWithBatteryProjection(
@@ -153,51 +169,39 @@ export function energyPlanningStep(
   const rankings = [...continuation.rankings];
   const previous = rankings.length;
   const rankingState = { checkpoint: continuation.ranking_checkpoint };
-  const step = advanceAuctions(completed => replay(input, completed, rankings, budget, true, rankingState), continuation, budget);
-  return { ...step, rankings: rankings.slice(previous), ranking_checkpoint: rankingState.checkpoint };
-}
-
-/** Shared resumable auction driver; callers own their final result and scoring. */
-export function advanceAuctions(
-  resolve: (completed: DispatchResult[]) => {done: true} | {done: false; problem: Parameters<DispatchAuctionSolver>} | {done: false; pause: true},
-  continuation: Pick<EnergyPlanningContinuation, "completed" | "checkpoint"> = {completed: []},
-  budget?: PlanningBudget,
-): Omit<EnergyPlanningStep, "rankings"> {
-  let completed = continuation.completed;
+  const completed = [...continuation.completed];
   let checkpoint = continuation.checkpoint;
   const finished: DispatchResult[] = [];
-  for (;;) {
-    // Rebuilding a response neighborhood can itself be expensive. Do not
-    // reconstruct the next auction after this request has spent its allowance.
-    if (finished.length > 0 && !budget?.allowsAuction()) {
-      return { done: false, completed: finished };
-    }
-    const replayed = resolve(completed);
-    if (replayed.done === true) {
-      if (checkpoint) {
-        throw new Error("Planning continuation does not match the input");
-      }
-      return { done: true, completed: finished };
-    }
-    if ("pause" in replayed) return { done: false, completed: finished };
-    const [slots, stores, limits, options] = replayed.problem;
+  const solveMissing = (problem: Parameters<DispatchAuctionSolver>): DispatchResult | null => {
+    if (finished.length > 0 && !budget?.allowsAuction()) return null;
+    const [slots, stores, limits, options] = problem;
     const steps = dispatchAuctionSteps(
       slots,
       stores,
       limits,
-      options,
+      { ...options, work: budget?.work },
       checkpoint,
       budget?.spent,
     );
     let step = steps.next();
     while (step.done !== true) {
       if (!budget || budget.spent()) {
-        return { done: false, completed: finished, checkpoint: step.value };
+        checkpoint = step.value;
+        return null;
       }
       step = steps.next();
     }
     finished.push(step.value);
-    completed = [...completed, step.value];
     checkpoint = undefined;
-  }
+    return step.value;
+  };
+  const replayed = replay(input, completed, rankings, budget, true, rankingState, solveMissing);
+  if (replayed.done && checkpoint) throw new Error("Planning continuation does not match the input");
+  return {
+    done: replayed.done,
+    completed: finished,
+    checkpoint,
+    rankings: rankings.slice(previous),
+    ranking_checkpoint: rankingState.checkpoint,
+  };
 }

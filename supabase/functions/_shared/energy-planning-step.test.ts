@@ -36,6 +36,41 @@ Deno.test("worker slices stop on elapsed time instead of an unrelated operation 
   }
 });
 
+Deno.test("a slice prepares the household once while completing multiple auctions", () => {
+  const input = inputFor(snapshot());
+  const captured = input.snapshot;
+  let preparations = 0;
+  Object.defineProperty(input, "snapshot", {
+    get: () => {
+      preparations += 1;
+      return captured;
+    },
+  });
+  const step = energyPlanningStep(input, undefined, createPlanningBudget(60_000));
+  assertEquals(step.done, true);
+  assert(step.completed.length > 1);
+  assertEquals(preparations, 1);
+});
+
+Deno.test("a spent slice saves a finished auction before doing its caller's next work", () => {
+  const captured = snapshot();
+  captured.pool = null;
+  captured.capabilities.pool = false;
+  const input = inputFor(captured);
+  const step = energyPlanningStep(input, undefined, {
+    spent: () => false,
+    allowsAuction: () => false,
+  });
+  assertEquals(step.done, false);
+  assertEquals(step.completed.length, 1);
+  assertEquals(step.checkpoint, undefined);
+  const resumed = energyPlanningStep(input, {
+    completed: step.completed,
+    rankings: step.rankings,
+  }, createPlanningBudget(60_000));
+  assertEquals(resumed.done, true);
+});
+
 Deno.test("distributed planning preserves discrete EV alternatives", () => {
   assertStagesMatch(inputFor(dispatchedEvSnapshot()));
 });

@@ -45,7 +45,16 @@ export async function handleEnergyPlanningStep(
       return json({ error: "planning_protocol_mismatch" }, 409);
     }
     const started = performance.now();
-    const budget = createPlanningBudget(Math.max(1, 900 - (performance.now() - received)));
+    const sliceBudget = createPlanningBudget(Math.max(1, 900 - (performance.now() - received)));
+    let firstBudgetCheckMs: number | null = null;
+    const budget = {
+      work: sliceBudget.work,
+      allowsAuction: sliceBudget.allowsAuction,
+      spent: () => {
+        firstBudgetCheckMs ??= Math.round(performance.now() - started);
+        return sliceBudget.spent();
+      },
+    };
     const result: EnergyPlanningStep = energyPlanningStep(
       body.input,
       body.continuation,
@@ -56,9 +65,19 @@ export async function handleEnergyPlanningStep(
       auction: body.continuation?.completed.length ?? 0,
       stage: body.continuation?.ranking_checkpoint ? "ranking" : body.continuation?.checkpoint?.next ?? "auction",
       elapsed_ms: Math.round(performance.now() - started),
+      first_budget_check_ms: firstBudgetCheckMs,
+      work: budget.work,
       done: result.done,
       finished: result.completed.length,
       next: result.checkpoint?.next ?? null,
+      iterations_before: body.continuation?.checkpoint?.iterations ?? null,
+      iterations_after: result.checkpoint?.iterations ?? null,
+      transfer_before: body.continuation?.checkpoint?.transfer_scan
+        ? [body.continuation.checkpoint.transfer_scan.store, body.continuation.checkpoint.transfer_scan.charge, body.continuation.checkpoint.transfer_scan.load]
+        : null,
+      transfer_after: result.checkpoint?.transfer_scan
+        ? [result.checkpoint.transfer_scan.store, result.checkpoint.transfer_scan.charge, result.checkpoint.transfer_scan.load]
+        : null,
     });
     return json(result);
   } catch (error) {

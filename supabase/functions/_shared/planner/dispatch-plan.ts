@@ -35,6 +35,7 @@ import {
 } from "./store-value.ts";
 
 import { serviceValue, marginalServiceValues } from "./dispatch-service-value.ts";
+import { PairPricingBook } from "./pair-pricing-book.ts";
 
 export const SLOT_HOURS = 0.25;
 
@@ -2250,6 +2251,35 @@ function dispatchAuction(
   return step.value;
 }
 
+/** Numeric search work only; never contains household inputs or decision values. */
+export interface DispatchWorkCounts {
+  transfer_pairs: number;
+  transfer_economics: number;
+  bisection_probes: number;
+  feasibility_attempts: number;
+  next_state_quarters: number;
+  failed_bounds: number;
+  failed_export_reserve: number;
+  failed_suffix: number;
+  pair_pricing_hits: number;
+  pair_pricing_misses: number;
+}
+
+export function createDispatchWorkCounts(): DispatchWorkCounts {
+  return {
+    transfer_pairs: 0,
+    transfer_economics: 0,
+    bisection_probes: 0,
+    feasibility_attempts: 0,
+    next_state_quarters: 0,
+    failed_bounds: 0,
+    failed_export_reserve: 0,
+    failed_suffix: 0,
+    pair_pricing_hits: 0,
+    pair_pricing_misses: 0,
+  };
+}
+
 /**
  * The synchronous and distributed planners execute these same three stages.
  * Distributed callers checkpoint numeric bidding, settlement and scan cursors.
@@ -2259,7 +2289,7 @@ export function* dispatchAuctionSteps(
   slots: DispatchSlot[],
   stores: DispatchStore[],
   limits: DispatchLimits,
-  { maxIterations = 20_000 }: { maxIterations?: number } = {},
+  { maxIterations = 20_000, work }: { maxIterations?: number; work?: DispatchWorkCounts } = {},
   checkpoint?: DispatchCheckpoint,
   budgetSpent?: () => boolean,
 ): Generator<DispatchCheckpoint, DispatchResult> {
@@ -3985,6 +4015,9 @@ export function* dispatchAuctionSteps(
     const rate = limits.peak_shaping_sek_per_kwh_per_kw;
     let transfersThisCall = 0;
     let transferCursor = checkpoint?.transfer_scan;
+    // Transient per slice: reuse prices across this invocation's transfers,
+    // without putting a pair matrix in the continued request's wire payload.
+    const pricingBooks = new Map<string, PairPricingBook>();
     while (iterations < maxIterations) {
       // Every transfer rescans every charge/discharge pair, and a long horizon
       // can accept a hundred of them: on 2026-09-19 this stage alone outran a
@@ -4014,6 +4047,11 @@ export function* dispatchAuctionSteps(
         const schedule = powerW[store.key];
         const discharge = dischargeW[store.key];
         const state = stateByKey[store.key];
+        let pricing = pricingBooks.get(store.key);
+        if (!pricing) {
+          pricing = new PairPricingBook(count);
+          pricingBooks.set(store.key, pricing);
+        }
         const flowWear = store.wear_sek_per_kwh ?? 0;
         const cycling = store.discharge!.cycling_cost_sek_per_unit ?? 0;
         // A destination quarter's side of a pair is the same for every charge
@@ -4032,6 +4070,7 @@ export function* dispatchAuctionSteps(
             returnedW[load],
           );
           spentAt[load] = store.discharge!.state_per_kwh_out(state[load], load);
+          pricing.updateLoad(load, spentAt[load], importAt[load]);
           deliverableAt[load] = Math.min(
             importAt[load],
             store.discharge!.max_power_w - discharge[load],
@@ -4066,6 +4105,7 @@ export function* dispatchAuctionSteps(
           );
           const netSource = chargeSlot.fixed_load_w + occupiedW[charge] -
             chargeSlot.pv_w - returnedW[charge];
+          pricing.updateSource(charge, units, occupiedW[charge], returnedW[charge], solarW);
           // Buying here costs at least what selling here earns, so the
           // marginal saving below cannot rise with the power transferred.
           const buyingCostsMore = chargeSlot.import_price_sek_per_kwh >=
@@ -4076,6 +4116,7 @@ export function* dispatchAuctionSteps(
               yield capture("transfers", {transferred: [...transferredStores], transfer_scan: {store: storeIndex, charge, load, best: numeric}});
             }
             transferCursor = undefined;
+            if (work) work.transfer_pairs += 1;
             if (load === charge || schedule[load] > 0) continue;
             const importW = importAt[load];
             const spent = spentAt[load];
@@ -4095,6 +4136,7 @@ export function* dispatchAuctionSteps(
             }
             if (maximumW <= GRID_NOISE_W) continue;
             const economics = (outW: number) => {
+              if (work) work.transfer_economics += 1;
               const inW = outW * spent / units * loadHours / chargeHours;
               const inKwh = inW / 1_000 * chargeHours;
               const outKwh = outW / 1_000 * loadHours;
@@ -4120,51 +4162,64 @@ export function* dispatchAuctionSteps(
                 saving: benefit - cost - wear,
               };
             };
-            if (
-              buyingCostsMore &&
-              economics(Math.min(maximumW, 0.01)).saving <= 1e-12
-            ) continue;
-            const levels = [
-              maximumW,
-              Math.min(maximumW, solarW * units / spent * chargeHours / loadHours),
-            ];
-            // Equal marginal source and destination costs give the convex optimum.
-            if (rate > 0) {
-              const ratio = spent / units;
-              const flowWearCost = (ratio + 1) * flowWear;
-              const cyclingCost = spent * cycling;
-              const marginalSaving = (out: number) => {
-                const source = netSource + out * ratio * loadHours / chargeHours;
-                const buy = source > 0
-                  ? chargeSlot.import_price_sek_per_kwh
-                  : chargeSlot.export_price_sek_per_kwh;
-                return slots[load].import_price_sek_per_kwh +
-                  rate * overThresholdKw(limits, importW - out) -
-                  ratio *
-                    (buy +
-                      rate * overThresholdKw(limits, Math.max(0, source))) -
-                  flowWearCost - cyclingCost;
-              };
-              levels.push(
-                bisectedLevel(maximumW, marginalSaving, buyingCostsMore),
-              );
-            }
-            for (const outW of levels) {
-              if (outW <= 1e-6) continue;
-              const { inW, outKwh, cost, wear, benefit, saving } = economics(
-                outW,
-              );
-              const score = saving / (outKwh * spent);
-              if (saving <= 0.001 || score <= (best?.score ?? 0) + 1e-9) {
-                continue;
+            let pair = pricing.lookup(charge, load, maximumW);
+            if (pair === undefined) {
+              if (work) work.pair_pricing_misses += 1;
+              pair = pricing.prepare(charge, load, maximumW);
+              if (!(buyingCostsMore && economics(Math.min(maximumW, 0.01)).saving <= 1e-12)) {
+                const levels = [
+                  maximumW,
+                  Math.min(maximumW, solarW * units / spent * chargeHours / loadHours),
+                ];
+                // Equal marginal source and destination costs give the convex optimum.
+                if (rate > 0) {
+                  const ratio = spent / units;
+                  const flowWearCost = (ratio + 1) * flowWear;
+                  const cyclingCost = spent * cycling;
+                  const marginalSaving = (out: number) => {
+                    if (work) work.bisection_probes += 1;
+                    const source = netSource + out * ratio * loadHours / chargeHours;
+                    const buy = source > 0
+                      ? chargeSlot.import_price_sek_per_kwh
+                      : chargeSlot.export_price_sek_per_kwh;
+                    return slots[load].import_price_sek_per_kwh +
+                      rate * overThresholdKw(limits, importW - out) -
+                      ratio *
+                        (buy +
+                          rate * overThresholdKw(limits, Math.max(0, source))) -
+                      flowWearCost - cyclingCost;
+                  };
+                  levels.push(
+                    bisectedLevel(maximumW, marginalSaving, buyingCostsMore),
+                  );
+                }
+                for (let level = 0; level < levels.length; level++) {
+                  const outW = levels[level];
+                  if (outW <= 1e-6) continue;
+                  const priced = economics(outW);
+                  const score = priced.saving / (priced.outKwh * spent);
+                  pricing.record(pair, level, outW, score, !(priced.saving <= 0.001));
+                }
               }
+            } else if (work) work.pair_pricing_hits += 1;
+            if (!pricing.canBeat(pair, (best?.score ?? 0) + 1e-9)) continue;
+            // Keep the original level order, duplicate levels and tolerance
+            // fold. A scalar maximum would select a different winner near ties.
+            for (let level = 0; level < 3; level++) {
+              if (!pricing.eligible(pair, level)) continue;
+              const outW = pricing.power(pair, level);
+              const score = pricing.score(pair, level);
+              if (score <= (best?.score ?? 0) + 1e-9) continue;
+              const { inW, cost, wear, benefit, saving } = economics(outW);
               // Verify actual dynamics without clamping, including any
               // state-dependent efficiency. The suffix must be unchanged.
+              if (work) work.feasibility_attempts += 1;
               const first = Math.min(charge, load);
               const last = Math.max(charge, load);
               let projected = state[first];
               let feasible = true;
               for (let index = first; index <= last; index += 1) {
+                if (work) work.next_state_quarters += 1;
                 projected = nextState(
                   store,
                   projected,
@@ -4175,20 +4230,28 @@ export function* dispatchAuctionSteps(
                 if (
                   !Number.isFinite(projected) ||
                   projected < (store.min_state ?? -Infinity) - 1e-9 ||
-                  projected > (store.max_state ?? Infinity) + 1e-9 ||
-                  // Spending now and refilling later must preserve the reserve
-                  // behind any export already scheduled between the two legs.
-                  (discharge[index] > gridImportW(
+                  projected > (store.max_state ?? Infinity) + 1e-9
+                ) {
+                  if (work) work.failed_bounds += 1;
+                  feasible = false;
+                  break;
+                }
+                // Spending now and refilling later must preserve the reserve
+                // behind any export already scheduled between the two legs.
+                if (discharge[index] > gridImportW(
                     slots[index], occupiedW[index],
                     returnedW[index] - discharge[index],
                   ) + GRID_NOISE_W &&
-                    projected < (store.discharge!.export_min_state ?? -Infinity) - 1e-9)
+                    projected < (store.discharge!.export_min_state ?? -Infinity) - 1e-9
                 ) {
+                  if (work) work.failed_export_reserve += 1;
                   feasible = false;
                   break;
                 }
               }
-              if (!feasible || Math.abs(projected - state[last + 1]) > 1e-9) {
+              if (!feasible) continue;
+              if (Math.abs(projected - state[last + 1]) > 1e-9) {
+                if (work) work.failed_suffix += 1;
                 continue;
               }
               best = {
