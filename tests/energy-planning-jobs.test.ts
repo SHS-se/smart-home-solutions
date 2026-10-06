@@ -224,3 +224,183 @@ Deno.test('migration terminalizes the active legacy job and its matching website
     assertEquals(current.id,other);assert(current.error.includes('Request a new replan'));
   } finally { await db.close(); }
 });
+
+const resumeMigration = '20261006203500_resume_planning_across_bounded_exchanges';
+async function applyResume(db: PGlite) {
+  await db.exec((await migration(resumeMigration)).replace(
+    /^ALTER TABLE private\.energy_planning_(jobs|parts) ALTER COLUMN \w+ SET COMPRESSION lz4;$/gm, ''));
+}
+async function durableDatabase() {
+  const db = await database();
+  await applyResume(db);
+  return db;
+}
+type BatchClaim = { id: string; fence: number; steps: number; phase: string; home_id: string };
+async function batchClaim(db: PGlite, job: string, homeId = home): Promise<BatchClaim | null> {
+  return (await db.query<{ value: BatchClaim | null }>(
+    'SELECT claim_energy_planning_batch($1,$2) AS value', [homeId, job])).rows[0].value;
+}
+async function batchLoad(db: PGlite, owner: BatchClaim, homeId = home) {
+  return (await db.query<{ value: {
+    input: { devices: Record<string, number> };
+    continuation: { completed: Record<string, unknown>[]; rankings: Record<string, unknown>[];
+      checkpoint: Record<string, unknown> | null; ranking_checkpoint: Record<string, unknown> | null };
+  } | null }>('SELECT load_energy_planning_batch($1,$2,$3) AS value', [homeId, owner.id, owner.fence])).rows[0].value;
+}
+function batchWrite(owner: BatchClaim, patch: Record<string, unknown> = {}) {
+  return { job_id: owner.id, home_id: home, fence: owner.fence, steps: owner.steps,
+    calls: 2, phase: 'solving', completed: [], rankings: [], continuation: {}, ...patch };
+}
+
+Deno.test('durable batches preserve JSON order, append exactly once and allow late unreclaimed checkpoints', async () => {
+  const db = await durableDatabase();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    const owner = (await batchClaim(db, accepted.job_id))!;
+    assertEquals(await batchClaim(db, owner.id), null);
+    const loaded = (await batchLoad(db, owner))!;
+    assertEquals(Object.keys(loaded.input.devices), ['z_device', 'a_device', 'middle']);
+    assertEquals(loaded.continuation.completed, []);
+    assertEquals(loaded.continuation.checkpoint, null);
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second',created_at=now()-interval '2 days' WHERE id=$1", [owner.id]);
+    await db.exec('SELECT private.sweep_energy_planning_jobs()');
+    assertEquals((await read(db, owner.id))?.state, 'pending', 'elapsed job time cannot discard healthy work');
+    const first = batchWrite(owner, { completed: [{ z: 1, a: 2 }], rankings: [{ y: 3, b: 4 }],
+      continuation: { checkpoint: { z_cursor: 5, a_cursor: 6 }, ranking_checkpoint: { x: 7, b: 8 } } });
+    assertEquals((await rpc<Receipt>(db, 'commit_energy_planning_batch', first)).state, 'pending');
+    assertEquals(await rpc(db, 'commit_energy_planning_batch', first), null, 'lost-reply retry cannot append twice');
+    const second = (await batchClaim(db, owner.id))!;
+    assertEquals(second.steps, 2);
+    const resumed = (await batchLoad(db, second))!.continuation;
+    assertEquals(Object.keys(resumed.completed[0]), ['z', 'a']);
+    assertEquals(Object.keys(resumed.checkpoint!), ['z_cursor', 'a_cursor']);
+    assertEquals(Object.keys(resumed.ranking_checkpoint!), ['x', 'b']);
+    await rpc(db, 'commit_energy_planning_batch', batchWrite(second, {
+      completed: [{ q: 9, c: 10 }], rankings: [{ w: 11, d: 12 }], continuation: { checkpoint: { position: 13 } },
+    }));
+    const third = (await batchClaim(db, owner.id))!;
+    assertEquals(third.steps, 4);
+    assertEquals((await batchLoad(db, third))!.continuation.completed, [{ z: 1, a: 2 }, { q: 9, c: 10 }]);
+    assertEquals((await batchLoad(db, third))!.continuation.rankings, [{ y: 3, b: 4 }, { w: 11, d: 12 }]);
+  } finally { await db.close(); }
+});
+
+Deno.test('durable lease takeover fences stale load, checkpoint, failure and publication', async () => {
+  const db = await durableDatabase();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    const old = (await batchClaim(db, accepted.job_id))!;
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1", [old.id]);
+    const next = (await batchClaim(db, old.id))!;
+    assert(next.fence > old.fence);
+    assertEquals(await batchLoad(db, old), null);
+    assertEquals(await rpc(db, 'commit_energy_planning_batch', batchWrite(old)), null);
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...batchWrite(old), code: 'stale', detail: 'stale owner' }), null);
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...batchWrite(old), current: currentRow(), run: runRow() }), null);
+    assertEquals((await read(db, old.id))?.state, 'pending');
+    await rpc(db, 'commit_energy_planning_batch', batchWrite(next, { phase: 'assembling', calls: 1 }));
+    const assembler = (await batchClaim(db, old.id))!;
+    assertEquals(assembler.phase, 'assembling');
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...batchWrite(next), current: currentRow(), run: runRow() }), null);
+    assertEquals((await read(db, old.id))?.state, 'pending');
+  } finally { await db.close(); }
+});
+
+Deno.test('durable publication is atomic, idempotent and completes only on exact HA acknowledgement', async () => {
+  const db = await durableDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1,ha_runtime=$2', [manual, { running: true }]);
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission(snapshot, { observed_replan_request_id: manual }));
+    const solver = (await batchClaim(db, accepted.job_id))!;
+    await rpc(db, 'commit_energy_planning_batch', batchWrite(solver, { phase: 'assembling' }));
+    const assembler = (await batchClaim(db, solver.id))!;
+    const publish = { ...batchWrite(assembler), current: currentRow(), run: runRow() };
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', {
+      ...publish, run: { ...runRow(), status: 'invalid' },
+    }), Error, 'check constraint');
+    assertEquals((await read(db, solver.id))?.state, 'pending');
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 0);
+    const published = await rpc<Receipt>(db, 'publish_energy_planning_job', publish);
+    assertEquals(published.state, 'published');
+    assertEquals(published.plan, undefined, 'normal publication receipt avoids a full plan download');
+    assertEquals((await read(db, solver.id))?.plan, currentRow().plan, 'lost publication response recovers the stored exact plan');
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', publish)).state, 'published');
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 1);
+    const completed = async () => (await db.query<{ id: string | null }>('SELECT replan_completed_request_id id FROM energy_optimisation_current')).rows[0].id;
+    const acknowledge = (planId: string, snapshotId: string) => db.query(
+      'SELECT acknowledge_energy_optimisation_plan($1,$2,$3,9::smallint,$4,now(),$5,$6,$7)',
+      [home, planId, snapshotId, 'accepted', 'test', 'ack', null]);
+    assertEquals(await completed(), null);
+    await acknowledge(other, snapshot);
+    assertEquals(await completed(), null);
+    await acknowledge(plan, other);
+    assertEquals(await completed(), null);
+    await acknowledge(plan, snapshot);
+    assertEquals(await completed(), manual);
+    assertEquals((await db.query<{ runtime: unknown }>('SELECT ha_runtime runtime FROM energy_optimisation_current')).rows[0].runtime, { running: true });
+  } finally { await db.close(); }
+});
+
+Deno.test('durable batch RPCs are service-only and enforce home isolation', async () => {
+  const db = await durableDatabase();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    for (const role of ['anon', 'authenticated']) {
+      await db.exec(`SET ROLE ${role}`);
+      await assertRejects(() => batchClaim(db, accepted.job_id), Error, 'permission denied');
+      await assertRejects(() => batchLoad(db, { id: accepted.job_id, fence: 0, steps: 0, phase: 'solving', home_id: home }), Error, 'permission denied');
+      await assertRejects(() => rpc(db, 'commit_energy_planning_batch', { job_id: accepted.job_id }), Error, 'permission denied');
+      await db.exec('RESET ROLE');
+    }
+    await db.exec('SET ROLE service_role');
+    assertEquals(await batchClaim(db, accepted.job_id, other), null);
+    const owner = (await batchClaim(db, accepted.job_id))!;
+    assertEquals(await batchLoad(db, owner, other), null);
+    assertEquals(await rpc(db, 'commit_energy_planning_batch', { ...batchWrite(owner), home_id: other }), null);
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...batchWrite(owner), home_id: other }), null);
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...batchWrite(owner), home_id: other }), null);
+    await assertRejects(() => db.query('SELECT * FROM private.energy_planning_parts'), Error, 'permission denied');
+    await db.exec('RESET ROLE');
+  } finally { await db.close(); }
+});
+
+Deno.test('durable migration terminalizes legacy manual work without replacing existing controls', async () => {
+  const db = await database();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1,ha_runtime=$2', [manual, { running: true }]);
+    const old = await rpc<Receipt>(db, 'accept_energy_planning_job', submission(snapshot, { observed_replan_request_id: manual }));
+    await claim(db, old.job_id);
+    await applyResume(db);
+    assertEquals((await read(db, old.job_id))?.code, 'planner_upgraded');
+    const row = (await db.query<{ id: string; runtime: unknown; error: string }>('SELECT plan_id id,ha_runtime runtime,replan_error error FROM energy_optimisation_current')).rows[0];
+    assertEquals(row.id, other);
+    assertEquals(row.runtime, { running: true });
+    assert(row.error.includes('Request a new replan'));
+    assertEquals(await batchClaim(db, old.job_id), null);
+  } finally { await db.close(); }
+});
+
+Deno.test('durable head, manual and fixed revisions supersede stale batches without changing controls', async () => {
+  const db = await durableDatabase();
+  try {
+    await insertCurrent(db);
+    const old = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    const oldOwner = (await batchClaim(db, old.job_id))!;
+    const newer = await rpc<Receipt>(db, 'accept_energy_planning_job', submission(other));
+    assertEquals(await rpc(db, 'commit_energy_planning_batch', batchWrite(oldOwner)), null);
+    assertEquals((await read(db, old.job_id))?.state, 'superseded');
+    const manualOwner = (await batchClaim(db, newer.job_id))!;
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1', [manual]);
+    assertEquals(await rpc(db, 'commit_energy_planning_batch', batchWrite(manualOwner)), null);
+    assertEquals((await read(db, newer.job_id))?.state, 'superseded');
+    const fixed = await rpc<Receipt>(db, 'accept_energy_planning_job', submission(plan, { observed_replan_request_id: manual }));
+    const fixedOwner = (await batchClaim(db, fixed.job_id))!;
+    await db.exec('UPDATE energy_optimisation_current SET fixed_plan_revision=1');
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...batchWrite(fixedOwner), code: 'stale', detail: 'older fixed revision' }), null);
+    assertEquals((await read(db, fixed.job_id))?.state, 'superseded');
+    assertEquals((await db.query<{ id: string; error: string | null }>('SELECT plan_id id,replan_error error FROM energy_optimisation_current')).rows[0],
+      { id: other, error: null });
+  } finally { await db.close(); }
+});

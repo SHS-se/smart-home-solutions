@@ -34,7 +34,6 @@ import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
-import { PLANNING_EXECUTION_TIMEOUT_MS } from "../_shared/energy-planning-client.ts";
 import { type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
 import {
   fitZones,
@@ -913,8 +912,6 @@ async function prepareThermalPlanning(
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const ingestStarted = performance.now();
-  let deadline = ingestStarted + PLANNING_EXECUTION_TIMEOUT_MS;
-  let deadlineAt = new Date(Date.now() + PLANNING_EXECUTION_TIMEOUT_MS).toISOString();
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
@@ -965,9 +962,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             Object.keys(body).some(key => !["api_version", "planning_exchange_version", "job_id", "snapshot_id"].includes(key))) {
           return json({ error: "invalid_planning_status_request" }, 400);
         }
-        const receipt = body.job_id !== undefined
-          ? await jobs.readForHome(auth.homeId, body.job_id)
-          : await jobs.readSubmissionForHome(auth.homeId, body.snapshot_id);
+        const receipt = await jobs.advanceForHome(auth.homeId,
+          body.job_id !== undefined ? { jobId: body.job_id } : { snapshotId: body.snapshot_id }, {
+            url: Deno.env.get("SUPABASE_URL") ?? "",
+            planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
+          }, traffic.fetch);
         return receipt ? json(receipt, receipt.pending ? 202 : 200) : json({ error: "planning_job_not_found" }, 404);
       }
       if (body?.replan_recommendation !== undefined) {
@@ -1669,12 +1668,6 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
 
     const { data: accepted, error: acceptedError } = await supabase.rpc('get_energy_replan_monitor', { p_home_id: auth.homeId });
     if (acceptedError) throw new Error(acceptedError.message);
-    // The website request's server receipt starts the manual budget. HA capture,
-    // transport and input preparation must not reset it when ingest begins.
-    if (portalReplanId && portalReplanId === accepted?.replan_request_id) {
-      deadlineAt = new Date(Date.parse(accepted.replan_requested_at) + PLANNING_EXECUTION_TIMEOUT_MS).toISOString();
-      deadline = Math.min(deadline, performance.now() + Date.parse(deadlineAt) - Date.now());
-    }
     const recommend = async (key: string, reason: string, at = new Date().toISOString()) => {
       const { error } = await supabase.rpc('recommend_energy_replan', {
         p_home_id: auth.homeId, p_key: key, p_reason: reason, p_occurred_at: at,
@@ -1742,9 +1735,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       ).toISOString();
       // Start the archive read alongside settings: neither depends on the other.
       // A scalar JSON RPC preserves every quarter without serial REST pages.
-      const priceArchivePromise = supabase.rpc("read_energy_planning_price_archive", {
+      const priceArchivePromise = Promise.resolve(supabase.rpc("read_energy_planning_price_archive", {
         p_home_id: auth.homeId, p_from: shapeFrom,
-      }).then(({ data, error }): StoredPriceRow[] => {
+      })).then(({ data, error }): StoredPriceRow[] => {
         if (error) throw new Error(error.message);
         return data as StoredPriceRow[];
       }).catch((shapeError): StoredPriceRow[] => {
@@ -1866,7 +1859,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           elapsed_ms: Math.round(planningStarted - ingestStarted) });
         planningReceipt = await jobs.accept({
           homeId: auth.homeId, customerId: auth.customerId,
-          snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!, deadlineAt,
+          snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!,
           input: { snapshot, now: planningNow.toISOString(), price_archive: priceArchive, fixed_plan: fixedPlan },
           context: {
             request_id: requestId, integration_version: integrationVersion,
@@ -1889,13 +1882,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             },
           },
         });
-        if (planningReceipt.pending) {
-          planningReceipt = await jobs.execute(planningReceipt.job_id, {
-            url: Deno.env.get("SUPABASE_URL") ?? "",
-            planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
-            deadline,
-          }, traffic.fetch) ?? await jobs.readForHome(auth.homeId, planningReceipt.job_id) ?? planningReceipt;
-        }
+        // Admission returns the durable receipt. HA's existing status loop
+        // advances bounded batches in fresh requests, preserving ingest's CPU.
         console.info("[ENERGY-OPTIMISATION] planning response", {
           request_id: requestId, job_id: planningReceipt.job_id, state: planningReceipt.state,
           elapsed_ms: Math.round(performance.now() - planningStarted),

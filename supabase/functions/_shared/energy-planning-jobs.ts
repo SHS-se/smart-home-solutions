@@ -1,7 +1,8 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { OPTIMISATION_MODEL_VERSION, type OptimisationPlan } from "./planner/energy-optimisation.ts";
-import { ENERGY_PLANNING_PROTOCOL, type EnergyPlanningInput } from "./energy-planning-protocol.ts";
-import { generateRemoteOptimisationPlan, EnergyPlanningError } from "./energy-planning-client.ts";
+import { ENERGY_PLANNING_PROTOCOL, type EnergyPlanningInput, type EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
+import { runRemotePlanningBatch, PLANNING_BATCH_TIMEOUT_MS, EnergyPlanningError } from "./energy-planning-client.ts";
+import { assembleOptimisationPlan } from "./energy-planning-step.ts";
 import { buildThermalProjection, type ProjectionZoneInput } from "./thermal-training.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
@@ -37,13 +38,16 @@ export interface PlanningContext {
 }
 interface PreparedPlanningJob {
   homeId: string; customerId: string; snapshotId: string; sourceHash: string;
-  input: EnergyPlanningInput; context: PlanningContext; deadlineAt: string;
+  input: EnergyPlanningInput; context: PlanningContext;
 }
 interface ClaimedJob {
   id: string; home_id: string; customer_id: string; snapshot_id: string;
-  protocol: number; fence: number; deadline_at: string;
+  protocol: number; fence: number; steps: number; phase: "solving" | "assembling";
+}
+interface LoadedJob {
   input: EnergyPlanningInput;
   context: PlanningContext & { model_version: string };
+  continuation: EnergyPlanningContinuation;
 }
 export class PlanningJobError extends Error {
   constructor(readonly code: string, message: string, readonly status = 500) {
@@ -76,7 +80,7 @@ export class PlanningJobs {
       home_id: prepared.homeId, customer_id: prepared.customerId,
       snapshot_id: prepared.snapshotId, source_hash: prepared.sourceHash,
       input: prepared.input, context: { ...prepared.context, model_version: OPTIMISATION_MODEL_VERSION },
-      protocol: ENERGY_PLANNING_PROTOCOL, deadline_at: prepared.deadlineAt,
+      protocol: ENERGY_PLANNING_PROTOCOL,
     });
     return this.delivery(receipt)!;
   }
@@ -103,44 +107,84 @@ export class PlanningJobs {
     }));
   }
 
-  async execute(jobId: string, connection: { url: string; planningSecret: string; deadline: number },
-    fetcher: typeof fetch = fetch): Promise<PlanningReceipt | null> {
-    const loadStarted = performance.now();
-    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_job", { p_job_id: jobId });
-    if (!job) return null;
-    const identity = { job_id: job.id, fence: job.fence };
+  /** Advances one home-scoped job without giving the job a lifetime deadline. */
+  async advanceForHome(homeId: string, identity: { jobId: string } | { snapshotId: string },
+    connection: { url: string; planningSecret: string }, fetcher: typeof fetch = fetch): Promise<PlanningReceipt | null> {
     const started = performance.now();
-    console.info("[ENERGY-PLANNING-JOB] started", {
-      ...identity, request_id: job.context.request_id,
-      load_ms: Math.round(started - loadStarted), memory: Deno.memoryUsage(),
+    const receipt = "jobId" in identity
+      ? await this.readForHome(homeId, identity.jobId)
+      : await this.readSubmissionForHome(homeId, identity.snapshotId);
+    const readAt = performance.now();
+    if (!receipt || !receipt.pending) return receipt;
+    // Snapshot recovery carries the original admission exchange needed by HA to
+    // confirm configuration. Job-only SQL receipts do not repeat those fields.
+    const deliver = (current: PlanningReceipt | null): PlanningReceipt | null =>
+      current ? { ...receipt, ...current } : null;
+    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_batch", {
+      p_home_id: homeId, p_job_id: receipt.job_id,
     });
-    if (job.protocol !== ENERGY_PLANNING_PROTOCOL || job.context.model_version !== OPTIMISATION_MODEL_VERSION) {
-      return this.delivery(await this.rpc<PlanningReceipt>("fail_energy_planning_job", {
-        ...identity, code: "planner_upgraded", detail: "Planner version changed. Request a new replan.",
-      }));
+    const claimAt = performance.now();
+    if (!job) return deliver(await this.readForHome(homeId, receipt.job_id) ?? receipt);
+    const loaded = await this.rpc<LoadedJob | null>("load_energy_planning_batch", {
+      p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
+    });
+    const loadAt = performance.now();
+    if (!loaded) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
+    const owner = { job_id: job.id, home_id: homeId, fence: job.fence, steps: job.steps };
+    if (job.protocol !== ENERGY_PLANNING_PROTOCOL || loaded.context.model_version !== OPTIMISATION_MODEL_VERSION) {
+      return deliver(await this.writeRecovering("fail_energy_planning_job", { ...owner,
+        code: "planner_upgraded", detail: "Planner version changed. Request a new replan." }, homeId, job.id));
     }
+    if (job.phase === "solving") {
+      let batch;
+      try {
+        batch = await runRemotePlanningBatch(loaded.input, loaded.continuation, {
+          ...connection, requestId: loaded.context.request_id,
+        }, { deadline: started + PLANNING_BATCH_TIMEOUT_MS }, fetcher);
+      } catch (error) {
+        return deliver(await this.computeFailure(owner, error));
+      }
+      // Storage uncertainty must never enter the compute-failure path. The next
+      // poll restores whichever atomic checkpoint actually committed.
+      const computedAt = performance.now();
+      const saved = await this.writeRecovering("commit_energy_planning_batch", { ...owner, calls: batch.calls,
+        phase: batch.done ? "assembling" : "solving",
+        completed: batch.continuation.completed.slice(loaded.continuation.completed.length),
+        rankings: batch.continuation.rankings.slice(loaded.continuation.rankings.length),
+        continuation: {
+          ...(batch.continuation.checkpoint === undefined ? {} : { checkpoint: batch.continuation.checkpoint }),
+          ...(batch.continuation.ranking_checkpoint === undefined ? {} : { ranking_checkpoint: batch.continuation.ranking_checkpoint }),
+        },
+      }, homeId, job.id);
+      console.info("[ENERGY-PLANNING-JOB] batch response", { ...owner, state: saved?.state,
+        calls: batch.calls, attempted_total_steps: job.steps + batch.calls, attempted_next_phase: batch.done ? "assembling" : "solving",
+        read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
+        load_ms: Math.round(loadAt - claimAt), worker_ms: Math.round(computedAt - loadAt),
+        save_ms: Math.round(performance.now() - computedAt), elapsed_ms: Math.round(performance.now() - started) });
+      return deliver(saved);
+    }
+    let generated: PublishedPlan;
+    let publication: { current: Record<string, unknown>; run: Record<string, unknown> };
+    const assembledJob = { ...job, ...loaded };
     try {
-      const planned = await generateRemoteOptimisationPlan(job.input, {
-        ...connection, requestId: job.context.request_id,
-        deadline: Math.min(connection.deadline, performance.now() + Date.parse(job.deadline_at) - Date.now()),
-      }, fetcher);
-      let generated: PublishedPlan = planned.plan;
-      const snapshot = job.input.snapshot;
-      if (job.context.thermal_zones.length) {
+      const planned = assembleOptimisationPlan(loaded.input, loaded.continuation.completed, loaded.continuation.rankings);
+      generated = planned.plan;
+      const snapshot = loaded.input.snapshot;
+      if (loaded.context.thermal_zones.length) {
         const slots = generated.plans.priority.slots;
         const projection = buildThermalProjection(snapshot.slots.map(slot => slot.start),
-          snapshot.outdoor_temperature_c as number[], job.context.thermal_zones.map(zone => ({
+          snapshot.outdoor_temperature_c as number[], loaded.context.thermal_zones.map(zone => ({
             ...zone, planned_power_w: slots.map(slot => slot.room_heating_w?.[zone.key] ?? 0),
           })), snapshot.solar_irradiance_w_per_m2 ?? null);
         if (projection) generated = { ...generated, thermal_projection: projection };
       }
       const inputHash = await sha256Hex(JSON.stringify(snapshot));
-      const ack = { generation_request_id: job.context.request_id,
+      const ack = { generation_request_id: loaded.context.request_id,
         plan_schema_version: generated.schema_version, ha_ack_status: "pending",
-        ha_acknowledged_at: null, ha_integration_version: job.context.integration_version,
+        ha_acknowledged_at: null, ha_integration_version: loaded.context.integration_version,
         ha_ack_request_id: null, ha_ack_error: null };
       const current = {
-        ...ack, fixed_plan_generation_revision: job.context.fixed_revision, replan_error: null,
+        ...ack, fixed_plan_generation_revision: loaded.context.fixed_revision, replan_error: null,
         home_id: job.home_id, customer_id: job.customer_id, snapshot_id: snapshot.snapshot_id,
         plan_id: generated.plan_id, input_hash: inputHash, captured_at: snapshot.captured_at,
         issued_at: generated.issued_at, valid_until: generated.valid_until, binding_until: generated.binding_until,
@@ -152,38 +196,50 @@ export class PlanningJobs {
         home_id: job.home_id, snapshot_id: snapshot.snapshot_id, input_hash: inputHash,
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         summary: compactPlanSummary(generated), validation_errors: generated.validation_errors };
-      const assembled = performance.now();
-      if (performance.now() >= connection.deadline) {
-        throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");
-      }
-      const receipt = await this.rpc<PlanningReceipt | null>("publish_energy_planning_job", { ...identity, current, run });
-      console.info("[ENERGY-PLANNING-JOB] publication finished", {
-        ...identity, request_id: job.context.request_id, state: receipt?.state ?? "lost_owner",
-        assembly_ms: Math.round(assembled - started), publish_ms: Math.round(performance.now() - assembled),
-        memory: Deno.memoryUsage(),
-      });
-      if (receipt?.state === "published") {
-        // Archives are outside the response's critical path and never delay delivery.
-        const archive = this.archive(job, generated).catch(error => {
-          console.error("[ENERGY-PLANNING-JOB] archive failed", { job_id: job.id, detail: describeThrown(error) });
-        });
-        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(archive);
-        else await archive;
-        return this.delivery(receipt, generated);
-      }
-      return this.delivery(receipt);
+      publication = { current, run };
     } catch (error) {
-      // No compute retry: the terminal sweeper handles a killed or disconnected
-      // owner. A publication reply lost after commit is recovered by receipt lookup.
-      if (error instanceof PlanningJobError) throw error;
-      const detail = describeThrown(error);
-      const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";
-      console.error("[ENERGY-PLANNING-JOB] failed", { ...identity, code, detail });
-      return this.delivery(await this.rpc<PlanningReceipt | null>("fail_energy_planning_job", { ...identity, code, detail }));
+      return deliver(await this.computeFailure(owner, error));
+    }
+    const assembledAt = performance.now();
+    const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication }, homeId, job.id, generated);
+    console.info("[ENERGY-PLANNING-JOB] assembly response", { ...owner, state: published?.state,
+      read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
+      load_ms: Math.round(loadAt - claimAt), assembly_ms: Math.round(assembledAt - loadAt),
+      publication_ms: Math.round(performance.now() - assembledAt),
+      elapsed_ms: Math.round(performance.now() - started) });
+    if (published?.state === "published") {
+      const archive = this.archive(assembledJob, generated).catch(error => {
+        console.error("[ENERGY-PLANNING-JOB] archive failed", { job_id: job.id, detail: describeThrown(error) });
+      });
+      if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(archive);
+      else await archive;
+    }
+    return deliver(published);
+  }
+
+  private async computeFailure(owner: { job_id: string; home_id: string; fence: number; steps: number },
+    error: unknown): Promise<PlanningReceipt | null> {
+    const detail = describeThrown(error);
+    const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";
+    console.error("[ENERGY-PLANNING-JOB] failed", { ...owner, code, detail });
+    return this.writeRecovering("fail_energy_planning_job", { ...owner, code, detail }, owner.home_id, owner.job_id);
+  }
+
+  private async writeRecovering(name: string, body: Record<string, unknown>, homeId: string,
+    jobId: string, generated?: PublishedPlan): Promise<PlanningReceipt | null> {
+    try {
+      const stored = await this.rpc<PlanningReceipt | null>(name, body);
+      const verified = stored?.state === "published" && stored.job_id === jobId && stored.plan_id === generated?.plan_id;
+      const receipt = this.delivery(stored, verified ? generated : undefined);
+      return receipt ?? await this.readForHome(homeId, jobId);
+    } catch (error) {
+      const receipt = await this.readForHome(homeId, jobId).catch(() => null);
+      if (receipt) return receipt;
+      throw error;
     }
   }
 
-  private async archive(job: ClaimedJob, plan: OptimisationPlan): Promise<void> {
+  private async archive(job: ClaimedJob & LoadedJob, plan: OptimisationPlan): Promise<void> {
     const snapshot = job.input.snapshot;
     const estimates = priceEstimateRows({ homeId: job.home_id, timezone: snapshot.timezone,
       issuedAt: plan.issued_at, slots: snapshot.slots,

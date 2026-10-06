@@ -5,12 +5,13 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { generateOptimisationPlan } from "./planner/energy-optimisation.ts";
-import { createPlanningBudget, energyPlanningStep } from "./energy-planning-step.ts";
+import { assembleOptimisationPlan, createPlanningBudget, energyPlanningStep } from "./energy-planning-step.ts";
 import { ENERGY_PLANNING_PROTOCOL } from "./energy-planning-protocol.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import {
   EnergyPlanningError,
   generateRemoteOptimisationPlan,
+  runRemotePlanningBatch,
 } from "./energy-planning-client.ts";
 import type { FixedEnergyPlan } from "./planner/fixed-energy-plan.ts";
 
@@ -341,4 +342,77 @@ Deno.test("the household deadline is not reset by a successful stage response", 
       done: false, completed: [], rankings: [] });
   }), EnergyPlanningError, "request deadline");
   assertEquals(error.code,"planning_deadline_exceeded");
+});
+
+Deno.test("serialized batches carry real checkpoints past120 seconds without a job deadline", async () => {
+  const input = inputFor(snapshot());
+  input.snapshot.slots = input.snapshot.slots.slice(0, 12);
+  let elapsed = 0;
+  let batches = 0;
+  let resumed = 0;
+  let continuation: import("./energy-planning-protocol.ts").EnergyPlanningContinuation = { completed: [], rankings: [] };
+  let done = false;
+  const fetcher: typeof fetch = (_url, init) => {
+    const request = JSON.parse(String(init!.body));
+    if (request.continuation.checkpoint || request.continuation.ranking_checkpoint) resumed++;
+    const step = energyPlanningStep(request.input, request.continuation, countedBudget(100)());
+    elapsed += 10_000; // Simulated network/compute time across independent requests.
+    return Promise.resolve(Response.json({ protocol: ENERGY_PLANNING_PROTOCOL,
+      request_id: connection.requestId, ...step }));
+  };
+  while (!done && batches < 2000) {
+    const batch = await runRemotePlanningBatch(input, wire(continuation), connection,
+      { deadline: elapsed + 25_000, maxCalls: 1, now: () => elapsed }, fetcher);
+    assertEquals(batch.calls, 1);
+    continuation = wire(batch.continuation);
+    done = batch.done;
+    batches++;
+  }
+  assert(done);
+  assert(elapsed > 120_000 && resumed > 0, JSON.stringify({ elapsed, resumed, batches }));
+  assertEquals(wire(assembleOptimisationPlan(wire(input), continuation.completed, continuation.rankings)),
+    wire(solvedPlan(input.snapshot, new Date(input.now))));
+});
+
+Deno.test("batch timeout preserves a validated prefix and resumes its cursor", async () => {
+  const input = inputFor(snapshot());
+  input.snapshot.slots = input.snapshot.slots.slice(0, 12);
+  let calls = 0;
+  const first = energyPlanningStep(wire(input), { completed: [], rankings: [] }, countedBudget(100)());
+  assert(!first.done && (first.checkpoint || first.ranking_checkpoint));
+  const fetcher: typeof fetch = (_url, init) => {
+    calls++;
+    if (calls === 1) return Promise.resolve(Response.json({ protocol: ENERGY_PLANNING_PROTOCOL,
+      request_id: connection.requestId, ...first }));
+    const signal = init!.signal!;
+    return new Promise<Response>((_resolve, reject) => {
+      const abort = () => reject(new DOMException("Batch deadline", "AbortError"));
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+    });
+  };
+  const prefix = await runRemotePlanningBatch(input, { completed: [], rankings: [] }, connection,
+    { deadline: performance.now() + 50 }, fetcher);
+  assertEquals(calls, 2);
+  assertEquals(prefix.calls, 1);
+  assertEquals(prefix.done, false);
+  assertEquals(prefix.continuation, wire({ completed: first.completed, rankings: first.rankings,
+    ...(first.checkpoint ? { checkpoint: first.checkpoint } : {}),
+    ...(first.ranking_checkpoint ? { ranking_checkpoint: first.ranking_checkpoint } : {}) }));
+  let continuation = wire(prefix.continuation);
+  let done = false;
+  for (let batch = 0; !done && batch < 100; batch++) {
+    const resumed = await runRemotePlanningBatch(input, continuation, connection,
+      { deadline: performance.now() + 25_000 }, (_url, init) => {
+        const request = JSON.parse(String(init!.body));
+        const step = energyPlanningStep(request.input, request.continuation, countedBudget(250_000)());
+        return Promise.resolve(Response.json({ protocol: ENERGY_PLANNING_PROTOCOL,
+          request_id: connection.requestId, ...step }));
+      });
+    continuation = wire(resumed.continuation);
+    done = resumed.done;
+  }
+  assert(done);
+  assertEquals(wire(assembleOptimisationPlan(wire(input), continuation.completed, continuation.rankings)),
+    wire(solvedPlan(input.snapshot, new Date(input.now))));
 });
