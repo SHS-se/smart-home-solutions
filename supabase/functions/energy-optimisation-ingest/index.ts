@@ -1740,13 +1740,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
       ).toISOString();
       // Start the archive read alongside settings: neither depends on the other.
-      // Paging still preserves every quarter rather than truncating the archive.
-      const priceArchivePromise = readPagedRows<StoredPriceRow>((fromRow, toRow) => supabase
-        .from("energy_optimisation_price_slots")
-        .select("start_ts, import_price_sek_per_kwh")
-        .eq("home_id", auth.homeId)
-        .gte("start_ts", shapeFrom)
-        .order("start_ts").range(fromRow, toRow)).catch((shapeError): StoredPriceRow[] => {
+      // A scalar JSON RPC preserves every quarter without serial REST pages.
+      const priceArchivePromise = supabase.rpc("read_energy_planning_price_archive", {
+        p_home_id: auth.homeId, p_from: shapeFrom,
+      }).then(({ data, error }): StoredPriceRow[] => {
+        if (error) throw new Error(error.message);
+        return data as StoredPriceRow[];
+      }).catch((shapeError): StoredPriceRow[] => {
           console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
           return [];
         });
