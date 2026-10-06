@@ -19,6 +19,9 @@
 //     more of that load is bought from the grid, the quarter loses a point
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
+//     Imported base load of at least FLEXIBLE_W loses one point in the dearest
+//     quarter of prices, or two in the dearest tenth, when spare battery power
+//     and energy can cover it fully.
 //     A quarter below 1 SEK/kWh loses one point when a flexible store is below
 //     target but no charging or pool heating draws at least FLEXIBLE_W.
 //     Each quarter with a sale price above 4 SEK/kWh loses a point without
@@ -49,12 +52,14 @@
 import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type OpportunityAuditSummary } from './opportunities';
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
+import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
 import { LARGE_WORKLOAD_W } from './large-load-overlap';
 import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
 
+export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 21;
+export const SCORER_VERSION = 22;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -81,6 +86,8 @@ export interface QuarterView {
   flexibleW: number;
   /** Flexible demand left after battery supply, capped by actual grid imports, W. */
   flexibleGridW: number;
+  /** The battery can cover all grid-attributed base load in this quarter. */
+  baseLoadCoverable: boolean;
   /** The plan's next day against this one; null in the last day, which has none to compare with. */
   ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
@@ -132,6 +139,7 @@ const carFrom = (s: BenchSeries, t: number) =>
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
 const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && q.dearRank < t;
+const baseLoadDearBuy = (q: QuarterView, t: number) => q.baseLoadCoverable && q.dearRank < t;
 
 const missedCheapQuarter = (q: QuarterView, price: number) => {
   if (q.s.importPrice[q.i] >= price) return false;
@@ -155,29 +163,6 @@ export function arbitragePreparation(s: BenchSeries, salePrice: number): {
   }
   const soc = lastChargeQuarter === null ? s.homeStartSoc : s.homeSoc[lastChargeQuarter];
   return { firstQuarter, lastChargeQuarter, prepared: firstQuarter >= 0 && soc !== null && soc >= 100 };
-}
-
-const batteryHouseSupplyW = (s: BenchSeries, i: number) => Math.max(0, s.batteryDischargeW[i] - s.gridExportW[i]);
-
-/** Attribute available battery discharge to flexible demand before counting any of it as a grid purchase. */
-export function flexibleGridSupplyW(s: BenchSeries, i: number): number {
-  const flexibleW = s.poolW[i] + s.carW[i] + s.batteryChargeW[i];
-  const remainingW = Math.max(0, flexibleW - batteryHouseSupplyW(s, i));
-  // Stored powers have 0.1 W precision; round subtraction noise before the 500 W boundary.
-  return Math.round(Math.min(remainingW, s.gridImportW[i]) * 10) / 10;
-}
-
-/**
- * Supply attribution on the shared house bus: allocate battery exports and
- * non-EV demand first. Only the remainder can be attributed to the EV.
- * loadW already includes the pool, hot water and all other household loads.
- * Net simultaneous battery charging out of its discharge before allocating it.
- */
-export function evBatterySupplyW(s: BenchSeries, i: number): number {
-  const nonEvW = Math.max(0, s.loadW[i] - s.carW[i]);
-  const batteryForHouseW = Math.max(0, batteryHouseSupplyW(s, i) - s.batteryChargeW[i]);
-  // Stored power has 0.1 W precision; subtraction noise is not battery energy.
-  return Math.round(Math.min(s.carW[i], Math.max(0, batteryForHouseW - nonEvW)) * 10) / 10;
 }
 
 export const DEFAULT_RULES: QuarterRule[] = [
@@ -223,6 +208,18 @@ export const DEFAULT_RULES: QuarterRule[] = [
     fires: dearBuy, eligibleFrom: () => 0,
   },
   {
+    key: 'base_load_dear_import', about: 'price', label: 'Dear base-load import the battery could cover',
+    describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
+    threshold: 0.25, points: -1,
+    unless: 'base_load_dearest_import', fires: baseLoadDearBuy, eligibleFrom: () => 0,
+  },
+  {
+    key: 'base_load_dearest_import', about: 'price', label: 'Very dear base-load import the battery could cover',
+    describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
+    threshold: 0.1, points: -2,
+    fires: baseLoadDearBuy, eligibleFrom: () => 0,
+  },
+  {
     key: 'missed_cheap_quarter', about: 'price', label: 'Missed cheap charging or heating quarter',
     describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no charging or pool heating drawing at least ${FLEXIBLE_W} W`,
     threshold: 1, points: -1,
@@ -265,7 +262,9 @@ export const DEFAULT_RULES: QuarterRule[] = [
   })),
 ];
 
-/** The price rules that count from the dear end of the plan's prices. */
+/** The base-load price tiers share the same explanation and capability check. */
+export const BASE_LOAD_DEAR_RULE_KEYS: readonly string[] = ['base_load_dear_import', 'base_load_dearest_import'];
+/** The flexible-load price rules that count from the dear end of the plan's prices. */
 export const DEAR_RULE_KEYS: readonly string[] = ['dear_load', 'dearest_load'];
 
 /**
@@ -381,7 +380,8 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const overlapRule = resolved.find(r => r.key === 'large_load_overlap')!;
   const gapThresholds = Object.fromEntries(resolved.map(r => [r.key, r.threshold]));
   const preparation = arbitragePreparation(s, gapThresholds.arbitrage_not_full);
-  const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
+  const batteryEvidenceMissing = s.baseLoadBatteryCoverW?.length !== n;
+  const auditPending = batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
       || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
@@ -420,11 +420,14 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
+    const baseGridW = baseLoadGridSupplyW(s, i);
     const flexibleW = s.poolW[i] + s.batteryChargeW[i] + s.carW[i];
     const q: QuarterView = {
       s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       flexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
+      baseLoadCoverable: !batteryEvidenceMissing && baseGridW >= FLEXIBLE_W
+        && s.baseLoadBatteryCoverW[i] >= baseGridW,
       avoidableOverlap: overlapQuarters.has(i),
       shortGapDevices: new Set(shortGaps.filter(gap => gap.from <= i && i < gap.to).map(gap => gap.device)),
       evBatteryW: evBatterySupplyW(s, i),

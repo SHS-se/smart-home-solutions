@@ -203,7 +203,8 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
   // A warm pool is marked and loses nothing; the price rules are set aside to show it.
   const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 30 ? 3764 : 0 })).series },
-    { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false }, dear_load: { enabled: false }, dearest_load: { enabled: false } });
+    { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false }, dear_load: { enabled: false }, dearest_load: { enabled: false },
+      base_load_dear_import: { enabled: false }, base_load_dearest_import: { enabled: false } });
   assertEquals(warm.sum, 0);
 });
 
@@ -348,8 +349,9 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
 });
 
 Deno.test('a case scores each affected known-price quarter under its primary rule, hindsight beside it', () => {
-  // No plan here heats the pool, which cools all the while: its comfort is set aside to leave the battery's story.
-  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false } };
+  // Isolate the economic audit from comfort and the independent base-load preferences.
+  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false },
+    base_load_dear_import: { enabled: false }, base_load_dearest_import: { enabled: false } };
   const lost = evaluate(spilled(), record(plan()), unheated, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));

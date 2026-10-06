@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import BenchOverlapMove from './BenchOverlapMove';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, BASE_LOAD_DEAR_RULE_KEYS, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
@@ -234,6 +234,13 @@ export default function BenchRuleList({
         {settings(rule, t('Säljpris över (SEK/kWh)', 'Sale price above (SEK/kWh)'), '0.01')}
       </>;
     }
+    if (BASE_LOAD_DEAR_RULE_KEYS.includes(rule.key)) return <>
+      <p>{t(`En kvart ger avdrag när priset hör till planens dyraste ${Math.round(rule.threshold * 100)} % och batteriet kunde ha täckt hela den nätförsörjda baslasten på minst ${FLEXIBLE_W} W. Tillgänglig energi över batteriets lägsta laddnivå, urladdningsförluster och återstående urladdningseffekt räknas efter kvartens befintliga batterianvändning. Ingen extra urladdning räknas medan batteriet laddas.`,
+        `A quarter loses points when its price is among the plan's dearest ${Math.round(rule.threshold * 100)} % and the battery could have covered all grid-supplied base load of at least ${FLEXIBLE_W} W. Available energy above the battery cut-off, discharge losses and remaining discharge power are checked after the quarter's existing battery use. No extra discharge is counted while the battery charges.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Nätimport tillskrivs först flexibla laster och varmvatten, sedan baslast. Detta är en preferens för batteriförsörjning i dyra kvartar, inte ett bevis på lägre totalkostnad. Varje kvart bedöms separat vid verkliga priser, även opublicerade. Att spara batteriet till senare kvartar undantar inte importen. De två baslastreglerna staplas inte. Regeln kan ge avdrag samtidigt som energigranskningen.',
+        'Grid imports are assigned to flexible loads and hot water first, then base load. This is a preference for battery supply in expensive quarters, not proof of a lower total bill. Each quarter is assessed independently at actual prices, including unpublished prices. Reserving the battery for later quarters does not exempt the import. The two base-load rules never stack. The rule can stack with the economic audit.')}</p>
+      {settings(rule, t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)'), '0.05')}
+    </>;
     if (rule.key === 'missed_cheap_quarter') return <>
       <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen billaddning, hembatteriladdning eller poolvärme drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
         `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no EV charging, home battery charging or pool heating draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>
@@ -293,8 +300,8 @@ export default function BenchRuleList({
             `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
         {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
       </p>
-      {dear && <p className="text-xs text-muted-foreground">{t('Batteriets urladdning till huset räknas först mot de flexibla lasterna. Bara återstående flexibel effekt, begränsad till den faktiska nätimporten, jämförs med 500 W-gränsen. Batteriexport räknas bort från tillgänglig batterieffekt. Nätimport för baslast ger inget avdrag när batteriet täcker de flexibla lasterna.',
-        'Battery discharge serving the house is assigned to flexible loads first. Only the remaining flexible demand, capped by actual grid imports, is compared with the 500 W threshold. Battery exports are excluded from available battery power. Grid imports for base load cause no deduction when the battery covers the flexible loads.')}</p>}
+      {dear && <p className="text-xs text-muted-foreground">{t('Batteriets urladdning till huset räknas först mot de flexibla lasterna. Bara återstående flexibel effekt, begränsad till den faktiska nätimporten, jämförs med 500 W-gränsen. Batteriexport räknas bort från tillgänglig batterieffekt. Denna regel ger inget avdrag för baslast; den separata baslastregeln bedömer sådan import.',
+        'Battery discharge serving the house is assigned to flexible loads first. Only the remaining flexible demand, capped by actual grid imports, is compared with the 500 W threshold. Battery exports are excluded from available battery power. This rule does not penalize base load; the separate base-load rule assesses those imports.')}</p>}
       {settings(rule, dear ? t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)') : t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
     </>;
   };

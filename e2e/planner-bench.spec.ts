@@ -35,7 +35,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const n = 288, start = Date.parse('2026-09-24T00:00:00Z');
   const s: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
-    hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
+    hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: 50, carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
   };
   let temp = 29.5;
@@ -61,6 +61,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.gridExportW.push(Math.max(0, solar - load));
     s.batteryChargeW.push(0);
     s.batteryDischargeW.push(0);
+    s.baseLoadBatteryCoverW.push(0);
     s.homeSoc.push(50);
     s.carSoc.push(null);
     s.carConnected.push(1);
@@ -130,8 +131,8 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || arbitrage || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
   if (heatingAtTarget) {
     for (const plan of Object.values(plans)) {
       plan.importPrice = plan.importPrice.map((_, i) => i >= 24 && i < 44 ? 0.95 : 1.5);
@@ -151,6 +152,21 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
       plan.batteryDischargeW[27] = 4610;
       plan.gridImportW[27] = 610;
       plan.gridExportW[27] = 0;
+    }
+  }
+  if (baseLoad) {
+    for (const plan of Object.values(plans)) {
+      plan.importPrice = plan.importPrice.map((_, i) => i >= 240 ? 5 : 1 + i / 1000);
+      for (const [i, price] of [[27, 3.93], [28, 6.11]]) {
+        plan.importPrice[i] = price;
+        plan.poolW[i] = 0;
+        plan.hotWaterW[i] = 0;
+        plan.carW[i] = 0;
+        plan.loadW[i] = 2440;
+        plan.solarW[i] = 480;
+        plan.gridImportW[i] = 1960;
+        plan.baseLoadBatteryCoverW[i] = 1960;
+      }
     }
   }
   if (arbitrage) {
@@ -523,6 +539,35 @@ test.describe('planner bench', () => {
     await expect(explanation).toContainText('2.15');
     await expect(explanation).toContainText(/No rule fired|Ingen regel slog till/);
     await expect(explanation).not.toContainText(/Flexible load bought in a (very )?dear quarter/);
+  });
+
+  test('shows the two battery-coverable base-load price tiers in the chart and rule settings', async ({ context, page }) => {
+    await mockBackend(context, { baseLoad: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const box = (await chart.boundingBox())!;
+    const explanation = page.locator('#bench-quarter-explanation');
+    for (const [quarter, price, key, points] of [
+      [27, '3.93', 'base_load_dear_import', '−1'],
+      [28, '6.11', 'base_load_dearest_import', '−2'],
+    ] as const) {
+      await chart.click({ position: { x: box.width * (58 + (quarter + 0.5) / 288 * 1010) / 1160, y: box.height * 0.2 } });
+      await expect(explanation).toContainText(price);
+      await expect(explanation).toContainText(points);
+      await expect(explanation).toContainText(/base-load import the battery could cover/);
+      const row = page.locator(`#bench-rule-${key}`);
+      await expect(row).toContainText(new RegExp(`1 (q|kv) · ${points}`));
+      await row.getByRole('button').first().click();
+      await expect(row).toContainText(/remaining discharge power|återstående urladdningseffekt/);
+      await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue(key === 'base_load_dear_import' ? '0.25' : '0.1');
+      await row.getByRole('button').first().click();
+    }
+    const row = page.locator('#bench-rule-base_load_dearest_import');
+    await row.getByRole('button').first().click();
+    await page.locator('#bench-base_load_dearest_import-on').click();
+    await expect(explanation).toContainText('−1');
+    await expect(explanation).not.toContainText('Very dear base-load import');
   });
 
   test('shows independent high-sale export and full-charge preparation penalties', async ({ context, page }) => {

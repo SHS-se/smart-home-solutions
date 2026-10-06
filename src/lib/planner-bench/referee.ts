@@ -35,9 +35,10 @@ import {
   carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, projectHeatPumpResponse, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
+import { baseLoadGridSupplyW } from './supply';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 10;
+export const REFEREE_VERSION = 11;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -277,7 +278,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   const series: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
-    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
+    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
     carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [],
     comfort: {
@@ -305,6 +306,13 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.gridExportW.push(r1(Math.max(0, -sim.netW[i])));
     series.batteryChargeW.push(r1(sim.chargeW[i]));
     series.batteryDischargeW.push(r1(sim.dischargeW[i]));
+    // Extra house supply uses energy left after this quarter's existing actions.
+    const storedW = Math.max(0, sim.batteryKwh[i] - h.battery.min_soc * h.battery.capacity_kwh)
+      * h.battery.discharge_efficiency / HOURS * 1_000;
+    const spareW = Math.min(Math.max(0, h.battery.discharge_max_w - sim.dischargeW[i]), storedW);
+    const availableW = sim.chargeW[i] > 0 ? 0 : spareW;
+    // Floor available power to stored precision so rounding cannot invent capacity.
+    series.baseLoadBatteryCoverW.push(Math.min(baseLoadGridSupplyW(series, i), Math.floor(availableW * 10) / 10));
     series.homeSoc.push(r1(sim.batteryKwh[i] / h.battery.capacity_kwh * 100));
     series.carSoc.push(r1(sim.evKwh[i] / h.car.battery.capacity_kwh * 100));
     series.carKm!.push(r1(sim.evKwh[i] / h.car.battery.kwh_per_km));

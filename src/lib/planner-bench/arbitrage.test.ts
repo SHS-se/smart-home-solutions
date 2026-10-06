@@ -14,7 +14,7 @@ function series(): BenchSeries {
     hours: new Array(n).fill(0.25), published: zeros(), importPrice: new Array(n).fill(2),
     exportPrice: [0.5, 0.5, 0.5, 4.01, 4, 6, 0.5, 4.25],
     solarW: zeros(), loadW: new Array(n).fill(500), poolW: zeros(), hotWaterW: zeros(), carW: zeros(),
-    gridImportW: zeros(), gridExportW: zeros(), batteryChargeW: zeros(), batteryDischargeW: zeros(),
+    gridImportW: zeros(), gridExportW: zeros(), batteryChargeW: zeros(), batteryDischargeW: zeros(), baseLoadBatteryCoverW: zeros(),
     homeStartSoc: 50, homeSoc: new Array(n).fill(50), carSoc: zeros(), carConnected: zeros(), poolC: zeros(), costSek: zeros(),
   };
 }

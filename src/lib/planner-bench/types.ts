@@ -28,6 +28,8 @@ export interface BenchSeries {
   gridExportW: number[];
   batteryChargeW: number[];
   batteryDischargeW: number[];
+  /** Base-load imports the battery could cover in each quarter, W, after existing commitments. */
+  baseLoadBatteryCoverW: number[];
   /** Percentages. */
   homeSoc: (number | null)[];
   /** Home-battery SOC at the case start, percent; null when the series has no initial reading. */

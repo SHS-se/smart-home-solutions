@@ -39,7 +39,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
   const out: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
-    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
+    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: null, carSoc: [], carConnected: [], poolC: [], costSek: [],
   };
   slots.forEach((slot, i) => {
@@ -60,6 +60,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
     out.gridExportW.push(r1(slot.grid_export_w));
     out.batteryChargeW.push(r1(slot.battery_charge_w));
     out.batteryDischargeW.push(r1(slot.battery_discharge_w + (slot.battery_export_w ?? 0)));
+    out.baseLoadBatteryCoverW.push(0);
     out.homeSoc.push(Number.isFinite(slot.battery_soc) ? r1(slot.battery_soc * 100) : null);
     out.carSoc.push(slot.ev_soc === null ? null : r1(slot.ev_soc * 100));
     out.carConnected.push(slot.ev_connected ? 1 : 0);
