@@ -5,7 +5,7 @@ import { simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { evaluate } from './evaluate.ts';
 import { scoreQuarters } from './score.ts';
-import { TARGETS, plan, world, within } from './world.fixture.ts';
+import { TARGETS, plan, world, within, shortEvRestartFixture } from './world.fixture.ts';
 import type { BenchCase } from './case.ts';
 import type { PlanRecord } from './types.ts';
 
@@ -89,15 +89,51 @@ Deno.test('the combined tolerance accepts the discussed 1-, 2- and 4-quarter gap
   }
 });
 
-Deno.test('a price-qualified four-quarter EV gap cannot use more energy than its adjacent runs booked', () => {
+Deno.test('C-0616 told/low scores all four EV gap quarters by joining the restart to the earlier run', () => {
   // C-0616 told/low: both border prices pass every gap quarter's 10% envelope.
-  const prices = [1.68275, 1.76646, 1.7636, 1.72264, 1.68929, 1.63933];
-  const c = world({ buy: i => i >= 11 && i <= 16 ? prices[i - 11] : 1.8 });
-  const d = plan({ ev: i => i === 10 ? 4140 : i === 11 || i === 16 ? 3450 : 0 });
-  const result = audit(c, d);
+  const { c, decisions: d } = shortEvRestartFixture();
+  const evaluated = evaluate(c, recordOf(c, d), {}, 'told/low');
+  const result = evaluated.series.audit!.shortGaps;
   assertEquals(result.candidates, [{ device: 'ev', from: 12, to: 16 }]);
   assertAlmostEquals(d.ev_w.reduce((sum, w) => sum + w * 0.25 / 1000, 0), 2.76);
-  assertEquals(result.gaps, []);
+  assertEquals(result.gaps.length, 1);
+  const moved = alternative(d, result.gaps[0]);
+  assertEquals(moved.ev_w.slice(10, 17), [4140, 3450, 3450, 0, 0, 0, 0]);
+  assertAlmostEquals(moved.ev_w.reduce((sum, w) => sum + w * 0.25 / 1000, 0), 2.76);
+  const before = simulate(c, HOUSEHOLD, d), after = simulate(c, HOUSEHOLD, moved);
+  assertEquals(after.violations, []);
+  for (const store of ['batteryKwh', 'evKwh', 'poolC'] as const) assert(after[store][287] >= before[store][287] - 1e-6);
+  assertEquals(evaluated.score.counts.ev_short_gap, 4);
+  assertEquals(scoreQuarters(evaluated.series).quarters.flatMap((q, i) => q.fired.includes('ev_short_gap') ? [i] : []), [12, 13, 14, 15]);
+});
+
+Deno.test('short runs can join at either side of a longer gap without filling every idle quarter', () => {
+  for (const device of ['ev', 'pool'] as const) {
+    const power = device === 'ev' ? 3450 : 3764;
+    const key = device === 'ev' ? 'ev_w' : 'pool_w';
+    // Pool heat decays, so finishing earlier cannot preserve its final store.
+    for (const blocked of device === 'ev' ? [5, 8] : [5]) {
+      const c = world({ load: i => i === blocked ? HOUSEHOLD.site.import_limit_w : 500 });
+      const d = plan({ [device]: (i: number) => i === 4 || i === 9 ? power : 0 });
+      assertEquals(simulate(c, HOUSEHOLD, d).violations, []);
+      const result = audit(c, d);
+      assertEquals(result.gaps.length, 1, `${device}, blocked quarter ${blocked}`);
+      const moved = alternative(d, result.gaps[0]);
+      const on = moved[key].flatMap((w, i) => w > 0 ? [i] : []);
+      assertEquals(on.length, 2);
+      assertEquals(on[1] - on[0], 1);
+      assertEquals(moved[key][blocked], 0);
+      assertEquals(simulate(c, HOUSEHOLD, moved).violations, []);
+      assertEquals(evaluate(c, recordOf(c, d), {}).score.counts[`${device}_short_gap`], 4);
+    }
+  }
+});
+
+Deno.test('joining short pool runs still cannot reduce the final heat inventory', () => {
+  const c = world({ load: i => i === 8 ? HOUSEHOLD.site.import_limit_w : 500 });
+  const d = plan({ pool: i => i === 4 || i === 9 ? 3764 : 0 });
+  assertEquals(simulate(c, HOUSEHOLD, d).violations, []);
+  assertEquals(audit(c, d).gaps, []);
 });
 
 Deno.test('five-quarter gaps, leading/trailing idle time and continuous runs are exempt', () => {

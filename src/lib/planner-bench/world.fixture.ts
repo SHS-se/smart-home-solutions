@@ -88,3 +88,12 @@ export function plan(spec: { pool?: (i: number) => number; ev?: (i: number) => n
     battery_charge_w: quarters(spec.charge ?? (() => 0)), battery_discharge_w: quarters(spec.discharge ?? (() => 0)),
   };
 }
+
+/** C-0616 told/low's reported gap prices and adjacent EV decisions; other inputs are synthetic. */
+export function shortEvRestartFixture() {
+  const prices = [1.68275, 1.76646, 1.7636, 1.72264, 1.68929, 1.63933];
+  const c = world({ buy: i => i >= 11 && i <= 16 ? prices[i - 11] : 1.8 });
+  c.start = '2026-06-15T22:00:00.000Z'; // 16 June, 00:00 in Stockholm.
+  const decisions = plan({ ev: i => i === 10 ? 4140 : i === 11 || i === 16 ? 3450 : 0 });
+  return { c, decisions };
+}

@@ -57,10 +57,11 @@ export function auditShortGaps(
       // Try retaining both runs first, then trimming only their outer edges.
       // At most one edge quarter per gap quarter needs to be removed. Two
       // donor orders expose alternatives that protect early service or stores.
+      // An edge may move into the old gap: joining runs can finish earlier or
+      // start later without keeping every formerly idle quarter running.
       search: for (let trim = 0; trim <= length; trim++) {
         for (let trimLeft = 0; trimLeft <= trim; trimLeft++) {
           const trimRight = trim - trimLeft;
-          if (trimLeft > from - left || trimRight > right - to) continue;
           const start = left + trimLeft, end = right - trimRight;
           for (const reverse of [false, true]) {
             const shifted = [...values];

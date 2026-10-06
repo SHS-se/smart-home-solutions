@@ -16,6 +16,8 @@ import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { LANES } from '../src/lib/planner-bench/lanes';
+import { evaluate } from '../src/lib/planner-bench/evaluate';
+import { shortEvRestartFixture } from '../src/lib/planner-bench/world.fixture';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
@@ -131,8 +133,15 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
+  if (shortEvRestart) {
+    const { c, decisions } = shortEvRestartFixture();
+    const result = evaluate(c, { ...record(1), decisions,
+      beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh, grid_cost_sek: null },
+    }, {}, 'told/low');
+    for (const plan of Object.values(plans)) Object.assign(plan, result.series);
+  }
   if (heatingAtTarget) {
     for (const plan of Object.values(plans)) {
       plan.importPrice = plan.importPrice.map((_, i) => i >= 24 && i < 44 ? 0.95 : 1.5);
@@ -316,6 +325,25 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('scores the C-0616 03:00–04:00 EV restart gap in the prices-known low lane using the real evaluator', async ({ context, page }) => {
+    await mockBackend(context, { shortEvRestart: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await page.locator('#bench-lane-told-low').click();
+    await expect(page.locator('#bench-lane-told-low')).toHaveAttribute('aria-pressed', 'true');
+    const row = page.locator('#bench-rule-ev_short_gap');
+    await expect(row).toContainText(/4 (q|kv) · −4/);
+    await row.getByRole('button').first().click();
+    await row.getByRole('button', { name: /^Test: 4 / }).click();
+    const explanation = page.locator('#bench-quarter-explanation');
+    await expect(explanation).toContainText('16/06 03:00');
+    await expect(explanation).toContainText('−1 Short interruption in EV charging');
+    await expect(explanation).toContainText('16/06 03:00 → 16/06 04:00');
+    await row.locator('details').last().locator('summary').click();
+    await expect(row.locator('details').last()).toContainText('16/06 03:00: 0.00 → 3.45 kW');
+    await expect(row.locator('details').last()).toContainText('16/06 04:00: 3.45 → 0.00 kW');
+  });
+
   test('explains short EV and pool gaps with their times and feasible continuous schedules', async ({ context, page }) => {
     await mockBackend(context, { gaps: true });
     await login(page);
