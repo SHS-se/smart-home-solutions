@@ -50,6 +50,7 @@ async function database() {
   // the same storage-only exclusion exists in energy-plan-storage.test.ts.
   const jobsMigration = await migration('20261006120000_durable_energy_planning_jobs');
   await db.exec(jobsMigration.replace(/^ALTER TABLE private\.energy_planning_(jobs|parts) ALTER COLUMN \w+ SET COMPRESSION lz4;$/gm, ''));
+  await db.exec(await migration('20261006150000_lease_safe_energy_planning_claims'));
   await db.exec(`UPDATE private.energy_planning_credentials SET function_url=
     'https://example.supabase.co/functions/v1/energy-optimisation-planning-worker';`);
   return db;
@@ -151,6 +152,9 @@ Deno.test('planning RPCs are service-only, ordered JSON is frozen, and checkpoin
     assertEquals((await db.query<{ proconfig: string[] }>(`SELECT proconfig FROM pg_proc
       WHERE oid='publish_energy_planning_job(json)'::regprocedure`)).rows[0].proconfig,
       ['search_path=public, private', 'statement_timeout=30s']);
+    assertEquals((await db.query<{ proconfig: string[] }>(`SELECT proconfig FROM pg_proc
+      WHERE oid='claim_energy_planning_step(uuid)'::regprocedure`)).rows[0].proconfig,
+      ['search_path=public, private', 'statement_timeout=15s']);
   } finally { await db.close(); }
 });
 
@@ -183,6 +187,42 @@ Deno.test('expired leases fence old workers and repeated expiry fails only the b
     const state = (await db.query<{ error: string; completed: string | null }>('SELECT replan_error error,replan_completed_request_id completed FROM energy_optimisation_current')).rows[0];
     assert(state.error.includes('repeatedly'));
     assertEquals(state.completed, null);
+  } finally { await db.close(); }
+});
+
+Deno.test('a claim starts a fresh wall-clock lease even in an older transaction', async () => {
+  const db = await database();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    await db.exec('BEGIN');
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const owned = (await claim(db, accepted.job_id))!;
+    assertEquals((await db.query<{ fresh: boolean }>(`SELECT lease_until > now()+interval '30 seconds' AS fresh
+      FROM private.energy_planning_jobs WHERE id=$1`, [owned.id])).rows[0].fresh, true);
+    await db.exec('ROLLBACK');
+  } finally { await db.close(); }
+});
+
+Deno.test('expired wall-clock owners cannot commit, publish or fail using an older transaction timestamp', async () => {
+  const db = await database();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', submission());
+    let owned = (await claim(db, accepted.job_id))!;
+    await rpc(db, 'commit_energy_planning_step', { job_id: owned.id, fence: owned.fence, step: owned.step,
+      phase: 'assembling', continuation: {}, completed: [], rankings: [] });
+    owned = (await claim(db, accepted.job_id))!;
+    await db.exec('BEGIN');
+    await new Promise(resolve => setTimeout(resolve, 30));
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 microsecond' WHERE id=$1", [owned.id]);
+    assertEquals((await db.query<{ older: boolean }>('SELECT now()<lease_until AS older FROM private.energy_planning_jobs WHERE id=$1', [owned.id])).rows[0].older, true);
+    const identity = { job_id: owned.id, fence: owned.fence, step: owned.step };
+    assertEquals(await rpc(db, 'commit_energy_planning_step', { ...identity,
+      phase: 'assembling', continuation: {}, completed: [], rankings: [] }), null);
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...identity, current: currentRow(), run: runRow() }), null);
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...identity, code: 'late', detail: 'Late worker' }), null);
+    const reclaimed = (await claim(db, accepted.job_id))!;
+    assert(reclaimed.fence > owned.fence);
+    await db.exec('ROLLBACK');
   } finally { await db.close(); }
 });
 

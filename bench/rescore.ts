@@ -80,28 +80,36 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   }
   let latestRules = rules;
   const current = (result: EvaluatedResult) =>
-    cases.has(result.scenario_id) && result.status === "ok" && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
+    cases.has(result.scenario_id) && result.status === "ok" && result.has_record && result.has_evaluation
+    && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
   const eligible = before.filter(result => result.status === "ok" && cases.has(result.scenario_id));
   report.eligible = eligible.length;
   const missing = new Set<string>();
+  let inspected = 0;
+  console.log(`[BENCH-RESCORE] Checking ${eligible.length} results; source decisions are loaded only for stale evaluations.`);
   for (const result of eligible) {
     const entry = cases.get(result.scenario_id)!;
     try {
-      // Check even current results: derived scores without their source decisions
-      // cannot count as complete, reproducible benchmark coverage.
-      const record = await bench.planRecord(result);
-      if (!record) {
+      // Presence comes from the database row, never a writable cached flag.
+      if (!result.has_record) {
         report.missingRecords++;
         missing.add(keyOf(result));
         report.issues.push(`${describe(result)}: missing stored decisions. Restore the raw record or rerun this planner/case/lane; rescore cannot reconstruct it.`);
         continue;
       }
       if (current(result)) { report.alreadyCurrent++; continue; }
+      const record = await bench.planRecord(result);
+      if (!record) throw new Error("Stored decisions disappeared or changed during rescore; rerun with fresh metadata.");
       await bench.saveEvaluation(result, evaluate(entry.c, record, rules, result.lane));
       report.processed++;
     } catch (error) {
       report.evaluationErrors++;
       report.issues.push(`${describe(result)}: ${messageOf(error)}`);
+    } finally {
+      inspected++;
+      if (inspected % 25 === 0 || inspected === eligible.length) {
+        console.log(`[BENCH-RESCORE] ${inspected}/${eligible.length} checked; ${report.processed} refreshed, ${report.alreadyCurrent} already current, ${report.evaluationErrors} evaluation errors.`);
+      }
     }
   }
 
@@ -109,7 +117,6 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   const after = await bench.evaluatedResults();
   latestRules = await bench.rules();
   const afterByKey = new Map(after.map(result => [keyOf(result), result]));
-  const beforeKeys = new Set(eligible.map(keyOf));
   // Newly inserted successful results are included too; concurrent writes must
   // never make this verification silently claim a stale result is current.
   const verify = new Map(eligible.map(result => [keyOf(result), result]));
@@ -120,15 +127,15 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   for (const [key, result] of verify) {
     if (missing.has(key)) continue;
     const stored = afterByKey.get(key);
+    if (stored && !stored.has_record) {
+      report.missingRecords++;
+      missing.add(key);
+      report.issues.push(`${describe(stored)}: stored decisions missing after rescore.`);
+      continue;
+    }
     if (!stored || !current(stored)) {
       report.verificationErrors++;
       report.issues.push(`${describe(result)}: stored result missing or scorer/referee/rules are not current after rescore. Retry after any concurrent rule edit finishes.`);
-      continue;
-    }
-    if (!beforeKeys.has(key) && !(await bench.planRecord(stored))) {
-      report.missingRecords++;
-      missing.add(key);
-      report.issues.push(`${describe(stored)}: concurrently added result has no stored decisions.`);
       continue;
     }
     report.verifiedCurrent++;

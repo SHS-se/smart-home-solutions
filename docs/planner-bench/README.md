@@ -66,6 +66,19 @@ prices; the six lanes separate price information from valuation strength.
 The next bench run, or **Recompute scores**, re-evaluates every stored result
 from its stored decisions when a rule or the referee changes; no planner runs.
 
+The benchmark store serializes its requests and leaves idle time of at least
+250 ms, or the preceding request's duration if longer, between them. This limits
+benchmark pressure on the TEST database shared with the household portal and
+planning workers. Coverage reads use artifact-presence metadata; current results
+do not download their source decisions. Scorer changes write only the score when
+the audit and criteria are unchanged; audit changes update audit and score
+together, and referee changes replace the complete evaluation. Each write checks
+the observed source identity and score, and fails if another run replaced them.
+Updating an audit inside JSONB still rewrites that series, so pacing remains
+necessary. Missing JSON artifacts use SQL NULL and stored artifacts must be objects.
+The storage constraint validates existing artifacts on row updates, so smaller
+writes reduce rewrites and network traffic without eliminating all JSON reads.
+
 ## Running it
 
 **Add a case:** upload a replay file on the page. It is converted to a test case, and once its 72 hours are recorded every commit

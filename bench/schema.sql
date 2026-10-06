@@ -146,8 +146,66 @@ end $$;
 revoke all on function public.bench_set_current(text) from public, anon;
 grant execute on function public.bench_set_current(text) to authenticated;
 
+-- SQL NULL is the sole representation of absent JSON artifacts. Establish the
+-- object/null storage contract once, so coverage presence checks never detoast
+-- source decisions or series. JSON null and SQL NULL mean the same absence.
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='public.bench_results'::regclass
+    and conname='bench_result_json_objects') then
+    update public.bench_results set record=nullif(record,'null'::jsonb),series=nullif(series,'null'::jsonb),
+      stats=nullif(stats,'null'::jsonb),outcome=nullif(outcome,'null'::jsonb)
+      where record='null'::jsonb or series='null'::jsonb or stats='null'::jsonb or outcome='null'::jsonb;
+    alter table public.bench_results add constraint bench_result_json_objects check (
+      (record is null or jsonb_typeof(record)='object') and (series is null or jsonb_typeof(series)='object')
+      and (stats is null or jsonb_typeof(stats)='object') and (outcome is null or jsonb_typeof(outcome)='object'));
+  end if;
+end $$;
+
 -- Totals for every result, without the 30–40 kB plan series behind each.
 create or replace view public.bench_result_summaries
 with (security_invoker = true) as
-select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash, lane
+select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash, lane,
+  created_at,
+  record is not null as has_record,
+  series is not null and stats is not null and outcome is not null as has_evaluation
 from public.bench_results;
+
+-- Derived writes are fenced by the observed source and evaluation. A scorer or
+-- audit change does not rewrite unchanged referee output or source decisions.
+create or replace function public.bench_save_evaluation(p_update jsonb)
+returns boolean language plpgsql security invoker set search_path=public as $$
+declare
+  g jsonb := p_update->'guard';
+  k text := p_update->>'kind';
+  n integer;
+begin
+  if k is null or k not in ('score','audit-score','evaluation')
+    or jsonb_typeof(g) is distinct from 'object'
+    or (k in ('score','audit-score') and jsonb_typeof(p_update->'score') is distinct from 'object')
+    or (k='audit-score' and jsonb_typeof(p_update->'audit') is distinct from 'object')
+    or (k='evaluation' and (jsonb_typeof(p_update->'value'->'series') is distinct from 'object'
+      or jsonb_typeof(p_update->'value'->'stats') is distinct from 'object'
+      or jsonb_typeof(p_update->'value'->'outcome') is distinct from 'object'
+      or jsonb_typeof(p_update->'value'->'score') is distinct from 'object'
+      or p_update->'value'->>'referee_version' is null)) then
+    raise exception 'Invalid benchmark evaluation mutation' using errcode='22023';
+  end if;
+  update public.bench_results r set
+    score=case when k='evaluation' then p_update->'value'->'score' else p_update->'score' end,
+    series=case when k='evaluation' then p_update->'value'->'series'
+      when k='audit-score' then jsonb_set(r.series,'{audit}',p_update->'audit') else r.series end,
+    stats=case when k='evaluation' then p_update->'value'->'stats' else r.stats end,
+    outcome=case when k='evaluation' then p_update->'value'->'outcome' else r.outcome end,
+    referee_version=case when k='evaluation' then (p_update->'value'->>'referee_version')::integer else r.referee_version end
+  where r.sha=g->>'sha' and r.scenario_id=(g->>'scenario_id')::uuid and r.lane=g->>'lane'
+    and r.status='ok' and r.record is not null
+    and r.input_hash is not distinct from g->>'input_hash'
+    and r.created_at=(g->>'created_at')::timestamptz
+    and r.referee_version is not distinct from (g->>'referee_version')::integer
+    and r.score is not distinct from nullif(g->'score','null'::jsonb)
+    and (k='evaluation' or (r.series is not null and r.stats is not null and r.outcome is not null));
+  get diagnostics n=row_count;
+  return n=1;
+end $$;
+revoke all on function public.bench_save_evaluation(jsonb) from public, anon, authenticated;
+grant execute on function public.bench_save_evaluation(jsonb) to service_role;

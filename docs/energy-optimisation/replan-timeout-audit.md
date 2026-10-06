@@ -1,5 +1,35 @@
 # Replanning timeout audit — 24 September 2026
 
+## Follow-up — 6 October 2026
+
+The TEST portal RPC `get_energy_portal_delta` and durable worker claim
+`claim_energy_planning_step` both hit PostgreSQL statement timeouts while the
+planner benchmark was rescoring 960 stored results. Claim cancellation occurred
+while building the ordered completed-auction/ranking payload. The benchmark
+downloaded source decisions even for current results and rewrote all derived
+artifacts when only scorer/audit versions changed. Thermal portal reads already
+had covering indexes; several unrelated reads slowed under this load.
+
+Pausing GitHub benchmark run `37461029224` restored the portal RPC to about
+879 ms. This supports benchmark contention as the incident's cause; the database
+resource graphs were not used to attribute it to a particular resource.
+
+Benchmark requests now serialize and leave idle time between requests. Coverage
+uses cheap artifact-presence metadata, and guarded writes update only the derived
+fields whose dependencies changed. Claim payload assembly precedes the fresh
+30-second lease, with a scoped 15-second claim timeout. Commit, publication and
+failure ownership checks use wall-clock time after locks. Planner mathematics,
+search budgets and the delivery protocol are unchanged.
+
+The migration and benchmark schema were applied to TEST. Two bounded live
+checks each refreshed and verified 12 stale audit/score results through the new
+RPC. During the concurrent check, the actual portal RPC completed in 584 ms under
+its unchanged 8-second limit. The household job advanced from step 536 to 606
+with zero lease expiries; publication was still pending at that observation.
+These are bounded samples, not a guarantee against future saturation. Updating
+an audit still rewrites its JSONB series, and artifact constraints still read
+existing JSON during row updates.
+
 ## Follow-up — 25 September 2026
 
 ### Failure

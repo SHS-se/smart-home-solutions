@@ -40,10 +40,12 @@ class MemoryStore {
   ];
   rows: EvaluatedResult[] = ["old-not-in-git", "new-not-in-git"].flatMap(sha => LANES.map(lane => ({
     sha, scenario_id: "ready", lane, status: "ok" as const, error: null, score: null, referee_version: 0,
+    input_hash: `immutable-${sha}/ready/${lane}`, created_at: dataset.start, has_record: true, has_evaluation: false,
   })));
   records = new Map(this.rows.map(row => [keyOf(row), structuredClone(record)]));
   hashes = new Map(this.rows.map(row => [keyOf(row), `immutable-${keyOf(row)}`]));
   writes: ResultKey[] = [];
+  reads: ResultKey[] = [];
   discardWrites = false;
   async rules(): Promise<CriteriaOverrides> { return {}; }
   async scenarios(only?: string, includeArchived = false) {
@@ -52,12 +54,13 @@ class MemoryStore {
   async runs(): Promise<RunSummary[]> {
     return ["old-not-in-git", "new-not-in-git"].map(sha => ({ sha, committed_at: dataset.start, planner_version: null, is_current: false }));
   }
-  async evaluatedResults() { return structuredClone(this.rows); }
-  async planRecord(key: ResultKey) { return structuredClone(this.records.get(keyOf(key)) ?? null); }
+  async evaluatedResults() { return structuredClone(this.rows.map(r => ({ ...r, has_record: this.records.get(keyOf(r)) != null }))); }
+  async planRecord(key: EvaluatedResult) { this.reads.push(key); return structuredClone(this.records.get(keyOf(key)) ?? null); }
   async saveEvaluation(key: ResultKey, evaluation: Evaluation) {
     this.writes.push(key);
     if (this.discardWrites) return;
-    this.rows = this.rows.map(row => keyOf(row) === keyOf(key) ? { ...row, score: evaluation.score, referee_version: evaluation.referee_version } : row);
+    this.rows = this.rows.map(row => keyOf(row) === keyOf(key) ? { ...row, score: evaluation.score,
+      referee_version: evaluation.referee_version, has_evaluation: true } : row);
   }
 }
 
@@ -76,6 +79,7 @@ Deno.test("rescore evaluates every stored lane with the real evaluator and is id
   const second = await rescoreExisting(store);
   assertEquals([second.processed, second.alreadyCurrent, second.verifiedCurrent], [0, 12, 12]);
   assertEquals(store.writes.length, 12);
+  assertEquals(store.reads.length, 12, "already-current verification downloads no source records");
   assertEquals(store.records, rawBefore);
   assertEquals(store.hashes, hashesBefore);
   assert(rescoreMarkdown(second).includes("12/12"));
@@ -138,6 +142,30 @@ Deno.test("a concurrent rule edit prevents a falsely current verification", asyn
   store.rules = async () => ++reads < 2 ? {} : { pool_low: { threshold: 0.5 } };
   const error = await assertRejects(() => rescoreExisting(store), RescoreIncompleteError);
   assertEquals(error.report.verificationErrors, 12);
+});
+
+Deno.test("metadata verification catches decisions removed after current scores were read", async () => {
+  const store = new MemoryStore();
+  await rescoreExisting(store);
+  let snapshots = 0;
+  const read = store.evaluatedResults.bind(store);
+  store.evaluatedResults = () => {
+    if (++snapshots === 2) store.records.delete(keyOf(store.rows[0]));
+    return read();
+  };
+  const error = await assertRejects(() => rescoreExisting(store), RescoreIncompleteError);
+  assertEquals(error.report.missingRecords, 1);
+  assertEquals(error.report.verifiedCurrent, 11);
+  assertEquals(store.reads.length, 12);
+});
+
+Deno.test("missing referee-derived artifacts are rebuilt even when score versions are current", async () => {
+  const store = new MemoryStore();
+  await rescoreExisting(store);
+  store.rows[0].has_evaluation = false;
+  const report = await rescoreExisting(store);
+  assertEquals([report.processed, report.alreadyCurrent], [1, 11]);
+  assertEquals(store.reads.length, 13);
 });
 
 Deno.test("rescore-only refuses a missing local result file instead of reporting zero results", async () => {

@@ -5,11 +5,27 @@
 // records in one JSON file so the runner can be developed and checked without a
 // database; its test cases are `{ dataset, recorded }` files in a directory.
 
-import type { BenchRecorded, BenchScenarioData } from "../src/lib/planner-bench/case.ts";
+import { canonicalJson, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import type { Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
 import type { LaneId } from "../src/lib/planner-bench/lanes.ts";
 import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
+
+/** Only the derived fields whose dependencies changed cross the database boundary. */
+export type EvaluationMutation =
+  | { kind: "score"; score: StoredScore }
+  | { kind: "audit-score"; score: StoredScore; audit: NonNullable<Evaluation["series"]["audit"]> }
+  | { kind: "evaluation"; value: Evaluation };
+
+export function evaluationMutation(previous: EvaluatedResult, value: Evaluation): EvaluationMutation {
+  if (!previous.has_evaluation || previous.referee_version !== value.referee_version) {
+    return { kind: "evaluation", value };
+  }
+  if (previous.score?.criteria === value.score.criteria && canonicalJson(previous.score?.audit) === canonicalJson(value.score.audit)) {
+    return { kind: "score", score: value.score };
+  }
+  return { kind: "audit-score", score: value.score, audit: value.series.audit! };
+}
 
 export interface StoredScenario {
   id: string;
@@ -52,6 +68,7 @@ export interface ResultKey {
 export const laneKey = (scenarioId: string, lane: LaneId) => `${scenarioId}|${lane}`;
 
 export interface ResultRecord extends Partial<Evaluation>, ResultKey {
+  created_at?: string;
   status: "ok" | "error";
   error: string | null;
   cpu_ms: number | null;
@@ -62,6 +79,10 @@ export interface ResultRecord extends Partial<Evaluation>, ResultKey {
 }
 
 export interface EvaluatedResult extends ResultKey {
+  input_hash: string | null;
+  created_at: string | null;
+  has_record: boolean;
+  has_evaluation: boolean;
   status: "ok" | "error";
   error: string | null;
   score: StoredScore | null;
@@ -88,14 +109,38 @@ export interface BenchStore {
   saveResult(result: ResultRecord): Promise<void>;
   /** Every result, including planner errors, for complete rescore coverage checks. */
   evaluatedResults(): Promise<EvaluatedResult[]>;
-  planRecord(key: ResultKey): Promise<PlanRecord | null>;
-  saveEvaluation(key: ResultKey, evaluation: Evaluation): Promise<void>;
+  planRecord(observed: EvaluatedResult): Promise<PlanRecord | null>;
+  saveEvaluation(observed: EvaluatedResult, evaluation: Evaluation): Promise<void>;
 }
 
-export class DbStore implements BenchStore {
-  constructor(private url: string, private key: string) {}
+interface BenchTransport {
+  now(): number;
+  wait(ms: number): Promise<void>;
+}
+const transport: BenchTransport = {
+  now: () => performance.now(),
+  wait: ms => new Promise(resolve => setTimeout(resolve, ms)),
+};
 
-  private async request(path: string, init: RequestInit = {}) {
+export class DbStore implements BenchStore {
+  private queue: Promise<void> = Promise.resolve();
+  private previousDuration: number | null = null;
+  constructor(private url: string, private key: string, private timing: BenchTransport = transport) {}
+
+  private request(path: string, init: RequestInit = {}): Promise<unknown> {
+    const result = this.queue.then(async () => {
+      // Leave at least as much idle time as the preceding request spent busy.
+      // Queue every read/write, including callers using Promise.all.
+      if (this.previousDuration !== null) await this.timing.wait(Math.max(250, this.previousDuration));
+      const started = this.timing.now();
+      try { return await this.performRequest(path, init); }
+      finally { this.previousDuration = this.timing.now() - started; }
+    });
+    this.queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async performRequest(path: string, init: RequestInit) {
     const response = await fetch(`${this.url}/rest/v1/${path}`, {
       ...init,
       headers: {
@@ -208,19 +253,27 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version&order=sha,scenario_id,lane");
+    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,created_at,has_record,has_evaluation&order=sha,scenario_id,lane");
   }
 
   private where = ({ sha, scenario_id, lane }: ResultKey) =>
     `sha=eq.${sha}&scenario_id=eq.${scenario_id}&lane=eq.${encodeURIComponent(lane)}`;
 
-  async planRecord(key: ResultKey) {
-    const rows = await this.request(`bench_results?select=record&${this.where(key)}`) as { record: PlanRecord | null }[];
+  async planRecord(key: EvaluatedResult) {
+    const guard = (field: string, value: string | null) => `${field}=${value === null ? "is.null" : `eq.${encodeURIComponent(value)}`}`;
+    const rows = await this.request(`bench_results?select=record&${this.where(key)}&${guard("input_hash", key.input_hash)}&${guard("created_at", key.created_at)}`) as { record: PlanRecord | null }[];
     return rows[0]?.record ?? null;
   }
 
-  async saveEvaluation(key: ResultKey, evaluation: Evaluation) {
-    await this.patch(`bench_results?${this.where(key)}`, evaluation);
+  async saveEvaluation(observed: EvaluatedResult, evaluation: Evaluation) {
+    const { sha, scenario_id, lane, input_hash, created_at, referee_version, score } = observed;
+    const saved = await this.request("rpc/bench_save_evaluation", {
+      method: "POST", body: JSON.stringify({ p_update: {
+        guard: { sha, scenario_id, lane, input_hash, created_at, referee_version, score },
+        ...evaluationMutation(observed, evaluation),
+      } }),
+    });
+    if (saved !== true) throw new Error("Benchmark source or evaluation changed during rescore; rerun with fresh metadata.");
   }
 }
 
@@ -300,19 +353,33 @@ export class LocalStore implements BenchStore {
   }
   async saveResult(result: ResultRecord) {
     const file = await this.load();
-    file.results = [...file.results.filter(r => !same(r, result)), result];
+    file.results = [...file.results.filter(r => !same(r, result)), { ...result, created_at: new Date().toISOString() }];
     await this.save(file);
   }
   async evaluatedResults() {
     return (await this.load()).results
-      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error, score: r.score ?? null, referee_version: r.referee_version ?? null }));
+      .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error,
+        score: r.score ?? null, referee_version: r.referee_version ?? null, input_hash: r.input_hash ?? null,
+        created_at: r.created_at ?? null, has_record: r.record != null,
+        has_evaluation: r.series != null && r.stats != null && r.outcome != null }));
   }
-  async planRecord(key: ResultKey) {
-    return (await this.load()).results.find(r => same(r, key))?.record ?? null;
+  async planRecord(key: EvaluatedResult) {
+    return (await this.load()).results.find(r => same(r, key)
+      && (r.input_hash ?? null) === key.input_hash && (r.created_at ?? null) === key.created_at)?.record ?? null;
   }
-  async saveEvaluation(key: ResultKey, evaluation: Evaluation) {
+  async saveEvaluation(key: EvaluatedResult, evaluation: Evaluation) {
     const file = await this.load();
-    file.results = file.results.map(r => same(r, key) ? { ...r, ...evaluation } : r);
+    const row = file.results.find(r => same(r, key));
+    const mutation = evaluationMutation(key, evaluation);
+    if (!row || row.status !== "ok" || !row.record || (row.input_hash ?? null) !== key.input_hash
+      || (row.created_at ?? null) !== key.created_at || (row.referee_version ?? null) !== key.referee_version
+      || canonicalJson(row.score ?? null) !== canonicalJson(key.score)
+      || (mutation.kind !== "evaluation" && (row.series == null || row.stats == null || row.outcome == null))) {
+      throw new Error("Benchmark source or evaluation changed during rescore; rerun with fresh metadata.");
+    }
+    const patch = mutation.kind === "evaluation" ? mutation.value : mutation.kind === "score"
+      ? { score: mutation.score } : { score: mutation.score, series: { ...row.series!, audit: mutation.audit } };
+    file.results = file.results.map(r => same(r, key) ? { ...r, ...patch } : r);
     await this.save(file);
   }
 }
