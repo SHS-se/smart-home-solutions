@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the internal dependency before any ingest caller. Preserve its secret.
+# Deploy planning executors before callers. Preserve the preflight secret.
 set -euo pipefail
 PROJECT_REF="${1:?Usage: deploy-energy-planning.sh PROJECT_REF}"
 cd "$(dirname "$0")/.."
@@ -18,3 +18,5 @@ PY
 fi
 
 supabase functions deploy energy-optimisation-plan-step --project-ref "$PROJECT_REF" --use-api --yes
+
+supabase functions deploy energy-optimisation-planning-worker --project-ref "$PROJECT_REF" --use-api --yes

@@ -1,5 +1,5 @@
 import type { OptimisationResult } from "./planner/energy-optimisation.ts";
-import type { DispatchCheckpoint, DispatchResult } from "./planner/dispatch-plan.ts";
+import type { DispatchCheckpoint, DispatchResult, ResponsiveRankingCheckpoint } from "./planner/dispatch-plan.ts";
 import {
   ENERGY_PLANNING_PROTOCOL,
   type EnergyPlanningInput,
@@ -50,6 +50,7 @@ export async function generateRemoteOptimisationPlan(
   const rankings: NonNullable<EnergyPlanningStep["rankings"]> = [];
   const rankingsJson: string[] = [];
   let checkpoint: DispatchCheckpoint | undefined;
+  let rankingCheckpoint: ResponsiveRankingCheckpoint | undefined;
   for (let index = 0; index < MAX_STEPS; index += 1) {
     let response: Response;
     try {
@@ -65,7 +66,7 @@ export async function generateRemoteOptimisationPlan(
           body: `{"protocol":${ENERGY_PLANNING_PROTOCOL},"input":${inputJson},` +
             `"continuation":{"completed":[${completedJson.join(",")}],"rankings":[${rankingsJson.join(",")}]${
               checkpoint ? `,"checkpoint":${JSON.stringify(checkpoint)}` : ""
-            }}}`,
+            }${rankingCheckpoint ? `,"ranking_checkpoint":${JSON.stringify(rankingCheckpoint)}` : ""}}}`,
           signal,
         },
       );
@@ -119,7 +120,9 @@ export async function generateRemoteOptimisationPlan(
     if (
       typeof body.done !== "boolean" || !Array.isArray(body.completed) || !Array.isArray(body.rankings) ||
       (body.checkpoint !== undefined &&
-        (body.done || typeof body.checkpoint !== "object"))
+        (body.done || typeof body.checkpoint !== "object")) ||
+      (body.ranking_checkpoint !== undefined &&
+        (body.done || typeof body.ranking_checkpoint !== "object"))
     ) {
       throw new EnergyPlanningError(
         "Planning worker returned an invalid continuation",
@@ -134,6 +137,7 @@ export async function generateRemoteOptimisationPlan(
       rankingsJson.push(JSON.stringify(ranking));
     }
     checkpoint = body.checkpoint;
+    rankingCheckpoint = body.ranking_checkpoint;
     if (body.done) {
       const assembling = performance.now();
       let result: OptimisationResult;

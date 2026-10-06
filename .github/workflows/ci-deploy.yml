@@ -262,6 +262,13 @@ jobs:
              SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/sync-weather-history'
              WHERE singleton"
 
+      - name: Configure durable planning worker endpoint
+        run: |
+          supabase db query --linked \
+            "UPDATE private.energy_planning_credentials
+             SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/energy-optimisation-planning-worker'
+             WHERE singleton"
+
   functions:
     name: Deploy edge functions
     needs: [changes, migrate]
@@ -286,15 +293,19 @@ jobs:
         # Deploys the functions whose code changed (per-function settings come from config.toml,
         # and changing it deploys them all). --use-api bundles without Docker; auth is the access
         # token above, so no DB password is needed. Runs after migrate so functions can rely on the
-        # latest schema/RPCs. The plan step goes first: the ingest functions call it.
+        # latest schema/RPCs. Planning executors deploy before their callers.
         env:
           FUNCTIONS: ${{ needs.changes.outputs.functions }}
         run: |
           set -euo pipefail
           rest=()
+          planning_deployed=false
           for name in $FUNCTIONS; do
-            if [ "$name" = energy-optimisation-plan-step ]; then
-              bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
+            if [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-optimisation-planning-worker ]; then
+              if [ "$planning_deployed" = false ]; then
+                bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
+                planning_deployed=true
+              fi
             else
               rest+=("$name")
             fi

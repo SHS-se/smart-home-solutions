@@ -1,7 +1,6 @@
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
-import type { BatteryProjection } from "../_shared/planner/battery-dispatch-projection.ts";
 import { replanReference, type ReplanPreviousPlan } from "../_shared/planner/replan-continuity.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
@@ -29,20 +28,14 @@ import {
   type DeviceControlType,
   type DeviceLoadType,
   type DevicePlanningRole,
-  type generateOptimisationPlan,
   type OptimisationSnapshot,
 } from "../_shared/planner/energy-optimisation.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
-import {
-  EnergyPlanningError,
-  generateRemoteOptimisationPlan,
-} from "../_shared/energy-planning-client.ts";
+import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
-import { storedPlan } from "../_shared/stored-plan.ts";
 import {
-  buildThermalProjection,
   fitZones,
   type ProjectionZoneInput,
   REFIT_INTERVAL_HOURS,
@@ -77,7 +70,6 @@ import {
 } from "../_shared/outdoor-forecast.ts";
 import { withWindOutlook } from "../_shared/market-wind.ts";
 import { withDemandOutlook } from "../_shared/demand-evidence.ts";
-import { priceEstimateRows } from "../_shared/price-estimate-record.ts";
 import {
   irradianceForQuarters,
   irradianceOnto,
@@ -236,42 +228,6 @@ const round = (value: number, decimals = 6) => {
   return Math.round((value + Number.EPSILON) * multiplier) / multiplier;
 };
 
-const compactPlanSummary = (
-  plan: ReturnType<typeof generateOptimisationPlan>,
-) => ({
-  binding_until: plan.binding_until,
-  valid_until: plan.valid_until,
-  policy: plan.policy,
-  sources: plan.sources,
-  pv_calibration: plan.pv_calibration,
-  battery: plan.battery,
-  grid: plan.grid,
-  services: plan.services,
-  device_models: plan.device_models.map((model) => ({
-    key: model.key,
-    name: model.name,
-    statistic_id: model.statistic_id,
-    category: model.category,
-    suggested_load_type: model.suggested_load_type,
-    load_type: model.load_type,
-    planning_role: model.planning_role,
-    control_type: model.control_type,
-    active_power_w: model.active_power_w,
-    profile_sample_count: model.profile_sample_count,
-    forecast_method: model.forecast_method,
-  })),
-  service_requirement_sample_days: plan.service_requirement_sample_days,
-  plans: Object.fromEntries(
-    Object.entries(plan.plans).map(([key, value]) => [key, {
-      status: value.status,
-      validation_errors: value.validation_errors,
-      summary: value.summary,
-      service_slots: value.service_slots,
-      service_currents_a: value.service_currents_a,
-      service_inhibited_slots: value.service_inhibited_slots,
-    }]),
-  ),
-});
 
 interface PreparedThermalPlanning {
   snapshot: OptimisationSnapshot;
@@ -976,6 +932,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       return json({ error: "subscription_inactive" }, 402);
     }
 
+    const jobs = new PlanningJobs(supabase);
+    let sourceHash: string | null = null;
     let actuals: IncomingActualSlot[] = [];
     let prices: IncomingPriceSlot[] = [];
     let devices: IncomingDevice[] = [];
@@ -997,6 +955,18 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         return json({ error: "request_too_large" }, 413);
       }
       const body = JSON.parse(rawBody);
+      if (body?.job_id !== undefined || body?.snapshot_id !== undefined) {
+        const identity = body.job_id ?? body.snapshot_id;
+        if ((body.job_id !== undefined && body.snapshot_id !== undefined) || typeof identity !== "string" || !HA_UUID.test(identity) ||
+            body.api_version !== 1 || body.planning_exchange_version !== PLANNING_EXCHANGE_VERSION ||
+            Object.keys(body).some(key => !["api_version", "planning_exchange_version", "job_id", "snapshot_id"].includes(key))) {
+          return json({ error: "invalid_planning_status_request" }, 400);
+        }
+        const receipt = body.job_id !== undefined
+          ? await jobs.readForHome(auth.homeId, body.job_id)
+          : await jobs.readSubmissionForHome(auth.homeId, body.snapshot_id);
+        return receipt ? json(receipt, receipt.pending ? 202 : 200) : json({ error: "planning_job_not_found" }, 404);
+      }
       if (body?.replan_recommendation !== undefined) {
         if (typeof body.replan_recommendation !== 'string' || body.replan_recommendation.length > 1000) throw new Error('replan_recommendation');
         replanRecommendation = body.replan_recommendation;
@@ -1061,6 +1031,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         ? body.integration_version
         : null;
       if (snapshot !== null) {
+        if (typeof snapshot.snapshot_id !== "string" || !HA_UUID.test(snapshot.snapshot_id)) {
+          return json({ error: "invalid_snapshot", detail: "snapshot_id must be a UUID" }, 400);
+        }
+        if (body.planning_exchange_version !== PLANNING_EXCHANGE_VERSION) {
+          return json({ error: "planning_exchange_upgrade_required", detail: "Update the SHS app to use durable planning.", retryable: false }, 426);
+        }
+        sourceHash = await sha256Hex(JSON.stringify({ snapshot, replan_request_id: portalReplanId }));
         const negotiationError = validatePlanningNegotiation(
           body,
           snapshot.schema_version,
@@ -1074,8 +1051,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             retryable: negotiationError.retryable,
           }, 426);
         }
+        const existing = await jobs.findSnapshot(auth.homeId, snapshot.snapshot_id, sourceHash);
+        if (existing) return json(existing, existing.pending ? 202 : 200);
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof PlanningJobError) return json({ error: error.code, detail: error.message }, error.status);
       return json({ error: "invalid_body" }, 400);
     }
     if (
@@ -1717,19 +1697,12 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     // A manual request may be picked up by either the listener or quarter poll.
     const pendingManual = accepted?.replan_request_id && !accepted.replan_error &&
       accepted.replan_request_id !== accepted.replan_completed_request_id && snapshot &&
-      Date.parse(snapshot.captured_at) >= Date.parse(accepted.replan_requested_at);
+      portalReplanId === accepted.replan_request_id;
     if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
       snapshot = null;
     }
 
-    let batteryProjection: BatteryProjection | null = null;
-    let generated:
-      | (ReturnType<typeof generateOptimisationPlan> & {
-        thermal_projection?: NonNullable<
-          ReturnType<typeof buildThermalProjection>
-        >;
-      })
-      | null = null;
+    let planningReceipt: PlanningReceipt | null = null;
     if (snapshot !== null) {
       const models = new Map(
         snapshot.device_models.map((model) => [model.key, model]),
@@ -1884,233 +1857,46 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         const planningStarted = performance.now();
         console.info("[ENERGY-OPTIMISATION] inputs ready", { request_id: requestId, replan_request_id: portalReplanId,
           elapsed_ms: Math.round(planningStarted - ingestStarted) });
-        console.info("[ENERGY-OPTIMISATION] planning started", {
-          request_id: requestId,
-          slot_count: snapshot.slots.length,
-          device_count: snapshot.device_models.length,
-          thermal_zone_count: thermalZones.length,
+        planningReceipt = await jobs.accept({
+          homeId: auth.homeId, customerId: auth.customerId,
+          snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!,
+          input: { snapshot, now: planningNow.toISOString(), price_archive: priceArchive, fixed_plan: fixedPlan },
+          context: {
+            request_id: requestId, integration_version: integrationVersion,
+            thermal_zones: thermalZones, fixed_revision: fixedRevision,
+            observed_replan_request_id: accepted?.replan_request_id ?? null,
+            replan_request_id: portalReplanId,
+            exchange: {
+              actual_slots_accepted: actualRows.length,
+              actuals_accepted_until: actualRows.at(-1)?.start_ts ?? null,
+              thermal_slots_accepted: thermalRows.length,
+              thermal_slots_accepted_until: thermalAcceptedUntil,
+              price_slots_accepted: priceRows.length,
+              home_configuration: { battery: { included: homePlanning.battery_included, choice_at: homePlanning.battery_choice_at } },
+              device_configuration: storedDevices.map((device) => ({
+                key: device.key, statistic_id: device.statistic_id, name: device.name,
+                category: device.category, suggested_load_type: device.suggested_load_type,
+                load_type: device.load_type_override, ...effectivePlanning(device),
+                mapping_status: device.mapping_status, mapped_control_type: device.mapped_control_type,
+              })),
+            },
+          },
         });
-        const planned = await generateRemoteOptimisationPlan({
-          snapshot,
-          now: planningNow.toISOString(),
-          price_archive: priceArchive,
-          fixed_plan: fixedPlan,
-        }, {
-          url: Deno.env.get("SUPABASE_URL") ?? "",
-          planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
-          requestId,
-        }, traffic.fetch);
-        generated = planned.plan;
-        batteryProjection = planned.battery_projection;
-        console.info("[ENERGY-OPTIMISATION] planning completed", {
-          request_id: requestId,
+        console.info("[ENERGY-OPTIMISATION] planning accepted", {
+          request_id: requestId, job_id: planningReceipt.job_id,
           elapsed_ms: Math.round(performance.now() - planningStarted),
-          status: generated.status,
         });
       } catch (error) {
         const detail = describeThrown(error);
-        if (fixedPlan) await supabase.from("energy_optimisation_current")
-          .update({ replan_error: detail }).eq("home_id", auth.homeId)
-          .eq("fixed_plan_revision", fixedRevision);
-        console.error("[ENERGY-OPTIMISATION] snapshot refused", detail, error);
-        if (error instanceof EnergyPlanningError && error.status === 502) {
-          return json({ error: "planning_failed", detail, retryable: true }, 502);
-        }
+        console.error("[ENERGY-OPTIMISATION] preparation refused", detail, error);
+        if (error instanceof PlanningJobError) return json({ error: error.code, detail }, error.status);
         return json({ error: "invalid_snapshot", detail }, 400);
-      }
-
-      // The same scheduled demand is projected into room temperature for the
-      // Thermal tab. This is descriptive; the executable power series was
-      // already installed in the snapshot before planning above.
-      if (thermalZones.length > 0) {
-        const plannedSlots = generated.plans.priority.slots;
-        const projection = buildThermalProjection(
-          snapshot.slots.map((slot) => slot.start),
-          snapshot.outdoor_temperature_c as number[],
-          thermalZones.map((zone) => ({
-            ...zone,
-            planned_power_w: plannedSlots.map((slot) =>
-              slot.room_heating_w?.[zone.key] ?? 0
-            ),
-          })),
-          snapshot.solar_irradiance_w_per_m2 ?? null,
-        );
-        if (projection) {
-          generated = { ...generated, thermal_projection: projection };
-        }
-      }
-
-      const inputHash = await sha256Hex(JSON.stringify(snapshot));
-      const currentRow = {
-        fixed_plan_generation_revision: fixedRevision,
-        replan_error: null,
-        home_id: auth.homeId,
-        customer_id: auth.customerId,
-        snapshot_id: snapshot.snapshot_id,
-        plan_id: generated.plan_id,
-        generation_request_id: requestId,
-        plan_schema_version: generated.schema_version,
-        ha_ack_status: "pending",
-        ha_acknowledged_at: null,
-        ha_integration_version: integrationVersion,
-        ha_ack_request_id: null,
-        ha_ack_error: null,
-        input_hash: inputHash,
-        captured_at: snapshot.captured_at,
-        issued_at: generated.issued_at,
-        valid_until: generated.valid_until,
-        binding_until: generated.binding_until,
-        status: generated.status,
-        model_version: generated.model_version,
-        snapshot,
-        plan: storedPlan(generated),
-        battery_projection: batteryProjection,
-        updated_at: new Date().toISOString(),
-      };
-      const storingStarted = performance.now();
-      const { error: currentError } = await supabase.rpc(
-        "store_energy_optimisation_current",
-        currentRow,
-      );
-      console.info("[ENERGY-OPTIMISATION] current plan storage", {
-        request_id: requestId, elapsed_ms: Math.round(performance.now() - storingStarted),
-        error_code: currentError?.code ?? null,
-      });
-      if (currentError) {
-        console.error(
-          "[ENERGY-OPTIMISATION] current plan upsert failed",
-          currentError,
-        );
-        return json({ error: "storage_failed" }, 500);
-      }
-
-      // What this plan estimated for the unpublished days, kept for the staff
-      // accuracy view. Losing it costs a data point, never the plan.
-      const estimateRows = priceEstimateRows({
-        homeId: auth.homeId, timezone: snapshot.timezone, issuedAt: generated.issued_at, slots: snapshot.slots,
-        shadowImportSekPerKwh: generated.price_outlook?.shadow_import_sek_per_kwh,
-        basis: generated.price_outlook?.level_basis,
-      });
-      if (estimateRows.length > 0) {
-        const { error: estimateError } = await supabase.from("energy_price_estimate_days")
-          .upsert(estimateRows, { onConflict: "home_id,issued_on,target_day" });
-        if (estimateError) console.error("[ENERGY-OPTIMISATION] price estimate not recorded", estimateError);
-      }
-
-      const runStarted = performance.now();
-      const { error: runError } = await supabase
-        .from("energy_optimisation_plan_runs")
-        .upsert({
-          id: generated.plan_id,
-          customer_id: auth.customerId,
-          home_id: auth.homeId,
-          snapshot_id: snapshot.snapshot_id,
-          generation_request_id: requestId,
-          plan_schema_version: generated.schema_version,
-          ha_ack_status: "pending",
-          ha_acknowledged_at: null,
-          ha_integration_version: integrationVersion,
-          ha_ack_request_id: null,
-          ha_ack_error: null,
-          input_hash: inputHash,
-          issued_at: generated.issued_at,
-          status: generated.status,
-          model_version: generated.model_version,
-          summary: compactPlanSummary(generated),
-          validation_errors: generated.validation_errors,
-        }, { onConflict: "home_id,snapshot_id" });
-      console.info("[ENERGY-OPTIMISATION] run summary storage", {
-        request_id: requestId, elapsed_ms: Math.round(performance.now() - runStarted),
-        error_code: runError?.code ?? null,
-      });
-      if (runError) {
-        console.error(
-          "[ENERGY-OPTIMISATION] run summary upsert failed",
-          runError,
-        );
-        return json({ error: "storage_failed" }, 500);
-      }
-
-      // Answer whatever the portal is waiting on. The device names the request
-      // when it knows about one; otherwise the snapshot's own capture time
-      // decides, so a home on an older integration still clears its request on
-      // its next ordinary push rather than waiting for a reply it cannot send.
-      // Failing the whole exchange over this would throw away a stored plan to
-      // report a stale button, so it is logged and left for the next push.
-      const { error: completionError } = await supabase.rpc(
-        "complete_energy_optimisation_replan",
-        {
-          p_home_id: auth.homeId,
-          p_captured_at: snapshot.captured_at,
-          p_request_id: portalReplanId,
-        },
-      );
-      console.info("[ENERGY-OPTIMISATION] publication finished", { request_id: requestId, replan_request_id: portalReplanId,
-        elapsed_ms: Math.round(performance.now() - ingestStarted), completed: !completionError });
-      if (completionError) {
-        console.error(
-          "[ENERGY-OPTIMISATION] replan completion failed",
-          completionError,
-        );
-      }
-
-      // Archive the forecasts exactly as they stood at this decision time.
-      // §8.11's second replay run — the only achievable one — compares what was
-      // knowable then against what happened, so this cannot be reconstructed
-      // later from outturn data and cannot be backfilled at all.
-      //
-      // One row per six-hour window, matching the cadence of the weather models
-      // underneath the PV forecast, and stored as parallel arrays with implied
-      // slot times. A failure here is logged rather than returned: losing one
-      // window is a gap in a study, while failing the request would stop the
-      // house being planned.
-      const issuedAt = new Date(snapshot.captured_at);
-      const issuedBucket = new Date(issuedAt);
-      issuedBucket.setUTCHours(
-        Math.floor(issuedBucket.getUTCHours() / 6) * 6,
-        0,
-        0,
-        0,
-      );
-      const outdoor = snapshot.outdoor_temperature_c as number[] | null;
-      const { error: forecastError } = await supabase
-        .from("energy_optimisation_forecast_runs")
-        .upsert({
-          customer_id: auth.customerId,
-          home_id: auth.homeId,
-          issued_at: issuedAt.toISOString(),
-          issued_bucket: issuedBucket.toISOString(),
-          horizon_start: snapshot.slots[0]?.start ?? snapshot.captured_at,
-          slot_minutes: snapshot.slot_minutes,
-          slot_count: snapshot.slots.length,
-          series: {
-            pv_forecast_w: snapshot.slots.map((slot) => slot.pv_forecast_w),
-            base_load_forecast_w: snapshot.slots.map((slot) =>
-              slot.base_load_forecast_w
-            ),
-            outdoor_temperature_c: snapshot.slots.map((_slot, index) =>
-              outdoor?.[index] ?? null
-            ),
-            import_price_sek_per_kwh: snapshot.slots.map((slot) =>
-              slot.import_price_sek_per_kwh
-            ),
-            export_price_sek_per_kwh: snapshot.slots.map((slot) =>
-              slot.export_price_sek_per_kwh
-            ),
-          },
-          sources: snapshot.sources,
-        }, { onConflict: "home_id,issued_bucket", ignoreDuplicates: true });
-      if (forecastError) {
-        console.error(
-          "[ENERGY-OPTIMISATION] forecast archive upsert failed",
-          forecastError,
-        );
       }
     }
 
-    // Deliver newly generated plans before doing retention maintenance. Ordinary
+    // Deliver accepted job receipts before retention maintenance. Ordinary
     // telemetry exchanges drain bounded batches independently of replanning.
-    if (!generated) {
+    if (!planningReceipt) {
       const { error: pruneError } = await supabase.rpc(
         "prune_energy_optimisation_data",
         { p_home_id: auth.homeId },
@@ -2132,9 +1918,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       thermal_slots_accepted: thermalRows.length,
       thermal_slots_accepted_until: thermalAcceptedUntil,
       price_slots_accepted: priceRows.length,
-      plan_id: generated?.plan_id ?? null,
-      snapshot_id: generated?.snapshot_id ?? null,
-      plan: generated,
+      plan_id: null,
+      snapshot_id: null,
+      plan: null,
+      ...planningReceipt,
       home_configuration: { battery: { included: homePlanning.battery_included, choice_at: homePlanning.battery_choice_at } },
       device_configuration: storedDevices.map((device) => ({
         key: device.key,
@@ -2147,9 +1934,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         mapping_status: device.mapping_status,
         mapped_control_type: device.mapped_control_type,
       })),
-    });
+    }, planningReceipt?.pending ? 202 : 200);
   } catch (error) {
     console.error("[ENERGY-OPTIMISATION] unexpected", error);
+    if (error instanceof PlanningJobError) return json({ error: error.code, detail: error.message }, error.status);
     return json({ error: "internal_error" }, 500);
   }
 }));

@@ -205,6 +205,7 @@ run_migrations() {
   (
     cd "$PROJECT_DIR"
     supabase db push --linked --yes
+    supabase db query --linked "UPDATE private.energy_planning_credentials SET function_url = 'https://${PROJECT_REF}.supabase.co/functions/v1/energy-optimisation-planning-worker' WHERE singleton"
   )
 }
 
@@ -221,7 +222,7 @@ run_pull() {
 deploy_edge_functions() {
   (
     cd "$PROJECT_DIR"
-    # The ingest caller must never deploy before its internal stage endpoint.
+    # Deploy planning executors before household and preflight callers.
     bash scripts/deploy-energy-planning.sh "$PROJECT_REF"
     supabase functions deploy --project-ref "$PROJECT_REF" --use-api --yes
   )

@@ -111,7 +111,7 @@ Deno.test("ingest client accumulates each call's auctions and checkpoint across 
     const step = energyPlanningStep(
       body.input,
       body.continuation,
-      countedBudget(400)(),
+      countedBudget(250_000)(),
     );
     return Promise.resolve(Response.json({
       protocol: ENERGY_PLANNING_PROTOCOL,
@@ -265,8 +265,11 @@ Deno.test("a worker cannot finish a plan it has not solved", async () => {
 
 Deno.test("response rankings pause before an auction and survive JSON reconstruction", () => {
   const input = seasonInput("sunny");
-  input.snapshot.slots = input.snapshot.slots.slice(0, 24);
-  const counts = assertStagesMatch(input, () => ({ spent: () => true, allowsAuction: () => false }));
+  input.snapshot.slots = input.snapshot.slots.slice(0, 12);
+  const counts = assertStagesMatch(input, () => {
+    const budget = countedBudget(2)();
+    return {...budget, allowsAuction: () => false};
+  });
   assert(counts.rankings > 0);
   assert(counts.rankingOnly > 0);
 });

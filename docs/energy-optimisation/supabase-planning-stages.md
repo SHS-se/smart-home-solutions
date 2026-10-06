@@ -1,102 +1,84 @@
 # Planning within Supabase CPU limits
 
-`energy-optimisation-ingest` stores observations and prepares the snapshot, then
-calls the internal `energy-optimisation-plan-step` endpoint sequentially. Each
-auction has three stages: bidding and settlement, paired energy transfers, and
-cost refinement with diagnostics. Each invocation has its own CPU budget;
-network waits do not consume ingest CPU. A call works through stages until it
-has spent 1.2 s (`STAGE_BUDGET_MS` in the worker). The transfer and refinement
-stages stop part-way at that point, transfers between two transfers and
-refinement between two source quarters. Bidding and settlement cannot stop, so
-a call starts the next auction only within its first 0.3 s
-(`AUCTION_START_MS`). The next call resumes from the checkpoint, and the plan is
-identical wherever the calls divide the work.
+Household planning uses the [durable job owner](durable-planning-jobs.md).
+`energy-optimisation-ingest` authenticates the device, stores telemetry and
+prepares a frozen snapshot. It accepts a database job and returns HTTP 202 with
+its receipt. Both manual requests and automatic price-driven solves use this
+path. Telemetry exchanges which keep the existing schedule still return 200.
 
-A call returns only what it added: the auctions it finished, and a checkpoint if
-it stopped inside one. Ingest keeps the continuation and, once every auction is
-done, assembles all three scenarios itself by replaying the finished auctions.
-Assembly never searches: an auction missing from the continuation is a planning
-failure. The multi-megabyte plan therefore never crosses the worker boundary,
-and each auction result crosses it once.
+`energy-optimisation-planning-worker` receives only a job identity from the
+database. It claims a 30-second fenced lease, loads frozen input, completed
+auction/ranking results and the unfinished cursor, then advances the search.
+The shared budget stops at 900 ms or two million inspected boundaries. These
+limits change where execution pauses; they do not reduce the economic search.
+Bidding, settlement, transfer-pair scans, refinement comparisons and responsive
+ranking can all checkpoint. Numeric held-bid caches, exact costs, scan positions
+and stable ranking order survive JSON serialization.
 
-`energy-optimisation-fixed-plan` materialises a household's fixed schedule
-through the same chain before activating it. It checks the schedule against
-the auction's inputs captured unsolved (`dispatchWorkbenchInputs`), because
-solving the workbench alone took seconds of CPU on a 288-quarter home. A schema
-9 snapshot cannot carry a fixed plan, so activation refuses it before planning.
+Completed results are appended once to a separate ledger. A checkpoint commit
+atomically appends additions, advances the job sequence, replaces its cursor
+and queues the next authenticated `pg_net` wake. `pg_cron` runs every ten seconds
+to recover missed wakes and expired leases. Work continues when the app or
+browser disconnects. A terminated worker loses only its uncommitted slice;
+four successive lease expirations without progress terminate the job visibly.
 
-The stages use the same generator as the synchronous planner. A continuation
-contains numeric schedules, trajectories, allocations and completed auction
-results. Store callbacks are rebuilt from the unchanged input snapshot. Completed
-auctions are reused, including the EV alternative and fixed-plan prefix/suffix
-cases; the search is never restarted. The captured planning time remains fixed
-across calls, keeping freshness checks and output deterministic.
+Assembly gets a separate invocation after search completes. It replays saved
+auctions/rankings without running missing searches, adds descriptive thermal
+projection, and publishes the current plan, run summary, matching manual-request
+completion and terminal job state in one database transaction. Publication
+checks the received-order job head, worker fence/sequence, fixed-plan revision
+and observed manual request identity. Source timestamps do not order jobs.
+The previous plan remains current until that transaction succeeds.
 
-Ingest holds continuations only for its current request. No partial plan is
-stored or sent to Home Assistant. Once every stage succeeds, ingest stores and
-returns the finished plan through the existing SHS API envelope. Worker failures,
-including HTTP 546, return an explicit retryable `planning_failed` HTTP 502.
-Invalid snapshots retain HTTP 400. There is no inline retry or local solve on
-worker failure. The stage chain has a 20-second deadline and a 64-call limit,
-leaving room inside the integration's existing 30-second request timeout.
+The app journals the capture identity before submitting it. Once accepted, it
+journals the job identity and polls status without retransmitting telemetry or
+preparing another snapshot. Delivery has its own host-owned task and releases
+the exchange lock while waiting. Restart resumes journalled delivery. Normal
+quarter exchanges upload telemetry while an automatic job is pending; explicit
+manual requests can supersede it. A snapshot-only status lookup recovers an
+acceptance reply lost in transport. Status only delivers the exact job's plan
+while it remains current; superseded jobs never return a different plan.
 
-The step endpoint requires the project's `ENERGY_PLANNING_SECRET` in the
-`x-shs-planning-secret` header; device tokens and user JWTs cannot submit work. It has no database access.
-Every call's log carries the original request ID, the auction and stage it
-resumed, elapsed time, the auctions it finished and the stage the next call
-resumes (`next`). Ingest's completion log adds the number of calls and the
-assembly time. Public Home Assistant schemas and planner model versions are
-unchanged.
+## Fixed-plan activation
+
+`energy-optimisation-fixed-plan` still uses the secret-only
+`energy-optimisation-plan-step` endpoint to materialise its activation preflight.
+This existing caller shares the improved pure resumable solver, but retains
+its bounded request chain (120 seconds, at most 512 calls). It authenticates
+with `ENERGY_PLANNING_SECRET`; the household job worker instead verifies the
+private database wake token. Fixed-plan activation's portal workflow is unchanged.
 
 ## Deployment and verification
 
-Deploy `energy-optimisation-plan-step` before deploying the updated ingest
-function. `scripts/deploy-energy-planning.sh PROJECT_REF` provisions a random
-`ENERGY_PLANNING_SECRET` only if missing, then deploys the stage endpoint. CI and
-the local deploy script run this first. Existing secrets are preserved across
-deployments. Both functions use the same Supabase project; there is no new paid
-service or database migration. Deploy both whenever their
-shared planning code changes. Incompatible checkpoint/wire changes require a
-bump to `ENERGY_PLANNING_PROTOCOL`; a mismatch fails explicitly. Protocol 4
-(incremental responses, ingest-side assembly) is one such change: between the
-two deployments of a CI run, ingest's pushes fail with a retryable 502. Paused
-stages only add optional fields to a checkpoint (`transferred`, `refinement`),
-and a checkpoint without them resumes as before, so those did not need a bump.
+The migration creates private job/head/result/credential tables, service-only
+RPCs and the recovery cron. CI and `scripts/dev.sh` configure the current
+project's worker URL in `private.energy_planning_credentials`. The deployment
+script deploys both planning executors before their callers. The wake token
+never leaves the private credential row except in server-to-server headers.
 
-Run `deno task test` for the full suite. The staged tests serialize every
-continuation and compare complete output against the synchronous planner for
-288-quarter sunny/dark snapshots, discrete EV alternatives and fixed schedules.
-`deno bench --no-check scripts/benchmark-energy-optimisation.ts` reports total
-planning time, individual stage time including JSON parsing/serialization, and
-ingest's assembly time.
+Household snapshot submissions require `planning_exchange_version: 2`; old
+clients receive an explicit 426. Update the SHS app to the coordinated beta
+release. There is no compatibility solve path. Protocol 8 pins numeric cursor
+representation; incompatible in-flight jobs fail explicitly rather than restart
+under a different planner. The planner model and generated plan contract remain
+unchanged.
 
-## Traffic
+Run `deno task test`, the migration-version test, frontend lint/typecheck/build
+and all local E2E suites. Solver tests round-trip checkpoints and compare full
+plans, including sunny/dark, responsive, discrete-EV and fixed-schedule cases.
+SQL tests cover roles, key order, leases, fencing, supersession, atomic rollback
+and bounded recovery/retention. HA tests cover receipt recovery, restart,
+job-only polling, configuration changes and retained controls on failures.
 
-Supabase bills Edge Function egress as data sent to the client, so the
-worker's responses to ingest count and ingest's requests to the worker do not. Before protocol 4, every call returned every finished auction again
-plus the checkpoint, and the last call returned the plan. On the test home's
-288-quarter input of 2026-09-19 that was 12 calls and 11.4 MB of decoded
-responses per plan (1.49 MB gzip). With stages chained under the budget,
-incremental responses and ingest-side assembly, the same plan took 8 calls and
-2.05 MB (0.34 MB gzip), with the call budget scaled to a local machine. Ingest's
-assembly took 39 ms locally. The worker's calls are still re-sent the whole
-input and continuation, about 8 MB per plan, as request bodies.
+## Resource diagnosis
 
-Stage boundaries reduce CPU per invocation rather than total computation. An
-individual stage can still reach Supabase's limit as workloads grow. Use the
-stage logs to identify which stage needs a finer checkpoint; keep plan semantics
-and the HA response contract unchanged when adding one. Thermal preparation and
-training remain in ingest and retain their existing bounded work.
+Each worker start logs job/fence/sequence, original request ID, phase, cursor,
+result counts, load time and Deno memory usage. Commit/publication logs separate
+compute/assembly time from database time. Match a start without completion to
+platform shutdown logs when investigating CPU versus memory termination.
 
-The transfer stage was the first to need one. On 2026-09-19 the battery
-verification auction of a 288-quarter plan accepted about 90 transfers, each
-rescanning every charge/discharge pair, and that stage alone ran 2.1 s on the
-worker before Supabase terminated it (546, relayed by ingest as 502). It now
-pauses between transfers, and its scan does the same arithmetic in about half
-the time. Refinement, the next largest at about 0.55 s on a local M-series
-machine (the worker runs roughly twice as slow), pauses between source
-quarters. Its checkpoint carries the cost the search last accepted instead of
-rescoring it on resume: the incremental scorer counts a run that starts in the
-first quarter from a different noise floor than a full rescore, and a resumed
-search must compare trials against the same bar. The auction stage, bidding and
-settlement, cannot pause; on that home's input it peaks at about 0.25 s locally.
+Local equivalence and timing checks are not hosted capacity proof. Replay,
+input parsing, primitive scoring, checkpoint encoding, assembly and preparation
+still consume CPU and memory. Hosted test-project logs must verify their margin.
+Durability preserves committed progress and identifies repeated failure; it does
+not promise that every possible input avoids a resource limit.

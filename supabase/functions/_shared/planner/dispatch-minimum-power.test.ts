@@ -217,13 +217,15 @@ Deno.test("a paused auction resumes to the same rounded schedule", () => {
   let beforeRounding = 0;
   let insideRefinement = 0;
   for (let request = 0; request < 4_096; request += 1) {
+    let primitives = 0;
+    const slice = checkpoint?.next === "refinement" ? 10 : 1_000;
     const next = dispatchAuctionSteps(
       slots,
       [store],
       SHAPED,
       {},
       checkpoint,
-      () => true,
+      () => ++primitives > slice,
     ).next();
     if (next.done === true) {
       assertEquals(wire(next.value), wire(expected));

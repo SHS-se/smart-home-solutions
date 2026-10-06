@@ -22,7 +22,8 @@
       9
     ],
     "minimum_snapshot_schema_version": 5,
-    "minimum_plan_schema_version": 5
+    "minimum_plan_schema_version": 5,
+    "planning_exchange_version": 2
   },
   "servers": [
     {
@@ -268,18 +269,32 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OptimisationIngestRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/OptimisationIngestRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PlanningStatusRequest"
+                  }
+                ]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Accepted telemetry and optional generated plan",
+            "description": "Accepted telemetry, or terminal status of the exact household planning job.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptimisationIngestResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OptimisationIngestResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PlanningStatusResponse"
+                    }
+                  ]
                 }
               }
             }
@@ -291,7 +306,7 @@
             "$ref": "#/components/responses/Error"
           },
           "202": {
-            "description": "Battery curve calculation accepted and checkpointed. Continue the same snapshot and replan request after retry_after_ms; this is not a completed exchange.",
+            "description": "Telemetry accepted and household planning queued durably. Poll with only job_id after retry_after_ms; computation continues without the client.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1321,6 +1336,9 @@
             "type": "string",
             "maxLength": 1000,
             "description": "An integration event recommending a manual replan. This never authorizes a new solve."
+          },
+          "planning_exchange_version": {
+            "const": 2
           }
         },
         "dependentRequired": {
@@ -1340,7 +1358,21 @@
             "accepted_plan_schema_versions"
           ]
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "snapshot"
+              ]
+            },
+            "then": {
+              "required": [
+                "planning_exchange_version"
+              ]
+            }
+          }
+        ]
       },
       "PlanCommon": {
         "type": "object",
@@ -2306,6 +2338,31 @@
                 }
               }
             }
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "published",
+              "superseded",
+              "failed"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "retry_after_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
           }
         },
         "additionalProperties": true
@@ -3235,7 +3292,10 @@
                 "type": "object",
                 "required": [
                   "pending",
-                  "retry_after_ms"
+                  "retry_after_ms",
+                  "job_id",
+                  "snapshot_id",
+                  "state"
                 ],
                 "properties": {
                   "pending": {
@@ -3245,6 +3305,17 @@
                   "retry_after_ms": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "job_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "snapshot_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "state": {
+                    "const": "pending"
                   }
                 }
               }
@@ -3268,6 +3339,124 @@
             "const": true
           }
         }
+      },
+      "PlanningStatusRequest": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "planning_exchange_version"
+        ],
+        "properties": {
+          "api_version": {
+            "const": 1
+          },
+          "planning_exchange_version": {
+            "const": 2
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Resolve a submitted capture after an acceptance reply was lost."
+          }
+        },
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "job_id"
+            ]
+          },
+          {
+            "required": [
+              "snapshot_id"
+            ]
+          }
+        ]
+      },
+      "PlanningReceipt": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "snapshot_id",
+          "state",
+          "pending"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "snapshot_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "published",
+              "superseded",
+              "failed"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "retry_after_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "plan_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PlanV5"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV6"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV7"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV8"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV9"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "PlanningStatusResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiSuccess"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PlanningReceipt"
+              }
+            }
+          }
+        ]
       }
     }
   }

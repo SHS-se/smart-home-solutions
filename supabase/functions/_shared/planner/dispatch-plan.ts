@@ -1256,6 +1256,9 @@ export interface RefinementCursor {
   /** Index into the auction's stores. */
   store: number;
   from: number;
+  /** Next destination comparison within this source. */
+  to: number;
+  releasing: boolean;
   /** Whether this sweep has already accepted an exchange. */
   improved: boolean;
   changed: string[];
@@ -1319,6 +1322,7 @@ export function* refineDispatchCostSteps(
   let firstFrom = cursor?.from ?? 0;
   let improved = cursor?.improved ?? false;
   let searched = false;
+  let resumePair = cursor;
   for (let sweep = cursor?.sweep ?? 0; sweep < 8; sweep += 1) {
     const startStore = firstStore;
     firstStore = 0;
@@ -1359,36 +1363,31 @@ export function* refineDispatchCostSteps(
               ) <= 1e-6));
       };
       for (let from = startFrom; from < slots.length; from += 1) {
-        // One source quarter per call guarantees progress.
-        if (searched && budgetSpent?.()) {
-          yield {
-            sweep,
-            store: storeIndex,
-            from,
-            improved,
-            changed: [...changed],
-            service_floor: serviceFloor,
-            cost: {
-              billable_sek: current.billable_sek,
-              wear_sek: current.wear_sek,
-              start_sek: current.start_sek,
-              peak_sek: current.peak_sek,
-              continuity_sek: current.continuity_sek,
-            },
-          };
-          searched = false;
-        }
-        searched = true;
         for (const releasing of [false, true]) {
+          if (resumePair?.releasing === true && !releasing) continue;
           if (releasing && !supportsEnergyTransfers(store)) continue;
           const flow = releasing ? schedule.discharge_w[store.key] : power;
-          if (!flow || flow[from] <= GRID_NOISE_W ||
-            (releasing && current.export_w[from] <= GRID_NOISE_W)) continue;
+          if (!flow || (!resumePair && (flow[from] <= GRID_NOISE_W ||
+            (releasing && current.export_w[from] <= GRID_NOISE_W)))) continue;
           for (
-            let to = Math.max(0, from - 4);
+            let to = resumePair?.to ?? Math.max(0, from - 4);
             to <= Math.min(slots.length - 1, from + 4);
             to += 1
           ) {
+            if (searched && budgetSpent?.()) {
+              yield {
+                sweep, store: storeIndex, from, to, releasing, improved,
+                changed: [...changed], service_floor: serviceFloor,
+                cost: {
+                  billable_sek: current.billable_sek, wear_sek: current.wear_sek,
+                  start_sek: current.start_sek, peak_sek: current.peak_sek,
+                  continuity_sek: current.continuity_sek,
+                },
+              };
+              searched = false;
+            }
+            searched = true;
+            resumePair = undefined;
             if (
               from === to ||
               (releasing
@@ -1793,7 +1792,14 @@ export function enforceMinimumSizedPower(
  */
 export type ResponsiveCommands = Record<string, number[]>;
 export interface ResponsiveRanking { context: string; commands: ResponsiveCommands[] }
-export type ResponsiveRanker = (context: string, compute: () => ResponsiveCommands[]) => ResponsiveCommands[];
+export interface ResponsiveRankingCursor {
+  next_trial: number;
+  seen: string[];
+  top: { commands: ResponsiveCommands; cost: number; bridge: boolean; order: number }[];
+}
+export interface ResponsiveRankingCheckpoint { context: string; cursor: ResponsiveRankingCursor }
+export type ResponsiveRankingSearch = (cursor?: ResponsiveRankingCursor, budgetSpent?: () => boolean) => Generator<ResponsiveRankingCursor, ResponsiveCommands[]>;
+export type ResponsiveRanker = (context: string, compute: ResponsiveRankingSearch) => ResponsiveCommands[];
 export interface DispatchSearchBudget { remaining: number; rank?: ResponsiveRanker }
 export function dispatchSearchBudget(rank?: ResponsiveRanker): DispatchSearchBudget {
   return { remaining: 10, rank };
@@ -1807,9 +1813,48 @@ export type DispatchAuctionSolver = (
   options: { maxIterations?: number },
 ) => DispatchResult;
 
+/** Store callbacks are reconstructed from the immutable input, never serialized. */
+interface AuctionBid {
+  store_key: string;
+  index: number;
+  indices: number[];
+  surplus: number;
+  score: number;
+  direction: "charge" | "discharge";
+  parts: DispatchAllocationDiagnostic[];
+}
+interface SavedRun { store_key: string; indices: number[] }
+interface SavedWorstRun extends SavedRun { net: number }
+interface SavedChargeExchange {
+  store_key: string; from: number; to: number;
+  removed_w: number; added_w: number; saving_sek: number;
+}
+type AuctionPosition =
+  | { kind: "bidding"; store: number; direction: "charge" | "discharge"; slot: number; best: AuctionBid | null }
+  | { kind: "startup"; store: number; start: number; best: AuctionBid | null }
+  | { kind: "solar"; store: number; to: number; from: number; best: SavedChargeExchange | null }
+  | { kind: "settlement"; pass: number; store: number; run: number; from: number; to: number;
+      margin: number; worst: SavedWorstRun | null; starved: SavedRun | null };
+interface AuctionCursor {
+  round: number;
+  previous_releases: string | null;
+  released_runs: string[];
+  position: AuctionPosition;
+  charge_bids: Record<string, (AuctionBid | null)[]>;
+  discharge_bids: Record<string, (AuctionBid | null)[]>;
+  stale: Record<string, number[]>;
+}
+interface SavedTransfer {
+  store_key: string; charge: number; discharge: number; inW: number; outW: number;
+  cost: number; benefit: number; wear: number; saving: number; score: number;
+}
+interface TransferScanCursor { store: number; charge: number; load: number; best: SavedTransfer | null }
+
 /** Only numeric state crosses the internal planning boundary; never callbacks. */
 export interface DispatchCheckpoint {
-  next: "transfers" | "refinement";
+  next: "auction" | "transfers" | "refinement";
+  auction?: AuctionCursor;
+  transfer_scan?: TransferScanCursor;
   powerW: Record<string, number[]>;
   dischargeW: Record<string, number[]>;
   stateByKey: Record<string, number[]>;
@@ -2037,8 +2082,12 @@ function planResponsiveDispatch(
   while (budget.remaining > 0) {
     // A distributed caller keeps this ordered top-eight ledger alongside the
     // scalar auctions. Replaying completed comparisons must not rank again.
-    const compute = (): ResponsiveCommands[] => {
-      const trials = new Map<string, { powers: Record<string, number[]>; cost: number; bridge: boolean }>();
+    const compute: ResponsiveRankingSearch = function* (cursor, budgetSpent) {
+      const seen = new Set(cursor?.seen);
+      let top = cursor?.top ?? [];
+      let trial = 0;
+      let worked = false;
+      const resumeFrom = cursor?.next_trial ?? 0;
       // All-off can beat a fragmented seed before any bridges are tried. Keep
       // that seed as a search origin so startup charges cannot erase the very
       // run combinations that repay them.
@@ -2046,50 +2095,64 @@ function planResponsiveDispatch(
       for (const origin of origins) for (const store of responsive) {
         const originScore = origin === seed ? seedScore : bestScore;
         const current = origin.power_w[store.key];
-        const add = (profile: number[], bridge = false) => {
+        const add = function* (profile: number[], bridge = false): Generator<ResponsiveRankingCursor, void> {
+          const ordinal = trial++;
+          if (ordinal < resumeFrom) return;
+          if (worked && budgetSpent?.()) {
+            yield { next_trial: ordinal, seen: [...seen], top };
+            worked = false;
+          }
+          worked = true;
           if (store.fixed_charge_w_by_slot?.some((fixed, i) => fixed !== null && fixed !== profile[i])) return;
           const powers = { ...origin.power_w, [store.key]: profile };
           const key = identity(powers);
-          if (visited.has(key) || trials.has(key)) return;
+          if (visited.has(key) || seen.has(key)) return;
           const score = scoreDispatchWithReuse(slots, stores, limits, { ...origin, power_w: powers }, undefined,
             { previous: originScore, changedKey: store.key });
           // Other stores can repair grid and battery conflicts, but cannot repair this heater's own state cap.
           if (score.infeasibilities.some(item => item.store_key === store.key)) return;
-          trials.set(key, { powers, cost: score.total_sek, bridge });
+          seen.add(key);
+          top = [...top, {
+            commands: Object.fromEntries(responsive.map(item => [item.key, powers[item.key]])),
+            cost: score.total_sek, bridge, order: ordinal,
+          }].sort((a, b) => Number(b.bridge) - Number(a.bridge) || a.cost - b.cost || a.order - b.order).slice(0, 8);
         };
-        const change = (from: number, to: number, watts: number, bridge = false) => {
-          const profile = [...current]; profile.fill(watts, from, to); add(profile, bridge);
+        const change = function* (from: number, to: number, watts: number, bridge = false) {
+          const profile = [...current]; profile.fill(watts, from, to); yield* add(profile, bridge);
         };
         const runs = runsOf(current).map(run => ({ ...run, end: run.start + run.slots }));
         for (let r = 0; r < runs.length; r++) {
           const run = runs[r];
-          change(run.start, run.end, 0);
-          if (r + 1 < runs.length) change(run.end, runs[r + 1].start, store.max_power_w, true);
-          change(run.start, run.start + 1, 0);
-          change(run.end - 1, run.end, 0);
-          if (run.start > 0) change(run.start - 1, run.start, store.max_power_w);
-          if (run.end < slots.length) change(run.end, run.end + 1, store.max_power_w);
+          yield* change(run.start, run.end, 0);
+          if (r + 1 < runs.length) yield* change(run.end, runs[r + 1].start, store.max_power_w, true);
+          yield* change(run.start, run.start + 1, 0);
+          yield* change(run.end - 1, run.end, 0);
+          if (run.start > 0) yield* change(run.start - 1, run.start, store.max_power_w);
+          if (run.end < slots.length) yield* change(run.end, run.end + 1, store.max_power_w);
           for (const shift of [-1, 1]) {
             if (run.start + shift < 0 || run.end + shift > slots.length) continue;
             const profile = [...current]; profile.fill(0, run.start, run.end);
-            profile.fill(store.max_power_w, run.start + shift, run.end + shift); add(profile);
+            profile.fill(store.max_power_w, run.start + shift, run.end + shift); yield* add(profile);
           }
         }
         // Multi-quarter insertion crosses the initial low-output interval without a hard run limit.
         for (let start = 0; start < slots.length; start++) {
           if (current[start] > 0) continue;
           for (const length of [1, 2, 4, 8, 16, 32, 64]) {
-            if (start + length <= slots.length) change(start, start + length, store.max_power_w);
+            if (start + length <= slots.length) yield* change(start, start + length, store.max_power_w);
           }
         }
       }
-      return [...trials.values()].sort((a, b) => Number(b.bridge) - Number(a.bridge) || a.cost - b.cost)
-        .slice(0, 8).map(trial => Object.fromEntries(responsive.map(store =>
-          [store.key, trial.powers[store.key]])));
+      return top.map(item => item.commands);
     };
     const context = JSON.stringify([responsive.map(store => store.key), slots.length,
       identity(best.power_w), identity(seed.power_w), budget.remaining]);
-    const ranked = budget.rank ? budget.rank(context, compute) : compute();
+    const ranked = budget.rank ? budget.rank(context, compute) : (() => {
+      const search = compute();
+      let step = search.next();
+      while (step.done !== true) step = search.next();
+      return step.value;
+    })();
     if (!ranked.length) return { ...best, responsive_search: { evaluations, stopped_because: "neighborhood_exhausted" } };
     // Rank on the exact physics with the incumbent coupling, then re-solve the best candidates jointly.
     let improved = false;
@@ -2188,8 +2251,8 @@ function dispatchAuction(
 
 /**
  * The synchronous and distributed planners execute these same three stages.
- * `budgetSpent` lets a distributed caller also checkpoint the transfer and
- * refinement stages part-way through; the synchronous planner never pauses.
+ * Distributed callers checkpoint numeric bidding, settlement and scan cursors.
+ * The synchronous planner drains this same search without a slice limit.
  */
 export function* dispatchAuctionSteps(
   slots: DispatchSlot[],
@@ -2199,6 +2262,9 @@ export function* dispatchAuctionSteps(
   checkpoint?: DispatchCheckpoint,
   budgetSpent?: () => boolean,
 ): Generator<DispatchCheckpoint, DispatchResult> {
+  if (checkpoint && (checkpoint.next === "auction") !== Boolean(checkpoint.auction)) {
+    throw new Error("Auction checkpoint phase does not match its cursor");
+  }
   const count = slots.length;
   const sellPrices = publishedSellPrices(slots);
   const powerW: Record<string, number[]> = checkpoint?.powerW ?? {};
@@ -2254,6 +2320,7 @@ export function* dispatchAuctionSteps(
     retentionByKey[store.key] = retentionBySlot(store, count);
     suffixMinByKey[store.key] = new Array(count + 1);
     suffixMaxByKey[store.key] = new Array(count + 1);
+    if (checkpoint?.auction) suffixBounds(stateByKey[store.key], suffixMinByKey[store.key], suffixMaxByKey[store.key]);
   }
 
   let iterations = checkpoint?.iterations ?? 0;
@@ -2536,13 +2603,37 @@ export function* dispatchAuctionSteps(
   // runner-up in some other quarter is the store's new bid, and only a per-slot
   // record still holds it.
   // ---------------------------------------------------------------------
+  const storesByKey = new Map(stores.map(store => [store.key, store]));
+  const restoreStore = (key: string): DispatchStore => {
+    const store = storesByKey.get(key);
+    if (!store) throw new Error("Auction checkpoint contains an unknown store");
+    return store;
+  };
+  const saveBid = (candidate: Candidate | null): AuctionBid | null => {
+    if (!candidate) return null;
+    const {store, ...numeric} = candidate;
+    return {...numeric, store_key: store.key};
+  };
+  function restoreBid(candidate: AuctionBid | null): Candidate | null {
+    if (!candidate) return null;
+    const {store_key, ...numeric} = candidate;
+    return {...numeric, store: restoreStore(store_key)};
+  }
+  let worked = false;
+  const pause = () => {
+    if (worked && budgetSpent?.()) { worked = false; return true; }
+    worked = true;
+    return false;
+  };
   const chargeBestBySlot: Record<string, (Candidate | null)[]> = {};
   const dischargeBestBySlot: Record<string, (Candidate | null)[]> = {};
   const staleBySlot: Record<string, Uint8Array> = {};
   for (const store of stores) {
-    chargeBestBySlot[store.key] = new Array(count).fill(null);
-    dischargeBestBySlot[store.key] = new Array(count).fill(null);
-    staleBySlot[store.key] = new Uint8Array(count).fill(1);
+    chargeBestBySlot[store.key] = checkpoint?.auction?.charge_bids[store.key]?.map(restoreBid) ?? new Array(count).fill(null);
+    dischargeBestBySlot[store.key] = checkpoint?.auction?.discharge_bids[store.key]?.map(restoreBid) ?? new Array(count).fill(null);
+    staleBySlot[store.key] = checkpoint?.auction
+      ? new Uint8Array(checkpoint.auction.stale[store.key])
+      : new Uint8Array(count).fill(1);
   }
   const markAllStale = () => {
     for (const store of stores) staleBySlot[store.key].fill(1);
@@ -2555,6 +2646,18 @@ export function* dispatchAuctionSteps(
       index += 1
     ) stale[index] = 1;
   };
+
+  const capture = (next: DispatchCheckpoint["next"], extra: Partial<DispatchCheckpoint> = {}): DispatchCheckpoint => ({
+    next, powerW, dischargeW, stateByKey, occupiedW, returnedW, allocations,
+    iterations, stopped, ...extra,
+  });
+  const captureAuction = (round: number, previousReleases: string | null, releasedRuns: string[], position: AuctionPosition): DispatchCheckpoint =>
+    capture("auction", { auction: {
+      round, previous_releases: previousReleases, released_runs: releasedRuns, position,
+      charge_bids: Object.fromEntries(stores.map(store => [store.key, chargeBestBySlot[store.key].map(saveBid)])),
+      discharge_bids: Object.fromEntries(stores.map(store => [store.key, dischargeBestBySlot[store.key].map(saveBid)])),
+      stale: Object.fromEntries(stores.map(store => [store.key, [...staleBySlot[store.key]]])),
+    }});
 
   // ---------------------------------------------------------------------
   // Settle the books against the trajectory the plan will execute.
@@ -2729,9 +2832,12 @@ export function* dispatchAuctionSteps(
    * horizon edge. Timed demand, leaking heat and discrete hardware
    * cannot exchange arbitrary fractions of a charge under that contract.
    */
-  const bestSolarExchange = (): ChargeExchange | null => {
-    let best: ChargeExchange | null = null;
-    for (const store of stores) {
+  const bestSolarExchange = function* (round: number, previousReleases: string | null, releasedRuns: string[], cursor?: Extract<AuctionPosition, {kind: "solar"}>): Generator<DispatchCheckpoint, ChargeExchange | null> {
+    let best: ChargeExchange | null = cursor?.best ? {
+      ...cursor.best, store: restoreStore(cursor.best.store_key),
+    } : null;
+    for (let storeIndex = cursor?.store ?? 0; storeIndex < stores.length; storeIndex++) {
+      const store = stores[storeIndex];
       if (!supportsEnergyTransfers(store)) continue;
       const schedule = powerW[store.key];
       const discharge = dischargeW[store.key];
@@ -2754,19 +2860,24 @@ export function* dispatchAuctionSteps(
         chargeCost(index, watts)
       );
 
-      for (let to = 0; to < count; to += 1) {
-        if (discharge[to] > 0 || units[to] <= 0) continue;
+      for (let to = cursor?.to ?? 0; to < count; to += 1) {
+        if (discharge[to] > 0 || units[to] <= 0) {cursor = undefined; continue;}
         const availableW = Math.min(
           store.max_power_w - schedule[to],
           slots[to].pv_w - slots[to].fixed_load_w - occupiedW[to],
         );
-        if (availableW <= 1e-6) continue;
+        if (availableW <= 1e-6) {cursor = undefined; continue;}
 
         // Moving charge earlier raises the intervening states; moving it later
         // lowers them. Only that interval changes, not the whole suffix.
         const room = transferRoom(state, to, low, high);
 
-        for (let from = 0; from < count; from += 1) {
+        for (let from = cursor?.from ?? 0; from < count; from += 1) {
+          if (pause()) {
+            const saved = best ? (({store, ...numeric}: ChargeExchange) => ({...numeric, store_key: store.key}))(best) : null;
+            yield captureAuction(round, previousReleases, releasedRuns, {kind: "solar", store: storeIndex, to, from, best: saved});
+          }
+          cursor = undefined;
           if (from === to || schedule[from] <= 1e-6 || units[from] <= 0) {
             continue;
           }
@@ -3068,24 +3179,28 @@ export function* dispatchAuctionSteps(
   // The loop is therefore bounded three ways — by the iteration budget the
   // auction already spends from, by the round cap, and by the cycle.
   // ---------------------------------------------------------------------
-  if (!checkpoint) {
+  if (!checkpoint || checkpoint.next === "auction") {
     let settling = true;
-    let previousReleases: string | null = null;
-    for (let round = 0; settling; round += 1) {
+    let resume = checkpoint?.auction;
+    let previousReleases: string | null = resume?.previous_releases ?? null;
+    for (let round = resume?.round ?? 0; settling; round += 1) {
       if (round >= MAX_SETTLE_ROUNDS) {
         stopped = "settle_cap";
         break;
       }
-      releasedThisRound = 0;
-      const releasedRuns: string[] = [];
+      const releasedRuns: string[] = resume?.released_runs ?? [];
+      releasedThisRound = releasedRuns.length;
       // Every held bid was priced against a schedule the previous round has since
       // settled away.
-      markAllStale();
-      while (iterations < maxIterations) {
-        iterations += 1;
-        let best: Candidate | null = null;
+      if (!resume) markAllStale();
+      while (resume?.position.kind !== "settlement" && (iterations < maxIterations || resume)) {
+        if (!resume) iterations += 1;
+        let best: Candidate | null = resume && (resume.position.kind === "bidding" || resume.position.kind === "startup")
+          ? restoreBid(resume.position.best) : null;
 
-        for (const store of stores) {
+        for (let storeIndex = 0; storeIndex < stores.length; storeIndex++) {
+          const store = stores[storeIndex];
+          if (resume && (resume.position.kind !== "bidding" || storeIndex < resume.position.store)) continue;
           let storeBest: Candidate | null = null;
           const stale = staleBySlot[store.key];
           const chargeBest = chargeBestBySlot[store.key];
@@ -3106,7 +3221,9 @@ export function* dispatchAuctionSteps(
           const suffixMin = suffixMinByKey[store.key];
           const suffixMax = suffixMaxByKey[store.key];
           if (anyStale) suffixBounds(state, suffixMin, suffixMax);
-          for (let index = 0; anyStale && index < count; index += 1) {
+          for (let index = resume?.position.kind === "bidding" ? resume.position.slot : 0; anyStale && index < count; index += 1) {
+            if (resume?.position.kind === "bidding" && resume.position.direction === "discharge") break;
+            if (pause()) yield captureAuction(round, previousReleases, releasedRuns, {kind: "bidding", store: storeIndex, direction: "charge", slot: index, best: saveBid(best)});
             if (!stale[index]) continue;
             // A quarter about to be repriced holds nothing from last time: every
             // path out of this loop is a quarter with no charge bid in it.
@@ -3335,7 +3452,8 @@ export function* dispatchAuctionSteps(
           // rather keep its charge simply loses to the sinks, and one whose charge is
           // worth less than tonight's import price wins.
           if (store.discharge) {
-            for (let index = 0; anyStale && index < count; index += 1) {
+            for (let index = resume?.position.kind === "bidding" && resume.position.direction === "discharge" ? resume.position.slot : 0; anyStale && index < count; index += 1) {
+              if (pause()) yield captureAuction(round, previousReleases, releasedRuns, {kind: "bidding", store: storeIndex, direction: "discharge", slot: index, best: saveBid(best)});
               if (!stale[index]) continue;
               dischargeBest[index] = null;
               if (schedule[index] > 0) continue;
@@ -3506,6 +3624,7 @@ export function* dispatchAuctionSteps(
               dischargeBest[index] = slotBest;
             }
           }
+          resume = undefined;
           if (anyStale) stale.fill(0);
           // Reduced in the order the two scans ran in, because `outranks` keeps
           // the incumbent on a tie: charge bids across the horizon, then
@@ -3529,18 +3648,22 @@ export function* dispatchAuctionSteps(
           }
         }
 
-        if (!best) {
+        if (!best || resume?.position.kind === "startup") {
           // A relay's first quarter need not repay the entire startup cost.
           // Search every executable run length only once single-quarter bids
           // are exhausted. Each prefix is priced incrementally, so this is
           // quadratic in the horizon, not a fresh simulation for every block.
-          for (const store of stores) {
+          for (let storeIndex = 0; storeIndex < stores.length; storeIndex++) {
+            const store = stores[storeIndex];
+            if (resume && (resume.position.kind !== "startup" || storeIndex < resume.position.store)) continue;
             if (
               store.discharge || store.min_power_w !== store.max_power_w ||
               (store.start_cost_sek ?? 0) <= 0
             ) continue;
             const schedule = powerW[store.key];
-            for (let start = 0; start < count; start += 1) {
+            for (let start = resume?.position.kind === "startup" ? resume.position.start : 0; start < count; start += 1) {
+              if (pause()) yield captureAuction(round, previousReleases, releasedRuns, {kind: "startup", store: storeIndex, start, best: saveBid(best)});
+              resume = undefined;
               if (schedule[start] > 0 || store.fixed_charge_w_by_slot?.[start] != null) continue;
               const indices: number[] = [];
               for (
@@ -3558,7 +3681,8 @@ export function* dispatchAuctionSteps(
           }
         }
         if (!best) {
-          const exchange = bestSolarExchange();
+          const exchange = yield* bestSolarExchange(round, previousReleases, releasedRuns, resume?.position.kind === "solar" ? resume.position : undefined);
+          resume = undefined;
           if (!exchange) break;
           const { store, from, to, removed_w, added_w } = exchange;
           const schedule = powerW[store.key];
@@ -3663,7 +3787,9 @@ export function* dispatchAuctionSteps(
       // rest of the pass had already moved.
       //
       // Release allocations that no longer pay for their energy and start cost.
-      for (let pass = 0; pass <= count * stores.length; pass += 1) {
+      let settleCursor = resume?.position.kind === "settlement" ? resume.position : undefined;
+      resume = undefined;
+      for (let pass = settleCursor?.pass ?? 0; pass <= count * stores.length; pass += 1) {
         for (const store of stores) {
           project(
             store,
@@ -3676,11 +3802,14 @@ export function* dispatchAuctionSteps(
         for (let index = 0; index < count; index += 1) recostSlot(index);
         reconcileChargeRuns();
 
-        let starved: { store: DispatchStore; indices: number[] } | null = null;
+        let starved: { store: DispatchStore; indices: number[] } | null = settleCursor?.starved
+          ? {...settleCursor.starved, store: restoreStore(settleCursor.starved.store_key)} : null;
         let worst:
           | { store: DispatchStore; indices: number[]; net: number }
-          | null = null;
-        for (const store of stores) {
+          | null = settleCursor?.worst
+            ? {...settleCursor.worst, net: settleCursor.worst.net, store: restoreStore(settleCursor.worst.store_key)} : null;
+        for (let storeIndex = settleCursor?.store ?? 0; storeIndex < stores.length; storeIndex++) {
+          const store = stores[storeIndex];
           const runs = new Map<string, { indices: number[]; net: number }>();
           let starvedKey: string | null = null;
           for (let index = 0; index < count; index += 1) {
@@ -3699,7 +3828,9 @@ export function* dispatchAuctionSteps(
           if (starvedKey !== null && starved === null && editable(store, runs.get(starvedKey)!.indices)) {
             starved = { store, indices: runs.get(starvedKey)!.indices };
           }
-          for (const run of runs.values()) {
+          const orderedRuns = [...runs.values()];
+          for (let runIndex = settleCursor?.run ?? 0; runIndex < orderedRuns.length; runIndex++) {
+            const run = orderedRuns[runIndex];
             const startCost = store.start_cost_sek ?? 0;
             if (startCost > 0) {
               // Trimming a run is allowed, but cutting a gap creates a restart.
@@ -3712,9 +3843,15 @@ export function* dispatchAuctionSteps(
               const margins = run.indices.map((index) =>
                 settledNet(store, index) + partAt(store, index)!.start_cost_sek
               );
-              for (let from = 0; from < run.indices.length; from += 1) {
-                let margin = 0;
-                for (let to = from; to < run.indices.length; to += 1) {
+              for (let from = settleCursor?.from ?? 0; from < run.indices.length; from += 1) {
+                let margin = settleCursor?.margin ?? 0;
+                for (let to = settleCursor?.to ?? from; to < run.indices.length; to += 1) {
+                  if (pause()) yield captureAuction(round, previousReleases, releasedRuns, {
+                    kind: "settlement", pass, store: storeIndex, run: runIndex, from, to, margin,
+                    worst: worst ? {store_key: worst.store.key, indices: worst.indices, net: worst.net} : null,
+                    starved: starved ? {store_key: starved.store.key, indices: starved.indices} : null,
+                  });
+                  settleCursor = undefined;
                   margin += margins[to];
                   const remainingStarts = (from > 0 ? originalStart : 0) +
                     (to + 1 < run.indices.length ? startCost : 0);
@@ -3733,10 +3870,16 @@ export function* dispatchAuctionSteps(
                   }
                 }
               }
-            } else if (
-              run.net < -1e-9 && (worst === null || run.net < worst.net) && editable(store, run.indices)
-            ) {
-              worst = { store, indices: run.indices, net: run.net };
+            } else {
+              if (pause()) yield captureAuction(round, previousReleases, releasedRuns, {
+                kind: "settlement", pass, store: storeIndex, run: runIndex, from: 0, to: 0, margin: 0,
+                worst: worst ? {store_key: worst.store.key, indices: worst.indices, net: worst.net} : null,
+                starved: starved ? {store_key: starved.store.key, indices: starved.indices} : null,
+              });
+              settleCursor = undefined;
+              if (run.net < -1e-9 && (worst === null || run.net < worst.net) && editable(store, run.indices)) {
+                worst = { store, indices: run.indices, net: run.net };
+              }
             }
           }
         }
@@ -3837,6 +3980,7 @@ export function* dispatchAuctionSteps(
     const transferredStores = new Set<string>(checkpoint?.transferred);
     const rate = limits.peak_shaping_sek_per_kwh_per_kw;
     let transfersThisCall = 0;
+    let transferCursor = checkpoint?.transfer_scan;
     while (iterations < maxIterations) {
       // Every transfer rescans every charge/discharge pair, and a long horizon
       // can accept a hundred of them: on 2026-09-19 this stage alone outran a
@@ -3858,8 +4002,10 @@ export function* dispatchAuctionSteps(
         };
         transfersThisCall = 0;
       }
-      let best: EnergyTransfer | null = null;
-      for (const store of stores) {
+      let best: EnergyTransfer | null = transferCursor?.best
+        ? {...transferCursor.best, store: restoreStore(transferCursor.best.store_key)} : null;
+      for (let storeIndex = transferCursor?.store ?? 0; storeIndex < stores.length; storeIndex++) {
+        const store = stores[storeIndex];
         if (!supportsEnergyTransfers(store)) continue;
         const schedule = powerW[store.key];
         const discharge = dischargeW[store.key];
@@ -3888,8 +4034,8 @@ export function* dispatchAuctionSteps(
           ) /
             1_000 * hours[load] * spentAt[load];
         }
-        for (let charge = 0; charge < count; charge += 1) {
-          if (discharge[charge] > 0) continue;
+        for (let charge = transferCursor?.charge ?? 0; charge < count; charge += 1) {
+          if (discharge[charge] > 0) {transferCursor = undefined; continue;}
           const availableW = Math.min(
             store.max_power_w - schedule[charge],
             headroomW(
@@ -3920,7 +4066,12 @@ export function* dispatchAuctionSteps(
           // marginal saving below cannot rise with the power transferred.
           const buyingCostsMore = chargeSlot.import_price_sek_per_kwh >=
             chargeSlot.export_price_sek_per_kwh;
-          for (let load = 0; load < count; load += 1) {
+          for (let load = transferCursor?.load ?? 0; load < count; load += 1) {
+            if (pause()) {
+              const numeric = best ? (({store, ...rest}: EnergyTransfer) => ({...rest, store_key: store.key}))(best) : null;
+              yield capture("transfers", {transferred: [...transferredStores], transfer_scan: {store: storeIndex, charge, load, best: numeric}});
+            }
+            transferCursor = undefined;
             if (load === charge || schedule[load] > 0) continue;
             const importW = importAt[load];
             const spent = spentAt[load];
@@ -4224,7 +4375,7 @@ export function* dispatchAuctionSteps(
   ) {
     // Refinement rescores the whole schedule for every trial exchange, which
     // makes it the costliest stage after transfers. It too stops between two
-    // source quarters when a caller's budget is spent; the schedule refined so
+    // destination comparisons when a caller's budget is spent; the schedule refined so
     // far is `powerW`, already in the checkpoint.
     const search = refineDispatchCostSteps(
       slots,

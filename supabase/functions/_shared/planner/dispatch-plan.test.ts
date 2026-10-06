@@ -1,6 +1,8 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   dispatchAuctionSteps,
+  dispatchSearchBudget,
+  type ResponsiveRankingCursor,
   type DispatchCheckpoint,
   type DispatchLimits,
   type DispatchResult,
@@ -647,6 +649,8 @@ Deno.test("surplus solar replaces the grid purchase that reserved its room", () 
     importedKwh < 1.279,
     "and the plan must buy less than the one that exported the solar",
   );
+  const phases = assertAuctionJsonContinuation(slots, [replayBattery(slots.length, 1.33, 1.17)], LIMITS, result);
+  assert(phases.has("solar"), "exercise an in-progress solar-exchange scan");
 });
 
 Deno.test("a partial discharge deepens when the load it covers is dearer", () => {
@@ -1385,14 +1389,15 @@ Deno.test("a transfer stage paused between transfers resumes to the same schedul
 
   let checkpoint: DispatchCheckpoint | undefined;
   let pauses = 0;
-  for (let request = 0; request < 256; request += 1) {
+  for (let request = 0; request < 2_048; request += 1) {
+    let primitives = 0;
     const next = dispatchAuctionSteps(
       slots,
       [battery],
       limits,
       {},
       checkpoint,
-      () => true,
+      () => ++primitives > 1_000,
     ).next();
     if (next.done === true) {
       assertEquals(wire(next.value), wire(expected));
@@ -1400,7 +1405,7 @@ Deno.test("a transfer stage paused between transfers resumes to the same schedul
       return;
     }
     checkpoint = wire(next.value);
-    if (checkpoint.transferred) {
+    if (checkpoint.transferred?.length) {
       pauses += 1;
       assertEquals(checkpoint.next, "transfers");
       assertEquals(checkpoint.transferred, ["battery"]);
@@ -2268,7 +2273,7 @@ Deno.test("use-then-refill transfers preserve the reserve behind intervening exp
   assertEquals(scoreDispatch(slots, [battery], LIMITS, result).infeasibilities, []);
   assert(result.state.battery[2] >= 1 - 1e-9);
   let checkpoint: DispatchCheckpoint | undefined;
-  for (let request = 0; request < 32; request++) {
+  for (let request = 0; request < 4_096; request++) {
     const next = dispatchAuctionSteps(slots, [battery], LIMITS, {}, checkpoint, () => true).next();
     if (next.done === true) {
       assertEquals(next.value.power_w, result.power_w);
@@ -2431,4 +2436,68 @@ Deno.test("a pool below its target is heated once: heat already bought later sto
   const plan = heated(pool());
   assertEquals([plan.before, plan.cheap], [0, 16]);
   assert(plan.end > 29.3, `ended at ${plan.end}`);
+});
+
+Deno.test("every auction scan survives JSON continuation with held bids and settlement ties intact", () => {
+  const slots: DispatchSlot[] = Array.from({length: 12}, (_, index) => ({
+    pv_w: index >= 3 && index <= 7 ? 5_000 : 0,
+    fixed_load_w: index >= 8 ? 2_500 : 600,
+    import_price_sek_per_kwh: index >= 8 ? 2.5 : .8,
+    export_price_sek_per_kwh: .25,
+  }));
+  const stores = [batteryStore(slots.length, 3, .6), {
+    ...poolStore(slots.length, 26), min_power_w: 3_500, max_power_w: 3_500,
+    start_cost_sek: .2,
+  }];
+  const limits = {...LIMITS, grid_ramp_sek_per_kw: .05, load_start_preference_sek: .2};
+  const phases = assertAuctionJsonContinuation(slots, stores, limits);
+  assert(phases.has("bidding") && phases.has("startup") && phases.has("settlement") && phases.has("transfer_pair") && phases.has("refinement_pair"), [...phases].join(","));
+});
+
+function assertAuctionJsonContinuation(slots: DispatchSlot[], stores: DispatchStore[], limits: DispatchLimits, expected = planDispatch(slots, stores, limits)) {
+  const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+  const phases = new Set<string>();
+  let checkpoint: DispatchCheckpoint | undefined;
+  for (let invocation = 0; invocation < 20_000; invocation++) {
+    const next = dispatchAuctionSteps(slots, stores, limits, {}, checkpoint, () => true).next();
+    if (next.done === true) {
+      assertEquals(wire(next.value), wire(expected));
+      return phases;
+    }
+    checkpoint = wire(next.value);
+    if (checkpoint.auction) phases.add(checkpoint.auction.position.kind);
+    if (checkpoint.transfer_scan) phases.add("transfer_pair");
+    if (checkpoint.refinement?.to !== undefined) phases.add("refinement_pair");
+  }
+  throw new Error("Micro-checkpointed auction did not finish");
+}
+
+Deno.test("responsive ranking preserves its exact stable shortlist through JSON trial checkpoints", () => {
+  const count = 12;
+  const slots: DispatchSlot[] = Array.from({length: count}, (_, index) => ({
+    pv_w: index >= 4 && index < 8 ? 4_000 : 0,
+    fixed_load_w: 600,
+    import_price_sek_per_kwh: 1 + .7 * Math.sin(index),
+    export_price_sek_per_kwh: .3,
+  }));
+  const response: NonNullable<DispatchStore["input_response"]> = {
+    project: commands => ({draw_w: [...commands], gain_fraction: commands.map(watts => watts > 0 ? 1 : 0)}),
+    afterPrefix: () => response,
+  };
+  const pool = {...poolStore(count, 26), input_response: response, start_cost_sek: .2};
+  const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+  const expected = wire(planDispatch(slots, [pool], LIMITS));
+  let pauses = 0;
+  const actual = planDispatch(slots, [pool], LIMITS, {searchBudget: dispatchSearchBudget((_context, compute) => {
+    let cursor: ResponsiveRankingCursor | undefined;
+    for (let invocation = 0; invocation < 10_000; invocation++) {
+      const step = compute(cursor, () => true).next();
+      if (step.done === true) return step.value;
+      cursor = wire(step.value);
+      pauses++;
+    }
+    throw new Error("Ranking did not finish");
+  })});
+  assert(pauses > 0, "the scenario must actually score ranking trials");
+  assertEquals(wire(actual), expected);
 });

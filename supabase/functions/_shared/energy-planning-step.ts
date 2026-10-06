@@ -7,6 +7,7 @@ import {
   dispatchAuctionSteps,
   type DispatchResult,
   type ResponsiveRanking,
+  type ResponsiveRankingCheckpoint,
 } from "./planner/dispatch-plan.ts";
 import type {
   EnergyPlanningContinuation,
@@ -14,12 +15,24 @@ import type {
   EnergyPlanningStep,
 } from "./energy-planning-protocol.ts";
 
-/** How much of a worker call's CPU the planning chain may still use. */
+/** A slice limit affects execution boundaries, never the planner's search budget. */
 export interface PlanningBudget {
-  /** Once true, the transfer and refinement stages pause part-way. */
   spent: () => boolean;
-  /** Whether an auction, whose bidding and settlement cannot pause, may start. */
   allowsAuction: () => boolean;
+}
+
+/** Leave CPU headroom for reconstruction, checkpoint encoding and storage. */
+export function createPlanningBudget(durationMs = 900, primitiveLimit = 2_000_000): PlanningBudget {
+  if (!(durationMs > 0) || !Number.isSafeInteger(primitiveLimit) || primitiveLimit < 1) {
+    throw new Error("Planning slice budget must be positive");
+  }
+  const started = performance.now();
+  let primitives = 0;
+  const spent = () => ++primitives > primitiveLimit || performance.now() - started >= durationMs;
+  return {
+    spent,
+    allowsAuction: () => primitives < primitiveLimit && performance.now() - started < durationMs,
+  };
 }
 
 type Replay =
@@ -39,6 +52,7 @@ function replay(
   rankings: ResponsiveRanking[],
   budget?: PlanningBudget,
   allowNewRankings = true,
+  rankingState: { checkpoint?: ResponsiveRankingCheckpoint } = {},
 ): Replay {
   let index = 0;
   let rankIndex = 0;
@@ -69,7 +83,18 @@ function replay(
           return saved.commands;
         }
         if (!allowNewRankings) throw new Error("Planning continuation is missing a ranking");
-        const commands = compute();
+        if (rankingState.checkpoint && rankingState.checkpoint.context !== context) {
+          throw new Error("Planning ranking checkpoint does not match the input");
+        }
+        const search = compute(rankingState.checkpoint?.cursor, budget?.spent);
+        const step = search.next();
+        if (step.done !== true) {
+          rankingState.checkpoint = { context, cursor: step.value };
+          pausedRanking = true;
+          throw pending;
+        }
+        rankingState.checkpoint = undefined;
+        const commands = step.value;
         rankings.push({ context, commands });
         if (budget && !budget.allowsAuction()) {
           pausedRanking = true;
@@ -107,9 +132,9 @@ export function assembleOptimisationPlan(
 }
 
 /**
- * Advance the planning chain as far as `budget` allows, then hand back what
- * this call added. There is no stored job or partial plan to race with a newer
- * push.
+ * Advance immutable planning input as far as `budget` allows. The caller owns
+ * durable storage, fencing and publication; this module returns only additions
+ * and the active numeric cursor.
  *
  * A call ranks a responsive neighborhood, starts an auction, or resumes one.
  * Rankings cross the wire once, so their reconstruction never spends CPU again.
@@ -122,10 +147,14 @@ export function energyPlanningStep(
   continuation: EnergyPlanningContinuation = { completed: [], rankings: [] },
   budget?: PlanningBudget,
 ): EnergyPlanningStep {
+  if (continuation.checkpoint && continuation.ranking_checkpoint) {
+    throw new Error("Planning continuation cannot resume an auction and ranking together");
+  }
   const rankings = [...continuation.rankings];
   const previous = rankings.length;
-  const step = advanceAuctions(completed => replay(input, completed, rankings, budget), continuation, budget);
-  return { ...step, rankings: rankings.slice(previous) };
+  const rankingState = { checkpoint: continuation.ranking_checkpoint };
+  const step = advanceAuctions(completed => replay(input, completed, rankings, budget, true, rankingState), continuation, budget);
+  return { ...step, rankings: rankings.slice(previous), ranking_checkpoint: rankingState.checkpoint };
 }
 
 /** Shared resumable auction driver; callers own their final result and scoring. */
