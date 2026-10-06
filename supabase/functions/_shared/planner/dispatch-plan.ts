@@ -927,13 +927,14 @@ function scoreDispatchWithReuse(
       }
     });
     powerByKey[store.key] = power;
-    const response = store.input_response?.project(power, slots.map((slot) => slot.duration_hours ?? SLOT_HOURS));
-    drawByKey[store.key] = response?.draw_w ?? power;
     dischargeByKey[store.key] = discharge;
     if (reuse && store.key !== reuse.changedKey) {
+      drawByKey[store.key] = reuse.previous.draw_w[store.key];
       stateByKey[store.key] = reuse.previous.state[store.key];
       continue;
     }
+    const response = store.input_response?.project(power, slots.map((slot) => slot.duration_hours ?? SLOT_HOURS));
+    drawByKey[store.key] = response?.draw_w ?? power;
 
     // Project the trajectory unclamped so a schedule that overfills or drains a
     // store is reported rather than quietly bounded into feasibility. A state
@@ -2282,8 +2283,11 @@ export function* dispatchAuctionSteps(
   // a physical trajectory changes. Inventory-only battery bids keep their
   // existing finite-move valuation and arbitrage accounting.
   const marginalCache = new Map<string, { state: number[]; revision: number; values: number[] }>();
+  // Store preferences are fixed for this auction; do not rescan the horizon
+  // for every candidate before looking up its cached trajectory derivative.
+  const timedServices = new Set(stores.filter(store => store.usage_weight.some(weight => weight !== 0)));
   const serviceMarginal = (store: DispatchStore): number[] | null => {
-    if (!store.usage_weight.some(weight => weight !== 0)) return null;
+    if (!timedServices.has(store)) return null;
     const state = stateByKey[store.key];
     const revision = trajectoryRevisions.get(state) ?? 0;
     const held = marginalCache.get(store.key);

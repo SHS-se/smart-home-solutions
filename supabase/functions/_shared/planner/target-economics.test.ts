@@ -52,3 +52,17 @@ Deno.test("suffix marginal matches finite differences through actual thermal tra
     assertAlmostEquals(adjoint[i], (serviceValue(model, project(i, 1e-5)) - base) / 1e-5, 2e-5);
   }
 });
+
+Deno.test("zero-weight service terms retain signed-zero accumulation", () => {
+  const model = { curve: { unit: "kwh", points: [{ at: 10, sek_per_unit: 2 }] },
+    usage_weight: [0], terminal_weight: -0 };
+  // The terminal account is -0; the held account's +0 normalizes the sum.
+  assertEquals(Object.is(serviceValue(model, [1, 1]), 0), true);
+});
+
+Deno.test("an empty nonterminal service slice reads no utility", () => {
+  const model = { curve: { unit: "kwh", get points(): { at: number; sek_per_unit: number }[] {
+    throw new Error("No utility belongs to this empty slice");
+  } }, usage_weight: [] };
+  assertEquals(serviceValue(model, [1, 2, 3], 1, 1), 0);
+});

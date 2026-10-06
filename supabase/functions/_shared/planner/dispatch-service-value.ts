@@ -1,4 +1,4 @@
-import { marginalValue, valueOfMove, type UtilityCurve } from "./store-value.ts";
+import { marginalValue, totalUtility, type UtilityCurve } from "./store-value.ts";
 
 export interface ServiceValueModel {
   curve: UtilityCurve;
@@ -10,11 +10,14 @@ export interface ServiceValueModel {
 export function serviceValue(
   model: ServiceValueModel, state: readonly number[], from = 0, to = state.length - 1,
 ): number {
-  const initial = state[0];
+  if (to !== state.length - 1 && !(from < to)) return 0;
+  // Every term uses the same initial utility. Evaluate it once, preserving
+  // the exact subtraction, multiplication and accumulation order of each term.
+  const initial = totalUtility(model.curve, state[0]);
   let value = to === state.length - 1
-    ? (model.terminal_weight ?? 0) * valueOfMove(model.curve, initial, state[to]) : 0;
+    ? (model.terminal_weight ?? 0) * (totalUtility(model.curve, state[to]) - initial) : 0;
   for (let index = from; index < to; index++) {
-    value += (model.usage_weight[index] ?? 0) * valueOfMove(model.curve, initial, state[index]);
+    value += (model.usage_weight[index] ?? 0) * (totalUtility(model.curve, state[index]) - initial);
   }
   return value;
 }
