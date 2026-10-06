@@ -66,7 +66,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     if (allFunctions) return true;
     const dir = `supabase/functions/${name}/`;
     const graph = reach(tree, [`${dir}index.ts`]);
-    if (["energy-optimisation-plan-step", "energy-optimisation-planning-worker"].includes(name)) graph.add("scripts/deploy-energy-planning.sh");
+    if (name === "energy-optimisation-plan-step") graph.add("scripts/deploy-energy-planning.sh");
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));
   });
 

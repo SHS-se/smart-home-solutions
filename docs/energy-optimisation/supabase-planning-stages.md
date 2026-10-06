@@ -1,84 +1,53 @@
 # Planning within Supabase CPU limits
 
-Household planning uses the [durable job owner](durable-planning-jobs.md).
-`energy-optimisation-ingest` authenticates the device, stores telemetry and
-prepares a frozen snapshot. It accepts a database job and returns HTTP 202 with
-its receipt. Both manual requests and automatic price-driven solves use this
-path. Telemetry exchanges which keep the existing schedule still return 200.
+Household replanning runs in two Edge Functions. `energy-optimisation-ingest`
+authenticates the device, writes telemetry and prepares one frozen input. It
+accepts a snapshot-scoped job receipt, then drives the secret-only
+`energy-optimisation-plan-step` endpoint inline. The caller holds completed
+auctions, rankings and the unfinished cursor in memory. Each step uses the
+existing 900ms/two-million-boundary execution budget without reducing the
+planner's economic search. Progress is exchanged between Edge Functions;
+it is never written or repeatedly downloaded as a database result ledger.
 
-`energy-optimisation-planning-worker` receives only a job identity from the
-database. It claims a 30-second fenced lease, loads frozen input, completed
-auction/ranking results and the unfinished cursor, then advances the search.
-The shared budget stops at 900 ms or two million inspected boundaries. These
-limits change where execution pauses; they do not reduce the economic search.
-Bidding, settlement, transfer-pair scans, refinement comparisons and responsive
-ranking can all checkpoint. Numeric held-bid caches, exact costs, scan positions
-and stable ranking order survive JSON serialization.
+The job owner claims the input once and publishes once. The transaction checks
+received-order ownership, its fence, fixed-plan revision and manual request
+identity. It writes current plan, run summary and terminal publication receipt
+atomically. A single operational deadline spans input preparation and solve;
+website requests use the server's request receipt time rather than resetting
+the budget at ingest, acceptance or each step. A deadline crossed during
+publication rolls back the entire new plan. Device/source timestamps never
+order submissions or constrain measurement or forecast validity.
 
-Completed results are appended once to a separate ledger. A checkpoint commit
-atomically appends additions, advances the job sequence, replaces its cursor
-and queues the next authenticated `pg_net` wake. `pg_cron` runs every ten seconds
-to recover missed wakes and expired leases. Work continues when the app or
-browser disconnects. A terminated worker loses only its uncommitted slice;
-four successive lease expirations without progress terminate the job visibly.
+Cloud publication does not complete a website request. Only acknowledgement
+that HA accepted the matching published plan completes it. Rejection reports
+HA's actual error. The website polls content deltas every second while waiting.
+The requirement is **ten seconds from website click through HA acceptance to
+the website displaying completion**. The attempt deadline is a resource bound,
+not evidence that this successful end-to-end requirement has been achieved.
 
-Assembly gets a separate invocation after search completes. It replays saved
-auctions/rankings without running missing searches, adds descriptive thermal
-projection, and publishes the current plan, run summary, matching manual-request
-completion and terminal job state in one database transaction. Publication
-checks the received-order job head, worker fence/sequence, fixed-plan revision
-and observed manual request identity. Source timestamps do not order jobs.
-The previous plan remains current until that transaction succeeds.
+The app retains exchange-version2 journals and exact job/snapshot status
+lookup, so a response lost after acceptance or publication can be recovered.
+A killed ingest invocation does not restart computation. The ten-second cron
+sweep only expires overdue receipts and prunes bounded terminal history; it
+never starts a solve. The existing HA schedule and controls remain retained
+when planning fails. There are no planning-worker wakes or checkpoint tables.
 
-The app journals the capture identity before submitting it. Once accepted, it
-journals the job identity and polls status without retransmitting telemetry or
-preparing another snapshot. Delivery has its own host-owned task and releases
-the exchange lock while waiting. Restart resumes journalled delivery. Normal
-quarter exchanges upload telemetry while an automatic job is pending; explicit
-manual requests can supersede it. A snapshot-only status lookup recovers an
-acceptance reply lost in transport. Status only delivers the exact job's plan
-while it remains current; superseded jobs never return a different plan.
+Fixed-plan activation retains its existing preflight call through the same
+remote client and plan-step endpoint. Its separate120-second activation budget
+is unchanged. Household/manual attempts supply their explicit remaining budget.
 
-## Fixed-plan activation
+## Validation and limitations
 
-`energy-optimisation-fixed-plan` still uses the secret-only
-`energy-optimisation-plan-step` endpoint to materialise its activation preflight.
-This existing caller shares the improved pure resumable solver, but retains
-its bounded request chain (120 seconds, at most 512 calls). It authenticates
-with `ENERGY_PLANNING_SECRET`; the household job worker instead verifies the
-private database wake token. Fixed-plan activation's portal workflow is unchanged.
+Run `deno task test`, migration-version validation, frontend lint/build and
+all local E2E suites before committing. SQL tests cover permissions,
+idempotency, exclusive claim, supersession, terminal expiry without retries,
+publication rollback, exact receipt recovery, and completion after matching HA
+acceptance. Pure solver tests compare full canonical output across serialized
+steps, including sunny/dark, responsive, discrete-EV and fixed schedules.
 
-## Deployment and verification
-
-The migration creates private job/head/result/credential tables, service-only
-RPCs and the recovery cron. CI and `scripts/dev.sh` configure the current
-project's worker URL in `private.energy_planning_credentials`. The deployment
-script deploys both planning executors before their callers. The wake token
-never leaves the private credential row except in server-to-server headers.
-
-Household snapshot submissions require `planning_exchange_version: 2`; old
-clients receive an explicit 426. Update the SHS app to the coordinated beta
-release. There is no compatibility solve path. Protocol 8 pins numeric cursor
-representation; incompatible in-flight jobs fail explicitly rather than restart
-under a different planner. The planner model and generated plan contract remain
-unchanged.
-
-Run `deno task test`, the migration-version test, frontend lint/typecheck/build
-and all local E2E suites. Solver tests round-trip checkpoints and compare full
-plans, including sunny/dark, responsive, discrete-EV and fixed-schedule cases.
-SQL tests cover roles, key order, leases, fencing, supersession, atomic rollback
-and bounded recovery/retention. HA tests cover receipt recovery, restart,
-job-only polling, configuration changes and retained controls on failures.
-
-## Resource diagnosis
-
-Each worker start logs job/fence/sequence, original request ID, phase, cursor,
-result counts, load time and Deno memory usage. Commit/publication logs separate
-compute/assembly time from database time. Match a start without completion to
-platform shutdown logs when investigating CPU versus memory termination.
-
-Local equivalence and timing checks are not hosted capacity proof. Replay,
-input parsing, primitive scoring, checkpoint encoding, assembly and preparation
-still consume CPU and memory. Hosted test-project logs must verify their margin.
-Durability preserves committed progress and identifies repeated failure; it does
-not promise that every possible input avoids a resource limit.
+Returning to caller-held progress removes the database amplification observed
+in the checkpoint chain. It still resends completed progress between Edge
+requests and reconstructs prior planner context. Local canonical288-quarter
+fixtures measured roughly5–10seconds of computation alone. Hosted profiling
+must establish the full click-to-confirmation target; neither a fast error nor
+a quick queued response counts as success.

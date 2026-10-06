@@ -9,7 +9,8 @@ Deno.test("a planner change deploys the energy functions and the portal, and run
   // The portal's plan workbench runs the planner in the browser.
   assert(c.frontend);
   assert(c.functions.includes("energy-optimisation-plan-step"));
-  assert(c.functions.includes("energy-optimisation-planning-worker"));
+  assert(c.functions.includes("energy-optimisation-ingest"));
+  assert(!c.functions.includes("energy-optimisation-planning-worker"));
   assert(!c.functions.includes("stripe-webhook"));
   assert(!c.migrations);
 });

@@ -262,12 +262,6 @@ jobs:
              SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/sync-weather-history'
              WHERE singleton"
 
-      - name: Configure durable planning worker endpoint
-        run: |
-          supabase db query --linked \
-            "UPDATE private.energy_planning_credentials
-             SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/energy-optimisation-planning-worker'
-             WHERE singleton"
 
   functions:
     name: Deploy edge functions
@@ -301,7 +295,7 @@ jobs:
           rest=()
           planning_deployed=false
           for name in $FUNCTIONS; do
-            if [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-optimisation-planning-worker ]; then
+            if [ "$name" = energy-optimisation-plan-step ]; then
               if [ "$planning_deployed" = false ]; then
                 bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
                 planning_deployed=true

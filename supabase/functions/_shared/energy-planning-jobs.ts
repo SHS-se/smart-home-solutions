@@ -1,15 +1,16 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { OPTIMISATION_MODEL_VERSION, type OptimisationPlan } from "./planner/energy-optimisation.ts";
-import { ENERGY_PLANNING_PROTOCOL, type EnergyPlanningInput, type EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
-import { energyPlanningStep, assembleOptimisationPlan, createPlanningBudget } from "./energy-planning-step.ts";
+import { ENERGY_PLANNING_PROTOCOL, type EnergyPlanningInput } from "./energy-planning-protocol.ts";
+import { generateRemoteOptimisationPlan, EnergyPlanningError } from "./energy-planning-client.ts";
 import { buildThermalProjection, type ProjectionZoneInput } from "./thermal-training.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 import { priceEstimateRows } from "./price-estimate-record.ts";
 
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
 export const PLANNING_EXCHANGE_VERSION = 2;
-const SLICE_MS = 900;
 
 type PublishedPlan = OptimisationPlan & { thermal_projection?: NonNullable<ReturnType<typeof buildThermalProjection>> };
 
@@ -36,16 +37,13 @@ export interface PlanningContext {
 }
 interface PreparedPlanningJob {
   homeId: string; customerId: string; snapshotId: string; sourceHash: string;
-  input: EnergyPlanningInput; context: PlanningContext;
+  input: EnergyPlanningInput; context: PlanningContext; deadlineAt: string;
 }
 interface ClaimedJob {
   id: string; home_id: string; customer_id: string; snapshot_id: string;
-  protocol: number; fence: number; step: number; phase: "solving" | "assembling";
+  protocol: number; fence: number; deadline_at: string;
   input: EnergyPlanningInput;
   context: PlanningContext & { model_version: string };
-  continuation: Omit<EnergyPlanningContinuation, "completed" | "rankings">;
-  completed: EnergyPlanningContinuation["completed"];
-  rankings: EnergyPlanningContinuation["rankings"];
 }
 export class PlanningJobError extends Error {
   constructor(readonly code: string, message: string, readonly status = 500) {
@@ -66,9 +64,9 @@ export class PlanningJobs {
     return data as T;
   }
 
-  private delivery(receipt: PlanningReceipt | null): PlanningReceipt | null {
+  private delivery(receipt: PlanningReceipt | null, generated?: PublishedPlan): PlanningReceipt | null {
     if (!receipt) return null;
-    if (receipt.state === "published") receipt = { ...receipt, plan: expandStoredPlan(receipt.plan) };
+    if (receipt.state === "published") receipt = { ...receipt, plan: generated ?? expandStoredPlan(receipt.plan) };
     const { exchange, source_hash: _hash, ...delivery } = receipt;
     return { ...exchange, ...delivery };
   }
@@ -78,7 +76,7 @@ export class PlanningJobs {
       home_id: prepared.homeId, customer_id: prepared.customerId,
       snapshot_id: prepared.snapshotId, source_hash: prepared.sourceHash,
       input: prepared.input, context: { ...prepared.context, model_version: OPTIMISATION_MODEL_VERSION },
-      protocol: ENERGY_PLANNING_PROTOCOL,
+      protocol: ENERGY_PLANNING_PROTOCOL, deadline_at: prepared.deadlineAt,
     });
     return this.delivery(receipt)!;
   }
@@ -105,41 +103,27 @@ export class PlanningJobs {
     }));
   }
 
-  async advance(jobId: string): Promise<void> {
+  async execute(jobId: string, connection: { url: string; planningSecret: string; deadline: number },
+    fetcher: typeof fetch = fetch): Promise<PlanningReceipt | null> {
     const loadStarted = performance.now();
-    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_step", { p_job_id: jobId });
-    if (!job) return;
-    const identity = { job_id: job.id, fence: job.fence, step: job.step };
+    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_job", { p_job_id: jobId });
+    if (!job) return null;
+    const identity = { job_id: job.id, fence: job.fence };
     const started = performance.now();
-    const continuation = { ...job.continuation, completed: job.completed, rankings: job.rankings };
     console.info("[ENERGY-PLANNING-JOB] started", {
-      ...identity, request_id: job.context.request_id, phase: job.phase,
-      stage: continuation.checkpoint?.next ?? "replay",
-      auctions: job.completed.length, rankings: job.rankings.length,
+      ...identity, request_id: job.context.request_id,
       load_ms: Math.round(started - loadStarted), memory: Deno.memoryUsage(),
     });
     if (job.protocol !== ENERGY_PLANNING_PROTOCOL || job.context.model_version !== OPTIMISATION_MODEL_VERSION) {
-      await this.rpc("fail_energy_planning_job", { ...identity, code: "planner_upgraded", detail: "Planner version changed while the job was running. Request a new replan." });
-      return;
+      return this.delivery(await this.rpc<PlanningReceipt>("fail_energy_planning_job", {
+        ...identity, code: "planner_upgraded", detail: "Planner version changed. Request a new replan.",
+      }));
     }
     try {
-      if (job.phase === "solving") {
-        const result = energyPlanningStep(job.input, continuation, createPlanningBudget(SLICE_MS));
-        const { completed, rankings, done, ...cursor } = result;
-        const computed = performance.now();
-        const receipt = await this.rpc<PlanningReceipt | null>("commit_energy_planning_step", {
-          ...identity, completed, rankings, continuation: cursor,
-          phase: done ? "assembling" : "solving",
-        });
-        console.info("[ENERGY-PLANNING-JOB] checkpoint committed", {
-          ...identity, phase: done ? "assembling" : "solving", committed: receipt !== null,
-          finished: completed.length, ranked: rankings.length,
-          compute_ms: Math.round(computed - started), commit_ms: Math.round(performance.now() - computed),
-          memory: Deno.memoryUsage(),
-        });
-        return;
-      }
-      const planned = assembleOptimisationPlan(job.input, job.completed, job.rankings);
+      const planned = await generateRemoteOptimisationPlan(job.input, {
+        ...connection, requestId: job.context.request_id,
+        deadline: Math.min(connection.deadline, performance.now() + Date.parse(job.deadline_at) - Date.now()),
+      }, fetcher);
       let generated: PublishedPlan = planned.plan;
       const snapshot = job.input.snapshot;
       if (job.context.thermal_zones.length) {
@@ -169,25 +153,33 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         summary: compactPlanSummary(generated), validation_errors: generated.validation_errors };
       const assembled = performance.now();
-      const receipt = await this.rpc<{ state: PlanningReceipt["state"] } | null>("publish_energy_planning_job", { ...identity, current, run });
+      if (performance.now() >= connection.deadline) {
+        throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");
+      }
+      const receipt = await this.rpc<PlanningReceipt | null>("publish_energy_planning_job", { ...identity, current, run });
       console.info("[ENERGY-PLANNING-JOB] publication finished", {
-        ...identity, request_id: job.context.request_id, state: receipt?.state ?? "lost_lease",
+        ...identity, request_id: job.context.request_id, state: receipt?.state ?? "lost_owner",
         assembly_ms: Math.round(assembled - started), publish_ms: Math.round(performance.now() - assembled),
         memory: Deno.memoryUsage(),
       });
       if (receipt?.state === "published") {
-        try { await this.archive(job, generated); }
-        catch (error) { console.error("[ENERGY-PLANNING-JOB] archive failed", { job_id: job.id, detail: describeThrown(error) }); }
+        // Archives are outside the response's critical path and never delay delivery.
+        const archive = this.archive(job, generated).catch(error => {
+          console.error("[ENERGY-PLANNING-JOB] archive failed", { job_id: job.id, detail: describeThrown(error) });
+        });
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(archive);
+        else await archive;
+        return this.delivery(receipt, generated);
       }
+      return this.delivery(receipt);
     } catch (error) {
-      // Storage/transport failures leave the leased checkpoint recoverable. A
-      // deterministic planner error is terminal and scoped to this job only.
+      // No compute retry: the terminal sweeper handles a killed or disconnected
+      // owner. A publication reply lost after commit is recovered by receipt lookup.
       if (error instanceof PlanningJobError) throw error;
       const detail = describeThrown(error);
-      console.error("[ENERGY-PLANNING-JOB] failed", { ...identity, phase: job.phase, detail });
-      await this.rpc("fail_energy_planning_job", {
-        ...identity, code: job.phase === "assembling" ? "assembly_failed" : "invalid_snapshot", detail,
-      });
+      const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";
+      console.error("[ENERGY-PLANNING-JOB] failed", { ...identity, code, detail });
+      return this.delivery(await this.rpc<PlanningReceipt | null>("fail_energy_planning_job", { ...identity, code, detail }));
     }
   }
 

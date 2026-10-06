@@ -19,4 +19,9 @@ fi
 
 supabase functions deploy energy-optimisation-plan-step --project-ref "$PROJECT_REF" --use-api --yes
 
-supabase functions deploy energy-optimisation-planning-worker --project-ref "$PROJECT_REF" --use-api --yes
+# The retired checkpoint endpoint must disappear from existing deployments too.
+HAS_LEGACY_WORKER="$(supabase functions list --project-ref "$PROJECT_REF" --output json |
+  python3 -c 'import json, sys; print("yes" if any(f["name"] == "energy-optimisation-planning-worker" for f in json.load(sys.stdin)) else "no")')"
+if [ "$HAS_LEGACY_WORKER" = "yes" ]; then
+  supabase functions delete energy-optimisation-planning-worker --project-ref "$PROJECT_REF" --yes
+fi

@@ -273,3 +273,15 @@ Deno.test("response rankings pause before an auction and survive JSON reconstruc
   assert(counts.rankings > 0);
   assert(counts.rankingOnly > 0);
 });
+
+Deno.test("the household deadline is not reset by a successful stage response", async () => {
+  const input = inputFor(dispatchedEvSnapshot());
+  const error = await assertRejects(() => generateRemoteOptimisationPlan(input, {
+    ...connection, deadline: performance.now()+10,
+  }, async () => {
+    await new Promise(resolve => setTimeout(resolve,25));
+    return Response.json({ protocol: ENERGY_PLANNING_PROTOCOL, request_id: connection.requestId,
+      done: false, completed: [], rankings: [] });
+  }), EnergyPlanningError, "request deadline");
+  assertEquals(error.code,"planning_deadline_exceeded");
+});

@@ -205,7 +205,6 @@ run_migrations() {
   (
     cd "$PROJECT_DIR"
     supabase db push --linked --yes
-    supabase db query --linked "UPDATE private.energy_planning_credentials SET function_url = 'https://${PROJECT_REF}.supabase.co/functions/v1/energy-optimisation-planning-worker' WHERE singleton"
   )
 }
 

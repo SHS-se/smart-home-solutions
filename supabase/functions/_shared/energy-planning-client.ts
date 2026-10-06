@@ -11,7 +11,7 @@ import { describeThrown } from "./ha-api-contract.ts";
 const MAX_STEPS = 512;
 
 export class EnergyPlanningError extends Error {
-  constructor(message: string, readonly status: 400 | 502 = 502) {
+  constructor(message: string, readonly status: 400 | 502 = 502, readonly code = "planning_failed") {
     super(message);
     this.name = "EnergyPlanningError";
   }
@@ -29,6 +29,8 @@ export async function generateRemoteOptimisationPlan(
     url: string;
     planningSecret: string;
     requestId: string;
+    /** Absolute monotonic deadline supplied by the household request owner. */
+    deadline?: number;
   },
   fetcher: typeof fetch = fetch,
 ): Promise<OptimisationResult> {
@@ -40,7 +42,14 @@ export async function generateRemoteOptimisationPlan(
   const started = performance.now();
   // A price arrival also runs the bounded daily curve search. Individual
   // worker calls retain their existing CPU budget.
-  const signal = AbortSignal.timeout(120_000);
+  const deadline = connection.deadline ?? started + 120_000;
+  const checkDeadline = () => {
+    if (performance.now() >= deadline) {
+      throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");
+    }
+  };
+  checkDeadline();
+  const signal = AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now())));
   // The worker plans from the input as JSON delivers it, so the plan is
   // assembled from that same form. Each part is serialized once, not per call.
   const inputJson = JSON.stringify(input);
@@ -52,6 +61,7 @@ export async function generateRemoteOptimisationPlan(
   let checkpoint: DispatchCheckpoint | undefined;
   let rankingCheckpoint: ResponsiveRankingCheckpoint | undefined;
   for (let index = 0; index < MAX_STEPS; index += 1) {
+    checkDeadline();
     let response: Response;
     try {
       response = await fetcher(
@@ -78,9 +88,10 @@ export async function generateRemoteOptimisationPlan(
         retry_after_ms: error && typeof error === "object" && "retryAfterMs" in error
           ? error.retryAfterMs : null,
       });
+      if (signal.aborted) checkDeadline();
       throw new EnergyPlanningError(
         signal.aborted
-          ? "Planning stages exceeded the 120-second request deadline"
+          ? "Planning stages exceeded the request deadline"
           : `Planning worker could not be reached: ${describeThrown(error)}`,
       );
     }
@@ -109,6 +120,7 @@ export async function generateRemoteOptimisationPlan(
         invalid ? 400 : 502,
       );
     }
+    checkDeadline();
     if (
       body.protocol !== ENERGY_PLANNING_PROTOCOL ||
       body.request_id !== connection.requestId
@@ -140,6 +152,7 @@ export async function generateRemoteOptimisationPlan(
     rankingCheckpoint = body.ranking_checkpoint;
     if (body.done) {
       const assembling = performance.now();
+      checkDeadline();
       let result: OptimisationResult;
       try {
         result = assembleOptimisationPlan(wireInput, completed, rankings);
@@ -150,6 +163,7 @@ export async function generateRemoteOptimisationPlan(
           }`,
         );
       }
+      checkDeadline();
       console.info("[ENERGY-PLANNING] request completed", {
         request_id: connection.requestId,
         calls: index + 1,

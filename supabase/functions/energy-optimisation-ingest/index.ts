@@ -912,6 +912,8 @@ async function prepareThermalPlanning(
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const ingestStarted = performance.now();
+  let deadline = ingestStarted + 10_000;
+  let deadlineAt = new Date(Date.now() + 10_000).toISOString();
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
   if (req.method === "OPTIONS") {
@@ -1667,6 +1669,12 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
 
     const { data: accepted, error: acceptedError } = await supabase.rpc('get_energy_replan_monitor', { p_home_id: auth.homeId });
     if (acceptedError) throw new Error(acceptedError.message);
+    // The website request's server receipt starts the manual budget. HA capture,
+    // transport and input preparation must not reset it when ingest begins.
+    if (portalReplanId && portalReplanId === accepted?.replan_request_id) {
+      deadlineAt = new Date(Date.parse(accepted.replan_requested_at) + 10_000).toISOString();
+      deadline = Math.min(deadline, performance.now() + Date.parse(deadlineAt) - Date.now());
+    }
     const recommend = async (key: string, reason: string, at = new Date().toISOString()) => {
       const { error } = await supabase.rpc('recommend_energy_replan', {
         p_home_id: auth.homeId, p_key: key, p_reason: reason, p_occurred_at: at,
@@ -1859,7 +1867,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           elapsed_ms: Math.round(planningStarted - ingestStarted) });
         planningReceipt = await jobs.accept({
           homeId: auth.homeId, customerId: auth.customerId,
-          snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!,
+          snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!, deadlineAt,
           input: { snapshot, now: planningNow.toISOString(), price_archive: priceArchive, fixed_plan: fixedPlan },
           context: {
             request_id: requestId, integration_version: integrationVersion,
@@ -1882,7 +1890,14 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             },
           },
         });
-        console.info("[ENERGY-OPTIMISATION] planning accepted", {
+        if (planningReceipt.pending) {
+          planningReceipt = await jobs.execute(planningReceipt.job_id, {
+            url: Deno.env.get("SUPABASE_URL") ?? "",
+            planningSecret: Deno.env.get("ENERGY_PLANNING_SECRET") ?? "",
+            deadline,
+          }, traffic.fetch) ?? await jobs.readForHome(auth.homeId, planningReceipt.job_id) ?? planningReceipt;
+        }
+        console.info("[ENERGY-OPTIMISATION] planning completed", {
           request_id: requestId, job_id: planningReceipt.job_id,
           elapsed_ms: Math.round(performance.now() - planningStarted),
         });
