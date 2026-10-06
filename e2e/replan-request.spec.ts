@@ -63,7 +63,10 @@ const idle: ReplanColumns = {
 interface MockPlanState {
   row: ReplanColumns;
   reportedPlanId?: string;
+  reportedValidUntil?: string;
+  acknowledgement?: { status: 'pending' | 'accepted' | 'rejected'; message: string | null; version: string | null };
   publishedPlan?: typeof PLAN;
+  unsupportedPlan?: boolean;
   refreshing?: boolean;
   readError?: boolean;
   history?: Array<{ start_ts: string; total_load_kwh: number }>;
@@ -145,17 +148,17 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
           ha_runtime: replan.reportedPlanId ? {
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
             reason: 'A validated plan is available', binding_until: shown.binding_until,
-            valid_until: shown.valid_until, recovering: replan.refreshing ?? false, retry_at: null, last_error: null,
+            valid_until: replan.reportedValidUntil ?? shown.valid_until, recovering: replan.refreshing ?? false, retry_at: null, last_error: null,
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
-          ha_ack_status: 'accepted',
+          ha_ack_status: replan.acknowledgement?.status ?? 'accepted',
           ha_acknowledged_at: CAPTURED_AT,
-          ha_integration_version: null,
+          ha_integration_version: replan.acknowledgement?.version ?? null,
           ha_ack_request_id: null,
-          ha_ack_error: null,
+          ha_ack_error: replan.acknowledgement?.message ? { message: replan.acknowledgement.message } : null,
           ...replan.row,
         },
-        plan: shown,
+        plan: replan.unsupportedPlan ? { ...shown, schema_version: 999 } : shown,
         devices: replan.devices ?? [],
       }),
       device_actuals: {
@@ -253,6 +256,50 @@ test.describe('requesting a replan', () => {
       await expect(page.getByText(/Nästa omplanering|Next replan/)).toHaveCount(0);
     });
   }
+
+  test('a rejected delivery explains the mismatch without inventing stale live battery readings', async ({ page }) => {
+    replan.reportedPlanId = REQUEST_ID;
+    replan.acknowledgement = { status: 'rejected', message: 'optimisation plan was not issued recently', version: '0.9.0-beta.86' };
+    // Frozen sources cover six hours; the actual plan covers seventy-two.
+    await page.clock.setFixedTime(new Date(Date.parse(CAPTURED_AT) + 7 * 60 * 60_000));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const rejection = page.getByRole('alert').filter({ hasText: /HA avvisade|HA rejected/ });
+    await expect(rejection).toContainText('optimisation plan was not issued recently');
+    await expect(rejection).toContainText(/tidigare planen fortfarande används|retained plan is still in use/);
+    await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+    await rejection.getByText(/Vad det betyder|What this means/).click();
+    await expect(rejection).toContainText('0.9.0-beta.86');
+    await expect(rejection).toContainText(REQUEST_ID);
+    await expect(rejection).not.toContainText(/batteriets mätvärden|battery readings/);
+    // A historical ready report is not proof that an expired retained plan executes.
+    replan.reportedValidUntil = CAPTURED_AT;
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(rejection).not.toContainText(/tidigare planen fortfarande används|retained plan is still in use/);
+  });
+
+  test('aged frozen battery provenance does not invalidate a matching ready plan', async ({ page }) => {
+    replan.reportedPlanId = PLAN.plan_id;
+    await page.clock.setFixedTime(new Date(Date.parse(CAPTURED_AT) + 7 * 60 * 60_000));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByText(/Senast rapporterad redo i HA|Last reported ready in HA/, { exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: /batteriets mätvärden|battery readings|avvisade|rejected/ })).toHaveCount(0);
+  });
+
+  test('a newer unreadable cloud plan cannot confirm the retained older chart', async ({ page }) => {
+    replan.reportedPlanId = PLAN.plan_id;
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByTestId('ha-plan-identity')).toContainText(/Samma plan|Same plan/);
+    replan.publishedPlan = { ...PLAN, plan_id: REQUEST_ID };
+    replan.reportedPlanId = REQUEST_ID;
+    replan.unsupportedPlan = true;
+    replan.acknowledgement = { status: 'rejected', message: 'Rejection belongs to the newer unreadable plan', version: 'newer-version' };
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByRole('alert')).toContainText(/Webbplatsen kan inte visa det mottagna planformatet|The website cannot display the received plan format/);
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    await expect(page.getByTestId('ha-plan-identity')).toContainText(/Annan plan|Different plan/);
+    await expect(page.getByText(/Senast rapporterad redo i HA|Last reported ready in HA/, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('alert')).not.toContainText('Rejection belongs to the newer unreadable plan');
+  });
 
   test('configuration refresh retains the plan, locks saves and recovers automatically', async ({ page }) => {
     replan.reportedPlanId = PLAN.plan_id;

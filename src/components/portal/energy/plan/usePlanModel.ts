@@ -109,9 +109,6 @@ export function usePlanModel(
   const hasBattery = plan.capabilities.battery && plan.battery !== null;
   const hasEvBattery = plan.capabilities.ev && plan.ev_battery != null;
   const hasPv = plan.capabilities.pv;
-  const sourceStale = Object.entries(plan.sources)
-    .filter(([, source]) => source !== null && Date.parse(source.valid_until) < Date.now())
-    .map(([name]) => name);
   const bindingExpired = Date.now() >= Date.parse(plan.binding_until);
   const ready = !stale && plan.status === 'ready' && executed.status === 'ready';
   const pct = (value: number) => `${(value * 100).toFixed(0)}%`;
@@ -211,7 +208,6 @@ export function usePlanModel(
     hasBattery,
     hasEvBattery,
     hasPv,
-    sourceStale,
     bindingExpired,
     ready,
     pct,

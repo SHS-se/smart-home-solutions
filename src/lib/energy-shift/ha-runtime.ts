@@ -29,3 +29,37 @@ export function haRuntimeStatus(row: HaRuntimeRow, now: number) {
   if (!(Date.parse(runtime.valid_until ?? '') > now)) return { state: 'expired', ready: false, runtime };
   return { state: 'ready', ready: true, runtime };
 }
+
+interface PlanAcknowledgement {
+  plan_id: string | null;
+  ha_ack_status: 'pending' | 'accepted' | 'rejected';
+  ha_ack_error: { message?: string; details?: unknown } | null;
+  ha_integration_version: string | null;
+  ha_acknowledged_at: string | null;
+}
+
+/** Delivery of the displayed plan and HA's retained schedule are separate facts. */
+export function planDeliveryStatus({ displayedPlanId, acknowledgement, reported, now }: {
+  displayedPlanId: string;
+  acknowledgement: PlanAcknowledgement;
+  reported: HaRuntimeRow;
+  now: number;
+}) {
+  // A newer cloud row may be unreadable while the previous chart stays visible.
+  const runtimeStatus = haRuntimeStatus({ ...reported, plan_id: displayedPlanId }, now);
+  const rejection = acknowledgement.plan_id === displayedPlanId && acknowledgement.ha_ack_status === 'rejected'
+    ? {
+      messages: [...new Set([
+        acknowledgement.ha_ack_error?.message,
+        ...(Array.isArray(acknowledgement.ha_ack_error?.details) ? acknowledgement.ha_ack_error.details : []),
+      ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0))],
+      integrationVersion: acknowledgement.ha_integration_version,
+      acknowledgedAt: acknowledgement.ha_acknowledged_at,
+    }
+    : null;
+  const runtime = runtimeStatus.runtime;
+  const retained = runtime?.plan_id && runtime.plan_id !== displayedPlanId
+    ? { runtime, ready: runtime.state === 'ready' && Date.parse(runtime.valid_until ?? '') > now }
+    : null;
+  return { runtimeStatus, rejection, retained };
+}

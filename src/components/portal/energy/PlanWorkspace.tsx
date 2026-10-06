@@ -5,7 +5,7 @@ import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-reques
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
 import { HistoryCache, type HistoryDelta, type ChangedValue } from '@/lib/energy-shift/portal-sync';
 import { planRefreshError, readPlanRefresh } from '@/lib/energy-shift/plan-refresh';
-import { haRuntimeStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
+import { haRuntimeStatus, planDeliveryStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Loader2 } from 'lucide-react';
@@ -473,10 +473,12 @@ const PlanView: React.FC<{
   const model = usePlanModel(current, empiricalDevices, stale);
   const {
     plan, executed, active, comparison, hasBattery, hasEvBattery,
-    sourceStale, bindingExpired, ready, pct, costDelta, costTone, costMeaning,
+    bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
-  const runtimeStatus = haRuntimeStatus(latestRuntime ?? current, now);
+  const { runtimeStatus, rejection, retained } = planDeliveryStatus({
+    displayedPlanId: plan.plan_id, acknowledgement: current, reported: latestRuntime ?? current, now,
+  });
   const runtimeReady = ready && runtimeStatus.ready;
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
@@ -583,28 +585,18 @@ const PlanView: React.FC<{
               ? t(`för ${minutesSinceSeen} minuter sedan`, `${minutesSinceSeen} minutes ago`)
               : t(`kl. ${clockTime(lastSeenMs)}`, `at ${clockTime(lastSeenMs)}`);
 
-        // Source keys are internal. Only these names ever reach a household.
-        const SOURCE_NAMES: Record<string, [string, string]> = {
-          pv: ['solprognosen', 'the solar forecast'],
-          battery: ['batteriets mätvärden', 'the battery readings'],
-          base_load: ['hemmets normalförbrukning', "your home's usual consumption"],
-          import_price: ['elpriserna', 'electricity prices'],
-          export_price: ['elpriserna', 'electricity prices'],
-          outdoor_temperature: ['väderprognosen', 'the weather forecast'],
-        };
-        const staleNames = [...new Set(sourceStale.map(source =>
-          SOURCE_NAMES[source] ? t(...SOURCE_NAMES[source]) : t('en av prognoserna', 'one of the forecasts')))];
-
         const runningNormally = t(
-          'Den här planen kan inte längre användas för att styra hemmet efter elpriset. Home Assistant visar vilka inställningar varje enhet använder under tiden.',
-          'This plan can no longer be used to control your home according to electricity prices. Home Assistant shows which settings each device is using meanwhile.',
+          'Enheterna behåller de senaste inställningarna som SHS skickade. Home Assistant visar deras aktuella inställningar.',
+          'Devices retain the last settings SHS sent. Home Assistant shows their current settings.',
         );
         const notYours = t(
           'Det här är något vi behöver rätta till, inte något du behöver göra.',
           'This is something for us to put right, not something you need to do.',
         );
 
-        const title = !runtimeStatus.ready
+        const title = !runtimeStatus.ready && rejection
+          ? t('HA avvisade den här planen', 'HA rejected this plan')
+          : !runtimeStatus.ready
           ? runtimeLabel
           : stale
               ? connectionLive
@@ -612,11 +604,19 @@ const PlanView: React.FC<{
                 : t('Hemmet har slutat skicka data', 'Your home has stopped sending data')
               : bindingExpired
                 ? t('Planen sträcker sig längre än elpriserna', 'The plan reaches further than the prices do')
-                : sourceStale.length > 0
-                  ? t('En del av prognosen är inaktuell', 'Part of the forecast is out of date')
-                  : t('Planen går inte att genomföra', 'This plan cannot be carried out');
+                : t('Planen går inte att genomföra', 'This plan cannot be carried out');
 
-        const body = !runtimeStatus.ready
+        const body = !runtimeStatus.ready && rejection
+          ? [
+            t('Home Assistant avvisade planen som visas här.', 'Home Assistant rejected the plan shown here.'),
+            ...rejection.messages,
+            retained?.ready ? t(
+              'HA rapporterar att den tidigare planen fortfarande används. Den visade planen är inte den som körs i HA.',
+              'HA reports that its retained plan is still in use. The displayed plan is not the one running in HA.',
+            ) : runtimeDetail,
+            t('Begär en ny omplanering för att skapa en ersättare med aktuella uppgifter.', 'Request a new replan to create a replacement with current measurements.'),
+          ]
+          : !runtimeStatus.ready
           ? [runtimeDetail]
           : stale
               ? connectionLive
@@ -648,34 +648,27 @@ const PlanView: React.FC<{
                 ]
               : bindingExpired
                 ? [t(
-                  'Elpriserna publiceras bara ungefär ett dygn i förväg. Längre fram är planen en gissning, så Home Assistant följer dina vanliga inställningar tills morgondagens priser kommer.',
-                  'Electricity prices are only published about a day ahead. Beyond that the plan is a best guess, so Home Assistant follows your usual settings until tomorrow\'s prices arrive.',
+                  'Efter de publicerade priserna använder den sparade planen uppskattade priser. En ny prispublicering kan ge en ersättningsplan.',
+                  'Beyond the published prices, the cached schedule uses estimated prices. A new price release can produce a replacement plan.',
                 ), t('Inget behöver göras.', 'Nothing needs doing.')]
-                : sourceStale.length > 0
-                  ? [t(
-                    `Planen bygger delvis på ${staleNames.join(', ')}, som nu är inaktuell.`,
-                    `This plan was partly built on ${staleNames.join(', ')}, which is now out of date.`,
-                  ), t(
-                    'En ny plan ersätter den normalt inom en timme.',
-                    'A fresh plan normally replaces it within the hour.',
-                  )]
-                  : [t(
-                    'Home Assistant använder sina vanliga inställningar tills en giltig plan finns.',
-                    'Home Assistant uses its usual settings until a valid plan is available.',
-                  )];
+                : [runningNormally];
 
         const details = [
           ...(stale ? [t(
             `Planen behövde ersättas senast ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
             `The plan needed replacing by ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
           )] : []),
-          ...(bindingExpired ? [t(
+          ...(runtimeStatus.ready && bindingExpired ? [t(
             `Tillgängliga elpriser täcker bara tiden fram till ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
             `Available electricity prices only cover the period up to ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
           )] : []),
-          ...(sourceStale.length > 0 ? [t(
-            `Underlaget för ${staleNames.join(', ')} behöver uppdateras innan en ny plan kan användas.`,
-            `The information for ${staleNames.join(', ')} needs updating before a new plan can be used.`,
+          ...(rejection?.integrationVersion ? [t(
+            `Avvisad av HA ${rejection.integrationVersion}${rejection.acknowledgedAt ? ` kl. ${formatHomeStamp(rejection.acknowledgedAt, homeTimeZone)}` : ''}.`,
+            `Rejected by HA ${rejection.integrationVersion}${rejection.acknowledgedAt ? ` at ${formatHomeStamp(rejection.acknowledgedAt, homeTimeZone)}` : ''}.`,
+          )] : []),
+          ...(retained ? [t(
+            `Senast rapporterad plan i HA: ${retained.runtime.plan_id}. Status: ${retained.runtime.state}.`,
+            `Last reported plan in HA: ${retained.runtime.plan_id}. Status: ${retained.runtime.state}.`,
           )] : []),
           ...(stale ? [t(
             'Detta visar när planen slutade gälla, inte varför nästa plan saknas. Det senaste planeringsfelet finns i Home Assistants diagnostik.',
@@ -688,7 +681,7 @@ const PlanView: React.FC<{
         ];
 
         return (
-          <Alert variant={stale || bindingExpired || sourceStale.length > 0 ? 'destructive' : 'default'}>
+          <Alert variant={rejection || stale || validationMessages.length > 0 ? 'destructive' : 'default'}>
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>{title}</AlertTitle>
             <AlertDescription>
