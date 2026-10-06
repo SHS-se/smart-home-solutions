@@ -130,8 +130,20 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || arbitrage ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, arbitrage = false, batterySupplied = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || arbitrage || batterySupplied ? structuredClone(PLANS) : PLANS;
+  if (batterySupplied) {
+    for (const plan of Object.values(plans)) {
+      plan.importPrice = plan.importPrice.map((_, i) => 1 + i / 1000);
+      plan.importPrice[27] = 2.15;
+      plan.poolW[27] = 3764;
+      plan.loadW[27] = 5884;
+      plan.solarW[27] = 664;
+      plan.batteryDischargeW[27] = 4610;
+      plan.gridImportW[27] = 610;
+      plan.gridExportW[27] = 0;
+    }
+  }
   if (arbitrage) {
     for (const [key, plan] of Object.entries(plans)) {
       for (const i of [24, 25, 27]) {
@@ -391,9 +403,16 @@ test.describe('planner bench', () => {
     await page.locator('#bench-show-current').click();
     await expect(async () => expect(await chart.innerHTML()).not.toBe(drawn)).toPass({ timeout: 10_000 });
 
-    // Each planner's cost at real prices, beside what it expected, and the curves it planned with.
-    await expect(page.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
-    await expect(page.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
+    // Case costs live in the top summary, labelled separately from totals across all cases.
+    const summary = page.locator('#bench-summary');
+    await expect(summary.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
+    await expect(summary.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
+    await expect(summary.locator('#bench-real-cost')).toContainText(/−3\.4 kr/);
+    await expect(summary.locator('#bench-selected-cost-title')).toContainText('Cheap night');
+    await expect(page.locator('#bench-real-cost')).toHaveCount(1);
+    const caseCard = page.locator('#bench-show-current').locator('xpath=ancestor::*[contains(@class,"rounded-lg")][1]');
+    await expect(caseCard.locator('#bench-real-cost')).toHaveCount(0);
+    await summary.screenshot({ path: test.info().outputPath('cost-summary-desktop.png') });
     const poolCurve = page.locator('#bench-curve-pool').getByRole('img');
     await expect(poolCurve).toBeVisible();
     await expect(page.locator('#bench-curve-pool')).toContainText('comfort target');
@@ -419,6 +438,27 @@ test.describe('planner bench', () => {
     expect((captured.updated[0].dataset as BenchScenarioData).start_state.pool_water_c).toBe(27);
     await expect.poll(() => captured.dispatched.length).toBe(1);
 
+    await page.locator(`#bench-case-${CASES[1].id}`).click();
+    await expect(summary.locator('#bench-selected-cost-title')).toContainText('Dear week');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(summary.locator('#bench-real-cost')).toBeVisible();
+    expect(await summary.locator('#bench-real-cost').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await summary.screenshot({ path: test.info().outputPath('cost-summary-mobile.png') });
+
+  });
+
+  test('does not penalize battery-supplied flexible load while base load still imports in a dear quarter', async ({ context, page }) => {
+    await mockBackend(context, { batterySupplied: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const box = (await chart.boundingBox())!;
+    // Quarter 27 in the full 288-quarter chart, inside the plotted area.
+    await chart.click({ position: { x: box.width * (58 + 27.5 / 288 * 1010) / 1160, y: box.height * 0.2 } });
+    const explanation = page.locator('#bench-quarter-explanation');
+    await expect(explanation).toContainText('2.15');
+    await expect(explanation).toContainText(/No rule fired|Ingen regel slog till/);
+    await expect(explanation).not.toContainText(/Flexible load bought in a (very )?dear quarter/);
   });
 
   test('shows independent high-sale export and full-charge preparation penalties', async ({ context, page }) => {

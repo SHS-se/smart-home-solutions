@@ -6,7 +6,7 @@ import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, evBatterySupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, evBatterySupplyW, flexibleGridSupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -209,6 +209,32 @@ Deno.test('flexible load bought in a dear quarter loses a point, in a very dear 
   series.importPrice = series.importPrice.map(() => 1);
   series.carW = series.carW.map(() => 3000);
   assertEquals([scoreQuarters(series).sum, scoreQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
+});
+
+Deno.test('dear-price rules exclude battery-supplied flexible demand even when base load imports from the grid', () => {
+  const s = planSeries([
+    // Screenshot regression: the battery covers the pool while the house still imports 610 W.
+    slot(0, { pool_w: 3764, load_w: 5884, pv_w: 664, battery_discharge_w: 4610, grid_import_w: 610 }),
+    slot(1, { pool_w: 3000, load_w: 4000, pv_w: 500, battery_discharge_w: 2500, grid_import_w: 1000 }),
+    slot(2, { pool_w: 3000, load_w: 4000, pv_w: 500, battery_discharge_w: 2500.1, grid_import_w: 999.9 }),
+    // Discharge exported to the grid is unavailable to flexible demand.
+    slot(3, { pool_w: 3000, battery_discharge_w: 5000, grid_export_w: 5000, grid_import_w: 500 }),
+    // Simultaneous charging and discharging are netted against total flexible demand.
+    slot(4, { battery_charge_w: 3000, battery_discharge_w: 3000, grid_import_w: 500 }),
+    slot(5, { battery_charge_w: 3000, battery_discharge_w: 1000, grid_import_w: 2500 }),
+    slot(6, { ev_w: 3000, load_w: 3500, battery_discharge_w: 3000, grid_import_w: 500 }),
+    slot(7, { pool_w: 2000, ev_w: 2000, battery_charge_w: 1000, battery_discharge_w: 5000, grid_import_w: 9000 }),
+    // Stored decimal powers at the boundary must not slip below it through subtraction noise.
+    slot(8, { pool_w: 3000.1, ev_w: 2000.1, battery_charge_w: 1000.1, battery_discharge_w: 5500.3, grid_import_w: 1000 }),
+    slot(9, { pool_w: 3000, pv_w: 4000, grid_import_w: 0 }),
+    slot(10, { pool_w: 3000, battery_discharge_w: 0, grid_import_w: 500 }),
+  ], null);
+  s.importPrice.fill(2);
+  assertEquals(s.start.map((_, i) => flexibleGridSupplyW(s, i)), [0, 500, 499.9, 500, 0, 2000, 0, 0, 500, 0, 500]);
+  const events = (key: string, overrides = {}) => scoreQuarters(s, overrides).quarters.flatMap((q, i) => q.fired.includes(key) ? [i] : []);
+  assertEquals(events('dearest_load'), [1, 3, 5, 8, 10]);
+  assertEquals(events('dear_load', { dearest_load: { enabled: false } }), [1, 3, 5, 8, 10]);
+  assertEquals(events('dear_load'), []);
 });
 
 Deno.test('EV battery supply is charged only after battery exports and other household demand', () => {

@@ -54,7 +54,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 17;
+export const SCORER_VERSION = 18;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -79,7 +79,7 @@ export interface QuarterView {
   dearRank: number;
   /** Pool + battery charging + car, W. */
   flexibleW: number;
-  /** The part of it bought from the grid: the flexible load, up to what the quarter imported, W. */
+  /** Flexible demand left after battery supply, capped by actual grid imports, W. */
   flexibleGridW: number;
   /** The plan's next day against this one; null in the last day, which has none to compare with. */
   ahead: { dearer: boolean; lessSun: boolean } | null;
@@ -157,6 +157,16 @@ export function arbitragePreparation(s: BenchSeries, salePrice: number): {
   return { firstQuarter, lastChargeQuarter, prepared: firstQuarter >= 0 && soc !== null && soc >= 100 };
 }
 
+const batteryHouseSupplyW = (s: BenchSeries, i: number) => Math.max(0, s.batteryDischargeW[i] - s.gridExportW[i]);
+
+/** Attribute available battery discharge to flexible demand before counting any of it as a grid purchase. */
+export function flexibleGridSupplyW(s: BenchSeries, i: number): number {
+  const flexibleW = s.poolW[i] + s.carW[i] + s.batteryChargeW[i];
+  const remainingW = Math.max(0, flexibleW - batteryHouseSupplyW(s, i));
+  // Stored powers have 0.1 W precision; round subtraction noise before the 500 W boundary.
+  return Math.round(Math.min(remainingW, s.gridImportW[i]) * 10) / 10;
+}
+
 /**
  * Supply attribution on the shared house bus: allocate battery exports and
  * non-EV demand first. Only the remainder can be attributed to the EV.
@@ -165,7 +175,7 @@ export function arbitragePreparation(s: BenchSeries, salePrice: number): {
  */
 export function evBatterySupplyW(s: BenchSeries, i: number): number {
   const nonEvW = Math.max(0, s.loadW[i] - s.carW[i]);
-  const batteryForHouseW = Math.max(0, s.batteryDischargeW[i] - s.batteryChargeW[i] - s.gridExportW[i]);
+  const batteryForHouseW = Math.max(0, batteryHouseSupplyW(s, i) - s.batteryChargeW[i]);
   // Stored power has 0.1 W precision; subtraction noise is not battery energy.
   return Math.round(Math.min(s.carW[i], Math.max(0, batteryForHouseW - nonEvW)) * 10) / 10;
 }
@@ -414,8 +424,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     const q: QuarterView = {
       s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
-      // Flexible load is the load there was a choice about, so what the quarter imported is counted as its first.
-      flexibleW, flexibleGridW: Math.min(flexibleW, s.gridImportW[i]),
+      flexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
       avoidableOverlap: overlapQuarters.has(i),
       shortGapDevices: new Set(shortGaps.filter(gap => gap.from === i).map(gap => gap.device)),
       evBatteryW: evBatterySupplyW(s, i),

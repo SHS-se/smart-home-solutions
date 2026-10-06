@@ -393,7 +393,7 @@ const Bench: React.FC = () => {
             })}
           </div>
 
-          <Card>
+          <Card id="bench-summary">
             <CardContent className="pt-6 space-y-4">
               <div className="grid items-start gap-4 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5 min-w-0">
@@ -420,6 +420,7 @@ const Bench: React.FC = () => {
                 </div>
               </div>
               {totals && <SuiteTable totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
+              {selectedCase && series.data && <CaseCostSummary scenario={selectedCase} details={series.data} />}
               {!cases.length && <p className="text-sm text-muted-foreground">{t('Inga testfall ännu. Lägg till en replay-fil.', 'No test cases yet. Add a replay file to start.')}</p>}
             </CardContent>
           </Card>
@@ -476,6 +477,30 @@ const Bench: React.FC = () => {
   );
 };
 
+
+const CaseCostSummary: React.FC<{
+  scenario: BenchScenario;
+  details: { current: BenchResultDetail | null; test: BenchResultDetail | null };
+}> = ({ scenario, details }) => {
+  const { t } = useLanguage();
+  if (!details.current?.outcome && !details.test?.outcome) return null;
+  return <section id="bench-selected-cost-summary" aria-labelledby="bench-selected-cost-title" className="space-y-2 border-t pt-4">
+    <h3 id="bench-selected-cost-title" className="text-sm font-medium">{t('Kostnad för valt testfall', 'Cost for selected test case')} · {scenario.name} · {formatHomeDayMonthTime(scenario.captured_at, TZ)}</h3>
+    <div id="bench-real-cost" className="grid gap-3 text-sm sm:grid-cols-2">
+      {([['current', details.current], ['test', details.test]] as const).map(([which, d]) => d?.outcome && (
+        <div key={which} className="rounded-md border px-3 py-2">
+          <div className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
+          <div className="text-xs text-muted-foreground">
+            {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
+            {' · '}{t('kvar i lagren vid slutet', 'left in the stores at the end')} <span className="font-mono">{signed(d.outcome.terminal.credit_sek, 1)} kr</span>
+            {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
+            {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>;
+};
 
 /** Which way a metric should move; null when neither way is better by itself. */
 type Better = 'higher' | 'lower' | null;
@@ -754,21 +779,6 @@ const CaseView: React.FC<CaseViewProps> = ({
                 </div>
               ))}
             </div>
-            {(details?.current?.outcome || details?.test?.outcome) && (
-              <div id="bench-real-cost" className="grid gap-3 text-sm sm:grid-cols-2">
-                {([['current', details?.current], ['test', details?.test]] as const).map(([which, d]) => d?.outcome && (
-                  <div key={which} className="rounded-md border px-3 py-2">
-                    <div className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
-                    <div className="text-xs text-muted-foreground">
-                      {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
-                      {' · '}{t('kvar i lagren vid slutet', 'left in the stores at the end')} <span className="font-mono">{signed(d.outcome.terminal.credit_sek, 1)} kr</span>
-                      {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
-                      {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
             {shownSeries ? (
               <>
                 <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}

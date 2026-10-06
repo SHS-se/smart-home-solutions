@@ -294,6 +294,8 @@ export default function BenchRuleList({
             `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
         {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
       </p>
+      {dear && <p className="text-xs text-muted-foreground">{t('Batteriets urladdning till huset räknas först mot de flexibla lasterna. Bara återstående flexibel effekt, begränsad till den faktiska nätimporten, jämförs med 500 W-gränsen. Batteriexport räknas bort från tillgänglig batterieffekt. Nätimport för baslast ger inget avdrag när batteriet täcker de flexibla lasterna.',
+        'Battery discharge serving the house is assigned to flexible loads first. Only the remaining flexible demand, capped by actual grid imports, is compared with the 500 W threshold. Battery exports are excluded from available battery power. Grid imports for base load cause no deduction when the battery covers the flexible loads.')}</p>}
       {settings(rule, dear ? t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)') : t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
     </>;
   };
