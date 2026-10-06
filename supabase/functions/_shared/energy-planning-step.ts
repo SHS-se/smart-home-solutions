@@ -22,7 +22,7 @@ export interface PlanningBudget {
 }
 
 /** Leave CPU headroom for reconstruction, checkpoint encoding and storage. */
-export function createPlanningBudget(durationMs = 900, primitiveLimit = 2_000_000): PlanningBudget {
+export function createPlanningBudget(durationMs = 900, primitiveLimit = Number.MAX_SAFE_INTEGER): PlanningBudget {
   if (!(durationMs > 0) || !Number.isSafeInteger(primitiveLimit) || primitiveLimit < 1) {
     throw new Error("Planning slice budget must be positive");
   }

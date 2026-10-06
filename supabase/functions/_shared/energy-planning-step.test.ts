@@ -5,7 +5,7 @@ import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { snapshot, snapshotV8 } from "../../../src/lib/energy-shift/optimisation-snapshot.fixture.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { generateOptimisationPlan } from "./planner/energy-optimisation.ts";
-import { energyPlanningStep } from "./energy-planning-step.ts";
+import { createPlanningBudget, energyPlanningStep } from "./energy-planning-step.ts";
 import { ENERGY_PLANNING_PROTOCOL } from "./energy-planning-protocol.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import {
@@ -13,6 +13,28 @@ import {
   generateRemoteOptimisationPlan,
 } from "./energy-planning-client.ts";
 import type { FixedEnergyPlan } from "./planner/fixed-energy-plan.ts";
+
+Deno.test("worker slices stop on elapsed time instead of an unrelated operation count", () => {
+  const original = performance.now;
+  let elapsed = 0;
+  performance.now = () => elapsed;
+  try {
+    const budget = createPlanningBudget();
+    let paused = false;
+    for (let count = 0; count < 2_000_001; count += 1) paused ||= budget.spent();
+    assertEquals(paused, false);
+    assertEquals(budget.allowsAuction(), true);
+    elapsed = 900;
+    assertEquals(budget.spent(), true);
+    assertEquals(budget.allowsAuction(), false);
+    const counted = createPlanningBudget(900, 2);
+    assertEquals(counted.spent(), false);
+    assertEquals(counted.spent(), false);
+    assertEquals(counted.spent(), true);
+  } finally {
+    performance.now = original;
+  }
+});
 
 Deno.test("distributed planning preserves discrete EV alternatives", () => {
   assertStagesMatch(inputFor(dispatchedEvSnapshot()));

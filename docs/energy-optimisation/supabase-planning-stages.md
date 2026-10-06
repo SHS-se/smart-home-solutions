@@ -5,8 +5,10 @@ authenticates the device, writes telemetry and prepares one frozen input. It
 accepts a snapshot-scoped job receipt, then drives the secret-only
 `energy-optimisation-plan-step` endpoint inline. The caller holds completed
 auctions, rankings and the unfinished cursor in memory. Each step uses the
-existing 900ms/two-million-boundary execution budget without reducing the
-planner's economic search. Progress is exchanged between Edge Functions;
+900ms elapsed-time execution budget without reducing the planner's economic
+search. An explicit operation limit remains available for deterministic
+checkpoint tests; ordinary execution does not pause after two million checks
+while time remains in its slice. Progress is exchanged between Edge Functions;
 it is never written or repeatedly downloaded as a database result ledger.
 
 The job owner claims the input once and publishes once. The transaction checks
