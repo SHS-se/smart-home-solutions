@@ -763,6 +763,7 @@ const CaseView: React.FC<CaseViewProps> = ({
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {scenario.notes && <p className="text-sm text-muted-foreground">{scenario.notes}</p>}
         {errors.map(e => (
           <Alert key={e!.sha} variant="destructive"><AlertDescription className="font-mono text-xs whitespace-pre-wrap">{e!.sha.slice(0, 7)}: {e!.error?.split('\n')[0]}</AlertDescription></Alert>
         ))}

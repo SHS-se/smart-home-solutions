@@ -91,10 +91,15 @@ deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-
 `bench/cases/C-1005.json` preserves the converted 5 October 2026 replay beginning
 at 10:15 UTC, with 47 published-price quarters, pool water at 30.01 °C, battery
 at 13.9 % and EV at 66 %. The SHS test bench case is
-`ef654356-5b2b-453b-8cb2-649dadcf1e6b`. Its measured 72-hour window and saved
-comfort preferences are completed by the database runner; no actual results
-have been invented for its future quarters. The raw replay and its old plan
-are excluded from the case.
+`ef654356-5b2b-453b-8cb2-649dadcf1e6b`. On 6 October it was made runnable with
+explicit synthetic evaluation data: 49 missing price quarters and 154 missing
+outdoor-temperature quarters repeat the latest available value at the same time
+of day; load and solar use the replay forecasts for all 288 quarters. Existing
+prices, temperatures, pre-case history and start state are preserved. The case
+file includes the saved comfort targets (30.5 °C and 360 km), the indices of the
+synthetic quarters, and visible case notes explaining the assumptions. It is a
+test scenario rather than a measured 72-hour outcome. The raw replay and its old
+plan are excluded from the case.
 
 A window from before the home's quarter tables (12 August 2026) is made into a
 case from Home Assistant's hourly statistics, then added the same way

@@ -286,7 +286,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           { ...TEST, branch: null, is_current: false, status: 'done', error: null, finished_at: nowIso },
         ];
         case 'bench_scenarios': return CASES.map(c => ({
-          ...c, source_filename: null, notes: null, archived: false, created_at: nowIso,
+          ...c, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,
           dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
         }));
         case 'bench_result_summaries': return [
@@ -489,6 +489,7 @@ test.describe('planner bench', () => {
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
+    await expect(page.getByText('Synthetic evaluation: load and solar use forecasts.', { exact: true })).toBeVisible();
     await expect(page.locator('#bench-day-all')).toHaveAttribute('aria-pressed', 'true');
 
     // Every quarter of the shown plan carries its score in a strip above the chart.

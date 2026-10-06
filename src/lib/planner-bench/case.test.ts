@@ -64,7 +64,7 @@ Deno.test('a file that is not a 72-hour replay is refused', () => {
   assertThrows(() => caseFromReplay(replay({ slots: [] })), ReplayFormatError);
 });
 
-Deno.test('C-1005 preserves the downloaded replay as a 72-hour bench case awaiting measured results', async () => {
+Deno.test('C-1005 runs now with explicit synthetic evaluation data and preserves the replay inputs', async () => {
   const file = JSON.parse(await Deno.readTextFile(new URL('../../../bench/cases/C-1005.json', import.meta.url)));
   const data = parseScenarioData(file.dataset);
   assertEquals(data.start, '2026-10-05T10:15:00.000Z');
@@ -73,8 +73,19 @@ Deno.test('C-1005 preserves the downloaded replay as a 72-hour bench case awaiti
   assertEquals(data.known_prices.import_sek_per_kwh[0], 1.10176);
   assertEquals(data.solar_forecast_w.length, QUARTERS);
   assertEquals(data.base_load_forecast_w.length, QUARTERS);
-  assertEquals(file.recorded, null);
-  assertEquals(data.comfort, null);
+  const c = loadCase(data, file.recorded);
+  assertEquals(data.comfort, { pool_c: 30.5, ev_km: 360 });
+  assertEquals(c.recorded.prices.import_sek_per_kwh.slice(0, 47), data.known_prices.import_sek_per_kwh.slice(0, 47));
+  assertEquals(c.recorded.prices.export_sek_per_kwh.slice(0, 47), data.known_prices.export_sek_per_kwh.slice(0, 47));
+  assertEquals(c.recorded.actual, { base_load_w: data.base_load_forecast_w, solar_w: data.solar_forecast_w });
+  assertEquals(file.recorded.synthetic_quarters.prices.length, 49);
+  assertEquals(file.recorded.synthetic_quarters.outdoor_temperature_c.length, 154);
+  for (const i of file.recorded.synthetic_quarters.prices) {
+    assertEquals(c.recorded.prices.import_sek_per_kwh[i], c.recorded.prices.import_sek_per_kwh[i - 96]);
+    assertEquals(c.recorded.prices.export_sek_per_kwh[i], c.recorded.prices.export_sek_per_kwh[i - 96]);
+  }
+  assert(file.notes.startsWith('Synthetic evaluation:'));
+  assert(file.notes.includes('not a measured 72-hour outcome'));
   assert(!/resolved_price_outlook|replan_reference|planner_output/.test(JSON.stringify(data)));
 });
 

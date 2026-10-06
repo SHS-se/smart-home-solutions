@@ -33,7 +33,8 @@ for (const arg of Deno.args) {
   const response = await fetch(`${url}/rest/v1/bench_scenarios`, {
     method: "POST",
     headers: { ...headers, Prefer: "return=representation" },
-    body: JSON.stringify({ name, captured_at: data.start, source_filename: filename, dataset: data, ...(recorded ? { recorded } : {}) }),
+    body: JSON.stringify({ name, captured_at: data.start, source_filename: filename, dataset: data,
+      ...(typeof file.notes === "string" ? { notes: file.notes } : {}), ...(recorded ? { recorded } : {}) }),
   });
   if (!response.ok) throw new Error(`${name}: ${response.status} ${await response.text()}`);
   const [row] = await response.json();
