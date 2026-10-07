@@ -100,6 +100,7 @@ export interface BenchRun {
   subject: string;
   branch: string | null;
   is_current: boolean;
+  is_test: boolean;
   status: 'running' | 'done' | 'failed';
   error: string | null;
   finished_at: string | null;

@@ -3,23 +3,15 @@ name: Planner bench
 # Replays every bench test case through planner versions and stores the plans
 # in the TEST Supabase project (docs/planner-bench/README.md).
 #
-# - Push to dev: benchmarks the pushed commit and marks it as the current
-#   planner, because dev is what the test environment runs.
-# - Manual / from the bench page: runs any commits, typically `all` after a
-#   new test case is added. Existing results are kept unless `force` is set.
-#   `none` runs no planners and only recomputes stale scores (after a case's
-#   criteria change). Every run ends by rescoring whatever is stale.
-#
-# A push runs the bench only when it changed the planner or the bench's own
-# input and judgement (scripts/ci-changes.ts) since the last successful bench
-# push. It runs the pushed commit and `all`: only results whose input changed
-# are planned again, and stale evaluations are recomputed without planning.
-#
-# Uses the existing SUPABASE_ACCESS_TOKEN and SUPABASE_DB_PASSWORD_TEST secrets.
+# Successful CI deployments establish the production/main and test/dev versions.
+# The bench remains in TEST and historical comparisons remain available.
+# Manual dispatch runs/re-scores requested cases without changing deployment identity.
 
 on:
-  push:
-    branches: [dev]
+  workflow_run:
+    workflows: ["CI & Deploy"]
+    types: [completed]
+    branches: [main, dev]
   workflow_dispatch:
     inputs:
       shas:
@@ -45,42 +37,12 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  changes:
-    name: Detect planner changes
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read # to find the last successful run
-    outputs:
-      planner: ${{ steps.detect.outputs.planner }}
-      bench: ${{ steps.detect.outputs.bench }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Classify changed files
-        id: detect
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          base=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/planner-bench.yml/runs?branch=dev&event=push&status=success&per_page=1" \
-            --jq '.workflow_runs[0].head_sha // ""')
-          deno run -A --no-check scripts/ci-changes.ts --base "$base" --workflow planner-bench.yml
-
   bench:
     name: Run planner bench
-    needs: changes
-    if: ${{ !cancelled() && !failure() && (github.event_name != 'push' || needs.changes.outputs.planner == 'true' || needs.changes.outputs.bench == 'true') }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -91,7 +53,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Planner versions are checked out as worktrees of arbitrary commits.
+          # Run the current dev harness; planner versions use historical worktrees.
+          ref: dev
           fetch-depth: 0
 
       - name: Set up Node
@@ -125,6 +88,18 @@ jobs:
           echo "::add-mask::$key"
           echo "BENCH_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
 
+      - name: Resolve successfully deployed planner commits
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for branch in main dev; do
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-deploy.yml/runs?branch=$branch&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""')
+            [ -n "$sha" ] || { echo "No successful deployment for $branch" >&2; exit 1; }
+            echo "DEPLOYED_$branch=$sha" >> "$GITHUB_ENV"
+          done
+
       - name: Run the bench
         env:
           INPUT_SHAS: ${{ inputs.shas }}
@@ -133,9 +108,9 @@ jobs:
           INPUT_RERECORD: ${{ inputs.rerecord }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
             deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
-              --shas "$GITHUB_SHA,all" --branch dev --current "$GITHUB_SHA"
+              --shas "$DEPLOYED_main,$DEPLOYED_dev,all" --current "$DEPLOYED_main" --test "$DEPLOYED_dev"
           else
             extra=()
             [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")

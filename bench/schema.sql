@@ -48,13 +48,15 @@ create table if not exists public.bench_runs (
   committed_at timestamptz not null,
   subject text not null default '',
   branch text,
-  -- The planner version deployed where plans are currently made.
+  -- The planner version successfully deployed to production.
   is_current boolean not null default false,
   status text not null default 'running' check (status in ('running', 'done', 'failed')),
   error text,
   finished_at timestamptz,
   created_at timestamptz not null default now()
 );
+alter table public.bench_runs add column if not exists is_test boolean not null default false;
+create unique index if not exists bench_runs_one_test on public.bench_runs (is_test) where is_test;
 create unique index if not exists bench_runs_one_current on public.bench_runs (is_current) where is_current;
 -- What the planner's code does (bench/planner-version.ts). Commits that share a
 -- version share one run: the runner folds later ones into the earliest.
@@ -112,7 +114,7 @@ alter table public.bench_results enable row level security;
 alter table public.bench_verdicts enable row level security;
 alter table public.bench_rules enable row level security;
 
--- Staff read everything and curate cases, rules, verdicts and which run is current.
+-- Staff read everything and curate cases, rules and verdicts.
 -- Results are written only by the runner, with the service-role key.
 do $$
 declare
@@ -128,23 +130,28 @@ begin
   end loop;
 end $$;
 
--- Marking a run current must clear the previous one in the same statement,
--- which a client update cannot do under the unique index.
-create or replace function public.bench_set_current(p_sha text)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
+-- Deployment identity belongs to successful CI deployments, never manual UI edits.
+drop function if exists public.bench_set_current(text);
+create or replace function public.bench_set_deployed(p_sha text, p_environment text)
+returns void language plpgsql security definer set search_path=public as $$
 begin
-  if not public.is_staff(auth.uid()) then
-    raise exception 'staff only';
+  if p_environment not in ('production', 'test') or p_environment is null then
+    raise exception 'Unknown deployment environment';
   end if;
-  update public.bench_runs set is_current = false where is_current and sha <> p_sha;
-  update public.bench_runs set is_current = true where sha = p_sha;
+  perform pg_advisory_xact_lock(hashtext('bench deployment identity'));
+  if not exists (select 1 from public.bench_runs where sha=p_sha) then
+    raise exception 'Unknown deployed planner: %', p_sha;
+  end if;
+  if p_environment='production' then
+    update public.bench_runs set is_current=false where is_current and sha<>p_sha;
+    update public.bench_runs set is_current=true where sha=p_sha;
+  else
+    update public.bench_runs set is_test=false where is_test and sha<>p_sha;
+    update public.bench_runs set is_test=true where sha=p_sha;
+  end if;
 end $$;
-revoke all on function public.bench_set_current(text) from public, anon;
-grant execute on function public.bench_set_current(text) to authenticated;
+revoke all on function public.bench_set_deployed(text,text) from public, anon, authenticated;
+grant execute on function public.bench_set_deployed(text,text) to service_role;
 
 -- SQL NULL is the sole representation of absent JSON artifacts. Establish the
 -- object/null storage contract once, so coverage presence checks never detoast

@@ -12,7 +12,8 @@
 //   --rerecord              read again, from the home's tables, what each case's house drew and the
 //                           days before it, replacing what is stored (after those tables were corrected).
 //                           Cases made from an hourly history file keep theirs.
-//   --current <sha>         mark this commit as the planner currently deployed.
+//   --current <sha>         mark this commit as the production planner.
+//   --test <sha>            mark this commit as the test environment planner.
 //   --branch <name>         recorded against the run (CI passes the pushed branch).
 //   --local <dir> --out <file.json>
 //                           no database: cases are `{ dataset, recorded }` files in <dir>,
@@ -56,7 +57,7 @@ import { commitTree, currentVersionMethod, plannerVersion } from "./planner-vers
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
-const VALUED = ["shas", "scenario", "current", "branch", "local", "out", "worker", "root"] as const;
+const VALUED = ["shas", "scenario", "current", "test", "branch", "local", "out", "worker", "root"] as const;
 const args: Partial<Record<(typeof VALUED)[number], string>> & { force?: boolean; rerecord?: boolean } = {};
 for (let i = 0; i < Deno.args.length; i++) {
   const name = Deno.args[i].replace(/^--/, "");
@@ -257,6 +258,7 @@ async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSumma
     console.log(`${run.sha.slice(0, 7)}: same planner as ${first.sha.slice(0, 7)}, folded into it.`);
     await bench.mergeRun(run.sha, first.sha);
     first.is_current ||= run.is_current;
+    first.is_test ||= run.is_test;
   }
   return kept;
 }
@@ -264,7 +266,7 @@ async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSumma
 async function orchestrate() {
   const bench = store();
   if (args.shas === "none") {
-    if (args.current) throw new Error("--shas none only rescores; omit --current to leave planner run identity unchanged.");
+    if (args.current || args.test) throw new Error("--shas none only rescores; omit --current and --test to leave planner run identity unchanged.");
     if (args.rerecord) throw new Error("--shas none only rescores; --rerecord needs case preparation, so run it with --shas all.");
     // A rescore needs an existing source file; creating an empty local bench
     // is valid for planning, but would hide a mistyped path here.
@@ -299,7 +301,7 @@ async function orchestrate() {
       }
       console.log(`${shortSha} ${subject}`);
       const run = { sha, short_sha: shortSha, committed_at: committedAt, subject, branch: args.branch ?? null, planner_version: version };
-      byVersion.set(version, { sha, committed_at: committedAt, planner_version: version, is_current: false });
+      byVersion.set(version, { sha, committed_at: committedAt, planner_version: version, is_current: false, is_test: false });
       await bench.saveRun({ ...run, status: "running", error: null, finished_at: null });
 
       const root = `${scratch}/${shortSha}`;
@@ -323,10 +325,11 @@ async function orchestrate() {
         await git("worktree", "remove", "--force", root).catch(() => {});
       }
     }
-    if (args.current) {
+    for (const [ref, environment] of [[args.current, "production"], [args.test, "test"]] as const) {
+      if (!ref) continue;
       // The deployed commit may share its planner with an earlier run.
-      const sha = await git("rev-parse", args.current);
-      await bench.markCurrent(byVersion.get(await versionOf(sha))?.sha ?? sha);
+      const sha = await git("rev-parse", ref);
+      await bench.markDeployed(byVersion.get(await versionOf(sha))?.sha ?? sha, environment);
     }
     await rescoreAndReport(bench);
   } finally {

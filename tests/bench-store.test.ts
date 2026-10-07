@@ -3,6 +3,40 @@ import { DbStore, LocalStore, type EvaluatedResult } from "../bench/store.ts";
 
 const immediate = { now: () => 0, wait: () => Promise.resolve() };
 
+Deno.test("deployment marks remain independent and follow identical planners when runs fold", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bench-deployments-" });
+  try {
+    const store = new LocalStore(dir, `${dir}/results.json`);
+    for (const sha of ["older", "main", "dev"]) {
+      await store.saveRun({ sha, short_sha: sha, committed_at: "2026-10-07T00:00:00Z", subject: sha, branch: null, status: "done" });
+    }
+    await store.markDeployed("main", "production");
+    await store.markDeployed("dev", "test");
+    await store.mergeRun("main", "older");
+    await store.mergeRun("dev", "older");
+    assertEquals((await store.runs()).map(run => [run.sha, run.is_current, run.is_test]), [["older", true, true]]);
+    await assertRejects(() => store.markDeployed("missing", "production"), Error, "Unknown deployed planner");
+    assertEquals((await store.runs()).map(run => [run.is_current, run.is_test]), [[true, true]]);
+  } finally { await Deno.remove(dir, { recursive: true }); }
+});
+
+Deno.test("database deployment identity uses one atomic service-role RPC", async () => {
+  const original = globalThis.fetch;
+  const writes: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    assertEquals(new URL(String(input)).pathname, "/rest/v1/rpc/bench_set_deployed");
+    assertEquals(init?.method, "POST");
+    writes.push(JSON.parse(String(init?.body)));
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const store = new DbStore("https://bench.invalid", "test-key", immediate);
+    await store.markDeployed("main-sha", "production");
+    await store.markDeployed("dev-sha", "test");
+    assertEquals(writes, [{ p_sha: "main-sha", p_environment: "production" }, { p_sha: "dev-sha", p_environment: "test" }]);
+  } finally { globalThis.fetch = original; }
+});
+
 Deno.test("database rescore reads every result beyond 1000, with stable ordering and server-capped pages", async () => {
   const original = globalThis.fetch;
   const rows: EvaluatedResult[] = Array.from({ length: 1203 }, (_, i) => ({

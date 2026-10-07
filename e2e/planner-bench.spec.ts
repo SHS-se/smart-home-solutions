@@ -281,9 +281,9 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         case 'staff_users': return [{ role: 'admin' }];
         case 'bench_rules': return [{ criteria: {} }];
         case 'bench_runs': return [
-          ...(repeats ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, status: 'done', error: null, finished_at: nowIso })),
-          { ...CURRENT, branch: 'dev', is_current: true, status: 'done', error: null, finished_at: nowIso },
-          { ...TEST, branch: null, is_current: false, status: 'done', error: null, finished_at: nowIso },
+          ...(repeats ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
+          { ...CURRENT, branch: 'main', is_current: true, is_test: false, status: 'done', error: null, finished_at: nowIso },
+          { ...TEST, branch: 'dev', is_current: false, is_test: true, status: 'done', error: null, finished_at: nowIso },
         ];
         case 'bench_scenarios': return CASES.map(c => ({
           ...c, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,

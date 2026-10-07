@@ -55,6 +55,7 @@ export interface RunSummary {
   committed_at: string;
   planner_version: string | null;
   is_current: boolean;
+  is_test: boolean;
 }
 
 /** One result: a planner commit, a test case and the lane it was planned under. */
@@ -105,7 +106,7 @@ export interface BenchStore {
   /** The input hash of each result this commit has, by `laneKey`. */
   resultHashes(sha: string): Promise<Map<string, string | null>>;
   saveRun(run: RunRecord): Promise<void>;
-  markCurrent(sha: string): Promise<void>;
+  markDeployed(sha: string, environment: "production" | "test"): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
   /** Every result, including planner errors, for complete rescore coverage checks. */
   evaluatedResults(): Promise<EvaluatedResult[]>;
@@ -201,7 +202,7 @@ export class DbStore implements BenchStore {
   }
 
   async runs() {
-    return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current&order=committed_at,sha");
+    return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current,is_test&order=committed_at,sha");
   }
 
   async setPlannerVersion(sha: string, version: string) {
@@ -217,8 +218,9 @@ export class DbStore implements BenchStore {
         body: JSON.stringify(verdicts.map(verdict => ({ ...verdict, sha: into }))),
       });
     }
-    const [run] = await this.request(`bench_runs?select=is_current&sha=eq.${from}`) as { is_current: boolean }[];
-    if (run?.is_current) await this.markCurrent(into);
+    const [run] = await this.request(`bench_runs?select=is_current,is_test&sha=eq.${from}`) as { is_current: boolean; is_test: boolean }[];
+    if (run?.is_current) await this.markDeployed(into, "production");
+    if (run?.is_test) await this.markDeployed(into, "test");
     // Results and verdicts cascade.
     await this.request(`bench_runs?sha=eq.${from}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
@@ -236,9 +238,8 @@ export class DbStore implements BenchStore {
     });
   }
 
-  async markCurrent(sha: string) {
-    await this.patch("bench_runs?is_current=eq.true", { is_current: false });
-    await this.patch(`bench_runs?sha=eq.${sha}`, { is_current: true });
+  async markDeployed(sha: string, environment: "production" | "test") {
+    await this.request("rpc/bench_set_deployed", { method: "POST", body: JSON.stringify({ p_sha: sha, p_environment: environment }) });
   }
 
   async saveResult(result: ResultRecord) {
@@ -280,7 +281,7 @@ export class DbStore implements BenchStore {
 const same = (a: ResultKey, b: ResultKey) => a.sha === b.sha && a.scenario_id === b.scenario_id && a.lane === b.lane;
 
 interface LocalFile {
-  runs: (RunRecord & { is_current?: boolean })[];
+  runs: (RunRecord & { is_current?: boolean; is_test?: boolean })[];
   results: ResultRecord[];
   rules?: CriteriaOverrides;
 }
@@ -322,7 +323,7 @@ export class LocalStore implements BenchStore {
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
   async runs() {
     return (await this.load()).runs.map(run => ({
-      sha: run.sha, committed_at: run.committed_at, planner_version: run.planner_version ?? null, is_current: !!run.is_current,
+      sha: run.sha, committed_at: run.committed_at, planner_version: run.planner_version ?? null, is_current: !!run.is_current, is_test: !!run.is_test,
     })).sort((a, b) => a.committed_at.localeCompare(b.committed_at));
   }
   async setPlannerVersion(sha: string, version: string) {
@@ -332,8 +333,8 @@ export class LocalStore implements BenchStore {
   }
   async mergeRun(from: string, into: string) {
     const file = await this.load();
-    const moved = file.runs.find(run => run.sha === from)?.is_current;
-    file.runs = file.runs.filter(run => run.sha !== from).map(run => moved && run.sha === into ? { ...run, is_current: true } : run);
+    const moved = file.runs.find(run => run.sha === from);
+    file.runs = file.runs.filter(run => run.sha !== from).map(run => run.sha === into ? { ...run, is_current: run.is_current || moved?.is_current, is_test: run.is_test || moved?.is_test } : run);
     file.results = file.results.filter(result => result.sha !== from);
     await this.save(file);
   }
@@ -346,9 +347,11 @@ export class LocalStore implements BenchStore {
     file.runs = [...file.runs.filter(r => r.sha !== run.sha), { ...old, ...run }];
     await this.save(file);
   }
-  async markCurrent(sha: string) {
+  async markDeployed(sha: string, environment: "production" | "test") {
     const file = await this.load();
-    file.runs = file.runs.map(run => ({ ...run, is_current: run.sha === sha }));
+    if (!file.runs.some(run => run.sha === sha)) throw new Error(`Unknown deployed planner: ${sha}`);
+    const field = environment === "production" ? "is_current" : "is_test";
+    file.runs = file.runs.map(run => ({ ...run, [field]: run.sha === sha }));
     await this.save(file);
   }
   async saveResult(result: ResultRecord) {

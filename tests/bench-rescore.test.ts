@@ -52,7 +52,7 @@ class MemoryStore {
     return this.cases.filter(c => (!only || c.id === only) && (includeArchived || !c.archived));
   }
   async runs(): Promise<RunSummary[]> {
-    return ["old-not-in-git", "new-not-in-git"].map(sha => ({ sha, committed_at: dataset.start, planner_version: null, is_current: false }));
+    return ["old-not-in-git", "new-not-in-git"].map(sha => ({ sha, committed_at: dataset.start, planner_version: null, is_current: false, is_test: false }));
   }
   async evaluatedResults() { return structuredClone(this.rows.map(r => ({ ...r, has_record: this.records.get(keyOf(r)) != null }))); }
   async planRecord(key: EvaluatedResult) { this.reads.push(key); return structuredClone(this.records.get(keyOf(key)) ?? null); }

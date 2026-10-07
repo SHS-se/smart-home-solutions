@@ -102,7 +102,7 @@ const Bench: React.FC = () => {
   const cases = useMemo(() => scenarios.data ?? [], [scenarios.data]);
   const currentRun = allRuns.find(run => run.is_current) ?? null;
   const [testSha, setTestSha] = useState<string | null>(null);
-  const testRun = allRuns.find(run => run.sha === testSha) ?? allRuns[allRuns.length - 1] ?? null;
+  const testRun = allRuns.find(run => run.sha === testSha) ?? allRuns.find(run => run.is_test) ?? null;
   const [caseId, setCaseId] = useState<string | null>(null);
   const selectedCase = cases.find(c => c.id === caseId) ?? cases[0] ?? null;
   const [shown, setShown] = useState<'current' | 'test'>('test');
@@ -280,18 +280,12 @@ const Bench: React.FC = () => {
     onError: (error: Error) => toast({ title: t('Kunde inte spara reglerna', 'Could not save the rules'), description: error.message, variant: 'destructive' }),
   });
 
-  const makeCurrent = useMutation({
-    mutationFn: async (sha: string) => { await rows(db.rpc('bench_set_current', { p_sha: sha })); },
-    onSuccess: refresh,
-    onError: (error: Error) => toast({ title: t('Kunde inte ändra', 'Could not change the current planner'), description: error.message, variant: 'destructive' }),
-  });
-
   const loading = runs.isLoading || scenarios.isLoading || summaries.isLoading;
   const loadError = runs.error ?? scenarios.error ?? summaries.error;
   const runLabel = (run: BenchRun) => {
     const score = runScores.get(run.sha);
     const status = run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : '';
-    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${status}`;
+    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : ''}${status}`;
   };
 
   const shortRun = (sha: string | null) => {
@@ -398,12 +392,12 @@ const Bench: React.FC = () => {
             <CardContent className="pt-6 space-y-4">
               <div className="grid items-start gap-4 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <div className="text-xs text-muted-foreground">{t('Nuvarande planerare (körs på testmiljön)', 'Current planner (running on the test environment)')}</div>
+                  <div className="text-xs text-muted-foreground">{t('Nuvarande planerare (produktion · main)', 'Current planner (production · main)')}</div>
                   <div id="bench-current-run" className="flex h-10 items-center font-mono text-sm rounded-md border px-3"><span className="truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</span></div>
                   {currentRun && <div className="text-xs text-muted-foreground truncate">{currentRun.subject}</div>}
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Testplanerare', 'Test planner')}</label>
+                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Testplanerare (testmiljön · dev)', 'Test planner (test environment · dev)')}</label>
                   <div className="flex items-center gap-2">
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
@@ -411,11 +405,6 @@ const Bench: React.FC = () => {
                         {listedRuns.map(run => <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    {testRun && !testRun.is_current && (
-                      <Button variant="ghost" size="sm" disabled={makeCurrent.isPending} onClick={() => makeCurrent.mutate(testRun.sha)}>
-                        {t('Gör nuvarande', 'Make current')}
-                      </Button>
-                    )}
                   </div>
                   {testRun && <div className="text-xs text-muted-foreground truncate">{testRun.subject}</div>}
                 </div>

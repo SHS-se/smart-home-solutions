@@ -16,7 +16,7 @@ Page: **Planner bench** in the staff menu, on the test site
 | Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household data never reaches production. |
 | Runner | `bench/run.ts`, `bench/adapter.ts`, `bench/history.ts`, `bench/store.ts`, `bench/planner-version.ts` | Converts and completes test cases, then checks each planner commit out as a git worktree and plans every case whose result is missing or stale, in a fresh Deno process. Stores what the planner decided and the referee's account of it. |
 | Shared logic | `src/lib/planner-bench/` | Test case format, replay conversion, household, referee, totals, scoring. Used by both the runner and the page. |
-| CI | `.github/workflows/planner-bench.yml` | On push to `dev` that touches the planner or the bench's own input and judgement: benches the pushed commit and every stale result, and marks the pushed planner version current. On manual dispatch: runs any commits, usually `all`. |
+| CI | `.github/workflows/planner-bench.yml` | After successful main/dev deployments, benches the deployed planner versions and stale results, marking production as current and dev as test. Manual dispatch runs requested commits or rescores. |
 | Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
 | Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, rule list, upload. |
 
@@ -39,17 +39,15 @@ changes only the website, the bench, tests, docs or types has the same version
 as the commit before it, and gets no new entry.
 
 Before each run the runner gives every stored run its version and folds runs
-that share one into the earliest: verdicts and the current mark move over, the
-duplicate's results go. When the pushed commit's version is already on the
-bench, nothing runs and that entry becomes current.
+that share one into the earliest: verdicts and deployment marks move over, the
+duplicate's results go. When a deployed commit's version is already on the bench, that existing entry receives its deployment mark.
 
 ## Current and test planner
 
-- **Current:** the run marked `is_current`. CI marks the planner version of each
-  commit pushed to `dev`, because `dev` is what the test environment runs. **Make current** on
-  the page changes it by hand.
-- **Test:** whichever run you pick in the dropdown. Runs are listed oldest
-  first as `short sha · commit time · score`.
+- **Current:** the planner version successfully deployed from `main` to production, marked `is_current` by CI.
+- **Test:** defaults to the planner version successfully deployed from `dev` to test, marked `is_test` by CI. The dropdown also allows historical comparisons.
+
+Both marks may belong to the same run when production and test share a planner version. Deployment marks cannot be changed from the page.
 
 The totals table compares only the cases both runs have results for.
 
