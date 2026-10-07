@@ -2,6 +2,7 @@
   "tasks": {
     "deploy:planner-probe": "deno run --allow-read --allow-write --allow-run scripts/deploy-planner-probe.ts",
     "build:planner-wasm": "deno run --allow-read --allow-write --allow-run --allow-env=HOME,CARGO_HOME scripts/build-planner-wasm.ts",
+    "test:planner-build-reproducibility": "deno run --allow-read --allow-write --allow-run scripts/check-planner-build-reproducibility.ts",
     "test:planner-native-parity": "deno run --no-check --sloppy-imports --allow-read --allow-run scripts/check-planner-native-parity.ts",
     "probe:planner-hosted": "deno run --no-check --sloppy-imports --allow-read --allow-write --allow-run --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/probe-planner-hosted.ts",
     "bench:planner-wasm": "deno run --no-check --sloppy-imports --allow-read --allow-write scripts/bench-planner-wasm.ts",

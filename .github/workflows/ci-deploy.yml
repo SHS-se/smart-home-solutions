@@ -173,7 +173,9 @@ jobs:
         # rustup reads rust-toolchain.toml, including Wasm, rustfmt and Clippy.
         run: rustup show
       - name: Check Rust formatting
-        run: cargo fmt --all --manifest-path planner-core/Cargo.toml --check
+        run: |
+          cargo fmt --all --manifest-path planner-core/Cargo.toml --check
+          rustfmt --check scripts/rustc-wasm-wrapper.rs
       - name: Check Rust lint
         run: cargo clippy --manifest-path planner-core/Cargo.toml --all-targets --locked -- -D warnings
       - name: Test Rust device models
@@ -182,6 +184,8 @@ jobs:
         run: |
           deno task build:planner-wasm
           git diff --exit-code -- supabase/functions/_shared/planner-wasm/solver.wasm supabase/functions/_shared/planner-wasm/artifact.json supabase/functions/_shared/planner-wasm/solver-bytes.ts supabase/functions/energy-planner-probe/recipe.json
+      - name: Verify independent checkout reproduces Wasm
+        run: deno task test:planner-build-reproducibility
       - name: Build native reference and check parity
         run: |
           cargo build --manifest-path planner-core/Cargo.toml --locked --release --bin shs-planner-core

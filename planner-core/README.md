@@ -33,7 +33,11 @@ Supabase `--use-api` deployment path, which cannot package static Wasm files.
 Source, compiler/toolchain configuration, prepared-input dependencies, policy,
 recipe and binary digests identify the candidate. Path remapping removes local
 Cargo/repository paths from the binary. CI rebuilds and checks the artifacts,
-Rust lint/tests and exact native/Wasm output parity.
+Rust lint/tests and exact native/Wasm output parity. The frozen ABI uses an
+explicit compiler metadata salt and strips release symbols so Cargo cannot
+change internal names and function order with its build host or checkout path.
+`deno task test:planner-build-reproducibility` rebuilds in another directory and
+compares the complete binary and source manifest without normalization.
 
 ## Measurement
 

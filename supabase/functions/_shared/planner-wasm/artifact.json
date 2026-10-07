@@ -1,7 +1,7 @@
 {
   "abi": 2,
-  "wasm_sha256": "5315d7a60cde33069c72a8ff80285053b2087a169d211222dcac8021cb1ae7a0",
-  "source_sha256": "7176b2defcafc7ca0f6534e485bf3d32b99b6dc5604c8f1f3cddaa452c324563",
+  "wasm_sha256": "91213c47f9811745046e9796740c54244e17ca03d23c3ae4b01392e009d7097c",
+  "source_sha256": "fc90f987022a1f708abdd0db6854c8d2b3862d2e69f644e7b9b4f2814253ffaf",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -26,6 +26,7 @@
     "rust-toolchain.toml",
     "scripts/build-planner-wasm.ts",
     "scripts/module-graph.ts",
+    "scripts/rustc-wasm-wrapper.rs",
     "src/lib/planner-bench/case.ts",
     "src/lib/planner-bench/lanes.ts",
     "src/lib/planner-bench/large-load-overlap.ts",

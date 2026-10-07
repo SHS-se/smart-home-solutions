@@ -14,6 +14,7 @@ export const SOURCE_FILES = [
   'planner-core/policy.json',
   'planner-core/recipe.json',
   'scripts/build-planner-wasm.ts',
+  'scripts/rustc-wasm-wrapper.rs',
   'bench/wasm-planner.ts',
   'bench/planner-engine.json',
   'supabase/functions/_shared/planner-wasm/core.ts',
@@ -55,9 +56,21 @@ if (import.meta.main) {
     `--remap-path-prefix=${root}=/workspace/`,
     `--remap-path-prefix=${cargoHome}=/cargo`,
   ];
+  const wrapper = join(root, 'planner-core/target/rustc-wasm-wrapper');
+  await Deno.mkdir(join(root, 'planner-core/target'), { recursive: true });
+  const wrapperBuild = await new Deno.Command('rustc', {
+    cwd: root,
+    args: ['--edition=2021', '-Dwarnings', 'scripts/rustc-wasm-wrapper.rs', '-o', wrapper],
+    stdout: 'inherit',
+    stderr: 'inherit',
+  }).spawn().status;
+  if (!wrapperBuild.success) Deno.exit(wrapperBuild.code);
   const build = await new Deno.Command('cargo', {
     cwd: root,
-    env: { CARGO_ENCODED_RUSTFLAGS: flags.join('\u001f') },
+    env: {
+      CARGO_ENCODED_RUSTFLAGS: flags.join('\u001f'),
+      RUSTC_WRAPPER: wrapper,
+    },
     args: [
       'build',
       '--manifest-path',
