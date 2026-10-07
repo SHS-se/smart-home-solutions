@@ -30,6 +30,11 @@ alter table public.bench_scenarios add column if not exists dataset jsonb;
 alter table public.bench_scenarios add column if not exists recorded jsonb;
 -- Why a case cannot be run yet, in words; null once it can.
 alter table public.bench_scenarios add column if not exists pending_reason text;
+-- Content identity shared by every planner generation. Authored edits and new
+-- observations invalidate results automatically; capture timestamps do not.
+alter table public.bench_scenarios add column if not exists revision text generated always as (
+  md5(coalesce((dataset - 'origin')::text, '') || '|' || coalesce((recorded - 'recorded_at')::text, ''))
+) stored;
 alter table public.bench_scenarios alter column input drop not null;
 
 -- The scoring rules, as changes to the defaults in src/lib/planner-bench/score.ts.
@@ -86,6 +91,7 @@ alter table public.bench_results add column if not exists record jsonb;
 alter table public.bench_results add column if not exists outcome jsonb;
 alter table public.bench_results add column if not exists referee_version integer;
 alter table public.bench_results add column if not exists input_hash text;
+alter table public.bench_results add column if not exists case_revision text;
 -- Each case is planned under several lanes (src/lib/planner-bench/lanes.ts):
 -- which prices the planner was told, and how much its value curves were worth.
 alter table public.bench_results add column if not exists lane text not null default 'told/nominal';
@@ -174,8 +180,26 @@ with (security_invoker = true) as
 select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_version, input_hash, lane,
   created_at,
   record is not null as has_record,
-  series is not null and stats is not null and outcome is not null as has_evaluation
+  series is not null and stats is not null and outcome is not null as has_evaluation,
+  case_revision
 from public.bench_results;
+
+-- A legacy result may acquire its case revision only after the runner has
+-- reproduced its complete input hash. Neither its decisions nor timestamps change.
+create or replace function public.bench_bind_result_revision(p_sha text, p_scenario uuid, p_lane text, p_input_hash text, p_revision text)
+returns boolean language plpgsql security invoker set search_path=public as $$
+declare n integer;
+begin
+  update public.bench_results r set case_revision=p_revision
+  where r.sha=p_sha and r.scenario_id=p_scenario and r.lane=p_lane
+    and r.input_hash=p_input_hash and r.status='ok' and r.record is not null
+    and exists (select 1 from public.bench_scenarios s where s.id=p_scenario
+      and s.revision=p_revision and s.recorded is not null and not s.archived);
+  get diagnostics n=row_count;
+  return n=1;
+end $$;
+revoke all on function public.bench_bind_result_revision(text,uuid,text,text,text) from public, anon, authenticated;
+grant execute on function public.bench_bind_result_revision(text,uuid,text,text,text) to service_role;
 
 -- Derived writes are fenced by the observed source and evaluation. A scorer or
 -- audit change does not rewrite unchanged referee output or source decisions.
@@ -210,6 +234,9 @@ begin
     and r.created_at=(g->>'created_at')::timestamptz
     and r.referee_version is not distinct from (g->>'referee_version')::integer
     and r.score is not distinct from nullif(g->'score','null'::jsonb)
+    and r.case_revision=g->>'case_revision'
+    and exists (select 1 from public.bench_scenarios s where s.id=r.scenario_id
+      and s.revision=r.case_revision and s.recorded is not null and not s.archived)
     and (k='evaluation' or (r.series is not null and r.stats is not null and r.outcome is not null));
   get diagnostics n=row_count;
   return n=1;

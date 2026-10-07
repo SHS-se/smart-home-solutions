@@ -22,11 +22,13 @@ import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
 import { BASE_LANE, LANES, diagnose, plannerKnewPrice, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
+import { fetchAllRows } from '@/lib/fetch-all-rows';
+import { resultState, runCoverage } from '@/lib/planner-bench/coverage';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import { benchDays, periodRange, type BenchPeriod } from '@/lib/planner-bench/days';
 import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import {
-  distinctScoreRuns, isStale, resolveRules, runScore, scoreQuarters, storedPassed, criteriaErrors,
+  distinctScoreRuns, isStale, resolveRules, scoreQuarters, criteriaErrors,
 } from '@/lib/planner-bench/score';
 import type {
   BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, CriteriaOverrides,
@@ -54,8 +56,6 @@ async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: str
 
 const key = (sha: string, scenario: string) => `${sha}/${scenario}`;
 
-interface CaseSummary { points: number; passed: boolean }
-
 /** PostgREST's answer when a table is not in the schema: this is not the test project. */
 const isMissingTable = (error: unknown) => /PGRST205|bench_\w+.*(does not exist|schema cache)/i.test(String((error as Error)?.message ?? error));
 
@@ -69,18 +69,20 @@ const Bench: React.FC = () => {
 
   const runs = useQuery({
     queryKey: ['bench', 'runs'],
-    queryFn: () => rows<BenchRun[]>(db.from('bench_runs').select('*').order('committed_at')),
+    queryFn: () => fetchAllRows<BenchRun>((from, to) => db.from('bench_runs').select('*').order('committed_at').order('sha').range(from, to)),
     refetchInterval: 30_000,
   });
   const scenarios = useQuery({
     queryKey: ['bench', 'scenarios'],
-    queryFn: () => rows<BenchScenario[]>(db.from('bench_scenarios')
-      .select('id, name, captured_at, source_filename, notes, archived, created_at, pending_reason, dataset, recorded_at:recorded->>recorded_at')
-      .eq('archived', false).order('captured_at')),
+    queryFn: () => fetchAllRows<BenchScenario>((from, to) => db.from('bench_scenarios')
+      .select('id, revision, name, captured_at, source_filename, notes, archived, created_at, pending_reason, dataset, recorded_at:recorded->>recorded_at')
+      .eq('archived', false).order('captured_at').order('id').range(from, to)),
+    refetchInterval: 30_000,
   });
   const summaries = useQuery({
     queryKey: ['bench', 'summaries'],
-    queryFn: () => rows<BenchResultSummary[]>(db.from('bench_result_summaries').select('*')),
+    queryFn: () => fetchAllRows<BenchResultSummary>((from, to) => db.from('bench_result_summaries').select('*')
+      .eq('lane', BASE_LANE).order('sha').order('scenario_id').order('lane').range(from, to)),
     refetchInterval: 30_000,
   });
 
@@ -110,29 +112,31 @@ const Bench: React.FC = () => {
   // Lists and totals show the base lane: the planner as it runs live. The other lanes explain it.
   const baseSummaries = useMemo(() => (summaries.data ?? []).filter(s => (s.lane ?? BASE_LANE) === BASE_LANE), [summaries.data]);
   const summaryByKey = useMemo(() => new Map(baseSummaries.map(s => [key(s.sha, s.scenario_id), s])), [baseSummaries]);
-  /** What each lane of a run came to for the selected case. */
+  const laneSummaries = useQuery({
+    queryKey: ['bench', 'lanes', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha],
+    enabled: Boolean(selectedCase?.recorded_at && (currentRun || testRun)),
+    queryFn: () => fetchAllRows<BenchResultSummary>((from, to) => db.from('bench_result_summaries').select('*')
+      .eq('scenario_id', selectedCase!.id).in('sha', [currentRun?.sha, testRun?.sha].filter((sha): sha is string => Boolean(sha)))
+      .order('sha').order('scenario_id').order('lane').range(from, to)),
+    refetchInterval: 30_000,
+  });
   const lanesFor = useMemo(() => (sha: string | undefined, scenarioId: string | undefined) => {
     const out: Partial<Record<LaneId, LaneResult>> = {};
-    for (const s of summaries.data ?? []) {
-      if (s.sha !== sha || s.scenario_id !== scenarioId || s.status !== 'ok' || !s.outcome || !s.score
-        || isStale(s.score, savedRules)) continue;
-      out[s.lane ?? BASE_LANE] = { cost_sek: s.outcome.cost_sek, credit_sek: s.outcome.terminal.credit_sek, points: s.score.points };
+    const c = cases.find(c => c.id === scenarioId);
+    if (!c) return out;
+    for (const s of laneSummaries.data ?? []) {
+      if (s.sha !== sha || resultState(c, s, savedRules) !== 'scored') continue;
+      out[s.lane] = { cost_sek: s.outcome!.cost_sek, credit_sek: s.outcome!.terminal.credit_sek, points: s.score!.points };
     }
     return out;
-  }, [summaries.data, savedRules]);
+  }, [laneSummaries.data, cases, savedRules]);
   const [lane, setLane] = useState<LaneId>(BASE_LANE);
 
-  /** Every case's stored score for one run; null where the run has no scored result. */
-  const scoresFor = useMemo(() => (sha: string) => new Map(cases.map(c => {
-    const summary = summaryByKey.get(key(sha, c.id));
-    const score = summary?.status === 'ok' && !isStale(summary.score, savedRules) ? summary.score : null;
-    return [c.id, score ? { points: score.points, passed: storedPassed(score, null) } : null] as const;
-  })), [cases, summaryByKey, savedRules]);
-
-  const runScores = useMemo(() => new Map(allRuns.map(run => {
-    const points = [...scoresFor(run.sha).values()].filter((s): s is CaseSummary => s !== null).map(s => s.points);
-    return [run.sha, runScore(points)] as const;
-  })), [allRuns, scoresFor]);
+  const coverage = useMemo(() => new Map(allRuns.map(run => [run.sha, runCoverage(cases,
+    new Map(baseSummaries.filter(s => s.sha === run.sha).map(s => [s.scenario_id, s])), savedRules)])),
+  [allRuns, cases, baseSummaries, savedRules]);
+  const scoresFor = (sha: string) => coverage.get(sha)?.scores ?? null;
+  const runScores = useMemo(() => new Map([...coverage].map(([sha, value]) => [sha, value.score])), [coverage]);
 
   /** The planners offered for testing: a version that scored the same as the one after it is left out. */
   const listedRuns = useMemo(() => distinctScoreRuns(
@@ -158,21 +162,21 @@ const Bench: React.FC = () => {
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
 
-  /** Totals over the cases both runs have results for, so the columns compare like with like. */
+  /** Both complete runs use the entire recorded cohort; never a partial intersection. */
   const totals = useMemo(() => {
-    if (!currentRun || !testRun) return null;
-    const both = cases.filter(c => summaryByKey.get(key(currentRun.sha, c.id))?.stats && summaryByKey.get(key(testRun.sha, c.id))?.stats);
-    const stats = (sha: string) => suiteStats(both.map(c => summaryByKey.get(key(sha, c.id))!.stats!));
-    return { cases: both.length, current: stats(currentRun.sha), test: stats(testRun.sha) };
-  }, [cases, currentRun, testRun, summaryByKey]);
+    if (!currentRun || !testRun || runScores.get(currentRun.sha) == null || runScores.get(testRun.sha) == null) return null;
+    const ready = cases.filter(c => c.dataset && c.recorded_at);
+    const stats = (sha: string) => suiteStats(ready.map(c => summaryByKey.get(key(sha, c.id))!.stats!));
+    return { cases: ready.length, current: stats(currentRun.sha), test: stats(testRun.sha) };
+  }, [cases, currentRun, testRun, summaryByKey, runScores]);
 
   const series = useQuery({
-    queryKey: ['bench', 'series', selectedCase?.id, currentRun?.sha, testRun?.sha, lane],
-    enabled: Boolean(selectedCase && (currentRun || testRun)),
+    queryKey: ['bench', 'series', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha, lane],
+    enabled: Boolean(selectedCase?.recorded_at && (currentRun || testRun)),
     queryFn: async () => {
       const shas = [currentRun?.sha, testRun?.sha].filter((s): s is string => Boolean(s));
       const data = await rows<({ sha: string } & BenchResultDetail)[]>(db.from('bench_results')
-        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).eq('lane', lane).in('sha', shas));
+        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).eq('lane', lane).eq('case_revision', selectedCase!.revision).in('sha', shas));
       const by = new Map(data.map(r => [r.sha, r]));
       return { current: currentRun ? by.get(currentRun.sha) ?? null : null, test: testRun ? by.get(testRun.sha) ?? null : null };
     },
@@ -285,7 +289,9 @@ const Bench: React.FC = () => {
   const runLabel = (run: BenchRun) => {
     const score = runScores.get(run.sha);
     const status = run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : '';
-    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : ''}${status}`;
+    const cov = coverage.get(run.sha);
+    const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('testfall', 'cases')}` : '';
+    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : ''}${status}${incomplete}`;
   };
 
   const shortRun = (sha: string | null) => {
@@ -370,6 +376,11 @@ const Bench: React.FC = () => {
         <>
           <div className="flex flex-wrap gap-2" role="group" aria-label={t('Testfall', 'Test case')}>
             {cases.map(c => {
+              const state = resultState(c, testRun ? summaryByKey.get(key(testRun.sha, c.id)) : undefined, savedRules);
+              const stateLabel = state === 'missing' ? t('saknar resultat', 'missing result')
+                : state === 'inputs-changed' ? t('ändrade indata · kör om', 'inputs changed · rerun')
+                : state === 'needs-rescore' ? t('räkna om poäng', 'recompute score')
+                : state === 'error' ? t('planerarfel', 'planner error') : null;
               const currentScore = currentScores?.get(c.id);
               const testScore = testScores?.get(c.id);
               const dot = testScore == null ? 'bg-muted-foreground/40' : testScore.passed ? 'bg-emerald-500' : 'bg-red-500';
@@ -381,6 +392,7 @@ const Bench: React.FC = () => {
                   <span className="font-mono text-xs">{c.name}</span>
                   <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
                   {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
+                  {stateLabel && <span className="text-xs opacity-70">{stateLabel}</span>}
                   {currentScore && <span className="font-mono text-xs opacity-70">{t('N', 'C')} {signed(currentScore.points)}</span>}
                   {testScore && <span className="font-mono text-xs opacity-70">T {signed(testScore.points)}</span>}
                 </button>
@@ -409,8 +421,16 @@ const Bench: React.FC = () => {
                   {testRun && <div className="text-xs text-muted-foreground truncate">{testRun.subject}</div>}
                 </div>
               </div>
+              <p id="bench-coverage" className="text-sm text-muted-foreground">
+                {t(`${cases.filter(c => c.dataset && c.recorded_at).length} uppmätta testfall · ${cases.filter(c => !c.recorded_at).length} väntar på mätningar`,
+                  `${cases.filter(c => c.dataset && c.recorded_at).length} measured cases · ${cases.filter(c => !c.recorded_at).length} waiting for measurements`)}
+              </p>
+              {!totals && cases.some(c => c.recorded_at) && <p id="bench-incomplete" className="text-sm text-muted-foreground">
+                {t('Jämförelsen väntar på aktuella resultat för alla uppmätta testfall. Kör saknade resultat.',
+                  'Comparison awaits current results for every measured case. Run missing results.')}
+              </p>}
               {totals && <SuiteTable totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
-              {selectedCase && series.data && <CaseCostSummary scenario={selectedCase} details={series.data} />}
+              {selectedCase?.recorded_at && series.data && <CaseCostSummary scenario={selectedCase} details={series.data} />}
               {!cases.length && <p className="text-sm text-muted-foreground">{t('Inga testfall ännu. Lägg till en replay-fil.', 'No test cases yet. Add a replay file to start.')}</p>}
             </CardContent>
           </Card>
@@ -422,7 +442,7 @@ const Bench: React.FC = () => {
               currentRun={currentRun}
               testRun={testRun}
               summaryByKey={summaryByKey}
-              details={series.data ?? null}
+              details={selectedCase.recorded_at ? series.data ?? null : null}
               lane={lane}
               onLane={setLane}
               lanes={{ current: lanesFor(currentRun?.sha, selectedCase.id), test: lanesFor(testRun?.sha, selectedCase.id) }}
@@ -752,6 +772,9 @@ const CaseView: React.FC<CaseViewProps> = ({
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {!scenario.recorded_at && <Alert><AlertDescription>
+          {t('Väntar på fullständiga mätningar. ', 'Waiting for complete measurements. ')}{scenario.pending_reason}
+        </AlertDescription></Alert>}
         {scenario.notes && <p className="text-sm text-muted-foreground">{scenario.notes}</p>}
         {errors.map(e => (
           <Alert key={e!.sha} variant="destructive"><AlertDescription className="font-mono text-xs whitespace-pre-wrap">{e!.sha.slice(0, 7)}: {e!.error?.split('\n')[0]}</AlertDescription></Alert>

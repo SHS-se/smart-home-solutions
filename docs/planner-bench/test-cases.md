@@ -63,7 +63,7 @@ Recorded part (`recorded`), filled by the runner from the home's quarter tables
 ```jsonc
 {
   "prices": { "import_sek_per_kwh": [ … ], "export_sek_per_kwh": [ … ] },  // real, all 288 quarters
-  "actual": { "base_load_w": [ … ], "solar_w": [ … ] },  // what the house drew and the panels gave; absent if not measured in full
+  "actual": { "base_load_w": [ … ], "solar_w": [ … ] },  // what the house drew and the panels gave; required for a live bench case
   "outdoor_temperature_c": [ … ],            // measured at the house; a perfect forecast for planners
   "solar_irradiance_w_per_m2": [ … ],
   "wind": { "zone": "SE3", "days": [ { "day": "2026-09-20", "mean_speed_m_s": 3.4 }, … ] },  // observed, 45 days before the start to the end
@@ -110,7 +110,7 @@ household through what it drew (`actual.base_load_w`: measured load less the
 pool and the car, which the bench plans itself) and what the panels gave, not
 through the forecasts. A window whose device meters add up to more than the
 house drew in more than a few quarters is not used, and that case is refereed
-on its forecasts as before.
+as pending until a complete usable measured outcome exists. Forecast substitution is not used for live bench comparisons.
 
 From 17 August to 3 October 2026 the home recorded its car charging twice
 (`ev_charging_kwh`): the charger's dashboard meter plus a second meter for the

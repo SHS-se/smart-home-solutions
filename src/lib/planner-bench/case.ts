@@ -193,6 +193,11 @@ export function loadCase(data: unknown, recorded: unknown): BenchCase {
   return { ...parseScenarioData(data), recorded: parseRecorded(recorded) };
 }
 
+/** Live bench cases require observations; synthetic unit worlds are separate. */
+export function hasMeasuredOutcome(recorded: BenchRecorded | null): boolean {
+  return !!recorded?.actual && !('synthetic_quarters' in recorded);
+}
+
 export const quarterStarts = (start: string): string[] =>
   Array.from({ length: QUARTERS }, (_, i) => new Date(Date.parse(start) + i * QUARTER_MS).toISOString());
 

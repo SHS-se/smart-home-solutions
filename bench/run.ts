@@ -9,8 +9,8 @@
 //                           without case preparation or historical planner checkouts.
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases whose result is already up to date.
-//   --rerecord              read again, from the home's tables, what each case's house drew and the
-//                           days before it, replacing what is stored (after those tables were corrected).
+//   --rerecord              read the complete measured outcome and pre-case history again,
+//                           replacing what is stored (after those tables were corrected).
 //                           Cases made from an hourly history file keep theirs.
 //   --current <sha>         mark this commit as the production planner.
 //   --test <sha>            mark this commit as the test environment planner.
@@ -44,14 +44,14 @@
 // cannot take the others with it.
 
 import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
-import { canonicalJson, caseTargets, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
+import { canonicalJson, caseTargets, hasMeasuredOutcome, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { homeComfortTargets } from "./comfort.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
-import { completeCase, recordedActual, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
+import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
 import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
 
@@ -86,7 +86,7 @@ async function git(...argv: string[]): Promise<string> {
 
 /** The scenarios that are complete test cases. */
 const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =>
-  scenario.dataset && scenario.recorded ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
+  scenario.dataset && hasMeasuredOutcome(scenario.recorded) ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
 
 /** Identity of everything a planner generation is given for a case under one lane. */
 function inputHash(c: BenchCase, generation: string, lane: LaneId): Promise<string> {
@@ -99,11 +99,16 @@ async function worker(sha: string, root: string) {
   const bench = store();
   const planner = await loadPlanner(root);
   const [done, rules] = await Promise.all([bench.resultHashes(sha), bench.rules()]);
+  let failures = 0;
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
     for (const lane of LANES) {
       const hash = await inputHash(c, planner.generation, lane);
-      if (!args.force && done.get(laneKey(scenario.id, lane)) === hash) continue;
-      const base = { sha, scenario_id: scenario.id, lane, input_hash: hash };
+      const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
+      const previous = done.get(laneKey(scenario.id, lane));
+      if (!args.force && previous?.input_hash === hash && previous.status === "ok" && previous.has_record) {
+        if (previous.case_revision !== scenario.revision) await bench.bindResultRevision(base);
+        continue;
+      }
       try {
         const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale);
         // Whatever the planner was told, its plan is judged on the case as it really was.
@@ -113,12 +118,14 @@ async function worker(sha: string, root: string) {
           + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
           + ` score ${evaluation.score.points} (quarter rules ${evaluation.score.sum}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
       } catch (error) {
+        failures++;
         const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);
         await bench.saveResult({ ...base, status: "error", error: message, cpu_ms: null, record: null });
         console.log(`  ${scenario.name} ${lane}: ERROR ${message.split("\n")[0]}`);
       }
     }
   }
+  if (failures) throw new Error(`${failures} planner/case/lanes failed; successful results were saved. Rerun to retry the errors.`);
 }
 
 /** Where the home's recorded history is read from, or null without a database. */
@@ -156,58 +163,45 @@ async function prepareCases(bench: BenchStore) {
       console.log(`${scenario.name}: current home comfort preferences captured.`);
     }
     caseTargets(dataset);
+    if (scenario.recorded && (!hasMeasuredOutcome(scenario.recorded)
+      || (args.rerecord && dataset.origin?.kind !== "history"))) {
+      scenario.recorded = null;
+      await bench.saveRecorded(scenario.id, null, "awaiting complete measured outcome");
+      console.log(`${scenario.name}: recording cleared for measured completion.`);
+    }
     if (scenario.recorded && source && !scenario.recorded.wind) {
       // Wind was not kept when this case was recorded; it is added once it has been observed.
       const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
       if (wind) {
-        await bench.saveRecorded(scenario.id, { ...scenario.recorded, wind }, null);
+        scenario.recorded = { ...scenario.recorded, wind };
+        await bench.saveRecorded(scenario.id, scenario.recorded, null);
         console.log(`${scenario.name}: observed wind added.`);
       }
     }
-    if (args.rerecord && scenario.recorded && source && dataset.origin?.kind !== "history") {
-      // The home's tables were put right after this case was recorded, so what it stores is read again.
-      // Nothing is kept from before: a window that no longer measures cleanly is refereed on its forecasts.
-      const actual = await recordedActual(source, dataset.start);
+    if (scenario.recorded && source && !scenario.recorded.history.demand_days) {
       const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
-      const { actual: _stored, ...rest } = scenario.recorded;
-      const recorded = {
-        ...rest, ...(actual ? { actual } : {}),
-        history: { ...scenario.recorded.history, ...(demand ? { demand_days: demand } : {}) },
-      };
-      const changed = canonicalJson(recorded) !== canonicalJson(scenario.recorded);
-      if (changed) {
-        await bench.saveRecorded(scenario.id, recorded, null);
-        scenario.recorded = recorded;
-      }
-      console.log(`${scenario.name}: re-recorded${changed ? "" : ", unchanged"}; ${actual ? "window measured" : "window not measured, refereed on its forecasts"}.`);
-    }
-    if (scenario.recorded && source && (!scenario.recorded.actual || !scenario.recorded.history.demand_days)) {
-      // Recorded before the bench kept what the house really drew, or the days before it.
-      const recorded = { ...scenario.recorded, history: { ...scenario.recorded.history } };
-      const actual = recorded.actual ? null : await recordedActual(source, dataset.start);
-      const demand = recorded.history.demand_days ? null : await recordedDemandDays(source, dataset.timezone, dataset.start);
-      if (actual) recorded.actual = actual;
-      if (demand) recorded.history.demand_days = demand;
-      if (actual || demand) {
-        await bench.saveRecorded(scenario.id, recorded, null);
-        scenario.recorded = recorded;
-        console.log(`${scenario.name}: ${[actual && "measured load and solar", demand && "the days before it"].filter(Boolean).join(" and ")} added.`);
+      if (demand) {
+        scenario.recorded = { ...scenario.recorded, history: { ...scenario.recorded.history, demand_days: demand } };
+        await bench.saveRecorded(scenario.id, scenario.recorded, null);
       }
     }
     if (scenario.recorded || !source) continue;
     const done = await completeCase(source, dataset);
-    if (dataset.start_state_unread?.length) {
+    if (dataset.start_state_unread?.length && Object.keys(done.startState).length) {
       // Readings the replay lacked come from recorded history, once.
       const { ev_soc, ...read } = done.startState;
+      const remaining = dataset.start_state_unread.filter(field => !(field in done.startState));
       const { start_state_unread: _unread, ...rest } = dataset;
-      dataset = { ...rest, start_state: { ...dataset.start_state, ...read, ev: { ...dataset.start_state.ev, ...(ev_soc !== undefined ? { soc: ev_soc } : {}) } } };
+      dataset = { ...rest, ...(remaining.length ? { start_state_unread: remaining } : {}), start_state: { ...dataset.start_state, ...read, ev: { ...dataset.start_state.ev, ...(ev_soc !== undefined ? { soc: ev_soc } : {}) } } };
       await bench.saveDataset(scenario.id, dataset);
+    }
+    if (dataset.start_state_unread?.length) {
+      done.recorded = null;
+      done.missing = `${done.missing ? done.missing + "; " : ""}missing measured start state: ${dataset.start_state_unread.join(", ")}`;
     }
     if (done.recorded) {
       const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
       if (wind) done.recorded.wind = wind;
-      const actual = await recordedActual(source, dataset.start);
-      if (actual) done.recorded.actual = actual;
       const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
       if (demand) done.recorded.history.demand_days = demand;
     }
@@ -217,7 +211,7 @@ async function prepareCases(bench: BenchStore) {
 }
 
 /** Print and persist coverage even when some successful records could not be rescored. */
-async function rescoreAndReport(bench: BenchStore) {
+async function rescoreAndReport(bench: BenchStore, requireComplete = false) {
   const publish = async (report: RescoreReport) => {
     const markdown = rescoreMarkdown(report);
     console.log(markdown);
@@ -225,7 +219,11 @@ async function rescoreAndReport(bench: BenchStore) {
     if (summary) await Deno.writeTextFile(summary, markdown, { append: true });
   };
   try {
-    await publish(await rescoreExisting(bench, args.scenario));
+    const report = await rescoreExisting(bench, args.scenario);
+    await publish(report);
+    if (requireComplete && report.planners.some(p => p.currentLanes !== p.expectedLanes)) {
+      throw new Error("Bench coverage is incomplete: see the reported missing, stale-input or failed lanes. Rerun the named planners.");
+    }
   } catch (error) {
     if (error instanceof RescoreIncompleteError) await publish(error.report);
     throw error;
@@ -331,7 +329,7 @@ async function orchestrate() {
       const sha = await git("rev-parse", ref);
       await bench.markDeployed(byVersion.get(await versionOf(sha))?.sha ?? sha, environment);
     }
-    await rescoreAndReport(bench);
+    await rescoreAndReport(bench, true);
   } finally {
     await Deno.remove(scratch, { recursive: true }).catch(() => {});
   }

@@ -86,18 +86,13 @@ on the bench is run for it. From the command line:
 deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-replay.json
 ```
 
-`bench/cases/C-1005.json` preserves the converted 5 October 2026 replay beginning
-at 10:15 UTC, with 47 published-price quarters, pool water at 30.01 °C, battery
-at 13.9 % and EV at 66 %. The SHS test bench case is
-`ef654356-5b2b-453b-8cb2-649dadcf1e6b`. On 6 October it was made runnable with
-explicit synthetic evaluation data: 49 missing price quarters and 154 missing
-outdoor-temperature quarters repeat the latest available value at the same time
-of day; load and solar use the replay forecasts for all 288 quarters. Existing
-prices, temperatures, pre-case history and start state are preserved. The case
-file includes the saved comfort targets (30.5 °C and 360 km), the indices of the
-synthetic quarters, and visible case notes explaining the assumptions. It is a
-test scenario rather than a measured 72-hour outcome. The raw replay and its old
-plan are excluded from the case.
+C-1005 preserves the converted 5 October replay in the TEST database, starting
+at 10:15 UTC with 47 published-price quarters, pool water at 30.01 °C, battery
+at 13.9 % and EV at 66 %. Its former synthetic outcome has been removed. Like
+all replay cases, it waits for complete measured prices, temperature, load and
+solar over its 72 hours (ending 8 October at 10:15 UTC). Re-running the bench
+completes it once those observations exist. Household case data belongs in the
+TEST database, not a bespoke repository fixture.
 
 A window from before the home's quarter tables (12 August 2026) is made into a
 case from Home Assistant's hourly statistics, then added the same way
@@ -114,8 +109,9 @@ locally:
 
 After the home's quarter tables have been corrected, run it with `rerecord`
 (`--rerecord`, together with `shas` `all`): every case not made from an hourly
-history file reads what the house drew and the days before it again, replacing
-what is stored. Only cases whose input changed are planned again.
+history file reads its complete measured prices, weather, load, solar and
+pre-case history again, replacing what is stored. An incomplete window becomes
+pending; its previous outcome is not reused. Only cases whose input changed are planned again.
 
 ```bash
 deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas all
@@ -152,3 +148,11 @@ not yet demonstrated sufficient search quality.
 Without the token, everything except the page's rerun button works; start runs
 from GitHub Actions instead. The workflow uses the existing
 `SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD_TEST` secrets.
+
+Result lists use paginated, deterministic reads. Suite scores require every
+ready case; pending cases are excluded on both sides. A database-generated
+case revision marks changed inputs stale, separately from the planner-specific
+input hash. Existing results can acquire a revision only after the runner
+reproduces their full input hash. Rescoring never applies old decisions to a
+changed case. A full bench run fails if any ready planner/case/lane is missing,
+stale or failed; rescore-only reports such gaps without recreating decisions.

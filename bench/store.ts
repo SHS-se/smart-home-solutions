@@ -5,7 +5,7 @@
 // records in one JSON file so the runner can be developed and checked without a
 // database; its test cases are `{ dataset, recorded }` files in a directory.
 
-import { canonicalJson, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
+import { canonicalJson, sha256, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import type { Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
 import type { LaneId } from "../src/lib/planner-bench/lanes.ts";
@@ -29,6 +29,7 @@ export function evaluationMutation(previous: EvaluatedResult, value: Evaluation)
 
 export interface StoredScenario {
   id: string;
+  revision: string;
   name: string;
   archived: boolean;
   /** The test case; null for a scenario still held as a replay. */
@@ -75,12 +76,14 @@ export interface ResultRecord extends Partial<Evaluation>, ResultKey {
   cpu_ms: number | null;
   /** Identity of everything the planner was given (run.ts); a result with another hash is stale. */
   input_hash: string;
+  case_revision: string | null;
   /** What the planner did; the one stored truth a result's numbers derive from. */
   record: PlanRecord | null;
 }
 
 export interface EvaluatedResult extends ResultKey {
   input_hash: string | null;
+  case_revision: string | null;
   created_at: string | null;
   has_record: boolean;
   has_evaluation: boolean;
@@ -88,6 +91,13 @@ export interface EvaluatedResult extends ResultKey {
   error: string | null;
   score: StoredScore | null;
   referee_version: number | null;
+}
+
+export interface ResultIdentity {
+  input_hash: string | null;
+  case_revision: string | null;
+  status: "ok" | "error";
+  has_record: boolean;
 }
 
 export interface BenchStore {
@@ -104,7 +114,8 @@ export interface BenchStore {
   /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
   mergeRun(from: string, into: string): Promise<void>;
   /** The input hash of each result this commit has, by `laneKey`. */
-  resultHashes(sha: string): Promise<Map<string, string | null>>;
+  resultHashes(sha: string): Promise<Map<string, ResultIdentity>>;
+  bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }): Promise<void>;
   saveRun(run: RunRecord): Promise<void>;
   markDeployed(sha: string, environment: "production" | "test"): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
@@ -180,7 +191,7 @@ export class DbStore implements BenchStore {
   async scenarios(only?: string, includeArchived = false) {
     const filter = only ? `&id=eq.${encodeURIComponent(only)}` : "";
     const archived = includeArchived ? "" : "&archived=eq.false";
-    return await this.pages<StoredScenario>(`bench_scenarios?select=id,name,dataset,recorded,archived${archived}${filter}&order=captured_at,id`);
+    return await this.pages<StoredScenario>(`bench_scenarios?select=id,revision,name,dataset,recorded,archived${archived}${filter}&order=captured_at,id`);
   }
 
   async legacyReplayInput(id: string) {
@@ -193,7 +204,7 @@ export class DbStore implements BenchStore {
   }
 
   async saveRecorded(id: string, recorded: BenchRecorded | null, pendingReason: string | null) {
-    await this.patch(`bench_scenarios?id=eq.${id}`, { ...(recorded ? { recorded } : {}), pending_reason: pendingReason });
+    await this.patch(`bench_scenarios?id=eq.${id}`, { recorded, pending_reason: pendingReason });
   }
 
   async knownShas() {
@@ -226,8 +237,16 @@ export class DbStore implements BenchStore {
   }
 
   async resultHashes(sha: string) {
-    const rows = await this.pages<{ scenario_id: string; lane: LaneId; input_hash: string | null }>(`bench_results?select=scenario_id,lane,input_hash&sha=eq.${sha}&order=scenario_id,lane`);
-    return new Map(rows.map(row => [laneKey(row.scenario_id, row.lane), row.input_hash]));
+    const rows = await this.pages<ResultIdentity & ResultKey>(`bench_result_summaries?select=scenario_id,lane,input_hash,case_revision,status,has_record&sha=eq.${sha}&order=scenario_id,lane`);
+    return new Map(rows.map(row => [laneKey(row.scenario_id, row.lane), row]));
+  }
+
+  async bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }) {
+    const saved = await this.request("rpc/bench_bind_result_revision", { method: "POST", body: JSON.stringify({
+      p_sha: result.sha, p_scenario: result.scenario_id, p_lane: result.lane,
+      p_input_hash: result.input_hash, p_revision: result.case_revision,
+    }) });
+    if (saved !== true) throw new Error("Case or source decisions changed while validating the result revision.");
   }
 
   async saveRun(run: RunRecord) {
@@ -254,7 +273,7 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,created_at,has_record,has_evaluation&order=sha,scenario_id,lane");
+    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,case_revision,created_at,has_record,has_evaluation&order=sha,scenario_id,lane");
   }
 
   private where = ({ sha, scenario_id, lane }: ResultKey) =>
@@ -267,10 +286,10 @@ export class DbStore implements BenchStore {
   }
 
   async saveEvaluation(observed: EvaluatedResult, evaluation: Evaluation) {
-    const { sha, scenario_id, lane, input_hash, created_at, referee_version, score } = observed;
+    const { sha, scenario_id, lane, input_hash, case_revision, created_at, referee_version, score } = observed;
     const saved = await this.request("rpc/bench_save_evaluation", {
       method: "POST", body: JSON.stringify({ p_update: {
-        guard: { sha, scenario_id, lane, input_hash, created_at, referee_version, score },
+        guard: { sha, scenario_id, lane, input_hash, case_revision, created_at, referee_version, score },
         ...evaluationMutation(observed, evaluation),
       } }),
     });
@@ -309,7 +328,10 @@ export class LocalStore implements BenchStore {
       if (only && only !== id) continue;
       const file = JSON.parse(await Deno.readTextFile(`${this.dir}/${entry.name}`));
       if (file.archived && !includeArchived) continue;
-      out.push({ id, name: id, archived: file.archived === true, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
+      const { origin: _origin, ...dataset } = file.dataset ?? {};
+      const { recorded_at: _at, ...recorded } = file.recorded ?? {};
+      const revision = await sha256(canonicalJson({ dataset, recorded }));
+      out.push({ id, revision, name: id, archived: file.archived === true, dataset: file.dataset ?? null, recorded: file.recorded ?? null });
     }
     return out.sort((a, b) => (a.dataset?.start ?? "").localeCompare(b.dataset?.start ?? ""));
   }
@@ -319,7 +341,7 @@ export class LocalStore implements BenchStore {
     await Deno.writeTextFile(path, JSON.stringify({ ...JSON.parse(await Deno.readTextFile(path)), ...change }));
   }
   async saveDataset(id: string, dataset: BenchScenarioData) { await this.rewrite(id, { dataset }); }
-  async saveRecorded(id: string, recorded: BenchRecorded | null) { if (recorded) await this.rewrite(id, { recorded }); }
+  async saveRecorded(id: string, recorded: BenchRecorded | null, pending_reason: string | null) { await this.rewrite(id, { recorded, pending_reason }); }
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
   async runs() {
     return (await this.load()).runs.map(run => ({
@@ -339,7 +361,19 @@ export class LocalStore implements BenchStore {
     await this.save(file);
   }
   async resultHashes(sha: string) {
-    return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [laneKey(r.scenario_id, r.lane), r.input_hash ?? null]));
+    return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [laneKey(r.scenario_id, r.lane), {
+      input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null, status: r.status, has_record: r.record != null,
+    }]));
+  }
+  async bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }) {
+    const file = await this.load();
+    const row = file.results.find(r => same(r, result));
+    const scenario = (await this.scenarios(result.scenario_id))[0];
+    if (!row || row.input_hash !== result.input_hash || row.status !== "ok" || !row.record || scenario?.revision !== result.case_revision) {
+      throw new Error("Case or source decisions changed while validating the result revision.");
+    }
+    row.case_revision = result.case_revision;
+    await this.save(file);
   }
   async saveRun(run: RunRecord) {
     const file = await this.load();
@@ -362,7 +396,7 @@ export class LocalStore implements BenchStore {
   async evaluatedResults() {
     return (await this.load()).results
       .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error,
-        score: r.score ?? null, referee_version: r.referee_version ?? null, input_hash: r.input_hash ?? null,
+        score: r.score ?? null, referee_version: r.referee_version ?? null, input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null,
         created_at: r.created_at ?? null, has_record: r.record != null,
         has_evaluation: r.series != null && r.stats != null && r.outcome != null }));
   }
@@ -373,8 +407,10 @@ export class LocalStore implements BenchStore {
   async saveEvaluation(key: EvaluatedResult, evaluation: Evaluation) {
     const file = await this.load();
     const row = file.results.find(r => same(r, key));
+    const scenario = (await this.scenarios(key.scenario_id))[0];
     const mutation = evaluationMutation(key, evaluation);
     if (!row || row.status !== "ok" || !row.record || (row.input_hash ?? null) !== key.input_hash
+      || row.case_revision !== key.case_revision || scenario?.revision !== key.case_revision || !scenario.recorded
       || (row.created_at ?? null) !== key.created_at || (row.referee_version ?? null) !== key.referee_version
       || canonicalJson(row.score ?? null) !== canonicalJson(key.score)
       || (mutation.kind !== "evaluation" && (row.series == null || row.stats == null || row.outcome == null))) {

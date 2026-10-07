@@ -11,6 +11,7 @@
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from '../src/lib/planner-bench/opportunities';
+import { REFEREE_VERSION } from '../src/lib/planner-bench/referee';
 import { storedScore } from '../src/lib/planner-bench/score';
 import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
@@ -133,7 +134,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false } = {}): Promise<Captured> {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
   const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
   if (shortEvRestart) {
     const { c, decisions } = shortEvRestartFixture();
@@ -286,8 +287,8 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           { ...TEST, branch: 'dev', is_current: false, is_test: true, status: 'done', error: null, finished_at: nowIso },
         ];
         case 'bench_scenarios': return CASES.map(c => ({
-          ...c, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,
-          dataset: dataset(c.captured_at), recorded_at: nowIso, pending_reason: null,
+          ...c, revision: c.id, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,
+          dataset: dataset(c.captured_at), recorded_at: waitingCase && c.id === CASES[1].id ? null : nowIso, pending_reason: waitingCase && c.id === CASES[1].id ? 'measurement window ends tomorrow' : null,
         }));
         case 'bench_result_summaries': return [
           ...Object.entries(plans),
@@ -296,7 +297,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
           return LANES.map((lane, k) => ({
-            sha, scenario_id, lane, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: { ...storedScore(plan), ...(missingAudit ? { version: 2 } : {}) },
+            sha, scenario_id, lane, case_revision: changedCase && sha === TEST.sha && scenario_id === CASES[1].id ? 'old' : scenario_id, has_record: true, has_evaluation: true, referee_version: REFEREE_VERSION, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: { ...storedScore(plan), ...(missingAudit ? { version: 2 } : {}) },
             outcome: { ...OUTCOME, cost_sek: OUTCOME.cost_sek - (lane.startsWith('oracle') ? 12 : 0) + (k % 3) },
           }));
         }).flat();
@@ -309,8 +310,25 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         default: return [];
       }
     })();
+    let resultRows = rows;
+    if (table === 'bench_result_summaries') {
+      if (manyResults) resultRows = [...Array.from({ length: 1200 }, (_, i) => ({
+        ...(rows[0] as Record<string, unknown>), lane: 'told/nominal', sha: `0${String(i).padStart(39, '0')}`,
+      })), ...rows];
+      if (missingResult) resultRows = resultRows.filter(row => {
+        const r = row as Record<string, unknown>;
+        return !(r.sha === TEST.sha && r.scenario_id === CASES[1].id);
+      });
+      for (const [field, query] of url.searchParams) {
+        if (query.startsWith('eq.')) resultRows = resultRows.filter(row => (row as Record<string, unknown>)[field] === query.slice(3));
+        if (query.startsWith('in.')) resultRows = resultRows.filter(row => query.slice(4, -1).split(',').includes(String((row as Record<string, unknown>)[field])));
+      }
+      const from = Number(url.searchParams.get('offset') ?? request.headers().range?.split('-')[0] ?? 0);
+      const limit = Math.min(1000, Number(url.searchParams.get('limit') ?? 1000));
+      resultRows = resultRows.slice(from, from + limit);
+    }
     const single = (request.headers().accept || '').includes('vnd.pgrst.object');
-    await route.fulfill({ status: single && rows.length === 0 ? 406 : 200, contentType: 'application/json', body: JSON.stringify(single ? rows[0] ?? null : rows) });
+    await route.fulfill({ status: single && resultRows.length === 0 ? 406 : 200, contentType: 'application/json', body: JSON.stringify(single ? resultRows[0] ?? null : resultRows) });
   });
   return captured;
 }
@@ -449,6 +467,50 @@ test.describe('planner bench', () => {
     await expect(card.getByRole('row', { name: /^2 norm 1 1\.00 -1\.00 0\.40$/ })).toBeVisible();
     // A day the market has not published yet waits, and is left out of the means.
     await expect(card.getByRole('row', { name: /2026-10-05 2026-10-03 (wind|vind) 1\.50 – (waiting|väntar)/ })).toBeVisible();
+  });
+
+  test('loads every result beyond the API cap before showing suite scores', async ({ context, page }) => {
+    const offsets: number[] = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/bench_result_summaries') && url.searchParams.get('scenario_id') === null) offsets.push(Number(url.searchParams.get('offset') ?? 0));
+    });
+    await mockBackend(context, { manyResults: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-total-score')).toBeVisible();
+    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/T [−-]?\d+/);
+    expect(offsets).toContain(1000);
+  });
+
+  test('withholds a suite comparison when one measured case has no result', async ({ context, page }) => {
+    await mockBackend(context, { missingResult: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-incomplete')).toBeVisible();
+    await expect(page.locator('#bench-total-score')).toHaveCount(0);
+    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/missing result|saknar resultat/);
+  });
+
+  test('pending measurements exclude old scores on both sides', async ({ context, page }) => {
+    await mockBackend(context, { waitingCase: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-coverage')).toContainText(/1 measured cases.*1 waiting|1 uppmätta testfall.*1 väntar/);
+    await expect(page.locator('#bench-total-score')).toBeVisible();
+    const pending = page.locator(`#bench-case-${CASES[1].id}`);
+    await expect(pending).not.toContainText(/T [−-]?\d+|[CN] [−-]?\d+/);
+    await pending.click();
+    await expect(page.getByText(/measurement window ends tomorrow/)).toBeVisible();
+    await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
+  });
+
+  test('changed case inputs cannot enter an otherwise current suite score', async ({ context, page }) => {
+    await mockBackend(context, { changedCase: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-incomplete')).toBeVisible();
+    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/inputs changed|ändrade indata/);
   });
 
   test('lists only the newest of consecutive versions with the same score', async ({ context, page }) => {

@@ -1,6 +1,6 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError } from "../bench/rescore.ts";
-import { type EvaluatedResult, type ResultKey, type RunSummary, type StoredScenario } from "../bench/store.ts";
+import { type EvaluatedResult, type ResultKey, type RunSummary, type StoredScenario, LocalStore } from "../bench/store.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate, type Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import { LANES } from "../src/lib/planner-bench/lanes.ts";
@@ -18,6 +18,7 @@ const dataset: BenchScenarioData = {
   start_state: { battery_soc: 0.5, pool_water_c: 30, ev: { soc: 0.7, target_soc: 0.8 } }, comfort: { pool_c: 30, ev_km: 300 },
 };
 const recorded: BenchRecorded = {
+  actual: { base_load_w: fill(500), solar_w: fill(0) },
   prices: { import_sek_per_kwh: fill(1), export_sek_per_kwh: fill(0.4) },
   outdoor_temperature_c: fill(20), solar_irradiance_w_per_m2: fill(0),
   history: {
@@ -34,13 +35,13 @@ const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
 
 class MemoryStore {
   cases: StoredScenario[] = [
-    { id: "ready", name: "Ready", archived: false, dataset, recorded },
-    { id: "waiting", name: "Waiting", archived: false, dataset, recorded: null },
-    { id: "archived", name: "Archived", archived: true, dataset, recorded },
+    { id: "ready", revision: "basis", name: "Ready", archived: false, dataset, recorded },
+    { id: "waiting", revision: "pending", name: "Waiting", archived: false, dataset, recorded: null },
+    { id: "archived", revision: "basis", name: "Archived", archived: true, dataset, recorded },
   ];
   rows: EvaluatedResult[] = ["old-not-in-git", "new-not-in-git"].flatMap(sha => LANES.map(lane => ({
     sha, scenario_id: "ready", lane, status: "ok" as const, error: null, score: null, referee_version: 0,
-    input_hash: `immutable-${sha}/ready/${lane}`, created_at: dataset.start, has_record: true, has_evaluation: false,
+    case_revision: "basis", input_hash: `immutable-${sha}/ready/${lane}`, created_at: dataset.start, has_record: true, has_evaluation: false,
   })));
   records = new Map(this.rows.map(row => [keyOf(row), structuredClone(record)]));
   hashes = new Map(this.rows.map(row => [keyOf(row), `immutable-${keyOf(row)}`]));
@@ -121,7 +122,8 @@ Deno.test("rescore-only CLI works with absent historical git objects, no subproc
     await Deno.writeTextFile(`${cases}/ready.json`, JSON.stringify({ dataset, recorded }));
     await Deno.writeTextFile(`${cases}/waiting.json`, JSON.stringify({ dataset, recorded: null }));
     const runs = [{ sha: "not-a-local-git-object", short_sha: "not-a-l", committed_at: dataset.start, subject: "Preserve me", branch: null, status: "done" }];
-    const results = LANES.map(lane => ({ sha: runs[0].sha, scenario_id: "ready", lane, status: "ok", error: null, cpu_ms: 1, input_hash: "immutable", record, score: null, referee_version: 0 }));
+    const revision = (await new LocalStore(cases, out).scenarios()).find(s => s.id === "ready")!.revision;
+    const results = LANES.map(lane => ({ sha: runs[0].sha, scenario_id: "ready", lane, status: "ok", error: null, cpu_ms: 1, case_revision: revision, input_hash: "immutable", record, score: null, referee_version: 0 }));
     await Deno.writeTextFile(out, JSON.stringify({ runs, results }));
     const result = await new Deno.Command(Deno.execPath(), {
       args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--allow-write", "--allow-env", "--config", `${root}/deno.json`, `${root}/bench/run.ts`, "--shas", "none", "--local", cases, "--out", out],
@@ -179,4 +181,14 @@ Deno.test("rescore-only refuses a missing local result file instead of reporting
     assert(!result.success);
     assert(new TextDecoder().decode(result.stderr).includes("NotFound"));
   } finally { await Deno.remove(dir, { recursive: true }); }
+});
+
+Deno.test('changed case inputs require planning and are never used to rescore previous decisions', async () => {
+  const store = new MemoryStore();
+  store.cases[0].revision = 'changed';
+  const report = await rescoreExisting(store);
+  assertEquals([report.staleInputs, report.processed, report.verifiedCurrent], [12, 0, 0]);
+  assertEquals(store.reads.length, 0);
+  assertEquals(store.writes.length, 0);
+  assertEquals(report.planners.map(p => p.currentLanes), [0, 0]);
 });

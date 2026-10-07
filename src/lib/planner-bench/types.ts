@@ -108,6 +108,7 @@ export interface BenchRun {
 
 export interface BenchScenario {
   id: string;
+  revision: string;
   name: string;
   captured_at: string;
   source_filename: string | null;
@@ -130,6 +131,10 @@ export interface BenchResultDetail {
 
 export interface BenchResultSummary {
   sha: string;
+  case_revision: string | null;
+  has_record: boolean;
+  has_evaluation: boolean;
+  referee_version: number | null;
   scenario_id: string;
   /** Which prices the planner was told and which valuation it ran under (lanes.ts). */
   lane: import('./lanes').LaneId;

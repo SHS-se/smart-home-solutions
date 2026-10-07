@@ -133,12 +133,14 @@ export interface Completion {
 }
 
 /** Read what a case needs from recorded history; `recorded` stays null until its whole window exists. */
-export async function completeCase(source: HistorySource, data: BenchScenarioData): Promise<Completion> {
+export async function completeCase(source: HistorySource, data: BenchScenarioData, now = Date.now()): Promise<Completion> {
   const start = Date.parse(data.start);
   const end = start + QUARTERS * QUARTER_MS;
-  const [prices, outdoor] = await Promise.all([
+  if (now < end) return { recorded: null, missing: `measurement window ends ${new Date(end).toISOString()}`, startState: {} };
+  const [prices, outdoor, actual] = await Promise.all([
     quarterRows(source, "energy_optimisation_price_slots", "import_price_sek_per_kwh,export_price_sek_per_kwh", start, end),
     quarterRows(source, "energy_optimisation_outdoor_slots", "temperature_c,solar_w_per_m2", start, end),
+    recordedActual(source, data.start),
   ]);
   const buy = onto(prices, "import_price_sek_per_kwh", start, QUARTERS);
   const sell = onto(prices, "export_price_sek_per_kwh", start, QUARTERS);
@@ -166,7 +168,8 @@ export async function completeCase(source: HistorySource, data: BenchScenarioDat
     const count = values.filter(v => v === null).length;
     return count ? `${count} of ${QUARTERS} quarters of ${name}` : null;
   };
-  const missing = [gaps("prices", buy.map((v, i) => v === null || sell[i] === null ? null : v)), gaps("outdoor temperature", temperature)]
+  const missing = [gaps("prices", buy.map((v, i) => v === null || sell[i] === null ? null : v)), gaps("outdoor temperature", temperature),
+    actual ? null : "complete measured load and solar"]
     .filter(Boolean).join(" and ");
   if (missing) return { recorded: null, missing: `not yet recorded: ${missing}`, startState };
 
@@ -191,6 +194,7 @@ export async function completeCase(source: HistorySource, data: BenchScenarioDat
     missing: null,
     startState,
     recorded: {
+      actual: actual!,
       prices: { import_sek_per_kwh: buy as number[], export_sek_per_kwh: sell as number[] },
       outdoor_temperature_c: temperature as number[],
       solar_irradiance_w_per_m2: onto(outdoor, "solar_w_per_m2", start, QUARTERS),

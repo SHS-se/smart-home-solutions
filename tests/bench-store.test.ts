@@ -42,7 +42,7 @@ Deno.test("database rescore reads every result beyond 1000, with stable ordering
   const rows: EvaluatedResult[] = Array.from({ length: 1203 }, (_, i) => ({
     sha: String(i).padStart(5, "0"), scenario_id: "case", lane: "told/nominal",
     status: i % 11 ? "ok" : "error", error: i % 11 ? null : "planner failed", score: null, referee_version: null,
-    input_hash: "input", created_at: "2026-10-06T00:00:00Z", has_record: true, has_evaluation: false,
+    case_revision: null, input_hash: "input", created_at: "2026-10-06T00:00:00Z", has_record: true, has_evaluation: false,
   }));
   const offsets: number[] = [];
   globalThis.fetch = async (input, init) => {
@@ -119,7 +119,7 @@ Deno.test("source identity filters preserve literal hashes and timestamp offsets
   try {
     const store = new DbStore('https://bench.invalid', 'test-key', immediate);
     const observed: EvaluatedResult = { sha: 'test', scenario_id: 'case', lane: 'told/nominal',
-      status: 'ok', error: null, score: null, referee_version: 1, input_hash: 'hash&literal',
+      status: 'ok', error: null, score: null, referee_version: 1, case_revision: 'case-revision', input_hash: 'hash&literal',
       created_at: '2026-10-06T12:00:00.123456+00:00', has_record: true, has_evaluation: true };
     await store.planRecord(observed);
     assertEquals(urls[0].searchParams.get('input_hash'), 'eq.hash&literal');
@@ -128,4 +128,18 @@ Deno.test("source identity filters preserve literal hashes and timestamp offsets
     assertEquals(urls[1].searchParams.get('input_hash'), 'is.null');
     assertEquals(urls[1].searchParams.get('created_at'), 'is.null');
   } finally { globalThis.fetch = original; }
+});
+
+Deno.test('pending completion explicitly clears recorded observations in database and local stores', async () => {
+  const original = globalThis.fetch;
+  let body: unknown;
+  globalThis.fetch = (_input, init) => { body = JSON.parse(String(init?.body)); return Promise.resolve(new Response(null, { status: 204 })); };
+  const dir = await Deno.makeTempDir();
+  try {
+    await new DbStore('https://bench.invalid', 'test-key', immediate).saveRecorded('case', null, 'measurements incomplete');
+    assertEquals(body, { recorded: null, pending_reason: 'measurements incomplete' });
+    await Deno.writeTextFile(`${dir}/case.json`, JSON.stringify({ dataset: null, recorded: { stale: true } }));
+    await new LocalStore(dir, `${dir}/output`).saveRecorded('case', null, 'measurements incomplete');
+    assertEquals(JSON.parse(await Deno.readTextFile(`${dir}/case.json`)), { dataset: null, recorded: null, pending_reason: 'measurements incomplete' });
+  } finally { globalThis.fetch = original; await Deno.remove(dir, { recursive: true }); }
 });

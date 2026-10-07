@@ -25,10 +25,13 @@ async function database() {
   await db.exec(`GRANT SELECT,UPDATE ON bench_results TO service_role;
     INSERT INTO bench_scenarios(id,name,captured_at) VALUES('${scenario}','Synthetic',now());
     INSERT INTO bench_runs(sha,short_sha,committed_at) VALUES('test','test',now());`);
+  await db.query('UPDATE bench_scenarios SET dataset=$1::jsonb,recorded=$2::jsonb WHERE id=$3',
+    [JSON.stringify(c), JSON.stringify(c.recorded), scenario]);
   await db.query(`INSERT INTO bench_results(sha,scenario_id,lane,status,input_hash,record,series,stats,outcome,score,referee_version)
     VALUES('test',$1,'told/nominal','ok','immutable',$2::jsonb,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7)`,
     [scenario, JSON.stringify(record), JSON.stringify(value.series), JSON.stringify(value.stats),
       JSON.stringify(value.outcome), JSON.stringify(value.score), value.referee_version]);
+  await db.exec("UPDATE bench_results SET case_revision=(SELECT revision FROM bench_scenarios WHERE id=bench_results.scenario_id)");
   return db;
 }
 const observed = async (db: PGlite) => (await db.query<EvaluatedResult>('SELECT * FROM bench_result_summaries')).rows[0];
@@ -106,7 +109,7 @@ Deno.test('local partial evaluations reject derived artifacts removed after obse
     for (const kind of ['score', 'audit-score']) {
       for (const field of ['series', 'stats', 'outcome']) {
         await store.saveResult({ sha: 'test', scenario_id: scenario, lane: 'told/nominal',
-          status: 'ok', error: null, cpu_ms: 0, input_hash: 'immutable', record, ...value,
+          status: 'ok', error: null, cpu_ms: 0, case_revision: null, input_hash: 'immutable', record, ...value,
           score: kind === 'score' ? { ...value.score, version: 0 }
             : { ...value.score, audit: { ...value.score.audit!, version: 0 } } });
         const old = (await store.evaluatedResults())[0];
@@ -133,5 +136,28 @@ Deno.test('schema upgrades canonicalize absent JSON artifacts once', async () =>
     assertEquals((await observed(db)).has_evaluation, false);
     await db.exec(await Deno.readTextFile('bench/schema.sql'));
     assertEquals(await row(db), upgraded);
+  } finally { await db.close(); }
+});
+
+Deno.test('case revision follows content, ignores capture metadata, and fences both binding and rescoring', async () => {
+  const db = await database();
+  try {
+    const before = await observed(db);
+    const revision = (await db.query<{ revision: string }>('SELECT revision FROM bench_scenarios')).rows[0].revision;
+    await db.exec("UPDATE bench_scenarios SET dataset=jsonb_set(dataset,'{origin,detail}','\"other provenance\"'),recorded=jsonb_set(recorded,'{recorded_at}','\"2026-10-07\"')");
+    assertEquals((await db.query<{ revision: string }>('SELECT revision FROM bench_scenarios')).rows[0].revision, revision);
+    await db.exec('UPDATE bench_results SET case_revision=NULL');
+    const bind = async (hash: string) => (await db.query<{ saved: boolean }>(
+      "SELECT bench_bind_result_revision('test',$1,'told/nominal',$2,$3) AS saved", [scenario, hash, revision])).rows[0].saved;
+    assertEquals(await bind('wrong'), false);
+    assertEquals(await bind('immutable'), true);
+    assertEquals((await observed(db)).created_at, before.created_at);
+    const source = await observed(db);
+    await db.exec("UPDATE bench_scenarios SET dataset=jsonb_set(dataset,'{start_state,battery_soc}','0.8')");
+    assert((await db.query<{ revision: string }>('SELECT revision FROM bench_scenarios')).rows[0].revision !== revision);
+    assertEquals(await bind('immutable'), false);
+    const saved = (await db.query<{ saved: boolean }>('SELECT bench_save_evaluation($1::jsonb) AS saved', [JSON.stringify({ guard: source, kind: 'evaluation', value })])).rows[0].saved;
+    assertEquals(saved, false);
+    assertEquals(await observed(db), source);
   } finally { await db.close(); }
 });

@@ -1,6 +1,6 @@
 // Re-evaluation owns only derived result fields. It never prepares cases, loads
 // historical planner code, merges runs, or changes stored decisions/input hashes.
-import { loadCase, type BenchCase } from "../src/lib/planner-bench/case.ts";
+import { hasMeasuredOutcome, loadCase, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { BASE_LANE, LANES } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
@@ -43,6 +43,7 @@ export interface RescoreReport {
   verificationErrors: number;
   plannerErrors: number;
   missingLanes: number;
+  staleInputs: number;
   planners: PlannerRescoreSummary[];
   issues: string[];
 }
@@ -64,12 +65,12 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     scenarioFilter: onlyScenario ?? null, readyCases: 0, archivedCases: 0, unreadyCases: 0, eligible: 0,
     processed: 0, alreadyCurrent: 0, verifiedCurrent: 0,
     missingRecords: 0, evaluationErrors: 0, verificationErrors: 0,
-    plannerErrors: 0, missingLanes: 0, planners: [], issues: [],
+    plannerErrors: 0, missingLanes: 0, staleInputs: 0, planners: [], issues: [],
   };
   const cases = new Map<string, { scenario: StoredScenario; c: BenchCase }>();
   for (const scenario of scenarios) {
     if (scenario.archived) { report.archivedCases++; continue; }
-    if (!scenario.dataset || !scenario.recorded) { report.unreadyCases++; continue; }
+    if (!scenario.dataset || !hasMeasuredOutcome(scenario.recorded)) { report.unreadyCases++; continue; }
     try {
       cases.set(scenario.id, { scenario, c: loadCase(scenario.dataset, scenario.recorded) });
       report.readyCases++;
@@ -80,9 +81,18 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   }
   let latestRules = rules;
   const current = (result: EvaluatedResult) =>
-    cases.has(result.scenario_id) && result.status === "ok" && result.has_record && result.has_evaluation
+    cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
     && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
-  const eligible = before.filter(result => result.status === "ok" && cases.has(result.scenario_id));
+  const eligible = before.filter(result => {
+    const entry = cases.get(result.scenario_id);
+    if (result.status !== "ok" || !entry) return false;
+    if (result.case_revision !== entry.scenario.revision) {
+      report.staleInputs++;
+      report.issues.push(`${describe(result)}: case inputs changed or have not been verified; rerun the planner before rescoring.`);
+      return false;
+    }
+    return true;
+  });
   report.eligible = eligible.length;
   const missing = new Set<string>();
   let inspected = 0;
@@ -113,6 +123,14 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     }
   }
 
+  const latestCases = new Map((await bench.scenarios(onlyScenario, true)).map(s => [s.id, s]));
+  for (const [id, entry] of cases) {
+    const latest = latestCases.get(id);
+    if (!latest || latest.archived || !hasMeasuredOutcome(latest.recorded) || latest.revision !== entry.scenario.revision) {
+      report.verificationErrors++;
+      report.issues.push(`${entry.scenario.name}: case changed during rescore; retry after case preparation finishes.`);
+    }
+  }
   // Read the rules again: a rule saved while this ran must not leave results looking current.
   const after = await bench.evaluatedResults();
   latestRules = await bench.rules();
@@ -121,7 +139,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   // never make this verification silently claim a stale result is current.
   const verify = new Map(eligible.map(result => [keyOf(result), result]));
   for (const result of after) {
-    if (result.status === "ok" && cases.has(result.scenario_id)) verify.set(keyOf(result), result);
+    if (result.status === "ok" && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision) verify.set(keyOf(result), result);
   }
   report.eligible = verify.size;
   for (const [key, result] of verify) {
@@ -176,7 +194,7 @@ export function rescoreMarkdown(report: RescoreReport): string {
     `Scorer **v${report.scorerVersion}**, referee **v${report.refereeVersion}**. Verified **${report.verifiedCurrent}/${report.eligible}** eligible successful results across all six lanes.`,
     `Processed: ${report.processed}; already current: ${report.alreadyCurrent}; missing decisions: ${report.missingRecords}; evaluation errors: ${report.evaluationErrors}; verification errors: ${report.verificationErrors}.`,
     `Cases: ${report.readyCases} ready, ${report.unreadyCases} unready, ${report.archivedCases} archived. Unready and archived cases were not changed.`,
-    `Existing planner errors: ${report.plannerErrors}; absent planner/case/lanes: ${report.missingLanes}. These need planner runs, not rescoring.`,
+    `Stale case inputs: ${report.staleInputs}; existing planner errors: ${report.plannerErrors}; absent planner/case/lanes: ${report.missingLanes}. These need planner runs, not rescoring.`,
     "",
     "Nominal scores use told/nominal only; parentheses show scored/ready cases. Passes are automatic rule verdicts. Scores with different coverage are not directly comparable.",
     "",
