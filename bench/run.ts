@@ -53,7 +53,7 @@ import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-benc
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
-import { commitTree, plannerVersion } from "./planner-version.ts";
+import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -230,8 +230,6 @@ async function rescoreAndReport(bench: BenchStore, requireComplete = false) {
   }
 }
 
-const versionOf = (sha: string) => plannerVersion(commitTree(sha, harness));
-
 async function orchestrate() {
   const bench = store();
   if (args.shas === "none") {
@@ -262,9 +260,16 @@ async function orchestrate() {
       });
       if (shown === null) continue;
       const [sha, shortSha, committedAt, subject] = shown.split("\t");
-      const version = await versionOf(sha);
       console.log(`${shortSha} ${subject}`);
-      const run = { sha, short_sha: shortSha, committed_at: committedAt, subject, branch: args.branch ?? null, planner_version: version };
+      const tree = commitTree(sha, harness);
+      const metadata = { sha, short_sha: shortSha, committed_at: committedAt, subject, branch: args.branch ?? null };
+      if (plannerDir(tree) === null) {
+        const error = "This commit does not contain a planner entry point.";
+        await bench.saveRun({ ...metadata, planner_version: null, status: "unavailable", error, finished_at: new Date().toISOString() });
+        console.log(`  UNAVAILABLE: ${error} No benchmark results can be generated for this commit.`);
+        continue;
+      }
+      const run = { ...metadata, planner_version: await plannerVersion(tree) };
       await bench.saveRun({ ...run, status: "running", error: null, finished_at: null });
 
       const root = `${scratch}/${shortSha}`;

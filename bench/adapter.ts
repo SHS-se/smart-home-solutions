@@ -303,7 +303,9 @@ async function optionalImport(path: string): Promise<BasisModule | null> {
 }
 
 export async function loadPlanner(root: string): Promise<LoadedPlanner> {
-  const dir = `${root}/${plannerDir(diskTree(root))}`;
+  const planner = plannerDir(diskTree(root));
+  if (planner === null) throw new Error("This commit does not contain a planner entry point.");
+  const dir = `${root}/${planner}`;
   const M: PlannerModule = await import(`file://${dir}/energy-optimisation.ts`);
   const basis = await optionalImport(`${dir}/planning-basis.ts`);
   const generation = M.PLANNER_INPUTS?.includes("comfort") ? "snapshot+comfort"

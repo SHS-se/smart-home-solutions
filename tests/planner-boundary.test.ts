@@ -1,6 +1,6 @@
-import { assert, assertEquals, assertNotEquals } from "@std/assert";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
 import { diskTree, resolve, specifiers, type SourceTree } from "../scripts/module-graph.ts";
-import { PLANNER_DIR, plannerVersion } from "../bench/planner-version.ts";
+import { PLANNER_DIR, plannerDir, plannerVersion } from "../bench/planner-version.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -27,6 +27,14 @@ function memoryTree(dir: string, files: Record<string, string>): SourceTree {
   const all = new Map(Object.entries(files).map(([name, text]) => [`${dir}/${name}`, text]));
   return { read: path => all.get(path) ?? null, isFile: path => all.has(path) };
 }
+
+Deno.test("commits before the planner existed have no planner directory or code version", async () => {
+  const empty = memoryTree(PLANNER_DIR, {});
+  assertEquals(plannerDir(empty), null);
+  await assertRejects(() => plannerVersion(empty), Error, "does not contain a planner entry point");
+  const partial = memoryTree(PLANNER_DIR, { "dispatch-plan.ts": "export {};" });
+  assertEquals(plannerDir(partial), null);
+});
 
 const PLANNER = {
   "energy-optimisation.ts": `import { plan } from "./dispatch-plan.ts";\nexport const run = (x: number) => plan(x) + 1;\n`,

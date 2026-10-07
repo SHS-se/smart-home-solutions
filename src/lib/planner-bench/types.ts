@@ -101,7 +101,7 @@ export interface BenchRun {
   branch: string | null;
   is_current: boolean;
   is_test: boolean;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'unavailable';
   error: string | null;
   finished_at: string | null;
 }

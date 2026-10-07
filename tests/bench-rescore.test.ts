@@ -48,12 +48,13 @@ class MemoryStore {
   writes: ResultKey[] = [];
   reads: ResultKey[] = [];
   discardWrites = false;
+  unavailable = false;
   async rules(): Promise<CriteriaOverrides> { return {}; }
   async scenarios(only?: string, includeArchived = false) {
     return this.cases.filter(c => (!only || c.id === only) && (includeArchived || !c.archived));
   }
   async runs(): Promise<RunSummary[]> {
-    return ["old-not-in-git", "new-not-in-git"].map(sha => ({ sha, committed_at: dataset.start, planner_version: null, is_current: false, is_test: false }));
+    return ["old-not-in-git", "new-not-in-git"].map(sha => ({ sha, committed_at: dataset.start, planner_version: null, is_current: false, is_test: false, status: this.unavailable && sha === "old-not-in-git" ? "unavailable" : "done", error: this.unavailable && sha === "old-not-in-git" ? "This commit does not contain a planner entry point." : null }));
   }
   async evaluatedResults() { return structuredClone(this.rows.map(r => ({ ...r, has_record: this.records.get(keyOf(r)) != null }))); }
   async planRecord(key: EvaluatedResult) { this.reads.push(key); return structuredClone(this.records.get(keyOf(key)) ?? null); }
@@ -84,6 +85,19 @@ Deno.test("rescore evaluates every stored lane with the real evaluator and is id
   assertEquals(store.records, rawBefore);
   assertEquals(store.hashes, hashesBefore);
   assert(rescoreMarkdown(second).includes("12/12"));
+});
+
+Deno.test("unavailable pre-planner commits are reported explicitly without claiming scores or executable coverage", async () => {
+  const store = new MemoryStore();
+  store.unavailable = true;
+  const report = await rescoreExisting(store);
+  const unavailable = report.planners.find(p => p.sha === "old-not-in-git")!;
+  assertEquals([unavailable.score, unavailable.oldScore, unavailable.scored, unavailable.expectedCases, unavailable.currentLanes, unavailable.expectedLanes],
+    [null, null, 0, 0, 0, 0]);
+  assertEquals(report.planners.find(p => p.sha === "new-not-in-git")!.currentLanes, LANES.length);
+  assertEquals([report.processed, report.verifiedCurrent, report.missingLanes], [LANES.length, LANES.length, 0]);
+  assert(store.reads.every(r => r.sha === "new-not-in-git"));
+  assert(rescoreMarkdown(report).includes("Unavailable: This commit does not contain a planner entry point."));
 });
 
 Deno.test("a successful result without its decisions fails after other lanes are rescored and reports the repair", async () => {

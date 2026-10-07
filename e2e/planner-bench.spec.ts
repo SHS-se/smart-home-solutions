@@ -139,7 +139,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, noCurrentPlanner = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
   const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
   if (shortEvRestart) {
     const { c, decisions } = shortEvRestartFixture();
@@ -288,7 +288,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         case 'bench_rules': return [{ criteria: {} }];
         case 'bench_runs': return [
           ...(repeats || history ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
-          { ...CURRENT, branch: 'main', is_current: true, is_test: false, status: 'done', error: null, finished_at: nowIso },
+          { ...CURRENT, branch: 'main', is_current: true, is_test: false, status: noCurrentPlanner ? 'unavailable' : 'done', error: noCurrentPlanner ? 'This commit does not contain a planner entry point.' : null, finished_at: nowIso },
           { ...TEST, branch: 'dev', is_current: false, is_test: true, status: 'done', error: null, finished_at: nowIso },
           ...(history ? LATER_REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
         ];
@@ -297,7 +297,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           dataset: dataset(c.captured_at), recorded_at: waitingCase && c.id === CASES[1].id ? null : nowIso, pending_reason: waitingCase && c.id === CASES[1].id ? 'measurement window ends tomorrow' : null,
         }));
         case 'bench_result_summaries': return [
-          ...Object.entries(plans),
+          ...Object.entries(plans).filter(([key]) => !noCurrentPlanner || !key.startsWith(CURRENT.sha)),
           ...(repeats || history ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${history ? TEST.sha : CURRENT.sha}/${c.id}`]] as const)),
           ...(history ? LATER_REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${TEST.sha}/${c.id}`]] as const)),
         ].map(([key, plan]) => {
@@ -310,7 +310,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         }).flat();
         case 'bench_results': {
           const scenario = url.searchParams.get('scenario_id')?.replace('eq.', '');
-          return [CURRENT.sha, TEST.sha].map(sha => ({
+          return [CURRENT.sha, TEST.sha].filter(sha => !noCurrentPlanner || sha !== CURRENT.sha).map(sha => ({
             sha, series: missingAudit ? { ...plans[`${sha}/${scenario}`], audit: undefined } : plans[`${sha}/${scenario}`], record: record(sha === TEST.sha ? 0.9 : 1.1), outcome: OUTCOME,
           }));
         }
@@ -546,6 +546,22 @@ test.describe('planner bench', () => {
     await expect(page.getByRole('option')).toHaveText([/^bbbbbbb · /, /^ccccccc · /, /^ddddddd · /, /^fffffff · /]);
     await page.getByRole('option').filter({ hasText: /^ddddddd · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
+  });
+
+  test('shows a branch commit with no planner as unavailable without inventing a comparison score', async ({ context, page }) => {
+    await mockBackend(context, { noCurrentPlanner: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
+    await expect(page.locator('#bench-current-run')).toContainText(/no planner|saknar planerare/);
+    await expect(page.getByRole('status').filter({ hasText: /This commit does not contain a planner|Den här commiten innehåller ingen planerare/ })).toBeVisible();
+    await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
+    await expect(page.locator('#bench-total-score')).toHaveCount(0);
+    await expect(page.locator('#bench-incomplete')).toContainText(/one does not contain a planner|saknar planerare/);
+    await page.locator('#bench-test-run').click();
+    await page.getByRole('option').filter({ hasText: /^ccccccc · / }).click();
+    await expect(page.locator('#bench-test-run')).toContainText(/no planner|saknar planerare/);
+    await expect(page.locator('#bench-total-score')).toHaveCount(0);
   });
 
   test('compares the test planner with the current one', async ({ context, page }) => {

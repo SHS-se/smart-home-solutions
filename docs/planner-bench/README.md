@@ -42,6 +42,12 @@ complete scores. Unscored, running and failed commits stay visible, as do the
 main head, dev head and currently selected historical commit. Stored runs,
 results and verdicts remain attached to their original commits.
 
+Commits from before the planner existed retain their SHA and environment marks
+but are labelled **no planner** (`unavailable`). The runner checks for the planner
+entry point before hashing code or launching a worker. These commits have no
+score and do not count toward executable benchmark coverage. Missing imports
+or runtime errors in an existing planner still fail the benchmark normally.
+
 ## Current and test planner
 
 - **Current:** the exact `main` branch-head commit, marked `is_current` by CI.

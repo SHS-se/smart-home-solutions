@@ -15,9 +15,9 @@ const LEGACY_DIR = "supabase/functions/_shared";
 /** `planning-basis.ts` exists only in planners that build a basis from history; the adapter calls it for those. */
 const ENTRIES = ["energy-optimisation.ts", "dispatch-plan.ts", "planning-basis.ts"];
 
-/** The folder holding a tree's planner: its own, or _shared for older commits. */
-export const plannerDir = (tree: SourceTree) =>
-  tree.isFile(`${PLANNER_DIR}/${ENTRIES[0]}`) ? PLANNER_DIR : LEGACY_DIR;
+/** The folder holding a tree's planner; null for commits with no planner. */
+export const plannerDir = (tree: SourceTree): string | null =>
+  [PLANNER_DIR, LEGACY_DIR].find(dir => tree.isFile(`${dir}/${ENTRIES[0]}`)) ?? null;
 
 // Resolved from node_modules at run time, so a script that only needs
 // PLANNER_DIR runs without them.
@@ -29,8 +29,9 @@ const ESBUILD = "npm:esbuild";
  * runner records the current method when a commit is benched.
  */
 export async function plannerVersion(tree: SourceTree): Promise<string> {
-  const { transform, stop, version } = await import(ESBUILD);
   const dir = plannerDir(tree);
+  if (dir === null) throw new Error("This commit does not contain a planner entry point.");
+  const { transform, stop, version } = await import(ESBUILD);
   const parts: string[] = [];
   try {
     for (const file of reach(tree, ENTRIES.map(entry => `${dir}/${entry}`))) {

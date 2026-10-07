@@ -15,6 +15,7 @@ type RescoreStore = Pick<BenchStore, "rules" | "scenarios" | "runs" | "evaluated
 
 export interface PlannerRescoreSummary {
   sha: string;
+  unavailableReason: string | null;
   expectedCases: number;
   oldScore: number | null;
   oldScored: number;
@@ -60,6 +61,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   const [rules, scenarios, runs, before] = await Promise.all([
     bench.rules(), bench.scenarios(onlyScenario, true), bench.runs(), bench.evaluatedResults(),
   ]);
+  const unavailable = new Map(runs.filter(run => run.status === "unavailable").map(run => [run.sha, run.error!]));
   const report: RescoreReport = {
     scorerVersion: SCORER_VERSION, refereeVersion: REFEREE_VERSION,
     scenarioFilter: onlyScenario ?? null, readyCases: 0, archivedCases: 0, unreadyCases: 0, eligible: 0,
@@ -81,11 +83,11 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   }
   let latestRules = rules;
   const current = (result: EvaluatedResult) =>
-    cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
+    !unavailable.has(result.sha) && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
     && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
   const eligible = before.filter(result => {
     const entry = cases.get(result.scenario_id);
-    if (result.status !== "ok" || !entry) return false;
+    if (unavailable.has(result.sha) || result.status !== "ok" || !entry) return false;
     if (result.case_revision !== entry.scenario.revision) {
       report.staleInputs++;
       report.issues.push(`${describe(result)}: case inputs changed or have not been verified; rerun the planner before rescoring.`);
@@ -139,7 +141,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   // never make this verification silently claim a stale result is current.
   const verify = new Map(eligible.map(result => [keyOf(result), result]));
   for (const result of after) {
-    if (result.status === "ok" && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision) verify.set(keyOf(result), result);
+    if (!unavailable.has(result.sha) && result.status === "ok" && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision) verify.set(keyOf(result), result);
   }
   report.eligible = verify.size;
   for (const [key, result] of verify) {
@@ -161,6 +163,11 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
 
   const shas = [...new Set([...runs.map(run => run.sha), ...before.map(result => result.sha), ...after.map(result => result.sha)])];
   for (const sha of shas) {
+    if (unavailable.has(sha)) {
+      report.planners.push({ sha, unavailableReason: unavailable.get(sha)!, expectedCases: 0, oldScore: null, oldScored: 0,
+        score: null, scored: 0, passed: 0, currentLanes: 0, expectedLanes: 0, plannerErrors: 0, missingLanes: 0 });
+      continue;
+    }
     const old = before.filter(r => r.sha === sha && r.lane === BASE_LANE && r.status === "ok" && cases.has(r.scenario_id) && r.score);
     const now = after.filter(r => r.sha === sha && r.lane === BASE_LANE && current(r) && !missing.has(keyOf(r)));
     let missingLanes = 0, plannerErrors = 0, currentLanes = 0;
@@ -175,7 +182,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     report.plannerErrors += plannerErrors;
     report.missingLanes += missingLanes;
     report.planners.push({
-      sha, expectedCases: cases.size, oldScore: runScore(old.map(r => r.score!.points)), oldScored: old.length,
+      sha, unavailableReason: null, expectedCases: cases.size, oldScore: runScore(old.map(r => r.score!.points)), oldScored: old.length,
       score: runScore(now.map(r => r.score!.points)), scored: now.length,
       passed: now.filter(r => storedPassed(r.score!, null)).length,
       currentLanes, expectedLanes: cases.size * LANES.length, plannerErrors, missingLanes,
@@ -200,7 +207,9 @@ export function rescoreMarkdown(report: RescoreReport): string {
     "",
     "| Planner | Previous score (coverage) | Current score (coverage) | Passes / scored | Current lanes / expected | Planner errors | Missing lanes |",
     "|---|---:|---:|---:|---:|---:|---:|",
-    ...report.planners.map(p => `| ${p.sha.slice(0, 12)} | ${score(p.oldScore, p.oldScored, p.expectedCases)} | ${score(p.score, p.scored, p.expectedCases)} | ${p.passed}/${p.scored} | ${p.currentLanes}/${p.expectedLanes} | ${p.plannerErrors} | ${p.missingLanes} |`),
+    ...report.planners.map(p => p.unavailableReason !== null
+      ? `| ${p.sha.slice(0, 12)} | Unavailable: ${p.unavailableReason} | — | — | — | — | — |`
+      : `| ${p.sha.slice(0, 12)} | ${score(p.oldScore, p.oldScored, p.expectedCases)} | ${score(p.score, p.scored, p.expectedCases)} | ${p.passed}/${p.scored} | ${p.currentLanes}/${p.expectedLanes} | ${p.plannerErrors} | ${p.missingLanes} |`),
   ];
   if (report.issues.length) lines.push("", "### Incomplete coverage", ...report.issues.map(issue => `- ${issue.replaceAll("\n", " ")}`));
   return lines.join("\n") + "\n";

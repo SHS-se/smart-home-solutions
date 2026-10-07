@@ -61,6 +61,15 @@ const isMissingTable = (error: unknown) => /PGRST205|bench_\w+.*(does not exist|
 
 const PlannerBench: React.FC = () => <Bench />;
 
+const RunDetails: React.FC<{ run: BenchRun | null }> = ({ run }) => {
+  const { t } = useLanguage();
+  return run && <>
+    <div className="text-xs text-muted-foreground truncate">{run.subject}</div>
+    {run.error && <p role="status" className="text-xs text-destructive">{run.status === 'unavailable'
+      ? t('Den här commiten innehåller ingen planerare.', 'This commit does not contain a planner.') : run.error}</p>}
+  </>;
+};
+
 const Bench: React.FC = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
@@ -132,7 +141,7 @@ const Bench: React.FC = () => {
   }, [laneSummaries.data, cases, savedRules]);
   const [lane, setLane] = useState<LaneId>(BASE_LANE);
 
-  const coverage = useMemo(() => new Map(allRuns.map(run => [run.sha, runCoverage(cases,
+  const coverage = useMemo(() => new Map(allRuns.map(run => [run.sha, runCoverage(run.status === 'unavailable' ? [] : cases,
     new Map(baseSummaries.filter(s => s.sha === run.sha).map(s => [s.scenario_id, s])), savedRules)])),
   [allRuns, cases, baseSummaries, savedRules]);
   const scoresFor = (sha: string) => coverage.get(sha)?.scores ?? null;
@@ -288,7 +297,7 @@ const Bench: React.FC = () => {
   const loadError = runs.error ?? scenarios.error ?? summaries.error;
   const runLabel = (run: BenchRun) => {
     const score = runScores.get(run.sha);
-    const status = run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : '';
+    const status = run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : run.status === 'unavailable' ? ` · ${t('saknar planerare', 'no planner')}` : '';
     const cov = coverage.get(run.sha);
     const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('testfall', 'cases')}` : '';
     return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : ''}${status}${incomplete}`;
@@ -406,7 +415,7 @@ const Bench: React.FC = () => {
                 <div className="flex flex-col gap-1.5 min-w-0">
                   <div className="text-xs text-muted-foreground">{t('Nuvarande planerare (produktion · main)', 'Current planner (production · main)')}</div>
                   <div id="bench-current-run" className="flex h-10 items-center font-mono text-sm rounded-md border px-3"><span className="truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</span></div>
-                  {currentRun && <div className="text-xs text-muted-foreground truncate">{currentRun.subject}</div>}
+                  <RunDetails run={currentRun} />
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-0">
                   <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Testplanerare (testmiljön · dev)', 'Test planner (test environment · dev)')}</label>
@@ -418,7 +427,7 @@ const Bench: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  {testRun && <div className="text-xs text-muted-foreground truncate">{testRun.subject}</div>}
+                  <RunDetails run={testRun} />
                 </div>
               </div>
               <p id="bench-coverage" className="text-sm text-muted-foreground">
@@ -426,8 +435,11 @@ const Bench: React.FC = () => {
                   `${cases.filter(c => c.dataset && c.recorded_at).length} measured cases · ${cases.filter(c => !c.recorded_at).length} waiting for measurements`)}
               </p>
               {!totals && cases.some(c => c.recorded_at) && <p id="bench-incomplete" className="text-sm text-muted-foreground">
-                {t('Jämförelsen väntar på aktuella resultat för alla uppmätta testfall. Kör saknade resultat.',
-                  'Comparison awaits current results for every measured case. Run missing results.')}
+                {currentRun?.status === 'unavailable' || testRun?.status === 'unavailable'
+                  ? t('Jämförelsen kan inte göras eftersom en av dessa commits saknar planerare.',
+                    'These commits cannot be compared because one does not contain a planner.')
+                  : t('Jämförelsen väntar på aktuella resultat för alla uppmätta testfall. Kör saknade resultat.',
+                    'Comparison awaits current results for every measured case. Run missing results.')}
               </p>}
               {totals && <SuiteTable totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
               {selectedCase?.recorded_at && series.data && <CaseCostSummary scenario={selectedCase} details={series.data} />}

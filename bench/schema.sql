@@ -55,11 +55,15 @@ create table if not exists public.bench_runs (
   branch text,
   -- The commit at the production/main branch head.
   is_current boolean not null default false,
-  status text not null default 'running' check (status in ('running', 'done', 'failed')),
+  status text not null default 'running' check (status in ('running', 'done', 'failed', 'unavailable')),
   error text,
   finished_at timestamptz,
   created_at timestamptz not null default now()
 );
+-- Update the existing constraint too: the schema is reapplied to the TEST store.
+alter table public.bench_runs drop constraint if exists bench_runs_status_check;
+alter table public.bench_runs add constraint bench_runs_status_check
+  check (status in ('running', 'done', 'failed', 'unavailable'));
 alter table public.bench_runs add column if not exists is_test boolean not null default false;
 create unique index if not exists bench_runs_one_test on public.bench_runs (is_test) where is_test;
 create unique index if not exists bench_runs_one_current on public.bench_runs (is_current) where is_current;

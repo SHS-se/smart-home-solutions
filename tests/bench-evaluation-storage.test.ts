@@ -21,6 +21,9 @@ async function database() {
     CREATE FUNCTION is_staff(uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$;`);
   const schema = await Deno.readTextFile('bench/schema.sql');
   await db.exec(schema);
+  // Upgrade an installation with the old status constraint, then reapply idempotently.
+  await db.exec("ALTER TABLE bench_runs DROP CONSTRAINT bench_runs_status_check; ALTER TABLE bench_runs ADD CONSTRAINT bench_runs_status_check CHECK (status IN ('running','done','failed'))");
+  await db.exec(schema);
   await db.exec(schema); // the workflow applies it on every run
   await db.exec(`GRANT SELECT,UPDATE ON bench_results TO service_role;
     INSERT INTO bench_scenarios(id,name,captured_at) VALUES('${scenario}','Synthetic',now());
@@ -36,6 +39,17 @@ async function database() {
 }
 const observed = async (db: PGlite) => (await db.query<EvaluatedResult>('SELECT * FROM bench_result_summaries')).rows[0];
 const row = async (db: PGlite) => (await db.query<Record<string, unknown>>('SELECT * FROM bench_results')).rows[0];
+
+Deno.test('the reapplied bench schema accepts unavailable commits and preserves exact environment marks', async () => {
+  const db = await database();
+  try {
+    await db.exec("UPDATE bench_runs SET status='unavailable',error='This commit does not contain a planner entry point.',planner_version=NULL WHERE sha='test'");
+    await db.query("SELECT bench_set_deployed('test','production')");
+    assertEquals((await db.query<{ sha: string; status: string; is_current: boolean }>("SELECT sha,status,is_current FROM bench_runs")).rows,
+      [{ sha: 'test', status: 'unavailable', is_current: true }]);
+    await assertRejects(() => db.exec("UPDATE bench_runs SET status='invented'"));
+  } finally { await db.close(); }
+});
 
 Deno.test('bench mutations preserve exact evaluations, avoid unchanged fields, and reject concurrent replacements', async () => {
   const db = await database();

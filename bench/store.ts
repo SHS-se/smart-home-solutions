@@ -9,7 +9,7 @@ import { canonicalJson, sha256, type BenchRecorded, type BenchScenarioData } fro
 import type { Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import type { StoredScore } from "../src/lib/planner-bench/score.ts";
 import type { LaneId } from "../src/lib/planner-bench/lanes.ts";
-import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
+import type { BenchRun, CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
 /** Only the derived fields whose dependencies changed cross the database boundary. */
 export type EvaluationMutation =
@@ -44,7 +44,7 @@ export interface RunRecord {
   committed_at: string;
   subject: string;
   branch: string | null;
-  status: "running" | "done" | "failed";
+  status: BenchRun["status"];
   error?: string | null;
   finished_at?: string | null;
   /** What the planner's code does (planner-version.ts), independent of commit identity. */
@@ -52,6 +52,8 @@ export interface RunRecord {
 }
 
 export interface RunSummary {
+  status: BenchRun["status"];
+  error: string | null;
   sha: string;
   committed_at: string;
   planner_version: string | null;
@@ -210,7 +212,7 @@ export class DbStore implements BenchStore {
   }
 
   async runs() {
-    return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current,is_test&order=committed_at,sha");
+    return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current,is_test,status,error&order=committed_at,sha");
   }
 
   async resultHashes(sha: string) {
@@ -322,7 +324,7 @@ export class LocalStore implements BenchStore {
   async knownShas() { return (await this.load()).runs.map(run => run.sha); }
   async runs() {
     return (await this.load()).runs.map(run => ({
-      sha: run.sha, committed_at: run.committed_at, planner_version: run.planner_version ?? null, is_current: !!run.is_current, is_test: !!run.is_test,
+      sha: run.sha, committed_at: run.committed_at, status: run.status, error: run.error ?? null, planner_version: run.planner_version ?? null, is_current: !!run.is_current, is_test: !!run.is_test,
     })).sort((a, b) => a.committed_at.localeCompare(b.committed_at));
   }
   async resultHashes(sha: string) {

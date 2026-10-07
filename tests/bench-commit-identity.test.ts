@@ -3,7 +3,7 @@ import { LocalStore } from '../bench/store.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 
-Deno.test('branch heads and identical planner commits retain their own identities through the real bench runner', async () => {
+Deno.test('the real bench runner preserves branch heads, marks pre-planner commits unavailable, and fails existing broken planners', async () => {
   const dir = await Deno.makeTempDir({ prefix: 'bench-commit-identity-' });
   const repo = `${dir}/repo`, cases = `${dir}/cases`, out = `${dir}/results.json`;
   const command = async (executable: string, args: string[], env: Record<string, string> = {}) => {
@@ -14,7 +14,7 @@ Deno.test('branch heads and identical planner commits retain their own identitie
   try {
     await Deno.mkdir(repo);
     await Deno.mkdir(cases);
-    // Use the current harness in an isolated repository with three real commits.
+    // Use the current harness in an isolated repository with real commits.
     await command('cp', ['-R', ...['bench', 'src', 'scripts', 'supabase'].map(path => `${root}/${path}`), repo]);
     await Deno.copyFile(`${root}/deno.json`, `${repo}/deno.json`);
     await Deno.symlink(`${root}/node_modules`, `${repo}/node_modules`);
@@ -24,11 +24,12 @@ Deno.test('branch heads and identical planner commits retain their own identitie
     await command('git', ['init', '--initial-branch=main']);
     await command('git', ['config', 'user.name', 'Bench test']);
     await command('git', ['config', 'user.email', 'bench@example.invalid']);
-    await command('git', ['add', `${planner}/energy-optimisation.ts`, `${planner}/dispatch-plan.ts`]);
     const commit = async (subject: string, date: string) => {
       await command('git', ['commit', '--allow-empty', '-m', subject], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
       return await command('git', ['rev-parse', 'HEAD']);
     };
+    const beforePlanner = await commit('Before the planner existed', '2026-09-30T00:00:00Z');
+    await command('git', ['add', `${planner}/energy-optimisation.ts`, `${planner}/dispatch-plan.ts`]);
     const older = await commit('Original planner', '2026-10-01T00:00:00Z');
     const main = await commit('Main head, same planner', '2026-10-02T00:00:00Z');
     await command('git', ['switch', '-c', 'dev']);
@@ -47,6 +48,7 @@ Deno.test('branch heads and identical planner commits retain their own identitie
     // Start with the misleading folded record produced by the old runner.
     const store = new LocalStore(cases, out);
     await store.saveRun({ sha: older, short_sha: older.slice(0, 7), committed_at: '2026-10-01T00:00:00Z', subject: 'Original planner', branch: null, status: 'done' });
+    await store.saveRun({ sha: beforePlanner, short_sha: beforePlanner.slice(0, 7), committed_at: "2026-09-30T00:00:00Z", subject: "Before the planner existed", branch: null, status: "failed", error: "worker exited with 1" });
     await store.markDeployed(older, 'production');
     await store.markDeployed(older, 'test');
     const run = () => command(Deno.execPath(), [
@@ -56,12 +58,33 @@ Deno.test('branch heads and identical planner commits retain their own identitie
     await run();
     const first = await store.runs();
     assertEquals(first.map(r => [r.sha, r.is_current, r.is_test]), [
-      [older, false, false], [main, true, false], [dev, false, true],
+      [beforePlanner, false, false], [older, false, false], [main, true, false], [dev, false, true],
     ]);
-    assert(first[0].planner_version);
-    assertEquals(new Set(first.map(r => r.planner_version)).size, 1);
+    assertEquals(first[0].status, 'unavailable');
+    assertEquals(first[0].planner_version, null);
+    assertEquals(first[0].error, 'This commit does not contain a planner entry point.');
+    assert(first[1].planner_version);
+    assertEquals(new Set(first.slice(1).map(r => r.planner_version)).size, 1);
     await run();
     assertEquals(await store.runs(), first, 'repeated runs keep branch marks and every equal-code commit');
+    // An environment may itself point to a commit with no planner. Its identity stays exact.
+    await command(Deno.execPath(), [
+      'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
+      '--shas', 'all', '--current', beforePlanner, '--test', 'dev', '--local', cases, '--out', out,
+    ]);
+    assertEquals((await store.runs()).filter(r => r.is_current).map(r => [r.sha, r.status]), [[beforePlanner, 'unavailable']]);
+    assertEquals((await store.runs()).filter(r => r.is_test).map(r => r.sha), [dev]);
+
+    await Deno.writeTextFile(`${repo}/${planner}/energy-optimisation.ts`, "import './missing.ts';\nexport const PLANNER_INPUTS = [];\n");
+    await command('git', ['add', `${planner}/energy-optimisation.ts`]);
+    const broken = await commit('Broken planner dependency', '2026-10-04T00:00:00Z');
+    const failure = await new Deno.Command(Deno.execPath(), { cwd: repo, args: [
+      'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
+      '--shas', broken, '--test', broken, '--local', cases, '--out', out,
+    ], stdout: 'piped', stderr: 'piped' }).output();
+    assert(!failure.success, 'an existing planner with a missing import must still fail the workflow');
+    assert(new TextDecoder().decode(failure.stderr).includes('Module not found'));
+    assertEquals((await store.runs()).find(r => r.sha === broken)!.status, 'failed');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
