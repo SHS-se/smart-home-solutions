@@ -1,7 +1,7 @@
 // A planner version is what the planner's code does, not the commit carrying
 // it. Two commits share a version when the code their planner runs is the same
 // once types, comments and formatting are stripped, so a commit that changes
-// the website, the bench, tests, docs or only types gets no new bench entry.
+// the website, the bench, tests, docs or only types keeps the same code hash.
 //
 // The planner is every module reached through code imports from the entry
 // points the bench calls (bench/adapter.ts).
@@ -26,7 +26,7 @@ const ESBUILD = "npm:esbuild";
 /**
  * The planner version of a source tree: `<method>:<sha-256>`. The method names
  * the minifier, so versions are compared only when computed the same way; the
- * bench recomputes stored versions whose method differs from the current one.
+ * runner records the current method when a commit is benched.
  */
 export async function plannerVersion(tree: SourceTree): Promise<string> {
   const { transform, stop, version } = await import(ESBUILD);
@@ -51,11 +51,6 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
 }
 
 const versionMethod = (esbuild: string) => `v2-esbuild${esbuild}`;
-
-/** The method prefix `plannerVersion` writes today. */
-export async function currentVersionMethod(): Promise<string> {
-  return versionMethod((await import(ESBUILD)).version);
-}
 
 /** A commit's files, read from git without checking it out. */
 export function commitTree(sha: string, cwd: string): SourceTree {

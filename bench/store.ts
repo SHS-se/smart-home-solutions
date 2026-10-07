@@ -47,7 +47,7 @@ export interface RunRecord {
   status: "running" | "done" | "failed";
   error?: string | null;
   finished_at?: string | null;
-  /** What the planner's code does (planner-version.ts); commits sharing it share one entry. */
+  /** What the planner's code does (planner-version.ts), independent of commit identity. */
   planner_version?: string | null;
 }
 
@@ -110,9 +110,6 @@ export interface BenchStore {
   saveRecorded(id: string, recorded: BenchRecorded | null, pendingReason: string | null): Promise<void>;
   knownShas(): Promise<string[]>;
   runs(): Promise<RunSummary[]>;
-  setPlannerVersion(sha: string, version: string): Promise<void>;
-  /** Fold run `from` into `into`, the same planner: its verdicts and current mark move over, its results go. */
-  mergeRun(from: string, into: string): Promise<void>;
   /** The input hash of each result this commit has, by `laneKey`. */
   resultHashes(sha: string): Promise<Map<string, ResultIdentity>>;
   bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }): Promise<void>;
@@ -214,26 +211,6 @@ export class DbStore implements BenchStore {
 
   async runs() {
     return await this.pages<RunSummary>("bench_runs?select=sha,committed_at,planner_version,is_current,is_test&order=committed_at,sha");
-  }
-
-  async setPlannerVersion(sha: string, version: string) {
-    await this.patch(`bench_runs?sha=eq.${sha}`, { planner_version: version });
-  }
-
-  async mergeRun(from: string, into: string) {
-    const verdicts = await this.request(`bench_verdicts?select=scenario_id,verdict,note,decided_by,decided_at&sha=eq.${from}`) as Record<string, unknown>[];
-    if (verdicts.length) {
-      await this.request("bench_verdicts?on_conflict=sha,scenario_id", {
-        method: "POST",
-        headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
-        body: JSON.stringify(verdicts.map(verdict => ({ ...verdict, sha: into }))),
-      });
-    }
-    const [run] = await this.request(`bench_runs?select=is_current,is_test&sha=eq.${from}`) as { is_current: boolean; is_test: boolean }[];
-    if (run?.is_current) await this.markDeployed(into, "production");
-    if (run?.is_test) await this.markDeployed(into, "test");
-    // Results and verdicts cascade.
-    await this.request(`bench_runs?sha=eq.${from}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
 
   async resultHashes(sha: string) {
@@ -347,18 +324,6 @@ export class LocalStore implements BenchStore {
     return (await this.load()).runs.map(run => ({
       sha: run.sha, committed_at: run.committed_at, planner_version: run.planner_version ?? null, is_current: !!run.is_current, is_test: !!run.is_test,
     })).sort((a, b) => a.committed_at.localeCompare(b.committed_at));
-  }
-  async setPlannerVersion(sha: string, version: string) {
-    const file = await this.load();
-    file.runs = file.runs.map(run => run.sha === sha ? { ...run, planner_version: version } : run);
-    await this.save(file);
-  }
-  async mergeRun(from: string, into: string) {
-    const file = await this.load();
-    const moved = file.runs.find(run => run.sha === from);
-    file.runs = file.runs.filter(run => run.sha !== from).map(run => run.sha === into ? { ...run, is_current: run.is_current || moved?.is_current, is_test: run.is_test || moved?.is_test } : run);
-    file.results = file.results.filter(result => result.sha !== from);
-    await this.save(file);
   }
   async resultHashes(sha: string) {
     return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [laneKey(r.scenario_id, r.lane), {

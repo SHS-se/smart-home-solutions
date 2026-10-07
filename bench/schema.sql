@@ -53,7 +53,7 @@ create table if not exists public.bench_runs (
   committed_at timestamptz not null,
   subject text not null default '',
   branch text,
-  -- The planner version successfully deployed to production.
+  -- The commit at the production/main branch head.
   is_current boolean not null default false,
   status text not null default 'running' check (status in ('running', 'done', 'failed')),
   error text,
@@ -63,8 +63,8 @@ create table if not exists public.bench_runs (
 alter table public.bench_runs add column if not exists is_test boolean not null default false;
 create unique index if not exists bench_runs_one_test on public.bench_runs (is_test) where is_test;
 create unique index if not exists bench_runs_one_current on public.bench_runs (is_current) where is_current;
--- What the planner's code does (bench/planner-version.ts). Commits that share a
--- version share one run: the runner folds later ones into the earliest.
+-- What the planner's code does (bench/planner-version.ts). Equal versions
+-- still keep separate commit identities, results and environment marks.
 alter table public.bench_runs add column if not exists planner_version text;
 
 create table if not exists public.bench_results (

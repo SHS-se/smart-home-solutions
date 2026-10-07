@@ -16,7 +16,7 @@ Page: **Planner bench** in the staff menu, on the test site
 | Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household data never reaches production. |
 | Runner | `bench/run.ts`, `bench/adapter.ts`, `bench/history.ts`, `bench/store.ts`, `bench/planner-version.ts` | Converts and completes test cases, then checks each planner commit out as a git worktree and plans every case whose result is missing or stale, in a fresh Deno process. Stores what the planner decided and the referee's account of it. |
 | Shared logic | `src/lib/planner-bench/` | Test case format, replay conversion, household, referee, totals, scoring. Used by both the runner and the page. |
-| CI | `.github/workflows/planner-bench.yml` | After successful main/dev deployments, benches the deployed planner versions and stale results, marking production as current and dev as test. Manual dispatch runs requested commits or rescores. |
+| CI | `.github/workflows/planner-bench.yml` | After successful main/dev deployments, benches the current branch heads and stale results, marking main as current and dev as test. Manual planning runs also refresh branch heads; rescore-only runs preserve identity. |
 | Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
 | Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, rule list, upload. |
 
@@ -30,24 +30,28 @@ the referee that scores every plan at real prices are described in
 
 ## Planner versions
 
-The bench lists planner versions, not commits. The planner is its own folder,
-`supabase/functions/_shared/planner/`, which imports nothing from outside
+Every requested commit keeps its own run and results. The planner is its own
+folder, `supabase/functions/_shared/planner/`, which imports nothing from outside
 itself (`tests/planner-boundary.test.ts`). A commit's planner version is a hash
 of the code that folder's entry points reach, with types, comments and
-formatting stripped by esbuild (`bench/planner-version.ts`). So a commit that
-changes only the website, the bench, tests, docs or types has the same version
-as the commit before it, and gets no new entry.
+formatting stripped by esbuild (`bench/planner-version.ts`). That hash describes
+code equivalence; it never replaces a commit's SHA or moves its environment marks.
 
-Before each run the runner gives every stored run its version and folds runs
-that share one into the earliest: verdicts and deployment marks move over, the
-duplicate's results go. When a deployed commit's version is already on the bench, that existing entry receives its deployment mark.
+The dropdown keeps the newest commit in each consecutive group with equal,
+complete scores. Unscored, running and failed commits stay visible, as do the
+main head, dev head and currently selected historical commit. Stored runs,
+results and verdicts remain attached to their original commits.
 
 ## Current and test planner
 
-- **Current:** the planner version successfully deployed from `main` to production, marked `is_current` by CI.
-- **Test:** defaults to the planner version successfully deployed from `dev` to test, marked `is_test` by CI. The dropdown also allows historical comparisons.
+- **Current:** the exact `main` branch-head commit, marked `is_current` by CI.
+- **Test:** defaults to the exact `dev` branch-head commit, marked `is_test` by CI. The dropdown also allows historical comparisons.
 
-Both marks may belong to the same run when production and test share a planner version. Deployment marks cannot be changed from the page.
+Both marks belong to the same run only when main and dev point to the same SHA.
+The workflow fetches both branch heads before each planning run and includes
+them even when specific historical commits were requested. `--shas none` only
+rescores and does not change these marks. Environment marks cannot be changed
+from the page.
 
 The totals table compares only the cases both runs have results for.
 

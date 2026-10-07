@@ -28,6 +28,11 @@ const REPEATS = [
   { sha: 'a'.repeat(40), short_sha: 'aaaaaaa', committed_at: '2026-09-25T09:00:00Z', subject: 'Refactor, no change' },
   { sha: 'b'.repeat(40), short_sha: 'bbbbbbb', committed_at: '2026-09-26T09:00:00Z', subject: 'Comments, no change' },
 ];
+/** Later historical runs with the same score as dev, but no environment mark. */
+const LATER_REPEATS = [
+  { sha: 'e'.repeat(40), short_sha: 'eeeeeee', committed_at: '2026-09-30T09:00:00Z', subject: 'Later equivalent planner' },
+  { sha: 'f'.repeat(40), short_sha: 'fffffff', committed_at: '2026-10-01T09:00:00Z', subject: 'Newest equivalent planner' },
+];
 const CASES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Cheap night', captured_at: '2026-09-19T13:06:00Z' },
   { id: '22222222-2222-4222-8222-222222222222', name: 'Dear week', captured_at: '2026-09-24T07:25:00Z' },
@@ -134,7 +139,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
   const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
   if (shortEvRestart) {
     const { c, decisions } = shortEvRestartFixture();
@@ -282,9 +287,10 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         case 'staff_users': return [{ role: 'admin' }];
         case 'bench_rules': return [{ criteria: {} }];
         case 'bench_runs': return [
-          ...(repeats ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
+          ...(repeats || history ? REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
           { ...CURRENT, branch: 'main', is_current: true, is_test: false, status: 'done', error: null, finished_at: nowIso },
           { ...TEST, branch: 'dev', is_current: false, is_test: true, status: 'done', error: null, finished_at: nowIso },
+          ...(history ? LATER_REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
         ];
         case 'bench_scenarios': return CASES.map(c => ({
           ...c, revision: c.id, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,
@@ -292,7 +298,8 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         }));
         case 'bench_result_summaries': return [
           ...Object.entries(plans),
-          ...(repeats ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${CURRENT.sha}/${c.id}`]] as const)),
+          ...(repeats || history ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${history ? TEST.sha : CURRENT.sha}/${c.id}`]] as const)),
+          ...(history ? LATER_REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${TEST.sha}/${c.id}`]] as const)),
         ].map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
@@ -521,6 +528,24 @@ test.describe('planner bench', () => {
     // The two older versions scored what the current planner does, so the changes in them moved nothing.
     await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /]);
     await page.getByRole('listbox').screenshot({ path: test.info().outputPath('planner-options.png') });
+  });
+
+  test('keeps exact main and dev heads and the newest equal-score historical commits', async ({ context, page }) => {
+    await mockBackend(context, { history: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
+    await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
+    await page.locator('#bench-test-run').click();
+    await expect(page.getByRole('option')).toHaveText([/^bbbbbbb · /, /^ccccccc · /, /^ddddddd · /, /^fffffff · /]);
+    await page.getByRole('option').filter({ hasText: /^bbbbbbb · / }).click();
+    await expect(page.locator('#bench-test-run')).toContainText('bbbbbbb');
+    await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
+    await page.locator('#bench-test-run').click();
+    // Dev stays available even after selecting history and a newer run has its score.
+    await expect(page.getByRole('option')).toHaveText([/^bbbbbbb · /, /^ccccccc · /, /^ddddddd · /, /^fffffff · /]);
+    await page.getByRole('option').filter({ hasText: /^ddddddd · / }).click();
+    await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
   });
 
   test('compares the test planner with the current one', async ({ context, page }) => {

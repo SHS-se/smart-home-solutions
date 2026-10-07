@@ -3,20 +3,24 @@ import { DbStore, LocalStore, type EvaluatedResult } from "../bench/store.ts";
 
 const immediate = { now: () => 0, wait: () => Promise.resolve() };
 
-Deno.test("deployment marks remain independent and follow identical planners when runs fold", async () => {
+Deno.test("environment marks preserve exact commit identities for identical planners", async () => {
   const dir = await Deno.makeTempDir({ prefix: "bench-deployments-" });
   try {
     const store = new LocalStore(dir, `${dir}/results.json`);
     for (const sha of ["older", "main", "dev"]) {
-      await store.saveRun({ sha, short_sha: sha, committed_at: "2026-10-07T00:00:00Z", subject: sha, branch: null, status: "done" });
+      await store.saveRun({ sha, short_sha: sha, committed_at: "2026-10-07T00:00:00Z", subject: sha, branch: null, status: "done", planner_version: "same-code" });
     }
     await store.markDeployed("main", "production");
     await store.markDeployed("dev", "test");
-    await store.mergeRun("main", "older");
-    await store.mergeRun("dev", "older");
-    assertEquals((await store.runs()).map(run => [run.sha, run.is_current, run.is_test]), [["older", true, true]]);
+    assertEquals((await store.runs()).map(run => [run.sha, run.is_current, run.is_test]), [
+      ["older", false, false], ["main", true, false], ["dev", false, true],
+    ]);
+    // Refreshing metadata and results never redirects marks to a code-equivalent commit.
+    await store.saveRun({ sha: "main", short_sha: "main", committed_at: "2026-10-07T00:00:00Z", subject: "Updated", branch: "main", status: "done", planner_version: "same-code" });
     await assertRejects(() => store.markDeployed("missing", "production"), Error, "Unknown deployed planner");
-    assertEquals((await store.runs()).map(run => [run.is_current, run.is_test]), [[true, true]]);
+    assertEquals((await store.runs()).map(run => [run.is_current, run.is_test]), [[false, false], [false, true], [true, false]]);
+    await store.markDeployed("dev", "production");
+    assertEquals((await store.runs()).filter(run => run.is_current || run.is_test).map(run => [run.sha, run.is_current, run.is_test]), [["dev", true, true]]);
   } finally { await Deno.remove(dir, { recursive: true }); }
 });
 

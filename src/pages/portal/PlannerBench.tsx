@@ -143,7 +143,7 @@ const Bench: React.FC = () => {
     allRuns,
     // A run still going, or one that failed, has only part of its score.
     run => run.status === 'done' ? runScores.get(run.sha) ?? null : null,
-    run => run.is_current || run.sha === testRun?.sha,
+    run => run.is_current || run.is_test || run.sha === testRun?.sha,
   ), [allRuns, runScores, testRun?.sha]);
 
   /** Results scored by an older scorer, or before the rules last changed. */

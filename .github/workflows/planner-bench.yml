@@ -3,9 +3,9 @@ name: Planner bench
 # Replays every bench test case through planner versions and stores the plans
 # in the TEST Supabase project (docs/planner-bench/README.md).
 #
-# Successful CI deployments establish the production/main and test/dev versions.
+# Successful CI deployments trigger bench runs of the current main/dev heads.
 # The bench remains in TEST and historical comparisons remain available.
-# Manual dispatch runs/re-scores requested cases without changing deployment identity.
+# Manual planning runs also refresh branch identity; rescore-only runs preserve it.
 
 on:
   workflow_run:
@@ -88,16 +88,14 @@ jobs:
           echo "::add-mask::$key"
           echo "BENCH_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
 
-      - name: Resolve successfully deployed planner commits
-        if: github.event_name == 'workflow_run'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Resolve main and dev branch heads
+        if: github.event_name == 'workflow_run' || inputs.shas != 'none'
         run: |
           set -euo pipefail
+          git fetch origin +refs/heads/main:refs/remotes/origin/main +refs/heads/dev:refs/remotes/origin/dev
           for branch in main dev; do
-            sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-deploy.yml/runs?branch=$branch&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""')
-            [ -n "$sha" ] || { echo "No successful deployment for $branch" >&2; exit 1; }
-            echo "DEPLOYED_$branch=$sha" >> "$GITHUB_ENV"
+            sha=$(git rev-parse "refs/remotes/origin/$branch^{commit}")
+            echo "BRANCH_$branch=$sha" >> "$GITHUB_ENV"
           done
 
       - name: Run the bench
@@ -110,9 +108,12 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
-              --shas "$DEPLOYED_main,$DEPLOYED_dev,all" --current "$DEPLOYED_main" --test "$DEPLOYED_dev"
+              --shas "all" --current "$BRANCH_main" --test "$BRANCH_dev"
           else
             extra=()
+            if [ "$INPUT_SHAS" != "none" ]; then
+              extra+=(--current "$BRANCH_main" --test "$BRANCH_dev")
+            fi
             [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")
             [ "$INPUT_FORCE" = "true" ] && extra+=(--force)
             [ "$INPUT_RERECORD" = "true" ] && extra+=(--rerecord)

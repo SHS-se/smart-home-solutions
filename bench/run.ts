@@ -35,9 +35,9 @@
 // battery trajectories, score) is recomputed from that whenever the referee or
 // the scorer changes, with no planner run.
 //
-// Commits whose planner code is the same (planner-version.ts) share one run:
-// a commit whose planner version is already on the bench is not run again, and
-// runs already stored with the same version fold into the earliest.
+// Every commit keeps its own run, results and environment marks, even when
+// its planner code matches another commit. The page hides older consecutive
+// equal-score entries without changing stored commit identity.
 //
 // Each commit is checked out into its own git worktree and run in a fresh Deno
 // process, so versions never share module state and one version crashing
@@ -52,8 +52,8 @@ import { homeComfortTargets } from "./comfort.ts";
 import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
-import { type BenchStore, DbStore, laneKey, LocalStore, type RunSummary, type StoredScenario } from "./store.ts";
-import { commitTree, currentVersionMethod, plannerVersion } from "./planner-version.ts";
+import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
+import { commitTree, plannerVersion } from "./planner-version.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -232,35 +232,6 @@ async function rescoreAndReport(bench: BenchStore, requireComplete = false) {
 
 const versionOf = (sha: string) => plannerVersion(commitTree(sha, harness));
 
-/**
- * Give every stored run its planner version and fold runs that share one into
- * the earliest. Returns the remaining run of each version.
- */
-async function foldSameVersions(bench: BenchStore): Promise<Map<string, RunSummary>> {
-  const method = `${await currentVersionMethod()}:`;
-  const runs = await bench.runs();
-  for (const run of runs) {
-    if (run.planner_version?.startsWith(method)) continue;
-    try {
-      run.planner_version = await versionOf(run.sha);
-      await bench.setPlannerVersion(run.sha, run.planner_version);
-    } catch {
-      console.log(`${run.sha.slice(0, 7)}: not in this checkout's history; left as it is.`);
-    }
-  }
-  const kept = new Map<string, RunSummary>();
-  for (const run of runs) {
-    if (!run.planner_version?.startsWith(method)) continue;
-    const first = kept.get(run.planner_version);
-    if (!first) { kept.set(run.planner_version, run); continue; }
-    console.log(`${run.sha.slice(0, 7)}: same planner as ${first.sha.slice(0, 7)}, folded into it.`);
-    await bench.mergeRun(run.sha, first.sha);
-    first.is_current ||= run.is_current;
-    first.is_test ||= run.is_test;
-  }
-  return kept;
-}
-
 async function orchestrate() {
   const bench = store();
   if (args.shas === "none") {
@@ -273,8 +244,8 @@ async function orchestrate() {
     return;
   }
   await prepareCases(bench);
-  const byVersion = await foldSameVersions(bench);
-  const listed = (args.shas ?? "HEAD").split(",").map(s => s.trim()).filter(Boolean);
+  const listed = [...(args.shas ?? "HEAD").split(","), args.current, args.test]
+    .filter((ref): ref is string => Boolean(ref?.trim())).map(ref => ref.trim());
   const stored = new Set(listed.includes("all") ? await bench.knownShas() : []);
   // A commit asked for by name must exist; one that is only stored may not.
   for (const ref of listed) stored.delete(ref);
@@ -292,14 +263,8 @@ async function orchestrate() {
       if (shown === null) continue;
       const [sha, shortSha, committedAt, subject] = shown.split("\t");
       const version = await versionOf(sha);
-      const same = byVersion.get(version);
-      if (same && same.sha !== sha) {
-        console.log(`${shortSha} ${subject}\n  same planner as ${same.sha.slice(0, 7)}: nothing to run.`);
-        continue;
-      }
       console.log(`${shortSha} ${subject}`);
       const run = { sha, short_sha: shortSha, committed_at: committedAt, subject, branch: args.branch ?? null, planner_version: version };
-      byVersion.set(version, { sha, committed_at: committedAt, planner_version: version, is_current: false, is_test: false });
       await bench.saveRun({ ...run, status: "running", error: null, finished_at: null });
 
       const root = `${scratch}/${shortSha}`;
@@ -325,9 +290,8 @@ async function orchestrate() {
     }
     for (const [ref, environment] of [[args.current, "production"], [args.test, "test"]] as const) {
       if (!ref) continue;
-      // The deployed commit may share its planner with an earlier run.
       const sha = await git("rev-parse", ref);
-      await bench.markDeployed(byVersion.get(await versionOf(sha))?.sha ?? sha, environment);
+      await bench.markDeployed(sha, environment);
     }
     await rescoreAndReport(bench, true);
   } finally {
