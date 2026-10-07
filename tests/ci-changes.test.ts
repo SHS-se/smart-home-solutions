@@ -30,6 +30,12 @@ Deno.test("a function importing website code redeploys with it", () => {
   assert(classify(root, ["src/lib/ecb-rate-core.ts"]).functions.includes("fetch-ecb-exchange-rate"));
 });
 
+Deno.test("probe credential and deployment changes redeploy only the private probe", () => {
+  for (const path of ["scripts/deploy-planner-probe.ts", "scripts/planner-probe-auth.ts"]) {
+    assertEquals(classify(root, [path]).functions, ["energy-planner-probe"]);
+  }
+});
+
 Deno.test("tests and docs deploy nothing", () => {
   const c = classify(root, ["supabase/functions/_shared/energy-optimisation.test.ts", "docs/x.md"]);
   assertEquals([c.frontend, c.migrations, c.functions.length, c.planner], [false, false, 0, false]);

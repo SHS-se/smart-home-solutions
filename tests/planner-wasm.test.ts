@@ -1,0 +1,379 @@
+import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
+import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
+import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
+import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
+import { command, problem } from "./planner-wasm.fixture.ts";
+import {
+  projectHeatPumpResponse,
+  stepThermalStore,
+} from "../supabase/functions/_shared/planner/device-models.ts";
+import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { scoreQuarters } from "../src/lib/planner-bench/score.ts";
+import { referee } from "../src/lib/planner-bench/referee.ts";
+import {
+  type BenchCase,
+  caseTargets,
+  QUARTERS,
+} from "../src/lib/planner-bench/case.ts";
+import { createPlannerProbe } from "../supabase/functions/_shared/planner-wasm/probe.ts";
+import { SOLVER_BASE64 } from "../supabase/functions/_shared/planner-wasm/solver-bytes.ts";
+import build from "../supabase/functions/_shared/planner-wasm/artifact.json" with {
+  type: "json",
+};
+import recipe from "../planner-core/recipe.json" with { type: "json" };
+
+const root = new URL("..", import.meta.url).pathname;
+const bytes = await Deno.readFile(
+  `${root}/supabase/functions/_shared/planner-wasm/solver.wasm`,
+);
+const core = createWasmPlanner(bytes);
+const solve = (p: ReadyProblem) => core.solve(p).outcome;
+
+Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
+  const planner = await loadWasmCandidate(root);
+  assert(planner.version.startsWith("wasm-v1:"));
+  assert(planner.artifact_bytes > 0);
+  assertEquals(
+    Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
+    bytes,
+  );
+});
+
+Deno.test("probe refuses production, anonymous access and alternate work recipes", async () => {
+  const handler = createPlannerProbe(
+    SOLVER_BASE64,
+    build,
+    recipe,
+    "test-secret",
+    "https://vxqpgbzseckgceopitpm.supabase.co",
+  );
+  const request = (p = problem(), secret = "test-secret") =>
+    new Request("https://test.invalid/probe", {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}` },
+      body: JSON.stringify(p),
+    });
+  assertEquals((await handler(request(problem(), "wrong"))).status, 401);
+  assertEquals((await handler(request())).status, 400);
+  const prod = createPlannerProbe(
+    SOLVER_BASE64,
+    build,
+    recipe,
+    "test-secret",
+    "https://oosxndduqzhvrorgogaw.supabase.co",
+  );
+  assertEquals((await prod(request())).status, 403);
+  const p = problem();
+  p.work_grant = recipe.work_grant;
+  p.recipe = recipe;
+  const response = await handler(request(p));
+  assertEquals(response.status, 200);
+  const result = await response.json();
+  assertEquals(result.outcome.kind, "selected");
+  assertEquals(result.qualification, "prototype_only");
+  assertEquals(result.cold, true);
+  assertEquals((await (await handler(request(p))).json()).cold, false);
+});
+
+Deno.test("each solve is deterministic and uses private memory", () => {
+  const p = problem();
+  const first = solve(p);
+  const other = problem();
+  other.initial.pool_c = 45;
+  solve(other);
+  assertEquals(solve(p), first);
+  assertEquals(p.initial.pool_c, 32);
+});
+
+Deno.test("Wasm exports accept a host-wrapped public Memory constructor", () => {
+  const native = WebAssembly.Memory;
+  try {
+    WebAssembly.Memory = class HostMemory extends native {};
+    assertEquals(solve(problem()).kind, "selected");
+  } finally {
+    WebAssembly.Memory = native;
+  }
+});
+
+Deno.test("missing and partial accepted commitments fail explicitly", () => {
+  for (const endpoint of [0, 900, 3599]) {
+    const p = problem();
+    p.accepted = p.slots.map(() => command());
+    p.locked_through_seconds = endpoint;
+    assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
+  }
+  const p = problem();
+  p.locked_through_seconds = 3600;
+  assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
+  p.accepted = [command()];
+  assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
+});
+
+Deno.test("first hour includes the intersecting partial quarter and keeps exact commands", () => {
+  const p = problem();
+  for (const s of p.slots) s.start_seconds -= 300;
+  p.accepted = p.slots.map((_, i) => command(i % 2 === 0));
+  p.accepted[0].ev_amps = 6;
+  p.accepted[0].battery = "grid_charge";
+  p.accepted[0].charge_limit_w = 1000;
+  p.heater.response = {
+    kind: "bergvarme",
+    startup: [
+      { elapsed_seconds: 0, electric_fraction: .5, heat_fraction: 0 },
+      { elapsed_seconds: 1800, electric_fraction: 1, heat_fraction: 1 },
+    ],
+  };
+  p.locked_through_seconds = 3600;
+  const result = solve(p);
+  assertEquals(result.kind, "selected");
+  if (result.kind !== "selected") throw new Error(result.issue);
+  assertEquals(result.selection.commands.slice(0, 5), p.accepted.slice(0, 5));
+  const hours = 600 / 3600;
+  const response = projectHeatPumpResponse(
+    p.heater.response,
+    p.heater,
+    [3764],
+    [hours],
+    null,
+  );
+  const first = result.selection.quarters[0];
+  assertAlmostEquals(first.pool_w, response.draw_w[0], 1e-9);
+  assertAlmostEquals(
+    first.pool_c,
+    stepThermalStore(
+      p.pool_store,
+      p.initial.pool_c,
+      12000 * response.gain_fraction[0],
+      10,
+      hours,
+    ),
+    1e-9,
+  );
+  const evW = 6 * p.charger.voltage_v * p.charger.phase_count;
+  assertAlmostEquals(
+    first.ev_kwh,
+    p.initial.ev_kwh + evW * hours / 1000 * p.car.charge_efficiency,
+  );
+  assertAlmostEquals(
+    first.battery_kwh,
+    p.initial.battery_kwh + 1000 * hours / 1000 * p.battery.charge_efficiency,
+  );
+  assertAlmostEquals(
+    first.cost,
+    (500 + response.draw_w[0] + evW + 1000) * hours / 1000,
+  );
+  assertEquals(first.heater_age.kind, "running");
+  if (first.heater_age.kind !== "running") throw new Error("Expected running heater.");
+  assertAlmostEquals(first.heater_age.seconds, 600, 1e-9);
+  assert(result.selection.work_used <= p.work_grant);
+  const shifted = structuredClone(p);
+  for (const s of shifted.slots) s.start_seconds += 900;
+  assertEquals(solve(shifted), {
+    kind: "failed",
+    issue: "missing_capture_interval",
+  });
+});
+
+Deno.test("physical startup and measured thermal loss match the independent existing device model", () => {
+  const p = problem();
+  p.slots = p.slots.slice(0, 4);
+  p.pool_store = {
+    capacity_kwh_per_c: 63.965,
+    loss: {
+      kind: "measured",
+      points: [
+        { at_c: 25, c_per_h: -.03 },
+        { at_c: 35, c_per_h: -.08 },
+      ],
+    },
+  };
+  p.heater.response = {
+    kind: "bergvarme",
+    startup: [
+      { elapsed_seconds: 0, electric_fraction: .5, heat_fraction: 0 },
+      { elapsed_seconds: 1800, electric_fraction: 1, heat_fraction: 1 },
+    ],
+  };
+  p.accepted = p.slots.map(() => command(true));
+  p.locked_through_seconds = 3600;
+  const result = solve(p);
+  assertEquals(result.kind, "selected");
+  if (result.kind !== "selected") throw new Error(result.issue);
+  let water = p.initial.pool_c;
+  const response = projectHeatPumpResponse(
+    p.heater.response,
+    p.heater,
+    p.slots.map(() => 3764),
+    p.slots.map((s) => s.hours),
+    null,
+  );
+  for (let i = 0; i < p.slots.length; i++) {
+    const q = result.selection.quarters[i];
+    assertAlmostEquals(q.pool_w, response.draw_w[i], 1e-9);
+    water = stepThermalStore(
+      p.pool_store,
+      water,
+      12000 * response.gain_fraction[i],
+      10,
+      .25,
+    );
+    assertAlmostEquals(q.pool_c, water, 1e-9);
+    assertEquals(q.pool_command_w, 3764);
+    assertEquals(q.charge_w, 0);
+    assertEquals(q.discharge_w, 0);
+  }
+});
+
+Deno.test("invalid equipment fails without rejecting realistic above-target state", () => {
+  const p = problem();
+  p.battery = { ...p.battery, charge_efficiency: 1.1 };
+  assertEquals(solve(p), { kind: "failed", issue: "invalid_model_parameters" });
+  const valid = problem();
+  valid.initial.pool_c = 45;
+  valid.initial.ev_kwh = 75;
+  assertEquals(solve(valid).kind, "selected");
+});
+
+Deno.test("opposite rules are retained even when a quarter scores zero", () => {
+  const p = problem();
+  p.slots = p.slots.slice(0, 4);
+  p.initial.pool_c = 50;
+  p.targets.pool_c = 50;
+  p.pool_store = {
+    capacity_kwh_per_c: 1,
+    loss: { kind: "linear", kw_per_c: 1, surroundings_c: 10 },
+  };
+  p.rules = [{ key: "pool_low", threshold: 0, points: -1 }, {
+    key: "cheapest_buy",
+    threshold: 1,
+    points: 1,
+  }];
+  p.accepted = p.slots.map(() => command(true));
+  p.locked_through_seconds = 3600;
+  const result = solve(p);
+  assertEquals(result.kind, "selected");
+  if (result.kind !== "selected") throw new Error(result.issue);
+  assertEquals(result.selection.account.contributions[0], [-1, 1]);
+});
+
+Deno.test("measurement rounding keeps equality outside a strictly-above buffer rule", () => {
+  const p = problem();
+  p.slots = p.slots.slice(0, 4);
+  p.pool_store = {
+    capacity_kwh_per_c: 1,
+    loss: { kind: "linear", kw_per_c: 0, surroundings_c: null },
+  };
+  p.initial.pool_c = 32.0004;
+  for (const s of p.slots) s.next_day_buffer = true;
+  p.rules = [{ key: "pool_buffer", threshold: 2, points: 1 }];
+  p.accepted = p.slots.map(() => command());
+  p.locked_through_seconds = 3600;
+  const result = solve(p);
+  assertEquals(result.kind, "selected");
+  if (result.kind !== "selected") throw new Error(result.issue);
+  assertEquals(result.selection.account.points, 0);
+  assertEquals(result.selection.quarters[0].pool_c, 32.0004);
+});
+
+Deno.test("a grant too small for a complete certified result fails without partial output", () => {
+  const p = problem();
+  p.work_grant = 1;
+  assertEquals(solve(p), {
+    kind: "failed",
+    issue: "work_grant_cannot_construct_and_certify",
+  });
+  assertEquals(
+    solve({
+      ...problem(),
+      initial: { ...problem().initial, pool_c: Number.NaN },
+    }).kind,
+    "failed",
+  );
+});
+
+Deno.test("minimum construction grant returns a complete certified incumbent", () => {
+  const p = problem();
+  p.work_grant = p.slots.length * 64 * 4;
+  const result = solve(p);
+  assertEquals(result.kind, "selected");
+  if (result.kind !== "selected") throw new Error(result.issue);
+  assertEquals(result.selection.work_used, p.work_grant);
+  assertEquals(result.selection.commands.length, p.slots.length);
+  assertEquals(result.selection.quarters.length, p.slots.length);
+  assertEquals(result.selection.termination, "grant_exhausted");
+});
+
+function causalCase(): BenchCase {
+  const all = (value: number) => Array(QUARTERS).fill(value);
+  return {
+    format: "shs-bench-case",
+    version: 1,
+    start: "2026-09-28T00:00:00Z",
+    timezone: "Europe/Stockholm",
+    origin: {
+      kind: "manual",
+      detail: "causal boundary",
+      created_at: "2026-09-28T00:00:00Z",
+    },
+    location: { latitude: 59, longitude: 18 },
+    known_prices: { import_sek_per_kwh: all(1), export_sek_per_kwh: all(.5) },
+    solar_forecast_w: all(0),
+    base_load_forecast_w: all(500),
+    other_devices_w: {},
+    comfort: { pool_c: 30, ev_km: 300 },
+    start_state: {
+      battery_soc: .5,
+      pool_water_c: 30,
+      ev: { soc: .5, target_soc: .9 },
+    },
+    recorded: {
+      prices: { import_sek_per_kwh: all(1), export_sek_per_kwh: all(.5) },
+      outdoor_temperature_c: all(10),
+      solar_irradiance_w_per_m2: Array(QUARTERS).fill(null),
+      recorded_at: "2026-10-01T00:00:00Z",
+      history: {
+        prices: {
+          start: "2026-09-27T00:00:00Z",
+          import_sek_per_kwh: Array(96).fill(1),
+          export_sek_per_kwh: Array(96).fill(.5),
+        },
+        grid_import_kwh: { start: "2026-09-01T00:00:00Z", kwh: [] },
+      },
+    },
+  };
+}
+
+Deno.test("direct rule accounts agree with the independent quarter scorer when information matches", async () => {
+  const c = causalCase();
+  const planner = await loadWasmCandidate(root);
+  const p = readyProblem(c, HOUSEHOLD);
+  const result = planner.plan(p);
+  if (result.outcome.kind !== "selected") throw new Error(result.outcome.issue);
+  const { series, violations } = referee(
+    c,
+    HOUSEHOLD,
+    caseTargets(c),
+    result.record.decisions,
+    p.slots.map((s) => s.import_price),
+  );
+  assertEquals(violations, []);
+  const quarters = scoreQuarters(series, {}).quarters;
+  const expected = quarters.map((q) =>
+    p.rules.map((r) => q.fired.includes(r.key) ? r.points : 0)
+  );
+  assertEquals(result.outcome.selection.account.contributions, expected);
+});
+
+Deno.test("withheld future prices and actual household measurements cannot affect ready input", () => {
+  const c = causalCase();
+  for (let i = 96; i < QUARTERS; i++) {
+    c.known_prices.import_sek_per_kwh[i] = null;
+    c.known_prices.export_sek_per_kwh[i] = null;
+  }
+  const all = (value: number) => Array(QUARTERS).fill(value);
+  const changed = structuredClone(c);
+  changed.recorded.prices.import_sek_per_kwh.fill(999);
+  changed.recorded.prices.export_sek_per_kwh.fill(-999);
+  changed.recorded.actual = { base_load_w: all(9000), solar_w: all(9000) };
+  assertEquals(readyProblem(changed, HOUSEHOLD), readyProblem(c, HOUSEHOLD));
+});

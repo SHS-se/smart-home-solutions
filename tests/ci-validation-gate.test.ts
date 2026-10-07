@@ -5,8 +5,8 @@ const gate = workflow.split("\n  ci:\n")[1].split("\n  migrate:\n")[0];
 const script = gate.split("        run: |\n")[1]
   .split("\n").filter(line => line.trim()).map(line => line.slice(10)).join("\n");
 
-Deno.test("CI deployment gate waits for quality, every unit shard and browser tests", () => {
-  assert(gate.includes("needs: [changes, quality, unit, frontend]"));
+Deno.test("CI deployment gate waits for quality, every unit shard, Rust and browser tests", () => {
+  assert(gate.includes("needs: [changes, quality, unit, planner-rust, frontend]"));
   assert(gate.includes("!cancelled()"));
   assert(workflow.includes("fail-fast: false"));
   assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/4"));
@@ -14,11 +14,11 @@ Deno.test("CI deployment gate waits for quality, every unit shard and browser te
 });
 
 Deno.test("the actual CI gate rejects failed, cancelled or unexpectedly skipped checks", async () => {
-  const success = { QUALITY_RESULT: "success", UNIT_RESULT: "success", FRONTEND_RESULT: "success", FRONTEND_CHANGED: "true" };
+  const success = { QUALITY_RESULT: "success", UNIT_RESULT: "success", PLANNER_RUST_RESULT: "success", FRONTEND_RESULT: "success", FRONTEND_CHANGED: "true" };
   const scenarios = [
     { env: success, passes: true },
     { env: { ...success, FRONTEND_RESULT: "skipped", FRONTEND_CHANGED: "false" }, passes: true },
-    ...["QUALITY_RESULT", "UNIT_RESULT", "FRONTEND_RESULT"].flatMap(key =>
+    ...["QUALITY_RESULT", "UNIT_RESULT", "PLANNER_RUST_RESULT", "FRONTEND_RESULT"].flatMap(key =>
       ["failure", "cancelled", "skipped"].map(result => ({ env: { ...success, [key]: result }, passes: false }))),
   ];
   for (const { env, passes } of scenarios) {

@@ -33,3 +33,6 @@ test-results/
 # Supabase CLI temp files and restore artifacts
 supabase/.temp/
 supabase/config.toml.bak
+
+# Rust intermediates; the verified deployable Wasm artifact is tracked.
+planner-core/target/

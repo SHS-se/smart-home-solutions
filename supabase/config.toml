@@ -128,3 +128,7 @@ verify_jwt = false
 
 [functions.roi-monthly-prices]
 verify_jwt = false
+
+# Nonpublishing Rust/Wasm qualification lane; handler restricts it to TEST and service auth.
+[functions.energy-planner-probe]
+verify_jwt = false

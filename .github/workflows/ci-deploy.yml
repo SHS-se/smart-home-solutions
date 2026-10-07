@@ -151,6 +151,42 @@ jobs:
       - name: Unit tests
         run: deno task test --shard ${{ matrix.shard }}/4
 
+  planner-rust:
+    name: Rust planner & Wasm parity
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Install pinned Rust toolchain
+        # rustup reads rust-toolchain.toml, including Wasm, rustfmt and Clippy.
+        run: rustup show
+      - name: Check Rust formatting
+        run: cargo fmt --all --manifest-path planner-core/Cargo.toml --check
+      - name: Check Rust lint
+        run: cargo clippy --manifest-path planner-core/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Test Rust device models
+        run: cargo test --manifest-path planner-core/Cargo.toml --locked
+      - name: Build and verify tracked Wasm
+        run: |
+          deno task build:planner-wasm
+          git diff --exit-code -- supabase/functions/_shared/planner-wasm/solver.wasm supabase/functions/_shared/planner-wasm/artifact.json supabase/functions/_shared/planner-wasm/solver-bytes.ts supabase/functions/energy-planner-probe/recipe.json
+      - name: Build native reference and check parity
+        run: |
+          cargo build --manifest-path planner-core/Cargo.toml --locked --release --bin shs-planner-core
+          deno task test:planner-native-parity
+
   frontend:
     name: Build & browser tests
     needs: changes
@@ -193,7 +229,7 @@ jobs:
 
   ci:
     name: Lint, test & build
-    needs: [changes, quality, unit, frontend]
+    needs: [changes, quality, unit, planner-rust, frontend]
     # Run the gate even after a failed dependency, so its required status fails
     # explicitly. Frontend validation may skip only when no frontend changed.
     if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
@@ -203,11 +239,13 @@ jobs:
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          PLANNER_RUST_RESULT: ${{ needs.planner-rust.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
         run: |
           test "$QUALITY_RESULT" = success
           test "$UNIT_RESULT" = success
+          test "$PLANNER_RUST_RESULT" = success
           if [ "$FRONTEND_CHANGED" = true ]; then
             test "$FRONTEND_RESULT" = success
           else
@@ -283,6 +321,11 @@ jobs:
         with:
           version: latest
 
+      - name: Set up Deno for the private TEST probe deployment
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Deploy edge functions
         # Deploys the functions whose code changed (per-function settings come from config.toml,
         # and changing it deploys them all). --use-api bundles without Docker; auth is the access
@@ -295,7 +338,11 @@ jobs:
           rest=()
           planning_deployed=false
           for name in $FUNCTIONS; do
-            if [ "$name" = energy-optimisation-plan-step ]; then
+            if [ "$name" = energy-planner-probe ]; then
+              if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]; then
+                deno task deploy:planner-probe
+              fi
+            elif [ "$name" = energy-optimisation-plan-step ]; then
               if [ "$planning_deployed" = false ]; then
                 bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
                 planning_deployed=true

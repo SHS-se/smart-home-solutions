@@ -1,0 +1,8 @@
+{
+  "version": "diagnostic-causal-quarter-v1",
+  "qualification": "prototype_only",
+  "ordering": ["additive_rule_points", "cash_plus_declared_wear"],
+  "direct_rules": ["pool_low", "pool_cold", "pool_hot", "pool_buffer", "ev_low", "ev_short", "cheap_buy", "cheapest_buy", "dear_load", "dearest_load", "base_load_dear_import", "base_load_dearest_import", "missed_cheap_quarter", "arbitrage_no_export", "arbitrage_not_full", "ev_from_home_battery"],
+  "external_witness_rules": ["large_load_overlap", "ev_short_gap", "pool_short_gap"],
+  "remaining_policy_work": ["causal witness mappings", "useful closing inventory", "episode anchors", "measurement precision parity"]
+}

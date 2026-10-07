@@ -1,0 +1,7 @@
+{
+  "version": "coupled-profile-pair-v1",
+  "work_grant": 120000000,
+  "max_passes": 8,
+  "coupled_masks": [7, 3, 1, 2, 4],
+  "qualification": "prototype_only"
+}

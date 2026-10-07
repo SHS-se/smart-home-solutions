@@ -362,7 +362,7 @@ export function findOpportunities(
     const net = load - world.solarW[i];
     return sum + Math.abs(net) * Math.abs(net > 0 ? buy[i] : sell[i]) * KWH;
   }, 0));
-  const emptyRules = () => Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as AuditCore['rules'];
+  const emptyRules = () => Object.fromEntries(OPPORTUNITY_RULES.map<readonly [OpportunityRuleKey, OpportunityRuleResult]>(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as AuditCore['rules'];
   const applicability = applicabilityOf(c, h, targets);
 
   let trials = 1;

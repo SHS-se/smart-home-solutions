@@ -16,6 +16,7 @@ try {
       "energy-optimisation-fixed-plan",
       "energy-optimisation-ingest",
       "energy-optimisation-plan-step",
+      "energy-planner-probe",
     ]
   ) {
     const entry = join(functions, name);
