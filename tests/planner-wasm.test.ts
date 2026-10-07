@@ -8,7 +8,7 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
-import { command, problem } from "./planner-wasm.fixture.ts";
+import { causalCase, command, problem } from "./planner-wasm.fixture.ts";
 import {
   projectHeatPumpResponse,
   stepThermalStore,
@@ -17,7 +17,6 @@ import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { resolveRules, scoreQuarters } from "../src/lib/planner-bench/score.ts";
 import { referee } from "../src/lib/planner-bench/referee.ts";
 import {
-  type BenchCase,
   caseTargets,
   QUARTERS,
 } from "../src/lib/planner-bench/case.ts";
@@ -334,45 +333,6 @@ Deno.test("bounded construction returns a complete certified incumbent", () => {
   assertEquals(result.selection.termination, "bounded_complete");
 });
 
-function causalCase(): BenchCase {
-  const all = (value: number) => Array(QUARTERS).fill(value);
-  return {
-    format: "shs-bench-case",
-    version: 1,
-    start: "2026-09-28T00:00:00Z",
-    timezone: "Europe/Stockholm",
-    origin: {
-      kind: "manual",
-      detail: "causal boundary",
-      created_at: "2026-09-28T00:00:00Z",
-    },
-    location: { latitude: 59, longitude: 18 },
-    known_prices: { import_sek_per_kwh: all(1), export_sek_per_kwh: all(.5) },
-    solar_forecast_w: all(0),
-    base_load_forecast_w: all(500),
-    other_devices_w: {},
-    comfort: { pool_c: 30, ev_km: 300 },
-    start_state: {
-      battery_soc: .5,
-      pool_water_c: 30,
-      ev: { soc: .5, target_soc: .9 },
-    },
-    recorded: {
-      prices: { import_sek_per_kwh: all(1), export_sek_per_kwh: all(.5) },
-      outdoor_temperature_c: all(10),
-      solar_irradiance_w_per_m2: Array(QUARTERS).fill(null),
-      recorded_at: "2026-10-01T00:00:00Z",
-      history: {
-        prices: {
-          start: "2026-09-27T00:00:00Z",
-          import_sek_per_kwh: Array(96).fill(1),
-          export_sek_per_kwh: Array(96).fill(.5),
-        },
-        grid_import_kwh: { start: "2026-09-01T00:00:00Z", kwh: [] },
-      },
-    },
-  };
-}
 
 Deno.test("direct rule accounts agree with the independent quarter scorer when information matches", async () => {
   const c = causalCase();

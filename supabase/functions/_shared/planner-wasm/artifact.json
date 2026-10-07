@@ -1,13 +1,14 @@
 {
   "abi": 2,
   "wasm_sha256": "5315d7a60cde33069c72a8ff80285053b2087a169d211222dcac8021cb1ae7a0",
-  "source_sha256": "dd5541d9379d09075f10014804c87515056281b77a71015b79c441a4c9081052",
+  "source_sha256": "7176b2defcafc7ca0f6534e485bf3d32b99b6dc5604c8f1f3cddaa452c324563",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
   "qualification": "prototype_only",
   "path_remapping": true,
   "source_files": [
+    "bench/planner-engine.json",
     "bench/wasm-planner.ts",
     "planner-core/Cargo.lock",
     "planner-core/Cargo.toml",

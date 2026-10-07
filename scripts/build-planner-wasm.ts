@@ -15,6 +15,7 @@ export const SOURCE_FILES = [
   'planner-core/recipe.json',
   'scripts/build-planner-wasm.ts',
   'bench/wasm-planner.ts',
+  'bench/planner-engine.json',
   'supabase/functions/_shared/planner-wasm/core.ts',
   'supabase/functions/_shared/planner-wasm/ready-problem.ts',
   'supabase/functions/_shared/planner/energy-price-shape.ts',

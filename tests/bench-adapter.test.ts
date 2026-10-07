@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { loadPlanner, snapshotFor } from "../bench/adapter.ts";
+import { loadTypeScriptPlanner, snapshotFor } from "../bench/adapter.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
@@ -35,8 +35,8 @@ const recorded = (): BenchRecorded => ({
   recorded_at: "2026-09-28T00:00:00Z",
 });
 
-Deno.test("the current planner derives its curves from the targets, and the scale turns them up", async () => {
-  const planner = await loadPlanner(root);
+Deno.test("the production TypeScript planner derives its curves from the targets, and the scale turns them up", async () => {
+  const planner = await loadTypeScriptPlanner(root);
   assertEquals(planner.generation, "snapshot+comfort");
   const c = loadCase(dataset(), recorded());
   const { record } = planner.plan(c, HOUSEHOLD);
@@ -77,7 +77,7 @@ Deno.test("the current planner derives its curves from the targets, and the scal
 });
 
 Deno.test("the planner is told the pool cools whatever the weather, and keeps it warm through a heat wave", async () => {
-  const planner = await loadPlanner(root);
+  const planner = await loadTypeScriptPlanner(root);
   // A pool at its target in 28 °C air: by the outdoor air alone it would hardly cool at all.
   const hot = loadCase({ ...dataset(), start_state: { ...dataset().start_state, pool_water_c: 30 } },
     { ...recorded(), outdoor_temperature_c: quarters(() => 28) });
@@ -129,7 +129,7 @@ Deno.test("the planner plans every device from its device model, whatever the ol
 });
 
 Deno.test("a plan's battery discharge is read once: what it sells is part of it, not on top of it", async () => {
-  const planner = await loadPlanner(root);
+  const planner = await loadTypeScriptPlanner(root);
   // Evenings at 3 kr to sell: the battery is planned to export, the house drawing 600 W of what it gives.
   const evening = (i: number) => hourOf(i) >= 16 && hourOf(i) < 20;
   const told = { ...dataset(), comfort: { pool_c: 20, ev_km: 100 }, start_state: { ...dataset().start_state, battery_soc: 0.95 }, known_prices: { import_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 4 : 1) : null), export_sek_per_kwh: quarters(i => i < 132 ? (evening(i) ? 3 : 0.4) : null) } };

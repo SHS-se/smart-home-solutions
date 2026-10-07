@@ -89,9 +89,9 @@ const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =
   scenario.dataset && hasMeasuredOutcome(scenario.recorded) ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
 
 /** Identity of everything a planner generation is given for a case under one lane. */
-function inputHash(c: BenchCase, generation: string, lane: LaneId): Promise<string> {
+function inputHash(c: BenchCase, generation: string, lane: LaneId, rules: Awaited<ReturnType<BenchStore["rules"]>>): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane) }));
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation === "ready-wasm-v2" ? { planner_rules: rules } : {}) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
@@ -102,7 +102,7 @@ async function worker(sha: string, root: string) {
   let failures = 0;
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
     for (const lane of LANES) {
-      const hash = await inputHash(c, planner.generation, lane);
+      const hash = await inputHash(c, planner.generation, lane, rules);
       const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
       const previous = done.get(laneKey(scenario.id, lane));
       if (!args.force && previous?.input_hash === hash && previous.status === "ok" && previous.has_record) {
@@ -110,7 +110,7 @@ async function worker(sha: string, root: string) {
         continue;
       }
       try {
-        const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale);
+        const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale, rules);
         // Whatever the planner was told, its plan is judged on the case as it really was.
         const evaluation = evaluate(c, record, rules, lane);
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });

@@ -30,9 +30,9 @@ import { caseTargets, QUARTERS, quarterStarts, type BenchCase } from "../src/lib
 import type { Household } from "../src/lib/planner-bench/household.ts";
 import { chargerLevels, cop, heatPumpLevels, idleCPerHour, operatingPoint, WATER_KWH_PER_M3_K } from "../supabase/functions/_shared/planner/device-models.ts";
 import type { Decisions } from "../src/lib/planner-bench/referee.ts";
-import type { PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
+import type { CriteriaOverrides, PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
 import { diskTree } from "../scripts/module-graph.ts";
-import { plannerDir } from "./planner-version.ts";
+import { typeScriptPlannerDir, usesRulePlanner } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
 export const ADAPTER_VERSION = 8;
@@ -55,9 +55,9 @@ interface PlannerModule {
 interface BasisModule { freezePlanningBasis?(snapshot: Json, archive: unknown[], gridImports: unknown[]): unknown }
 
 export interface LoadedPlanner {
-  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort";
+  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort" | "ready-wasm-v2";
   /** `scale` multiplies what the planner's value curves are worth (lanes.ts); 1 is the planner as it runs live. */
-  plan(c: BenchCase, household: Household, scale?: number): { record: PlanRecord; cpuMs: number };
+  plan(c: BenchCase, household: Household, scale?: number, criteria?: CriteriaOverrides): { record: PlanRecord; cpuMs: number };
 }
 
 /** Colder and warmer than any pool is planned: the ends of the cooling line planners are given. */
@@ -303,8 +303,39 @@ async function optionalImport(path: string): Promise<BasisModule | null> {
 }
 
 export async function loadPlanner(root: string): Promise<LoadedPlanner> {
-  const planner = plannerDir(diskTree(root));
-  if (planner === null) throw new Error("This commit does not contain a planner entry point.");
+  if (usesRulePlanner(diskTree(root))) {
+    // Load both forecast preparation and frozen Wasm from the requested commit,
+    // never the harness's current engine or a substitute on failure.
+    const candidate: typeof import("./wasm-planner.ts") = await import(
+      `file://${root}/bench/wasm-planner.ts`
+    );
+    const planner = await candidate.loadWasmCandidate(root);
+    return {
+      generation: "ready-wasm-v2",
+      plan(c, household, scale = 1, criteria = {}) {
+        const p = candidate.readyProblem(c, household, criteria);
+        const result = planner.plan(p);
+        return {
+          record: {
+            ...result.record,
+            valuation: { scale, pool: "none", ev: "none", battery: "none" },
+          },
+          cpuMs: result.elapsed_ms,
+        };
+      },
+    };
+  }
+  return loadTypeScriptPlanner(root);
+}
+
+/** Historical and still-production TypeScript planner, selected explicitly. */
+export async function loadTypeScriptPlanner(
+  root: string,
+): Promise<LoadedPlanner> {
+  const planner = typeScriptPlannerDir(diskTree(root));
+  if (planner === null) {
+    throw new Error("This commit does not contain a planner entry point.");
+  }
   const dir = `${root}/${planner}`;
   const M: PlannerModule = await import(`file://${dir}/energy-optimisation.ts`);
   const basis = await optionalImport(`${dir}/planning-basis.ts`);

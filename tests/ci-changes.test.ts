@@ -47,3 +47,18 @@ Deno.test("function config and unknown bases deploy everything", () => {
   const all = classify(root, "all");
   assert(all.frontend && all.migrations && all.planner);
 });
+
+Deno.test("rule planner artifacts and explicit engine selection trigger benchmark qualification", () => {
+  for (const path of [
+    "planner-core/solver/src/builder.rs",
+    "planner-core/recipe.json",
+    "supabase/functions/_shared/planner-wasm/artifact.json",
+    "bench/planner-engine.json",
+  ]) {
+    const c = classify(root, [path]);
+    assert(c.planner, path);
+    assert(!c.frontend, path);
+    assert(!c.functions.includes("energy-optimisation-plan-step"), path);
+  }
+  assert(classify(root, ["bench/planner-engine.json"]).bench);
+});

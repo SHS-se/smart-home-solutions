@@ -13,7 +13,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { diskTree, reach } from "./module-graph.ts";
-import { PLANNER_DIR } from "../bench/planner-version.ts";
+import { BENCH_ENGINE_FILE, PLANNER_DIR, WASM_PLANNER_DIR } from "../bench/planner-version.ts";
 
 export interface Changes {
   /** Anything beyond documentation: lint, typecheck and unit tests run. */
@@ -76,7 +76,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
 
   // A cheap gate only: the bench itself skips a commit whose planner version it
   // already has (bench/planner-version.ts), so over-including costs one CI job.
-  const planner = any(f => (f.startsWith(`${PLANNER_DIR}/`) && !isTest(f) && !isDoc(f)));
+  const planner = any(f => ((f.startsWith(`${PLANNER_DIR}/`) || f.startsWith(`${WASM_PLANNER_DIR}/`) || f.startsWith("planner-core/") || f === BENCH_ENGINE_FILE) && !isTest(f) && !isDoc(f)));
 
   return {
     code: any(f => !isDoc(f)),

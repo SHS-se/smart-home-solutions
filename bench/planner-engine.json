@@ -1,0 +1,4 @@
+{
+  "engine": "rule-wasm",
+  "scope": "bench-only"
+}

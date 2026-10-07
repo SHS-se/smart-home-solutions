@@ -37,6 +37,23 @@ of the code that folder's entry points reach, with types, comments and
 formatting stripped by esbuild (`bench/planner-version.ts`). That hash describes
 code equivalence; it never replaces a commit's SHA or moves its environment marks.
 
+Commits selecting `rule-wasm` in `bench/planner-engine.json` run the Rust/Wasm
+rule planner in the TEST bench. This selection is scoped to the bench; production
+replanning still uses the TypeScript planner. The Wasm version hashes the verified
+binary, its source manifest and the explicit engine selection. Missing, stale or
+unsupported configured artifacts fail the run. Historical commits without this
+selection retain their original TypeScript entry point and version.
+
+The rule planner receives the bench's saved rules when it builds each plan.
+Changing rules and running the bench regenerates these plans because the rules
+are part of their input identity. **Recompute scores** still only rescores stored
+decisions; use **Rerun** to build new decisions under the updated rules. The
+independent referee continues to judge every plan on the original case.
+The low/nominal/high valuation lanes remain available for comparison, but their
+decisions are identical for this planner because it has no cost-value curves;
+its valuation metadata reports `none`. Told and oracle price lanes still differ
+in the price information supplied.
+
 The dropdown keeps the newest commit in each consecutive group with equal,
 complete scores. Unscored, running and failed commits stay visible, as do the
 main head, dev head and currently selected historical commit. Stored runs,
