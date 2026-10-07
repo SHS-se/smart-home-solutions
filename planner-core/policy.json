@@ -1,8 +1,46 @@
 {
-  "version": "diagnostic-causal-quarter-v1",
+  "version": "rule-causal-certificate-v2",
   "qualification": "prototype_only",
-  "ordering": ["additive_rule_points", "cash_plus_declared_wear"],
-  "direct_rules": ["pool_low", "pool_cold", "pool_hot", "pool_buffer", "ev_low", "ev_short", "cheap_buy", "cheapest_buy", "dear_load", "dearest_load", "base_load_dear_import", "base_load_dearest_import", "missed_cheap_quarter", "arbitrage_no_export", "arbitrage_not_full", "ev_from_home_battery"],
-  "external_witness_rules": ["large_load_overlap", "ev_short_gap", "pool_short_gap"],
-  "remaining_policy_work": ["causal witness mappings", "useful closing inventory", "episode anchors", "measurement precision parity"]
+  "ordering": [
+    "additive_rule_points",
+    "cash_plus_declared_wear"
+  ],
+  "direct_rules": [
+    "pool_low",
+    "pool_cold",
+    "pool_hot",
+    "pool_buffer",
+    "ev_low",
+    "ev_short",
+    "cheap_buy",
+    "cheapest_buy",
+    "dear_load",
+    "dearest_load",
+    "base_load_dear_import",
+    "base_load_dearest_import",
+    "missed_cheap_quarter",
+    "arbitrage_no_export",
+    "arbitrage_not_full",
+    "ev_from_home_battery"
+  ],
+  "witness_rules": [
+    "large_load_overlap",
+    "pool_short_gap",
+    "ev_short_gap"
+  ],
+  "economic_rules": [
+    "export_before_import",
+    "battery_headroom_solar",
+    "pool_solar_preheat",
+    "pool_wait_for_sun",
+    "import_avoidable_by_storage",
+    "battery_price_spread",
+    "battery_preserve",
+    "high_value_export",
+    "pool_cheaper_heating",
+    "ev_timing",
+    "uneconomic_cycling"
+  ],
+  "coverage": "bounded_causal_certificates_with_reported_exhaustion",
+  "new_terminal_credit": false
 }

@@ -1,3 +1,9 @@
+import policy from "../planner-core/policy.json" with { type: "json" };
+import { OPPORTUNITY_RULES } from "../src/lib/planner-bench/opportunities.ts";
+import {
+  builderRecipe,
+  RULE_KEYS,
+} from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
@@ -8,7 +14,7 @@ import {
   stepThermalStore,
 } from "../supabase/functions/_shared/planner/device-models.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
-import { scoreQuarters } from "../src/lib/planner-bench/score.ts";
+import { resolveRules, scoreQuarters } from "../src/lib/planner-bench/score.ts";
 import { referee } from "../src/lib/planner-bench/referee.ts";
 import {
   type BenchCase,
@@ -31,7 +37,7 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v1:"));
+  assert(planner.version.startsWith("wasm-v2:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -65,7 +71,7 @@ Deno.test("probe refuses production, anonymous access and alternate work recipes
   assertEquals((await prod(request())).status, 403);
   const p = problem();
   p.work_grant = recipe.work_grant;
-  p.recipe = recipe;
+  p.recipe = builderRecipe(recipe);
   const response = await handler(request(p));
   assertEquals(response.status, 200);
   const result = await response.json();
@@ -163,7 +169,9 @@ Deno.test("first hour includes the intersecting partial quarter and keeps exact 
     (500 + response.draw_w[0] + evW + 1000) * hours / 1000,
   );
   assertEquals(first.heater_age.kind, "running");
-  if (first.heater_age.kind !== "running") throw new Error("Expected running heater.");
+  if (first.heater_age.kind !== "running") {
+    throw new Error("Expected running heater.");
+  }
   assertAlmostEquals(first.heater_age.seconds, 600, 1e-9);
   assert(result.selection.work_used <= p.work_grant);
   const shifted = structuredClone(p);
@@ -243,10 +251,18 @@ Deno.test("opposite rules are retained even when a quarter scores zero", () => {
     capacity_kwh_per_c: 1,
     loss: { kind: "linear", kw_per_c: 1, surroundings_c: 10 },
   };
-  p.rules = [{ key: "pool_low", threshold: 0, points: -1 }, {
+  p.rules = [{
+    key: "pool_low",
+    threshold: 0,
+    points: -1,
+    required: false,
+    unless: null,
+  }, {
     key: "cheapest_buy",
     threshold: 1,
     points: 1,
+    required: false,
+    unless: null,
   }];
   p.accepted = p.slots.map(() => command(true));
   p.locked_through_seconds = 3600;
@@ -258,20 +274,35 @@ Deno.test("opposite rules are retained even when a quarter scores zero", () => {
 
 Deno.test("measurement rounding keeps equality outside a strictly-above buffer rule", () => {
   const p = problem();
-  p.slots = p.slots.slice(0, 4);
+  p.slots = Array.from(
+    { length: 192 },
+    (_, i) => ({
+      ...p.slots[0],
+      start_seconds: i * 900,
+      import_price: i < 96 ? 1 : 2,
+    }),
+  );
+  p.work_grant = 900_000_000;
   p.pool_store = {
     capacity_kwh_per_c: 1,
     loss: { kind: "linear", kw_per_c: 0, surroundings_c: null },
   };
   p.initial.pool_c = 32.0004;
-  for (const s of p.slots) s.next_day_buffer = true;
-  p.rules = [{ key: "pool_buffer", threshold: 2, points: 1 }];
+  p.rules = [{
+    key: "pool_buffer",
+    threshold: 2,
+    points: 1,
+    required: false,
+    unless: null,
+  }];
   p.accepted = p.slots.map(() => command());
   p.locked_through_seconds = 3600;
   const result = solve(p);
   assertEquals(result.kind, "selected");
   if (result.kind !== "selected") throw new Error(result.issue);
-  assertEquals(result.selection.account.points, 0);
+  assertEquals(result.selection.account.contributions.slice(0, 4), [[0], [0], [
+    0,
+  ], [0]]);
   assertEquals(result.selection.quarters[0].pool_c, 32.0004);
 });
 
@@ -291,16 +322,16 @@ Deno.test("a grant too small for a complete certified result fails without parti
   );
 });
 
-Deno.test("minimum construction grant returns a complete certified incumbent", () => {
+Deno.test("bounded construction returns a complete certified incumbent", () => {
   const p = problem();
-  p.work_grant = p.slots.length * 64 * 4;
+  p.work_grant = 12_000_000;
   const result = solve(p);
   assertEquals(result.kind, "selected");
   if (result.kind !== "selected") throw new Error(result.issue);
-  assertEquals(result.selection.work_used, p.work_grant);
+  assert(result.selection.work_used <= p.work_grant);
   assertEquals(result.selection.commands.length, p.slots.length);
   assertEquals(result.selection.quarters.length, p.slots.length);
-  assertEquals(result.selection.termination, "grant_exhausted");
+  assertEquals(result.selection.termination, "bounded_complete");
 });
 
 function causalCase(): BenchCase {
@@ -376,4 +407,59 @@ Deno.test("withheld future prices and actual household measurements cannot affec
   changed.recorded.prices.export_sek_per_kwh.fill(-999);
   changed.recorded.actual = { base_load_w: all(9000), solar_w: all(9000) };
   assertEquals(readyProblem(changed, HOUSEHOLD), readyProblem(c, HOUSEHOLD));
+});
+
+Deno.test("every bench rule and economic family has an explicit planner mapping", () => {
+  assertEquals(
+    [...RULE_KEYS].sort(),
+    resolveRules({}).map((r) => r.key).sort(),
+  );
+  assertEquals(
+    [...policy.direct_rules, ...policy.witness_rules].sort(),
+    [...RULE_KEYS].sort(),
+  );
+  assertEquals(
+    policy.economic_rules.toSorted(),
+    OPPORTUNITY_RULES.map((r) => r.key).sort(),
+  );
+  const criteria = {
+    pool_low: { enabled: false },
+    pool_buffer: { threshold: 1.2, points: -2 },
+  };
+  const p = readyProblem(causalCase(), HOUSEHOLD, criteria);
+  assertEquals(
+    p.rules,
+    resolveRules(criteria).filter((r) => r.enabled).map((r) => ({
+      key: r.key,
+      threshold: r.threshold,
+      points: r.points,
+      required: r.required ?? false,
+      unless: r.unless ?? null,
+    })),
+  );
+  assertEquals(p.service_guard.pool, [1, 2]);
+});
+
+Deno.test("every selected result reports bounded witnesses and exact work accounting", () => {
+  const p = problem();
+  const result = solve(p);
+  if (result.kind !== "selected") throw new Error(result.issue);
+  const s = result.selection;
+  assertEquals(s.work.used, s.work_used);
+  assertEquals(s.work.limit, p.work_grant);
+  assertEquals(s.work.reserved, 0);
+  assertEquals(s.work.evaluations, s.evaluations);
+  assertEquals(
+    s.witness_coverage.map((c) => c.family).sort(),
+    [...policy.witness_rules, ...policy.economic_rules].sort(),
+  );
+  const economic = new Set(
+    s.economic.filter((hit) => hit.published).flatMap((hit) =>
+      hit.quarters.map((i) => `${hit.rule}:${i}`)
+    ),
+  ).size;
+  assertEquals(
+    s.account.points,
+    s.account.contributions.flat().reduce((a, b) => a + b, 0) - economic,
+  );
 });

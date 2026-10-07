@@ -131,7 +131,7 @@ pub enum Response {
     Steady,
     Bergvarme { startup: Vec<StartupPoint> },
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunAge {
     Off,

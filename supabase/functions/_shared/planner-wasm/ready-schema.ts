@@ -1,23 +1,35 @@
-import { z } from 'zod';
-import { DIRECT_RULE_KEYS } from './ready-problem.ts';
+import { z } from "zod";
+import { RULE_KEYS } from "./ready-problem.ts";
 
 const number = z.number().finite();
-const age = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('off') }),
-  z.object({ kind: z.literal('steady') }),
-  z.object({ kind: z.literal('running'), seconds: number.nonnegative() }),
+const age = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("steady") }),
+  z.object({ kind: z.literal("running"), seconds: number.nonnegative() }),
 ]);
 const command = z.object({
   pool_on: z.boolean(),
   ev_amps: number.int().nonnegative(),
-  battery: z.enum(['hold', 'self_consumption', 'grid_charge', 'supply_house', 'export']),
+  battery: z.enum([
+    "hold",
+    "self_consumption",
+    "grid_charge",
+    "supply_house",
+    "export",
+  ]),
   charge_limit_w: number,
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(1),
+  abi: z.literal(2),
   work_grant: number.int().nonnegative(),
-  recipe: z.object({ max_passes: number.int().nonnegative(), coupled_masks: number.int().array() }),
+  recipe: z.object({
+    beam_width: number.int().positive(),
+    max_actions: number.int().positive(),
+    finalists: number.int().positive(),
+    witness_trials: number.int().nonnegative(),
+    repair_trials: number.int().nonnegative(),
+  }),
   slots: z.object({
     start_seconds: number,
     hours: number,
@@ -27,9 +39,6 @@ export const readyProblemSchema = z.object({
     import_price: number,
     export_price: number,
     published: z.boolean(),
-    cheap_rank: number,
-    dear_rank: number,
-    next_day_buffer: z.boolean().nullable(),
   }).array().nonempty(),
   battery: z.object({
     capacity_kwh: number,
@@ -40,7 +49,11 @@ export const readyProblemSchema = z.object({
     charge_efficiency: number,
     discharge_efficiency: number,
   }),
-  car: z.object({ capacity_kwh: number, kwh_per_km: number, charge_efficiency: number }),
+  car: z.object({
+    capacity_kwh: number,
+    kwh_per_km: number,
+    charge_efficiency: number,
+  }),
   charger: z.object({
     voltage_v: number,
     phase_count: number.int(),
@@ -50,10 +63,14 @@ export const readyProblemSchema = z.object({
   }),
   pool_store: z.object({
     capacity_kwh_per_c: number,
-    loss: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('linear'), kw_per_c: number, surroundings_c: number.nullable() }),
+    loss: z.discriminatedUnion("kind", [
       z.object({
-        kind: z.literal('measured'),
+        kind: z.literal("linear"),
+        kw_per_c: number,
+        surroundings_c: number.nullable(),
+      }),
+      z.object({
+        kind: z.literal("measured"),
         points: z.object({ at_c: number, c_per_h: number }).array(),
       }),
     ]),
@@ -62,10 +79,10 @@ export const readyProblemSchema = z.object({
     compressor_w: number,
     auxiliary_w: number,
     heat_w: number,
-    response: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('steady') }),
+    response: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("steady") }),
       z.object({
-        kind: z.literal('bergvarme'),
+        kind: z.literal("bergvarme"),
         startup: z.object({
           elapsed_seconds: number,
           electric_fraction: number,
@@ -74,7 +91,12 @@ export const readyProblemSchema = z.object({
       }),
     ]),
   }),
-  initial: z.object({ battery_kwh: number, ev_kwh: number, pool_c: number, heater_age: age }),
+  initial: z.object({
+    battery_kwh: number,
+    ev_kwh: number,
+    pool_c: number,
+    heater_age: age,
+  }),
   targets: z.object({ pool_c: number, ev_km: number, ev_limit_kwh: number }),
   limits: z.object({
     import_w: number,
@@ -84,8 +106,18 @@ export const readyProblemSchema = z.object({
     battery_export_min_price: number,
     wear_per_kwh: number,
   }),
-  rules: z.object({ key: z.enum(DIRECT_RULE_KEYS), threshold: number, points: number.int() })
+  rules: z.object({
+    key: z.enum(RULE_KEYS),
+    threshold: number,
+    points: number.int(),
+    required: z.boolean(),
+    unless: z.enum(RULE_KEYS).nullable(),
+  })
     .array(),
+  service_guard: z.object({
+    pool: z.tuple([number, number]),
+    ev: z.tuple([number, number]),
+  }),
   accepted: command.array().nullable(),
   locked_through_seconds: number,
 }).strict();

@@ -79,7 +79,7 @@ if (import.meta.main) {
     `${artifactDir}/artifact.json`,
     JSON.stringify(
       {
-        abi: 1,
+        abi: 2,
         wasm_sha256,
         source_sha256: sourceDigest(root),
         rust: '1.99.0',

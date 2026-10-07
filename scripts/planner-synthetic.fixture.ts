@@ -1,8 +1,9 @@
+import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Entirely invented diagnostic household. No HA readings, case export or customer IDs.
-import type { ReadyProblem } from '../supabase/functions/_shared/planner-wasm/ready-problem.ts';
-import { DIRECT_RULE_KEYS } from '../supabase/functions/_shared/planner-wasm/ready-problem.ts';
-import { resolveRules } from '../src/lib/planner-bench/score.ts';
-import recipe from '../planner-core/recipe.json' with { type: 'json' };
+import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
+import { RULE_KEYS } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
+import { resolveRules } from "../src/lib/planner-bench/score.ts";
+import recipe from "../planner-core/recipe.json" with { type: "json" };
 
 export function syntheticReadyProblem(): ReadyProblem {
   const prices = Array.from(
@@ -10,9 +11,9 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   return {
-    abi: 1,
+    abi: 2,
     work_grant: recipe.work_grant,
-    recipe,
+    recipe: builderRecipe(recipe),
     slots: prices.map((price, i) => ({
       start_seconds: i * 900,
       hours: .25,
@@ -22,9 +23,6 @@ export function syntheticReadyProblem(): ReadyProblem {
       import_price: price,
       export_price: price - .5,
       published: i < 96,
-      cheap_rank: prices.filter((p) => p < price).length / 288,
-      dear_rank: prices.filter((p) => p > price).length / 288,
-      next_day_buffer: i < 192 ? false : null,
     })),
     battery: {
       capacity_kwh: 10,
@@ -45,10 +43,20 @@ export function syntheticReadyProblem(): ReadyProblem {
     },
     pool_store: {
       capacity_kwh_per_c: 30,
-      loss: { kind: 'linear', kw_per_c: .1, surroundings_c: 10 },
+      loss: { kind: "linear", kw_per_c: .1, surroundings_c: 10 },
     },
-    heater: { compressor_w: 2000, auxiliary_w: 200, heat_w: 8000, response: { kind: 'steady' } },
-    initial: { battery_kwh: 5, ev_kwh: 10, pool_c: 28, heater_age: { kind: 'off' } },
+    heater: {
+      compressor_w: 2000,
+      auxiliary_w: 200,
+      heat_w: 8000,
+      response: { kind: "steady" },
+    },
+    initial: {
+      battery_kwh: 5,
+      ev_kwh: 10,
+      pool_c: 28,
+      heater_age: { kind: "off" },
+    },
     targets: { pool_c: 30, ev_km: 200, ev_limit_kwh: 45 },
     limits: {
       import_w: 12000,
@@ -60,13 +68,16 @@ export function syntheticReadyProblem(): ReadyProblem {
     },
     rules: resolveRules({}).flatMap((r) =>
       r.enabled
-        ? DIRECT_RULE_KEYS.filter((k) => k === r.key).map((key) => ({
+        ? RULE_KEYS.filter((k) => k === r.key).map((key) => ({
           key,
           threshold: r.threshold,
           points: r.points,
+          required: r.required ?? false,
+          unless: RULE_KEYS.find((key) => key === r.unless) ?? null,
         }))
         : []
     ),
+    service_guard: { pool: [1, 2], ev: [50, 100] },
     accepted: null,
     locked_through_seconds: 0,
   };

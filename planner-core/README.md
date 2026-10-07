@@ -19,8 +19,10 @@ deno task test:planner-native-parity
 deno task test
 ```
 
-`models` owns pure device transitions; `solver` owns projection, additive
-measurements and bounded search. The TypeScript wrapper passes one prepared
+`models` owns pure device transitions. `solver/physics.rs` owns coupled
+projection, `policy.rs` owns additive measurements and construction guidance,
+`witnesses.rs` owns feasible alternatives, and `builder.rs` owns bounded joint
+construction and repairs. The TypeScript wrapper passes one prepared
 problem through one Wasm call. Each invocation has private mutable memory.
 Neither crate has database, history, forecast-fetching or training dependencies.
 
@@ -75,11 +77,23 @@ grid limits and an exact first-hour accepted-command prefix. An unavailable
 prefix fails explicitly. States are reprojected from the supplied initial
 readings; realistic above-target readings remain usable.
 
-Sixteen direct rules are implemented. The three feasibility-witness rules,
-useful terminal inventory, episode repair and the complete coupled neighborhood
-search remain to be implemented. The independent benchmark still applies all
-rules and opportunity audits. Current search quality does not meet the 769-point
-gate. The policy and recipe are explicitly marked `prototype_only`.
+The rule-driven builder maps all 19 quarter rules and 11 economic families.
+Rules carry their configured thresholds, signs, required flags and exclusions.
+Construction uses a reverse opportunity index and a forward beam of coupled
+native commands, followed by bounded complete-plan audits and span repairs.
+Two sweeps does not mean two total simulations. Exact projection decides physical
+feasibility; separate known-price and forecast certificates keep forecast-only
+savings from earning published-price penalties. Reports include every signed
+quarter contribution, witness coverage, run purposes and deterministic work.
+
+The 7 October frozen comparison scores **1,110 versus 569 (+541)**, with no physical
+violations or required-rule failures. All 22 cold hosted solves match local/native
+output exactly and finish in 93–292 ms; client requests take 282–1,575 ms. This proves
+the diagnostic subset's score/runtime improvement, not full production readiness.
+Electricity cost rises 20.4%, and some cars finish within the card's 50 km tolerance
+rather than at the target. See the detailed qualification and limitations in
+[the checkpoint](../docs/energy-optimisation/rule-builder-checkpoint-2026-10.md).
+The policy and recipe remain explicitly marked `prototype_only`.
 
 Production capture, background publishers, the model registry, supported device
 and authority migration, fixed bookings, durable delivery, pool hardware settings
