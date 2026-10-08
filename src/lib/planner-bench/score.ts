@@ -24,8 +24,8 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
 //     Prices come in waves, so the cheap shares widen to keep a valley whole:
-//     a quarter also counts when an unbroken run of quarters priced within
-//     VALLEY_PRICE_STRETCH times the share's dearest price joins it to a
+//     a quarter also counts when an unbroken run of quarters, each within
+//     VALLEY_SHARE_STRETCH times the share (25 % reaches 30 %), joins it to a
 //     quarter in the share (valleyRanks). The dear shares stay exact: a short
 //     dip between dear quarters is worth using.
 //     Imported base load of at least FLEXIBLE_W loses one point in the dearest
@@ -149,38 +149,33 @@ const carFrom = (s: BenchSeries, t: number) =>
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 
 /**
- * How far above the dearest cheap price a quarter of the same valley may be
- * priced and still count as cheap. The planner kernel applies the same stretch
- * (`VALLEY_PRICE_STRETCH`, planner-core policy.rs).
+ * How far a cheap share may stretch along a valley: 25 % reaches 30 %.
+ * The planner kernel applies the same stretch (`VALLEY_SHARE_STRETCH`, planner-core policy.rs).
  */
-export const VALLEY_PRICE_STRETCH = 1.2;
+export const VALLEY_SHARE_STRETCH = 1.2;
 /**
- * Cheap ranks with every valley widened and its gaps closed. A fixed share
- * cuts through a wave of prices, and quarters a hair over the line split one
- * valley into runs too short to use. For any share, a quarter counts when an
- * unbroken run of quarters priced within VALLEY_PRICE_STRETCH times the
- * dearest price in that share joins it to a quarter in the share. Each
- * returned rank is the share its quarter counts from, so it holds for every
- * threshold. A quarter beyond the stretch ends the valley, and a quarter
- * within it that touches no valley gains nothing.
+ * Cheap ranks with every valley widened. A fixed share cuts through a wave of
+ * prices, and quarters a hair over the line split one valley into runs too
+ * short to use. For any share, a quarter counts when an unbroken run of
+ * quarters, each within VALLEY_SHARE_STRETCH times the share, joins it to a
+ * quarter in the share. Each returned rank is the share its quarter counts
+ * from, so it holds for every threshold. A quarter beyond the stretch ends the
+ * valley, and a quarter within it that touches no valley gains nothing.
  */
 export function valleyRanks(prices: readonly number[]): number[] {
   const n = prices.length;
-  const rank = (price: number) => prices.reduce((count, other) => count + (other < price ? 1 : 0), 0) / n;
-  const ranks = prices.map(rank);
-  for (const core of [...new Set(prices)].sort((a, b) => a - b)) {
-    const limit = core + (VALLEY_PRICE_STRETCH - 1) * Math.abs(core), share = rank(core);
-    for (let from = 0; from < n; from++) {
-      let to = from, joined = false;
-      for (; to < n && prices[to] <= limit; to++) joined ||= prices[to] <= core;
-      if (joined) for (let i = from; i < to; i++) ranks[i] = Math.min(ranks[i], share);
-      from = to;
-    }
+  const rank = prices.map(price => prices.reduce((count, other) => count + (other < price ? 1 : 0), 0) / n);
+  // The lowest share with a quarter in it on that side and nothing beyond its stretch in between.
+  const left = new Array<number>(n).fill(Infinity), right = new Array<number>(n).fill(Infinity);
+  for (let i = 1; i < n; i++) {
+    left[i] = Math.min(rank[i - 1], Math.max(left[i - 1], rank[i - 1] / VALLEY_SHARE_STRETCH));
+    const j = n - 1 - i;
+    right[j] = Math.min(rank[j + 1], Math.max(right[j + 1], rank[j + 1] / VALLEY_SHARE_STRETCH));
   }
-  return ranks;
+  return rank.map((own, i) => Math.min(own, Math.max(own / VALLEY_SHARE_STRETCH, Math.min(left[i], right[i]))));
 }
 const cheapShare = (t: number) =>
-  `price in cheapest ${pct(t)}, or within ${Math.round((VALLEY_PRICE_STRETCH - 1) * 100)} % above the dearest such price in an unbroken run reaching one`;
+  `price in cheapest ${pct(t)}, or up to ${+(t * VALLEY_SHARE_STRETCH * 100).toFixed(1)} % in an unbroken run reaching such a quarter`;
 const poolHeatingPast = (q: QuarterView, threshold: number) => {
   const before = poolBeforeC(q.s, q.i);
   return !!q.s.comfort && before !== null && before >= q.s.comfort.pool_target_c + threshold

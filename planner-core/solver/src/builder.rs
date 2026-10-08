@@ -976,7 +976,7 @@ mod move_resize_tests {
             p.rules = vec![
                 Rule {
                     key: RuleKey::CheapBuy,
-                    threshold: 0.3,
+                    threshold: 0.25,
                     points: 2,
                     required: false,
                     unless: None,
@@ -989,6 +989,8 @@ mod move_resize_tests {
                     unless: None,
                 },
             ];
+            // A third of the quarters are cheaper than the rest: beyond the
+            // cheap share even stretched along its valley (0.25 × 1.2 = 0.30).
             for (i, slot) in p.slots.iter_mut().enumerate() {
                 slot.import_price = if i < 8 { 0.9 } else { 1.1 };
             }
