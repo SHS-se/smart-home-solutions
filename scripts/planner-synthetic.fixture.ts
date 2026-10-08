@@ -11,10 +11,12 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   return {
-    abi: 4,
+    abi: 5,
+    pool_cycle_seconds: 43200,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
     slots: prices.map((price, i) => ({
+      local_month: 7,
       start_seconds: i * 900,
       hours: .25,
       base_w: 700,

@@ -24,7 +24,8 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(4),
+  abi: z.literal(5),
+  pool_cycle_seconds: number.nonnegative(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
     beam_width: number.int().positive(),
@@ -34,6 +35,7 @@ export const readyProblemSchema = z.object({
     repair_trials: number.int().nonnegative(),
   }),
   slots: z.object({
+    local_month: number.int().min(1).max(12),
     start_seconds: number,
     hours: number,
     base_w: number,

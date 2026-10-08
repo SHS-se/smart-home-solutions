@@ -46,6 +46,7 @@ export const RULE_KEYS = [
 ] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];
 export interface ReadySlot {
+  local_month: number;
   start_seconds: number;
   hours: number;
   base_w: number;
@@ -58,7 +59,9 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 4;
+  abi: 5;
+  /** Shared cycle clock even when the restart deduction is disabled. */
+  pool_cycle_seconds: number;
   work_grant: number;
   recipe: {
     beam_width: number;

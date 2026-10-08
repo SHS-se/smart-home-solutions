@@ -1,3 +1,4 @@
+import BenchBufferEvent from '@/components/portal/planner-bench/BenchBufferEvent';
 // Planner bench: every planner version replayed on the same test cases,
 // scored, and compared against the planner currently deployed
 // (docs/planner-bench/README.md). Staff only. The bench tables exist only in
@@ -842,7 +843,9 @@ const CaseView: React.FC<CaseViewProps> = ({
                                 ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
                                 : null;
                               return <li key={k} className="font-mono">
-                                {signed(ruleLabel.get(k)!.points)} {ruleLabel.get(k)!.label}
+                                {signed(ruleLabel.get(k)!.points)} {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event
+                                  ? <BenchBufferEvent event={shownScore.thermalBuffer[selected].event!} series={shownSeries} timeZone={TZ} />
+                                  : ruleLabel.get(k)!.label}
                                 {move && <BenchOverlapMove move={move} series={shownSeries} timeZone={TZ} onSelect={select} />}
                                 {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
                                   {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('priser inom det större av', 'prices within the larger of')} {Math.round(ruleLabel.get(k)!.threshold * 100)} {t('öre/kWh eller', 'öre/kWh or')} {SHORT_GAP_PRICE_FRACTION * 100}% {t('av varje avbrottskvarts absoluta pris, jämfört med båda angränsande driftkvartarna', "of each gap quarter's absolute price, compared with both bordering running quarters")}</>}

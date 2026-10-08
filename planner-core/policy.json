@@ -1,5 +1,5 @@
 {
-  "version": "rule-causal-certificate-v3",
+  "version": "rule-causal-buffer-episode-v4",
   "qualification": "test_live_candidate",
   "ordering": [
     "additive_rule_points",

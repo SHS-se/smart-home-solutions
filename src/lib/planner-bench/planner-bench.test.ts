@@ -64,6 +64,10 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
   const n = 288;
   const series = planSeries(Array.from({ length: n }, (_, i) => slot(i)), null);
   series.poolStart = new Array(n).fill(null);
+  series.poolThermal = {
+    store: { capacity_kwh_per_c: 1, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -1 / 24 }] } },
+    outdoorC: new Array(n).fill(20), localMonth: new Array(n).fill(7),
+  };
   series.poolC = Array.from({ length: n }, (_, i) => poolC(i));
   series.carKm = Array.from({ length: n }, (_, i) => carKm(i));
   series.comfort = {
@@ -89,7 +93,7 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 450)).sum, 0);
 });
 
-Deno.test('a pool well above target is a buffer when the next day is dearer or duller, and overheated when it is neither', () => {
+Deno.test('a modeled future adverse reheating day credits one episode and preserves the separate overheating rule', () => {
   const hot = (price: (day: number) => number, solar: (day: number) => number) => {
     const series = comfortSeries(() => 32.1, () => 300);
     series.importPrice = series.importPrice.map((_, i) => price(Math.floor(i / 96)));
@@ -102,8 +106,8 @@ Deno.test('a pool well above target is a buffer when the next day is dearer or d
   assertEquals([waste.counts.pool_hot, waste.counts.pool_buffer, waste.sum, waste.passed], [192, undefined, -192, true]);
   // Dearer on the second day only: day one is a buffer, day two is not.
   const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
-  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 1, fired: ['pool_buffer'] }, { score: -1, fired: ['pool_hot'] }]);
-  assertEquals(dearer.sum, 0);
+  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 1, fired: ['pool_buffer'] }, { score: 0, fired: ['pool_hot', 'pool_buffer'] }]);
+  assertEquals(dearer.sum, 1);
   // Less sun the next day counts the same; a difference within the margin does not.
   assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, ['pool_buffer']);
   assertEquals(hot(day => 1 + day * 0.05, () => 1000).quarters[0].fired, ['pool_hot']);

@@ -1100,7 +1100,8 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 4,
+            abi: 5,
+            pool_cycle_seconds: 43200.0,
             work_grant: 100_000_000,
             recipe: Recipe {
                 beam_width: 8,
@@ -1111,6 +1112,7 @@ pub(crate) mod tests {
             },
             slots: (0..n)
                 .map(|i| Slot {
+                    local_month: 7,
                     start_seconds: i as f64 * 900.0,
                     hours: 0.25,
                     base_w: 0.0,

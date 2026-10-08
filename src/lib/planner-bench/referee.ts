@@ -1,3 +1,4 @@
+import { localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
 // A planner hands back decisions: how much power the pool, the car and the
@@ -39,7 +40,7 @@ import { baseLoadGridSupplyW } from './supply';
 import type { BenchSeries } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 
-export const REFEREE_VERSION = 13;
+export const REFEREE_VERSION = 14;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -291,6 +292,10 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     },
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     poolStart: sim.poolStart,
+    poolThermal: {
+      store: h.pool.store, outdoorC: [...c.recorded.outdoor_temperature_c],
+      localMonth: localMonths(starts, c.timezone),
+    },
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,

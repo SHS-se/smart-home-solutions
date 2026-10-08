@@ -1,3 +1,4 @@
+import { thermalBufferTrace, type BufferQuarter } from './thermal-buffer';
 // Scoring a plan, and the run score built from it.
 //
 // Every point is worth the same and they all add up: a case's points are the
@@ -11,7 +12,9 @@
 //     first quarter would have got the store there, plus a day to choose the
 //     hours. A pool more than 2 °C above its target is judged by the day
 //     that follows (the plan's next 24 hours against the 24 it is in): heat
-//     held for dearer prices or less sun gains a point as a thermal buffer,
+//     held for a modeled future reheating event gains points in one consecutive
+//     episode per heating cycle and event; low-solar credit is May–September.
+//     The separate next-day comparison still judges overheating:
 //     heat held for neither loses one as overheating. A quarter in
 //     which the pool, battery charging and car together draw FLEXIBLE_W or
 //     more gains a point when its real price is among the cheapest quarter of
@@ -61,7 +64,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVE
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 24;
+export const SCORER_VERSION = 25;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
@@ -90,6 +93,7 @@ export interface QuarterView {
   baseLoadCoverable: boolean;
   /** The plan's next day against this one; null in the last day, which has none to compare with. */
   ahead: { dearer: boolean; lessSun: boolean } | null;
+  thermalBuffer: boolean;
   /** Whether a level was reachable long enough ago for missing it to count. */
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
@@ -177,7 +181,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
     key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `more than ${t} °C above target, the next day neither dearer nor less sunny`, fires: (q, t) => poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
   },
   {
-    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target, the next day dearer or less sunny`, fires: (q, t) => poolAbove(q, t) && !!q.ahead && (q.ahead.dearer || q.ahead.lessSun), eligibleFrom: poolAny,
+    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target in one consecutive episode per heating cycle and future reheating event; high prices or low solar in May–September`, fires: q => q.thermalBuffer, eligibleFrom: poolAny,
   },
   {
     key: 'pool_restart', about: 'pool', label: 'Pool heater restarted too soon',
@@ -316,6 +320,7 @@ export interface CaseScore {
   /** Sum of every quarter's score: what the quarter rules gave and took. */
   sum: number;
   quarters: QuarterScore[];
+  thermalBuffer: BufferQuarter[] | null;
   /** How often each quarter rule fired. */
   counts: Record<string, number>;
   /** How many quarters scored each value. */
@@ -352,9 +357,12 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const overlapRule = resolved.find(r => r.key === 'large_load_overlap')!;
   const gapThresholds = Object.fromEntries(resolved.map(r => [r.key, r.threshold]));
   const preparation = arbitragePreparation(s, gapThresholds.arbitrage_not_full);
+  const thermalBuffer = rules.some(r => r.key === 'pool_buffer')
+    ? thermalBufferTrace(s, gapThresholds.pool_buffer, serviceGuard(overrides).pool[0], gapThresholds.pool_restart * 3600) : null;
+  const bufferEvidenceMissing = rules.some(r => r.key === 'pool_buffer') && !!s.comfort && s.poolC.some(v => v !== null) && thermalBuffer === null;
   const batteryEvidenceMissing = s.baseLoadBatteryCoverW?.length !== n;
   const heaterEvidenceMissing = rules.some(r => r.key === 'pool_restart') && s.poolStart?.length !== n;
-  const auditPending = heaterEvidenceMissing || batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
+  const auditPending = bufferEvidenceMissing || heaterEvidenceMissing || batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
       || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
@@ -396,7 +404,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     const baseGridW = baseLoadGridSupplyW(s, i);
     const flexibleW = s.poolW[i] + s.batteryChargeW[i] + s.carW[i];
     const q: QuarterView = {
-      s, i, due: due(i), ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
+      s, i, due: due(i), thermalBuffer: thermalBuffer?.[i].earns ?? false, ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       flexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
       baseLoadCoverable: !batteryEvidenceMissing && baseGridW >= FLEXIBLE_W
@@ -423,7 +431,8 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
-    const reason = rule.key === 'pool_restart' && s.poolStart?.length !== n ? 'Heater command transitions need recomputing.'
+    const reason = rule.key === 'pool_buffer' && bufferEvidenceMissing ? 'Thermal model, weather, calendar and heater transitions need recomputing.'
+      : rule.key === 'pool_restart' && s.poolStart?.length !== n ? 'Heater command transitions need recomputing.'
       : !rule.enabled ? 'Switched off for this case.'
       : rule.key !== 'pool_restart' && rule.about !== 'price' && !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
@@ -437,7 +446,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const points = sum + (economic ?? 0);
   return {
     points, economicPoints: economic, complete: economic !== null, audit, auditPending, physicalFailed,
-    sum, quarters, counts, histogram, requiredFired, applicability, verdict,
+    sum, quarters, thermalBuffer, counts, histogram, requiredFired, applicability, verdict,
     passed: !physicalFailed && (verdict ? verdict === 'pass' : requiredFired.length === 0),
   };
 }

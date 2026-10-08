@@ -2,7 +2,7 @@ import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
 
 export interface CriterionOverride { enabled?: boolean; threshold?: number; points?: number }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
-export type ReadyRulePolicy = Pick<ReadyProblem, "rules" | "service_guard">;
+export type ReadyRulePolicy = Pick<ReadyProblem, "rules" | "service_guard" | "pool_cycle_seconds">;
 type RuleDefault = { threshold: number; points: number; required?: boolean; unless?: PlannerRuleKey };
 /** Shared approved policy parameters; model transitions and the independent referee own measurements. */
 export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
@@ -52,5 +52,5 @@ export function resolveRulePolicy(overrides: CriteriaOverrides = {}): ReadyRuleP
       points:o.points ?? rule.points, required:rule.required ?? false, unless:rule.unless ?? null}] : [];
   });
   const threshold = (key: PlannerRuleKey) => overrides[key]?.threshold ?? RULE_DEFAULTS[key].threshold;
-  return {rules,service_guard:{pool:[threshold("pool_low"),threshold("pool_cold")],ev:[threshold("ev_low"),threshold("ev_short")]}};
+  return {rules,pool_cycle_seconds:threshold("pool_restart")*3600,service_guard:{pool:[threshold("pool_low"),threshold("pool_cold")],ev:[threshold("ev_low"),threshold("ev_short")]}};
 }

@@ -2,6 +2,7 @@
 mod builder;
 mod physics;
 mod policy;
+mod thermal_buffer;
 mod witnesses;
 use serde::{Deserialize, Serialize};
 use shs_planner_models::{
@@ -10,6 +11,7 @@ use shs_planner_models::{
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Slot {
+    pub local_month: u8,
     pub start_seconds: f64,
     pub hours: f64,
     pub base_w: f64,
@@ -110,6 +112,7 @@ pub struct Recipe {
 #[serde(deny_unknown_fields)]
 pub struct Problem {
     pub abi: u32,
+    pub pool_cycle_seconds: f64,
     pub work_grant: u64,
     pub recipe: Recipe,
     pub slots: Vec<Slot>,
@@ -180,8 +183,14 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 4 || p.slots.is_empty() {
+    if p.abi != 5 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
+    }
+    if !p.pool_cycle_seconds.is_finite()
+        || p.pool_cycle_seconds < 0.0
+        || p.slots.iter().any(|s| !(1..=12).contains(&s.local_month))
+    {
+        return bad("invalid_pool_cycle_or_calendar");
     }
     if p.battery.is_some() != p.initial.battery_kwh.is_some()
         || p.car.is_some() != p.charger.is_some()

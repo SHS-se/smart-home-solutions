@@ -8,7 +8,7 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
-import { causalCase, command, problem } from "./planner-wasm.fixture.ts";
+import { bufferProblem, causalCase, command, problem } from "./planner-wasm.fixture.ts";
 import {
   projectHeatPumpResponse,
   stepThermalStore,
@@ -33,7 +33,7 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v4:"));
+  assert(planner.version.startsWith("wasm-v5:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -543,4 +543,34 @@ Deno.test("deployed runtime configuration is generated from the measured recipe 
   const runtime = JSON.parse(await Deno.readTextFile(`${root}/supabase/functions/_shared/planner-wasm/runtime-config.json`));
   assertEquals(runtime.recipe, recipe);
   assertEquals(runtime.policy_manifest, JSON.parse(await Deno.readTextFile(`${root}/planner-core/policy.json`)));
+});
+
+Deno.test("native frozen-event credit matches independent replay across restarts, seasons and point overrides", () => {
+  for (const month of [7, 1]) for (const points of [2, -1]) {
+    const p = bufferProblem();
+    p.rules[0].points = points;
+    p.slots.forEach(slot => { slot.local_month = month; });
+    const result = solve(p);
+    assertEquals(result.kind, 'selected');
+    if (result.kind !== 'selected') throw new Error(result.issue);
+    const q = result.selection.quarters;
+    const c = causalCase();
+    const series = referee(c, HOUSEHOLD, { pool_c: 30, ev_km: 300 }, {
+      pool_w: new Array(288).fill(0), ev_w: new Array(288).fill(0),
+      battery_charge_w: new Array(288).fill(0), battery_discharge_w: new Array(288).fill(0),
+    }).series;
+    // Save the physical facts from the synthetic problem, not native earned flags.
+    series.poolC = q.map(v => Math.round(v.pool_c! * 1000) / 1000);
+    series.poolStart = q.map(v => v.pool_start);
+    series.importPrice = p.slots.map(v => v.import_price);
+    series.solarW = p.slots.map(v => v.solar_w);
+    series.poolThermal = { store: p.pool_store, outdoorC: p.slots.map(v => v.outdoor_c), localMonth: p.slots.map(v => v.local_month) };
+    const independent = scoreQuarters(series, { pool_buffer: { points } });
+    assertEquals(result.selection.account.contributions.map(row => row[0]), independent.thermalBuffer!.map(v => v.earns ? points : 0));
+    if (month === 7) {
+      assertEquals(independent.thermalBuffer![0].earns, true);
+      assertEquals(independent.thermalBuffer![2].earns, false);
+      assertEquals(independent.thermalBuffer![282].earns, false);
+    } else assertEquals(independent.counts.pool_buffer, undefined);
+  }
 });

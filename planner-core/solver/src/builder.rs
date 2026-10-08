@@ -4,6 +4,7 @@ use crate::*;
 
 #[derive(Clone)]
 struct Label {
+    buffer_episode: thermal_buffer::Credit,
     state: State,
     parent: usize,
     points: i32,
@@ -59,8 +60,24 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     let f = &index.future[i];
     // Purpose: service or forecast thermal reserve. Extra heat merely to earn a
     // cheap-load point has no proposal; this is guidance, not a physical ceiling.
+    let target = p.targets.pool_c.unwrap_or(0.0);
+    let pool_goal = match label.buffer_episode.episode {
+        thermal_buffer::Episode::Active(need) if i <= need.quarter => {
+            policy::rule(p, RuleKey::PoolBuffer)
+                .filter(|r| r.points > 0)
+                .map_or(target, |r| target + r.threshold + 0.0005)
+        }
+        thermal_buffer::Episode::Available
+            if label
+                .buffer_episode
+                .available(index.thermal_buffer.causes[i]) =>
+        {
+            f.pool_goal
+        }
+        _ => target,
+    };
     let pool_needed = p.pool_store.as_ref().is_some_and(|store| {
-        let coast = store.idle_per_hour(f.pool_goal, s.outdoor_c).abs()
+        let coast = store.idle_per_hour(pool_goal, s.outdoor_c).abs()
             * h
             * f.next_cheaper
                 .saturating_sub(i)
@@ -72,7 +89,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     },
                 )
                 .min(p.slots.len() - i) as f64;
-        store.step(label.state.pool, 0.0, s.outdoor_c, h) < f.pool_goal + coast
+        store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut ev_levels = vec![0];
@@ -246,14 +263,34 @@ fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
                 .pool_c
                 .unwrap()
                 .min(target - p.service_guard.pool[0]);
-            let buffer = policy::rule(p, RuleKey::PoolBuffer)
-                .map_or(target, |r| target + r.threshold + 0.0005);
+            let buffer = if l.buffer_episode.episode == thermal_buffer::Episode::Spent {
+                target
+            } else {
+                policy::rule(p, RuleKey::PoolBuffer)
+                    .map_or(target, |r| target + r.threshold + 0.0005)
+            };
             let share = (l.state.pool - floor) / (buffer - floor).max(f64::EPSILON);
             let warming = ((buffer - floor).max(0.0) * store.capacity_kwh_per_c
                 / (heater.heat_w / 4000.0))
                 .ceil()
                 .max(1.0);
-            index.future[i].useful_pool_quarters.min(warming) * share.clamp(0.0, 1.0)
+            let future = &index.future[i];
+            let buffer_points = match l.buffer_episode.episode {
+                thermal_buffer::Episode::Available => {
+                    if l.buffer_episode.available(index.thermal_buffer.causes[i]) {
+                        future.buffer_quarters
+                    } else {
+                        0.0
+                    }
+                }
+                thermal_buffer::Episode::Active(need) => {
+                    need.quarter.saturating_sub(i) as f64
+                        * policy::rule(p, RuleKey::PoolBuffer)
+                            .map_or(0.0, |r| r.points.max(0) as f64)
+                }
+                thermal_buffer::Episode::Spent => 0.0,
+            };
+            (future.useful_pool_quarters + buffer_points).min(warming) * share.clamp(0.0, 1.0)
         });
     pool + service + l.gap_estimate
 }
@@ -298,6 +335,7 @@ fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64
 fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Command>>, String> {
     let mut arena = Vec::new();
     let mut labels = vec![Label {
+        buffer_episode: thermal_buffer::Credit::new(p.slots.len()),
         state: physics::initial(p),
         parent: usize::MAX,
         points: 0,
@@ -337,9 +375,10 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
                 if policy::measured(q.charge_w, 10.0) > 0.0 {
                     next.last_charge = q.battery_kwh.unwrap();
                 }
-                next.points += policy::quarter(p, index, i, &q, next.prepared)
-                    .iter()
-                    .sum::<i32>();
+                next.points +=
+                    policy::quarter(p, index, i, &q, next.prepared, &mut next.buffer_episode)
+                        .iter()
+                        .sum::<i32>();
                 next.cash += q.cost;
                 next.wear += q.wear;
                 if c.pool_on {
@@ -494,7 +533,7 @@ fn evaluate(
         audit,
     })
 }
-fn runs(p: &Problem, index: &Index, commands: &[Command]) -> Vec<RunPurpose> {
+fn runs(p: &Problem, commands: &[Command], account: &Account) -> Vec<RunPurpose> {
     let mut out = Vec::new();
     for device in ["pool", "ev", "battery"] {
         let mut from = 0;
@@ -514,7 +553,16 @@ fn runs(p: &Problem, index: &Index, commands: &[Command]) -> Vec<RunPurpose> {
             }
             let purpose = if physics::locked(p, from) {
                 "accepted_command"
-            } else if device == "pool" && index.buffer[from] == Some(true) {
+            } else if device == "pool"
+                && p.rules
+                    .iter()
+                    .position(|r| r.key == RuleKey::PoolBuffer)
+                    .is_some_and(|j| {
+                        account.contributions[from..to]
+                            .iter()
+                            .any(|row| row[j] != 0)
+                    })
+            {
                 "thermal_buffer"
             } else if device == "battery" {
                 "forecast_demand_or_permitted_sale"
@@ -676,7 +724,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             return Err("commitment_changed".into());
         }
     }
-    let run_purposes = runs(p, &index, &best.commands);
+    let run_purposes = runs(p, &best.commands, &best.account);
     let termination = if budget_declined {
         "grant_exhausted"
     } else {

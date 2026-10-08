@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import BenchOverlapMove from './BenchOverlapMove';
+import BenchBufferEvent from './BenchBufferEvent';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { AHEAD_MARGIN, BASE_LOAD_DEAR_RULE_KEYS, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
@@ -327,13 +328,20 @@ export default function BenchRuleList({
           ? above ? t(`Poolen är varmare än ${level} ${unit}.`, `The pool is warmer than ${level} ${unit}.`) : t(`Poolen är kallare än ${level} ${unit}.`, `The pool is colder than ${level} ${unit}.`)
           : t(`Bilens räckvidd är under ${level} ${unit}.`, `The car has less than ${level} ${unit} of range.`)}
         {' '}{t(`Målet är ${target} ${unit}.`, `The target is ${target} ${unit}.`)}
-        {above && ` ${rule.key === 'pool_buffer'
-          ? t(`Nästa dygn är minst ${margin} % dyrare eller har minst ${margin} % mindre sol, så värmen sparas till det.`, `The next 24 h are at least ${margin} % dearer or have at least ${margin} % less sun, so the heat is stored for them.`)
-          : t(`Nästa dygn är varken ${margin} % dyrare eller ${margin} % solfattigare, så värmen sparas inte till något.`, `The next 24 h are neither ${margin} % dearer nor ${margin} % less sunny, so the heat is stored for nothing.`)}
-          ${t('Planens sista dygn bedöms inte: det har inget nästa dygn.', 'The plan\'s last 24 h are not judged: they have no next day.')}`}
+        {above && rule.key === 'pool_hot' && ` ${t(`Nästa dygn är varken ${margin} % dyrare eller ${margin} % solfattigare.`, `The next 24 h are neither ${margin} % dearer nor ${margin} % less sunny.`)} ${t('Planens sista dygn bedöms inte: det har inget nästa dygn.', "The plan's last 24 h are not judged: they have no next day.")}`}
         {rule.required && ` ${t('En enda kvart underkänner fallet.', 'A single quarter fails the case.')}`}
         {!above && ` ${t('Räknas först ett dygn efter att nivån gick att nå.', 'Counts only from a day after the level could be reached.')}`}
       </p>}
+      {rule.key === 'pool_buffer' && <>
+        <p>{t('En sammanhängande buffertperiod per värmecykel och framtida händelse. Ett kort återstart avslutar perioden; minst den inställda återstartstiden utan värme öppnar en ny cykel. Samma händelse får aldrig poäng igen i planen.',
+          'One consecutive buffer period per heating cycle and future event. A short restart ends the period; at least the configured restart interval without heating opens a new cycle. The same event cannot earn credit again in the plan.')}</p>
+        <p className="text-xs text-muted-foreground">{t('Modellen utgår från normal måltemperatur och hittar när uppvärmning behövs igen vid den milda komfortgränsen. Händelsen är det fulla 24-timmarsblock i planen som innehåller detta behov. Medelpriset ska vara mer än 10 % högre eller solenergin mer än 10 % lägre än nuvarande block. Solskäl gäller endast maj–september.',
+          'The model starts from the normal target and finds when heating is needed again at the mild comfort threshold. The event is the full 24-hour plan block containing that need. Mean price must be more than 10% higher or solar energy more than 10% lower than the current block. Solar reasons apply only in May–September.')}</p>
+        {sides.map(s => {
+          const events = [...new Map(s.score?.thermalBuffer?.flatMap((q, i) => q.earns && q.event && inRange(i) ? [[q.event.from, q.event] as const] : []) ?? []).values()];
+          return events.map(event => <p key={`${s.side}-${event.from}`} className="text-xs">{s.label}: <BenchBufferEvent event={event} series={s.series!} timeZone={timeZone} /></p>);
+        })}
+      </>}
       {sides.map(s => {
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;

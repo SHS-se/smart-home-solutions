@@ -27,6 +27,12 @@ export interface BenchSeries {
   poolW: number[];
   /** Device-model command starts; absent on stale pre-transition evaluations. */
   poolStart?: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
+  /** Independent thermal evidence for event-based buffer scoring; absent on stale results. */
+  poolThermal?: {
+    store: import('../../../supabase/functions/_shared/planner/device-models').ThermalStoreModel;
+    outdoorC: number[];
+    localMonth: number[];
+  };
   hotWaterW: number[];
   carW: number[];
   gridImportW: number[];

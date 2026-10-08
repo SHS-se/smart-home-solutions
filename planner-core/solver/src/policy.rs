@@ -6,6 +6,7 @@ pub(crate) struct FutureNeeds {
     pub pool_goal: f64,
     pub ev_goal: f64,
     pub useful_pool_quarters: f64,
+    pub buffer_quarters: f64,
     pub next_cheaper: usize,
     pub demand_kwh: f64,
     pub refill_demand_kwh: f64,
@@ -16,6 +17,7 @@ pub(crate) struct Index {
     pub cheap: Vec<f64>,
     pub dear: Vec<f64>,
     pub buffer: Vec<Option<bool>>,
+    pub thermal_buffer: thermal_buffer::Evidence,
     pub future: Vec<FutureNeeds>,
     pub first_sale: Option<usize>,
 }
@@ -80,6 +82,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             .iter()
             .position(|s| measured(s.export_price, 10000.0) > r.threshold)
     });
+    let thermal_buffer = thermal_buffer::prepare(p, work)?;
     let due = eligibility(p);
     let ev_goal = p.car.as_ref().map_or(0.0, |car| {
         (p.targets.ev_km.unwrap() * car.kwh_per_km).min(p.targets.ev_limit_kwh.unwrap())
@@ -89,6 +92,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             pool_goal: p.targets.pool_c.unwrap_or(0.0),
             ev_goal,
             useful_pool_quarters: 0.0,
+            buffer_quarters: 0.0,
             next_cheaper: n,
             demand_kwh: 0.0,
             refill_demand_kwh: 0.0,
@@ -103,7 +107,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         let s = &p.slots[i];
         let h = projected_hours(s);
         let buffer_rule = rule(p, RuleKey::PoolBuffer).filter(|r| r.points > 0);
-        let goal = if buffer[i] == Some(true) {
+        let goal = if thermal_buffer.causes[i].is_some() {
             buffer_rule.map_or(p.targets.pool_c.unwrap_or(0.0), |r| {
                 p.targets.pool_c.unwrap_or(0.0)
                     + r.threshold
@@ -123,11 +127,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             })
         } else {
             p.targets.pool_c.unwrap_or(0.0)
-        };
-        useful += if buffer[i] == Some(true) {
-            buffer_rule.map_or(0.0, |r| f64::from(r.points))
-        } else {
-            0.0
         };
         for (j, key) in [RuleKey::PoolLow, RuleKey::PoolCold].iter().enumerate() {
             if i >= due[j] {
@@ -160,6 +159,8 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             pool_goal: goal,
             ev_goal,
             useful_pool_quarters: useful,
+            buffer_quarters: thermal_buffer.best[i]
+                * buffer_rule.map_or(0.0, |r| f64::from(r.points)),
             next_cheaper,
             demand_kwh: demand,
             refill_demand_kwh: 0.0,
@@ -205,6 +206,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         cheap,
         dear,
         buffer,
+        thermal_buffer,
         future,
         first_sale,
     })
@@ -218,8 +220,10 @@ pub(crate) fn witnessed(
     index: &Index,
 ) {
     let prepared = prepared(p, q, index);
+    let mut episode = thermal_buffer::Credit::new(p.slots.len());
     for (i, row) in account.contributions.iter_mut().enumerate() {
-        let mut fired = raw_quarter(p, index, i, &q[i], prepared);
+        let earns = buffer_credit(p, index, i, &q[i], &mut episode);
+        let mut fired = raw_quarter(p, index, i, &q[i], prepared, earns);
         for (j, r) in p.rules.iter().enumerate() {
             match r.key {
                 RuleKey::PoolShortGap => fired[j] = audit.gaps[i][0],
@@ -339,10 +343,11 @@ pub(crate) fn measured(value: f64, scale: f64) -> f64 {
 }
 pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     let prepared = prepared(p, q, index);
+    let mut episode = thermal_buffer::Credit::new(p.slots.len());
     let contributions: Vec<Vec<i32>> = q
         .iter()
         .enumerate()
-        .map(|(i, v)| quarter(p, index, i, v, prepared))
+        .map(|(i, v)| quarter(p, index, i, v, prepared, &mut episode))
         .collect();
     Account {
         points: contributions.iter().flatten().sum(),
@@ -352,7 +357,34 @@ pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     }
 }
 
-fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool) -> Vec<bool> {
+fn buffer_credit(
+    p: &Problem,
+    index: &Index,
+    i: usize,
+    v: &Quarter,
+    episode: &mut thermal_buffer::Credit,
+) -> bool {
+    let warm = rule(p, RuleKey::PoolBuffer).is_some_and(|r| {
+        measured(v.pool_c.unwrap_or(0.0), 1000.0) > p.targets.pool_c.unwrap_or(0.0) + r.threshold
+    });
+    thermal_buffer::advance(
+        episode,
+        v.pool_start,
+        p.pool_cycle_seconds,
+        i,
+        warm,
+        p.slots[i].local_month,
+        index.thermal_buffer.causes[i],
+    )
+}
+fn raw_quarter(
+    p: &Problem,
+    index: &Index,
+    i: usize,
+    v: &Quarter,
+    prepared: bool,
+    buffer_credit: bool,
+) -> Vec<bool> {
     let s = &p.slots[i];
     let pool_w = measured(v.pool_w, 10.0);
     let ev_w = measured(v.ev_w, 10.0);
@@ -400,9 +432,7 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool
             PoolRestart => v
                 .pool_start
                 .is_some_and(|s| s.off_seconds.is_some_and(|off| off < t * 3600.0)),
-            PoolBuffer => {
-                pool_c > p.targets.pool_c.unwrap_or(0.0) + t && index.buffer[i] == Some(true)
-            }
+            PoolBuffer => buffer_credit,
             EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
             EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
             CheapBuy | CheapestBuy => flexible >= 500.0 && index.cheap[i] < t,
@@ -447,8 +477,10 @@ pub(crate) fn quarter(
     i: usize,
     v: &Quarter,
     prepared: bool,
+    episode: &mut thermal_buffer::Credit,
 ) -> Vec<i32> {
-    contributions(&p.rules, &raw_quarter(p, index, i, v, prepared))
+    let earns = buffer_credit(p, index, i, v, episode);
+    contributions(&p.rules, &raw_quarter(p, index, i, v, prepared, earns))
 }
 fn prepared(p: &Problem, q: &[Quarter], index: &Index) -> bool {
     index.first_sale.is_some_and(|sale| {

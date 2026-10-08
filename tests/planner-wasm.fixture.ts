@@ -34,7 +34,8 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   return {
-    abi: 4,
+    abi: 5,
+    pool_cycle_seconds: 43200,
     work_grant: 12_000_000,
     recipe: {
       beam_width: 8,
@@ -46,6 +47,7 @@ export function problem(): EquippedProblem {
     slots: Array.from(
       { length: 8 },
       (_, i) => ({
+        local_month: 7,
         start_seconds: i * 900,
         hours: .25,
         base_w: 500,
@@ -130,4 +132,24 @@ export function causalCase(): BenchCase {
       },
     },
   };
+}
+
+/** Three-day thermal evidence with a committed warm short restart. */
+export function bufferProblem(): EquippedProblem {
+  const p = problem();
+  p.work_grant = 900_000_000;
+  p.slots = Array.from({ length: 288 }, (_, i) => ({
+    ...p.slots[0], start_seconds: i * 900, import_price: 1,
+    solar_w: i < 96 ? 1000 : i < 192 ? 500 : 100,
+  }));
+  p.initial.pool_c = 35;
+  p.initial.heater_state = { kind: 'off', seconds: 43200 };
+  p.pool_store = {
+    capacity_kwh_per_c: 100,
+    loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -1 / 30 }] },
+  };
+  p.rules = [{ key: 'pool_buffer', threshold: 2, points: 2, required: false, unless: null }];
+  p.accepted = p.slots.slice(0, 4).map((_, i) => command(i === 0 || i === 2));
+  p.locked_through_seconds = 3600;
+  return p;
 }

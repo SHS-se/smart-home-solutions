@@ -47,6 +47,10 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     poolStart: [],
+    poolThermal: {
+      store: { capacity_kwh_per_c: 1, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -.048 }] } },
+      outdoorC: new Array(n).fill(20), localMonth: new Array(n).fill(9),
+    },
     homeSoc: [], homeStartSoc: 50, carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
   };
   let temp = 29.5;
@@ -144,8 +148,8 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, noCurrentPlanner = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget ? structuredClone(PLANS) : PLANS;
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, noCurrentPlanner = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, thermalBuffer = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+  const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget || thermalBuffer ? structuredClone(PLANS) : PLANS;
   if (shortEvRestart) {
     const { c, decisions } = shortEvRestartFixture();
     const result = evaluate(c, { ...record(1), decisions,
@@ -232,6 +236,13 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           ] },
         ],
       };
+    }
+  }
+  if (thermalBuffer) {
+    for (const plan of Object.values(plans)) {
+      plan.poolC.fill(32.6);
+      plan.solarW = plan.solarW.map((_, i) => i < 96 ? 1000 : 100);
+      plan.poolStart = plan.poolStart!.map(() => null);
     }
   }
   const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
@@ -355,6 +366,18 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('explains a thermal buffer event with cause and bounds in both rule and quarter details', async ({ context, page }) => {
+    await mockBackend(context, { thermalBuffer: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const rule = page.locator('#bench-rule-pool_buffer');
+    await rule.getByRole('button', { name: /Warm thermal buffer/ }).click();
+    await expect(rule).toContainText(/low solar event between|låg solproduktion under händelsen/);
+    await expect(rule).toContainText(/25.*02:00.*26.*02:00/);
+    await rule.getByRole('button', { name: /Show the first in the chart|Visa den första i diagrammet/ }).first().click();
+    await expect(page.locator('#bench-quarter-explanation')).toContainText(/low solar event between|låg solproduktion under händelsen/);
+  });
+
   test('scores the C-0616 03:00–04:00 EV restart gap in the prices-known low lane using the real evaluator', async ({ context, page }) => {
     await mockBackend(context, { shortEvRestart: true });
     await login(page);
