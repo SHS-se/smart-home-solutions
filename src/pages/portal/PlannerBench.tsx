@@ -22,7 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
-import { BASE_LANE, LANES, diagnose, plannerKnewPrice, type Diagnosis, type LaneId, type LaneResult } from '@/lib/planner-bench/lanes';
+import { BASE_LANE, plannerKnewPrice } from '@/lib/planner-bench/lanes';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { resultState, runCoverage } from '@/lib/planner-bench/coverage';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
@@ -35,7 +35,6 @@ import type {
   BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchSeries, CriteriaOverrides,
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
-import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import BenchOverlapMove from '@/components/portal/planner-bench/BenchOverlapMove';
@@ -119,28 +118,9 @@ const Bench: React.FC = () => {
   const [shown, setShown] = useState<'current' | 'test'>('test');
   const comparisonShas = [...new Set([testRun?.sha, currentRun?.sha].filter((s): s is string => Boolean(s)))].join(',');
 
-  // Lists and totals show the base lane: the planner as it runs live. The other lanes explain it.
+  // The bench shows the base lane: the planner as it runs live.
   const baseSummaries = useMemo(() => (summaries.data ?? []).filter(s => (s.lane ?? BASE_LANE) === BASE_LANE), [summaries.data]);
   const summaryByKey = useMemo(() => new Map(baseSummaries.map(s => [key(s.sha, s.scenario_id), s])), [baseSummaries]);
-  const laneSummaries = useQuery({
-    queryKey: ['bench', 'lanes', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha],
-    enabled: Boolean(selectedCase?.recorded_at && (currentRun || testRun)),
-    queryFn: () => fetchAllRows<BenchResultSummary>((from, to) => db.from('bench_result_summaries').select('*')
-      .eq('scenario_id', selectedCase!.id).in('sha', [currentRun?.sha, testRun?.sha].filter((sha): sha is string => Boolean(sha)))
-      .order('sha').order('scenario_id').order('lane').range(from, to)),
-    refetchInterval: 30_000,
-  });
-  const lanesFor = useMemo(() => (sha: string | undefined, scenarioId: string | undefined) => {
-    const out: Partial<Record<LaneId, LaneResult>> = {};
-    const c = cases.find(c => c.id === scenarioId);
-    if (!c) return out;
-    for (const s of laneSummaries.data ?? []) {
-      if (s.sha !== sha || resultState(c, s, savedRules) !== 'scored') continue;
-      out[s.lane] = { cost_sek: s.outcome!.cost_sek, credit_sek: s.outcome!.terminal.credit_sek, points: s.score!.points };
-    }
-    return out;
-  }, [laneSummaries.data, cases, savedRules]);
-  const [lane, setLane] = useState<LaneId>(BASE_LANE);
 
   const coverage = useMemo(() => new Map(allRuns.map(run => [run.sha, runCoverage(run.status === 'unavailable' ? [] : cases,
     new Map(baseSummaries.filter(s => s.sha === run.sha).map(s => [s.scenario_id, s])), savedRules)])),
@@ -182,12 +162,12 @@ const Bench: React.FC = () => {
   }, [cases, currentRun, testRun, summaryByKey, runScores]);
 
   const series = useQuery({
-    queryKey: ['bench', 'series', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha, lane],
+    queryKey: ['bench', 'series', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha],
     enabled: Boolean(selectedCase?.recorded_at && (currentRun || testRun)),
     queryFn: async () => {
       const shas = [currentRun?.sha, testRun?.sha].filter((s): s is string => Boolean(s));
       const data = await rows<({ sha: string } & BenchResultDetail)[]>(db.from('bench_results')
-        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).eq('lane', lane).eq('case_revision', selectedCase!.revision).in('sha', shas));
+        .select('sha, series, record, outcome').eq('scenario_id', selectedCase!.id).eq('lane', BASE_LANE).eq('case_revision', selectedCase!.revision).in('sha', shas));
       const by = new Map(data.map(r => [r.sha, r]));
       return { current: currentRun ? by.get(currentRun.sha) ?? null : null, test: testRun ? by.get(testRun.sha) ?? null : null };
     },
@@ -469,9 +449,6 @@ const Bench: React.FC = () => {
               testRun={testRun}
               summaryByKey={summaryByKey}
               details={selectedCase.recorded_at ? series.data ?? null : null}
-              lane={lane}
-              onLane={setLane}
-              lanes={{ current: lanesFor(currentRun?.sha, selectedCase.id), test: lanesFor(testRun?.sha, selectedCase.id) }}
               seriesLoading={series.isLoading}
               savingStartState={saveStartState.isPending}
               onSaveStartState={state => saveStartState.mutate(state)}
@@ -654,78 +631,12 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
   );
 };
 
-const LANE_LABEL: Record<string, [string, string]> = {
-  told: ['Priser kända vid start', 'Prices known at start'], oracle: ['Alla faktiska priser (facit)', 'All actual prices (oracle)'],
-  low: ['låg', 'low'], nominal: ['nominell', 'nominal'], high: ['hög', 'high'],
-};
-
-/**
- * Every lane the case was planned under, per planner: net cost and comfort,
- * and what the difference between lanes says about why the plan cost what it did.
- */
-const LanePanel: React.FC<{
-  lane: LaneId; onLane: (lane: LaneId) => void;
-  lanes: { current: Partial<Record<LaneId, LaneResult>>; test: Partial<Record<LaneId, LaneResult>> };
-}> = ({ lane, onLane, lanes }) => {
-  const { t } = useLanguage();
-  const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
-  const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${signed(r.points)} pts` : '—';
-  const verdict = (d: Diagnosis | null) => d === null ? t('extra diagnosspår har inte körts', 'additional diagnostic lanes have not been run') : [
-    t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
-    t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
-    t(`bästa värdering: ${t(...LANE_LABEL[d.best.told])} vid start, ${t(...LANE_LABEL[d.best.oracle])} med facit`,
-      `best valuation: ${t(...LANE_LABEL[d.best.told])} with starting prices, ${t(...LANE_LABEL[d.best.oracle])} with oracle prices`),
-  ].join(' · ');
-  return (
-    <div id="bench-lanes">
-      <div className="mb-2 flex flex-wrap items-baseline gap-x-4 text-sm">
-        <span className="font-medium">{t('Spår', 'Lanes')}</span>
-        <span className="text-xs text-muted-foreground">
-          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Normal körning görs en gång per fall. Extra diagnosspår körs uttryckligen i GitHub Actions. Nettokostnad · poäng.',
-            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. The normal refresh runs once per case. Additional diagnostic lanes are run explicitly in GitHub Actions. Net cost · points.')}
-        </span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="py-1 font-normal">{t('Spår', 'Lane')}</th>
-              <th className="py-1 text-right font-normal">{t('Nuvarande', 'Current')}</th>
-              <th className="py-1 text-right font-normal">Test</th>
-            </tr>
-          </thead>
-          <tbody>
-            {LANES.filter(id => id === BASE_LANE || lanes.current[id] || lanes.test[id]).map(id => (
-              <tr key={id} className={`border-b border-border/50 ${id === lane ? 'bg-muted/60' : ''}`}>
-                <td className="py-1">
-                  <button id={`bench-lane-${id.replace('/', '-')}`} className="text-left underline-offset-2 hover:underline" aria-pressed={id === lane} onClick={() => onLane(id)}>
-                    {name(id)}{id === BASE_LANE && <span className="text-xs text-muted-foreground"> ({t('som i drift', 'as it runs live')})</span>}
-                  </button>
-                </td>
-                <td className="py-1 text-right font-mono tabular-nums">{cell(lanes.current[id])}</td>
-                <td className="py-1 text-right font-mono tabular-nums">{cell(lanes.test[id])}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-        <div id="bench-diagnosis-current">{t('Nuvarande', 'Current')}: {verdict(diagnose(lanes.current))}</div>
-        <div id="bench-diagnosis-test">Test: {verdict(diagnose(lanes.test))}</div>
-      </div>
-    </div>
-  );
-};
-
 interface CaseViewProps {
   scenario: BenchScenario;
   currentRun: BenchRun | null;
   testRun: BenchRun | null;
   summaryByKey: Map<string, BenchResultSummary>;
   details: { current: BenchResultDetail | null; test: BenchResultDetail | null } | null;
-  lane: LaneId;
-  onLane: (lane: LaneId) => void;
-  lanes: { current: Partial<Record<LaneId, LaneResult>>; test: Partial<Record<LaneId, LaneResult>> };
   seriesLoading: boolean;
   savingStartState: boolean;
   onSaveStartState: (state: CaseStartState) => void;
@@ -745,7 +656,7 @@ const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '
 
 const CaseView: React.FC<CaseViewProps> = ({
   scenario, currentRun, testRun, summaryByKey,
-  details, lane, onLane, lanes, seriesLoading, savingStartState, onSaveStartState, shown, onShown, draft, unsaved, onDraft, onSaveRules, onRerun,
+  details, seriesLoading, savingStartState, onSaveStartState, shown, onShown, draft, unsaved, onDraft, onSaveRules, onRerun,
 }) => {
   const { t } = useLanguage();
   const [selected, setSelected] = useState<number | null>(null);
@@ -825,7 +736,7 @@ const CaseView: React.FC<CaseViewProps> = ({
             </div>
             {shownSeries ? (
               <>
-                <BenchPlanChart series={shownSeries} lane={lane} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+                <BenchPlanChart series={shownSeries} compared={series} lane={BASE_LANE} timeZone={TZ} quarters={shownScore?.quarters ?? null}
                   selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
                 <div id="bench-quarter-explanation" className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
                   {selected === null || !shownScore?.quarters[selected]
@@ -837,7 +748,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                           <div>
                             <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
                             <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
-                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {plannerKnewPrice(lane, shownSeries.published[selected])
+                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {plannerKnewPrice(BASE_LANE, shownSeries.published[selected])
                               ? shownSeries.published[selected] ? t('publicerat', 'published') : t('verkligt, givet till planeraren', 'real, given to the planner')
                               : shownDetail?.outcome
                                 ? t(`verkligt, planeraren trodde ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`, `real, the planner expected ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`)
@@ -867,8 +778,6 @@ const CaseView: React.FC<CaseViewProps> = ({
                 </div>
               </>
             ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
-            <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} />
-            <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
             {scenario.dataset && (
               <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
                 saving={savingStartState} onSave={onSaveStartState} />

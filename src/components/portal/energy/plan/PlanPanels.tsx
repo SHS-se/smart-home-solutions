@@ -1,4 +1,4 @@
-// One chart, five panels, one shared time axis.
+// One chart, a stack of panels, one shared time axis.
 //
 // Replaces the single plot that carried kilowatts, per cent and SEK/kWh against
 // three y-axes at once. Nothing about a curve said which axis it belonged to,
@@ -7,7 +7,8 @@
 // scales is arbitrary. Each quantity now gets its own strip and its own axis,
 // stacked over the same quarters, so reading a moment in time is reading a
 // column: what it cost, where the power came from, what used it, what was left
-// in store, and how warm the pool was.
+// in store, and how warm it was. The planner bench adds a last strip: what each
+// of the planners it compares had spent by then.
 //
 // The consumption stack draws individual meters, never categories: the planner
 // dispatches individual devices, so a band labelled "Kitchen & cold" would
@@ -50,6 +51,16 @@ const POOL_COLOUR = loadColour(2);
 
 interface Panel { top: number; height: number }
 
+/** One planner's running cost, for the bench's cost panel. */
+export interface PlanCostLine {
+  key: string;
+  name: string;
+  colour: string;
+  dashed?: boolean;
+  /** SEK spent from the start of the window to the end of each quarter, aligned with `rows`. */
+  values: readonly (number | null)[];
+}
+
 const PanelHeading: React.FC<{ title: string; unit: string; y: number }> = ({ title, unit, y }) => (
   <>
     <text x={MARGIN_LEFT} y={y} className="fill-foreground text-[11px] font-medium">{title}</text>
@@ -76,10 +87,14 @@ const Gridlines: React.FC<{ ticks: number[]; y: Scale; format: (tick: number) =>
 );
 
 /** The one label a line always earns: its own value, at its own end. */
-const EndLabel: React.FC<{ y: number; colour: string; children: string }> = ({ y, colour, children }) => (
+const EndLabel: React.FC<{
+  y: number; colour: string; children: string;
+  /** Where the text sits when a neighbouring label has taken the line's own height. */
+  labelY?: number;
+}> = ({ y, colour, children, labelY = y }) => (
   <g>
     <circle cx={RIGHT} cy={y} r={3} fill={colour} className="stroke-card" strokeWidth={2} />
-    <text x={RIGHT + 7} y={y + 3.5} className={AXIS_TEXT}>{children}</text>
+    <text x={RIGHT + 7} y={labelY + 3.5} className={AXIS_TEXT}>{children}</text>
   </g>
 );
 
@@ -139,9 +154,15 @@ const PlanPanels: React.FC<{
   realPrices?: boolean;
   /** The pool temperature the owner asked for, drawn as a reference line. */
   poolTargetC?: number | null;
+  /**
+   * Planner bench: what each compared planner has spent, drawn as the last
+   * panel. The portal never passes it.
+   */
+  costLines?: readonly PlanCostLine[];
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false, poolTargetC = null,
+  costLines,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -166,7 +187,12 @@ const PlanPanels: React.FC<{
     const knownPoolC = poolC.filter((value): value is number => value !== null);
     const showPool = knownPoolC.length > 0;
     const pool: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: showPool ? 96 : 0 };
-    const axisY = showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
+    const knownCost = (costLines ?? []).flatMap(line => line.values.slice(0, n))
+      .filter((value): value is number => value !== null && Number.isFinite(value));
+    const showCost = knownCost.length > 0;
+    const cost: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showCost ? 90 : 0 };
+    const axisY = showCost ? cost.top + cost.height
+      : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -225,6 +251,20 @@ const PlanPanels: React.FC<{
     const poolMax = Math.ceil((Math.max(...poolBounds) + 0.3) * 2) / 2;
     const poolY = linearScale([poolMin, poolMax], [pool.top + pool.height, pool.top]);
 
+    // Zero is always on the axis, and a window that cost next to nothing keeps
+    // a ten-krona span so its noise is not drawn as a cliff.
+    const costMin = Math.min(0, ...knownCost);
+    const costMax = Math.max(costMin + 10, 0, ...knownCost);
+    const costY = linearScale([costMin, costMax], [cost.top + cost.height, cost.top]);
+    const costEnds = (costLines ?? []).flatMap(line => {
+      const last = line.values[n - 1];
+      return last === null || last === undefined || !Number.isFinite(last)
+        ? [] : [{ line, value: last, y: costY(last), labelY: costY(last) }];
+    }).sort((a, b) => a.y - b.y);
+    costEnds.forEach((end, index) => {
+      if (index > 0) end.labelY = Math.max(end.labelY, costEnds[index - 1].labelY + 11);
+    });
+
     return {
       x, axisY, height: axisY + 42, scoreStrip,
       price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -232,8 +272,9 @@ const PlanPanels: React.FC<{
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
+      cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC, costLines]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -241,6 +282,7 @@ const PlanPanels: React.FC<{
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
+    cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
   const gradientId = 'plan-price-ramp';
@@ -318,10 +360,15 @@ const PlanPanels: React.FC<{
           style={onQuarterClick ? { cursor: 'pointer' } : undefined}
           role="img"
           tabIndex={0}
-          aria-label={t(
-            'Pris, effektflöden, förbrukning, lagernivå och pooltemperatur över tid',
-            'Price, power flows, consumption, storage and pool temperature over time',
-          )}
+          aria-label={showCost
+            ? t(
+              'Pris, effektflöden, förbrukning, lagernivå, temperatur och kostnad över tid',
+              'Price, power flows, consumption, storage, temperature and cost over time',
+            )
+            : t(
+              'Pris, effektflöden, förbrukning, lagernivå och temperatur över tid',
+              'Price, power flows, consumption, storage and temperature over time',
+            )}
           onPointerMove={handleMove}
           onPointerLeave={() => { setHover(null); setPointer(null); }}
           onKeyDown={handleKey}
@@ -591,11 +638,11 @@ const PlanPanels: React.FC<{
             </>
           )}
 
-          {/* ----------------------------------------------------- Pool --- */}
+          {/* ---------------------------------------------- Temperature --- */}
           {showPool && (
-            <g id="plan-pool-temperature">
+            <g id="plan-temperature">
               <PanelHeading
-                title={t('Pooltemperatur', 'Pool temperature')}
+                title={t('Temperatur', 'Temperature')}
                 unit={t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}
                 y={pool.top - 14}
               />
@@ -617,9 +664,42 @@ const PlanPanels: React.FC<{
               />
               {poolC[n - 1] !== null && (
                 <EndLabel y={poolY(poolC[n - 1] as number)} colour={POOL_COLOUR}>
-                  {`${(poolC[n - 1] as number).toFixed(1)} °C`}
+                  {`${t('pool', 'pool')} ${(poolC[n - 1] as number).toFixed(1)} °C`}
                 </EndLabel>
               )}
+            </g>
+          )}
+
+          {/* ----------------------------------------------- Bench cost --- */}
+          {showCost && costLines && (
+            <g id="plan-cost">
+              <PanelHeading
+                title={t('Kostnad', 'What it costs')}
+                unit={[
+                  t('kr, ackumulerad nätkostnad', 'SEK, cumulative grid cost'),
+                  ...costLines.map(line => `${line.dashed ? t('streckat', 'dashed') : t('heldraget', 'solid')} = ${line.name}`),
+                ].join(' · ')}
+                y={cost.top - 14}
+              />
+              <Gridlines ticks={niceTicks(costMin, costMax, 3)} y={costY} format={tick => tick.toFixed(0)} />
+              {costMin < 0 && (
+                <line
+                  x1={MARGIN_LEFT} x2={RIGHT} y1={costY(0)} y2={costY(0)}
+                  className="stroke-foreground" strokeWidth={1.25}
+                />
+              )}
+              {costLines.map(line => (
+                <path
+                  key={line.key} d={stepLinePath(line.values.slice(0, n), x, costY)} fill="none"
+                  stroke={line.colour} strokeWidth={line.dashed ? 1.6 : 2.2} strokeLinejoin="round"
+                  strokeDasharray={line.dashed ? '5 3' : undefined}
+                />
+              ))}
+              {costEnds.map(end => (
+                <EndLabel key={end.line.key} y={end.y} labelY={end.labelY} colour={end.line.colour}>
+                  {`${end.value.toFixed(0)} kr`}
+                </EndLabel>
+              ))}
             </g>
           )}
 
@@ -713,6 +793,7 @@ const PlanPanels: React.FC<{
           hasBattery={hasBattery}
           hasEvBattery={hasEvBattery}
           realPrices={realPrices}
+          costLines={showCost ? costLines : undefined}
           left={pointer.left}
           top={pointer.top}
           bounds={wrapRef.current?.getBoundingClientRect() ?? null}
@@ -740,11 +821,12 @@ const PlanTooltip: React.FC<{
   hasBattery: boolean;
   hasEvBattery: boolean;
   realPrices: boolean;
+  costLines?: readonly PlanCostLine[];
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, left, top, bounds,
+  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, left, top, bounds,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -768,7 +850,7 @@ const PlanTooltip: React.FC<{
   // Flip to the other side of the pointer rather than run off the edge, and
   // keep the whole card inside the chart.
   const offset = bounds && left + width + 24 > bounds.width ? -width - 16 : 16;
-  const estimated = 190 + running.length * 16;
+  const estimated = 190 + (running.length + (costLines?.length ?? 0)) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -855,10 +937,22 @@ const PlanTooltip: React.FC<{
             value={`${row.poolTemperatureC.toFixed(1)} °C`}
           />
         )}
-        <Reading
-          name={t('Kostnad hittills', 'Cost so far')}
-          value={`${row.cumulativeCostSek.toFixed(2)} kr`}
-        />
+        {costLines
+          ? costLines.map(line => {
+            const value = line.values[index];
+            return value === null || value === undefined ? null : (
+              <Reading
+                key={line.key} name={`${t('Kostnad', 'Cost so far')} · ${line.name}`} colour={line.colour}
+                value={`${value.toFixed(2)} kr`}
+              />
+            );
+          })
+          : (
+            <Reading
+              name={t('Kostnad hittills', 'Cost so far')}
+              value={`${row.cumulativeCostSek.toFixed(2)} kr`}
+            />
+          )}
       </div>
       </>}
     </div>

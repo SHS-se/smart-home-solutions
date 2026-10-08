@@ -7,9 +7,14 @@
 // drawn is the real one; where the lane's planner had to estimate it, its
 // estimate is drawn beside it. Score
 // digits need a single day's width; the three-day view shows coloured cells.
+//
+// The last panel is the comparison the bench exists for: what both planners
+// have spent by every point in the period shown. It never follows the
+// current/test toggle, and it counts from the start of the period, as the
+// chart's own "cost so far" does.
 
 import React, { useMemo } from 'react';
-import PlanPanels from '@/components/portal/energy/plan/PlanPanels';
+import PlanPanels, { type PlanCostLine } from '@/components/portal/energy/plan/PlanPanels';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import { benchChartData } from '@/lib/planner-bench/chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -18,8 +23,13 @@ import type { QuarterScore } from '@/lib/planner-bench/score';
 import { type LaneId } from '@/lib/planner-bench/lanes';
 import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
+const CURRENT_COLOUR = 'hsl(var(--muted-foreground))';
+const TEST_COLOUR = 'var(--plan-load-2)';
+
 interface Props {
   series: BenchSeries;
+  /** Both planners' plans for the case, whichever is shown; null where a planner has none. */
+  compared: { current: BenchSeries | null; test: BenchSeries | null };
   /** The lane the plan was made under: it decides which prices the planner was given. */
   lane: LaneId;
   timeZone: string;
@@ -33,7 +43,7 @@ interface Props {
   onPeriod: (period: BenchPeriod) => void;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, lane, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
@@ -43,6 +53,19 @@ const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, sel
     return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices });
   }, [series, lane, timeZone, range.from, range.to]);
   const { rows, consumption } = chart;
+
+  const { current, test } = compared;
+  const costLines = useMemo(() => {
+    const line = (key: string, name: string, colour: string, dashed: boolean, plan: BenchSeries | null): PlanCostLine[] => {
+      if (!plan) return [];
+      let running = 0;
+      return [{ key, name, colour, dashed, values: plan.costSek.slice(range.from, range.to).map(cost => (running += cost)) }];
+    };
+    return [
+      ...line('current', t('Nuvarande', 'Current'), CURRENT_COLOUR, true, current),
+      ...line('test', 'Test', TEST_COLOUR, false, test),
+    ];
+  }, [current, test, range.from, range.to, t]);
 
   const scores = quarters?.slice(range.from, range.to).map(q => q.score) ?? undefined;
   const selectedInView = selected !== null && selected >= range.from && selected < range.to ? selected - range.from : -1;
@@ -72,6 +95,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, lane, timeZone, quarters, sel
         quarterScores={scores}
         realPrices={chart.realPrices}
         poolTargetC={series.comfort?.pool_target_c ?? null}
+        costLines={costLines}
         selectedIndex={selectedInView}
         onQuarterClick={index => onSelect(range.from + index)}
       />

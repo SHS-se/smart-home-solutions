@@ -385,12 +385,10 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-quarter-explanation')).toContainText(/low solar event between|låg solproduktion under händelsen/);
   });
 
-  test('scores the C-0616 03:00–04:00 EV restart gap in the prices-known low lane using the real evaluator', async ({ context, page }) => {
+  test('scores the C-0616 03:00–04:00 EV restart gap using the real evaluator', async ({ context, page }) => {
     await mockBackend(context, { shortEvRestart: true });
     await login(page);
     await page.goto('/portal/planner-bench');
-    await page.locator('#bench-lane-told-low').click();
-    await expect(page.locator('#bench-lane-told-low')).toHaveAttribute('aria-pressed', 'true');
     const row = page.locator('#bench-rule-ev_short_gap');
     await expect(row).toContainText(/4 (q|kv) · −4/);
     await row.getByRole('button').first().click();
@@ -678,10 +676,19 @@ test.describe('planner bench', () => {
     await plan.click({ position: { x: box.width * 0.2, y: box.height * 0.5 } });
     await expect(page.getByText(/No rule fired|Ingen regel slog till|Flexible load|Pool/).first()).toBeVisible();
 
-    // Both planners are drawn for the case; the toggle swaps the full plan chart.
-    await expect(page.getByRole('img', { name: /Cost for both planners|Kostnad för båda planerarna/ })).toBeVisible();
-    // The pool's temperature is a panel of the plan chart itself, with the owner's target drawn in.
-    await expect(page.locator('#plan-pool-temperature')).toContainText(/30\.5 °C (target|mål)/);
+    // Both planners' costs are a panel of the plan chart itself; the toggle swaps the rest of it.
+    await expect(page.locator('#plan-cost')).toContainText(/What it costs|Kostnad/);
+    await expect(page.locator('#plan-cost path')).toHaveCount(2);
+    // It follows the period shown, like every other panel.
+    const testCost = page.locator('#plan-cost path').last();
+    const wholeCase = await testCost.getAttribute('d');
+    await page.locator('#bench-day-1').click();
+    await expect(testCost).not.toHaveAttribute('d', wholeCase!);
+    await page.locator('#plan-cost').screenshot({ path: test.info().outputPath('plan-cost-day.png') });
+    await page.locator('#bench-day-all').click();
+    await expect(testCost).toHaveAttribute('d', wholeCase!);
+    // So is the pool's temperature, with the owner's target drawn in.
+    await expect(page.locator('#plan-temperature')).toContainText(/30\.5 °C (target|mål)/);
     await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
@@ -701,13 +708,9 @@ test.describe('planner bench', () => {
     await summary.screenshot({ path: test.info().outputPath('cost-summary-desktop.png') });
     await expect(page.getByText(/Value curves used|Värdekurvor som användes/)).toHaveCount(0);
 
-    // The lanes say why: what knowing the real prices would have saved, and which valuation did best.
-    await expect(page.locator('#bench-diagnosis-test')).toContainText(/price estimate cost 12 kr|prisgissningen kostade 12 kr/);
-    // Planned from the starting prices, the planner's own estimate is drawn against the real price; given the real prices, there is none.
+    // Planned from the starting prices, the planner's own estimate is drawn against the real price.
     await expect(page.locator('#plan-planner-price')).toHaveCount(1);
-    await page.locator('#bench-lane-oracle-high').click();
-    await expect(page.locator('#bench-lane-oracle-high')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#plan-planner-price')).toHaveCount(0);
+    await expect(page.locator('#bench-lanes')).toHaveCount(0);
 
     // The start state belongs to the case: an edit is saved into it and the case is run again.
     await page.locator('#bench-start-pool').fill('27');
