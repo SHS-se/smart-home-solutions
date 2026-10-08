@@ -29,5 +29,13 @@ export function runCoverage(cases: CaseHead[], results: Map<string, BenchResultS
       ? { points: result!.score!.points, passed: storedPassed(result!.score!, null) } : null);
   }
   const points = [...scores.values()].filter(s => s !== null).map(s => s.points);
-  return { ready, scored: points.length, scores, score: points.length === ready ? runScore(points) : null };
+  // Saved points describe the executed run, even when today's evaluator or
+  // cohort has changed. They never enter the current comparison above.
+  const savedScores = [...results.values()].filter(r => r.status === 'ok' && r.score).map(r => r.score!);
+  const saved = {
+    score: runScore(savedScores.map(s => s.points)),
+    scored: savedScores.length,
+    versions: [...new Set(savedScores.map(s => s.version))].sort((a, b) => a - b),
+  };
+  return { ready, scored: points.length, scores, score: points.length === ready ? runScore(points) : null, saved };
 }

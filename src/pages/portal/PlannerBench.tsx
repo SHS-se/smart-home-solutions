@@ -171,6 +171,7 @@ const Bench: React.FC = () => {
 
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
+  const savedTestScore = testRun ? coverage.get(testRun.sha)?.saved : null;
 
   /** Both complete runs use the entire recorded cohort; never a partial intersection. */
   const totals = useMemo(() => {
@@ -297,11 +298,14 @@ const Bench: React.FC = () => {
   const loading = runs.isLoading || scenarios.isLoading || summaries.isLoading;
   const loadError = runs.error ?? scenarios.error ?? summaries.error;
   const runLabel = (run: BenchRun) => {
-    const score = runScores.get(run.sha);
+    const currentScore = runScores.get(run.sha);
     const status = run.status === 'pending' ? ` · ${t('väntar på körning', 'awaiting run')}` : run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : run.status === 'unavailable' ? ` · ${t('saknar planerare', 'no planner')}` : '';
     const cov = coverage.get(run.sha);
-    const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('testfall', 'cases')}` : '';
-    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : !run.is_current ? ` · ${t('historik', 'history')}` : ''}${status}${incomplete}`;
+    const score = currentScore ?? cov?.saved.score;
+    const saved = currentScore == null && score != null
+      ? ` · ${t('sparad poäng', 'saved score')} · v${cov!.saved.versions.join('/v')} · ${cov!.saved.scored} ${t('testfall', 'cases')}` : '';
+    const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('aktuella testfall', 'current cases')}` : '';
+    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : !run.is_current ? ` · ${t('historik', 'history')}` : ''}${status}${saved}${incomplete}`;
   };
 
   const shortRun = (sha: string | null) => {
@@ -373,8 +377,8 @@ const Bench: React.FC = () => {
       {!loading && !loadError && !job.active && staleCount > 0 && (
         <Alert>
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Dessa poäng döljs tills de räknats om.`,
-              `${staleCount} result${staleCount === 1 ? ' has' : 's have'} scores from an older scorer. These scores are excluded until they are recomputed.`)}</span>
+            <span>{t(`${staleCount} resultat har poäng från en äldre poängsättning. Sparade poäng visas fortfarande; räkna om för att jämföra med dagens poängsättare.`,
+              `${staleCount} result${staleCount === 1 ? ' has' : 's have'} scores from an older scorer. Saved points remain visible; recompute to compare with the current scorer.`)}</span>
             <Button size="sm" variant="outline" disabled={dispatch.isPending} onClick={() => dispatch.mutate({ shas: 'none' })}>
               {t('Räkna om poäng', 'Recompute scores')}
             </Button>
@@ -423,7 +427,7 @@ const Bench: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
-                      <SelectContent className="max-h-80">
+                      <SelectContent scrollButtons={false} className="max-h-[min(20rem,var(--radix-select-content-available-height))]">
                         {[true, false].map(environment => <SelectGroup key={String(environment)}>
                           <SelectLabel>{environment ? t('Aktuella grenar', 'Current branches') : t('Sparad bänkhistorik', 'Saved benchmark history')}</SelectLabel>
                           {listedRuns.filter(run => Boolean(run.is_current || run.is_test) === environment).map(run =>
@@ -439,6 +443,11 @@ const Bench: React.FC = () => {
                 {t(`${cases.filter(c => c.dataset && c.recorded_at).length} uppmätta testfall · ${cases.filter(c => !c.recorded_at).length} väntar på mätningar`,
                   `${cases.filter(c => c.dataset && c.recorded_at).length} measured cases · ${cases.filter(c => !c.recorded_at).length} waiting for measurements`)}
               </p>
+              {!totals && savedTestScore?.score != null && <p id="bench-saved-score" className="text-sm">
+                {t('Sparad poäng för körningen', 'Saved run score')}: <span className="font-mono font-semibold">{savedTestScore.score} {t('p', 'pts')}</span>
+                {' · '}{savedTestScore.scored} {t('testfall', 'cases')}
+                {' · '}{t('poängsättare', 'scorer')} v{savedTestScore.versions.join('/v')}
+              </p>}
               {!totals && cases.some(c => c.recorded_at) && <p id="bench-incomplete" className="text-sm text-muted-foreground">
                 {currentRun?.status === 'unavailable' || testRun?.status === 'unavailable'
                   ? t('Jämförelsen kan inte göras eftersom en av dessa commits saknar planerare.',

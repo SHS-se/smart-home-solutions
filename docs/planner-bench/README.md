@@ -64,6 +64,12 @@ The dropdown keeps the newest commit in each consecutive group with equal,
 complete scores. Unscored, running and failed commits stay visible, as do the
 main head, dev head and currently selected historical commit. Stored runs,
 results and verdicts remain attached to their original commits.
+When a run is no longer eligible for today's comparison, the picker still
+shows its stored points, with the scorer version and number of saved cases.
+Selecting it also shows that saved total beside the current coverage message.
+Saved totals describe the executed cases and do not enter a current comparison.
+The picker uses a bounded scrolling viewport with a scrollbar instead of
+hover-triggered scroll arrows.
 
 Commits from before the planner existed retain their SHA and environment marks
 but are labelled **no planner** (`unavailable`). The runner checks for the planner
@@ -100,7 +106,7 @@ Saving rules refreshes the branch heads, including new solves when rules affect
 planner decisions. **Recompute scores** re-evaluates stored decisions without
 running planners; this does not make old rule-driven decisions newly optimized.
 Routine refreshes verify their requested results; stale history stays excluded
-until explicitly refreshed.
+from current comparisons until explicitly refreshed. Its saved points remain visible.
 
 The benchmark store serializes its requests and leaves idle time of at least
 250 ms, or the preceding request's duration if longer, between them. This limits

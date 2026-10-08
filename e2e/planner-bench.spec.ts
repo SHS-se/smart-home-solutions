@@ -33,6 +33,10 @@ const LATER_REPEATS = [
   { sha: 'e'.repeat(40), short_sha: 'eeeeeee', committed_at: '2026-09-30T09:00:00Z', subject: 'Later equivalent planner' },
   { sha: 'f'.repeat(40), short_sha: 'fffffff', committed_at: '2026-10-01T09:00:00Z', subject: 'Newest equivalent planner' },
 ];
+const SAVED_HISTORY = Array.from({ length: 30 }, (_, i) => ({
+  sha: (i + 1).toString(16).padStart(40, '0'), short_sha: `saved-${i + 1}`,
+  committed_at: `2026-09-28T${String(i % 24).padStart(2, '0')}:00:00Z`, subject: 'Executed historical planner',
+}));
 const CASES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Cheap night', captured_at: '2026-09-19T13:06:00Z' },
   { id: '22222222-2222-4222-8222-222222222222', name: 'Dear week', captured_at: '2026-09-24T07:25:00Z' },
@@ -135,6 +139,7 @@ const PLANS: Record<string, BenchSeries> = {
   [`${CURRENT.sha}/${CASES[1].id}`]: series(200, 30),
   [`${TEST.sha}/${CASES[1].id}`]: series(20, 16),
 };
+const SAVED_TEST_POINTS = CASES.reduce((sum, c) => sum + storedScore(PLANS[`${TEST.sha}/${c.id}`]).points, 0);
 
 function fakeJwt(sub: string, email: string): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -148,7 +153,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, noCurrentPlanner = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, thermalBuffer = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, savedHistory = false, noCurrentPlanner = false, overlap = false, gaps = false, shortEvRestart = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, thermalBuffer = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
   const plans = overlap || gaps || shortEvRestart || arbitrage || baseLoad || batterySupplied || heatingAtTarget || thermalBuffer ? structuredClone(PLANS) : PLANS;
   if (shortEvRestart) {
     const { c, decisions } = shortEvRestartFixture();
@@ -307,6 +312,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           { ...CURRENT, branch: 'main', is_current: true, is_test: false, status: noCurrentPlanner ? 'unavailable' : 'done', error: noCurrentPlanner ? 'This commit does not contain a planner entry point.' : null, finished_at: nowIso },
           { ...TEST, branch: 'dev', is_current: false, is_test: true, status: 'done', error: null, finished_at: nowIso },
           ...(history ? LATER_REPEATS : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
+          ...(savedHistory ? SAVED_HISTORY : []).map(run => ({ ...run, branch: 'dev', is_current: false, is_test: false, status: 'done', error: null, finished_at: nowIso })),
         ];
         case 'bench_scenarios': return CASES.map(c => ({
           ...c, revision: c.id, source_filename: null, notes: 'Synthetic evaluation: load and solar use forecasts.', archived: false, created_at: nowIso,
@@ -316,11 +322,12 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
           ...Object.entries(plans).filter(([key]) => !noCurrentPlanner || !key.startsWith(CURRENT.sha)),
           ...(repeats || history ? REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${history ? TEST.sha : CURRENT.sha}/${c.id}`]] as const)),
           ...(history ? LATER_REPEATS : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${TEST.sha}/${c.id}`]] as const)),
+          ...(savedHistory ? SAVED_HISTORY : []).flatMap(run => CASES.map(c => [`${run.sha}/${c.id}`, plans[`${TEST.sha}/${c.id}`]] as const)),
         ].map(([key, plan]) => {
           const [sha, scenario_id] = key.split('/');
           // Every lane has a result; the oracle lanes are cheaper, as knowing the real prices would be.
           return LANES.map((lane, k) => ({
-            sha, scenario_id, lane, case_revision: changedCase && sha === TEST.sha && scenario_id === CASES[1].id ? 'old' : scenario_id, has_record: true, has_evaluation: true, referee_version: REFEREE_VERSION, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: { ...storedScore(plan), ...(missingAudit ? { version: 2 } : {}) },
+            sha, scenario_id, lane, case_revision: changedCase && sha === TEST.sha && scenario_id === CASES[1].id ? 'old' : scenario_id, has_record: true, has_evaluation: true, referee_version: REFEREE_VERSION, status: 'ok', error: null, cpu_ms: 500, stats: planStats(plan), score: { ...storedScore(plan), ...(missingAudit ? { version: 2 } : {}), ...(savedHistory && SAVED_HISTORY.some(r => r.sha === sha) ? { version: 24 } : {}) },
             outcome: { ...OUTCOME, cost_sek: OUTCOME.cost_sek - (lane.startsWith('oracle') ? 12 : 0) + (k % 3) },
           }));
         }).flat();
@@ -578,6 +585,43 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
   });
 
+  test('retains historical scores and scrolls a long picker without moving or skipping rows', async ({ context, page }) => {
+    await mockBackend(context, { savedHistory: true });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    await page.locator('#bench-test-run').click();
+    const list = page.getByRole('listbox');
+    const viewport = list.locator('[data-radix-select-viewport]');
+    await expect(viewport).toHaveCSS('scrollbar-width', 'thin');
+    await expect(page.getByRole('option')).toHaveCount(SAVED_HISTORY.length + 2);
+    await expect(page.getByRole('option').filter({ hasText: /^saved-1 · / })).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.getByRole('option').filter({ hasText: /^saved-1 · / })).toContainText(/saved score.*v24|sparad poäng.*v24/);
+    await list.screenshot({ path: test.info().outputPath('saved-history-picker.png') });
+    const bounds = (await list.boundingBox())!;
+    expect(bounds.height).toBeLessThanOrEqual(320);
+    await viewport.hover();
+    let previous = await viewport.evaluate(el => el.scrollTop);
+    for (let i = 0; i < 5; i++) {
+      await page.mouse.wheel(0, 100);
+      await expect.poll(() => viewport.evaluate(el => el.scrollTop)).toBeGreaterThan(previous);
+      previous = await viewport.evaluate(el => el.scrollTop);
+      const nextBounds = (await list.boundingBox())!;
+      expect(nextBounds.y).toBeCloseTo(bounds.y, 0);
+      expect(nextBounds.height).toBeCloseTo(bounds.height, 0);
+    }
+    await page.keyboard.press('End');
+    await expect(page.getByRole('option').last()).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#bench-test-run')).toContainText('saved-30');
+    await expect(page.locator('#bench-saved-score')).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.locator('#bench-total-score')).toHaveCount(0);
+    await page.locator('#bench-test-run').click();
+    await page.keyboard.press('Home');
+    await expect(page.getByRole('option').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#bench-test-run')).toBeFocused();
+  });
+
   test('shows a branch commit with no planner as unavailable without inventing a comparison score', async ({ context, page }) => {
     await mockBackend(context, { noCurrentPlanner: true });
     await login(page);
@@ -824,11 +868,14 @@ test.describe('planner bench', () => {
     await rules.screenshot({ path: test.info().outputPath('rules-mobile.png') });
   });
 
-  test('withholds stale scores and witnesses until older results are rescored', async ({ context, page }) => {
+  test('shows saved points while withholding current comparisons and stale witnesses', async ({ context, page }) => {
     await mockBackend(context, { missingAudit: true });
     await login(page);
     await page.goto('/portal/planner-bench');
-    await expect(page.locator('#bench-test-run')).toContainText(/— (pts|p)/);
+    await expect(page.locator('#bench-test-run')).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.locator('#bench-test-run')).toContainText(/saved score.*v2|sparad poäng.*v2/);
+    await expect(page.locator('#bench-saved-score')).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.locator('#bench-total-score')).toHaveCount(0);
     await expect(page.locator('#bench-rules')).toContainText(/Missing evidence|Saknar underlag/);
     await page.locator('#bench-untriggered-rules > button').click();
     await expect(page.locator('#bench-rule-battery_price_spread')).toContainText(/Awaiting rescore|Väntar på omräkning/);
