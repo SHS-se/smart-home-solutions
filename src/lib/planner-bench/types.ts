@@ -9,6 +9,9 @@
  * quarters. Watts are quarter averages; prices are SEK/kWh.
  */
 export interface BenchSeries {
+  /** Model-produced meter electricity; never reconstructed from commands by the chart. */
+  devices: import('../energy-shift/plan-chart-data').ChartDevice[];
+  deviceW: Record<string, number[]>;
   start: string[];
   hours: number[];
   /** 1 where the market published the price, 0 where the planner estimated it. */
@@ -103,7 +106,7 @@ export interface BenchRun {
   branch: string | null;
   is_current: boolean;
   is_test: boolean;
-  status: 'running' | 'done' | 'failed' | 'unavailable';
+  status: 'pending' | 'running' | 'done' | 'failed' | 'unavailable';
   error: string | null;
   finished_at: string | null;
 }
@@ -132,6 +135,8 @@ export interface BenchResultDetail {
 }
 
 export interface BenchResultSummary {
+  planner_generation?: string | null;
+  planner_rules?: string | null;
   sha: string;
   case_revision: string | null;
   has_record: boolean;
@@ -185,6 +190,8 @@ export interface UsedCurve {
 
 /** What one planner version did with one test case: the bench's stored truth for a result. */
 export interface PlanRecord {
+  /** Rule inputs used to solve, distinct from the rules later used to score it. */
+  planner_rules?: string;
   /** The planner's own verdict on its plan, e.g. "ready". */
   status: string;
   /** Which input generation the adapter built for this planner (bench/adapter.ts). */

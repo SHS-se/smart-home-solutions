@@ -2,9 +2,9 @@
 // historical planner code, merges runs, or changes stored decisions/input hashes.
 import { hasMeasuredOutcome, loadCase, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { BASE_LANE, LANES } from "../src/lib/planner-bench/lanes.ts";
+import { BASE_LANE, LANES, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
-import { isStale, runScore, SCORER_VERSION, storedPassed } from "../src/lib/planner-bench/score.ts";
+import { isStale, plannerRulesFingerprint, runScore, SCORER_VERSION, storedPassed } from "../src/lib/planner-bench/score.ts";
 import type { BenchStore, EvaluatedResult, ResultKey, StoredScenario } from "./store.ts";
 
 const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
@@ -12,6 +12,7 @@ const describe = (r: ResultKey) => `${r.sha.slice(0, 12)} / ${r.scenario_id} / $
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 type RescoreStore = Pick<BenchStore, "rules" | "scenarios" | "runs" | "evaluatedResults" | "planRecord" | "saveEvaluation">;
+export interface EvaluationScope { shas: readonly string[]; lanes: readonly LaneId[] }
 
 export interface PlannerRescoreSummary {
   sha: string;
@@ -29,6 +30,7 @@ export interface PlannerRescoreSummary {
 }
 
 export interface RescoreReport {
+  lanes: readonly LaneId[];
   scorerVersion: number;
   refereeVersion: number;
   scenarioFilter: string | null;
@@ -57,12 +59,17 @@ export class RescoreIncompleteError extends Error {
 }
 
 /** Recompute stale successful results, then read storage again to prove coverage. */
-export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string): Promise<RescoreReport> {
-  const [rules, scenarios, runs, before] = await Promise.all([
+export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string, scope?: EvaluationScope): Promise<RescoreReport> {
+  const [rules, scenarios, allRuns, allBefore] = await Promise.all([
     bench.rules(), bench.scenarios(onlyScenario, true), bench.runs(), bench.evaluatedResults(),
   ]);
+  const lanes = scope?.lanes ?? LANES;
+  const selected = (r: ResultKey) => !scope || scope.shas.includes(r.sha) && lanes.includes(r.lane);
+  const runs = allRuns.filter(r => !scope || scope.shas.includes(r.sha));
+  const before = allBefore.filter(selected);
   const unavailable = new Map(runs.filter(run => run.status === "unavailable").map(run => [run.sha, run.error!]));
   const report: RescoreReport = {
+    lanes,
     scorerVersion: SCORER_VERSION, refereeVersion: REFEREE_VERSION,
     scenarioFilter: onlyScenario ?? null, readyCases: 0, archivedCases: 0, unreadyCases: 0, eligible: 0,
     processed: 0, alreadyCurrent: 0, verifiedCurrent: 0,
@@ -84,7 +91,8 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   let latestRules = rules;
   const current = (result: EvaluatedResult) =>
     !unavailable.has(result.sha) && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
-    && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules);
+    && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules)
+    && (!scope || !result.planner_generation?.startsWith('ready-wasm-') || result.planner_rules === plannerRulesFingerprint(latestRules));
   const eligible = before.filter(result => {
     const entry = cases.get(result.scenario_id);
     if (unavailable.has(result.sha) || result.status !== "ok" || !entry) return false;
@@ -134,7 +142,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     }
   }
   // Read the rules again: a rule saved while this ran must not leave results looking current.
-  const after = await bench.evaluatedResults();
+  const after = (await bench.evaluatedResults()).filter(selected);
   latestRules = await bench.rules();
   const afterByKey = new Map(after.map(result => [keyOf(result), result]));
   // Newly inserted successful results are included too; concurrent writes must
@@ -172,7 +180,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
     const now = after.filter(r => r.sha === sha && r.lane === BASE_LANE && current(r) && !missing.has(keyOf(r)));
     let missingLanes = 0, plannerErrors = 0, currentLanes = 0;
     for (const scenarioId of cases.keys()) {
-      for (const lane of LANES) {
+      for (const lane of lanes) {
         const result = afterByKey.get(keyOf({ sha, scenario_id: scenarioId, lane }));
         if (!result) missingLanes++;
         else if (result.status === "error") plannerErrors++;
@@ -185,7 +193,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
       sha, unavailableReason: null, expectedCases: cases.size, oldScore: runScore(old.map(r => r.score!.points)), oldScored: old.length,
       score: runScore(now.map(r => r.score!.points)), scored: now.length,
       passed: now.filter(r => storedPassed(r.score!, null)).length,
-      currentLanes, expectedLanes: cases.size * LANES.length, plannerErrors, missingLanes,
+      currentLanes, expectedLanes: cases.size * lanes.length, plannerErrors, missingLanes,
     });
   }
   if (report.missingRecords || report.evaluationErrors || report.verificationErrors) throw new RescoreIncompleteError(report);
@@ -198,7 +206,7 @@ export function rescoreMarkdown(report: RescoreReport): string {
   const lines = [
     "## Planner bench rescore",
     `Scope: ${report.scenarioFilter ? `case ${report.scenarioFilter}` : "all stored cases"}.`,
-    `Scorer **v${report.scorerVersion}**, referee **v${report.refereeVersion}**. Verified **${report.verifiedCurrent}/${report.eligible}** eligible successful results across all six lanes.`,
+    `Scorer **v${report.scorerVersion}**, referee **v${report.refereeVersion}**. Verified **${report.verifiedCurrent}/${report.eligible}** eligible successful results. Requested lanes: ${report.lanes.join(", ")}.`,
     `Processed: ${report.processed}; already current: ${report.alreadyCurrent}; missing decisions: ${report.missingRecords}; evaluation errors: ${report.evaluationErrors}; verification errors: ${report.verificationErrors}.`,
     `Cases: ${report.readyCases} ready, ${report.unreadyCases} unready, ${report.archivedCases} archived. Unready and archived cases were not changed.`,
     `Stale case inputs: ${report.staleInputs}; existing planner errors: ${report.plannerErrors}; absent planner/case/lanes: ${report.missingLanes}. These need planner runs, not rescoring.`,

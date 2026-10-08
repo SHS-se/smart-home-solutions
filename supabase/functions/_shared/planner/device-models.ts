@@ -218,7 +218,7 @@ export function publishHeater(model: HeatPumpModel): PublishedHeater {
 
 /** Electrical/thermal response and command events come from the same device step. */
 export function stepHeater(heater: PublishedHeater, state: HeaterState, on: boolean, seconds: number): {
-  electric_w: number; heat_w: number; next: HeaterState; start: HeaterStart | null;
+  electric_w: number; compressor_w: number; auxiliary_w: number; heat_w: number; next: HeaterState; start: HeaterStart | null;
 } {
   const age = state.kind === "steady" ? Infinity : state.kind === "running" ? state.seconds : null;
   const projected = projectHeatPumpResponse(heater.response, heater,
@@ -228,7 +228,9 @@ export function stepHeater(heater: PublishedHeater, state: HeaterState, on: bool
     ? state.kind === "steady" ? { kind: "steady" } : { kind: "running", seconds: (age ?? 0) + seconds }
     : state.kind === "off_unobserved" ? { kind: "off_unobserved" }
       : { kind: "off", seconds: (state.kind === "off" ? state.seconds : 0) + seconds };
-  return { electric_w: projected.draw_w[0], heat_w: heater.heat_w * projected.gain_fraction[0], next, start };
+  const auxiliary_w = on ? heater.auxiliary_w : 0;
+  return { electric_w: projected.draw_w[0], compressor_w: projected.draw_w[0] - auxiliary_w,
+    auxiliary_w, heat_w: heater.heat_w * projected.gain_fraction[0], next, start };
 }
 
 /** Parse stored response data once; malformed dynamics never become a steady model. */

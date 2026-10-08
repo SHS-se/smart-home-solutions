@@ -3,9 +3,9 @@ import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError } from "../ben
 import { type EvaluatedResult, type ResultKey, type RunSummary, type StoredScenario, LocalStore } from "../bench/store.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate, type Evaluation } from "../src/lib/planner-bench/evaluate.ts";
-import { LANES } from "../src/lib/planner-bench/lanes.ts";
+import { BASE_LANE, LANES } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
-import { SCORER_VERSION } from "../src/lib/planner-bench/score.ts";
+import { SCORER_VERSION, plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
 const fill = (value: number) => Array<number>(QUARTERS).fill(value);
@@ -65,6 +65,26 @@ class MemoryStore {
       referee_version: evaluation.referee_version, has_evaluation: true } : row);
   }
 }
+
+Deno.test('base refresh verifies only the requested candidate and never evaluates historical diagnostics', async () => {
+  const store = new MemoryStore();
+  const report = await rescoreExisting(store, undefined, { shas: ['new-not-in-git'], lanes: [BASE_LANE] });
+  assertEquals([report.processed, report.verifiedCurrent, report.eligible], [1, 1, 1]);
+  assertEquals(report.planners.map(p => [p.sha, p.currentLanes, p.expectedLanes]), [['new-not-in-git', 1, 1]]);
+  assertEquals(store.reads.map(r => [r.sha, r.lane]), [['new-not-in-git', BASE_LANE]]);
+  assertEquals(report.missingLanes, 0);
+});
+
+Deno.test('scoped completion rejects decisions produced under different rules even after their score is refreshed', async () => {
+  const store = new MemoryStore();
+  store.rows = store.rows.map(r => ({ ...r, planner_generation: 'ready-wasm-v3',
+    planner_rules: plannerRulesFingerprint({ pool_restart: { points: -1 } }) }));
+  const error = await assertRejects(() => rescoreExisting(store, undefined,
+    { shas: ['new-not-in-git'], lanes: [BASE_LANE] }), RescoreIncompleteError);
+  assertEquals(error.report.verificationErrors, 1);
+  // A deliberate score-only operation can still measure those immutable historical decisions.
+  assertEquals((await rescoreExisting(store)).verifiedCurrent, LANES.length * 2);
+});
 
 Deno.test("rescore evaluates every stored lane with the real evaluator and is idempotent without changing decisions or input hashes", async () => {
   const store = new MemoryStore();

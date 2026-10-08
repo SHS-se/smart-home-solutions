@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectLabel, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -31,7 +31,7 @@ import {
   distinctScoreRuns, isStale, resolveRules, scoreQuarters, criteriaErrors,
 } from '@/lib/planner-bench/score';
 import type {
-  BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, CriteriaOverrides,
+  BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchSeries, CriteriaOverrides,
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
@@ -117,6 +117,7 @@ const Bench: React.FC = () => {
   const [caseId, setCaseId] = useState<string | null>(null);
   const selectedCase = cases.find(c => c.id === caseId) ?? cases[0] ?? null;
   const [shown, setShown] = useState<'current' | 'test'>('test');
+  const comparisonShas = [...new Set([testRun?.sha, currentRun?.sha].filter((s): s is string => Boolean(s)))].join(',');
 
   // Lists and totals show the base lane: the planner as it runs live. The other lanes explain it.
   const baseSummaries = useMemo(() => (summaries.data ?? []).filter(s => (s.lane ?? BASE_LANE) === BASE_LANE), [summaries.data]);
@@ -248,7 +249,7 @@ const Bench: React.FC = () => {
       setPending(null);
       setCaseId(id);
       refresh();
-      dispatch.mutate({ shas: 'all', scenario: id });
+      dispatch.mutate({ shas: 'heads', scenario: id });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara testfallet', 'Could not save the test case'), description: error.message, variant: 'destructive' }),
   });
@@ -272,7 +273,7 @@ const Bench: React.FC = () => {
     },
     onSuccess: () => {
       refresh();
-      dispatch.mutate({ shas: 'all', scenario: selectedCase!.id });
+      dispatch.mutate({ shas: comparisonShas, scenario: selectedCase!.id });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara starttillståndet', 'Could not save the start state'), description: error.message, variant: 'destructive' }),
   });
@@ -287,8 +288,8 @@ const Bench: React.FC = () => {
       setRulesDraft(null);
       refresh();
       toast({ title: t('Reglerna sparade', 'Rules saved'), description: t('Gäller alla testfall och alla planerare.', 'They apply to every test case and every planner.') });
-      // Every stored score is now stale; recompute them without re-running planners.
-      dispatch.mutate({ shas: 'none' });
+      // Rule-driven decisions must be optimized again; unchanged legacy inputs skip solve.
+      dispatch.mutate({ shas: 'heads' });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara reglerna', 'Could not save the rules'), description: error.message, variant: 'destructive' }),
   });
@@ -297,10 +298,10 @@ const Bench: React.FC = () => {
   const loadError = runs.error ?? scenarios.error ?? summaries.error;
   const runLabel = (run: BenchRun) => {
     const score = runScores.get(run.sha);
-    const status = run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : run.status === 'unavailable' ? ` · ${t('saknar planerare', 'no planner')}` : '';
+    const status = run.status === 'pending' ? ` · ${t('väntar på körning', 'awaiting run')}` : run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : run.status === 'unavailable' ? ` · ${t('saknar planerare', 'no planner')}` : '';
     const cov = coverage.get(run.sha);
     const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('testfall', 'cases')}` : '';
-    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : ''}${status}${incomplete}`;
+    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : !run.is_current ? ` · ${t('historik', 'history')}` : ''}${status}${incomplete}`;
   };
 
   const shortRun = (sha: string | null) => {
@@ -337,7 +338,7 @@ const Bench: React.FC = () => {
         <div className="flex flex-wrap gap-2">
           <input ref={fileInput} id="bench-replay-file" type="file" accept="application/json,.json" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
           <Button variant="outline" onClick={() => fileInput.current?.click()}><Upload className="h-4 w-4 mr-2" />{t('Lägg till testfall', 'Add test case')}</Button>
-          <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'all' })}>
+          <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'heads' })}>
             {dispatch.isPending || job.active ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             {t('Kör saknade', 'Run missing results')}
           </Button>
@@ -418,12 +419,16 @@ const Bench: React.FC = () => {
                   <RunDetails run={currentRun} />
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Testplanerare (testmiljön · dev)', 'Test planner (test environment · dev)')}</label>
+                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{testRun?.is_test ? t('Dev-kandidat · planerarbänken', 'Dev candidate · planner bench') : t('Historisk planerare', 'Historical planner')}</label>
                   <div className="flex items-center gap-2">
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
                       <SelectContent className="max-h-80">
-                        {listedRuns.map(run => <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
+                        {[true, false].map(environment => <SelectGroup key={String(environment)}>
+                          <SelectLabel>{environment ? t('Aktuella grenar', 'Current branches') : t('Sparad bänkhistorik', 'Saved benchmark history')}</SelectLabel>
+                          {listedRuns.filter(run => Boolean(run.is_current || run.is_test) === environment).map(run =>
+                            <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
+                        </SelectGroup>)}
                       </SelectContent>
                     </Select>
                   </div>
@@ -467,7 +472,7 @@ const Bench: React.FC = () => {
               unsaved={rulesDraft !== null}
               onDraft={setRulesDraft}
               onSaveRules={() => saveRules.mutate(rulesDraft ?? savedRules)}
-              onRerun={() => dispatch.mutate({ shas: 'all', scenario: selectedCase.id, force: true })}
+              onRerun={() => dispatch.mutate({ shas: comparisonShas, scenario: selectedCase.id, force: true })}
             />
           )}
         </>
@@ -490,7 +495,7 @@ const Bench: React.FC = () => {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPending(null)}>{t('Avbryt', 'Cancel')}</Button>
             <Button disabled={addCase.isPending} onClick={() => addCase.mutate()}>
-              {addCase.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}{t('Spara och kör alla planerare', 'Save and run every planner')}
+              {addCase.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}{t('Spara och kör aktuella planerare', 'Save and run current planners')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -656,7 +661,7 @@ const LanePanel: React.FC<{
   const { t } = useLanguage();
   const name = (id: LaneId) => { const [p, v] = id.split('/'); return `${t(...LANE_LABEL[p])}, ${t(...LANE_LABEL[v])}`; };
   const cell = (r: LaneResult | undefined) => r ? `${(r.cost_sek - r.credit_sek).toFixed(0)} kr · ${signed(r.points)} pts` : '—';
-  const verdict = (d: Diagnosis | null) => d === null ? t('väntar på alla spår', 'waiting for every lane') : [
+  const verdict = (d: Diagnosis | null) => d === null ? t('extra diagnosspår har inte körts', 'additional diagnostic lanes have not been run') : [
     t(`prisgissningen kostade ${d.price_estimate_sek.toFixed(0)} kr`, `the price estimate cost ${d.price_estimate_sek.toFixed(0)} kr`),
     t(`värderingen ${d.valuation_sek.toFixed(0)} kr`, `the valuation ${d.valuation_sek.toFixed(0)} kr`),
     t(`bästa värdering: ${t(...LANE_LABEL[d.best.told])} vid start, ${t(...LANE_LABEL[d.best.oracle])} med facit`,
@@ -667,8 +672,8 @@ const LanePanel: React.FC<{
       <div className="mb-2 flex flex-wrap items-baseline gap-x-4 text-sm">
         <span className="font-medium">{t('Spår', 'Lanes')}</span>
         <span className="text-xs text-muted-foreground">
-          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Låg/nominell/hög ändrar lagrens värdekurvor (0,71×/1×/1,41×). Nettokostnad · poäng.',
-            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. Low/nominal/high scales store value curves (0.71×/1×/1.41×). Net cost · points.')}
+          {t('Vid start: bara då publicerade priser, resten uppskattas. Facit: planeraren får alla senare faktiska priser. Båda mäts mot faktiska priser. Normal körning görs en gång per fall. Extra diagnosspår körs uttryckligen i GitHub Actions. Nettokostnad · poäng.',
+            'At start: only prices published then; the planner estimates the rest. Oracle: it is given all later actual prices. Both are evaluated at actual prices. The normal refresh runs once per case. Additional diagnostic lanes are run explicitly in GitHub Actions. Net cost · points.')}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -681,7 +686,7 @@ const LanePanel: React.FC<{
             </tr>
           </thead>
           <tbody>
-            {LANES.map(id => (
+            {LANES.filter(id => id === BASE_LANE || lanes.current[id] || lanes.test[id]).map(id => (
               <tr key={id} className={`border-b border-border/50 ${id === lane ? 'bg-muted/60' : ''}`}>
                 <td className="py-1">
                   <button id={`bench-lane-${id.replace('/', '-')}`} className="text-left underline-offset-2 hover:underline" aria-pressed={id === lane} onClick={() => onLane(id)}>
@@ -738,7 +743,10 @@ const CaseView: React.FC<CaseViewProps> = ({
   const draftErrors = criteriaErrors(draft);
   const rules = draftErrors.length ? [] : resolveRules(draft);
 
-  const series = useMemo(() => details && { current: details.current?.series ?? null, test: details.test?.series ?? null }, [details]);
+  const series = useMemo(() => {
+    const ready = (s: BenchSeries | null | undefined) => s?.devices && s.deviceW ? s : null;
+    return details && { current: ready(details.current?.series), test: ready(details.test?.series) };
+  }, [details]);
   const shownDetail = shown === 'current' ? details?.current : details?.test;
 
   // Scored live with the rules being edited, so a change shows before it is saved.
@@ -791,6 +799,7 @@ const CaseView: React.FC<CaseViewProps> = ({
         {errors.map(e => (
           <Alert key={e!.sha} variant="destructive"><AlertDescription className="font-mono text-xs whitespace-pre-wrap">{e!.sha.slice(0, 7)}: {e!.error?.split('\n')[0]}</AlertDescription></Alert>
         ))}
+        {shownDetail?.series && !shownSeries && <p className="text-sm text-muted-foreground">{t('Enhetsprognoserna behöver räknas om innan planen kan visas.', 'Device projections need recomputing before this plan can be displayed.')}</p>}
         {seriesLoading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar planer…', 'Loading plans…')}</div>}
         {series && (
           <>

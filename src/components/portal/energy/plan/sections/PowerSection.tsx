@@ -18,46 +18,22 @@ import {
   type SupplySlotInput,
 } from '@/lib/energy-shift/energy-attribution';
 import {
-  activeDeviceKeys,
   nowDividerIndex,
   type DayWindow,
   type TimelineRange,
   type TimelineRow,
 } from '@/lib/energy-shift/energy-timeline';
-import {
-  splitConsumption, type ConsumptionSeries,
-} from '@/lib/energy-shift/consumption-series';
+import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
+import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import PlanReplayDownload from '../PlanReplayDownload';
-import PlanPanels, { type PlanPanelRow } from '../PlanPanels';
+import PlanPanels from '../PlanPanels';
 import { loadColour, PLAN_COLOURS } from '../types';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
-import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 
 const QUARTER_W_TO_KWH = 4_000;
-
-/**
- * A quoted price if there is one, otherwise what the planner valued the
- * quarter at (ENERGY_OPTIMISATION_ARCHITECTURE.md §1.4.2). The plan acts on the
- * modelled number, so a chart that omitted it would show the plan spending
- * against a blank stretch of axis.
- *
- * The two are drawn, but never merged silently. Nord Pool publishes one day
- * ahead and the horizon is three, so most of a plan is priced by the shape
- * estimator rather than by the market — and an estimate presented as a quote
- * does not read as an estimate, it reads as the market being wrong. Whether a
- * quarter was actually quoted therefore travels beside the number, so the
- * chart can say which of the two a reader is looking at.
- */
-const isQuoted = (quoted: number | null): boolean =>
-  quoted !== null && Number.isFinite(quoted);
-
-const priced = (quoted: number | null, modelled: number | null): number | null =>
-  isQuoted(quoted) ? quoted
-    : modelled !== null && Number.isFinite(modelled) ? modelled
-      : null;
 
 const PowerSection: React.FC<{
   model: PlanModel;
@@ -92,47 +68,12 @@ const PowerSection: React.FC<{
 
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
-  const panelRows = useMemo<PlanPanelRow[]>(() => {
-    let running = 0;
-    return view.map(row => {
-      running += row.costSek ?? 0;
-      return {
-        startMs: row.startMs,
-        label: formatHomeDayMonthTime(row.start, homeTimeZone),
-        measured: row.measured,
-        missing: row.missing,
-        solarW: row.solarW,
-        loadW: row.loadW,
-        gridImportW: row.gridImportW,
-        gridExportW: row.gridExportW,
-        batteryChargeW: row.batteryChargeW,
-        batteryDischargeW: row.batteryDischargeW,
-        homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
-        evSoc: row.evSoc === null ? null : row.evSoc * 100,
-        importPriceSekPerKwh: priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
-        exportPriceSekPerKwh: priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
-        importPriceQuoted: isQuoted(row.importPriceSekPerKwh),
-        cumulativeCostSek: running,
-        poolTemperatureC: row.poolC ?? null,
-      };
-    });
-  }, [homeTimeZone, view]);
-
-  /**
-   * Individual meters, never categories — the plan dispatches devices, so a
-   * band labelled by category would describe something no schedule can act on.
-   * Small Planned meters share Other planned devices; Monitoring stays in base.
-   */
-  const consumption = useMemo(() => {
-    const active = new Set([...activeDeviceKeys(rows, range), ...schedulableKeys]);
-    const candidates = [...active].map(key => ({
-      key,
-      name: deviceNameByKey.get(key) ?? key,
-      values: view.map(row => row.deviceW[key] ?? NaN),
-      schedulable: schedulableKeys.has(key),
-    }));
-    return splitConsumption(candidates, view.map(row => row.loadW));
-  }, [deviceNameByKey, range, rows, schedulableKeys, view]);
+  const chart = useMemo(() => projectPlanChart({ rows, range, timeZone: homeTimeZone, prices: { kind: 'live' },
+    devices: [...new Set([...deviceNameByKey.keys(), ...schedulableKeys])].map(key => ({
+      key, name: deviceNameByKey.get(key) ?? key, schedulable: schedulableKeys.has(key),
+    })),
+  }), [rows, range, homeTimeZone, deviceNameByKey, schedulableKeys]);
+  const { rows: panelRows, consumption } = chart;
 
   const divider = nowDividerIndex(rows, range);
   const plannedStarts = useMemo(

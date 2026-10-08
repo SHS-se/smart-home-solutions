@@ -71,8 +71,9 @@ or runtime errors in an existing planner still fail the benchmark normally.
 - **Test:** defaults to the exact `dev` branch-head commit, marked `is_test` by CI. The dropdown also allows historical comparisons.
 
 Both marks belong to the same run only when main and dev point to the same SHA.
-The workflow fetches both branch heads before each planning run and includes
-them even when specific historical commits were requested. `--shas none` only
+The workflow fetches and marks both branch heads before each planning run.
+Routine refreshes run dev first, then main, once per measured case. Explicit
+historical selections run only those commits. `--shas none` only
 rescores and does not change these marks. Environment marks cannot be changed
 from the page.
 
@@ -87,9 +88,13 @@ quarter and the quarters it fired in for each planner; a row opens its explanati
 replayed alternatives and, for quarter rules, its settings. Rules are saved once for
 the whole bench, not per case. See the [complete scoring rules](scoring.md) and
 [architecture decision](scoring-design.md). Costs remain visible in SEK at real
-prices; the six lanes separate price information from valuation strength.
-The next bench run, or **Recompute scores**, re-evaluates every stored result
-from its stored decisions when a rule or the referee changes; no planner runs.
+prices; six optional diagnostic lanes separate price information from valuation
+strength. Normal refreshes use only the nominal lane with prices known at start.
+Saving rules refreshes the branch heads, including new solves when rules affect
+planner decisions. **Recompute scores** re-evaluates stored decisions without
+running planners; this does not make old rule-driven decisions newly optimized.
+Routine refreshes verify their requested results; stale history stays excluded
+until explicitly refreshed.
 
 The benchmark store serializes its requests and leaves idle time of at least
 250 ms, or the preceding request's duration if longer, between them. This limits
@@ -106,8 +111,9 @@ writes reduce rewrites and network traffic without eliminating all JSON reads.
 
 ## Running it
 
-**Add a case:** upload a replay file on the page. It is converted to a test case, and once its 72 hours are recorded every commit
-on the bench is run for it. From the command line:
+**Add a case:** upload a replay file on the page. It is converted to a test case,
+and once its 72 hours are recorded the current dev/main heads run for it. Saved
+historical planners can be selected explicitly. From the command line:
 
 ```bash
 deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-replay.json
@@ -131,7 +137,8 @@ deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=cases/NAME.js
 ```
 
 **Run commits by hand:** use the workflow's *Run workflow* button in GitHub
-Actions (`shas`: `all`, comma-separated SHAs, or `none` to only rescore), or
+Actions (`shas`: `heads`, `all`, comma-separated SHAs, or `none` to only rescore;
+`scope`: `base` by default or `diagnostics` for all six lanes), or
 locally:
 
 After the home's quarter tables have been corrected, run it with `rerecord`
@@ -141,7 +148,9 @@ pre-case history again, replacing what is stored. An incomplete window becomes
 pending; its previous outcome is not reused. Only cases whose input changed are planned again.
 
 ```bash
-deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas all
+deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas heads --current origin/main --test origin/dev
+# Explicit history and diagnostic expansion:
+deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts --shas all --scope diagnostics
 ```
 
 Database mode needs `BENCH_SUPABASE_URL` and `BENCH_SERVICE_ROLE_KEY`. Without

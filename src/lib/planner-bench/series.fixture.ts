@@ -37,6 +37,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
   const price = (quoted: number | null, shadow: number | undefined) =>
     quoted !== null && Number.isFinite(quoted) ? quoted : shadow ?? 0;
   const out: BenchSeries = {
+    devices: [], deviceW: {},
     start: [], hours: [], published: [], importPrice: [], exportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],

@@ -15,9 +15,14 @@ on:
   workflow_dispatch:
     inputs:
       shas:
-        description: "Commits to run: comma-separated SHAs, 'all' for every commit on the bench, or 'none' to only rescore"
+        description: "Commits to run: 'heads' for dev/main, comma-separated SHAs, 'all' for every commit on the bench, or 'none' to only rescore"
         required: true
-        default: all
+        default: heads
+      scope:
+        description: "base = normal planner once per case; diagnostics = all price/valuation experiments"
+        type: choice
+        options: [base, diagnostics]
+        default: base
       scenario:
         description: "Only this test case id (blank = every case)"
         required: false
@@ -104,11 +109,12 @@ jobs:
           INPUT_SCENARIO: ${{ inputs.scenario }}
           INPUT_FORCE: ${{ inputs.force }}
           INPUT_RERECORD: ${{ inputs.rerecord }}
+          INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
-              --shas "all" --current "$BRANCH_main" --test "$BRANCH_dev"
+              --shas heads --scope base --current "$BRANCH_main" --test "$BRANCH_dev"
           else
             extra=()
             if [ "$INPUT_SHAS" != "none" ]; then
@@ -117,6 +123,7 @@ jobs:
             [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")
             [ "$INPUT_FORCE" = "true" ] && extra+=(--force)
             [ "$INPUT_RERECORD" = "true" ] && extra+=(--rerecord)
+            extra+=(--scope "${INPUT_SCOPE:-base}")
             deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
               --shas "$INPUT_SHAS" "${extra[@]}"
           fi

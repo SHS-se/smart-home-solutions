@@ -84,6 +84,8 @@ export interface ResultRecord extends Partial<Evaluation>, ResultKey {
 }
 
 export interface EvaluatedResult extends ResultKey {
+  planner_generation?: string | null;
+  planner_rules?: string | null;
   input_hash: string | null;
   case_revision: string | null;
   created_at: string | null;
@@ -96,6 +98,7 @@ export interface EvaluatedResult extends ResultKey {
 }
 
 export interface ResultIdentity {
+  planner_rules?: string | null;
   input_hash: string | null;
   case_revision: string | null;
   status: "ok" | "error";
@@ -216,7 +219,7 @@ export class DbStore implements BenchStore {
   }
 
   async resultHashes(sha: string) {
-    const rows = await this.pages<ResultIdentity & ResultKey>(`bench_result_summaries?select=scenario_id,lane,input_hash,case_revision,status,has_record&sha=eq.${sha}&order=scenario_id,lane`);
+    const rows = await this.pages<ResultIdentity & ResultKey>(`bench_result_summaries?select=scenario_id,lane,input_hash,case_revision,status,has_record,planner_rules&sha=eq.${sha}&order=scenario_id,lane`);
     return new Map(rows.map(row => [laneKey(row.scenario_id, row.lane), row]));
   }
 
@@ -252,7 +255,7 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,case_revision,created_at,has_record,has_evaluation&order=sha,scenario_id,lane");
+    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,case_revision,created_at,has_record,has_evaluation,planner_generation,planner_rules&order=sha,scenario_id,lane");
   }
 
   private where = ({ sha, scenario_id, lane }: ResultKey) =>
@@ -330,6 +333,7 @@ export class LocalStore implements BenchStore {
   async resultHashes(sha: string) {
     return new Map((await this.load()).results.filter(r => r.sha === sha).map(r => [laneKey(r.scenario_id, r.lane), {
       input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null, status: r.status, has_record: r.record != null,
+      planner_rules: r.record?.planner_rules ?? null,
     }]));
   }
   async bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }) {
@@ -365,6 +369,7 @@ export class LocalStore implements BenchStore {
       .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error,
         score: r.score ?? null, referee_version: r.referee_version ?? null, input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null,
         created_at: r.created_at ?? null, has_record: r.record != null,
+        planner_generation: r.record?.generation ?? null, planner_rules: r.record?.planner_rules ?? null,
         has_evaluation: r.series != null && r.stats != null && r.outcome != null }));
   }
   async planRecord(key: EvaluatedResult) {

@@ -71,7 +71,7 @@ create table if not exists public.bench_runs (
 -- Update the existing constraint too: the schema is reapplied to the TEST store.
 alter table public.bench_runs drop constraint if exists bench_runs_status_check;
 alter table public.bench_runs add constraint bench_runs_status_check
-  check (status in ('running', 'done', 'failed', 'unavailable'));
+  check (status in ('pending', 'running', 'done', 'failed', 'unavailable'));
 alter table public.bench_runs add column if not exists is_test boolean not null default false;
 create unique index if not exists bench_runs_one_test on public.bench_runs (is_test) where is_test;
 create unique index if not exists bench_runs_one_current on public.bench_runs (is_current) where is_current;
@@ -193,7 +193,9 @@ select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_v
   created_at,
   record is not null as has_record,
   series is not null and stats is not null and outcome is not null as has_evaluation,
-  case_revision
+  case_revision,
+  record->>'generation' as planner_generation,
+  record->>'planner_rules' as planner_rules
 from public.bench_results;
 
 -- A legacy result may acquire its case revision only after the runner has

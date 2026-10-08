@@ -70,11 +70,13 @@ serve(async (request: Request): Promise<Response> => {
     });
   }
 
-  const shas = String(body?.shas ?? "all").trim();
+  const shas = String(body?.shas ?? "heads").trim();
   const scenario = String(body?.scenario ?? "").trim();
-  if (!/^(all|none|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'all', 'none' or commit SHAs" }, 400);
+  if (!/^(heads|all|none|[0-9a-f]{7,40}(,[0-9a-f]{7,40})*)$/.test(shas)) return json({ error: "shas must be 'heads', 'all', 'none' or commit SHAs" }, 400);
+  const scope = String(body?.scope ?? "base");
+  if (scope !== "base" && scope !== "diagnostics") return json({ error: "scope must be 'base' or 'diagnostics'" }, 400);
   if (scenario && !/^[0-9a-f-]{36}$/.test(scenario)) return json({ error: "scenario must be a test case id" }, 400);
-  const inputs = { shas, scenario, force: body?.force ? "true" : "false" };
+  const inputs = { shas, scenario, scope, force: body?.force ? "true" : "false" };
 
   const response = await fetch(`https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}/dispatches`, {
     method: "POST",

@@ -3,10 +3,11 @@
 //
 //   deno run -A --config deno.json bench/run.ts [options]
 //
-//   --shas a,b,c | all | none
-//                           commits to run (default: HEAD). `all` = every commit already on the bench,
+//   --shas a,b,c | heads | all | none
+//                           commits to run (default: HEAD); heads = dev/main only. `all` = every commit already on the bench,
 //                           and may be one of the list; `none` = only rescore existing ready cases,
 //                           without case preparation or historical planner checkouts.
+//   --scope base|diagnostics (default: base, one solve per case).
 //   --scenario <id>         only this test case (default: every case).
 //   --force                 re-run cases whose result is already up to date.
 //   --rerecord              read the complete measured outcome and pre-case history again,
@@ -48,16 +49,18 @@ import { canonicalJson, caseTargets, hasMeasuredOutcome, loadCase, sha256, type 
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import { homeComfortTargets } from "./comfort.ts";
-import { LANES, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
-import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport } from "./rescore.ts";
+import { laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
+import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
 import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
+import { refreshTargets, requiredLanes } from "./scope.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
-const VALUED = ["shas", "scenario", "current", "test", "branch", "local", "out", "worker", "root"] as const;
+const VALUED = ["shas", "scenario", "current", "test", "branch", "local", "out", "worker", "root", "scope"] as const;
 const args: Partial<Record<(typeof VALUED)[number], string>> & { force?: boolean; rerecord?: boolean } = {};
 for (let i = 0; i < Deno.args.length; i++) {
   const name = Deno.args[i].replace(/^--/, "");
@@ -101,19 +104,25 @@ async function worker(sha: string, root: string) {
   const [done, rules] = await Promise.all([bench.resultHashes(sha), bench.rules()]);
   let failures = 0;
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
-    for (const lane of LANES) {
+    for (const lane of requiredLanes(args.scope)) {
       const hash = await inputHash(c, planner.generation, lane, rules);
       const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
       const previous = done.get(laneKey(scenario.id, lane));
-      if (!args.force && previous?.input_hash === hash && previous.status === "ok" && previous.has_record) {
+      const rulesVerified = !planner.generation.startsWith("ready-wasm-") || previous?.planner_rules === plannerRulesFingerprint(rules);
+      if (!args.force && rulesVerified && previous?.input_hash === hash && previous.status === "ok" && previous.has_record) {
         if (previous.case_revision !== scenario.revision) await bench.bindResultRevision(base);
         continue;
       }
       try {
+        console.log(`  START ${scenario.name} ${lane}`);
+        const started = performance.now();
         const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale, rules);
         // Whatever the planner was told, its plan is judged on the case as it really was.
+        const solved = performance.now();
         const evaluation = evaluate(c, record, rules, lane);
+        const evaluated = performance.now();
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
+        console.log(`  TIMING prepare=${Math.round(solved - started - cpuMs)} ms, solver=${Math.round(cpuMs)} ms, independent evaluation=${Math.round(evaluated - solved)} ms, store=${Math.round(performance.now() - evaluated)} ms`);
         console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
           + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
           + ` score ${evaluation.score.points} (quarter rules ${evaluation.score.sum}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
@@ -211,7 +220,7 @@ async function prepareCases(bench: BenchStore) {
 }
 
 /** Print and persist coverage even when some successful records could not be rescored. */
-async function rescoreAndReport(bench: BenchStore, requireComplete = false) {
+async function rescoreAndReport(bench: BenchStore, requireComplete = false, scope?: EvaluationScope) {
   const publish = async (report: RescoreReport) => {
     const markdown = rescoreMarkdown(report);
     console.log(markdown);
@@ -219,7 +228,7 @@ async function rescoreAndReport(bench: BenchStore, requireComplete = false) {
     if (summary) await Deno.writeTextFile(summary, markdown, { append: true });
   };
   try {
-    const report = await rescoreExisting(bench, args.scenario);
+    const report = await rescoreExisting(bench, args.scenario, scope);
     await publish(report);
     if (requireComplete && report.planners.some(p => p.currentLanes !== p.expectedLanes)) {
       throw new Error("Bench coverage is incomplete: see the reported missing, stale-input or failed lanes. Rerun the named planners.");
@@ -241,66 +250,76 @@ async function orchestrate() {
     await rescoreAndReport(bench);
     return;
   }
+  const lanes = requiredLanes(args.scope);
+  const history = args.shas?.split(",").includes("all") ? await bench.knownShas() : [];
+  const refs = refreshTargets(args.shas ?? "HEAD", args, history);
+  const known = new Set(history);
+  const existing = new Map((await bench.runs()).map(r => [r.sha, r]));
+  const commits = new Map<string, { sha: string; short_sha: string; committed_at: string; subject: string; branch: string | null; planner_version: string | null }>();
+  const resolve = async (ref: string) => {
+    const shown = await git("show", "-s", "--format=%H%x09%h%x09%cI%x09%s", ref).catch(error => {
+      if (!known.has(ref)) throw error;
+      console.log(`${ref.slice(0, 7)}: not in this checkout's history; left as it is.`);
+      return null;
+    });
+    if (shown === null) return null;
+    const [sha, short_sha, committed_at, subject] = shown.split("\t");
+    if (commits.has(sha)) return sha;
+    const tree = commitTree(sha, harness);
+    const version = plannerDir(tree) === null ? null : await plannerVersion(tree);
+    const run = { sha, short_sha, committed_at, subject, branch: args.branch ?? null, planner_version: version };
+    commits.set(sha, run);
+    const old = existing.get(sha);
+    await bench.saveRun({ ...run, status: version === null ? "unavailable" : old?.status ?? "pending",
+      error: version === null ? "This commit does not contain a planner entry point." : old?.error ?? null });
+    return sha;
+  };
+  // Register both environment identities before any preparation or slow solve.
+  for (const [ref, environment] of [[args.test, "test"], [args.current, "production"]] as const) {
+    if (!ref) continue;
+    const sha = await resolve(ref);
+    if (sha) await bench.markDeployed(sha, environment);
+  }
+  const requested: string[] = [];
+  for (const ref of refs) {
+    const sha = await resolve(ref);
+    if (sha && !requested.includes(sha)) requested.push(sha);
+  }
+  console.log(`Refresh: ${requested.length} planner(s), lanes ${lanes.join(", ")}; historical runs only when explicitly selected.`);
   await prepareCases(bench);
-  const listed = [...(args.shas ?? "HEAD").split(","), args.current, args.test]
-    .filter((ref): ref is string => Boolean(ref?.trim())).map(ref => ref.trim());
-  const stored = new Set(listed.includes("all") ? await bench.knownShas() : []);
-  // A commit asked for by name must exist; one that is only stored may not.
-  for (const ref of listed) stored.delete(ref);
-  const requested = [...new Set(listed.flatMap(ref => ref === "all" ? [...stored] : [ref]))];
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
   let failures = 0;
   try {
-    for (const ref of requested) {
-      // A stored run may be of a commit that was never pushed; its results stay, but it cannot be run here.
-      const shown = await git("show", "-s", "--format=%H%x09%h%x09%cI%x09%s", ref).catch(error => {
-        if (!stored.has(ref)) throw error;
-        console.log(`${ref.slice(0, 7)}: not in this checkout's history; left as it is.`);
-        return null;
-      });
-      if (shown === null) continue;
-      const [sha, shortSha, committedAt, subject] = shown.split("\t");
-      console.log(`${shortSha} ${subject}`);
-      const tree = commitTree(sha, harness);
-      const metadata = { sha, short_sha: shortSha, committed_at: committedAt, subject, branch: args.branch ?? null };
-      if (plannerDir(tree) === null) {
-        const error = "This commit does not contain a planner entry point.";
-        await bench.saveRun({ ...metadata, planner_version: null, status: "unavailable", error, finished_at: new Date().toISOString() });
-        console.log(`  UNAVAILABLE: ${error} No benchmark results can be generated for this commit.`);
+    for (const sha of requested) {
+      const run = commits.get(sha)!;
+      console.log(`${run.short_sha} ${run.subject}`);
+      if (run.planner_version === null) {
+        console.log(`  UNAVAILABLE: This commit does not contain a planner entry point.`);
         continue;
       }
-      const run = { ...metadata, planner_version: await plannerVersion(tree) };
       await bench.saveRun({ ...run, status: "running", error: null, finished_at: null });
-
-      const root = `${scratch}/${shortSha}`;
+      const root = `${scratch}/${run.short_sha}`;
       await git("worktree", "add", "--detach", "--force", root, sha);
       try {
-        // Planner dependencies resolve through node_modules; the harness's copy
-        // stands in for each commit's own (they change rarely).
-        await Deno.symlink(`${harness}/node_modules`, `${root}/node_modules`).catch(() => {});
+        await Deno.symlink(`${harness}/node_modules`, `${root}/node_modules`);
         const child = await new Deno.Command(Deno.execPath(), {
           args: ["run", "-A", "--no-check", "--sloppy-imports", "--config", `${harness}/deno.json`, import.meta.filename!,
-            "--worker", sha, "--root", root,
+            "--worker", sha, "--root", root, "--scope", args.scope ?? "base",
             ...(args.scenario ? ["--scenario", args.scenario] : []),
             ...(args.force ? ["--force"] : []),
             ...(args.local ? ["--local", args.local, "--out", args.out!] : [])],
           stdout: "inherit", stderr: "inherit",
         }).output();
-        const status = child.success ? "done" : "failed";
         if (!child.success) failures++;
-        await bench.saveRun({ ...run, status, error: child.success ? null : `worker exited with ${child.code}`, finished_at: new Date().toISOString() });
+        await bench.saveRun({ ...run, status: child.success ? "done" : "failed",
+          error: child.success ? null : `worker exited with ${child.code}`, finished_at: new Date().toISOString() });
       } finally {
-        await git("worktree", "remove", "--force", root).catch(() => {});
+        await git("worktree", "remove", "--force", root);
       }
     }
-    for (const [ref, environment] of [[args.current, "production"], [args.test, "test"]] as const) {
-      if (!ref) continue;
-      const sha = await git("rev-parse", ref);
-      await bench.markDeployed(sha, environment);
-    }
-    await rescoreAndReport(bench, true);
+    await rescoreAndReport(bench, true, { shas: requested, lanes });
   } finally {
-    await Deno.remove(scratch, { recursive: true }).catch(() => {});
+    await Deno.remove(scratch, { recursive: true });
   }
   if (failures) Deno.exit(1);
 }

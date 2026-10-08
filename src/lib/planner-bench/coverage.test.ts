@@ -1,6 +1,7 @@
 import { assertEquals } from '@std/assert';
 import { resultState, runCoverage } from './coverage.ts';
 import { evaluate } from './evaluate.ts';
+import { plannerRulesFingerprint } from './score.ts';
 import { plan, world } from './world.fixture.ts';
 import type { BenchResultSummary, PlanRecord } from './types.ts';
 const c = world();
@@ -26,6 +27,14 @@ Deno.test('current evaluation versions do not bless results from a different cas
   assertEquals(resultState(scenario, { ...summary, referee_version: 0 }, {}), 'needs-rescore');
   assertEquals(resultState(scenario, { ...summary, status: 'error', has_record: false }, {}), 'error');
   assertEquals(resultState(scenario, undefined, {}), 'missing');
+});
+
+Deno.test('rescoring cannot make rule-driven decisions optimized under earlier rules current', () => {
+  const solved = { ...summary, planner_generation: 'ready-wasm-v3', planner_rules: plannerRulesFingerprint({}) };
+  assertEquals(resultState(scenario, solved, {}), 'scored');
+  const rules = { pool_restart: { points: -1 } };
+  assertEquals(resultState(scenario, { ...solved, ...evaluate(c, record, rules) }, rules), 'inputs-changed');
+  assertEquals(resultState(scenario, { ...solved, planner_rules: null }, {}), 'inputs-changed');
 });
 
 Deno.test('complete coverage remains correct beyond 1000 cases without a partial sum', () => {

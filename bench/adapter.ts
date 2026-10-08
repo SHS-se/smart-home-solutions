@@ -33,6 +33,8 @@ import type { Decisions } from "../src/lib/planner-bench/referee.ts";
 import type { CriteriaOverrides, PlanRecord, UsedCurve } from "../src/lib/planner-bench/types.ts";
 import { diskTree } from "../scripts/module-graph.ts";
 import { typeScriptPlannerDir, usesRulePlanner } from "./planner-version.ts";
+import { BENCH_DEVICE_KEYS } from "../src/lib/planner-bench/devices.ts";
+import { plannerInputsFingerprint } from "../src/lib/planner-bench/score.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
 export const ADAPTER_VERSION = 9;
@@ -64,9 +66,7 @@ export interface LoadedPlanner {
 const POOL_RESPONSE_BOTTOM_C = 10;
 const POOL_RESPONSE_TOP_C = 45;
 
-const POOL_PUMP = "sensor.pool_pump_energy";
-const POOL_HEATER = "sensor.pool_heater_energy";
-const EV_METER = "sensor.car_charging_total_energy";
+const { poolPump: POOL_PUMP, poolHeater: POOL_HEATER, ev: EV_METER } = BENCH_DEVICE_KEYS;
 
 function deviceModel(key: string, name: string, category: string, controlType: string, activeW: number, extra: Json = {}): Json {
   return {
@@ -322,6 +322,7 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
         return {
           record: {
             ...result.record,
+            planner_rules: plannerInputsFingerprint(p.rules, p.service_guard),
             valuation: { scale, pool: "none", ev: "none", battery: "none" },
           },
           cpuMs: result.elapsed_ms,

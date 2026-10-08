@@ -502,6 +502,16 @@ export interface StoredScore {
 export const criteriaFingerprint = (overrides: CriteriaOverrides = {}) =>
   JSON.stringify(Object.keys(overrides).filter(k => !REMOVED_RULE_KEYS.includes(k)).sort().map(k => [k, overrides[k]]));
 
+/** The effective rule inputs, including defaults, used by the rule-driven solver. */
+export const plannerInputsFingerprint = (rules: readonly {
+  key: string; threshold: number; points: number; required?: boolean; unless?: string | null;
+}[], guard: ServiceGuard) => JSON.stringify({
+  rules: rules.map(r => ({ key: r.key, threshold: r.threshold, points: r.points,
+    required: r.required ?? false, unless: r.unless ?? null })), service_guard: guard,
+});
+export const plannerRulesFingerprint = (overrides: CriteriaOverrides = {}) =>
+  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled), serviceGuard(overrides));
+
 export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): StoredScore {
   const c = scoreQuarters(s, overrides);
   if (!c.audit || c.economicPoints === null) {

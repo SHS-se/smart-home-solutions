@@ -80,11 +80,17 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     const broken = await commit('Broken planner dependency', '2026-10-04T00:00:00Z');
     const failure = await new Deno.Command(Deno.execPath(), { cwd: repo, args: [
       'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
-      '--shas', broken, '--test', broken, '--local', cases, '--out', out,
+      '--shas', broken, '--current', main, '--test', broken, '--local', cases, '--out', out,
     ], stdout: 'piped', stderr: 'piped' }).output();
     assert(!failure.success, 'an existing planner with a missing import must still fail the workflow');
     assert(new TextDecoder().decode(failure.stderr).includes('Module not found'));
     assertEquals((await store.runs()).find(r => r.sha === broken)!.status, 'failed');
+    // The failure cannot leave the UI marked with an old environment identity.
+    assertEquals((await store.runs()).filter(r => r.is_current).map(r => r.sha), [main]);
+    assertEquals((await store.runs()).filter(r => r.is_test).map(r => r.sha), [broken]);
+    const output = new TextDecoder().decode(failure.stdout);
+    assert(output.includes('Refresh: 1 planner(s)'));
+    assert(!output.includes('Main head, same planner'), 'explicit candidate refresh must not solve the production head');
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

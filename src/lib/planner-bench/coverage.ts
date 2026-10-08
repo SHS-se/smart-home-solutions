@@ -1,6 +1,6 @@
 // One definition of which saved results can enter a measured comparison.
 import { REFEREE_VERSION } from './referee.ts';
-import { isStale, runScore, storedPassed } from './score.ts';
+import { isStale, plannerRulesFingerprint, runScore, storedPassed } from './score.ts';
 import type { BenchResultSummary, BenchScenario, CriteriaOverrides } from './types.ts';
 
 type CaseHead = Pick<BenchScenario, 'id' | 'revision' | 'dataset' | 'recorded_at'>;
@@ -12,6 +12,7 @@ export function resultState(c: CaseHead, result: BenchResultSummary | undefined,
   if (result.case_revision !== c.revision) return 'inputs-changed';
   if (result.status === 'error') return 'error';
   if (!result.has_record) return 'inputs-changed';
+  if (result.planner_generation?.startsWith('ready-wasm-') && result.planner_rules !== plannerRulesFingerprint(rules)) return 'inputs-changed';
   if (!result.has_evaluation || !result.stats || !result.outcome || result.referee_version !== REFEREE_VERSION
     || isStale(result.score, rules)) return 'needs-rescore';
   return 'scored';

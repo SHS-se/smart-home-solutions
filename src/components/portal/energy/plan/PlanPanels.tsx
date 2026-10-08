@@ -31,44 +31,8 @@ import { loadColour, PLAN_COLOURS } from './types';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime, homeHourMinute } from '@/lib/energy-shift/home-time';
 
-export interface PlanPanelRow {
-  startMs: number;
-  /** Axis label for this quarter, already localised. */
-  label: string;
-  measured: boolean;
-  missing?: boolean;
-  /**
-   * Power, in watts. Signs are ignored: import and export are separate fields,
-   * as are charge and discharge, so which way the energy went is already
-   * carried by which field it is in (see power-flows.ts).
-   */
-  solarW: number | null;
-  loadW: number | null;
-  gridImportW: number | null;
-  gridExportW: number | null;
-  batteryChargeW: number | null;
-  batteryDischargeW: number | null;
-  /** Percentages, not fractions. */
-  homeSoc: number | null;
-  evSoc: number | null;
-  importPriceSekPerKwh: number | null;
-  exportPriceSekPerKwh: number | null;
-  /**
-   * Whether the market actually quoted this quarter, or the planner's shape
-   * estimator supplied the number. Day-ahead covers one day of a three-day
-   * horizon, so this is false for most of a plan.
-   */
-  importPriceQuoted: boolean;
-  /**
-   * Where the row's price is the real one and the planner planned with
-   * another: what it expected instead. Only the planner bench sets it.
-   */
-  plannerImportPriceSekPerKwh?: number | null;
-  /** Running net cost from the start of the window. */
-  cumulativeCostSek: number;
-  /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
-  poolTemperatureC?: number | null;
-}
+import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
+export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 
 const VIEW_W = 1160;
 const MARGIN_LEFT = 58;

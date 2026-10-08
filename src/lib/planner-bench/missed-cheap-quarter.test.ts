@@ -6,6 +6,7 @@ import { plan, TARGETS, world } from './world.fixture.ts';
 
 function series(): BenchSeries {
   return {
+    devices: [], deviceW: {},
     start: ['2026-10-05T00:00:00Z'], hours: [0.25], published: [1],
     importPrice: [0.9999], exportPrice: [0], solarW: [0], loadW: [500],
     poolW: [0], hotWaterW: [0], carW: [0], gridImportW: [500], gridExportW: [0],

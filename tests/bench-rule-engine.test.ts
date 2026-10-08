@@ -6,10 +6,38 @@ import { diskTree, type SourceTree } from "../scripts/module-graph.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { laneParts, LANES, toldCase } from "../src/lib/planner-bench/lanes.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
+import { plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import type { CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
 import { causalCase } from "./planner-wasm.fixture.ts";
 
 const root = new URL("..", import.meta.url).pathname;
+
+Deno.test('default bench worker solves ten measured cases once each and skips them on retry', async () => {
+  const dir = await Deno.makeTempDir({ prefix: 'bench-base-count-' });
+  try {
+    const cases = `${dir}/cases`, output = `${dir}/results.json`;
+    await Deno.mkdir(cases);
+    const { recorded, ...dataset } = causalCase();
+    for (let i = 0; i < 10; i++) await Deno.writeTextFile(`${cases}/case-${i}.json`, JSON.stringify({ dataset, recorded }));
+    const run = async () => {
+      const result = await new Deno.Command(Deno.execPath(), { cwd: root,
+        args: ['run', '-A', '--no-check', '--sloppy-imports', '--config', `${root}/deno.json`, `${root}/bench/run.ts`,
+          '--worker', 'candidate', '--root', root, '--local', cases, '--out', output], stdout: 'piped', stderr: 'piped' }).output();
+      assert(result.success, new TextDecoder().decode(result.stderr));
+      return new TextDecoder().decode(result.stdout);
+    };
+    assertEquals((await run()).match(/^ {2}START /gm)?.length, 10);
+    const first = JSON.parse(await Deno.readTextFile(output));
+    assertEquals(first.results.length, 10);
+    assert(first.results.every((r: { lane: string }) => r.lane === 'told/nominal'));
+    assertEquals((await run()).match(/^ {2}START /gm), null);
+    assertEquals(JSON.parse(await Deno.readTextFile(output)), first);
+    // Missing solve provenance requires a real solve, never a score-only repair.
+    delete first.results[0].record.planner_rules;
+    await Deno.writeTextFile(output, JSON.stringify(first));
+    assertEquals((await run()).match(/^ {2}START /gm)?.length, 1);
+  } finally { await Deno.remove(dir, { recursive: true }); }
+});
 
 Deno.test("public bench selects the configured rule engine and passes its saved rules", async () => {
   const planner = await loadPlanner(root);
@@ -28,6 +56,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     );
     assertEquals(actual.record, {
       ...expected.record,
+      planner_rules: plannerRulesFingerprint(criteria),
       valuation: { scale, pool: "none", ev: "none", battery: "none" },
     });
     assertEquals(actual.record.curves, []);
@@ -108,6 +137,8 @@ Deno.test("real bench worker stores all rule-engine lanes and replans when saved
           "--config",
           `${root}/deno.json`,
           `${root}/bench/run.ts`,
+          "--scope",
+          "diagnostics",
           "--worker",
           "candidate",
           "--root",

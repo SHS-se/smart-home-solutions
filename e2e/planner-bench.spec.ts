@@ -42,6 +42,8 @@ const CASES = [
 function series(runStart: number, runQuarters: number): BenchSeries {
   const n = 288, start = Date.parse('2026-09-24T00:00:00Z');
   const s: BenchSeries = {
+    devices: [{ key: 'pool', name: 'Pool', schedulable: true }, { key: 'hotWater', name: 'Hot water', schedulable: true }, { key: 'car', name: 'Car', schedulable: true }],
+    deviceW: {},
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     poolStart: [],
@@ -53,7 +55,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     const price = 1.5 + Math.sin((hour - 6) / 24 * 2 * Math.PI);
     const pool = i >= runStart && i < runStart + runQuarters ? 3500 : 0;
     const solar = Math.max(0, Math.sin((hour - 6) / 12 * Math.PI)) * 4000;
-    const load = 900 + pool;
+    const load = 900 + pool + (hour === 5 ? 2000 : 0);
     temp += pool ? 0.04 : -0.012;
     s.start.push(new Date(start + i * 900_000).toISOString());
     s.hours.push(0.25);
@@ -78,6 +80,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
+  s.deviceW = { pool: s.poolW, hotWater: s.hotWaterW, car: s.carW };
   s.carKm = new Array(n).fill(0);
   s.comfort = { pool_target_c: 30.5, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
     poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
@@ -539,13 +542,15 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
     await page.locator('#bench-test-run').click();
-    await expect(page.getByRole('option')).toHaveText([/^bbbbbbb · /, /^ccccccc · /, /^ddddddd · /, /^fffffff · /]);
+    await expect(page.getByText(/^(Current branches|Aktuella grenar)$/)).toBeVisible();
+    await expect(page.getByText(/^(Saved benchmark history|Sparad bänkhistorik)$/)).toBeVisible();
+    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /, /^bbbbbbb · .* · (history|historik)/, /^fffffff · .* · (history|historik)/]);
     await page.getByRole('option').filter({ hasText: /^bbbbbbb · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('bbbbbbb');
     await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
     await page.locator('#bench-test-run').click();
     // Dev stays available even after selecting history and a newer run has its score.
-    await expect(page.getByRole('option')).toHaveText([/^bbbbbbb · /, /^ccccccc · /, /^ddddddd · /, /^fffffff · /]);
+    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /, /^bbbbbbb · .* · (history|historik)/, /^fffffff · .* · (history|historik)/]);
     await page.getByRole('option').filter({ hasText: /^ddddddd · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
   });
@@ -796,7 +801,7 @@ test.describe('planner bench', () => {
     expect(captured.rules[0]).toMatchObject({ id: true, criteria: { pool_low: { threshold: 1.5 } } });
     expect(captured.updated).toEqual([]);
     await expect.poll(() => captured.dispatched.length).toBe(1);
-    expect(captured.dispatched[0]).toMatchObject({ shas: 'none' });
+    expect(captured.dispatched[0]).toMatchObject({ shas: 'heads' });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(rules).toBeVisible();
@@ -862,7 +867,7 @@ test.describe('planner bench', () => {
     };
     await page.locator('#bench-replay-file').setInputFiles({ name: 'plan-replay-test.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(replay)) });
     await page.locator('#bench-case-name').fill('Cold morning');
-    await page.getByRole('button', { name: /Save and run every planner|Spara och kör alla planerare/ }).click();
+    await page.getByRole('button', { name: /Save and run current planners|Spara och kör aktuella planerare/ }).click();
 
     await expect.poll(() => captured.inserted.length).toBe(1);
     const row = captured.inserted[0];
@@ -876,6 +881,6 @@ test.describe('planner bench', () => {
     // Nothing of another planner's work or the replay's bulk is.
     expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);
-    expect(captured.dispatched[0]).toMatchObject({ shas: 'all', scenario: '33333333-3333-4333-8333-333333333333' });
+    expect(captured.dispatched[0]).toMatchObject({ shas: 'heads', scenario: '33333333-3333-4333-8333-333333333333' });
   });
 });

@@ -10,6 +10,7 @@ const onlyArbitrage: CriteriaOverrides = Object.fromEntries(resolveRules().filte
 function series(): BenchSeries {
   const n = 8, zeros = () => new Array(n).fill(0);
   return {
+    devices: [], deviceW: {},
     start: Array.from({ length: n }, (_, i) => new Date(Date.UTC(2026, 9, 5, 0, i * 15)).toISOString()),
     hours: new Array(n).fill(0.25), published: zeros(), importPrice: new Array(n).fill(2),
     exportPrice: [0.5, 0.5, 0.5, 4.01, 4, 6, 0.5, 4.25],

@@ -37,8 +37,9 @@ import {
 import type { Household } from './household';
 import { baseLoadGridSupplyW } from './supply';
 import type { BenchSeries } from './types';
+import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 
-export const REFEREE_VERSION = 12;
+export const REFEREE_VERSION = 13;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -92,7 +93,7 @@ export interface Outcome {
 /** The household carried through one set of decisions, unrounded. Stores are at the end of each quarter. */
 export interface Simulation {
   poolStart: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
-  poolW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array;
+  poolW: Float64Array; compressorW: Float64Array; pumpW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array;
   /** Grid power: import positive, export negative. */
   netW: Float64Array;
   batteryKwh: Float64Array; poolC: Float64Array; evKwh: Float64Array;
@@ -166,6 +167,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   const air = c.recorded.outdoor_temperature_c;
 
   const out: Simulation = {
+    compressorW: new Float64Array(QUARTERS), pumpW: new Float64Array(QUARTERS),
     poolStart: [],
     poolW: new Float64Array(QUARTERS), evW: new Float64Array(QUARTERS), chargeW: new Float64Array(QUARTERS), dischargeW: new Float64Array(QUARTERS),
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
@@ -178,6 +180,8 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     const projected = stepHeater(heater, heaterState, heating.draw_w > 0, HOURS * 3600);
     heaterState = projected.next;
     const poolW = projected.electric_w;
+    out.compressorW[i] = projected.compressor_w;
+    out.pumpW[i] = projected.auxiliary_w;
     out.poolStart.push(projected.start);
     let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
@@ -279,6 +283,12 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   const reach = reachability(c, h);
 
   const series: BenchSeries = {
+    devices: BENCH_DEVICES.map(d => ({ ...d })),
+    deviceW: {
+      [BENCH_DEVICE_KEYS.poolPump]: Array.from(sim.pumpW, r1),
+      [BENCH_DEVICE_KEYS.poolHeater]: Array.from(sim.compressorW, r1),
+      [BENCH_DEVICE_KEYS.ev]: Array.from(sim.evW, r1),
+    },
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     poolStart: sim.poolStart,
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
