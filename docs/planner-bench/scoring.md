@@ -27,6 +27,8 @@ The rules are one set for the whole bench (`bench_rules`, a single row of change
 
 ### Cheap and dear quarters
 
+Prices come in waves, and a fixed share cuts through them: quarters a hair over the line used to split one valley into runs too short to use. Since scorer v27 every share below stretches to keep a valley or plateau whole. A quarter lying between two quarters that count also counts, provided it and every quarter between them are within 1.5 times the share (25 % reaches at most 37.5 %, 10 % at most 15 %). Only enclosed gaps close: a run never widens at its ends, and a price spike inside a valley stays out. The planner kernel applies the same stretch to the prices it plans on (`PRICE_BRIDGE_STRETCH` in `score.ts` and `planner-core/solver/src/policy.rs`).
+
 | Rule | Measurement | Points |
 |---|---|---|
 | Flexible load in a cheap quarter | Pool + battery charging + car ≥ 500 W, price in the cheapest 25 % of the plan's quarters, and not very cheap | +1 per quarter |

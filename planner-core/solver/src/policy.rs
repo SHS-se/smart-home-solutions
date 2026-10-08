@@ -43,6 +43,31 @@ pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 
     let fired: Vec<_> = p.rules.iter().map(fires).collect();
     contributions(&p.rules, &fired).iter().sum()
 }
+/// How far a price threshold may stretch to keep a valley or plateau unbroken.
+/// The bench referee applies the same stretch (`PRICE_BRIDGE_STRETCH`, score.ts).
+pub(crate) const PRICE_BRIDGE_STRETCH: f64 = 1.5;
+/// Price ranks with enclosed gaps bridged. Prices come in waves, and a fixed
+/// share cuts through them: quarters a hair over the line split one valley into
+/// runs too short to use. A quarter lying between two quarters that pass a
+/// threshold passes it too, provided it and every quarter between them stay
+/// within `PRICE_BRIDGE_STRETCH` times that threshold. The returned rank is the
+/// lowest threshold share the quarter passes, so it holds for every threshold.
+/// Only gaps close: a run never widens at its ends, and a spike stays out.
+pub(crate) fn bridged(rank: &[f64]) -> Vec<f64> {
+    let n = rank.len();
+    // The lowest threshold with a passing quarter on that side and nothing
+    // beyond the stretch in between.
+    let mut left = vec![f64::INFINITY; n];
+    let mut right = vec![f64::INFINITY; n];
+    for i in 1..n {
+        left[i] = rank[i - 1].min(left[i - 1].max(rank[i - 1] / PRICE_BRIDGE_STRETCH));
+        let j = n - 1 - i;
+        right[j] = rank[j + 1].min(right[j + 1].max(rank[j + 1] / PRICE_BRIDGE_STRETCH));
+    }
+    (0..n)
+        .map(|i| rank[i].min((rank[i] / PRICE_BRIDGE_STRETCH).max(left[i]).max(right[i])))
+        .collect()
+}
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
     if !work.spend(n as u64 * work.unit_cost * 4 + (n * n) as u64 * 2) {
@@ -53,14 +78,15 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         .iter()
         .map(|s| measured(s.import_price, 10000.0))
         .collect();
-    let cheap = prices
+    let cheap: Vec<f64> = prices
         .iter()
         .map(|v| prices.iter().filter(|a| *a < v).count() as f64 / n as f64)
         .collect();
-    let dear = prices
+    let dear: Vec<f64> = prices
         .iter()
         .map(|v| prices.iter().filter(|a| *a > v).count() as f64 / n as f64)
         .collect();
+    let (cheap, dear) = (bridged(&cheap), bridged(&dear));
     let mean = |from: usize, to: usize, solar: bool| {
         p.slots[from..to]
             .iter()
@@ -604,6 +630,27 @@ mod tests {
         heat[287].ev_amps = 6;
         let q = crate::physics::projection(&p, &heat).unwrap();
         assert_eq!(account(&p, &q, &index).contributions[287], vec![0, -1, 2]);
+    }
+    #[test]
+    fn price_ranks_bridge_enclosed_gaps_within_the_stretch_only() {
+        // A valley at 0.20, a quarter at 0.30 inside it, then a slope.
+        let rank = [0.20, 0.30, 0.20, 0.30, 0.50];
+        let cheap = bridged(&rank);
+        assert_eq!(cheap[0], 0.20);
+        // The enclosed quarter passes 25 %: both neighbours do and 0.30 < 0.375.
+        assert!(cheap[1] < 0.25 && cheap[1] >= 0.20);
+        // The same price at the valley's end has no passing quarter beyond it.
+        assert_eq!(cheap[3], 0.30);
+        assert_eq!(cheap[4], 0.50);
+        // A spike inside a valley stays out, and so does everything it would need.
+        assert!(bridged(&[0.20, 0.40, 0.20])[1] >= 0.25);
+        assert_eq!(bridged(&[0.20, 0.30, 0.90, 0.30, 0.20])[1], 0.30);
+        // A long gap closes as one when every quarter in it is within the stretch.
+        let wide = bridged(&[0.24, 0.30, 0.36, 0.30, 0.24]);
+        assert!(wide.iter().all(|rank| *rank < 0.25));
+        // No rank rises, and a very cheap threshold stretches by the same factor.
+        assert!(bridged(&[0.05, 0.14, 0.05])[1] < 0.10);
+        assert_eq!(bridged(&[0.05, 0.16, 0.05])[1], 0.16 / PRICE_BRIDGE_STRETCH);
     }
     #[test]
     fn exclusions_use_raw_firing_across_direct_and_witness_rules() {
