@@ -139,6 +139,34 @@ pub enum RunAge {
     Steady,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HeaterState {
+    OffUnobserved,
+    Off { seconds: f64 },
+    Running { seconds: f64 },
+    Steady,
+}
+impl HeaterState {
+    pub fn age(self) -> RunAge {
+        match self {
+            Self::OffUnobserved | Self::Off { .. } => RunAge::Off,
+            Self::Running { seconds } => RunAge::Running { seconds },
+            Self::Steady => RunAge::Steady,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+pub struct HeaterStart {
+    pub off_seconds: Option<f64>,
+}
+pub struct HeaterTransition {
+    pub electric_w: f64,
+    pub heat_w: f64,
+    pub next: HeaterState,
+    pub start: Option<HeaterStart>,
+}
+
 fn integral(points: &[StartupPoint], age: f64, seconds: f64, heat: bool) -> f64 {
     let steady_at = points.last().unwrap().elapsed_seconds;
     if age >= steady_at {
@@ -175,6 +203,61 @@ pub struct Heater {
     pub response: Response,
 }
 impl Heater {
+    pub fn validate_response(&self) -> Result<(), &'static str> {
+        if let Response::Bergvarme { startup } = &self.response {
+            if startup.len() < 2
+                || startup[0].elapsed_seconds != 0.0
+                || startup
+                    .windows(2)
+                    .any(|a| a[1].elapsed_seconds <= a[0].elapsed_seconds)
+                || startup.iter().any(|a| {
+                    a.electric_fraction < 0.0
+                        || a.heat_fraction < 0.0
+                        || a.electric_fraction == 0.0 && a.heat_fraction != 0.0
+                })
+                || startup.last().unwrap().electric_fraction != 1.0
+                || startup.last().unwrap().heat_fraction != 1.0
+            {
+                return Err("invalid_startup_model");
+            }
+        }
+        Ok(())
+    }
+    pub fn transition(&self, state: HeaterState, on: bool, seconds: f64) -> HeaterTransition {
+        let (electric_w, heat_w, age) = self.step(on, state.age(), seconds);
+        let start = if on {
+            match state {
+                HeaterState::OffUnobserved => Some(HeaterStart { off_seconds: None }),
+                HeaterState::Off { seconds } => Some(HeaterStart {
+                    off_seconds: Some(seconds),
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let next = if on {
+            match age {
+                RunAge::Running { seconds } => HeaterState::Running { seconds },
+                RunAge::Steady => HeaterState::Steady,
+                RunAge::Off => unreachable!(),
+            }
+        } else {
+            match state {
+                HeaterState::OffUnobserved => HeaterState::OffUnobserved,
+                HeaterState::Off { seconds: previous } => HeaterState::Off {
+                    seconds: previous + seconds,
+                },
+                _ => HeaterState::Off { seconds },
+            }
+        };
+        HeaterTransition {
+            electric_w,
+            heat_w,
+            next,
+            start,
+        }
+    }
     pub fn step(&self, on: bool, age: RunAge, seconds: f64) -> (f64, f64, RunAge) {
         if !on {
             return (0.0, 0.0, RunAge::Off);
@@ -213,6 +296,39 @@ impl Heater {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[derive(Deserialize)]
+    struct VectorSet {
+        response: Response,
+        vectors: Vec<Vector>,
+    }
+    #[derive(Deserialize)]
+    struct Vector {
+        state: HeaterState,
+        on: bool,
+        seconds: f64,
+        electric_w: f64,
+        heat_w: f64,
+        next: HeaterState,
+        start: Option<HeaterStart>,
+    }
+    #[test]
+    fn shared_heater_transition_vectors() {
+        let fixture: VectorSet =
+            serde_json::from_str(include_str!("../heater-transitions.json")).unwrap();
+        let heater = Heater {
+            compressor_w: 3000.0,
+            auxiliary_w: 0.0,
+            heat_w: 12000.0,
+            response: fixture.response,
+        };
+        for v in fixture.vectors {
+            let t = heater.transition(v.state, v.on, v.seconds);
+            assert!((t.electric_w - v.electric_w).abs() < 1e-9);
+            assert!((t.heat_w - v.heat_w).abs() < 1e-9);
+            assert_eq!(t.next, v.next);
+            assert_eq!(t.start, v.start);
+        }
+    }
     #[test]
     fn startup_keeps_auxiliary_draw_and_distinct_heat_integral() {
         let h = Heater {

@@ -10,6 +10,7 @@ export const SOURCE_FILES = [
   'planner-core/Cargo.toml',
   'planner-core/Cargo.lock',
   'planner-core/models/Cargo.toml',
+  'planner-core/models/heater-transitions.json',
   'planner-core/solver/Cargo.toml',
   'planner-core/policy.json',
   'planner-core/recipe.json',
@@ -56,7 +57,13 @@ if (import.meta.main) {
     `--remap-path-prefix=${root}=/workspace/`,
     `--remap-path-prefix=${cargoHome}=/cargo`,
   ];
-  const wrapper = join(root, 'planner-core/target/rustc-wasm-wrapper');
+  // Cargo tracks the wrapper path, not its contents. A changed normalization
+  // wrapper must also invalidate previously compiled dependency metadata.
+  const wrapperHash = createHash('sha256').update(readFileSync(join(root, 'scripts/rustc-wasm-wrapper.rs'))).digest('hex').slice(0, 16);
+  const wrapper = join(root, `planner-core/target/rustc-wasm-wrapper-${wrapperHash}`);
+  // The compiler flags are Cargo's dependency-cache identity. Wrapper contents
+  // alone are not fingerprinted, so include their stable digest explicitly.
+  flags.push(`--cfg=shs_wasm_wrapper_${wrapperHash}`);
   await Deno.mkdir(join(root, 'planner-core/target'), { recursive: true });
   const wrapperBuild = await new Deno.Command('rustc', {
     cwd: root,
@@ -93,7 +100,7 @@ if (import.meta.main) {
     `${artifactDir}/artifact.json`,
     JSON.stringify(
       {
-        abi: 2,
+        abi: 3,
         wasm_sha256,
         source_sha256: sourceDigest(root),
         rust: '1.99.0',

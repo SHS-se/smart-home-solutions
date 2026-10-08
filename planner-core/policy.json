@@ -1,5 +1,5 @@
 {
-  "version": "rule-causal-certificate-v2",
+  "version": "rule-causal-certificate-v3",
   "qualification": "prototype_only",
   "ordering": [
     "additive_rule_points",
@@ -10,6 +10,7 @@
     "pool_cold",
     "pool_hot",
     "pool_buffer",
+    "pool_restart",
     "ev_low",
     "ev_short",
     "cheap_buy",

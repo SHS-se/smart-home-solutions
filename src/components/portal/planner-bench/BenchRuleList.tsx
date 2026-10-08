@@ -307,6 +307,13 @@ export default function BenchRuleList({
   };
 
   const comfortDetail = (rule: ResolvedRule) => {
+    if (rule.key === 'pool_restart') return <>
+      <p>{t(`En start mindre än ${rule.threshold} timmar efter poolvärmarens senaste stopp ger ${rule.points} poäng. Bara startkvarten räknas; fortsatta driftkvartar ger inget nytt avdrag. Exakt ${rule.threshold} timmar är tillåtet.`,
+        `A start less than ${rule.threshold} hours after the pool heater's last stop scores ${rule.points} points. Only the start quarter counts; continuing running quarters add no restart penalty. Exactly ${rule.threshold} hours is allowed.`)}</p>
+      <p className="text-xs text-muted-foreground">{t('Start och stopp följer kommandot, inte effektmätaren. En okänd stopptid före planens början ger inget avdrag. Regeln läggs ihop med övriga regler.',
+        'Starts and stops follow the command, not the power meter. An unknown stop time before the plan begins gives no deduction. This rule adds to the other rules.')}</p>
+      {settings(rule, t('Timmar sedan senaste stopp', 'Hours since the last stop'), '0.25')}
+    </>;
     if (rule.about === 'price') return priceDetail(rule);
     const pool = rule.about === 'pool', above = rule.key === 'pool_hot' || rule.key === 'pool_buffer';
     const comfort = test?.comfort ?? current?.comfort;

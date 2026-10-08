@@ -25,6 +25,13 @@ projection, `policy.rs` owns additive measurements and construction guidance,
 construction and repairs. The TypeScript wrapper passes one prepared
 problem through one Wasm call. Each invocation has private mutable memory.
 Neither crate has database, history, forecast-fetching or training dependencies.
+ABI 3 requires the device-owned initial heater state (`off_unobserved`, known
+`off` seconds, known `running` seconds, or confirmed `steady`). Native quarters
+report command start events independently of electrical/thermal startup. The
+`pool_restart` direct rule scores −2 only on starts less than 12 hours after the
+last stop. The TEST bench now publishes the home's existing configured startup
+curve instead of steady draw. See the pool-restart design for calibration evidence
+and the one-time case-version migration.
 
 The build produces the tracked `solver.wasm`, `artifact.json`, generated
 `solver-bytes.ts` and the probe's recipe copy. Never edit those generated files.

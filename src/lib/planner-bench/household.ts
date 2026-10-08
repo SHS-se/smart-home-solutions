@@ -12,7 +12,8 @@
 // run again. Comfort targets are read from the history home's saved settings
 // by the runner and captured in each case. Adding a test case changes neither.
 
-import { parseDeviceModels, type DeviceModels } from '../../../supabase/functions/_shared/planner/device-models';
+import poolHeaterResponse from './pool-heater-response.json' with { type: 'json' };
+import { parseDeviceModels, parseHeaterResponse, type DeviceModels } from '../../../supabase/functions/_shared/planner/device-models';
 
 export interface Household extends DeviceModels {
   site: {
@@ -61,6 +62,8 @@ export const HOUSEHOLD: Household = {
         ],
         // The circulation pump: it must run with the heat pump and heats nothing.
         auxiliary_w: 764,
+        // Captured unchanged from the home's configured device model in TEST.
+        response: parseHeaterResponse(poolHeaterResponse),
       },
     },
   }),

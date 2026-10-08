@@ -4,14 +4,14 @@ pub(crate) struct State {
     pub battery: f64,
     pub ev: f64,
     pub pool: f64,
-    pub age: RunAge,
+    pub heater: HeaterState,
 }
 pub(crate) fn initial(p: &Problem) -> State {
     State {
         battery: p.initial.battery_kwh,
         ev: p.initial.ev_kwh,
         pool: p.initial.pool_c,
-        age: p.initial.heater_age,
+        heater: p.initial.heater_state,
     }
 }
 pub(crate) fn locked(p: &Problem, i: usize) -> bool {
@@ -38,7 +38,8 @@ pub(crate) fn step(
     if command.charge_limit_w < 0.0 || command.discharge_limit_w < 0.0 {
         return Err("negative_native_power_limit".into());
     }
-    let (pool_w, heat_w, age) = p.heater.step(command.pool_on, state.age, seconds);
+    let heater = p.heater.transition(state.heater, command.pool_on, seconds);
+    let (pool_w, heat_w) = (heater.electric_w, heater.heat_w);
     let nominal_ev = p
         .charger
         .watts(command.ev_amps)
@@ -93,7 +94,7 @@ pub(crate) fn step(
     state.pool = p.pool_store.step(state.pool, heat_w, s.outdoor_c, hours);
     state.ev += ev_w * hours / 1000.0 * p.car.charge_efficiency;
     state.battery = p.battery.step(state.battery, charge, discharge, hours);
-    state.age = age;
+    state.heater = heater.next;
     Ok(Quarter {
         pool_command_w: if command.pool_on {
             p.heater.compressor_w + p.heater.auxiliary_w
@@ -108,7 +109,8 @@ pub(crate) fn step(
         battery_kwh: state.battery,
         ev_kwh: state.ev,
         pool_c: state.pool,
-        heater_age: age,
+        heater_state: heater.next,
+        pool_start: heater.start,
         cost,
         wear,
         spare_battery_cover_w: if charge > 0.0 {

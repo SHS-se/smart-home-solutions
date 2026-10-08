@@ -3,7 +3,8 @@ import { RULE_KEYS } from "./ready-problem.ts";
 
 const number = z.number().finite();
 const age = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("off_unobserved") }),
+  z.object({ kind: z.literal("off"), seconds: number.nonnegative() }),
   z.object({ kind: z.literal("steady") }),
   z.object({ kind: z.literal("running"), seconds: number.nonnegative() }),
 ]);
@@ -21,7 +22,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(2),
+  abi: z.literal(3),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
     beam_width: number.int().positive(),
@@ -95,7 +96,7 @@ export const readyProblemSchema = z.object({
     battery_kwh: number,
     ev_kwh: number,
     pool_c: number,
-    heater_age: age,
+    heater_state: age,
   }),
   targets: z.object({ pool_c: number, ev_km: number, ev_limit_kwh: number }),
   limits: z.object({

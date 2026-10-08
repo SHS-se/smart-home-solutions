@@ -32,13 +32,13 @@
 
 import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
 import {
-  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, projectHeatPumpResponse, stepThermalStore, type Level, type Levels,
+  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import { baseLoadGridSupplyW } from './supply';
 import type { BenchSeries } from './types';
 
-export const REFEREE_VERSION = 11;
+export const REFEREE_VERSION = 12;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -91,6 +91,7 @@ export interface Outcome {
 
 /** The household carried through one set of decisions, unrounded. Stores are at the end of each quarter. */
 export interface Simulation {
+  poolStart: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
   poolW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array;
   /** Grid power: import positive, export negative. */
   netW: Float64Array;
@@ -158,12 +159,14 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   // The start state is what was read, also where it lies outside a device's limits.
   let batteryKwh = c.start_state.battery_soc * h.battery.capacity_kwh;
   let poolC = c.start_state.pool_water_c;
-  let heaterElapsed: number | null = null;
+  const heater = publishHeater(h.pool.heater);
+  let heaterState = c.start_state.pool_heater;
   let evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
   const buy = c.recorded.prices.import_sek_per_kwh, sell = c.recorded.prices.export_sek_per_kwh;
   const air = c.recorded.outdoor_temperature_c;
 
   const out: Simulation = {
+    poolStart: [],
     poolW: new Float64Array(QUARTERS), evW: new Float64Array(QUARTERS), chargeW: new Float64Array(QUARTERS), dischargeW: new Float64Array(QUARTERS),
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
     costSek: new Float64Array(QUARTERS), cost: 0, violations, start: { batteryKwh, poolC, evKwh },
@@ -172,11 +175,10 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   for (let i = 0; i < QUARTERS; i++) {
     // The heat pump is on at its setting or off; the charger holds whole amps, below the lowest not at all.
     const heating = onLevel(i, 'pool_step', heatLevels, clip(i, 'pool_power', asked(i, d.pool_w[i]), poolMaxW));
-    const projected = projectHeatPumpResponse(h.pool.heater.response ?? { kind: 'steady' },
-      { compressor_w: poolMaxW - h.pool.heater.auxiliary_w, auxiliary_w: h.pool.heater.auxiliary_w },
-      [heating.draw_w], [HOURS], heaterElapsed);
-    heaterElapsed = projected.elapsed_seconds_by_boundary[1];
-    const poolW = projected.draw_w[0];
+    const projected = stepHeater(heater, heaterState, heating.draw_w > 0, HOURS * 3600);
+    heaterState = projected.next;
+    const poolW = projected.electric_w;
+    out.poolStart.push(projected.start);
     let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
@@ -194,7 +196,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency), !measured);
 
     batteryKwh += (chargeW * h.battery.charge_efficiency - dischargeW / h.battery.discharge_efficiency) * HOURS / 1_000;
-    poolC = stepThermalStore(h.pool.store, poolC, heating.heat_w * projected.gain_fraction[0], air[i], HOURS);
+    poolC = stepThermalStore(h.pool.store, poolC, projected.heat_w, air[i], HOURS);
     evKwh += evW * h.car.battery.charge_efficiency * HOURS / 1_000;
 
     const netW = baseW[i] + poolW + evW + chargeW - dischargeW - solarW[i];
@@ -239,16 +241,17 @@ function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW
 
 /** Where each store could be at best, at the end of every quarter: full power from the first. */
 export function reachability(c: BenchCase, h: Household): { poolC: number[]; carKm: number[] } {
-  const poolMax = poolLevels(h).at(-1)!, carMaxW = evMaxW(h);
-  const response = projectHeatPumpResponse(h.pool.heater.response ?? { kind: 'steady' },
-    { compressor_w: poolMax.draw_w - h.pool.heater.auxiliary_w, auxiliary_w: h.pool.heater.auxiliary_w },
-    new Array(QUARTERS).fill(poolMax.draw_w), new Array(QUARTERS).fill(HOURS), null);
+  const carMaxW = evMaxW(h);
+  const heater = publishHeater(h.pool.heater);
+  let heaterState = c.start_state.pool_heater;
   let poolC = c.start_state.pool_water_c, evKwh = c.start_state.ev.soc * h.car.battery.capacity_kwh;
   // A car already past its charge limit stays where it is: it cannot be charged further.
   const ceilingKwh = Math.max(evKwh, evLimitKwh(c, h));
   const out = { poolC: [] as number[], carKm: [] as number[] };
   for (let i = 0; i < QUARTERS; i++) {
-    poolC = stepThermalStore(h.pool.store, poolC, poolMax.heat_w * response.gain_fraction[i], c.recorded.outdoor_temperature_c[i], HOURS);
+    const projected = stepHeater(heater, heaterState, true, HOURS * 3600);
+    heaterState = projected.next;
+    poolC = stepThermalStore(h.pool.store, poolC, projected.heat_w, c.recorded.outdoor_temperature_c[i], HOURS);
     evKwh = Math.min(ceilingKwh, evKwh + carMaxW * h.car.battery.charge_efficiency * HOURS / 1_000);
     out.poolC.push(Math.round(poolC * 100) / 100);
     out.carKm.push(r1(evKwh / h.car.battery.kwh_per_km));
@@ -277,6 +280,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
 
   const series: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
+    poolStart: sim.poolStart,
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,

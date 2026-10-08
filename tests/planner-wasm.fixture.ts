@@ -14,7 +14,7 @@ export const command = (pool_on = false): NativeCommand => ({
 });
 export function problem(): ReadyProblem {
   return {
-    abi: 2,
+    abi: 3,
     work_grant: 12_000_000,
     recipe: {
       beam_width: 8,
@@ -50,7 +50,7 @@ export function problem(): ReadyProblem {
       battery_kwh: 10,
       ev_kwh: 60,
       pool_c: 32,
-      heater_age: { kind: "off" },
+      heater_state: { kind: "off_unobserved" },
     },
     targets: { pool_c: 30, ev_km: 300, ev_limit_kwh: 70 },
     limits: {
@@ -72,7 +72,7 @@ export function causalCase(): BenchCase {
   const all = (value: number) => Array(QUARTERS).fill(value);
   return {
     format: "shs-bench-case",
-    version: 1,
+    version: 2,
     start: "2026-09-28T00:00:00Z",
     timezone: "Europe/Stockholm",
     origin: {
@@ -89,6 +89,7 @@ export function causalCase(): BenchCase {
     start_state: {
       battery_soc: .5,
       pool_water_c: 30,
+      pool_heater: { kind: "off_unobserved" },
       ev: { soc: .5, target_soc: .9 },
     },
     recorded: {

@@ -35,7 +35,7 @@ import { diskTree } from "../scripts/module-graph.ts";
 import { typeScriptPlannerDir, usesRulePlanner } from "./planner-version.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
-export const ADAPTER_VERSION = 8;
+export const ADAPTER_VERSION = 9;
 
 /**
  * Planners before single targets read a comfort band and an urgency per store.
@@ -55,7 +55,7 @@ interface PlannerModule {
 interface BasisModule { freezePlanningBasis?(snapshot: Json, archive: unknown[], gridImports: unknown[]): unknown }
 
 export interface LoadedPlanner {
-  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort" | "ready-wasm-v2";
+  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort" | "ready-wasm-v2" | "ready-wasm-v3";
   /** `scale` multiplies what the planner's value curves are worth (lanes.ts); 1 is the planner as it runs live. */
   plan(c: BenchCase, household: Household, scale?: number, criteria?: CriteriaOverrides): { record: PlanRecord; cpuMs: number };
 }
@@ -150,7 +150,10 @@ export function snapshotFor(c: BenchCase, h: Household, scale: number, comfort: 
       },
     },
     pool: {
-      volume_m3: store.capacity_kwh_per_c / WATER_KWH_PER_M3_K, water_temperature_c: c.start_state.pool_water_c, heating_running: false,
+      volume_m3: store.capacity_kwh_per_c / WATER_KWH_PER_M3_K, water_temperature_c: c.start_state.pool_water_c,
+      heating_running: ["running", "steady"].includes(c.start_state.pool_heater.kind),
+      ...(c.start_state.pool_heater.kind === "running" ? { heating_elapsed_seconds: c.start_state.pool_heater.seconds }
+        : c.start_state.pool_heater.kind === "steady" ? { heating_elapsed_seconds: heater.response?.kind === "bergvarme" ? heater.response.startup.at(-1)!.elapsed_seconds : 0 } : {}),
       source_entity_ids: { water_temperature: "sensor.bench_pool_water_temperature" },
     },
     pool_model: {
@@ -311,7 +314,8 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
     );
     const planner = await candidate.loadWasmCandidate(root);
     return {
-      generation: "ready-wasm-v2",
+      // Historical bench engines carry and load their own committed wire codec.
+      generation: planner.version.startsWith("wasm-v3:") ? "ready-wasm-v3" : "ready-wasm-v2",
       plan(c, household, scale = 1, criteria = {}) {
         const p = candidate.readyProblem(c, household, criteria);
         const result = planner.plan(p);

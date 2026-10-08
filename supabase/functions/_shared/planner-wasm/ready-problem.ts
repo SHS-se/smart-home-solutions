@@ -3,13 +3,10 @@ import type {
   CarBatteryModel,
   ChargerModel,
   HeatPumpResponse,
+  HeaterState,
   ThermalStoreModel,
 } from "../planner/device-models.ts";
 
-export type RunAge = { kind: "off" } | { kind: "steady" } | {
-  kind: "running";
-  seconds: number;
-};
 export type BatteryOperation =
   | "hold"
   | "self_consumption"
@@ -28,6 +25,7 @@ export const RULE_KEYS = [
   "pool_cold",
   "pool_hot",
   "pool_buffer",
+  "pool_restart",
   "ev_low",
   "ev_short",
   "cheap_buy",
@@ -57,7 +55,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 2;
+  abi: 3;
   work_grant: number;
   recipe: {
     beam_width: number;
@@ -81,7 +79,7 @@ export interface ReadyProblem {
     battery_kwh: number;
     ev_kwh: number;
     pool_c: number;
-    heater_age: RunAge;
+    heater_state: HeaterState;
   };
   targets: { pool_c: number; ev_km: number; ev_limit_kwh: number };
   limits: {

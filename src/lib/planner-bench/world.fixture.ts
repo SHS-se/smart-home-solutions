@@ -41,6 +41,7 @@ export function world(spec: WorldSpec = {}): BenchCase {
     start_state: {
       battery_soc: spec.start?.battery_soc ?? 0.5,
       pool_water_c: spec.start?.pool_water_c ?? 30,
+      pool_heater: spec.start?.pool_heater ?? { kind: 'off_unobserved' },
       ev: { soc: spec.start?.ev?.soc ?? 0.7, target_soc: spec.start?.ev?.target_soc ?? 0.8 },
     },
     comfort: { ...TARGETS, ...spec.comfort },

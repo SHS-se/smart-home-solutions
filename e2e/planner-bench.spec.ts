@@ -44,6 +44,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const s: BenchSeries = {
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
+    poolStart: [],
     homeSoc: [], homeStartSoc: 50, carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],
   };
   let temp = 29.5;
@@ -63,6 +64,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.solarW.push(solar);
     s.loadW.push(load);
     s.poolW.push(pool);
+    s.poolStart!.push(i === runStart ? { off_seconds: null } : null);
     s.hotWaterW.push(hour === 5 ? 2000 : 0);
     s.carW.push(0);
     s.gridImportW.push(Math.max(0, load - solar));
@@ -100,11 +102,11 @@ function series(runStart: number, runQuarters: number): BenchSeries {
 
 /** A test case as the page reads it: only what the page shows needs to be real. */
 const dataset = (start: string): BenchScenarioData => ({
-  format: 'shs-bench-case', version: 1, origin: { kind: 'replay', detail: 'e2e', created_at: start },
+  format: 'shs-bench-case', version: 2, origin: { kind: 'replay', detail: 'e2e', created_at: start },
   start, timezone: 'Europe/Stockholm', location: { latitude: 59.4, longitude: 18 },
   known_prices: { import_sek_per_kwh: [], export_sek_per_kwh: [] },
   solar_forecast_w: [], base_load_forecast_w: [], other_devices_w: {},
-  start_state: { battery_soc: 0.5, pool_water_c: 29.5, ev: { soc: 0.6, target_soc: 0.8 } },
+  start_state: { battery_soc: 0.5, pool_water_c: 29.5, pool_heater: { kind: 'off_unobserved' }, ev: { soc: 0.6, target_soc: 0.8 } },
   comfort: { pool_c: 30.5, ev_km: 300 },
 });
 
@@ -870,7 +872,7 @@ test.describe('planner bench', () => {
     expect(data.known_prices.import_sek_per_kwh.filter(v => v !== null)).toHaveLength(72);
     expect(data.solar_forecast_w[0]).toBeCloseTo(800);
     expect(data.base_load_forecast_w[0]).toBe(700);
-    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, ev: { soc: 0.7, target_soc: 0.8 } });
+    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, pool_heater: { kind: 'off_unobserved' }, ev: { soc: 0.7, target_soc: 0.8 } });
     // Nothing of another planner's work or the replay's bulk is.
     expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);

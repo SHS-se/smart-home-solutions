@@ -213,7 +213,7 @@ pub(crate) fn better(a: &Account, b: &Account) -> bool {
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     let mut reach_pool = p.initial.pool_c;
     let mut reach_ev = p.initial.ev_kwh;
-    let mut age = p.initial.heater_age;
+    let mut age = p.initial.heater_state.age();
     let thresholds = [
         p.service_guard.pool[0],
         p.service_guard.pool[1],
@@ -308,6 +308,9 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool
             PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c - t,
             PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c - t,
             PoolHot => pool_c > p.targets.pool_c + t && index.buffer[i] == Some(false),
+            PoolRestart => v
+                .pool_start
+                .is_some_and(|s| s.off_seconds.is_some_and(|off| off < t * 3600.0)),
             PoolBuffer => pool_c > p.targets.pool_c + t && index.buffer[i] == Some(true),
             EvLow => i >= index.due[2] && ev_km < p.targets.ev_km - t,
             EvShort => i >= index.due[3] && ev_km < p.targets.ev_km - t,

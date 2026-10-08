@@ -41,12 +41,12 @@ Deno.test('a cheaper isolated pool quarter cannot justify splitting a heating cy
   });
   const original = simulate(c, HOUSEHOLD, d);
   assertEquals(original.violations, []);
-  // A quarter-level replay alone accepts the isolated pool move, but the
-  // owner's rule keeps this continuous heating cycle fixed.
+  // Startup losses also prevent the isolated move preserving final heat;
+  // the overlap rule independently keeps this continuous heating cycle fixed.
   const splitPool = structuredClone(d);
   splitPool.pool_w[100] = 0;
   splitPool.pool_w[200] = 3764;
-  assert(scheduleWitness(c, HOUSEHOLD, TARGETS, original, DEFAULT_SERVICE_GUARD)(splitPool, 'pool', [100, 200]));
+  assert(!scheduleWitness(c, HOUSEHOLD, TARGETS, original, DEFAULT_SERVICE_GUARD)(splitPool, 'pool', [100, 200]));
   const evidence = audit(c, d);
   assertEquals(evidence.overlappingQuarters, [100]);
   assertEquals(evidence.moves, []);

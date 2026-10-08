@@ -22,6 +22,8 @@ export interface BenchSeries {
   /** Total household consumption including EV and pool; excludes battery charging. */
   loadW: number[];
   poolW: number[];
+  /** Device-model command starts; absent on stale pre-transition evaluations. */
+  poolStart?: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
   hotWaterW: number[];
   carW: number[];
   gridImportW: number[];

@@ -1,3 +1,5 @@
+import { parseHeaterState, type HeaterState } from '../../../supabase/functions/_shared/planner/device-models';
+
 // A planner bench test case (docs/planner-bench/test-cases.md).
 //
 // A 72-hour scenario in the bench's own format: 288 quarters of what a planner
@@ -13,7 +15,7 @@
 export const QUARTERS = 288;
 export const QUARTER_MS = 15 * 60_000;
 export const CASE_FORMAT = 'shs-bench-case';
-export const CASE_VERSION = 1;
+export const CASE_VERSION = 2;
 
 /** One value per quarter. */
 export type Series = number[];
@@ -21,6 +23,8 @@ export type Series = number[];
 export interface CaseStartState {
   battery_soc: number;
   pool_water_c: number;
+  /** Captured native command state; unobserved stop history remains explicit. */
+  pool_heater: HeaterState;
   /** `target_soc` is the car's own charge limit, not a wish; the car is planned whether plugged in or not. */
   ev: { soc: number; target_soc: number };
 }
@@ -162,6 +166,7 @@ export function parseScenarioData(raw: unknown): BenchScenarioData {
     || !finite(state.ev.soc) || !finite(state.ev.target_soc)) {
     throw new CaseFormatError('start_state is incomplete.');
   }
+  parseHeaterState(state.pool_heater);
   return data;
 }
 

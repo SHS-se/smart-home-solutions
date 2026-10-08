@@ -91,7 +91,7 @@ const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =
 /** Identity of everything a planner generation is given for a case under one lane. */
 function inputHash(c: BenchCase, generation: string, lane: LaneId, rules: Awaited<ReturnType<BenchStore["rules"]>>): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation === "ready-wasm-v2" ? { planner_rules: rules } : {}) }));
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation === "ready-wasm-v3" || generation === "ready-wasm-v2" ? { planner_rules: rules } : {}) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */

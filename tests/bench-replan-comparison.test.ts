@@ -8,7 +8,8 @@ import type { StoreKey } from "../bench/experiments/replan-seed.ts";
 const snapshot = () =>
   snapshotFor(
     realisticWorld(),
-    HOUSEHOLD,
+    // This older synthetic Bellman experiment explicitly excludes native startup.
+    { ...HOUSEHOLD, pool: { ...HOUSEHOLD.pool, heater: { ...HOUSEHOLD.pool.heater, response: { kind: "steady" } } } },
     1,
     true,
     false,

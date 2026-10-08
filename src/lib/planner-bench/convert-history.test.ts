@@ -17,7 +17,7 @@ const history = (over: Record<string, unknown> = {}) => ({
     planned_devices_kwh: { 'sensor.pool_heater_energy': hourly(i => i === 1 ? 3.4 : 0), 'sensor.pool_pump_energy': hourly(i => i === 1 ? 0.4 : 0) },
     outdoor_temperature_c: hourly(i => 15 + i / 10),
   },
-  start_state: { battery_soc: 0.3, pool_water_c: 29.9, ev: { soc: 0.8, target_soc: 0.8 } },
+  start_state: { battery_soc: 0.3, pool_water_c: 29.9, pool_heater: { kind: "off_unobserved" }, ev: { soc: 0.8, target_soc: 0.8 } },
   ...over,
 });
 

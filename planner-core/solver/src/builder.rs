@@ -99,7 +99,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
         if on && !pool_needed {
             continue;
         }
-        let (pool_w, _, _) = p.heater.step(on, label.state.age, h * 3600.0);
+        let (pool_w, _, _) = p.heater.step(on, label.state.heater.age(), h * 3600.0);
         for &amps in &ev_levels {
             let ev_w = p.charger.watts(amps).unwrap();
             let demand = s.base_w + pool_w + ev_w - s.solar_w;

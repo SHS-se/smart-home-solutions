@@ -63,6 +63,7 @@ const stats = (over: Partial<BenchStats>): BenchStats => ({
 function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => number, over: Partial<NonNullable<BenchSeries['comfort']>> = {}): BenchSeries {
   const n = 288;
   const series = planSeries(Array.from({ length: n }, (_, i) => slot(i)), null);
+  series.poolStart = new Array(n).fill(null);
   series.poolC = Array.from({ length: n }, (_, i) => poolC(i));
   series.carKm = Array.from({ length: n }, (_, i) => carKm(i));
   series.comfort = {
@@ -163,7 +164,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'ev_short_gap', 'pool_short_gap']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'ev_short_gap', 'pool_short_gap']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });

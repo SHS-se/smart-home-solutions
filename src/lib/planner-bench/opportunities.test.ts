@@ -202,7 +202,7 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   assert(Math.max(...preheat.after.poolC) > 30 && preheat.before.poolC[63] < 29.6);
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
   // A warm pool is marked and loses nothing; the price rules are set aside to show it.
-  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 30 ? 3764 : 0 })).series },
+  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 31 ? 3764 : 0 })).series },
     { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false }, dear_load: { enabled: false }, dearest_load: { enabled: false },
       base_load_dear_import: { enabled: false }, base_load_dearest_import: { enabled: false } });
   assertEquals(warm.sum, 0);

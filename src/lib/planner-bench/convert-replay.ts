@@ -116,6 +116,7 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
     start_state: {
       battery_soc: reading(battery?.soc, DEFAULT_START_STATE.battery_soc, 'battery_soc'),
       pool_water_c: reading(pool?.water_temperature_c, DEFAULT_START_STATE.pool_water_c, 'pool_water_c'),
+      pool_heater: replayHeaterState(pool),
       ev: {
         soc: reading(car?.soc, DEFAULT_START_STATE.ev_soc, 'ev_soc'),
         target_soc: num(car?.departure_target_soc) ?? DEFAULT_START_STATE.ev_target_soc,
@@ -130,4 +131,12 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
     throw new ReplayFormatError((error as Error).message);
   }
   return { data, suggestedName: `Case ${data.start.slice(0, 16).replace('T', ' ')} UTC` };
+}
+
+/** Capture command memory; power meters cannot identify startup or steady state. */
+function replayHeaterState(pool: Record<string, unknown> | null): import('../../../supabase/functions/_shared/planner/device-models').HeaterState {
+  if (pool?.heating_running !== true) return { kind: 'off_unobserved' };
+  const age = num(pool.heating_elapsed_seconds);
+  if (age === null || age < 0) throw new ReplayFormatError('A running pool heater needs its captured elapsed seconds.');
+  return { kind: 'running', seconds: age };
 }

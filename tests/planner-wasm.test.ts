@@ -36,7 +36,7 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v2:"));
+  assert(planner.version.startsWith("wasm-v3:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -167,11 +167,11 @@ Deno.test("first hour includes the intersecting partial quarter and keeps exact 
     first.cost,
     (500 + response.draw_w[0] + evW + 1000) * hours / 1000,
   );
-  assertEquals(first.heater_age.kind, "running");
-  if (first.heater_age.kind !== "running") {
+  assertEquals(first.heater_state.kind, "running");
+  if (first.heater_state.kind !== "running") {
     throw new Error("Expected running heater.");
   }
-  assertAlmostEquals(first.heater_age.seconds, 600, 1e-9);
+  assertAlmostEquals(first.heater_state.seconds, 600, 1e-9);
   assert(result.selection.work_used <= p.work_grant);
   const shifted = structuredClone(p);
   for (const s of shifted.slots) s.start_seconds += 900;
@@ -398,6 +398,45 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
     })),
   );
   assertEquals(p.service_guard.pool, [1, 2]);
+});
+
+Deno.test("native restart events and signed scores match the referee at the twelve-hour boundary", () => {
+  const c = causalCase();
+  c.start_state.pool_heater = { kind: "off", seconds: 3600 };
+  const criteria = Object.fromEntries(resolveRules().map(r => [r.key, { enabled: r.key === "pool_restart" || r.key === "cheapest_buy" }]));
+  const p = readyProblem(c, HOUSEHOLD, criteria);
+  // The exact accepted first hour starts, stops, restarts, then continues.
+  p.accepted = p.slots.map((_, i) => command(i === 0 || i === 2 || i === 3));
+  p.locked_through_seconds = 3600;
+  const result = solve(p);
+  if (result.kind !== "selected") throw new Error(result.issue);
+  const selected = result.selection;
+  const d = {
+    pool_w: selected.quarters.map(q => q.pool_command_w),
+    ev_w: selected.quarters.map(q => q.ev_w),
+    battery_charge_w: selected.quarters.map(q => q.charge_w),
+    battery_discharge_w: selected.quarters.map(q => q.discharge_w),
+  };
+  const series = referee(c, HOUSEHOLD, caseTargets(c), d).series;
+  const scored = scoreQuarters(series, criteria);
+  assertEquals(selected.quarters.map(q => q.pool_start), series.poolStart);
+  assertEquals(scored.quarters.slice(0, 4).flatMap((q, i) => q.fired.includes("pool_restart") ? [i] : []), [0, 2]);
+  assertEquals(selected.account.contributions, scored.quarters.map(q => p.rules.map(r => q.fired.includes(r.key) ? r.points : 0)));
+  for (let i = 0; i < QUARTERS; i++) {
+    assertAlmostEquals(selected.quarters[i].pool_w, series.poolW[i], 0.051);
+    assertAlmostEquals(selected.quarters[i].pool_c, series.poolC[i]!, 0.00051);
+  }
+  assertEquals(selected.account.contributions[0], [-2, 2]);
+  assertEquals(selected.account.contributions[3], [0, 2]);
+  p.initial.heater_state = { kind: "off", seconds: 43200 };
+  const boundary = solve(p);
+  if (boundary.kind !== "selected") throw new Error(boundary.issue);
+  assertEquals(boundary.selection.account.contributions[0], [0, 2]);
+});
+
+Deno.test("ready ABI rejects obsolete heater inputs rather than assuming an off heater", () => {
+  const obsolete = { ...problem(), abi: 2 };
+  assertEquals(core.solve(obsolete as unknown as ReadyProblem).outcome, { kind: "failed", issue: "unsupported_abi_or_empty_problem" });
 });
 
 Deno.test("every selected result reports bounded witnesses and exact work accounting", () => {

@@ -11,7 +11,7 @@ import {
   RULE_KEYS,
 } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { buildPriceOutlook } from "../supabase/functions/_shared/planner/energy-price-shape.ts";
-import { operatingPoint } from "../supabase/functions/_shared/planner/device-models.ts";
+import { publishHeater } from "../supabase/functions/_shared/planner/device-models.ts";
 import {
   type BenchCase,
   caseTargets,
@@ -26,7 +26,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v2";
+export const READY_PRODUCER_VERSION = "bench-ready-v3";
 
 /** This runs as forecast preparation, outside solve; production will consume ready artifacts. */
 export function readyProblem(
@@ -72,10 +72,10 @@ export function readyProblem(
     );
   }
   const spread = spreads[Math.floor(spreads.length / 2)];
-  const run = operatingPoint(h.pool.heater, h.pool.heater.selected_setting);
+  const heater = publishHeater(h.pool.heater);
   const target = caseTargets(c);
   return {
-    abi: 2,
+    abi: 3,
     work_grant: grant,
     recipe: builderRecipe(recipe),
     slots: starts.map((_start, i) => ({
@@ -94,17 +94,12 @@ export function readyProblem(
     car: h.car.battery,
     charger: h.car.charger,
     pool_store: h.pool.store,
-    heater: {
-      compressor_w: run.electric_w,
-      auxiliary_w: h.pool.heater.auxiliary_w,
-      heat_w: run.heat_w,
-      response: h.pool.heater.response ?? { kind: "steady" },
-    },
+    heater,
     initial: {
       battery_kwh: c.start_state.battery_soc * h.battery.capacity_kwh,
       ev_kwh: c.start_state.ev.soc * h.car.battery.capacity_kwh,
       pool_c: c.start_state.pool_water_c,
-      heater_age: { kind: "off" },
+      heater_state: c.start_state.pool_heater,
     },
     targets: {
       pool_c: target.pool_c,
@@ -150,7 +145,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 2 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 3 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -164,7 +159,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v2:${identity}`,
+    version: `wasm-v3:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -194,7 +189,7 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v2",
+          generation: "ready-wasm-v3",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>

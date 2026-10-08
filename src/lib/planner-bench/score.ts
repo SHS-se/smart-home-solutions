@@ -59,7 +59,7 @@ import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } f
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 23;
+export const SCORER_VERSION = 24;
 /** The most a rule may take from a quarter, and the most it may give. */
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
@@ -182,6 +182,16 @@ export const DEFAULT_RULES: QuarterRule[] = [
   {
     key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target, the next day dearer or less sunny`, threshold: 2, points: 1,
     fires: (q, t) => poolAbove(q, t) && !!q.ahead && (q.ahead.dearer || q.ahead.lessSun), eligibleFrom: poolAny,
+  },
+  {
+    key: 'pool_restart', about: 'pool', label: 'Pool heater restarted too soon',
+    describe: t => `started less than ${t} hours after its last stop; only the starting quarter counts`,
+    threshold: 12, points: -2,
+    fires: (q, t) => {
+      const start = q.s.poolStart?.[q.i];
+      return start !== null && start !== undefined && start.off_seconds !== null && start.off_seconds < t * 3600;
+    },
+    eligibleFrom: s => s.poolStart?.length === s.start.length ? 0 : Infinity,
   },
   {
     key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
@@ -381,7 +391,8 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const gapThresholds = Object.fromEntries(resolved.map(r => [r.key, r.threshold]));
   const preparation = arbitragePreparation(s, gapThresholds.arbitrage_not_full);
   const batteryEvidenceMissing = s.baseLoadBatteryCoverW?.length !== n;
-  const auditPending = batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
+  const heaterEvidenceMissing = rules.some(r => r.key === 'pool_restart') && s.poolStart?.length !== n;
+  const auditPending = heaterEvidenceMissing || batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
       || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
@@ -450,8 +461,9 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
-    const reason = !rule.enabled ? 'Switched off for this case.'
-      : rule.about !== 'price' && !s.comfort ? 'The plan carries no targets.'
+    const reason = rule.key === 'pool_restart' && s.poolStart?.length !== n ? 'Heater command transitions need recomputing.'
+      : !rule.enabled ? 'Switched off for this case.'
+      : rule.key !== 'pool_restart' && rule.about !== 'price' && !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;
     return [rule.key, { applicable: rule.enabled && eligibleQuarters > 0, reason, eligibleQuarters }];

@@ -28,6 +28,14 @@ create table if not exists public.bench_scenarios (
 -- converts it once and no longer reads it.
 alter table public.bench_scenarios add column if not exists dataset jsonb;
 alter table public.bench_scenarios add column if not exists recorded jsonb;
+-- Case version 1 explicitly began with the heater off. Preserve that test
+-- convention without inventing a pre-horizon stop time. This TEST-only,
+-- idempotent conversion changes the generated case revision automatically.
+update public.bench_scenarios
+set dataset = jsonb_set(jsonb_set(dataset, '{version}', '2'::jsonb),
+  '{start_state,pool_heater}', '{"kind":"off_unobserved"}'::jsonb)
+where dataset->>'format' = 'shs-bench-case' and dataset->>'version' = '1';
+
 -- Why a case cannot be run yet, in words; null once it can.
 alter table public.bench_scenarios add column if not exists pending_reason text;
 -- Content identity shared by every planner generation. Authored edits and new

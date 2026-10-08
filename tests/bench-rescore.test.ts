@@ -10,12 +10,12 @@ import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/typ
 
 const fill = (value: number) => Array<number>(QUARTERS).fill(value);
 const dataset: BenchScenarioData = {
-  format: "shs-bench-case", version: 1,
+  format: "shs-bench-case", version: 2,
   origin: { kind: "manual", detail: "rescore test", created_at: "2026-09-24T00:00:00Z" },
   start: "2026-09-24T00:00:00Z", timezone: "Europe/Stockholm", location: { latitude: 59.4, longitude: 18 },
   known_prices: { import_sek_per_kwh: fill(1), export_sek_per_kwh: fill(0.4) },
   solar_forecast_w: fill(0), base_load_forecast_w: fill(500), other_devices_w: {},
-  start_state: { battery_soc: 0.5, pool_water_c: 30, ev: { soc: 0.7, target_soc: 0.8 } }, comfort: { pool_c: 30, ev_km: 300 },
+  start_state: { battery_soc: 0.5, pool_water_c: 30, pool_heater: { kind: "off_unobserved" }, ev: { soc: 0.7, target_soc: 0.8 } }, comfort: { pool_c: 30, ev_km: 300 },
 };
 const recorded: BenchRecorded = {
   actual: { base_load_w: fill(500), solar_w: fill(0) },

@@ -1071,7 +1071,7 @@ mod tests {
 
     fn problem(n: usize) -> Problem {
         Problem {
-            abi: 2,
+            abi: 3,
             work_grant: 100_000_000,
             recipe: Recipe {
                 beam_width: 8,
@@ -1130,7 +1130,7 @@ mod tests {
                 battery_kwh: 5.0,
                 ev_kwh: 10.0,
                 pool_c: 30.0,
-                heater_age: RunAge::Off,
+                heater_state: HeaterState::OffUnobserved,
             },
             targets: Targets {
                 pool_c: 30.0,

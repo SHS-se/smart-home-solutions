@@ -48,7 +48,7 @@ Deno.test('a replay becomes a test case: the moment is kept, another planner\'s 
   // Devices the household plans (pool heater, car) leave the load; the rest fold into it, by key not category.
   assertEquals(data.base_load_forecast_w[0], 600);
   assertEquals(Object.keys(data.other_devices_w).sort(), ['sensor.hot_water_energy', 'sensor.pool_room_floor_heater_energy']);
-  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, ev: { soc: 0.8, target_soc: 0.8 } });
+  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, pool_heater: { kind: "off_unobserved" }, ev: { soc: 0.8, target_soc: 0.8 } });
   assertEquals(data.start_state_unread, undefined);
   assert(!/frozen|previous|another planner|value_curves/.test(JSON.stringify(data)));
 });
@@ -130,11 +130,13 @@ Deno.test('the pool cools and is heated the same whatever the weather', () => {
   // Unheated at 30 °C it loses about 2.1 kW to its surroundings, a third of a degree in ten hours, in frost as in a heat wave.
   assertEquals(inAir(-5, idle()), inAir(32, idle()));
   assertAlmostEquals(30 - inAir(12, idle())[39], 0.333, 0.005);
-  // An hour of the heat pump gives 12.45 kWh of heat for 3.76 kWh from the grid, in any air: COP is the machine's, at its setting.
+  // A newly started hour loses useful heat during warm-up, in any air.
   const hour = idle();
   for (let i = 0; i < 4; i++) hour.pool_w[i] = POOL_W;
   assertEquals(inAir(-5, hour), inAir(32, hour));
-  assertAlmostEquals(inAir(12, hour)[3] - inAir(12, idle())[3], 12.45 / 63.965, 0.001);
+  const gain = inAir(12, hour)[3] - inAir(12, idle())[3];
+  assertAlmostEquals(gain, 0.166, 0.001);
+  assert(gain < 12.45 / 63.965);
 });
 
 Deno.test('an evaluation is derived wholly from the stored decisions', () => {

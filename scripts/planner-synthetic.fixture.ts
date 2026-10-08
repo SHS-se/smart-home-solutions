@@ -11,7 +11,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   return {
-    abi: 2,
+    abi: 3,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
     slots: prices.map((price, i) => ({
@@ -55,7 +55,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       battery_kwh: 5,
       ev_kwh: 10,
       pool_c: 28,
-      heater_age: { kind: "off" },
+      heater_state: { kind: "off_unobserved" },
     },
     targets: { pool_c: 30, ev_km: 200, ev_limit_kwh: 45 },
     limits: {

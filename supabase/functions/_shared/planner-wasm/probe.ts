@@ -102,7 +102,7 @@ export function createPlannerProbe(
         (b) => b.toString(16).padStart(2, "0"),
       ).join("");
       if (
-        hash !== build.wasm_sha256 || build.abi !== 2 ||
+        hash !== build.wasm_sha256 || build.abi !== 3 ||
         build.qualification !== "prototype_only"
       ) throw new Error("Invalid prototype artifact.");
       try {

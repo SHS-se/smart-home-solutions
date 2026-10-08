@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { ReadyProblem } from "./ready-problem.ts";
 
 const age = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("off") }),
+  z.object({ kind: z.literal("off_unobserved") }),
+  z.object({ kind: z.literal("off"), seconds: z.number().finite().nonnegative() }),
   z.object({ kind: z.literal("steady") }),
   z.object({
     kind: z.literal("running"),
@@ -32,7 +33,8 @@ const quarter = z.object({
   battery_kwh: z.number().finite(),
   ev_kwh: z.number().finite(),
   pool_c: z.number().finite(),
-  heater_age: age,
+  heater_state: age,
+  pool_start: z.object({ off_seconds: z.number().finite().nonnegative().nullable() }).nullable(),
   cost: z.number().finite(),
   wear: z.number().finite(),
   spare_battery_cover_w: z.number().finite(),

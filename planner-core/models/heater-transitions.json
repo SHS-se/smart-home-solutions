@@ -1,0 +1,23 @@
+{
+  "response": {
+    "kind": "bergvarme",
+    "startup": [
+      { "elapsed_seconds": 0, "electric_fraction": 0, "heat_fraction": 0 },
+      { "elapsed_seconds": 300, "electric_fraction": 0, "heat_fraction": 0 },
+      { "elapsed_seconds": 600, "electric_fraction": 1, "heat_fraction": 0.5 },
+      { "elapsed_seconds": 900, "electric_fraction": 1, "heat_fraction": 1 }
+    ]
+  },
+  "vectors": [
+    { "state": {"kind":"off_unobserved"}, "on": false, "seconds": 900, "electric_w": 0, "heat_w": 0, "next":{"kind":"off_unobserved"}, "start":null },
+    { "state": {"kind":"off_unobserved"}, "on": true, "seconds": 300, "electric_w": 0, "heat_w": 0, "next":{"kind":"running","seconds":300}, "start":{"off_seconds":null} },
+    { "state": {"kind":"off","seconds":43199}, "on": true, "seconds": 900, "electric_w": 1500, "heat_w": 4000, "next":{"kind":"running","seconds":900}, "start":{"off_seconds":43199} },
+    { "state": {"kind":"off","seconds":43200}, "on": true, "seconds": 900, "electric_w": 1500, "heat_w": 4000, "next":{"kind":"running","seconds":900}, "start":{"off_seconds":43200} },
+    { "state": {"kind":"off","seconds":1500}, "on": false, "seconds": 450, "electric_w": 0, "heat_w": 0, "next":{"kind":"off","seconds":1950}, "start":null },
+    { "state": {"kind":"running","seconds":900}, "on": false, "seconds": 225, "electric_w": 0, "heat_w": 0, "next":{"kind":"off","seconds":225}, "start":null },
+    { "state": {"kind":"running","seconds":300}, "on": true, "seconds": 300, "electric_w": 1500, "heat_w": 3000, "next":{"kind":"running","seconds":600}, "start":null },
+    { "state": {"kind":"running","seconds":900}, "on": true, "seconds": 900, "electric_w": 3000, "heat_w": 12000, "next":{"kind":"running","seconds":1800}, "start":null },
+    { "state": {"kind":"steady"}, "on": true, "seconds": 900, "electric_w": 3000, "heat_w": 12000, "next":{"kind":"steady"}, "start":null },
+    { "state": {"kind":"steady"}, "on": false, "seconds": 900, "electric_w": 0, "heat_w": 0, "next":{"kind":"off","seconds":900}, "start":null }
+  ]
+}

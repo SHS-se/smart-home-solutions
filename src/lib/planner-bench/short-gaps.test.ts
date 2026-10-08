@@ -117,6 +117,12 @@ Deno.test('short runs can join at either side of a longer gap without filling ev
       const d = plan({ [device]: (i: number) => i === 4 || i === 9 ? power : 0 });
       assertEquals(simulate(c, HOUSEHOLD, d).violations, []);
       const result = audit(c, d);
+      if (device === 'pool') {
+        // Joining two cold starts delivers more heat than the two separate
+        // quarters. The equal-energy witness cannot invent partial commands.
+        assertEquals(result.gaps.length, 0);
+        continue;
+      }
       assertEquals(result.gaps.length, 1, `${device}, blocked quarter ${blocked}`);
       const moved = alternative(d, result.gaps[0]);
       const on = moved[key].flatMap((w, i) => w > 0 ? [i] : []);

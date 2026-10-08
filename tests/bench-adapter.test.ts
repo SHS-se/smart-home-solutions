@@ -12,7 +12,7 @@ const hourOf = (i: number) => new Date(START + i * 900_000).getUTCHours();
 
 /** Sunny days, dear evenings, a day and a half of published prices, a cool pool and a car wanting range. */
 const dataset = (): BenchScenarioData => ({
-  format: "shs-bench-case", version: 1, origin: { kind: "manual", detail: "test", created_at: "2026-09-24T07:15:00Z" },
+  format: "shs-bench-case", version: 2, origin: { kind: "manual", detail: "test", created_at: "2026-09-24T07:15:00Z" },
   start: new Date(START).toISOString(), timezone: "Europe/Stockholm", location: { latitude: 59.4, longitude: 18 },
   known_prices: {
     import_sek_per_kwh: quarters(i => i < 132 ? (hourOf(i) >= 16 && hourOf(i) < 20 ? 3 : 1) : null),
@@ -21,7 +21,7 @@ const dataset = (): BenchScenarioData => ({
   solar_forecast_w: quarters(i => hourOf(i) >= 8 && hourOf(i) < 14 ? 5000 : 0),
   base_load_forecast_w: quarters(() => 600),
   other_devices_w: {},
-  start_state: { battery_soc: 0.3, pool_water_c: 27.5, ev: { soc: 0.3, target_soc: 0.8 } },
+  start_state: { battery_soc: 0.3, pool_water_c: 27.5, pool_heater: { kind: "off_unobserved" }, ev: { soc: 0.3, target_soc: 0.8 } },
   comfort: { pool_c: 30, ev_km: 300 },
 });
 const recorded = (): BenchRecorded => ({
@@ -95,7 +95,7 @@ Deno.test("the planner plans every device from its device model, whatever the ol
   const decided = (snapshot: unknown) => {
     const plan = M.generateOptimisationPlan(snapshot, new Date(c.start), []);
     assertEquals(plan.status, "ready");
-    return plan.plans.priority.slots.map((slot: Record<string, number>) => [slot.pool_w, slot.ev_w, slot.battery_charge_w, slot.battery_discharge_w]);
+    return plan.plans.priority.slots.map((slot: Record<string, number>) => [plan.pool?.heater_response?.kind === "bergvarme" ? slot.pool_command_w : slot.pool_w, slot.ev_w, slot.battery_charge_w, slot.battery_discharge_w]);
   };
   const snapshot = snapshotFor(c, HOUSEHOLD, 1, true, false, false, true) as unknown as {
     [field: string]: unknown;

@@ -4,7 +4,9 @@ mod physics;
 mod policy;
 mod witnesses;
 use serde::{Deserialize, Serialize};
-use shs_planner_models::{Battery, CarBattery, Charger, Heater, RunAge, ThermalStore};
+use shs_planner_models::{
+    Battery, CarBattery, Charger, Heater, HeaterStart, HeaterState, ThermalStore,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Slot {
@@ -39,7 +41,7 @@ pub struct Initial {
     pub battery_kwh: f64,
     pub ev_kwh: f64,
     pub pool_c: f64,
-    pub heater_age: RunAge,
+    pub heater_state: HeaterState,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Targets {
@@ -63,6 +65,7 @@ pub enum RuleKey {
     PoolCold,
     PoolHot,
     PoolBuffer,
+    PoolRestart,
     EvLow,
     EvShort,
     CheapBuy,
@@ -133,7 +136,8 @@ pub struct Quarter {
     pub battery_kwh: f64,
     pub ev_kwh: f64,
     pub pool_c: f64,
-    pub heater_age: RunAge,
+    pub heater_state: HeaterState,
+    pub pool_start: Option<HeaterStart>,
     pub cost: f64,
     pub wear: f64,
     pub spare_battery_cover_w: f64,
@@ -168,7 +172,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 2 || p.slots.is_empty() {
+    if p.abi != 3 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if p.battery.capacity_kwh <= 0.0
@@ -202,8 +206,9 @@ fn validate(p: &Problem) -> Result<(), String> {
     {
         return bad("invalid_charger_commands");
     }
-    if matches!(p.initial.heater_age, RunAge::Running{seconds} if seconds<0.0) {
-        return bad("invalid_initial_heater_age");
+    if matches!(p.initial.heater_state, HeaterState::Running{seconds} | HeaterState::Off{seconds} if seconds<0.0)
+    {
+        return bad("invalid_initial_heater_state");
     }
     if p.rules
         .iter()
@@ -232,23 +237,7 @@ fn validate(p: &Problem) -> Result<(), String> {
             }
         }
     }
-    if let shs_planner_models::Response::Bergvarme { startup } = &p.heater.response {
-        if startup.len() < 2
-            || startup[0].elapsed_seconds != 0.0
-            || startup
-                .windows(2)
-                .any(|a| a[1].elapsed_seconds <= a[0].elapsed_seconds)
-            || startup.iter().any(|a| {
-                a.electric_fraction < 0.0
-                    || a.heat_fraction < 0.0
-                    || a.electric_fraction == 0.0 && a.heat_fraction != 0.0
-            })
-            || startup.last().unwrap().electric_fraction != 1.0
-            || startup.last().unwrap().heat_fraction != 1.0
-        {
-            return bad("invalid_startup_model");
-        }
-    }
+    p.heater.validate_response().map_err(str::to_owned)?;
     if p.recipe.beam_width == 0 || p.recipe.max_actions < 4 || p.recipe.finalists == 0 {
         return bad("invalid_builder_recipe");
     }

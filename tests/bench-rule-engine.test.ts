@@ -19,7 +19,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     pool_low: { enabled: false },
     pool_buffer: { points: -2 },
   };
-  assertEquals(planner.generation, "ready-wasm-v2");
+  assertEquals(planner.generation, "ready-wasm-v3");
   for (const lane of LANES) {
     const scale = laneParts(lane).scale;
     const actual = planner.plan(toldCase(c, lane), HOUSEHOLD, scale, criteria);
@@ -44,7 +44,7 @@ Deno.test("configured rule engine versions change with artifacts and cannot sile
     [
       "supabase/functions/_shared/planner-wasm/artifact.json",
       JSON.stringify({
-        abi: 2,
+        abi: 3,
         wasm_sha256: "binary-a",
         source_sha256: "source-a",
       }),
@@ -61,7 +61,7 @@ Deno.test("configured rule engine versions change with artifacts and cannot sile
   files.set(
     "supabase/functions/_shared/planner-wasm/artifact.json",
     JSON.stringify({
-      abi: 2,
+      abi: 3,
       wasm_sha256: "binary-b",
       source_sha256: "source-a",
     }),

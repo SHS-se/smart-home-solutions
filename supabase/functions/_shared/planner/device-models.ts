@@ -186,6 +186,51 @@ export type HeatPumpResponse =
   | { kind: "steady" }
   | { kind: "bergvarme"; startup: HeatPumpStartupPoint[]; evidence?: HeatPumpResponseEvidence };
 
+/** Native command memory, owned by the device rather than the scheduler. */
+export type HeaterState =
+  | { kind: "off_unobserved" }
+  | { kind: "off"; seconds: number }
+  | { kind: "running"; seconds: number }
+  | { kind: "steady" };
+export interface HeaterStart { off_seconds: number | null }
+export interface PublishedHeater {
+  compressor_w: number; auxiliary_w: number; heat_w: number; response: HeatPumpResponse;
+}
+
+export function parseHeaterState(input: unknown): HeaterState {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new DeviceModelError("Heater state is missing.");
+  const state = input as Record<string, unknown>;
+  if (state.kind === "off_unobserved" || state.kind === "steady") return { kind: state.kind };
+  if ((state.kind === "off" || state.kind === "running") && finite(state.seconds) && state.seconds >= 0) {
+    return { kind: state.kind, seconds: state.seconds };
+  }
+  throw new DeviceModelError("Heater state needs an explicit kind and nonnegative elapsed seconds.");
+}
+
+/** One immutable solver publication; missing dynamics never silently become steady. */
+export function publishHeater(model: HeatPumpModel): PublishedHeater {
+  const run = operatingPoint(model, model.selected_setting);
+  return {
+    compressor_w: run.electric_w, auxiliary_w: model.auxiliary_w, heat_w: run.heat_w,
+    response: parseHeaterResponse(model.response),
+  };
+}
+
+/** Electrical/thermal response and command events come from the same device step. */
+export function stepHeater(heater: PublishedHeater, state: HeaterState, on: boolean, seconds: number): {
+  electric_w: number; heat_w: number; next: HeaterState; start: HeaterStart | null;
+} {
+  const age = state.kind === "steady" ? Infinity : state.kind === "running" ? state.seconds : null;
+  const projected = projectHeatPumpResponse(heater.response, heater,
+    [on ? heater.compressor_w + heater.auxiliary_w : 0], [seconds / 3600], age);
+  const start = on && age === null ? { off_seconds: state.kind === "off" ? state.seconds : null } : null;
+  const next: HeaterState = on
+    ? state.kind === "steady" ? { kind: "steady" } : { kind: "running", seconds: (age ?? 0) + seconds }
+    : state.kind === "off_unobserved" ? { kind: "off_unobserved" }
+      : { kind: "off", seconds: (state.kind === "off" ? state.seconds : 0) + seconds };
+  return { electric_w: projected.draw_w[0], heat_w: heater.heat_w * projected.gain_fraction[0], next, start };
+}
+
 /** Parse stored response data once; malformed dynamics never become a steady model. */
 export function parseHeaterResponse(input: unknown): HeatPumpResponse {
   const fail = (message: string): never => { throw new DeviceModelError(message); };

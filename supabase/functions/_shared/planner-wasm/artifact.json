@@ -1,7 +1,7 @@
 {
-  "abi": 2,
-  "wasm_sha256": "91213c47f9811745046e9796740c54244e17ca03d23c3ae4b01392e009d7097c",
-  "source_sha256": "fc90f987022a1f708abdd0db6854c8d2b3862d2e69f644e7b9b4f2814253ffaf",
+  "abi": 3,
+  "wasm_sha256": "092f373f939c01c45a565e2ab1c4dff12e255ede926d66ceb9d5d383ef3cb103",
+  "source_sha256": "8aa85c346e438b9984b7f0f7f2bd05fee56032a3ecf2d4250f09a0804b7fdc48",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -13,6 +13,7 @@
     "planner-core/Cargo.lock",
     "planner-core/Cargo.toml",
     "planner-core/models/Cargo.toml",
+    "planner-core/models/heater-transitions.json",
     "planner-core/models/src/lib.rs",
     "planner-core/policy.json",
     "planner-core/recipe.json",
