@@ -30,12 +30,17 @@ export function trafficEndpoint(input: RequestInfo | URL, method?: string): stri
   } catch { return `${safeVerb} /other`; }
 }
 
+/** Statuses that carry no body: a Response cannot be constructed with one, even an empty stream. */
+const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
+
 /** Count the caller's stream once; never buffer or clone a planning payload. */
 export function measureResponse(
   response: Response,
   finished: (bytes: number, complete: boolean) => void,
 ): Response {
-  if (!response.body) {
+  // Chromium hands back an empty stream, not null, for a 204: every PostgREST
+  // write without a returned row. Wrapping it would throw after the write landed.
+  if (!response.body || NULL_BODY_STATUS.has(response.status)) {
     finished(0, true);
     return response;
   }

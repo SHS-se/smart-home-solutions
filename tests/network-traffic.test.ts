@@ -49,6 +49,16 @@ Deno.test('traffic measures no-content responses and unknown request bodies corr
   assertEquals(meter.snapshot().total.request_bodies_unmeasured, 1);
 });
 
+Deno.test('a no-content response with an empty stream for a body, as Chromium gives, is returned as it is', async () => {
+  const original = new Response(null, { status: 204 });
+  Object.defineProperty(original, 'body', { value: new ReadableStream({ start(controller) { controller.close(); } }) });
+  const meter = new NetworkTraffic(async () => original);
+  const response = await meter.fetch('https://db.example/rest/v1/bench_scenarios', { method: 'PATCH', body: '{}' });
+  assertEquals(response, original);
+  assertEquals(meter.snapshot().total.responses_measured, 1);
+  assertEquals(meter.snapshot().total.response_body_bytes, 0);
+});
+
 Deno.test('measurement failure does not replace the original response or pretend zero bytes were measured', async () => {
   const meter = new NetworkTraffic(async () => new Response(new ReadableStream({
     start(controller) { controller.error(new Error('interrupted body')); },

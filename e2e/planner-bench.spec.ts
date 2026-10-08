@@ -300,7 +300,8 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
         return;
       }
       if (table === 'bench_scenarios' && request.method() === 'PATCH') captured.updated.push(request.postDataJSON());
-      await route.fulfill({ status: 201, body: '' });
+      // As PostgREST answers a write that returns no row: an update with 204, an insert with 201.
+      await route.fulfill({ status: request.method() === 'PATCH' ? 204 : 201, body: '' });
       return;
     }
     const rows: unknown[] = (() => {
