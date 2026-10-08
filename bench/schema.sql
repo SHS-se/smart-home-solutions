@@ -195,7 +195,8 @@ select sha, scenario_id, status, error, cpu_ms, stats, score, outcome, referee_v
   series is not null and stats is not null and outcome is not null as has_evaluation,
   case_revision,
   record->>'generation' as planner_generation,
-  record->>'planner_rules' as planner_rules
+  record->>'planner_rules' as planner_rules,
+  record->>'planner_criteria' as planner_criteria
 from public.bench_results;
 
 -- A legacy result may acquire its case revision only after the runner has

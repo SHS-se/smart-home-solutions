@@ -55,6 +55,7 @@ import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
 import { LARGE_WORKLOAD_W } from './large-load-overlap';
 import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
+import { canonicalJson } from './case';
 
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
@@ -511,6 +512,17 @@ export const plannerInputsFingerprint = (rules: readonly {
 });
 export const plannerRulesFingerprint = (overrides: CriteriaOverrides = {}) =>
   plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled), serviceGuard(overrides));
+
+/** Full supplied inputs: historical planners may consume rules today's scorer removed. */
+export const plannerCriteriaFingerprint = (overrides: CriteriaOverrides = {}) => canonicalJson(overrides);
+
+/** Immutable planner defaults may differ; freshness concerns the supplied overrides. */
+export function plannerRuleInputsCurrent(result: {
+  planner_generation?: string | null; planner_rules?: string | null; planner_criteria?: string | null;
+}, overrides: CriteriaOverrides): boolean {
+  return !result.planner_generation?.startsWith('ready-wasm-')
+    || Boolean(result.planner_rules) && result.planner_criteria === plannerCriteriaFingerprint(overrides);
+}
 
 export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): StoredScore {
   const c = scoreQuarters(s, overrides);

@@ -47,10 +47,14 @@ cost and `splitConsumption`; both charts consume it. Missing device projections
 require recomputation, and inconsistent consumption leaves an explicit unknown
 remainder. Pool temperature is a producer output, never inferred by a chart.
 
-The record also stores its effective solver-rule fingerprint. The summary view
-exposes it separately from the score fingerprint. Rescoring cannot make old
-rule-driven decisions appear newly optimized; saving rules refreshes the current
-head candidates. No new production planner is activated by these changes.
+The record stores both the full supplied-criteria fingerprint and the actual
+effective solver-rule fingerprint. Historical code owns its defaults, which may
+legitimately differ from today's harness. Freshness compares supplied criteria;
+effective rules remain policy provenance. This includes removed overrides that
+historical code may still consume. The summary view exposes both separately from
+the score fingerprint. Rescoring cannot make old rule-driven decisions appear
+newly optimized; saving rules refreshes the current head candidates. No new
+production planner is activated by these changes.
 
 ## Synthesis decision
 

@@ -4,7 +4,7 @@ import { hasMeasuredOutcome, loadCase, type BenchCase } from "../src/lib/planner
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { BASE_LANE, LANES, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
-import { isStale, plannerRulesFingerprint, runScore, SCORER_VERSION, storedPassed } from "../src/lib/planner-bench/score.ts";
+import { isStale, plannerRuleInputsCurrent, runScore, SCORER_VERSION, storedPassed } from "../src/lib/planner-bench/score.ts";
 import type { BenchStore, EvaluatedResult, ResultKey, StoredScenario } from "./store.ts";
 
 const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
@@ -92,7 +92,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   const current = (result: EvaluatedResult) =>
     !unavailable.has(result.sha) && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
     && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules)
-    && (!scope || !result.planner_generation?.startsWith('ready-wasm-') || result.planner_rules === plannerRulesFingerprint(latestRules));
+    && (!scope || plannerRuleInputsCurrent(result, latestRules));
   const eligible = before.filter(result => {
     const entry = cases.get(result.scenario_id);
     if (unavailable.has(result.sha) || result.status !== "ok" || !entry) return false;

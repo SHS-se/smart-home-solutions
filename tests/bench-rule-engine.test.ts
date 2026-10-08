@@ -6,7 +6,7 @@ import { diskTree, type SourceTree } from "../scripts/module-graph.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { laneParts, LANES, toldCase } from "../src/lib/planner-bench/lanes.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
+import { plannerCriteriaFingerprint, plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import type { CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
 import { causalCase } from "./planner-wasm.fixture.ts";
 
@@ -36,6 +36,10 @@ Deno.test('default bench worker solves ten measured cases once each and skips th
     delete first.results[0].record.planner_rules;
     await Deno.writeTextFile(output, JSON.stringify(first));
     assertEquals((await run()).match(/^ {2}START /gm)?.length, 1);
+    const repaired = JSON.parse(await Deno.readTextFile(output));
+    delete repaired.results[0].record.planner_criteria;
+    await Deno.writeTextFile(output, JSON.stringify(repaired));
+    assertEquals((await run()).match(/^ {2}START /gm)?.length, 1);
   } finally { await Deno.remove(dir, { recursive: true }); }
 });
 
@@ -57,6 +61,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     assertEquals(actual.record, {
       ...expected.record,
       planner_rules: plannerRulesFingerprint(criteria),
+      planner_criteria: plannerCriteriaFingerprint(criteria),
       valuation: { scale, pool: "none", ev: "none", battery: "none" },
     });
     assertEquals(actual.record.curves, []);

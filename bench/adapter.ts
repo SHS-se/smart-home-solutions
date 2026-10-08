@@ -34,7 +34,7 @@ import type { CriteriaOverrides, PlanRecord, UsedCurve } from "../src/lib/planne
 import { diskTree } from "../scripts/module-graph.ts";
 import { typeScriptPlannerDir, usesRulePlanner } from "./planner-version.ts";
 import { BENCH_DEVICE_KEYS } from "../src/lib/planner-bench/devices.ts";
-import { plannerInputsFingerprint } from "../src/lib/planner-bench/score.ts";
+import { plannerCriteriaFingerprint, plannerInputsFingerprint } from "../src/lib/planner-bench/score.ts";
 
 /** Bump when the input built for a generation changes: every result is run again. */
 export const ADAPTER_VERSION = 9;
@@ -323,6 +323,7 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
           record: {
             ...result.record,
             planner_rules: plannerInputsFingerprint(p.rules, p.service_guard),
+            planner_criteria: plannerCriteriaFingerprint(criteria),
             valuation: { scale, pool: "none", ev: "none", battery: "none" },
           },
           cpuMs: result.elapsed_ms,

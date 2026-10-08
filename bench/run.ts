@@ -49,7 +49,7 @@ import { canonicalJson, caseTargets, hasMeasuredOutcome, loadCase, sha256, type 
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
-import { plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
+import { plannerRuleInputsCurrent } from "../src/lib/planner-bench/score.ts";
 import { homeComfortTargets } from "./comfort.ts";
 import { laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
@@ -115,7 +115,7 @@ async function worker(sha: string, root: string) {
       const hash = await inputHash(c, planner.generation, lane, rules);
       const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
       const previous = done.get(laneKey(scenario.id, lane));
-      const rulesVerified = !planner.generation.startsWith("ready-wasm-") || previous?.planner_rules === plannerRulesFingerprint(rules);
+      const rulesVerified = plannerRuleInputsCurrent({ planner_generation: planner.generation, ...previous }, rules);
       if (!args.force && rulesVerified && previous?.input_hash === hash && previous.status === "ok" && previous.has_record) {
         if (previous.case_revision !== scenario.revision) await bench.bindResultRevision(base);
         continue;

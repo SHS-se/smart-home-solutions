@@ -137,6 +137,7 @@ export interface BenchResultDetail {
 export interface BenchResultSummary {
   planner_generation?: string | null;
   planner_rules?: string | null;
+  planner_criteria?: string | null;
   sha: string;
   case_revision: string | null;
   has_record: boolean;
@@ -190,8 +191,10 @@ export interface UsedCurve {
 
 /** What one planner version did with one test case: the bench's stored truth for a result. */
 export interface PlanRecord {
-  /** Rule inputs used to solve, distinct from the rules later used to score it. */
+  /** Actual effective policy produced by this planner version. */
   planner_rules?: string;
+  /** Full rule overrides supplied for this solve, distinct from later scoring. */
+  planner_criteria?: string;
   /** The planner's own verdict on its plan, e.g. "ready". */
   status: string;
   /** Which input generation the adapter built for this planner (bench/adapter.ts). */
