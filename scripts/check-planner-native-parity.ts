@@ -9,7 +9,10 @@ const planner = await loadWasmCandidate(root);
 const base = problem();
 const committed = problem();
 committed.initial.ev_kwh = 75;
-committed.accepted = committed.slots.map((_, i) => command(i % 2 === 0));
+committed.accepted = committed.slots.filter((s) => s.start_seconds < 3600).map((
+  _,
+  i,
+) => command(i % 2 === 0));
 committed.locked_through_seconds = 3600;
 committed.heater.response = {
   kind: "bergvarme",

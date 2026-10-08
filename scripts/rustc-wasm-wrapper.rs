@@ -38,7 +38,7 @@ fn main() {
         let version = env::var("CARGO_PKG_VERSION").expect("Cargo must identify its version");
         args.push("-C".into());
         args.push(
-            format!("metadata=shs-planner-abi3:{package}@{version}:{crate_name}:{target}").into(),
+            format!("metadata=shs-planner-abi4:{package}@{version}:{crate_name}:{target}").into(),
         );
     }
     let status = Command::new(compiler)

@@ -258,3 +258,14 @@ begin
 end $$;
 revoke all on function public.bench_save_evaluation(jsonb) from public, anon, authenticated;
 grant execute on function public.bench_save_evaluation(jsonb) to service_role;
+
+-- User-selected retention boundary. Cascading FKs remove results and verdicts;
+-- the constraint also stops an older workflow or explicit SHA recreating them.
+delete from public.bench_runs where committed_at < timestamptz '2026-10-07T16:37:53Z';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='public.bench_runs'::regclass
+    and conname='bench_runs_retention_baseline') then
+    alter table public.bench_runs add constraint bench_runs_retention_baseline
+      check (committed_at >= timestamptz '2026-10-07T16:37:53Z');
+  end if;
+end $$;

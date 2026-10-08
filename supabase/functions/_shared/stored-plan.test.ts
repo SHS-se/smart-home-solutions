@@ -8,8 +8,8 @@ const fixture = JSON.parse(await Deno.readTextFile(
 )).plan as OptimisationPlan;
 
 Deno.test("stored schema 9 plans leave out the execution copy and restore it exactly", () => {
-  const generated = { ...fixture, thermal_projection: { zones: [] } } as OptimisationPlan;
-  assertEquals(derivedExecutionPlan(generated), fixture.execution_plan);
+  const generated = { ...fixture, execution_plan: derivedExecutionPlan(fixture), thermal_projection: { zones: [] } } as OptimisationPlan;
+  assertEquals(derivedExecutionPlan(generated), generated.execution_plan);
   const stored = storedPlan(generated);
   assert(!("execution_plan" in stored));
   assert(JSON.stringify(stored).length < JSON.stringify(generated).length * 0.6);
@@ -31,10 +31,16 @@ Deno.test("a divergent execution plan is stored unchanged", () => {
 });
 
 Deno.test("comparison follows serialized JSON, and older schemas are untouched", () => {
-  const withUndefined = { ...fixture, execution_plan: { ...fixture.execution_plan!, fixed_plan: undefined } };
+  const withUndefined = { ...fixture, execution_plan: { ...derivedExecutionPlan(fixture), fixed_plan: undefined } };
   assert(!("execution_plan" in storedPlan(withUndefined)));
   const v8 = fixture.execution_plan!;
   assertStrictEquals(storedPlan(v8), v8);
   assertStrictEquals(expandStoredPlan(v8), v8);
   assertStrictEquals(expandStoredPlan(fixture), fixture);
+});
+
+Deno.test("the native mixed-mode execution forecast is stored without losing its distinct physical trajectory", () => {
+  assertStrictEquals(storedPlan(fixture), fixture);
+  assertStrictEquals(expandStoredPlan(storedPlan(fixture)), fixture);
+  assert(isOptimisationPlan(fixture));
 });

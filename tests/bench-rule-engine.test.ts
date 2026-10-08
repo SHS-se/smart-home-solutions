@@ -22,7 +22,7 @@ Deno.test('default bench worker solves ten measured cases once each and skips th
     const run = async () => {
       const result = await new Deno.Command(Deno.execPath(), { cwd: root,
         args: ['run', '-A', '--no-check', '--sloppy-imports', '--config', `${root}/deno.json`, `${root}/bench/run.ts`,
-          '--worker', 'candidate', '--root', root, '--local', cases, '--out', output], stdout: 'piped', stderr: 'piped' }).output();
+          '--worker', 'HEAD', '--root', root, '--local', cases, '--out', output], stdout: 'piped', stderr: 'piped' }).output();
       assert(result.success, new TextDecoder().decode(result.stderr));
       return new TextDecoder().decode(result.stdout);
     };
@@ -51,7 +51,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     pool_low: { enabled: false },
     pool_buffer: { points: -2 },
   };
-  assertEquals(planner.generation, "ready-wasm-v3");
+  assertEquals(planner.generation, "ready-wasm-v4");
   for (const lane of LANES) {
     const scale = laneParts(lane).scale;
     const actual = planner.plan(toldCase(c, lane), HOUSEHOLD, scale, criteria);
@@ -66,19 +66,19 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     });
     assertEquals(actual.record.curves, []);
   }
-  assert((await plannerVersion(diskTree(root))).startsWith("v3-rule-wasm:"));
+  assert((await plannerVersion(diskTree(root))).startsWith("v4-rule-wasm:"));
 });
 
 Deno.test("configured rule engine versions change with artifacts and cannot silently use TypeScript", async () => {
   const files = new Map([
     [
       "bench/planner-engine.json",
-      JSON.stringify({ engine: "rule-wasm", scope: "bench-only" }),
+      JSON.stringify({ engine: "rule-wasm", scope: "test-live" }),
     ],
     [
       "supabase/functions/_shared/planner-wasm/artifact.json",
       JSON.stringify({
-        abi: 3,
+        abi: 4,
         wasm_sha256: "binary-a",
         source_sha256: "source-a",
       }),
@@ -95,7 +95,7 @@ Deno.test("configured rule engine versions change with artifacts and cannot sile
   files.set(
     "supabase/functions/_shared/planner-wasm/artifact.json",
     JSON.stringify({
-      abi: 3,
+      abi: 4,
       wasm_sha256: "binary-b",
       source_sha256: "source-a",
     }),
@@ -109,7 +109,7 @@ Deno.test("configured rule engine versions change with artifacts and cannot sile
   );
   files.set(
     "bench/planner-engine.json",
-    JSON.stringify({ engine: "unknown", scope: "bench-only" }),
+    JSON.stringify({ engine: "unknown", scope: "test-live" }),
   );
   assertThrows(
     () => usesRulePlanner(tree),
@@ -145,7 +145,7 @@ Deno.test("real bench worker stores all rule-engine lanes and replans when saved
           "--scope",
           "diagnostics",
           "--worker",
-          "candidate",
+          "HEAD",
           "--root",
           root,
           "--local",

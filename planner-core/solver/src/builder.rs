@@ -40,8 +40,14 @@ fn command(
         pool_on,
         ev_amps,
         battery,
-        charge_limit_w: charge.min(p.battery.charge_max_w),
-        discharge_limit_w: discharge.min(p.battery.discharge_max_w),
+        charge_limit_w: p
+            .battery
+            .as_ref()
+            .map_or(0.0, |b| charge.min(b.charge_max_w)),
+        discharge_limit_w: p
+            .battery
+            .as_ref()
+            .map_or(0.0, |b| discharge.min(b.discharge_max_w)),
     }
 }
 fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> {
@@ -53,43 +59,48 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     let f = &index.future[i];
     // Purpose: service or forecast thermal reserve. Extra heat merely to earn a
     // cheap-load point has no proposal; this is guidance, not a physical ceiling.
-    let coast = p.pool_store.idle_per_hour(f.pool_goal, s.outdoor_c).abs()
-        * h
-        * f.next_cheaper
-            .saturating_sub(i)
-            .max(
-                if policy::rule(p, RuleKey::PoolShortGap).is_some_and(|r| r.points < 0) {
-                    5
-                } else {
-                    1
-                },
-            )
-            .min(p.slots.len() - i) as f64;
-    let pool_needed =
-        p.pool_store.step(label.state.pool, 0.0, s.outdoor_c, h) < f.pool_goal + coast;
+    let pool_needed = p.pool_store.as_ref().is_some_and(|store| {
+        let coast = store.idle_per_hour(f.pool_goal, s.outdoor_c).abs()
+            * h
+            * f.next_cheaper
+                .saturating_sub(i)
+                .max(
+                    if policy::rule(p, RuleKey::PoolShortGap).is_some_and(|r| r.points < 0) {
+                        5
+                    } else {
+                        1
+                    },
+                )
+                .min(p.slots.len() - i) as f64;
+        store.step(label.state.pool, 0.0, s.outdoor_c, h) < f.pool_goal + coast
+            && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
+    });
     let mut ev_levels = vec![0];
-    let room =
-        (p.targets.ev_limit_kwh - label.state.ev).max(0.0) * 1000.0 / h / p.car.charge_efficiency;
-    let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / p.car.charge_efficiency;
-    if need > 0.0 {
-        let min = p.charger.min_current_a;
-        if p.charger.watts(min).unwrap() <= room {
-            ev_levels.push(min);
-        }
-        let target = p.charger.fitting_amps(need).max(min);
-        let target = if p.charger.watts(target).unwrap() < need {
-            target
-                .saturating_add(p.charger.current_step_a)
-                .min(p.charger.max_current_a)
-        } else {
-            target
-        };
-        if p.charger.watts(target).unwrap() <= room {
-            ev_levels.push(target);
-        }
-        let max = p.charger.fitting_amps(room);
-        if max > 0 {
-            ev_levels.push(max);
+    if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
+        let room = (p.targets.ev_limit_kwh.unwrap() - label.state.ev).max(0.0) * 1000.0
+            / h
+            / car.charge_efficiency;
+        let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / car.charge_efficiency;
+        if s.ev_available && need > 0.0 {
+            let min = charger.min_current_a;
+            if charger.watts(min).unwrap() <= room {
+                ev_levels.push(min);
+            }
+            let target = charger.fitting_amps(need).max(min);
+            let target = if charger.watts(target).unwrap() < need {
+                target
+                    .saturating_add(charger.current_step_a)
+                    .min(charger.max_current_a)
+            } else {
+                target
+            };
+            if charger.watts(target).unwrap() <= room {
+                ev_levels.push(target);
+            }
+            let max = charger.fitting_amps(room);
+            if max > 0 {
+                ev_levels.push(max);
+            }
         }
     }
     ev_levels.sort_unstable();
@@ -99,18 +110,41 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
         if on && !pool_needed {
             continue;
         }
-        let (pool_w, _, _) = p.heater.step(on, label.state.heater.age(), h * 3600.0);
+        let pool_w = p
+            .heater
+            .as_ref()
+            .zip(p.pool_store.as_ref())
+            .map_or(0.0, |(heater, store)| {
+                heater
+                    .pool_transition(
+                        store,
+                        label.state.heater,
+                        on,
+                        shs_planner_models::PoolConditions {
+                            water_c: label.state.pool,
+                            outdoor_c: s.outdoor_c,
+                            seconds: h * 3600.0,
+                            stop_c: p.pool_stop_c,
+                        },
+                    )
+                    .electric_w
+            });
         for &amps in &ev_levels {
-            let ev_w = p.charger.watts(amps).unwrap();
+            let ev_w = p
+                .charger
+                .as_ref()
+                .map_or(0.0, |charger| charger.watts(amps).unwrap());
+            let Some(battery) = &p.battery else {
+                out.push(command(p, on, amps, Operation::Idle, 0.0, 0.0));
+                continue;
+            };
             let demand = s.base_w + pool_w + ev_w - s.solar_w;
-            let available = p.battery.available_discharge_w(label.state.battery, h);
+            let available = battery.available_discharge_w(label.state.battery, h);
             let grid_room = (p.limits.import_w - demand).max(0.0);
-            let stored = (label.state.battery - p.battery.min_soc * p.battery.capacity_kwh)
-                .max(0.0)
-                * p.battery.discharge_efficiency;
-            let useful =
-                (f.demand_kwh - stored).max(0.0) * 1000.0 / h / p.battery.charge_efficiency;
-            let cap = p.battery.charge_max_w.min(grid_room).min(useful);
+            let stored = (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0)
+                * battery.discharge_efficiency;
+            let useful = (f.demand_kwh - stored).max(0.0) * 1000.0 / h / battery.charge_efficiency;
+            let cap = battery.charge_max_w.min(grid_room).min(useful);
             // Joint templates compete through exact coupled physics. EV-on can
             // coexist with house-only supply; no blanket battery prohibition.
             out.push(command(
@@ -118,9 +152,9 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 on,
                 amps,
                 Operation::SelfConsumption,
-                p.battery.charge_max_w,
+                battery.charge_max_w,
                 if amps == 0 {
-                    p.battery.discharge_max_w
+                    battery.discharge_max_w
                 } else {
                     (s.base_w + pool_w - s.solar_w).max(0.0).min(available)
                 },
@@ -129,10 +163,11 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 p,
                 on,
                 amps,
-                Operation::SelfConsumption,
-                p.battery.charge_max_w,
+                Operation::Hold,
+                battery.charge_max_w,
                 0.0,
             ));
+            out.push(command(p, on, amps, Operation::Idle, 0.0, 0.0));
             if cap > 0.0 {
                 // The same useful energy can be spread over cheaper quarters;
                 // native battery power is continuous, unlike EV amp commands.
@@ -140,7 +175,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 out.push(command(p, on, amps, Operation::GridCharge, thin, 0.0));
                 let refill = ((f.refill_demand_kwh - stored).max(0.0) * 1000.0
                     / h
-                    / p.battery.charge_efficiency)
+                    / battery.charge_efficiency)
                     .min(cap);
                 if refill > 0.0 {
                     out.push(command(p, on, amps, Operation::GridCharge, refill, 0.0));
@@ -163,7 +198,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     amps,
                     Operation::Export,
                     0.0,
-                    p.battery.discharge_max_w,
+                    battery.discharge_max_w,
                 ));
             }
         }
@@ -185,39 +220,49 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     out
 }
 fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
-    let f = &index.future[i];
-    let floor = p
-        .initial
-        .pool_c
-        .min(p.targets.pool_c - p.service_guard.pool[0]);
-    let buffer_level = policy::rule(p, RuleKey::PoolBuffer).map_or(p.targets.pool_c, |r| {
-        p.targets.pool_c + r.threshold + 0.0005
-    });
-    let pool = (l.state.pool - floor) / (buffer_level - floor).max(f64::EPSILON);
-    // Credit only service exposure that cannot be recovered before eligibility.
-    // Filling the EV early earns no invented horizon-wide progress bonus.
-    let max_gain =
-        p.charger.watts(p.charger.max_current_a).unwrap() * 0.25 / 1000.0 * p.car.charge_efficiency;
     let mut service = 0.0;
-    for (level, key) in [RuleKey::EvLow, RuleKey::EvShort].into_iter().enumerate() {
-        if let Some(r) = policy::rule(p, key) {
-            let deficit =
-                (p.targets.ev_km - p.service_guard.ev[level]) * p.car.kwh_per_km - l.state.ev;
-            let catchup = (deficit.max(0.0) / max_gain).ceil() as usize;
-            let exposed = (i + catchup).saturating_sub(index.due[2 + level].max(i + 1));
-            service -= exposed as f64 * (-r.points).max(0) as f64;
+    if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
+        let max_gain =
+            charger.watts(charger.max_current_a).unwrap() * 0.25 / 1000.0 * car.charge_efficiency;
+        for (level, key) in [RuleKey::EvLow, RuleKey::EvShort].into_iter().enumerate() {
+            if let Some(r) = policy::rule(p, key) {
+                let deficit = (p.targets.ev_km.unwrap() - p.service_guard.ev[level])
+                    * car.kwh_per_km
+                    - l.state.ev;
+                let catchup = (deficit.max(0.0) / max_gain).ceil() as usize;
+                service -= (i + catchup).saturating_sub(index.due[2 + level].max(i + 1)) as f64
+                    * (-r.points).max(0) as f64;
+            }
         }
     }
-    let warming = ((buffer_level - floor).max(0.0) * p.pool_store.capacity_kwh_per_c
-        / (p.heater.heat_w / 4000.0))
-        .ceil()
-        .max(1.0);
-    f.useful_pool_quarters.min(warming) * pool.clamp(0.0, 1.0) + service + l.gap_estimate
+    let pool = p
+        .heater
+        .as_ref()
+        .zip(p.pool_store.as_ref())
+        .map_or(0.0, |(heater, store)| {
+            let target = p.targets.pool_c.unwrap();
+            let floor = p
+                .initial
+                .pool_c
+                .unwrap()
+                .min(target - p.service_guard.pool[0]);
+            let buffer = policy::rule(p, RuleKey::PoolBuffer)
+                .map_or(target, |r| target + r.threshold + 0.0005);
+            let share = (l.state.pool - floor) / (buffer - floor).max(f64::EPSILON);
+            let warming = ((buffer - floor).max(0.0) * store.capacity_kwh_per_c
+                / (heater.heat_w / 4000.0))
+                .ceil()
+                .max(1.0);
+            index.future[i].useful_pool_quarters.min(warming) * share.clamp(0.0, 1.0)
+        });
+    pool + service + l.gap_estimate
 }
+
 fn rank(p: &Problem, index: &Index, i: usize, l: &Label) -> (f64, f64) {
     let future = estimate(p, index, i, l);
-    let mut stored = (l.state.battery - p.battery.min_soc * p.battery.capacity_kwh).max(0.0)
-        * p.battery.discharge_efficiency;
+    let mut stored = p.battery.as_ref().map_or(0.0, |b| {
+        (l.state.battery - b.min_soc * b.capacity_kwh).max(0.0) * b.discharge_efficiency
+    });
     let mut value = 0.0;
     for &(demand, price) in &index.future[i].battery_value_curve {
         let used = stored.min(demand);
@@ -258,7 +303,7 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
         points: 0,
         cash: 0.0,
         wear: 0.0,
-        last_charge: p.initial.battery_kwh,
+        last_charge: p.initial.battery_kwh.unwrap_or(0.0),
         prepared: false,
         pool_last: None,
         ev_last: None,
@@ -284,12 +329,13 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
                     continue;
                 };
                 if index.first_sale == Some(i) {
-                    next.prepared =
-                        policy::measured(l.last_charge / p.battery.capacity_kwh * 100.0, 10.0)
-                            >= 100.0;
+                    next.prepared = policy::measured(
+                        l.last_charge / p.battery.as_ref().unwrap().capacity_kwh * 100.0,
+                        10.0,
+                    ) >= 100.0;
                 }
                 if policy::measured(q.charge_w, 10.0) > 0.0 {
-                    next.last_charge = q.battery_kwh;
+                    next.last_charge = q.battery_kwh.unwrap();
                 }
                 next.points += policy::quarter(p, index, i, &q, next.prepared)
                     .iter()
@@ -404,15 +450,20 @@ fn evaluate(
     // Decline a new candidate before projection when its audit cannot be paid.
     let n = p.slots.len() as u64;
     let cap = p.recipe.witness_trials.clamp(1, 16) as u64;
-    let audit_cost = n
-        .saturating_mul(n)
-        .saturating_mul(32 + cap * 8)
-        .saturating_add(n.saturating_mul(256 + u64::from(p.charger.max_current_a) * 4))
-        .saturating_add(
-            (p.recipe.witness_trials as u64)
-                .saturating_mul(n)
-                .saturating_mul(96 + u64::from(p.charger.max_current_a) + work.unit_cost * 2),
-        );
+    let audit_cost =
+        n.saturating_mul(n)
+            .saturating_mul(32 + cap * 8)
+            .saturating_add(n.saturating_mul(
+                256 + u64::from(p.charger.as_ref().map_or(0, |c| c.max_current_a)) * 4,
+            ))
+            .saturating_add(
+                (p.recipe.witness_trials as u64)
+                    .saturating_mul(n)
+                    .saturating_mul(
+                        96 + u64::from(p.charger.as_ref().map_or(0, |c| c.max_current_a))
+                            + work.unit_cost * 2,
+                    ),
+            );
     if work
         .limit
         .saturating_sub(work.used)
@@ -484,13 +535,13 @@ fn runs(p: &Problem, index: &Index, commands: &[Command]) -> Vec<RunPurpose> {
 pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     validate(p)?;
     let n = p.slots.len() as u64;
-    let startup = match &p.heater.response {
-        shs_planner_models::Response::Steady => 0,
-        shs_planner_models::Response::Bergvarme { startup } => startup.len() as u64 * 4,
+    let startup = match p.heater.as_ref().map(|h| &h.response) {
+        None | Some(shs_planner_models::Response::Steady) => 0,
+        Some(shs_planner_models::Response::Bergvarme { startup }) => startup.len() as u64 * 4,
     };
-    let loss = match &p.pool_store.loss {
-        shs_planner_models::StandingLoss::Linear { .. } => 0,
-        shs_planner_models::StandingLoss::Measured { points } => points.len() as u64,
+    let loss = match p.pool_store.as_ref().map(|s| &s.loss) {
+        None | Some(shs_planner_models::StandingLoss::Linear { .. }) => 0,
+        Some(shs_planner_models::StandingLoss::Measured { points }) => points.len() as u64,
     };
     let unit = 96 + startup + loss + p.rules.len() as u64 * 6;
     let reserved = n
@@ -523,10 +574,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         repairs: 0,
     };
     let index = policy::index(p, &mut work)?;
-    let mut proposals = construct(p, &index, &mut work)?;
-    if let Some(seed) = &p.accepted {
-        proposals.push(seed.clone());
-    }
+    let proposals = construct(p, &index, &mut work)?;
+
     let mut candidates = Vec::new();
     let mut budget_declined = false;
     for commands in proposals {

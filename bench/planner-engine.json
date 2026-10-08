@@ -1,4 +1,4 @@
 {
   "engine": "rule-wasm",
-  "scope": "bench-only"
+  "scope": "test-live"
 }

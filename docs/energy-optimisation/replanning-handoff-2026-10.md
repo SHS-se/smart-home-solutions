@@ -1,5 +1,9 @@
 # Replanning improvements and future scaling considerations
 
+TEST/dev implementation update, 8 October 2026: [live rules planner](test-live-rules-planner-2026-10-08.md).
+That update supersedes this document's execution inventory for TEST; production
+still follows main. The new planner has an explicit ten-second end-to-end target.
+
 Status: 6 October 2026. This is a handoff and investigation priority list, not
 an approved replacement architecture. No redesign is implemented by this document.
 

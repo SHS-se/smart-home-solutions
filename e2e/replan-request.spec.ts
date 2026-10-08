@@ -185,7 +185,7 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'customers'
       ? [{ id: CUSTOMER_ID, primary_home_id: HOME_ID }]
       : table === 'energy_optimisation_current'
-      // The plan workbench loads its snapshot on demand, separately from sync.
+      // User-requested replay downloads read the source snapshot separately from sync.
       ? [{ snapshot: planSnapshot, plan: shown }]
       : table === 'energy_optimisation_pool_slots'
       ? replan.poolHistory ?? []
@@ -408,7 +408,8 @@ test.describe('requesting a replan', () => {
     await expect(save).toBeDisabled();
     await page.reload();
     await expect(card.locator('#comfort-target-pool')).toHaveValue('29.5');
-    // The economics tab and its curve editors are gone.
+    // Planning comes from the live engine; manual schedule and value-curve editors are gone.
+    await expect(page.getByRole('tab', { name: /^(Bygg plan|Build a plan)$/ })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
   });

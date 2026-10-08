@@ -28,12 +28,12 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
       await command('git', ['commit', '--allow-empty', '-m', subject], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
       return await command('git', ['rev-parse', 'HEAD']);
     };
-    const beforePlanner = await commit('Before the planner existed', '2026-09-30T00:00:00Z');
+    const beforePlanner = await commit('Before the planner existed', '2026-10-07T17:00:00Z');
     await command('git', ['add', `${planner}/energy-optimisation.ts`, `${planner}/dispatch-plan.ts`]);
-    const older = await commit('Original planner', '2026-10-01T00:00:00Z');
-    const main = await commit('Main head, same planner', '2026-10-02T00:00:00Z');
+    const older = await commit('Original planner', '2026-10-07T18:00:00Z');
+    const main = await commit('Main head, same planner', '2026-10-07T19:00:00Z');
     await command('git', ['switch', '-c', 'dev']);
-    const dev = await commit('Dev head, same planner', '2026-10-03T00:00:00Z');
+    const dev = await commit('Dev head, same planner', '2026-10-07T20:00:00Z');
     await command('git', ['remote', 'add', 'origin', repo]);
 
     // Exercise the workflow's actual branch-resolution script against git refs.
@@ -47,8 +47,8 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
 
     // Start with the misleading folded record produced by the old runner.
     const store = new LocalStore(cases, out);
-    await store.saveRun({ sha: older, short_sha: older.slice(0, 7), committed_at: '2026-10-01T00:00:00Z', subject: 'Original planner', branch: null, status: 'done' });
-    await store.saveRun({ sha: beforePlanner, short_sha: beforePlanner.slice(0, 7), committed_at: "2026-09-30T00:00:00Z", subject: "Before the planner existed", branch: null, status: "failed", error: "worker exited with 1" });
+    await store.saveRun({ sha: older, short_sha: older.slice(0, 7), committed_at: '2026-10-07T18:00:00Z', subject: 'Original planner', branch: null, status: 'done' });
+    await store.saveRun({ sha: beforePlanner, short_sha: beforePlanner.slice(0, 7), committed_at: "2026-10-07T17:00:00Z", subject: "Before the planner existed", branch: null, status: "failed", error: "worker exited with 1" });
     await store.markDeployed(older, 'production');
     await store.markDeployed(older, 'test');
     const run = () => command(Deno.execPath(), [
@@ -83,7 +83,7 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
 
     await Deno.writeTextFile(`${repo}/${planner}/energy-optimisation.ts`, "import './missing.ts';\nexport const PLANNER_INPUTS = [];\n");
     await command('git', ['add', `${planner}/energy-optimisation.ts`]);
-    const broken = await commit('Broken planner dependency', '2026-10-04T00:00:00Z');
+    const broken = await commit('Broken planner dependency', '2026-10-07T21:00:00Z');
     const failure = await new Deno.Command(Deno.execPath(), { cwd: repo, args: [
       'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
       '--shas', broken, '--current', main, '--test', broken, '--local', cases, '--out', out,

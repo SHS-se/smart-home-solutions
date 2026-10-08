@@ -8,7 +8,6 @@ export default defineConfig(config, {
   testMatch: [
     'navigation-shell.spec.ts',
     'invoice-bom-fulfillment.spec.ts',
-    'plan-workbench.spec.ts',
     'replan-request.spec.ts',
     'planner-bench.spec.ts',
   ],

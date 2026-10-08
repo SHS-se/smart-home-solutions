@@ -1,9 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import { OPTIMISATION_MODEL_VERSION, type OptimisationPlan } from "./planner/energy-optimisation.ts";
-import { ENERGY_PLANNING_PROTOCOL, type EnergyPlanningInput, type EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
-import { runRemotePlanningBatch, PLANNING_BATCH_TIMEOUT_MS, EnergyPlanningError } from "./energy-planning-client.ts";
-import { assembleOptimisationPlan } from "./energy-planning-step.ts";
-import { buildThermalProjection, type ProjectionZoneInput } from "./thermal-training.ts";
+import type { OptimisationPlan } from "./planner/energy-optimisation.ts";
+import { RULES_MODEL_VERSION, type PreparedRulesInput } from "./rules-planner.ts";
+import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, EnergyPlanningError } from "./rules-planning-client.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
 import { describeThrown } from "./ha-api-contract.ts";
@@ -13,7 +11,16 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 export const PLANNING_EXCHANGE_VERSION = 2;
 
-type PublishedPlan = OptimisationPlan & { thermal_projection?: NonNullable<ReturnType<typeof buildThermalProjection>> };
+export type PlanningCompletionBasis = "publication" | "home_assistant_ack";
+
+/** TEST observes plans without control authority, so it cannot acknowledge execution. */
+export function planningCompletionBasis(supabaseUrl: string): PlanningCompletionBasis {
+  return supabaseUrl === "https://vxqpgbzseckgceopitpm.supabase.co" ||
+      supabaseUrl === "https://vxqpgbzseckgceopitpm.supabase.co/"
+    ? "publication" : "home_assistant_ack";
+}
+
+type PublishedPlan = OptimisationPlan;
 
 type ReceiptIdentity = {
   job_id: string;
@@ -30,24 +37,24 @@ export type PlanningReceipt = ReceiptIdentity & (
 export interface PlanningContext {
   request_id: string;
   integration_version: string | null;
-  thermal_zones: ProjectionZoneInput[];
+  reference_plan_id: string | null;
   fixed_revision: number;
   observed_replan_request_id: string | null;
   replan_request_id: string | null;
+  completion_basis: PlanningCompletionBasis;
   exchange: Record<string, unknown>;
 }
 interface PreparedPlanningJob {
   homeId: string; customerId: string; snapshotId: string; sourceHash: string;
-  input: EnergyPlanningInput; context: PlanningContext;
+  input: PreparedRulesInput; context: PlanningContext;
 }
 interface ClaimedJob {
   id: string; home_id: string; customer_id: string; snapshot_id: string;
-  protocol: number; fence: number; steps: number; phase: "solving" | "assembling";
+  protocol: number; fence: number;
 }
 interface LoadedJob {
-  input: EnergyPlanningInput;
+  input: PreparedRulesInput;
   context: PlanningContext & { model_version: string };
-  continuation: EnergyPlanningContinuation;
 }
 export class PlanningJobError extends Error {
   constructor(readonly code: string, message: string, readonly status = 500) {
@@ -79,8 +86,8 @@ export class PlanningJobs {
     const receipt = await this.rpc<PlanningReceipt>("accept_energy_planning_job", {
       home_id: prepared.homeId, customer_id: prepared.customerId,
       snapshot_id: prepared.snapshotId, source_hash: prepared.sourceHash,
-      input: prepared.input, context: { ...prepared.context, model_version: OPTIMISATION_MODEL_VERSION },
-      protocol: ENERGY_PLANNING_PROTOCOL,
+      input: prepared.input, context: { ...prepared.context, model_version: RULES_MODEL_VERSION },
+      protocol: RULES_PLANNING_PROTOCOL,
     });
     return this.delivery(receipt)!;
   }
@@ -120,64 +127,28 @@ export class PlanningJobs {
     // confirm configuration. Job-only SQL receipts do not repeat those fields.
     const deliver = (current: PlanningReceipt | null): PlanningReceipt | null =>
       current ? { ...receipt, ...current } : null;
-    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_batch", {
+    const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_attempt", {
       p_home_id: homeId, p_job_id: receipt.job_id,
     });
     const claimAt = performance.now();
     if (!job) return deliver(await this.readForHome(homeId, receipt.job_id) ?? receipt);
-    const loaded = await this.rpc<LoadedJob | null>("load_energy_planning_batch", {
+    const loaded = await this.rpc<LoadedJob | null>("load_energy_planning_attempt", {
       p_home_id: homeId, p_job_id: job.id, p_fence: job.fence,
     });
     const loadAt = performance.now();
     if (!loaded) return deliver(await this.readForHome(homeId, job.id) ?? receipt);
-    const owner = { job_id: job.id, home_id: homeId, fence: job.fence, steps: job.steps };
-    if (job.protocol !== ENERGY_PLANNING_PROTOCOL || loaded.context.model_version !== OPTIMISATION_MODEL_VERSION) {
+    const owner = { job_id: job.id, home_id: homeId, fence: job.fence };
+    if (job.protocol !== RULES_PLANNING_PROTOCOL || loaded.context.model_version !== RULES_MODEL_VERSION) {
       return deliver(await this.writeRecovering("fail_energy_planning_job", { ...owner,
         code: "planner_upgraded", detail: "Planner version changed. Request a new replan." }, homeId, job.id));
-    }
-    if (job.phase === "solving") {
-      let batch;
-      try {
-        batch = await runRemotePlanningBatch(loaded.input, loaded.continuation, {
-          ...connection, requestId: loaded.context.request_id,
-        }, { deadline: started + PLANNING_BATCH_TIMEOUT_MS }, fetcher);
-      } catch (error) {
-        return deliver(await this.computeFailure(owner, error));
-      }
-      // Storage uncertainty must never enter the compute-failure path. The next
-      // poll restores whichever atomic checkpoint actually committed.
-      const computedAt = performance.now();
-      const saved = await this.writeRecovering("commit_energy_planning_batch", { ...owner, calls: batch.calls,
-        phase: batch.done ? "assembling" : "solving",
-        completed: batch.continuation.completed.slice(loaded.continuation.completed.length),
-        rankings: batch.continuation.rankings.slice(loaded.continuation.rankings.length),
-        continuation: {
-          ...(batch.continuation.checkpoint === undefined ? {} : { checkpoint: batch.continuation.checkpoint }),
-          ...(batch.continuation.ranking_checkpoint === undefined ? {} : { ranking_checkpoint: batch.continuation.ranking_checkpoint }),
-        },
-      }, homeId, job.id);
-      console.info("[ENERGY-PLANNING-JOB] batch response", { ...owner, state: saved?.state,
-        calls: batch.calls, attempted_total_steps: job.steps + batch.calls, attempted_next_phase: batch.done ? "assembling" : "solving",
-        read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
-        load_ms: Math.round(loadAt - claimAt), worker_ms: Math.round(computedAt - loadAt),
-        save_ms: Math.round(performance.now() - computedAt), elapsed_ms: Math.round(performance.now() - started) });
-      return deliver(saved);
     }
     let generated: PublishedPlan;
     let publication: { current: Record<string, unknown>; run: Record<string, unknown> };
     const assembledJob = { ...job, ...loaded };
     try {
-      const planned = assembleOptimisationPlan(loaded.input, loaded.continuation.completed, loaded.continuation.rankings);
+      const planned = await generateRemoteRulesPlan(loaded.input, { ...connection, requestId: loaded.context.request_id }, fetcher);
       generated = planned.plan;
       const snapshot = loaded.input.snapshot;
-      if (loaded.context.thermal_zones.length) {
-        const slots = generated.plans.priority.slots;
-        const projection = buildThermalProjection(snapshot.slots.map(slot => slot.start),
-          snapshot.outdoor_temperature_c as number[], loaded.context.thermal_zones.map(zone => ({
-            ...zone, planned_power_w: slots.map(slot => slot.room_heating_w?.[zone.key] ?? 0),
-          })), snapshot.solar_irradiance_w_per_m2 ?? null);
-        if (projection) generated = { ...generated, thermal_projection: projection };
-      }
       const inputHash = await sha256Hex(JSON.stringify(snapshot));
       const ack = { generation_request_id: loaded.context.request_id,
         plan_schema_version: generated.schema_version, ha_ack_status: "pending",
@@ -202,9 +173,9 @@ export class PlanningJobs {
     }
     const assembledAt = performance.now();
     const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication }, homeId, job.id, generated);
-    console.info("[ENERGY-PLANNING-JOB] assembly response", { ...owner, state: published?.state,
+    console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state,
       read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
-      load_ms: Math.round(loadAt - claimAt), assembly_ms: Math.round(assembledAt - loadAt),
+      load_ms: Math.round(loadAt - claimAt), solve_ms: Math.round(assembledAt - loadAt),
       publication_ms: Math.round(performance.now() - assembledAt),
       elapsed_ms: Math.round(performance.now() - started) });
     if (published?.state === "published") {
@@ -217,7 +188,7 @@ export class PlanningJobs {
     return deliver(published);
   }
 
-  private async computeFailure(owner: { job_id: string; home_id: string; fence: number; steps: number },
+  private async computeFailure(owner: { job_id: string; home_id: string; fence: number },
     error: unknown): Promise<PlanningReceipt | null> {
     const detail = describeThrown(error);
     const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";

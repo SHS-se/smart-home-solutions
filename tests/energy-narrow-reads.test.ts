@@ -1,6 +1,18 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
-import type { FixedPlanStatus } from '../src/lib/energy-shift/fixed-plan.ts';
+
+/** Stored status returned by this migration, independent of the removed editor. */
+interface FixedPlanStatus {
+  fixed_plan: { id: string; starts_at: string; ends_at: string } | null;
+  revision: number;
+  generated_revision: number;
+  generated_fixed_plan_id: string | null;
+  ha_ack_status: string;
+  ha_ack_error: unknown;
+  valid_until: string;
+  error: string | null;
+  pending: boolean;
+}
 
 interface CurrentEnergyRow {
   fixed_plan: FixedPlanStatus['fixed_plan'];
@@ -56,6 +68,7 @@ Deno.test('narrow reads preserve status, latest temperatures, freshness and acce
     const status = async (id = home) => (await db.query<{ value: FixedPlanStatus | null }>(
       'SELECT get_energy_fixed_plan_status($1) AS value', [id])).rows[0].value;
     const slim = await status();
+    assert(raw.fixed_plan);
     assertEquals(slim, {
       fixed_plan: { id: raw.fixed_plan.id, starts_at: raw.fixed_plan.starts_at, ends_at: raw.fixed_plan.ends_at },
       revision: raw.fixed_plan_revision, generated_revision: raw.fixed_plan_generation_revision,
@@ -70,12 +83,16 @@ Deno.test('narrow reads preserve status, latest temperatures, freshness and acce
     await db.exec('RESET ROLE');
     await db.query(`UPDATE energy_optimisation_current SET fixed_plan='null', plan=null,
       replan_request_id=null, replan_completed_request_id=null WHERE home_id=$1`, [home]);
-    assertEquals((await status()).fixed_plan, null);
-    assertEquals((await status()).generated_fixed_plan_id, null);
-    assertEquals((await status()).pending, false);
+    const cleared = await status();
+    assert(cleared);
+    assertEquals(cleared.fixed_plan, null);
+    assertEquals(cleared.generated_fixed_plan_id, null);
+    assertEquals(cleared.pending, false);
     await db.query(`UPDATE energy_optimisation_current SET fixed_plan=null,
       replan_request_id=$1, replan_completed_request_id=$1 WHERE home_id=$1`, [home]);
-    assertEquals((await status()).pending, false);
+    const completed = await status();
+    assert(completed);
+    assertEquals(completed.pending, false);
     // Twenty-four quarters per room: the old planner retained only the latest.
     await db.query(`INSERT INTO energy_optimisation_thermal_slots
       SELECT $1, $1, room, 20 + n/100.0, '2026-09-12T00:00:00Z'::timestamptz + n*interval '15 minutes'

@@ -18,10 +18,13 @@ pub struct Slot {
     pub import_price: f64,
     pub export_price: f64,
     pub published: bool,
+    pub ev_available: bool,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
+    Idle,
+    SolarCharge,
     Hold,
     SelfConsumption,
     GridCharge,
@@ -38,16 +41,16 @@ pub struct Command {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Initial {
-    pub battery_kwh: f64,
-    pub ev_kwh: f64,
-    pub pool_c: f64,
-    pub heater_state: HeaterState,
+    pub battery_kwh: Option<f64>,
+    pub ev_kwh: Option<f64>,
+    pub pool_c: Option<f64>,
+    pub heater_state: Option<HeaterState>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Targets {
-    pub pool_c: f64,
-    pub ev_km: f64,
-    pub ev_limit_kwh: f64,
+    pub pool_c: Option<f64>,
+    pub ev_km: Option<f64>,
+    pub ev_limit_kwh: Option<f64>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Limits {
@@ -110,12 +113,13 @@ pub struct Problem {
     pub work_grant: u64,
     pub recipe: Recipe,
     pub slots: Vec<Slot>,
-    pub battery: Battery,
-    pub car: CarBattery,
-    pub charger: Charger,
-    pub pool_store: ThermalStore,
-    pub heater: Heater,
+    pub battery: Option<Battery>,
+    pub car: Option<CarBattery>,
+    pub charger: Option<Charger>,
+    pub pool_store: Option<ThermalStore>,
+    pub heater: Option<Heater>,
     pub initial: Initial,
+    pub pool_stop_c: Option<f64>,
     pub targets: Targets,
     pub limits: Limits,
     pub rules: Vec<Rule>,
@@ -129,14 +133,18 @@ pub struct Problem {
 pub struct Quarter {
     pub pool_command_w: f64,
     pub pool_w: f64,
+    pub pool_compressor_w: f64,
+    pub pool_auxiliary_w: f64,
+    pub pool_heat_w: f64,
     pub ev_w: f64,
     pub charge_w: f64,
     pub discharge_w: f64,
     pub net_w: f64,
-    pub battery_kwh: f64,
-    pub ev_kwh: f64,
-    pub pool_c: f64,
-    pub heater_state: HeaterState,
+    pub curtailed_w: f64,
+    pub battery_kwh: Option<f64>,
+    pub ev_kwh: Option<f64>,
+    pub pool_c: Option<f64>,
+    pub heater_state: Option<HeaterState>,
     pub pool_start: Option<HeaterStart>,
     pub cost: f64,
     pub wear: f64,
@@ -172,41 +180,64 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 3 || p.slots.is_empty() {
+    if p.abi != 4 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
-    if p.battery.capacity_kwh <= 0.0
-        || p.battery.charge_efficiency <= 0.0
-        || p.battery.discharge_efficiency <= 0.0
-        || p.car.capacity_kwh <= 0.0
-        || p.car.kwh_per_km <= 0.0
-        || p.car.charge_efficiency <= 0.0
-        || p.pool_store.capacity_kwh_per_c <= 0.0
-        || p.battery.charge_efficiency > 1.0
-        || p.battery.discharge_efficiency > 1.0
-        || p.car.charge_efficiency > 1.0
-        || p.battery.min_soc < 0.0
-        || p.battery.max_soc > 1.0
-        || p.battery.min_soc >= p.battery.max_soc
-        || p.battery.charge_max_w <= 0.0
-        || p.battery.discharge_max_w <= 0.0
-        || p.heater.compressor_w <= 0.0
-        || p.heater.heat_w <= 0.0
-        || p.heater.auxiliary_w < 0.0
+    if p.battery.is_some() != p.initial.battery_kwh.is_some()
+        || p.car.is_some() != p.charger.is_some()
+        || p.car.is_some() != p.initial.ev_kwh.is_some()
+        || p.car.is_some() != p.targets.ev_km.is_some()
+        || p.car.is_some() != p.targets.ev_limit_kwh.is_some()
+        || p.heater.is_some() != p.pool_store.is_some()
+        || p.heater.is_some() != p.initial.pool_c.is_some()
+        || p.heater.is_some() != p.initial.heater_state.is_some()
+        || p.heater.is_some() != p.targets.pool_c.is_some()
+        || p.heater.is_none() && p.pool_stop_c.is_some()
     {
-        return bad("invalid_model_parameters");
+        return bad("inconsistent_device_presence");
     }
-    if p.charger.min_current_a == 0
-        || p.charger.current_step_a == 0
-        || p.charger.min_current_a > p.charger.max_current_a
-        || p.charger.phase_count == 0
-        || p.charger.voltage_v <= 0.0
-        || !(p.charger.max_current_a - p.charger.min_current_a)
-            .is_multiple_of(p.charger.current_step_a)
-    {
-        return bad("invalid_charger_commands");
+    if let Some(b) = &p.battery {
+        if b.capacity_kwh <= 0.0
+            || b.charge_efficiency <= 0.0
+            || b.charge_efficiency > 1.0
+            || b.discharge_efficiency <= 0.0
+            || b.discharge_efficiency > 1.0
+            || b.min_soc < 0.0
+            || b.max_soc > 1.0
+            || b.min_soc >= b.max_soc
+            || b.charge_max_w <= 0.0
+            || b.discharge_max_w <= 0.0
+        {
+            return bad("invalid_model_parameters");
+        }
     }
-    if matches!(p.initial.heater_state, HeaterState::Running{seconds} | HeaterState::Off{seconds} if seconds<0.0)
+    if let Some(c) = &p.car {
+        if c.capacity_kwh <= 0.0
+            || c.kwh_per_km <= 0.0
+            || c.charge_efficiency <= 0.0
+            || c.charge_efficiency > 1.0
+        {
+            return bad("invalid_model_parameters");
+        }
+    }
+    if let Some(c) = &p.charger {
+        if c.min_current_a == 0
+            || c.current_step_a == 0
+            || c.min_current_a > c.max_current_a
+            || c.phase_count == 0
+            || c.voltage_v <= 0.0
+            || !(c.max_current_a - c.min_current_a).is_multiple_of(c.current_step_a)
+        {
+            return bad("invalid_charger_commands");
+        }
+    }
+    if let Some(h) = &p.heater {
+        if h.compressor_w <= 0.0 || h.heat_w <= 0.0 || h.auxiliary_w < 0.0 {
+            return bad("invalid_model_parameters");
+        }
+        h.validate_response().map_err(str::to_owned)?;
+    }
+    if matches!(p.initial.heater_state, Some(HeaterState::Running{seconds} | HeaterState::Off{seconds}) if seconds<0.0)
     {
         return bad("invalid_initial_heater_state");
     }
@@ -225,19 +256,23 @@ fn validate(p: &Problem) -> Result<(), String> {
             return bad("noncontiguous_command_intervals");
         }
     }
-    match &p.pool_store.loss {
-        shs_planner_models::StandingLoss::Measured { points } => {
-            if points.is_empty() || points.windows(2).any(|a| a[1].at_c <= a[0].at_c) {
-                return bad("invalid_measured_loss_model");
-            }
+    if let Some(store) = &p.pool_store {
+        if store.capacity_kwh_per_c <= 0.0 {
+            return bad("invalid_model_parameters");
         }
-        shs_planner_models::StandingLoss::Linear { kw_per_c, .. } => {
-            if *kw_per_c < 0.0 {
-                return bad("invalid_linear_loss_model");
+        match &store.loss {
+            shs_planner_models::StandingLoss::Measured { points } => {
+                if points.is_empty() || points.windows(2).any(|a| a[1].at_c <= a[0].at_c) {
+                    return bad("invalid_measured_loss_model");
+                }
+            }
+            shs_planner_models::StandingLoss::Linear { kw_per_c, .. } => {
+                if *kw_per_c < 0.0 {
+                    return bad("invalid_linear_loss_model");
+                }
             }
         }
     }
-    p.heater.validate_response().map_err(str::to_owned)?;
     if p.recipe.beam_width == 0 || p.recipe.max_actions < 4 || p.recipe.finalists == 0 {
         return bad("invalid_builder_recipe");
     }
@@ -249,7 +284,11 @@ fn validate(p: &Problem) -> Result<(), String> {
         return bad("commitment_unavailable");
     }
     if let Some(accepted) = &p.accepted {
-        if accepted.len() != p.slots.len()
+        if accepted.len()
+            != p.slots
+                .iter()
+                .take_while(|s| s.start_seconds < p.locked_through_seconds)
+                .count()
             || p.locked_through_seconds != 3600.0
             || p.slots.last().unwrap().start_seconds + p.slots.last().unwrap().hours * 3600.0
                 < 3600.0
@@ -375,4 +414,199 @@ pub unsafe extern "C" fn planner_solve(pointer: *const u8, length: usize) -> u64
     let length = output.len() as u64;
     let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
     (length << 32) | pointer
+}
+
+#[derive(Deserialize)]
+pub struct ProjectionInput {
+    pub problem: Problem,
+    pub commands: Vec<Command>,
+}
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProjectionOutcome {
+    Projected { quarters: Vec<Quarter> },
+    Failed { issue: String },
+}
+pub fn project(p: &Problem, commands: &[Command]) -> ProjectionOutcome {
+    match validate(p).and_then(|()| physics::project_external(p, commands)) {
+        Ok(quarters) => ProjectionOutcome::Projected { quarters },
+        Err(issue) => ProjectionOutcome::Failed { issue },
+    }
+}
+pub fn project_json(bytes: &[u8]) -> Vec<u8> {
+    let outcome = match serde_json::from_slice::<ProjectionInput>(bytes) {
+        Ok(input) => project(&input.problem, &input.commands),
+        Err(e) => ProjectionOutcome::Failed {
+            issue: format!("invalid_projection: {e}"),
+        },
+    };
+    serde_json::to_vec(&outcome).expect("finite model projection")
+}
+/// # Safety
+/// Input must name a live initialized module allocation. Caller owns both buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_project(pointer: *const u8, length: usize) -> u64 {
+    let output = project_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    fn p() -> Problem {
+        super::witnesses::tests::problem(8)
+    }
+    fn command(operation: Operation) -> Command {
+        Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: operation,
+            charge_limit_w: 4000.0,
+            discharge_limit_w: 4000.0,
+        }
+    }
+    fn projected(p: &Problem, c: Command) -> Vec<Quarter> {
+        match project(p, &vec![c; p.slots.len()]) {
+            ProjectionOutcome::Projected { quarters } => quarters,
+            ProjectionOutcome::Failed { issue } => panic!("{issue}"),
+        }
+    }
+    #[test]
+    fn native_operations_keep_solar_permissions() {
+        let mut p = p();
+        p.slots[0].solar_w = 2000.0;
+        for op in [
+            Operation::Hold,
+            Operation::SolarCharge,
+            Operation::SupplyHouse,
+            Operation::SelfConsumption,
+        ] {
+            let q = projected(&p, command(op));
+            assert_eq!(q[0].charge_w, 2000.0);
+            assert_eq!(q[0].discharge_w, 0.0);
+        }
+        assert_eq!(projected(&p, command(Operation::Idle))[0].charge_w, 0.0);
+        p.slots[0].solar_w = 0.0;
+        p.slots[0].base_w = 1000.0;
+        assert_eq!(
+            projected(&p, command(Operation::SupplyHouse))[0].discharge_w,
+            1000.0
+        );
+        assert_eq!(projected(&p, command(Operation::Hold))[0].discharge_w, 0.0);
+    }
+    #[test]
+    fn all_presence_combinations_solve_without_phantom_devices() {
+        for mask in 0..8 {
+            let mut p = p();
+            if mask & 1 == 0 {
+                p.battery = None;
+                p.initial.battery_kwh = None;
+            }
+            if mask & 2 == 0 {
+                p.car = None;
+                p.charger = None;
+                p.initial.ev_kwh = None;
+                p.targets.ev_km = None;
+                p.targets.ev_limit_kwh = None;
+            }
+            if mask & 4 == 0 {
+                p.heater = None;
+                p.pool_store = None;
+                p.initial.pool_c = None;
+                p.initial.heater_state = None;
+                p.targets.pool_c = None;
+            }
+            p.rules = vec![
+                Rule {
+                    key: RuleKey::PoolCold,
+                    threshold: 2.0,
+                    points: -1,
+                    required: true,
+                    unless: None,
+                },
+                Rule {
+                    key: RuleKey::EvShort,
+                    threshold: 100.0,
+                    points: -1,
+                    required: true,
+                    unless: None,
+                },
+                Rule {
+                    key: RuleKey::ArbitrageNotFull,
+                    threshold: 1.0,
+                    points: -1,
+                    required: false,
+                    unless: None,
+                },
+            ];
+            p.slots[0].export_price = 2.0;
+            let Outcome::Selected { selection } = solve(&p) else {
+                panic!("presence mask {mask} failed");
+            };
+            if mask & 1 == 0 {
+                assert_eq!(selection.account.contributions[0][2], 0);
+            }
+            for q in selection.quarters {
+                assert_eq!(q.battery_kwh.is_some(), mask & 1 != 0);
+                assert_eq!(q.ev_kwh.is_some(), mask & 2 != 0);
+                assert_eq!(q.pool_c.is_some(), mask & 4 != 0);
+            }
+        }
+    }
+    #[test]
+    fn partial_locked_prefix_preserves_disconnected_amps_and_saturates_fresh_state() {
+        let mut p = p();
+        for s in &mut p.slots {
+            s.start_seconds -= 300.0;
+            s.ev_available = false;
+        }
+        let mut c = command(Operation::Hold);
+        c.ev_amps = 16;
+        c.pool_on = true;
+        p.initial.ev_kwh = Some(60.0);
+        p.pool_stop_c = Some(29.0);
+        p.accepted = Some(vec![c.clone(); 5]);
+        p.locked_through_seconds = 3600.0;
+        assert!(validate(&p).is_ok());
+        let Outcome::Selected { selection } = solve(&p) else {
+            panic!("locked prefix solve failed");
+        };
+        assert_eq!(selection.commands[..5], vec![c; 5]);
+        assert!(selection.quarters[..5]
+            .iter()
+            .all(|q| q.ev_w == 0.0 && q.pool_w == 0.0));
+        p.accepted.as_mut().unwrap().push(command(Operation::Hold));
+        assert_eq!(validate(&p), Err("commitment_unavailable".into()));
+    }
+    #[test]
+    fn locked_export_keeps_native_command_when_price_forecast_changes() {
+        let mut p = p();
+        p.limits.battery_export_min_price = 3.0;
+        let c = command(Operation::Export);
+        p.accepted = Some(vec![c.clone(); 4]);
+        p.locked_through_seconds = 3600.0;
+        let Outcome::Selected { selection } = solve(&p) else {
+            panic!("locked export lost after forecast change");
+        };
+        assert_eq!(selection.commands[..4], vec![c; 4]);
+        assert!(selection.quarters[0].discharge_w > 0.0);
+    }
+    #[test]
+    fn thermostat_clips_members_and_heat_together_and_surplus_is_curtailed() {
+        let mut p = p();
+        p.pool_stop_c = Some(30.1);
+        let mut c = command(Operation::Idle);
+        c.pool_on = true;
+        let q = projected(&p, c);
+        assert!((q[0].pool_c.unwrap() - 30.1).abs() < 1e-8);
+        assert!((q[0].pool_w - q[0].pool_compressor_w - q[0].pool_auxiliary_w).abs() < 1e-8);
+        assert!((q[0].pool_heat_w - 4000.0).abs() < 1e-6);
+        assert_eq!(q[1].pool_w, 0.0);
+        p.slots[0].solar_w = 9000.0;
+        let q = projected(&p, command(Operation::Idle));
+        assert_eq!(q[0].curtailed_w, 2000.0);
+        assert_eq!(q[0].net_w, -7000.0);
+    }
 }

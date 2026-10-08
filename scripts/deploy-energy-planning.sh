@@ -25,3 +25,10 @@ HAS_LEGACY_WORKER="$(supabase functions list --project-ref "$PROJECT_REF" --outp
 if [ "$HAS_LEGACY_WORKER" = "yes" ]; then
   supabase functions delete energy-optimisation-planning-worker --project-ref "$PROJECT_REF" --yes
 fi
+
+# The removed schedule editor has no activation endpoint.
+HAS_FIXED_PLAN="$(supabase functions list --project-ref "$PROJECT_REF" --output json |
+  python3 -c 'import json, sys; print("yes" if any(f["name"] == "energy-optimisation-fixed-plan" for f in json.load(sys.stdin)) else "no")')"
+if [ "$HAS_FIXED_PLAN" = "yes" ]; then
+  supabase functions delete energy-optimisation-fixed-plan --project-ref "$PROJECT_REF" --yes
+fi

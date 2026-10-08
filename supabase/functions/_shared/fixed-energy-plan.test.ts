@@ -3,7 +3,6 @@ import {
   dispatchWithFixedPlan,
   dispatchWithPrefix,
   type FixedEnergyPlan,
-  fixedPlanPreflightInput,
   QUARTER_MS,
   validateFixedSchedule,
 } from "./planner/fixed-energy-plan.ts";
@@ -15,13 +14,12 @@ import {
 } from "./planner/dispatch-plan.ts";
 import {
   dispatchWorkbench,
-  dispatchWorkbenchInputs,
   generateOptimisationPlan,
   type PlannedSlot,
 } from "./planner/energy-optimisation.ts";
-import { generateRemoteOptimisationPlan } from "./energy-planning-client.ts";
-import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { batterySnapshot, dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+
+import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 
 const starts = Array.from(
   { length: 8 },
@@ -221,69 +219,6 @@ Deno.test("real EV plans retain fixed allocations across new prices and material
   assertEquals(updated.fixed_plan?.id, f.id);
 });
 
-Deno.test("activation preflight checks unsolved auction inputs and materialises through the planning worker", async () => {
-  // energy-optimisation-fixed-plan's path: a CPU-bounded request can neither
-  // solve the workbench nor the whole plan inline.
-  const snapshot = dispatchedEvSnapshot();
-  const original = generateOptimisationPlan(
-    snapshot,
-    new Date(snapshot.captured_at),
-  );
-  const bench = dispatchWorkbench(snapshot, [], original.price_outlook)!;
-  const inputs = dispatchWorkbenchInputs(snapshot, [], original.price_outlook)!;
-  const { planned: _planned, stopped_because: _stopped, iterations: _iterations,
-    allocations: _allocations, battery: _battery, ...solvedInputs } = bench;
-  assertEquals(JSON.stringify(inputs), JSON.stringify(solvedInputs));
-  assertEquals(
-    scoreDispatch(inputs.slots, inputs.stores, inputs.limits, bench.planned),
-    scoreDispatch(bench.slots, bench.stores, bench.limits, bench.planned),
-  );
-  validateFixedSchedule(inputs.slot_start_ms, inputs.stores, bench.planned);
-
-  const f: FixedEnergyPlan = {
-    id: "ev-fixed",
-    source_snapshot_id: snapshot.snapshot_id,
-    starts_at: snapshot.slots[0].start,
-    ends_at: snapshot.slots[4].start,
-    slots: snapshot.slots.slice(0, 4).map((slot, i) => ({
-      start: slot.start,
-      power_w: { ev: i === 1 ? 4140 : 0 },
-      discharge_w: { ev: 0 },
-      targets: original.plans.priority.slots[i],
-      allow_export: false,
-    })),
-  };
-  const inline = generateOptimisationPlan(
-    snapshot,
-    new Date(snapshot.captured_at),
-    [],
-    original.price_outlook,
-    f,
-  );
-  const connection = {
-    url: "https://planner.test",
-    planningSecret: "test-planning-secret",
-    requestId: "fixed-plan-preflight",
-  };
-  const staged = await generateRemoteOptimisationPlan(
-    fixedPlanPreflightInput(snapshot, original.price_outlook, f),
-    connection,
-    (url, init) =>
-      handleEnergyPlanningStep(new Request(url, init), connection.planningSecret),
-  );
-  assertEquals(
-    JSON.parse(JSON.stringify(staged.plan)),
-    JSON.parse(JSON.stringify(inline)),
-  );
-  assertEquals(staged.plan.plans.priority.slots.slice(0, 4).map((s) => s.ev_w), [
-    0,
-    4140,
-    0,
-    0,
-  ]);
-});
-
-import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 Deno.test("fixed room relays, setpoints and per-device allocations survive changed preferences", () => {
   const snapshot = commandSnapshot();
   // Include an editable store alongside the room actuators.

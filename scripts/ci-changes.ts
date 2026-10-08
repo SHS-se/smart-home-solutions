@@ -66,6 +66,10 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     if (allFunctions) return true;
     const dir = `supabase/functions/${name}/`;
     const graph = reach(tree, [`${dir}index.ts`]);
+    if (graph.has(`${WASM_PLANNER_DIR}/artifact.json`)) {
+      graph.add("planner-core/recipe.json");
+      graph.add("planner-core/policy.json");
+    }
     if (name === "energy-optimisation-plan-step") graph.add("scripts/deploy-energy-planning.sh");
     if (name === "energy-planner-probe") {
       graph.add("scripts/deploy-planner-probe.ts");
@@ -76,7 +80,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
 
   // A cheap gate only: the bench itself skips a commit whose planner version it
   // already has (bench/planner-version.ts), so over-including costs one CI job.
-  const planner = any(f => ((f.startsWith(`${PLANNER_DIR}/`) || f.startsWith(`${WASM_PLANNER_DIR}/`) || f.startsWith("planner-core/") || f === BENCH_ENGINE_FILE) && !isTest(f) && !isDoc(f)));
+  const planner = any(f => ((f.startsWith(`${PLANNER_DIR}/`) || f.startsWith(`${WASM_PLANNER_DIR}/`) || f.startsWith("planner-core/") || f === BENCH_ENGINE_FILE || f === "supabase/functions/_shared/rules-planner.ts") && !isTest(f) && !isDoc(f)));
 
   return {
     code: any(f => !isDoc(f)),

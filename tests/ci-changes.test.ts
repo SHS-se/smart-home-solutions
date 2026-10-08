@@ -3,11 +3,11 @@ import { classify, functionNames } from "../scripts/ci-changes.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 
-Deno.test("a planner change deploys the energy functions and the portal, and runs the bench", () => {
-  const c = classify(root, ["supabase/functions/_shared/planner/energy-optimisation.ts"]);
+Deno.test("a live planner adapter change deploys the energy functions and runs the bench", () => {
+  const c = classify(root, ["supabase/functions/_shared/rules-planner.ts"]);
   assert(c.planner);
-  // The portal's plan workbench runs the planner in the browser.
-  assert(c.frontend);
+  // The portal renders the published contract; it never executes the solver.
+  assert(!c.frontend);
   assert(c.functions.includes("energy-optimisation-plan-step"));
   assert(c.functions.includes("energy-optimisation-ingest"));
   assert(!c.functions.includes("energy-optimisation-planning-worker"));
@@ -58,7 +58,10 @@ Deno.test("rule planner artifacts and explicit engine selection trigger benchmar
     const c = classify(root, [path]);
     assert(c.planner, path);
     assert(!c.frontend, path);
-    assert(!c.functions.includes("energy-optimisation-plan-step"), path);
+    if (path === "planner-core/recipe.json" || path.endsWith("artifact.json")) {
+      assert(c.functions.includes("energy-optimisation-plan-step"), path);
+      assert(c.functions.includes("energy-optimisation-ingest"), path);
+    } else assert(!c.functions.includes("energy-optimisation-plan-step"), path);
   }
   assert(classify(root, ["bench/planner-engine.json"]).bench);
 });

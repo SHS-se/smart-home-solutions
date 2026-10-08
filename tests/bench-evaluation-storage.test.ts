@@ -51,6 +51,23 @@ Deno.test('the reapplied bench schema accepts unavailable commits and preserves 
   } finally { await db.close(); }
 });
 
+Deno.test('benchmark retention deletes older runs and results, retains cases and baseline, and rejects reinsertion', async () => {
+  const db = await database();
+  try {
+    // Simulate existing rows from before the retention policy was introduced.
+    await db.exec("ALTER TABLE bench_runs DROP CONSTRAINT bench_runs_retention_baseline");
+    await db.exec("INSERT INTO bench_runs(sha,short_sha,committed_at) VALUES('old','old','2026-10-06T12:00:00Z'),('baseline','baseline','2026-10-07T16:37:53Z')");
+    await db.exec(`INSERT INTO bench_results(sha,scenario_id,lane,status,input_hash)
+      VALUES('old','${scenario}','told/nominal','error','old-input')`);
+    await db.exec(await Deno.readTextFile('bench/schema.sql'));
+    assertEquals((await db.query<{ sha: string }>('SELECT sha FROM bench_runs ORDER BY sha')).rows,
+      [{ sha: 'baseline' }, { sha: 'test' }]);
+    assertEquals((await db.query<{ sha: string }>('SELECT sha FROM bench_results')).rows, [{ sha: 'test' }]);
+    assertEquals((await db.query<{ id: string }>('SELECT id FROM bench_scenarios')).rows, [{ id: scenario }]);
+    await assertRejects(() => db.exec("INSERT INTO bench_runs(sha,short_sha,committed_at) VALUES('old','old','2026-10-06T12:00:00Z')"), Error, 'bench_runs_retention_baseline');
+  } finally { await db.close(); }
+});
+
 Deno.test('bench mutations preserve exact evaluations, avoid unchanged fields, and reject concurrent replacements', async () => {
   const db = await database();
   const original = globalThis.fetch;

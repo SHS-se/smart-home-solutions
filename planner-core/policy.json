@@ -1,6 +1,6 @@
 {
   "version": "rule-causal-certificate-v3",
-  "qualification": "prototype_only",
+  "qualification": "test_live_candidate",
   "ordering": [
     "additive_rule_points",
     "cash_plus_declared_wear"

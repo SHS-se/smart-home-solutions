@@ -96,6 +96,9 @@ fn exposure(p: &Problem, q: &[Quarter], index: &policy::Index, device: usize) ->
     } else {
         p.targets.ev_km
     };
+    let Some(target) = target else {
+        return out;
+    };
     let thresholds = if device == 0 {
         p.service_guard.pool
     } else {
@@ -103,9 +106,9 @@ fn exposure(p: &Problem, q: &[Quarter], index: &policy::Index, device: usize) ->
     };
     for (i, v) in q.iter().enumerate() {
         let value = if device == 0 {
-            policy::measured(v.pool_c, 1000.0)
+            policy::measured(v.pool_c.unwrap(), 1000.0)
         } else {
-            policy::measured(v.ev_kwh / p.car.kwh_per_km, 10.0)
+            policy::measured(v.ev_kwh.unwrap() / p.car.as_ref().unwrap().kwh_per_km, 10.0)
         };
         for (level, offset) in thresholds.iter().enumerate() {
             let short = (target - offset - value).max(0.0);
@@ -140,9 +143,9 @@ fn preserve(
     expected: &[Delivery],
 ) -> bool {
     let (a, b) = (before.last().unwrap(), after.last().unwrap());
-    b.battery_kwh + EPS >= a.battery_kwh
-        && b.ev_kwh + EPS >= a.ev_kwh
-        && b.pool_c + EPS >= a.pool_c
+    b.battery_kwh.unwrap_or(0.0) + EPS >= a.battery_kwh.unwrap_or(0.0)
+        && b.ev_kwh.unwrap_or(0.0) + EPS >= a.ev_kwh.unwrap_or(0.0)
+        && b.pool_c.unwrap_or(0.0) + EPS >= a.pool_c.unwrap_or(0.0)
         && (0..2).all(|d| not_worse(before_exposure[d], exposure(p, after, index, d)))
         && expected
             .iter()
@@ -154,12 +157,17 @@ fn cost(q: &[Quarter]) -> f64 {
 fn watts(p: &Problem, c: &Command, device: usize) -> f64 {
     if device == 0 {
         if c.pool_on {
-            p.heater.compressor_w + p.heater.auxiliary_w
+            p.heater
+                .as_ref()
+                .map_or(0.0, |h| h.compressor_w + h.auxiliary_w)
         } else {
             0.0
         }
     } else {
-        p.charger.watts(c.ev_amps).unwrap_or(0.0)
+        p.charger
+            .as_ref()
+            .and_then(|cgr| cgr.watts(c.ev_amps))
+            .unwrap_or(0.0)
     }
 }
 fn running(c: &Command, device: usize) -> bool {
@@ -170,27 +178,33 @@ fn running(c: &Command, device: usize) -> bool {
     }
 }
 fn set_charge(c: &mut Command, power: f64) {
+    // Removing a booked charge explicitly closes capture; that is Idle, not Hold.
     c.battery = if power > EPS {
         Operation::GridCharge
     } else {
-        Operation::Hold
+        Operation::Idle
     };
-    c.charge_limit_w = power.max(0.0);
+    c.charge_limit_w = if power > EPS { power } else { 0.0 };
     c.discharge_limit_w = 0.0;
 }
-fn set_discharge(c: &mut Command, power: f64, export: bool) {
+fn set_discharge(c: &mut Command, power: f64, export: bool, battery: &Battery) {
     c.battery = if power <= EPS {
-        Operation::Hold
+        Operation::Idle
     } else if export {
         Operation::Export
     } else {
         Operation::SupplyHouse
     };
-    c.discharge_limit_w = power.max(0.0);
-    c.charge_limit_w = 0.0;
+    c.discharge_limit_w = if power > EPS { power } else { 0.0 };
+    // House supply remains an automatic operation: fresh surplus is capturable.
+    c.charge_limit_w = if c.battery == Operation::SupplyHouse {
+        battery.charge_max_w
+    } else {
+        0.0
+    };
 }
 fn valid_amps(p: &Problem, amps: u32) -> bool {
-    p.charger.watts(amps).is_some()
+    p.charger.as_ref().is_some_and(|c| c.watts(amps).is_some())
 }
 
 /// Store only the best bounded number per family/day. Enumeration is separately
@@ -378,6 +392,9 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                     }
                 }
             }
+            let Some(model) = &p.battery else {
+                continue;
+            };
             let mut battery = |family, transfer, priority| {
                 offer(
                     &mut queues,
@@ -409,7 +426,7 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                 && dest_import > EPS
                 && p.slots[to].import_price
                     > p.slots[from].import_price
-                        / (p.battery.charge_efficiency * p.battery.discharge_efficiency)
+                        / (model.charge_efficiency * model.discharge_efficiency)
             {
                 battery(
                     8,
@@ -435,13 +452,13 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
             {
                 if p.slots[to].export_price
                     > p.slots[from].import_price
-                        / (p.battery.charge_efficiency * p.battery.discharge_efficiency)
+                        / (model.charge_efficiency * model.discharge_efficiency)
                 {
                     battery(
                         10,
                         Transfer::AddCycle,
                         (p.slots[to].export_price - p.slots[from].import_price)
-                            * p.battery.discharge_max_w,
+                            * model.discharge_max_w,
                     );
                 }
                 if q[from].discharge_w > EPS
@@ -504,7 +521,7 @@ fn edit(
                     c.ev_amps = if i < start || i >= end {
                         0
                     } else {
-                        c.ev_amps.max(p.charger.min_current_a)
+                        c.ev_amps.max(p.charger.as_ref()?.min_current_a)
                     };
                 }
             }
@@ -520,19 +537,26 @@ fn edit(
                 };
                 for i in order {
                     let before = commands[i].ev_amps;
-                    let unit = f64::from(p.charger.phase_count)
-                        * p.charger.voltage_v
+                    let unit = f64::from(p.charger.as_ref()?.phase_count)
+                        * p.charger.as_ref()?.voltage_v
                         * projected_hours(&p.slots[i]);
-                    let steps = (excess.abs() / unit / f64::from(p.charger.current_step_a) + 1e-8)
+                    let steps = (excess.abs()
+                        / unit
+                        / f64::from(p.charger.as_ref()?.current_step_a)
+                        + 1e-8)
                         .floor() as u32;
                     let amps = if excess > 0.0 {
                         before
-                            .saturating_sub(steps.saturating_mul(p.charger.current_step_a))
-                            .max(p.charger.min_current_a)
+                            .saturating_sub(
+                                steps.saturating_mul(p.charger.as_ref()?.current_step_a),
+                            )
+                            .max(p.charger.as_ref()?.min_current_a)
                     } else {
                         before
-                            .saturating_add(steps.saturating_mul(p.charger.current_step_a))
-                            .min(p.charger.max_current_a)
+                            .saturating_add(
+                                steps.saturating_mul(p.charger.as_ref()?.current_step_a),
+                            )
+                            .min(p.charger.as_ref()?.max_current_a)
                     };
                     commands[i].ev_amps = amps;
                     excess += (f64::from(amps) - f64::from(before)) * unit;
@@ -541,7 +565,7 @@ fn edit(
                     deliveries.push(Delivery {
                         slot: i,
                         flow: Flow::Ev,
-                        watts: p.charger.watts(c.ev_amps)?,
+                        watts: p.charger.as_ref()?.watts(c.ev_amps)?,
                     });
                 }
             }
@@ -573,7 +597,8 @@ fn edit(
                 if (target - f64::from(target_a)).abs() > EPS || !valid_amps(p, target_a) {
                     continue;
                 }
-                let added = p.charger.watts(target_a)? - p.charger.watts(dest)?;
+                let added =
+                    p.charger.as_ref()?.watts(target_a)? - p.charger.as_ref()?.watts(dest)?;
                 if added > (p.limits.import_w - q[to].net_w).max(0.0) + EPS {
                     continue;
                 }
@@ -586,12 +611,12 @@ fn edit(
             deliveries.push(Delivery {
                 slot: from,
                 flow: Flow::Ev,
-                watts: p.charger.watts(a)?,
+                watts: p.charger.as_ref()?.watts(a)?,
             });
             deliveries.push(Delivery {
                 slot: to,
                 flow: Flow::Ev,
-                watts: p.charger.watts(b)?,
+                watts: p.charger.as_ref()?.watts(b)?,
             });
         }
         Proposal::Overlap {
@@ -645,16 +670,17 @@ fn battery_edit(
     kind: Transfer,
     export: bool,
 ) -> Option<()> {
+    let battery = p.battery.as_ref()?;
     let (a, b) = endpoints;
     let ha = projected_hours(&p.slots[a]);
     let hb = projected_hours(&p.slots[b]);
-    let ce = p.battery.charge_efficiency;
-    let de = p.battery.discharge_efficiency;
+    let ce = battery.charge_efficiency;
+    let de = battery.discharge_efficiency;
     let charge_room = |i: usize| {
         if q[i].discharge_w > EPS {
             0.0
         } else {
-            (p.battery.charge_max_w - q[i].charge_w)
+            (battery.charge_max_w - q[i].charge_w)
                 .min((p.limits.import_w - q[i].net_w).max(0.0))
                 .max(0.0)
         }
@@ -663,7 +689,7 @@ fn battery_edit(
         if q[i].charge_w > EPS {
             0.0
         } else {
-            (p.battery.discharge_max_w - q[i].discharge_w)
+            (battery.discharge_max_w - q[i].discharge_w)
                 .min(if export {
                     (p.limits.export_w + q[i].net_w).max(0.0)
                 } else {
@@ -692,9 +718,9 @@ fn battery_edit(
     };
     for state in &q[a.min(b)..a.max(b)] {
         let margin = if increase_between {
-            p.battery.capacity_kwh * p.battery.max_soc - state.battery_kwh
+            battery.capacity_kwh * battery.max_soc - state.battery_kwh?
         } else {
-            state.battery_kwh - p.battery.capacity_kwh * p.battery.min_soc
+            state.battery_kwh? - battery.capacity_kwh * battery.min_soc
         };
         energy = energy.min(margin.max(0.0));
     }
@@ -738,6 +764,7 @@ fn battery_edit(
                 } else {
                     q[i].net_w < 0.0
                 },
+                battery,
             ),
             Flow::Ev => unreachable!(),
         }
@@ -875,7 +902,7 @@ pub(crate) fn audit(
     let preparation = (n as u64)
         .saturating_mul(n as u64)
         .saturating_mul((32 + cap * 8) as u64)
-        + (n as u64) * (256 + u64::from(p.charger.max_current_a) * 4);
+        + (n as u64) * (256 + u64::from(p.charger.as_ref().map_or(0, |c| c.max_current_a)) * 4);
     if !work.spend(preparation) {
         for c in &mut out.coverage {
             c.quota_exhausted = true;
@@ -912,7 +939,9 @@ pub(crate) fn audit(
                 }
                 // Pay copying, comparisons, exposure, native amp enumeration,
                 // interval margins and explanation materialization before trial.
-                if !work.spend(n as u64 * (96 + u64::from(p.charger.max_current_a))) {
+                if !work.spend(
+                    n as u64 * (96 + u64::from(p.charger.as_ref().map_or(0, |c| c.max_current_a))),
+                ) {
                     stopped = true;
                     break 'rounds;
                 }
@@ -1065,13 +1094,13 @@ pub(crate) fn audit(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use shs_planner_models::{Response, StandingLoss};
 
-    fn problem(n: usize) -> Problem {
+    pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 3,
+            abi: 4,
             work_grant: 100_000_000,
             recipe: Recipe {
                 beam_width: 8,
@@ -1090,9 +1119,10 @@ mod tests {
                     import_price: 1.0,
                     export_price: 0.0,
                     published: true,
+                    ev_available: true,
                 })
                 .collect(),
-            battery: Battery {
+            battery: Some(Battery {
                 capacity_kwh: 10.0,
                 min_soc: 0.0,
                 max_soc: 1.0,
@@ -1100,42 +1130,43 @@ mod tests {
                 discharge_max_w: 4000.0,
                 charge_efficiency: 1.0,
                 discharge_efficiency: 1.0,
-            },
-            car: CarBattery {
+            }),
+            car: Some(CarBattery {
                 capacity_kwh: 60.0,
                 kwh_per_km: 0.2,
                 charge_efficiency: 1.0,
-            },
-            charger: Charger {
+            }),
+            charger: Some(Charger {
                 voltage_v: 230.0,
                 phase_count: 1,
                 min_current_a: 6,
                 max_current_a: 16,
                 current_step_a: 1,
-            },
-            pool_store: ThermalStore {
+            }),
+            pool_store: Some(ThermalStore {
                 capacity_kwh_per_c: 10.0,
                 loss: StandingLoss::Linear {
                     kw_per_c: 0.0,
                     surroundings_c: None,
                 },
-            },
-            heater: Heater {
+            }),
+            heater: Some(Heater {
                 compressor_w: 3000.0,
                 auxiliary_w: 0.0,
                 heat_w: 12000.0,
                 response: Response::Steady,
-            },
+            }),
+            pool_stop_c: None,
             initial: Initial {
-                battery_kwh: 5.0,
-                ev_kwh: 10.0,
-                pool_c: 30.0,
-                heater_state: HeaterState::OffUnobserved,
+                battery_kwh: Some(5.0),
+                ev_kwh: Some(10.0),
+                pool_c: Some(30.0),
+                heater_state: Some(HeaterState::OffUnobserved),
             },
             targets: Targets {
-                pool_c: 30.0,
-                ev_km: 0.0,
-                ev_limit_kwh: 60.0,
+                pool_c: Some(30.0),
+                ev_km: Some(0.0),
+                ev_limit_kwh: Some(60.0),
             },
             limits: Limits {
                 import_w: 7000.0,
@@ -1176,11 +1207,11 @@ mod tests {
             locked_through_seconds: 0.0,
         }
     }
-    fn hold() -> Command {
+    fn idle() -> Command {
         Command {
             pool_on: false,
             ev_amps: 0,
-            battery: Operation::Hold,
+            battery: Operation::Idle,
             charge_limit_w: 0.0,
             discharge_limit_w: 0.0,
         }
@@ -1201,12 +1232,25 @@ mod tests {
         let audit = audit(p, commands, &q, &index, &mut work, quota);
         assert!(work.used + work.reserved <= work.limit);
         assert!(work.witness_trials <= quota as u64);
+        for repair in &audit.repairs {
+            for c in &repair.commands {
+                if matches!(
+                    c.battery,
+                    Operation::Hold | Operation::SupplyHouse | Operation::SolarCharge
+                ) {
+                    assert_eq!(c.charge_limit_w, p.battery.as_ref().unwrap().charge_max_w);
+                }
+                if c.battery == Operation::Idle {
+                    assert_eq!((c.charge_limit_w, c.discharge_limit_w), (0.0, 0.0));
+                }
+            }
+        }
         audit
     }
     #[test]
     fn joins_pool_gap_only_with_feasible_inventory_preserving_witness() {
         let mut p = problem(3);
-        let mut c = vec![hold(); 3];
+        let mut c = vec![idle(); 3];
         c[0].pool_on = true;
         c[2].pool_on = true;
         let yes = run(&p, &c, 192);
@@ -1220,7 +1264,7 @@ mod tests {
     #[test]
     fn equal_price_native_ev_gap_is_repaired_without_minimum_run_rule() {
         let p = problem(3);
-        let mut c = vec![hold(); 3];
+        let mut c = vec![idle(); 3];
         c[0].ev_amps = 16;
         c[2].ev_amps = 16;
         let result = run(&p, &c, 192);
@@ -1228,14 +1272,18 @@ mod tests {
         for repair in result.repairs.iter().filter(|r| r.family == "ev_short_gap") {
             let after = physics::projection(&p, &repair.commands).unwrap();
             let before = physics::projection(&p, &c).unwrap();
-            assert!((after.last().unwrap().ev_kwh - before.last().unwrap().ev_kwh).abs() < EPS);
+            assert!(
+                (after.last().unwrap().ev_kwh.unwrap() - before.last().unwrap().ev_kwh.unwrap())
+                    .abs()
+                    < EPS
+            );
         }
     }
     #[test]
     fn overlap_needs_cheaper_available_destination() {
         let mut p = problem(2);
         p.slots[0].import_price = 2.0;
-        let mut c = vec![hold(); 2];
+        let mut c = vec![idle(); 2];
         c[0].pool_on = true;
         c[0].ev_amps = 16;
         assert!(run(&p, &c, 192).overlap[0]);
@@ -1247,9 +1295,9 @@ mod tests {
         let mut p = problem(2);
         p.slots[0].import_price = 3.0;
         p.slots[1].base_w = 1000.0;
-        let mut c = vec![hold(); 2];
+        let mut c = vec![idle(); 2];
         set_charge(&mut c[0], 1000.0);
-        set_discharge(&mut c[1], 1000.0, false);
+        set_discharge(&mut c[1], 1000.0, false, p.battery.as_ref().unwrap());
         let yes = run(&p, &c, 192);
         assert!(yes
             .economic
@@ -1273,13 +1321,18 @@ mod tests {
     #[test]
     fn published_certificates_never_inherit_forecast_repairs() {
         let mut p = problem(4);
-        let mut commands = vec![hold(); 4];
+        let mut commands = vec![idle(); 4];
         for from in [0, 2] {
             p.slots[from].import_price = 3.0;
             p.slots[from + 1].import_price = 1.0;
             p.slots[from + 1].base_w = 1000.0;
             set_charge(&mut commands[from], 1000.0);
-            set_discharge(&mut commands[from + 1], 1000.0, false);
+            set_discharge(
+                &mut commands[from + 1],
+                1000.0,
+                false,
+                p.battery.as_ref().unwrap(),
+            );
         }
         p.slots[0].published = false;
         p.slots[1].published = false;
@@ -1311,10 +1364,10 @@ mod tests {
     #[test]
     fn accepted_hour_is_never_changed_and_zero_quota_is_explicit() {
         let mut p = problem(8);
-        let mut c = vec![hold(); 8];
+        let mut c = vec![idle(); 8];
         c[0].pool_on = true;
         c[2].pool_on = true;
-        p.accepted = Some(c.clone());
+        p.accepted = Some(c[..4].to_vec());
         p.locked_through_seconds = 3600.0;
         let result = run(&p, &c, 192);
         assert!(!result.gaps[1][0]);
@@ -1327,5 +1380,24 @@ mod tests {
             .iter()
             .any(|r| r.family == "pool_short_gap" && r.trials == 0 && r.quota_exhausted));
         assert!(none.economic.is_empty());
+    }
+    #[test]
+    fn witness_supply_retains_solar_permission_and_zero_booking_is_idle() {
+        let mut p = problem(1);
+        p.slots[0].solar_w = 2000.0;
+        let mut c = idle();
+        set_discharge(&mut c, 500.0, false, p.battery.as_ref().unwrap());
+        let rows = physics::projection(&p, &[c.clone()]).unwrap();
+        assert_eq!(rows[0].charge_w, 2000.0);
+        assert_eq!(rows[0].discharge_w, 0.0);
+        set_discharge(&mut c, 0.0, false, p.battery.as_ref().unwrap());
+        assert_eq!(c.battery, Operation::Idle);
+        assert_eq!(
+            physics::projection(&p, &[c.clone()]).unwrap()[0].charge_w,
+            0.0
+        );
+        set_charge(&mut c, 0.0);
+        assert_eq!(c.battery, Operation::Idle);
+        assert_eq!(c.charge_limit_w, 0.0);
     }
 }

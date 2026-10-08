@@ -53,17 +53,16 @@ import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type 
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
-import { LARGE_WORKLOAD_W } from './large-load-overlap';
-import { SHORT_GAP_PRICE_FRACTION, SHORT_GAP_PRICE_TOLERANCE, type GapDevice } from './short-gaps';
+import { SHORT_GAP_PRICE_FRACTION, type GapDevice } from './short-gaps';
 import { canonicalJson } from './case';
+import { criteriaErrors, CriteriaError, ruleDefaults, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
+export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
 export const SCORER_VERSION = 24;
 /** The most a rule may take from a quarter, and the most it may give. */
-export const RULE_POINTS_MIN = -2;
-export const RULE_POINTS_MAX = 2;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -166,28 +165,23 @@ export function arbitragePreparation(s: BenchSeries, salePrice: number): {
   return { firstQuarter, lastChargeQuarter, prepared: firstQuarter >= 0 && soc !== null && soc >= 100 };
 }
 
-export const DEFAULT_RULES: QuarterRule[] = [
+const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "unless">[] = [
   {
-    key: 'pool_low', about: 'pool', label: 'Pool below target', describe: t => `more than ${t} °C below`, threshold: 1, points: -1,
-    fires: poolBelow, eligibleFrom: poolFrom,
+    key: 'pool_low', about: 'pool', label: 'Pool below target', describe: t => `more than ${t} °C below`, fires: poolBelow, eligibleFrom: poolFrom,
   },
   {
-    key: 'pool_cold', about: 'pool', label: 'Pool far below target', describe: t => `more than ${t} °C below`, threshold: 2, points: -1, required: true,
-    fires: poolBelow, eligibleFrom: poolFrom,
+    key: 'pool_cold', about: 'pool', label: 'Pool far below target', describe: t => `more than ${t} °C below`, fires: poolBelow, eligibleFrom: poolFrom,
   },
   // Warm water is a store. Above the target it is one or the other: heat kept for a dearer or duller day, or waste.
   {
-    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `more than ${t} °C above target, the next day neither dearer nor less sunny`, threshold: 2, points: -1,
-    fires: (q, t) => poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
+    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `more than ${t} °C above target, the next day neither dearer nor less sunny`, fires: (q, t) => poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
   },
   {
-    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target, the next day dearer or less sunny`, threshold: 2, points: 1,
-    fires: (q, t) => poolAbove(q, t) && !!q.ahead && (q.ahead.dearer || q.ahead.lessSun), eligibleFrom: poolAny,
+    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target, the next day dearer or less sunny`, fires: (q, t) => poolAbove(q, t) && !!q.ahead && (q.ahead.dearer || q.ahead.lessSun), eligibleFrom: poolAny,
   },
   {
     key: 'pool_restart', about: 'pool', label: 'Pool heater restarted too soon',
     describe: t => `started less than ${t} hours after its last stop; only the starting quarter counts`,
-    threshold: 12, points: -2,
     fires: (q, t) => {
       const start = q.s.poolStart?.[q.i];
       return start !== null && start !== undefined && start.off_seconds !== null && start.off_seconds < t * 3600;
@@ -195,83 +189,71 @@ export const DEFAULT_RULES: QuarterRule[] = [
     eligibleFrom: s => s.poolStart?.length === s.start.length ? 0 : Infinity,
   },
   {
-    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, threshold: 50, points: -1,
-    fires: carBelow, eligibleFrom: carFrom,
+    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, threshold: 100, points: -1, required: true,
-    fires: carBelow, eligibleFrom: carFrom,
+    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.25, points: 1,
-    unless: 'cheapest_buy', fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, threshold: 0.1, points: 2,
-    fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.25, points: -1,
-    unless: 'dearest_load', fires: dearBuy, eligibleFrom: () => 0,
+    key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => `price in dearest ${pct(t)}`, fires: dearBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, threshold: 0.1, points: -2,
-    fires: dearBuy, eligibleFrom: () => 0,
+    key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, fires: dearBuy, eligibleFrom: () => 0,
   },
   {
     key: 'base_load_dear_import', about: 'price', label: 'Dear base-load import the battery could cover',
     describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
-    threshold: 0.25, points: -1,
-    unless: 'base_load_dearest_import', fires: baseLoadDearBuy, eligibleFrom: () => 0,
+    fires: baseLoadDearBuy, eligibleFrom: () => 0,
   },
   {
     key: 'base_load_dearest_import', about: 'price', label: 'Very dear base-load import the battery could cover',
     describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
-    threshold: 0.1, points: -2,
     fires: baseLoadDearBuy, eligibleFrom: () => 0,
   },
   {
     key: 'missed_cheap_quarter', about: 'price', label: 'Missed cheap charging or heating quarter',
     describe: t => `purchase price below ${t} SEK/kWh, a flexible store below target, and no charging or pool heating drawing at least ${FLEXIBLE_W} W`,
-    threshold: 1, points: -1,
     fires: missedCheapQuarter, eligibleFrom: () => 0,
   },
   {
     key: 'arbitrage_no_export', about: 'price', label: 'No export during a high sale-price quarter',
     describe: t => `sale price above ${t} SEK/kWh and no energy exported to the grid`,
-    threshold: ARBITRAGE_SALE_PRICE, points: -1,
     fires: (q, t) => q.s.exportPrice[q.i] > t && q.s.gridExportW[q.i] <= 0,
     eligibleFrom: () => 0,
   },
   {
     key: 'arbitrage_not_full', about: 'price', label: 'Battery not fully charged before arbitrage',
     describe: t => `sale price above ${t} SEK/kWh and the last charge before the first opportunity did not finish at 100% SOC`,
-    threshold: ARBITRAGE_SALE_PRICE, points: -1,
     fires: (q, t) => q.s.exportPrice[q.i] > t && !q.arbitragePrepared,
     eligibleFrom: () => 0,
   },
   {
     key: 'large_load_overlap', about: 'price', label: 'Large workloads overlap with cheaper capacity available',
     describe: t => `at least two workloads each above ${t} W, with jointly feasible EV or home-battery charging moves to distinct strictly cheaper quarters; pool heating stays fixed`,
-    threshold: LARGE_WORKLOAD_W, points: -1,
     fires: q => q.avoidableOverlap,
     eligibleFrom: () => 0,
   },
   {
     key: 'ev_from_home_battery', about: 'price', label: 'EV supplied by home battery',
     describe: t => `more than ${t} W of home-battery power supplies the EV after other loads and exports`,
-    threshold: 0, points: -1,
     fires: (q, t) => q.evBatteryW > t,
     eligibleFrom: () => 0,
   },
-  ...(['ev', 'pool'] as const).map((device): QuarterRule => ({
+  ...(['ev', 'pool'] as const).map((device): Omit<QuarterRule, "threshold" | "points" | "required" | "unless"> => ({
     key: `${device}_short_gap`, about: 'price',
     label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
     describe: t => `an avoidable 1–4-quarter gap, each gap price within the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price, compared with both bordering running quarters`,
-    threshold: SHORT_GAP_PRICE_TOLERANCE, points: -1,
     fires: q => q.shortGapDevices.has(device), eligibleFrom: () => 0,
   })),
 ];
+
+export const DEFAULT_RULES: QuarterRule[] = QUARTER_RULES.map(rule => ({...rule, ...ruleDefaults(rule.key)}));
 
 /** The base-load price tiers share the same explanation and capability check. */
 export const BASE_LOAD_DEAR_RULE_KEYS: readonly string[] = ['base_load_dear_import', 'base_load_dearest_import'];
@@ -283,27 +265,6 @@ export const DEAR_RULE_KEYS: readonly string[] = ['dear_load', 'dearest_load'];
  * opportunity audit replaced them; an override stored under one of these names
  * is ignored by name, not applied to anything.
  */
-export const REMOVED_RULE_KEYS: readonly string[] = ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge'];
-
-export class CriteriaError extends Error {}
-
-/** What is wrong with the saved overrides; empty when they can be scored with. */
-export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
-  const errors: string[] = [];
-  const known = new Set(DEFAULT_RULES.map(r => r.key));
-  for (const [key, o] of Object.entries(overrides ?? {})) {
-    if (REMOVED_RULE_KEYS.includes(key)) continue;
-    if (!known.has(key)) { errors.push(`Unknown rule "${key}".`); continue; }
-    if (typeof o !== 'object' || o === null) { errors.push(`${key}: not an override.`); continue; }
-    if (o.enabled !== undefined && typeof o.enabled !== 'boolean') errors.push(`${key}: enabled must be true or false.`);
-    if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);
-    if (o.points !== undefined && !(Number.isInteger(o.points) && o.points !== 0 && o.points >= RULE_POINTS_MIN && o.points <= RULE_POINTS_MAX)) {
-      errors.push(`${key}: points must be between ${RULE_POINTS_MIN} and ${RULE_POINTS_MAX}, and not 0.`);
-    }
-  }
-  return errors;
-}
-
 export type ResolvedRule = QuarterRule & { enabled: boolean };
 
 /** The bench's rules: the defaults with the saved `enabled`, `threshold` and `points` overrides applied. */

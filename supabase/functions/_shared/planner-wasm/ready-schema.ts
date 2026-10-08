@@ -12,6 +12,8 @@ const command = z.object({
   pool_on: z.boolean(),
   ev_amps: number.int().nonnegative(),
   battery: z.enum([
+    "idle",
+    "solar_charge",
     "hold",
     "self_consumption",
     "grid_charge",
@@ -22,7 +24,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(3),
+  abi: z.literal(4),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
     beam_width: number.int().positive(),
@@ -40,6 +42,7 @@ export const readyProblemSchema = z.object({
     import_price: number,
     export_price: number,
     published: z.boolean(),
+    ev_available: z.boolean(),
   }).array().nonempty(),
   battery: z.object({
     capacity_kwh: number,
@@ -49,19 +52,19 @@ export const readyProblemSchema = z.object({
     discharge_max_w: number,
     charge_efficiency: number,
     discharge_efficiency: number,
-  }),
+  }).nullable(),
   car: z.object({
     capacity_kwh: number,
     kwh_per_km: number,
     charge_efficiency: number,
-  }),
+  }).nullable(),
   charger: z.object({
     voltage_v: number,
     phase_count: number.int(),
     min_current_a: number.int(),
     max_current_a: number.int(),
     current_step_a: number.int(),
-  }),
+  }).nullable(),
   pool_store: z.object({
     capacity_kwh_per_c: number,
     loss: z.discriminatedUnion("kind", [
@@ -75,7 +78,7 @@ export const readyProblemSchema = z.object({
         points: z.object({ at_c: number, c_per_h: number }).array(),
       }),
     ]),
-  }),
+  }).nullable(),
   heater: z.object({
     compressor_w: number,
     auxiliary_w: number,
@@ -91,14 +94,19 @@ export const readyProblemSchema = z.object({
         }).array(),
       }),
     ]),
-  }),
+  }).nullable(),
+  pool_stop_c: number.nullable(),
   initial: z.object({
-    battery_kwh: number,
-    ev_kwh: number,
-    pool_c: number,
-    heater_state: age,
+    battery_kwh: number.nullable(),
+    ev_kwh: number.nullable(),
+    pool_c: number.nullable(),
+    heater_state: age.nullable(),
   }),
-  targets: z.object({ pool_c: number, ev_km: number, ev_limit_kwh: number }),
+  targets: z.object({
+    pool_c: number.nullable(),
+    ev_km: number.nullable(),
+    ev_limit_kwh: number.nullable(),
+  }),
   limits: z.object({
     import_w: number,
     export_w: number,

@@ -12,9 +12,29 @@ export const command = (pool_on = false): NativeCommand => ({
   charge_limit_w: 8800,
   discharge_limit_w: 9600,
 });
-export function problem(): ReadyProblem {
+/** This fixture intentionally contains every device; live absence has separate tests. */
+export type EquippedProblem =
+  & ReadyProblem
+  & {
+    [K in "battery" | "car" | "charger" | "pool_store" | "heater"]: NonNullable<
+      ReadyProblem[K]
+    >;
+  }
+  & {
+    initial: {
+      [K in keyof ReadyProblem["initial"]]: NonNullable<
+        ReadyProblem["initial"][K]
+      >;
+    };
+    targets: {
+      [K in keyof ReadyProblem["targets"]]: NonNullable<
+        ReadyProblem["targets"][K]
+      >;
+    };
+  };
+export function problem(): EquippedProblem {
   return {
-    abi: 3,
+    abi: 4,
     work_grant: 12_000_000,
     recipe: {
       beam_width: 8,
@@ -34,6 +54,7 @@ export function problem(): ReadyProblem {
         import_price: 1 + i / 10,
         export_price: .5,
         published: true,
+        ev_available: true,
       }),
     ),
     battery: HOUSEHOLD.battery,
@@ -46,6 +67,7 @@ export function problem(): ReadyProblem {
       heat_w: 12000,
       response: { kind: "steady" },
     },
+    pool_stop_c: null,
     initial: {
       battery_kwh: 10,
       ev_kwh: 60,

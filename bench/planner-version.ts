@@ -23,7 +23,7 @@ export function usesRulePlanner(tree: SourceTree): boolean {
   if (
     typeof selection !== "object" || selection === null ||
     !("engine" in selection) || selection.engine !== "rule-wasm" ||
-    !("scope" in selection) || selection.scope !== "bench-only" ||
+    !("scope" in selection) || !["bench-only", "test-live"].includes(String(selection.scope)) ||
     Object.keys(selection).length !== 2
   ) throw new Error("Unsupported committed bench engine selection.");
   return true;
@@ -64,7 +64,7 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
     const artifact: unknown = JSON.parse(manifest);
     if (
       typeof artifact !== "object" || artifact === null ||
-      !("abi" in artifact) || (artifact.abi !== 2 && artifact.abi !== 3) ||
+      !("abi" in artifact) || (artifact.abi !== 2 && artifact.abi !== 3 && artifact.abi !== 4) ||
       !("wasm_sha256" in artifact) ||
       typeof artifact.wasm_sha256 !== "string" ||
       !("source_sha256" in artifact) ||
@@ -78,7 +78,7 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
       }),
     );
     const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return `v3-rule-wasm:${
+    return `v${artifact.abi}-rule-wasm:${
       [...new Uint8Array(digest)].map((v) => v.toString(16).padStart(2, "0"))
         .join("")
     }`;

@@ -44,7 +44,7 @@ const build = JSON.parse(
   ),
 );
 const responseSchema = z.object({
-  qualification: z.literal("prototype_only"),
+  qualification: z.literal("test_live_candidate"),
   build: z.object({ wasm_sha256: z.string(), source_sha256: z.string() }),
   outcome: solveOutcome,
   cold: z.boolean(),
@@ -85,7 +85,9 @@ for (const scenario of workloads) {
         : "unspecified";
       const message = typeof diagnostic.message === "string"
         ? diagnostic.message.slice(0, 300)
-        : typeof diagnostic.error === "string" ? diagnostic.error.slice(0, 300) : "";
+        : typeof diagnostic.error === "string"
+        ? diagnostic.error.slice(0, 300)
+        : "";
       throw new Error(
         `TEST probe returned HTTP ${response.status} (${code}) ${message}; no result qualified.`,
       );
@@ -123,7 +125,7 @@ await Deno.writeTextFile(
   JSON.stringify(
     {
       project,
-      qualification: "prototype_only",
+      qualification: "test_live_candidate",
       version: planner.version,
       cpu_qualification: "unmeasured_platform_cpu",
       memory_scope: "wasm_instance_high_water_only",

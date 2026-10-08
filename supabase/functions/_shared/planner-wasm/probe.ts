@@ -102,9 +102,9 @@ export function createPlannerProbe(
         (b) => b.toString(16).padStart(2, "0"),
       ).join("");
       if (
-        hash !== build.wasm_sha256 || build.abi !== 3 ||
-        build.qualification !== "prototype_only"
-      ) throw new Error("Invalid prototype artifact.");
+        hash !== build.wasm_sha256 || build.abi !== 4 ||
+        build.qualification !== "test_live_candidate"
+      ) throw new Error("Invalid TEST candidate artifact.");
       try {
         loaded = {
           planner: createWasmPlanner(bytes),
@@ -146,7 +146,7 @@ export function createPlannerProbe(
     const { outcome, wasm_memory_bytes, input_bytes, output_bytes } = solved;
     const solve_elapsed_ms = performance.now() - beforeSolve;
     const response = Response.json({
-      qualification: "prototype_only",
+      qualification: "test_live_candidate",
       build,
       recipe,
       outcome,

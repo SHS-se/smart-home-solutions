@@ -1,10 +1,12 @@
 import type { OperatingScope } from "../supabase/functions/_shared/planner/operating-scope.ts";
 import {
-  generateOptimisationPlan,
   type OptimisationSnapshotV6,
   type OptimisationSnapshotV8,
   type OptimisationSnapshot,
 } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+
+import { generateRulesPlan, prepareRulesPlanningInput } from "../supabase/functions/_shared/rules-planner.ts";
+import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 
 const NOW = new Date("2026-08-20T08:55:00.000Z");
 const SLOT_MS = 15 * 60_000;
@@ -120,13 +122,42 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
   };
 }
 
+/** Explicit fixture facts, passed through the same live ready-input boundary. */
+export function rulesFixturePlan(source: OptimisationSnapshot) {
+  const snapshot = structuredClone(source);
+  snapshot.captured_at = new Date(Math.max(Date.parse(snapshot.captured_at), Date.parse(snapshot.slots[0].start))).toISOString();
+  snapshot.comfort = { ...(snapshot.capabilities.ev ? { ev: { target_km: 300 } } : {}),
+    ...(snapshot.capabilities.pool ? { pool: { target_c: 30 } } : {}) };
+  snapshot.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
+  if (snapshot.capabilities.pool) {
+    snapshot.pool_model = { loss_kw_per_k: .1, rated_cop: null, cop_per_air_c: null,
+      hardware: { start_c: 28, stop_c: 34, control: "external_enable", source_entity_ids: { start: "number.fixture_pool_start", stop: "number.fixture_pool_stop" } },
+      heater_response: { kind: "steady" } };
+    snapshot.device_physics = { pool: { store: { capacity_kwh_per_c: 55 * 1.163,
+      loss: { kind: "linear", kw_per_c: .1, surroundings_c: 15 } }, heater: {
+      setting_unit: "fixture", operating_points: [{ setting: 1, electric_w: 1400, heat_w: 6000 }],
+      selected_setting: 1, control: "switch", auxiliary_w: 700, response: {kind: "steady"},
+    } } };
+  }
+  if (snapshot.schema_version === 9 && snapshot.capabilities.battery) snapshot.battery_execution_feedback = {
+    generation: 1, source_receipt: 0, previous_contract_id: null, scope_revision: "fixture-whole-house", objectives: [],
+  };
+  return generateRulesPlan(prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
+    resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
+      shadow_import_sek_per_kwh: snapshot.slots.map(slot => {
+        if (slot.import_price_sek_per_kwh === null) throw new Error("Fixture must supply every forecast price");
+        return slot.import_price_sek_per_kwh;
+      }) },
+  }, null, resolveRulePolicy())).plan;
+}
+
 export function dispatchedEvPlanFixture() {
   return {
     contract_fixture: "schema-6-dispatched-ev",
-    generated_by: "generateOptimisationPlan",
+    generated_by: "generateRulesPlan",
     validation_time: "2026-08-20T09:00:00.000Z",
     plan: {
-      ...generateOptimisationPlan(dispatchedEvSnapshot(), NOW),
+      ...rulesFixturePlan(dispatchedEvSnapshot()),
       plan_id: "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     },
   };
@@ -148,9 +179,9 @@ export function batterySnapshot(): OptimisationSnapshotV8 {
 }
 
 export function batteryPlanFixture() {
-  return {contract_fixture: "schema-8-battery", generated_by: "generateOptimisationPlan",
+  return {contract_fixture: "schema-8-battery", generated_by: "generateRulesPlan",
     validation_time: "2026-08-20T09:00:00.000Z",
-    plan: {...generateOptimisationPlan(batterySnapshot(), NOW),
+    plan: {...rulesFixturePlan(batterySnapshot()),
       plan_id: "c22f37ca-7791-4b9c-a1ec-793ba6e226bd"}};
 }
 
@@ -187,9 +218,9 @@ export function mixedModeSnapshot(): OptimisationSnapshot & {operating_scope: Op
 
 export function mixedModePlanFixture() {
   const snapshot = mixedModeSnapshot();
-  return {contract_fixture: "schema-9-mixed-mode", generated_by: "generateOptimisationPlan",
+  return {contract_fixture: "schema-9-mixed-mode", generated_by: "generateRulesPlan",
     validation_time: snapshot.captured_at,
-    plan: generateOptimisationPlan(snapshot, new Date(snapshot.captured_at))};
+    plan: rulesFixturePlan(snapshot)};
 }
 
 if (import.meta.main) {

@@ -162,14 +162,7 @@ export interface BenchVerdict {
 }
 
 /** Changes to a default quarter rule, for every case and planner alike; omitted fields keep the default. Checked by `criteriaErrors` (score.ts). */
-export interface CriterionOverride {
-  enabled?: boolean;
-  /** How far from the target the rule fires, in the store's unit; 0 or more. */
-  threshold?: number;
-  /** Points the rule gives or takes per quarter, -2..2, never 0. */
-  points?: number;
-}
-export type CriteriaOverrides = Record<string, CriterionOverride>;
+export type { CriterionOverride, CriteriaOverrides } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export type ValuationSupport = 'scale' | 'urgency_only' | 'none';
 

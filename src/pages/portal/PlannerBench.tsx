@@ -35,7 +35,6 @@ import type {
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchComparePanel from '@/components/portal/planner-bench/BenchComparePanel';
-import BenchCurvesPanel from '@/components/portal/planner-bench/BenchCurvesPanel';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import BenchOverlapMove from '@/components/portal/planner-bench/BenchOverlapMove';
@@ -858,7 +857,6 @@ const CaseView: React.FC<CaseViewProps> = ({
             ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
             <BenchComparePanel current={series.current} test={series.test} timeZone={TZ} />
             <LanePanel lane={lane} onLane={onLane} lanes={lanes} />
-            <BenchCurvesPanel current={details?.current?.record?.curves ?? null} test={details?.test?.record?.curves ?? null} />
             {scenario.dataset && (
               <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
                 saving={savingStartState} onSave={onSaveStartState} />

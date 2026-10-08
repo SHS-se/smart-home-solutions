@@ -11,7 +11,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   return {
-    abi: 3,
+    abi: 4,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
     slots: prices.map((price, i) => ({
@@ -23,6 +23,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       import_price: price,
       export_price: price - .5,
       published: i < 96,
+      ev_available: true,
     })),
     battery: {
       capacity_kwh: 10,
@@ -51,6 +52,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       heat_w: 8000,
       response: { kind: "steady" },
     },
+    pool_stop_c: null,
     initial: {
       battery_kwh: 5,
       ev_kwh: 10,

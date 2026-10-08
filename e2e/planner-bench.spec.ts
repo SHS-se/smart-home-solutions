@@ -632,15 +632,7 @@ test.describe('planner bench', () => {
     const caseCard = page.locator('#bench-show-current').locator('xpath=ancestor::*[contains(@class,"rounded-lg")][1]');
     await expect(caseCard.locator('#bench-real-cost')).toHaveCount(0);
     await summary.screenshot({ path: test.info().outputPath('cost-summary-desktop.png') });
-    const poolCurve = page.locator('#bench-curve-pool').getByRole('img');
-    await expect(poolCurve).toBeVisible();
-    await expect(page.locator('#bench-curve-pool')).toContainText('comfort target');
-    // The positive target endpoint drops vertically, then stays at zero to the
-    // reachable ceiling. A sloping line would invent utility above the target.
-    await expect(poolCurve.locator('path').last()).toHaveAttribute('d', /L153\.0,8\.0 L153\.0,102\.0 L272\.0,102\.0$/);
-    await poolCurve.screenshot({ path: test.info().outputPath('target-value-curve.png') });
-    await expect(page.locator('#bench-curve-battery')).toContainText('balanced');
-    await expect(page.locator('#bench-curve-ev')).toContainText(/reported no curve|rapporterade ingen kurva/);
+    await expect(page.getByText(/Value curves used|Värdekurvor som användes/)).toHaveCount(0);
 
     // The lanes say why: what knowing the real prices would have saved, and which valuation did best.
     await expect(page.locator('#bench-diagnosis-test')).toContainText(/price estimate cost 12 kr|prisgissningen kostade 12 kr/);

@@ -26,7 +26,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v3";
+export const READY_PRODUCER_VERSION = "bench-ready-v4";
 
 /** This runs as forecast preparation, outside solve; production will consume ready artifacts. */
 export function readyProblem(
@@ -75,7 +75,7 @@ export function readyProblem(
   const heater = publishHeater(h.pool.heater);
   const target = caseTargets(c);
   return {
-    abi: 3,
+    abi: 4,
     work_grant: grant,
     recipe: builderRecipe(recipe),
     slots: starts.map((_start, i) => ({
@@ -87,6 +87,7 @@ export function readyProblem(
       outdoor_c: c.recorded.outdoor_temperature_c[i],
       import_price: prices[i],
       export_price: c.known_prices.export_sek_per_kwh[i] ?? prices[i] - spread,
+      ev_available: true,
       published: c.known_prices.import_sek_per_kwh[i] !== null &&
         c.known_prices.export_sek_per_kwh[i] !== null,
     })),
@@ -95,6 +96,8 @@ export function readyProblem(
     charger: h.car.charger,
     pool_store: h.pool.store,
     heater,
+    // The benchmark has no captured hardware thermostat. Keep its declared model.
+    pool_stop_c: null,
     initial: {
       battery_kwh: c.start_state.battery_soc * h.battery.capacity_kwh,
       ev_kwh: c.start_state.ev.soc * h.car.battery.capacity_kwh,
@@ -145,7 +148,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 3 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 4 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -159,7 +162,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v3:${identity}`,
+    version: `wasm-v4:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -189,23 +192,30 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v3",
+          generation: "ready-wasm-v4",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>
-              c.ev_amps * problem.charger.voltage_v *
-              problem.charger.phase_count
+              problem.charger
+                ? c.ev_amps * problem.charger.voltage_v *
+                  problem.charger.phase_count
+                : 0
             ),
             battery_charge_w: s.quarters.map((q) => q.charge_w),
             battery_discharge_w: s.quarters.map((q) => q.discharge_w),
             battery_follow: s.commands.map((c, i) => ({
-              follows: ["self_consumption", "supply_house", "hold"].includes(
+              follows: [
+                "self_consumption",
+                "solar_charge",
+                "supply_house",
+                "hold",
+              ].includes(
                 c.battery,
               ),
-              charge_limit_w: ["hold", "supply_house"].includes(c.battery)
+              charge_limit_w: c.charge_limit_w,
+              discharge_limit_w: ["hold", "solar_charge"].includes(c.battery)
                 ? 0
-                : c.charge_limit_w,
-              discharge_limit_w: c.battery === "hold" ? 0 : c.discharge_limit_w,
+                : c.discharge_limit_w,
               planned: [s.quarters[i].charge_w, s.quarters[i].discharge_w],
             })),
           },

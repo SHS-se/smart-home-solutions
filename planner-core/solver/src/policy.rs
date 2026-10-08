@@ -19,8 +19,20 @@ pub(crate) struct Index {
     pub future: Vec<FutureNeeds>,
     pub first_sale: Option<usize>,
 }
+pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
+    use RuleKey::*;
+    match key {
+        PoolLow | PoolCold | PoolHot | PoolBuffer | PoolRestart | PoolShortGap => {
+            p.heater.is_some()
+        }
+        EvLow | EvShort | EvShortGap => p.car.is_some(),
+        BaseLoadDearImport | BaseLoadDearestImport | ArbitrageNotFull => p.battery.is_some(),
+        EvFromHomeBattery => p.car.is_some() && p.battery.is_some(),
+        _ => true,
+    }
+}
 pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
-    p.rules.iter().find(|r| r.key == key)
+    p.rules.iter().find(|r| r.key == key && applicable(p, key))
 }
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
@@ -69,10 +81,12 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             .position(|s| measured(s.export_price, 10000.0) > r.threshold)
     });
     let due = eligibility(p);
-    let ev_goal = (p.targets.ev_km * p.car.kwh_per_km).min(p.targets.ev_limit_kwh);
+    let ev_goal = p.car.as_ref().map_or(0.0, |car| {
+        (p.targets.ev_km.unwrap() * car.kwh_per_km).min(p.targets.ev_limit_kwh.unwrap())
+    });
     let mut future = vec![
         FutureNeeds {
-            pool_goal: p.targets.pool_c,
+            pool_goal: p.targets.pool_c.unwrap_or(0.0),
             ev_goal,
             useful_pool_quarters: 0.0,
             next_cheaper: n,
@@ -90,20 +104,25 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         let h = projected_hours(s);
         let buffer_rule = rule(p, RuleKey::PoolBuffer).filter(|r| r.points > 0);
         let goal = if buffer[i] == Some(true) {
-            buffer_rule.map_or(p.targets.pool_c, |r| {
-                p.targets.pool_c
+            buffer_rule.map_or(p.targets.pool_c.unwrap_or(0.0), |r| {
+                p.targets.pool_c.unwrap_or(0.0)
                     + r.threshold
                     + 0.0005
-                    + (p.pool_store.step(
-                        p.targets.pool_c + r.threshold,
-                        p.heater.heat_w,
-                        s.outdoor_c,
-                        h,
-                    ) - (p.targets.pool_c + r.threshold))
+                    + (p.pool_store.as_ref().map_or(
+                        p.targets.pool_c.unwrap_or(0.0) + r.threshold,
+                        |store| {
+                            store.step(
+                                p.targets.pool_c.unwrap_or(0.0) + r.threshold,
+                                p.heater.as_ref().map_or(0.0, |h| h.heat_w),
+                                s.outdoor_c,
+                                h,
+                            )
+                        },
+                    ) - (p.targets.pool_c.unwrap_or(0.0) + r.threshold))
                         .max(0.0)
             })
         } else {
-            p.targets.pool_c
+            p.targets.pool_c.unwrap_or(0.0)
         };
         useful += if buffer[i] == Some(true) {
             buffer_rule.map_or(0.0, |r| f64::from(r.points))
@@ -115,21 +134,26 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
                 useful += rule(p, *key).map_or(0.0, |r| (-r.points).max(0) as f64);
             }
         }
-        let heat_load = if i + 1 < n {
-            (-p.pool_store.idle_per_hour(goal, s.outdoor_c)).max(0.0)
-                * p.pool_store.capacity_kwh_per_c
-                * 1000.0
-                / p.heater.heat_w
-                * (p.heater.compressor_w + p.heater.auxiliary_w)
-        } else {
-            0.0
-        };
+        let heat_load =
+            p.pool_store
+                .as_ref()
+                .zip(p.heater.as_ref())
+                .map_or(0.0, |(store, heater)| {
+                    (-store.idle_per_hour(goal, s.outdoor_c)).max(0.0)
+                        * store.capacity_kwh_per_c
+                        * 1000.0
+                        / heater.heat_w
+                        * (heater.compressor_w + heater.auxiliary_w)
+                });
         demand += (s.base_w + heat_load - s.solar_w).max(0.0) * h / 1000.0;
         let next_cheaper = (i + 1..n)
             .find(|j| {
                 p.slots[*j].import_price < s.import_price
                     || p.slots[*j].solar_w
-                        > p.slots[*j].base_w + p.heater.compressor_w + p.heater.auxiliary_w
+                        > p.slots[*j].base_w
+                            + p.heater
+                                .as_ref()
+                                .map_or(0.0, |h| h.compressor_w + h.auxiliary_w)
             })
             .unwrap_or(n);
         future[i] = FutureNeeds {
@@ -148,17 +172,26 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         let end = (i + 1..n)
             .find(|&j| {
                 p.slots[j].solar_w
-                    > p.slots[j].base_w + p.heater.compressor_w + p.heater.auxiliary_w
+                    > p.slots[j].base_w
+                        + p.heater
+                            .as_ref()
+                            .map_or(0.0, |h| h.compressor_w + h.auxiliary_w)
                     || p.slots[j].import_price < p.slots[i].import_price
             })
             .unwrap_or(n);
         for j in i + 1..end {
             let s = &p.slots[j];
-            let maintenance = (-p.pool_store.idle_per_hour(f.pool_goal, s.outdoor_c)).max(0.0)
-                * p.pool_store.capacity_kwh_per_c
-                * 1000.0
-                / p.heater.heat_w
-                * (p.heater.compressor_w + p.heater.auxiliary_w);
+            let maintenance =
+                p.pool_store
+                    .as_ref()
+                    .zip(p.heater.as_ref())
+                    .map_or(0.0, |(store, heater)| {
+                        (-store.idle_per_hour(f.pool_goal, s.outdoor_c)).max(0.0)
+                            * store.capacity_kwh_per_c
+                            * 1000.0
+                            / heater.heat_w
+                            * (heater.compressor_w + heater.auxiliary_w)
+                    });
             let demand =
                 (s.base_w + maintenance - s.solar_w).max(0.0) * projected_hours(s) / 1000.0;
             f.refill_demand_kwh += demand;
@@ -211,9 +244,13 @@ pub(crate) fn better(a: &Account, b: &Account) -> bool {
         || a.points == b.points && a.cash_sek + a.wear_sek < b.cash_sek + b.wear_sek - 1e-9
 }
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
-    let mut reach_pool = p.initial.pool_c;
-    let mut reach_ev = p.initial.ev_kwh;
-    let mut age = p.initial.heater_state.age();
+    let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
+    let mut reach_ev = p.initial.ev_kwh.unwrap_or(0.0);
+    let mut age = p
+        .initial
+        .heater_state
+        .unwrap_or(HeaterState::OffUnobserved)
+        .age();
     let thresholds = [
         p.service_guard.pool[0],
         p.service_guard.pool[1],
@@ -222,10 +259,18 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     ];
     let mut due = [usize::MAX; 4];
     for (k, threshold) in thresholds.iter().enumerate() {
+        if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {
+            continue;
+        }
         let (start, target) = if k < 2 {
-            (reach_pool, p.targets.pool_c)
+            (reach_pool, p.targets.pool_c.unwrap_or(0.0))
         } else {
-            (measured(reach_ev / p.car.kwh_per_km, 10.0), p.targets.ev_km)
+            (
+                p.car
+                    .as_ref()
+                    .map_or(0.0, |c| measured(reach_ev / c.kwh_per_km, 10.0)),
+                p.targets.ev_km.unwrap_or(0.0),
+            )
         };
         if start >= target - threshold {
             due[k] = 0;
@@ -233,18 +278,52 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     }
     for (i, s) in p.slots.iter().enumerate() {
         let hours = projected_hours(s);
-        let (_, heat, next) = p.heater.step(true, age, hours * 3600.0);
-        age = next;
-        reach_pool = p.pool_store.step(reach_pool, heat, s.outdoor_c, hours);
-        reach_ev = (reach_ev
-            + p.charger.watts(p.charger.max_current_a).unwrap() * hours / 1000.0
-                * p.car.charge_efficiency)
-            .min(p.targets.ev_limit_kwh.max(p.initial.ev_kwh));
+        if let Some((heater, store)) = p.heater.as_ref().zip(p.pool_store.as_ref()) {
+            let state = match age {
+                shs_planner_models::RunAge::Off => HeaterState::OffUnobserved,
+                shs_planner_models::RunAge::Running { seconds } => HeaterState::Running { seconds },
+                shs_planner_models::RunAge::Steady => HeaterState::Steady,
+            };
+            let step = heater.pool_transition(
+                store,
+                state,
+                true,
+                shs_planner_models::PoolConditions {
+                    water_c: reach_pool,
+                    outdoor_c: s.outdoor_c,
+                    seconds: hours * 3600.0,
+                    stop_c: p.pool_stop_c,
+                },
+            );
+            age = step.next.age();
+            reach_pool = step.water_c;
+        }
+        if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
+            if s.ev_available {
+                reach_ev = (reach_ev
+                    + charger.watts(charger.max_current_a).unwrap() * hours / 1000.0
+                        * car.charge_efficiency)
+                    .min(
+                        p.targets
+                            .ev_limit_kwh
+                            .unwrap()
+                            .max(p.initial.ev_kwh.unwrap()),
+                    );
+            }
+        }
         for (k, threshold) in thresholds.iter().enumerate() {
+            if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {
+                continue;
+            }
             let (now, target) = if k < 2 {
-                (measured(reach_pool, 100.0), p.targets.pool_c)
+                (measured(reach_pool, 100.0), p.targets.pool_c.unwrap_or(0.0))
             } else {
-                (measured(reach_ev / p.car.kwh_per_km, 10.0), p.targets.ev_km)
+                (
+                    p.car
+                        .as_ref()
+                        .map_or(0.0, |c| measured(reach_ev / c.kwh_per_km, 10.0)),
+                    p.targets.ev_km.unwrap_or(0.0),
+                )
             };
             if due[k] == usize::MAX && now >= target - threshold {
                 due[k] = i + 96;
@@ -279,9 +358,14 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool
     let ev_w = measured(v.ev_w, 10.0);
     let charge = measured(v.charge_w, 10.0);
     let discharge = measured(v.discharge_w, 10.0);
-    let pool_c = measured(v.pool_c, 1000.0);
-    let ev_km = measured(v.ev_kwh / p.car.kwh_per_km, 10.0);
-    let soc = measured(v.battery_kwh / p.battery.capacity_kwh * 100.0, 10.0);
+    let pool_c = measured(v.pool_c.unwrap_or(0.0), 1000.0);
+    let ev_km = p
+        .car
+        .as_ref()
+        .map_or(0.0, |c| measured(v.ev_kwh.unwrap() / c.kwh_per_km, 10.0));
+    let soc = p.battery.as_ref().map_or(0.0, |b| {
+        measured(v.battery_kwh.unwrap() / b.capacity_kwh * 100.0, 10.0)
+    });
     let imported = measured(v.net_w.max(0.0), 10.0);
     let export = measured((-v.net_w).max(0.0), 10.0);
     let load = measured(s.base_w + v.pool_w + v.ev_w, 10.0);
@@ -303,17 +387,24 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool
     let spare = (v.spare_battery_cover_w * 10.0).floor() / 10.0;
     let rule_fires = |r: &Rule| {
         use RuleKey::*;
+        if !applicable(p, r.key) {
+            return false;
+        }
         let t = r.threshold;
         match r.key {
-            PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c - t,
-            PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c - t,
-            PoolHot => pool_c > p.targets.pool_c + t && index.buffer[i] == Some(false),
+            PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
+            PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
+            PoolHot => {
+                pool_c > p.targets.pool_c.unwrap_or(0.0) + t && index.buffer[i] == Some(false)
+            }
             PoolRestart => v
                 .pool_start
                 .is_some_and(|s| s.off_seconds.is_some_and(|off| off < t * 3600.0)),
-            PoolBuffer => pool_c > p.targets.pool_c + t && index.buffer[i] == Some(true),
-            EvLow => i >= index.due[2] && ev_km < p.targets.ev_km - t,
-            EvShort => i >= index.due[3] && ev_km < p.targets.ev_km - t,
+            PoolBuffer => {
+                pool_c > p.targets.pool_c.unwrap_or(0.0) + t && index.buffer[i] == Some(true)
+            }
+            EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
+            EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
             CheapBuy | CheapestBuy => flexible >= 500.0 && index.cheap[i] < t,
             DearLoad | DearestLoad => flexible_grid >= 500.0 && index.dear[i] < t,
             BaseLoadDearImport | BaseLoadDearestImport => {
@@ -321,7 +412,9 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, prepared: bool
             }
             MissedCheapQuarter => {
                 measured(s.import_price, 10000.0) < t
-                    && (soc < 100.0 || ev_km < p.targets.ev_km || pool_c < p.targets.pool_c)
+                    && (p.battery.is_some() && soc < 100.0
+                        || p.car.is_some() && ev_km < p.targets.ev_km.unwrap_or(0.0)
+                        || p.heater.is_some() && pool_c < p.targets.pool_c.unwrap_or(0.0))
                     && charge < 500.0
                     && ev_w < 500.0
                     && pool_w < 500.0
@@ -363,8 +456,12 @@ fn prepared(p: &Problem, q: &[Quarter], index: &Index) -> bool {
             .iter()
             .rev()
             .find(|v| measured(v.charge_w, 10.0) > 0.0)
-            .map_or(p.initial.battery_kwh, |v| v.battery_kwh);
-        measured(soc / p.battery.capacity_kwh * 100.0, 10.0) >= 100.0
+            .map_or(p.initial.battery_kwh.unwrap_or(0.0), |v| {
+                v.battery_kwh.unwrap_or(0.0)
+            });
+        p.battery
+            .as_ref()
+            .is_some_and(|b| measured(soc / b.capacity_kwh * 100.0, 10.0) >= 100.0)
     })
 }
 

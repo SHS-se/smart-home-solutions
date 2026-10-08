@@ -1,5 +1,11 @@
 # Planner bench
 
+Benchmark history starts at `4cc6718cecdcc6b06fbc48216c504e6022fd659d`
+(`2026-10-07T16:37:53Z`). Earlier runs and their results are deleted from TEST.
+The runner excludes earlier commits before inspecting or solving their planner,
+including explicit selections and `all`; the TEST database rejects their reinsertion.
+Cases, measured history and scoring rules are retained.
+
 The bench decides whether a planner change is better by showing it, not by a
 gate table. Every planner version plans the same set of test cases, for the
 same household, and is scored the same way at what electricity really cost.

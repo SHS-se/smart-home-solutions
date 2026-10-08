@@ -29,7 +29,7 @@ export const SOURCE_FILES = [
 ];
 export function plannerSourceFiles(repository: string): string[] {
   const files = [
-    ...new Set([...SOURCE_FILES, ...reach(diskTree(repository), ['bench/wasm-planner.ts'])]),
+    ...new Set([...SOURCE_FILES, ...[...reach(diskTree(repository), ['bench/wasm-planner.ts', 'supabase/functions/_shared/rules-planner.ts'])].filter(path => !path.endsWith('/artifact.json') && !path.endsWith('/solver-bytes.ts') && !path.endsWith('/solver.wasm') && !path.endsWith('/runtime-config.json'))]),
   ];
   const walk = (directory: string) => {
     for (const e of readdirSync(join(repository, directory), { withFileTypes: true })) {
@@ -96,17 +96,21 @@ if (import.meta.main) {
   const bytes = await Deno.readFile(source);
   const wasm_sha256 = createHash('sha256').update(bytes).digest('hex');
   await Deno.copyFile(source, `${artifactDir}/solver.wasm`);
+  await Deno.writeTextFile(`${artifactDir}/runtime-config.json`, JSON.stringify({
+    recipe: JSON.parse(readFileSync(`${root}/planner-core/recipe.json`, 'utf8')),
+    policy_manifest: JSON.parse(readFileSync(`${root}/planner-core/policy.json`, 'utf8')),
+  }, null, 2) + '\n');
   await Deno.writeTextFile(
     `${artifactDir}/artifact.json`,
     JSON.stringify(
       {
-        abi: 3,
+        abi: 4,
         wasm_sha256,
         source_sha256: sourceDigest(root),
         rust: '1.99.0',
         target: 'wasm32-unknown-unknown',
         profile: 'release',
-        qualification: 'prototype_only',
+        qualification: 'test_live_candidate',
         path_remapping: true,
         source_files: plannerSourceFiles(root),
       },

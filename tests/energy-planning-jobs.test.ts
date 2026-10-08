@@ -404,3 +404,278 @@ Deno.test('durable head, manual and fixed revisions supersede stale batches with
       { id: other, error: null });
   } finally { await db.close(); }
 });
+
+const oneShotMigration = '20261008140000_one_shot_rules_planning';
+async function oneShotDatabase() {
+  const db = await durableDatabase();
+  await db.exec(await migration(oneShotMigration));
+  await db.exec(await migration('20261008144000_complete_test_rule_publications'));
+  return db;
+}
+type AttemptClaim = { id: string; home_id: string; customer_id: string; snapshot_id: string; protocol: number; fence: number };
+async function attemptClaim(db: PGlite, job: string, homeId = home): Promise<AttemptClaim | null> {
+  return (await db.query<{ value: AttemptClaim | null }>(
+    'SELECT claim_energy_planning_attempt($1,$2) AS value', [homeId, job])).rows[0].value;
+}
+async function attemptLoad(db: PGlite, owner: Pick<AttemptClaim, 'id' | 'fence'>, homeId = home) {
+  return (await db.query<{ value: { input: { devices: Record<string, number> }; context: Record<string, unknown> } | null }>(
+    'SELECT load_energy_planning_attempt($1,$2,$3) AS value', [homeId, owner.id, owner.fence])).rows[0].value;
+}
+function rulesSubmission(snapshotId = snapshot, context: Record<string, unknown> = {}) {
+  return { ...submission(snapshotId, { reference_plan_id: null, ...context }), protocol: 9 };
+}
+const attemptIdentity = (owner: AttemptClaim) => ({ job_id: owner.id, home_id: owner.home_id, fence: owner.fence });
+
+Deno.test('protocol 9 uses service-only home-scoped exclusive attempts with no continuation ledger', async () => {
+  const db = await oneShotDatabase();
+  try {
+    const args = rulesSubmission();
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, protocol: 8 }), Error, 'Incomplete planning job');
+    for (const role of ['anon', 'authenticated']) {
+      await db.exec(`SET ROLE ${role}`);
+      await assertRejects(() => rpc(db, 'accept_energy_planning_job', args), Error, 'permission denied');
+      await assertRejects(() => attemptClaim(db, snapshot), Error, 'permission denied');
+      await assertRejects(() => attemptLoad(db, { id: snapshot, fence: 0 }), Error, 'permission denied');
+      await db.exec('RESET ROLE');
+    }
+    await db.exec('SET ROLE service_role');
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    assertEquals((await rpc<Receipt>(db, 'accept_energy_planning_job', args)).job_id, accepted.job_id);
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, source_hash: 'changed' }), Error, 'identity reused');
+    assertEquals(await attemptClaim(db, accepted.job_id, other), null);
+    const owners = await Promise.all([attemptClaim(db, accepted.job_id), attemptClaim(db, accepted.job_id)]);
+    assertEquals(owners.filter(Boolean).length, 1);
+    const owner = owners.find((value): value is AttemptClaim => value !== null)!;
+    assertEquals(owner.protocol, 9);
+    assertEquals(Object.keys(owner).sort(), ['customer_id', 'fence', 'home_id', 'id', 'protocol', 'snapshot_id']);
+    assertEquals(await attemptLoad(db, owner, other), null);
+    const loaded = await attemptLoad(db, owner);
+    assert(loaded);
+    assertEquals(Object.keys(loaded).sort(), ['context', 'input']);
+    assertEquals(Object.keys(loaded.input.devices), ['z_device', 'a_device', 'middle']);
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...attemptIdentity(owner), home_id: other }), null);
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...attemptIdentity(owner), home_id: other }), null);
+    await db.exec('RESET ROLE');
+    assertEquals((await db.query<{ parts: string | null }>("SELECT to_regclass('private.energy_planning_parts')::text parts")).rows[0].parts, null);
+    assertEquals((await db.query<{ n: number }>("SELECT count(*)::int n FROM pg_proc WHERE proname IN ('claim_energy_planning_batch','load_energy_planning_batch','commit_energy_planning_batch')")).rows[0].n, 0);
+    assertEquals((await db.query<{ n: number }>("SELECT count(*)::int n FROM information_schema.columns WHERE table_schema='private' AND table_name='energy_planning_jobs' AND column_name IN ('phase','steps','continuation','deadline_at')")).rows[0].n, 0);
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM net.wakes')).rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+Deno.test('protocol 9 takeover fences stale loads and writes while an unreclaimed expired owner may publish', async () => {
+  const db = await oneShotDatabase();
+  try {
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission());
+    const old = (await attemptClaim(db, accepted.job_id))!;
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second',created_at=now()-interval '2 days' WHERE id=$1", [old.id]);
+    await db.exec('SELECT private.sweep_energy_planning_jobs()');
+    assertEquals((await read(db, old.id))?.state, 'pending');
+    const next = (await attemptClaim(db, old.id))!;
+    assert(next.fence > old.fence);
+    assertEquals(await attemptLoad(db, old), null);
+    assertEquals(await rpc(db, 'fail_energy_planning_job', { ...attemptIdentity(old), code: 'stale', detail: 'old owner' }), null);
+    assertEquals(await rpc(db, 'publish_energy_planning_job', { ...attemptIdentity(old), current: currentRow(), run: runRow() }), null);
+    assertEquals((await read(db, old.id))?.state, 'pending');
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1", [next.id]);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { ...attemptIdentity(next), current: currentRow(), run: runRow() })).state, 'published');
+    assertEquals(await attemptClaim(db, next.id), null);
+  } finally { await db.close(); }
+});
+
+Deno.test('protocol 9 guards the exact published reference at admission and publication', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', rulesSubmission()), Error, 'changed during preparation');
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(snapshot, { reference_plan_id: other }));
+    const owner = (await attemptClaim(db, accepted.job_id))!;
+    // A different current plan invalidates prepared commitments even when the
+    // fixed revision, manual request and admitted head have not changed.
+    await db.query('UPDATE energy_optimisation_current SET plan_id=$1', [nextManual]);
+    assertEquals(await attemptLoad(db, owner), null);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { ...attemptIdentity(owner), current: currentRow(), run: runRow() })).state, 'superseded');
+    assertEquals((await read(db, owner.id))?.state, 'superseded');
+    assertEquals((await db.query<{ id: string; error: string | null }>('SELECT plan_id id,replan_error error FROM energy_optimisation_current')).rows[0], { id: nextManual, error: null });
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 0);
+  } finally { await db.close(); }
+});
+
+Deno.test('protocol 9 direct publication is atomic, recovers lost replies and requires exact HA acknowledgement', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1,ha_runtime=$2', [manual, { running: true }]);
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(snapshot, { reference_plan_id: other,
+      observed_replan_request_id: manual, replan_request_id: manual, completion_basis: 'home_assistant_ack' }));
+    const owner = (await attemptClaim(db, accepted.job_id))!;
+    const publication = { ...attemptIdentity(owner), current: currentRow(), run: runRow() };
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', { ...publication, current: { ...currentRow(), snapshot_id: other } }), Error, 'identity mismatch');
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', { ...publication, run: { ...runRow(), status: 'invalid' } }), Error, 'check constraint');
+    assertEquals((await read(db, owner.id))?.state, 'pending');
+    assertEquals((await db.query<{ id: string }>('SELECT plan_id id FROM energy_optimisation_current')).rows[0].id, other);
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 0);
+    const published = await rpc<Receipt>(db, 'publish_energy_planning_job', publication);
+    assertEquals(published.state, 'published');
+    assertEquals(published.plan, undefined);
+    const recovered = await read(db, owner.id);
+    assertEquals(recovered?.plan, currentRow().plan, 'Authoritative receipt supplies the exact plan after a lost write response');
+    assertEquals(recovered?.plan_id, plan);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', publication)).state, 'published');
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 1);
+    const completed = async () => (await db.query<{ id: string | null }>('SELECT replan_completed_request_id id FROM energy_optimisation_current')).rows[0].id;
+    const acknowledge = (planId: string, snapshotId: string) => db.query(
+      'SELECT acknowledge_energy_optimisation_plan($1,$2,$3,9::smallint,$4,now(),$5,$6,$7)',
+      [home, planId, snapshotId, 'accepted', 'test', 'ack', null]);
+    assertEquals(await completed(), null);
+    await acknowledge(other, snapshot);
+    await acknowledge(plan, other);
+    assertEquals(await completed(), null);
+    await acknowledge(plan, snapshot);
+    assertEquals(await completed(), manual);
+    assertEquals((await db.query<{ runtime: unknown }>('SELECT ha_runtime runtime FROM energy_optimisation_current')).rows[0].runtime, { running: true });
+  } finally { await db.close(); }
+});
+
+Deno.test('protocol 9 migration retires pending ledgers and fixed bookings while preserving current commands', async () => {
+  const db = await durableDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1,ha_runtime=$2,fixed_plan=$3',
+      [manual, { running: true }, { id: plan, starts_at: '2026-10-08T08:00:00Z', ends_at: '2026-10-08T09:00:00Z', slots: [] }]);
+    const old = await rpc<Receipt>(db, 'accept_energy_planning_job', submission(snapshot, { observed_replan_request_id: manual }));
+    await batchClaim(db, old.job_id);
+    await db.exec(await migration(oneShotMigration));
+    assertEquals((await read(db, old.job_id))?.code, 'planner_upgraded');
+    assertEquals(await attemptClaim(db, old.job_id), null);
+    const row = (await db.query<{ id: string; runtime: unknown; error: string; fixed_plan: unknown; revision: number }>(
+      'SELECT plan_id id,ha_runtime runtime,replan_error error,fixed_plan,fixed_plan_revision revision FROM energy_optimisation_current')).rows[0];
+    assertEquals(row.id, other);
+    assertEquals(row.runtime, { running: true });
+    assertEquals(row.fixed_plan, null);
+    assertEquals(row.revision, 1);
+    assert(row.error.includes('Request a new replan'));
+  } finally { await db.close(); }
+});
+
+Deno.test('protocol 9 command references preserve pending-ack native commands and exact EV ranges', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    const slot = { start: '2026-10-08T08:00:00Z', pool_w: 1200, pool_command_w: 3764,
+      ev_target_current_a: 8, ev_min_current_a: 5, ev_max_current_a: 16, boiler_permitted: false,
+      battery_command: { schema_version: 3, operation: 'hold', charge_limit_w: 3000, discharge_limit_w: 0,
+        allow_grid_charge: false, allow_battery_export: false },
+      device_commands: { pool: { type: 'switch_schedule', on_seconds: 900 } } };
+    await db.query('UPDATE energy_optimisation_current SET plan=$1,ha_ack_status=$2',
+      [{ status: 'ready', plans: { priority: { slots: [slot] } } }, 'pending']);
+    const reference = (await db.query<{ value: { reference_plan_id: string; published_commands: unknown } }>(
+      'SELECT get_energy_replan_state($1) value', [home])).rows[0].value;
+    assertEquals(reference.reference_plan_id, other);
+    assertEquals(reference.published_commands, { plan_id: other, slots: [slot] });
+    assertEquals((await db.query<{ value: unknown }>('SELECT get_energy_replan_state($1) value', [other])).rows[0].value, null);
+  } finally { await db.close(); }
+});
+
+Deno.test('planner upgrade releases an unacknowledged legacy request without pretending HA accepted it', async () => {
+  const db = await durableDatabase();
+  try {
+    await insertCurrent(db);
+    await db.exec(`UPDATE energy_optimisation_current SET model_version='marginal-value-planner-v51',
+      replan_request_id='${manual}',replan_completed_request_id=NULL,ha_ack_status='pending',replan_error=NULL`);
+    await db.exec(await migration('20261008143000_release_legacy_replan_requests'));
+    const row = (await db.query<{replan_error:string;ha_ack_status:string;replan_completed_request_id:string|null}>(
+      'SELECT replan_error,ha_ack_status,replan_completed_request_id FROM energy_optimisation_current')).rows[0];
+    assertEquals(row, {replan_error:'Planner changed. Request a new replan.',ha_ack_status:'pending',replan_completed_request_id:null});
+  } finally { await db.close(); }
+});
+
+Deno.test('publication completion is atomic and recoverable without fabricating an HA acknowledgement', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1,replan_error=$2,ha_runtime=$3',
+      [manual, 'previous error', { running: true }]);
+    const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(snapshot, {
+      reference_plan_id: other, observed_replan_request_id: manual, replan_request_id: manual, completion_basis: 'publication',
+    }));
+    const owner = (await attemptClaim(db, accepted.job_id))!;
+    const publication = { ...attemptIdentity(owner), current: currentRow(), run: runRow() };
+    // Fail at the completion write, after current, run and receipt were written.
+    // None of them may become visible independently of request completion.
+    await db.exec(`CREATE FUNCTION reject_request_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'completion write failed'; END $$;
+      CREATE TRIGGER reject_request_completion BEFORE UPDATE OF replan_completed_request_id
+      ON energy_optimisation_current FOR EACH ROW EXECUTE FUNCTION reject_request_completion();`);
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', publication), Error, 'completion write failed');
+    assertEquals((await read(db, owner.id))?.state, 'pending');
+    assertEquals((await db.query<{ plan_id: string; replan_error: string; replan_completed_request_id: string | null }>(
+      'SELECT plan_id,replan_error,replan_completed_request_id FROM energy_optimisation_current')).rows[0],
+      { plan_id: other, replan_error: 'previous error', replan_completed_request_id: null });
+    assertEquals((await db.query<{ n: number }>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n, 0);
+    await db.exec('DROP TRIGGER reject_request_completion ON energy_optimisation_current');
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', publication)).state, 'published');
+    assertEquals((await read(db, owner.id))?.plan, currentRow().plan, 'A lost publication reply is recovered from the same durable receipt');
+    const row = (await db.query<{ plan_id: string; snapshot_id: string; replan_completed_request_id: string;
+      replan_error: string | null; ha_runtime: unknown }>(
+      'SELECT plan_id,snapshot_id,replan_completed_request_id,replan_error,ha_runtime FROM energy_optimisation_current')).rows[0];
+    assertEquals(row, { plan_id: plan, snapshot_id: snapshot, replan_completed_request_id: manual,
+      replan_error: null, ha_runtime: { running: true } });
+    for (const table of ['energy_optimisation_current', 'energy_optimisation_plan_runs']) {
+      const acknowledgement = (await db.query(`SELECT ha_ack_status,ha_acknowledged_at,ha_ack_request_id,ha_ack_error FROM ${table}`)).rows[0];
+      assertEquals(acknowledgement, { ha_ack_status: 'pending', ha_acknowledged_at: null, ha_ack_request_id: null, ha_ack_error: null });
+    }
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1', [nextManual]);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', publication)).state, 'published');
+    assertEquals((await db.query<{ id: string }>('SELECT replan_completed_request_id id FROM energy_optimisation_current')).rows[0].id, manual,
+      'Replaying a terminal receipt cannot complete a newer manual request');
+  } finally { await db.close(); }
+});
+
+for (const status of ['incomplete', 'infeasible']) {
+  Deno.test(`publication completion does not complete a ${status} plan`, async () => {
+    const db = await oneShotDatabase();
+    try {
+      await insertCurrent(db);
+      await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1', [manual]);
+      const accepted = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(snapshot, {
+        reference_plan_id: other, observed_replan_request_id: manual, replan_request_id: manual, completion_basis: 'publication',
+      }));
+      const owner = (await attemptClaim(db, accepted.job_id))!;
+      assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', { ...attemptIdentity(owner),
+        current: { ...currentRow(), status }, run: { ...runRow(), status } })).state, 'published');
+      assertEquals((await db.query<{ id: string | null; ha_ack_status: string }>(
+        'SELECT replan_completed_request_id id,ha_ack_status FROM energy_optimisation_current')).rows[0],
+        { id: null, ha_ack_status: 'pending' });
+    } finally { await db.close(); }
+  });
+}
+
+Deno.test('publication completion requires an explicit matching manual request and rejects a changed request', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1', [manual]);
+    const context = { reference_plan_id: other, observed_replan_request_id: manual, completion_basis: 'publication' };
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', rulesSubmission(snapshot,
+      { ...context, replan_request_id: nextManual })), Error, 'changed during preparation');
+    // Observing an outstanding request is not evidence that this capture was
+    // made for it: a scheduled price refresh cannot complete the manual ask.
+    const automatic = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(snapshot, context));
+    const automaticOwner = (await attemptClaim(db, automatic.job_id))!;
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', {
+      ...attemptIdentity(automaticOwner), current: currentRow(), run: runRow(),
+    })).state, 'published');
+    assertEquals((await db.query<{ id: string | null }>('SELECT replan_completed_request_id id FROM energy_optimisation_current')).rows[0].id, null);
+    const requested = await rpc<Receipt>(db, 'accept_energy_planning_job', rulesSubmission(other,
+      { ...context, reference_plan_id: plan, replan_request_id: manual }));
+    const requestedOwner = (await attemptClaim(db, requested.job_id))!;
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1', [nextManual]);
+    assertEquals((await rpc<Receipt>(db, 'publish_energy_planning_job', {
+      ...attemptIdentity(requestedOwner), current: { ...currentRow(), snapshot_id: other }, run: { ...runRow(), snapshot_id: other },
+    })).state, 'superseded');
+    assertEquals((await db.query<{ request: string; completed: string | null; snapshot_id: string }>(
+      'SELECT replan_request_id request,replan_completed_request_id completed,snapshot_id FROM energy_optimisation_current')).rows[0],
+      { request: nextManual, completed: null, snapshot_id: snapshot });
+  } finally { await db.close(); }
+});

@@ -56,10 +56,6 @@ async function files(directory: string): Promise<string[]> {
 
 Deno.test('recurring paths never read whole current energy plans or snapshots', async () => {
   const allowed: Record<string, string[]> = {
-    // Manual activation validates a complete user-edited schedule; status polling uses its narrow RPC.
-    'supabase/functions/energy-optimisation-fixed-plan/index.ts': ['snapshot'],
-    // Explicit workbench analysis needs the complete model and result.
-    'src/components/portal/energy/PlanWorkbenchTab.tsx': ['snapshot', 'plan'],
     // User-requested replay downloads need the original input snapshot.
     'src/components/portal/energy/plan/PlanReplayDownload.tsx': ['snapshot'],
   };
@@ -70,27 +66,4 @@ Deno.test('recurring paths never read whole current energy plans or snapshots', 
     }
   }
   assertEquals(violations, [], 'Use a SQL projection such as get_energy_replan_state; never return full plan/snapshot JSON in recurring paths.');
-});
-
-Deno.test('manual fixed-plan snapshot exception stays behind the status early return', async () => {
-  const source = await Deno.readTextFile('supabase/functions/energy-optimisation-fixed-plan/index.ts');
-  const file = ts.createSourceFile('endpoint.ts', source, ts.ScriptTarget.Latest, true);
-  let status: ts.IfStatement | undefined;
-  const snapshotReads: ts.CallExpression[] = [];
-  function visit(node: ts.Node) {
-    if (ts.isIfStatement(node) && ts.isBinaryExpression(node.expression)
-      && node.expression.left.getText(file) === 'body.action'
-      && ts.isStringLiteral(node.expression.right) && node.expression.right.text === 'status') status = node;
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
-      && node.expression.name.text === 'select' && node.arguments[0]
-      && ts.isStringLiteralLike(node.arguments[0])
-      && node.arguments[0].text.split(',').some(column => column.trim() === 'snapshot')) snapshotReads.push(node);
-    ts.forEachChild(node, visit);
-  }
-  visit(file);
-  assertEquals(!!status && ts.isBlock(status.thenStatement)
-    && ts.isReturnStatement(status.thenStatement.statements.at(-1)!), true);
-  assertEquals(snapshotReads.length > 0, true);
-  assertEquals(snapshotReads.every(read => read.pos > status!.end), true,
-    'Status polling must return before any full snapshot read.');
 });

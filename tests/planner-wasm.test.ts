@@ -16,10 +16,7 @@ import {
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { resolveRules, scoreQuarters } from "../src/lib/planner-bench/score.ts";
 import { referee } from "../src/lib/planner-bench/referee.ts";
-import {
-  caseTargets,
-  QUARTERS,
-} from "../src/lib/planner-bench/case.ts";
+import { caseTargets, QUARTERS } from "../src/lib/planner-bench/case.ts";
 import { createPlannerProbe } from "../supabase/functions/_shared/planner-wasm/probe.ts";
 import { SOLVER_BASE64 } from "../supabase/functions/_shared/planner-wasm/solver-bytes.ts";
 import build from "../supabase/functions/_shared/planner-wasm/artifact.json" with {
@@ -36,7 +33,7 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v3:"));
+  assert(planner.version.startsWith("wasm-v4:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -75,7 +72,7 @@ Deno.test("probe refuses production, anonymous access and alternate work recipes
   assertEquals(response.status, 200);
   const result = await response.json();
   assertEquals(result.outcome.kind, "selected");
-  assertEquals(result.qualification, "prototype_only");
+  assertEquals(result.qualification, "test_live_candidate");
   assertEquals(result.cold, true);
   assertEquals((await (await handler(request(p))).json()).cold, false);
 });
@@ -100,7 +97,7 @@ Deno.test("Wasm exports accept a host-wrapped public Memory constructor", () => 
   }
 });
 
-Deno.test("missing and partial accepted commitments fail explicitly", () => {
+Deno.test("missing, incomplete and overlong accepted prefixes fail explicitly", () => {
   for (const endpoint of [0, 900, 3599]) {
     const p = problem();
     p.accepted = p.slots.map(() => command());
@@ -112,12 +109,16 @@ Deno.test("missing and partial accepted commitments fail explicitly", () => {
   assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
   p.accepted = [command()];
   assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
+  p.accepted = p.slots.map(() => command());
+  assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
 });
 
 Deno.test("first hour includes the intersecting partial quarter and keeps exact commands", () => {
   const p = problem();
   for (const s of p.slots) s.start_seconds -= 300;
-  p.accepted = p.slots.map((_, i) => command(i % 2 === 0));
+  p.accepted = p.slots.filter((s) => s.start_seconds < 3600).map((_, i) =>
+    command(i % 2 === 0)
+  );
   p.accepted[0].ev_amps = 6;
   p.accepted[0].battery = "grid_charge";
   p.accepted[0].charge_limit_w = 1000;
@@ -142,6 +143,10 @@ Deno.test("first hour includes the intersecting partial quarter and keeps exact 
     null,
   );
   const first = result.selection.quarters[0];
+  assert(
+    first.pool_c !== null && first.ev_kwh !== null &&
+      first.battery_kwh !== null && first.heater_state !== null,
+  );
   assertAlmostEquals(first.pool_w, response.draw_w[0], 1e-9);
   assertAlmostEquals(
     first.pool_c,
@@ -224,6 +229,7 @@ Deno.test("physical startup and measured thermal loss match the independent exis
       10,
       .25,
     );
+    assert(q.pool_c !== null);
     assertAlmostEquals(q.pool_c, water, 1e-9);
     assertEquals(q.pool_command_w, 3764);
     assertEquals(q.charge_w, 0);
@@ -294,7 +300,9 @@ Deno.test("measurement rounding keeps equality outside a strictly-above buffer r
     required: false,
     unless: null,
   }];
-  p.accepted = p.slots.map(() => command());
+  p.accepted = p.slots.filter((s) => s.start_seconds < 3600).map(() =>
+    command()
+  );
   p.locked_through_seconds = 3600;
   const result = solve(p);
   assertEquals(result.kind, "selected");
@@ -332,7 +340,6 @@ Deno.test("bounded construction returns a complete certified incumbent", () => {
   assertEquals(result.selection.quarters.length, p.slots.length);
   assertEquals(result.selection.termination, "bounded_complete");
 });
-
 
 Deno.test("direct rule accounts agree with the independent quarter scorer when information matches", async () => {
   const c = causalCase();
@@ -403,28 +410,48 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
 Deno.test("native restart events and signed scores match the referee at the twelve-hour boundary", () => {
   const c = causalCase();
   c.start_state.pool_heater = { kind: "off", seconds: 3600 };
-  const criteria = Object.fromEntries(resolveRules().map(r => [r.key, { enabled: r.key === "pool_restart" || r.key === "cheapest_buy" }]));
+  const criteria = Object.fromEntries(
+    resolveRules().map(
+      (r) => [r.key, {
+        enabled: r.key === "pool_restart" || r.key === "cheapest_buy",
+      }],
+    ),
+  );
   const p = readyProblem(c, HOUSEHOLD, criteria);
   // The exact accepted first hour starts, stops, restarts, then continues.
-  p.accepted = p.slots.map((_, i) => command(i === 0 || i === 2 || i === 3));
+  p.accepted = p.slots.filter((s) => s.start_seconds < 3600).map((_, i) =>
+    command(i === 0 || i === 2 || i === 3)
+  );
   p.locked_through_seconds = 3600;
   const result = solve(p);
   if (result.kind !== "selected") throw new Error(result.issue);
   const selected = result.selection;
   const d = {
-    pool_w: selected.quarters.map(q => q.pool_command_w),
-    ev_w: selected.quarters.map(q => q.ev_w),
-    battery_charge_w: selected.quarters.map(q => q.charge_w),
-    battery_discharge_w: selected.quarters.map(q => q.discharge_w),
+    pool_w: selected.quarters.map((q) => q.pool_command_w),
+    ev_w: selected.quarters.map((q) => q.ev_w),
+    battery_charge_w: selected.quarters.map((q) => q.charge_w),
+    battery_discharge_w: selected.quarters.map((q) => q.discharge_w),
   };
   const series = referee(c, HOUSEHOLD, caseTargets(c), d).series;
   const scored = scoreQuarters(series, criteria);
-  assertEquals(selected.quarters.map(q => q.pool_start), series.poolStart);
-  assertEquals(scored.quarters.slice(0, 4).flatMap((q, i) => q.fired.includes("pool_restart") ? [i] : []), [0, 2]);
-  assertEquals(selected.account.contributions, scored.quarters.map(q => p.rules.map(r => q.fired.includes(r.key) ? r.points : 0)));
+  assertEquals(selected.quarters.map((q) => q.pool_start), series.poolStart);
+  assertEquals(
+    scored.quarters.slice(0, 4).flatMap((q, i) =>
+      q.fired.includes("pool_restart") ? [i] : []
+    ),
+    [0, 2],
+  );
+  assertEquals(
+    selected.account.contributions,
+    scored.quarters.map((q) =>
+      p.rules.map((r) => q.fired.includes(r.key) ? r.points : 0)
+    ),
+  );
   for (let i = 0; i < QUARTERS; i++) {
     assertAlmostEquals(selected.quarters[i].pool_w, series.poolW[i], 0.051);
-    assertAlmostEquals(selected.quarters[i].pool_c, series.poolC[i]!, 0.00051);
+    const poolC = selected.quarters[i].pool_c;
+    assert(poolC !== null);
+    assertAlmostEquals(poolC, series.poolC[i]!, 0.00051);
   }
   assertEquals(selected.account.contributions[0], [-2, 2]);
   assertEquals(selected.account.contributions[3], [0, 2]);
@@ -435,8 +462,11 @@ Deno.test("native restart events and signed scores match the referee at the twel
 });
 
 Deno.test("ready ABI rejects obsolete heater inputs rather than assuming an off heater", () => {
-  const obsolete = { ...problem(), abi: 2 };
-  assertEquals(core.solve(obsolete as unknown as ReadyProblem).outcome, { kind: "failed", issue: "unsupported_abi_or_empty_problem" });
+  const obsolete = { ...problem(), abi: 3 };
+  assertEquals(core.solve(obsolete as unknown as ReadyProblem).outcome, {
+    kind: "failed",
+    issue: "unsupported_abi_or_empty_problem",
+  });
 });
 
 Deno.test("every selected result reports bounded witnesses and exact work accounting", () => {
@@ -461,4 +491,56 @@ Deno.test("every selected result reports bounded witnesses and exact work accoun
     s.account.points,
     s.account.contributions.flat().reduce((a, b) => a + b, 0) - economic,
   );
+});
+
+Deno.test("public native projection keeps absent devices null and models PV curtailment", () => {
+  const p: ReadyProblem = problem();
+  p.battery = null;
+  p.car = null;
+  p.charger = null;
+  p.heater = null;
+  p.pool_store = null;
+  p.initial = {
+    battery_kwh: null,
+    ev_kwh: null,
+    pool_c: null,
+    heater_state: null,
+  };
+  p.targets = { pool_c: null, ev_km: null, ev_limit_kwh: null };
+  p.slots[0].solar_w = 20000;
+  const commands = p.slots.map(() => ({
+    ...command(),
+    battery: "idle" as const,
+    charge_limit_w: 0,
+    discharge_limit_w: 0,
+  }));
+  const result = core.project(p, commands);
+  assertEquals(result.outcome.kind, "projected");
+  if (result.outcome.kind !== "projected") {
+    throw new Error(result.outcome.issue);
+  }
+  const q = result.outcome.quarters[0];
+  assertEquals([q.battery_kwh, q.ev_kwh, q.pool_c, q.heater_state], [
+    null,
+    null,
+    null,
+    null,
+  ]);
+  assertEquals([
+    q.pool_w,
+    q.pool_compressor_w,
+    q.pool_auxiliary_w,
+    q.pool_heat_w,
+    q.ev_w,
+    q.charge_w,
+    q.discharge_w,
+  ], [0, 0, 0, 0, 0, 0, 0]);
+  assertEquals(q.curtailed_w, 3500);
+  assertEquals(q.net_w, -16000);
+});
+
+Deno.test("deployed runtime configuration is generated from the measured recipe and policy", async () => {
+  const runtime = JSON.parse(await Deno.readTextFile(`${root}/supabase/functions/_shared/planner-wasm/runtime-config.json`));
+  assertEquals(runtime.recipe, recipe);
+  assertEquals(runtime.policy_manifest, JSON.parse(await Deno.readTextFile(`${root}/planner-core/policy.json`)));
 });

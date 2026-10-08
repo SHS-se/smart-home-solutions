@@ -57,6 +57,7 @@ import { completeCase, recordedDemandDays, recordedWind, type HistorySource } fr
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
 import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
 import { refreshRequest, refreshTargets, requiredLanes } from "./scope.ts";
+import { BENCH_BASELINE_SHA, retainedCommit } from "./retention.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -101,11 +102,14 @@ const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =
 /** Identity of everything a planner generation is given for a case under one lane. */
 function inputHash(c: BenchCase, generation: string, lane: LaneId, rules: Awaited<ReturnType<BenchStore["rules"]>>): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation === "ready-wasm-v3" || generation === "ready-wasm-v2" ? { planner_rules: rules } : {}) }));
+  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation === "ready-wasm-v4" || generation === "ready-wasm-v3" || generation === "ready-wasm-v2" ? { planner_rules: rules } : {}) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
 async function worker(sha: string, root: string) {
+  if (!retainedCommit(await git("show", "-s", "--format=%cI", sha))) {
+    throw new Error(`Planner predates benchmark baseline ${BENCH_BASELINE_SHA.slice(0, 7)}; it cannot be run.`);
+  }
   const bench = store();
   const planner = await loadPlanner(root);
   const [done, rules] = await Promise.all([bench.resultHashes(sha), bench.rules()]);
@@ -271,6 +275,11 @@ async function orchestrate() {
     });
     if (shown === null) return null;
     const [sha, short_sha, committed_at, subject] = shown.split("\t");
+    // Check retention before inspecting planner code or registering a run.
+    if (!retainedCommit(committed_at)) {
+      console.log(`${short_sha}: excluded; benchmark history starts at ${BENCH_BASELINE_SHA.slice(0, 7)}.`);
+      return null;
+    }
     if (commits.has(sha)) return sha;
     const tree = commitTree(sha, harness);
     const version = plannerDir(tree) === null ? null : await plannerVersion(tree);

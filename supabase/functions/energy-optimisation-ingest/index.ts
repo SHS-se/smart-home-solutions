@@ -1,7 +1,9 @@
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
-import { replanReference, type ReplanPreviousPlan } from "../_shared/planner/replan-continuity.ts";
+import { prepareRulesPlanningInput } from "../_shared/rules-planner.ts";
+import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
+import { readPreparedForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -33,8 +35,8 @@ import {
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
-import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
-import { type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
+import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
+import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
 import {
   fitZones,
   type ProjectionZoneInput,
@@ -69,7 +71,6 @@ import {
   withServerOutdoorTemperature,
 } from "../_shared/outdoor-forecast.ts";
 import { withWindOutlook } from "../_shared/market-wind.ts";
-import { withDemandOutlook } from "../_shared/demand-evidence.ts";
 import {
   irradianceForQuarters,
   irradianceOnto,
@@ -909,6 +910,47 @@ async function prepareThermalPlanning(
   };
 }
 
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
+/** Forecast/model preparation is owned by telemetry, never awaited by replanning. */
+async function refreshPreparedForecasts(
+  // deno-lint-ignore no-explicit-any
+  supabase: any, customerId: string, homeId: string,
+  source: OptimisationSnapshot, devices: StoredDevice[],
+): Promise<void> {
+  // Price/weather products cover an extra day so a new capture can read its
+  // complete horizon between source refreshes. This is not a device forecast.
+  const forecastSlots = [...source.slots];
+  const last = source.slots.at(-1)!;
+  for (let i = 1; i <= 96; i++) forecastSlots.push({ ...last,
+    start: new Date(Date.parse(last.start) + i * SLOT_MS).toISOString(),
+    import_price_sek_per_kwh: null, export_price_sek_per_kwh: null });
+  const forecastSource = { ...source, slots: forecastSlots };
+  const [archiveResult, weather, wind] = await Promise.all([
+    supabase.rpc("read_energy_planning_price_archive", { p_home_id: homeId,
+      p_from: new Date(Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000).toISOString() }),
+    withServerOutdoorTemperature(supabase, forecastSource),
+    withWindOutlook(supabase, forecastSource),
+  ]);
+  if (archiveResult.error) throw new Error(archiveResult.error.message);
+  const outlook = buildPriceOutlook(forecastSlots, archiveResult.data as StoredPriceRow[], {
+    timeZone: source.timezone, asOf: Date.parse(source.captured_at), wind: wind.wind_outlook?.days });
+  if (source.pool) await refitPoolModel(supabase, customerId, homeId, source.pool.volume_m3,
+    poolHeaters(source.device_models).map(device => device.key));
+  const thermal = await prepareThermalPlanning(supabase, customerId, homeId, {
+    ...source, outdoor_temperature_c: weather.outdoor_temperature_c?.slice(0, source.slots.length),
+    sources: weather.sources }, devices);
+  const product = thermal.snapshot.thermal_zones?.length || thermal.snapshot.solar_irradiance_w_per_m2
+    ? { ...weather, slots: source.slots, outdoor_temperature_c: weather.outdoor_temperature_c?.slice(0, source.slots.length) }
+    : weather;
+  await storePreparedForecasts(supabase, homeId, { ...product,
+    thermal_zones: thermal.snapshot.thermal_zones,
+    solar_irradiance_w_per_m2: thermal.snapshot.solar_irradiance_w_per_m2 }, {
+    shaped: outlook.shaped, observed_days: outlook.observedDays, effective_days: outlook.effectiveDays,
+    level_sek_per_kwh: outlook.levelSekPerKwh, shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh.slice(0, product.slots.length),
+    ...(outlook.levelBasis ? { level_basis: outlook.levelBasis } : {}) });
+}
+
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
   const ingestStarted = performance.now();
@@ -1700,6 +1742,12 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       accepted.replan_request_id !== accepted.replan_completed_request_id && snapshot &&
       portalReplanId === accepted.replan_request_id;
     if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
+      const refresh = refreshPreparedForecasts(supabase, auth.customerId, auth.homeId,
+        structuredClone(snapshot), storedDevices).catch(error =>
+          console.error("[ENERGY-FORECAST] preparation failed", describeThrown(error)));
+      EdgeRuntime.waitUntil(refresh);
+    }
+    if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
       snapshot = null;
     }
 
@@ -1725,38 +1773,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           };
         }),
       };
-      // The measured price shape for this home, from the archive §1.3.7 added.
-      // Two thirds of the horizon is beyond the day-ahead window, and without
-      // this those slots price flat and the planner has no reason to prefer one
-      // hour over another (§1.4.3). A read failure is not fatal: no shape means
-      // a flat tail, which is the behaviour before this existed.
-      const shapeFrom = new Date(
-        Date.now() - PRICE_SHAPE_WINDOW_DAYS * 86_400_000,
-      ).toISOString();
-      // Start the archive read alongside settings: neither depends on the other.
-      // A scalar JSON RPC preserves every quarter without serial REST pages.
-      const priceArchivePromise = Promise.resolve(supabase.rpc("read_energy_planning_price_archive", {
-        p_home_id: auth.homeId, p_from: shapeFrom,
-      })).then(({ data, error }): StoredPriceRow[] => {
-        if (error) throw new Error(error.message);
-        return data as StoredPriceRow[];
-      }).catch((shapeError): StoredPriceRow[] => {
-          console.error("[ENERGY-OPTIMISATION] price shape read failed", shapeError);
-          return [];
-        });
-
-      // What the owner wants is one number per store. The planner derives
-      // what a degree or a kilometre is worth from these and the plan's own
-      // prices, solar and weather, so no curve is read or sent, and the
-      // battery's curve is always the planner's own.
-      const [targetResult, settingsResult, priceArchive] = await Promise.all([
+      const [targetResult, settingsResult] = await Promise.all([
         supabase.from("energy_optimisation_comfort_targets")
-          .select("pool_target_c, ev_target_km")
-          .eq("home_id", auth.homeId).maybeSingle(),
+          .select("pool_target_c, ev_target_km").eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
-          .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km")
-          .eq("home_id", auth.homeId).maybeSingle(),
-        priceArchivePromise,
+          .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km").eq("home_id", auth.homeId).maybeSingle(),
       ]);
       if (targetResult.error) throw new Error(targetResult.error.message);
       const { value_curves: _curves, ...withoutCurves } = snapshot;
@@ -1767,29 +1788,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         battery_curve_mode: "balanced",
       };
 
-      // Refit the pool alongside the rooms, then hand the planner whatever the
-      // fit produced. A refusal leaves `pool_model` absent and the planner
-      // falls back to its seeded figures.
+      // Device models own their prepared response, startup and hardware facts.
       if (snapshot.pool) {
-        // The COP is fitted on the heater's energy alone: the pump circulates
-        // and heats nothing, and the planner applies the COP to heater power.
-        const poolKeys = poolHeaters(snapshot.device_models).map((device) => device.key);
-        try {
-          await refitPoolModel(
-            supabase,
-            auth.customerId,
-            auth.homeId,
-            snapshot.pool.volume_m3,
-            poolKeys,
-          );
-        } catch (error) {
-          // A refit is an improvement, never a precondition: a home must still
-          // be planned on seeded figures if the fit itself fails.
-          console.error("[ENERGY-OPTIMISATION] pool refit skipped", error);
-        }
         const { data: poolModel, error: poolModelError } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response, hardware")
           .eq("home_id", auth.homeId)
           .maybeSingle();
         if (poolModelError) throw new Error(poolModelError.message);
@@ -1807,6 +1810,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           snapshot = {
             ...snapshot,
             pool_model: {
+              ...(poolModel?.hardware ? { hardware: poolModel.hardware } : {}),
               ...(poolModel?.heater_response ? { heater_response: parseHeaterResponse(poolModel.heater_response) } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
@@ -1827,45 +1831,29 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       if (fixedReadError) return json({ error: "fixed_plan_read_failed" }, 500);
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
-      let thermalZones: ProjectionZoneInput[] = [];
       try {
-        // These independent sources own disjoint fields. Fetch together, then
-        // compose only their fields so one cannot restore client-supplied evidence
-        // removed by another. Thermal preparation still follows outdoor weather.
-        const [weather, wind, demand] = await Promise.all([
-          withServerOutdoorTemperature(supabase, snapshot),
-          withWindOutlook(supabase, snapshot),
-          withDemandOutlook(supabase, auth.homeId, snapshot),
-        ]);
-        const { wind_outlook: _wind, demand_outlook: _demand, ...weatherSnapshot } = weather;
-        snapshot = {
-          ...weatherSnapshot,
-          ...(wind.wind_outlook ? { wind_outlook: wind.wind_outlook } : {}),
-          ...(demand.demand_outlook ? { demand_outlook: demand.demand_outlook } : {}),
-        };
-        const thermal = await prepareThermalPlanning(
-          supabase,
-          auth.customerId,
-          auth.homeId,
-          snapshot,
-          storedDevices,
-        );
-        snapshot = thermal.snapshot;
-        thermalZones = thermal.zones;
+        const prepared = await readPreparedForecasts(supabase as unknown as PreparedForecastDatabase, auth.homeId, snapshot);
+        snapshot = prepared.snapshot;
+        const { data: savedRules, error: rulesError } = await supabase.from("energy_planner_rule_policy")
+          .select("criteria").eq("id", true).single();
+        if (rulesError) throw new Error(rulesError.message);
         const planningNow = new Date();
-        snapshot = { ...snapshot, replan_reference: replanReference(fixedState?.previous_plan as ReplanPreviousPlan | null, snapshot, planningNow) };
+        const rulesInput = prepareRulesPlanningInput({ snapshot, now: planningNow.toISOString(),
+          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook },
+          fixedState?.published_commands ?? null, resolveRulePolicy(savedRules.criteria));
         const planningStarted = performance.now();
         console.info("[ENERGY-OPTIMISATION] inputs ready", { request_id: requestId, replan_request_id: portalReplanId,
           elapsed_ms: Math.round(planningStarted - ingestStarted) });
         planningReceipt = await jobs.accept({
           homeId: auth.homeId, customerId: auth.customerId,
           snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!,
-          input: { snapshot, now: planningNow.toISOString(), price_archive: priceArchive, fixed_plan: fixedPlan },
+          input: rulesInput,
           context: {
             request_id: requestId, integration_version: integrationVersion,
-            thermal_zones: thermalZones, fixed_revision: fixedRevision,
+            reference_plan_id: fixedState?.reference_plan_id ?? null, fixed_revision: fixedRevision,
             observed_replan_request_id: accepted?.replan_request_id ?? null,
             replan_request_id: portalReplanId,
+            completion_basis: planningCompletionBasis(Deno.env.get("SUPABASE_URL") ?? ""),
             exchange: {
               actual_slots_accepted: actualRows.length,
               actuals_accepted_until: actualRows.at(-1)?.start_ts ?? null,
@@ -1883,7 +1871,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           },
         });
         // Admission returns the durable receipt. HA's existing status loop
-        // advances bounded batches in fresh requests, preserving ingest's CPU.
+        // runs the complete solve in a fresh request, preserving ingest's CPU.
         console.info("[ENERGY-OPTIMISATION] planning response", {
           request_id: requestId, job_id: planningReceipt.job_id, state: planningReceipt.state,
           elapsed_ms: Math.round(performance.now() - planningStarted),

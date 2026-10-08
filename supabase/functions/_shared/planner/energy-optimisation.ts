@@ -541,6 +541,7 @@ export interface OptimisationSnapshot {
    * the seeded figures then, and says so through `forecast_method`.
    */
   pool_model?: {
+    hardware?: { start_c: number; stop_c: number; source_entity_ids: Record<string, string>; control: "external_enable" };
     heater_response?: HeatPumpResponse;
     /** Null while only the measured response exists; the seeded loss stands in then. */
     loss_kw_per_k: number | null;

@@ -1,11 +1,11 @@
 {
-  "abi": 3,
-  "wasm_sha256": "092f373f939c01c45a565e2ab1c4dff12e255ede926d66ceb9d5d383ef3cb103",
-  "source_sha256": "486db2c5315fce5dfe011e486c861fbb1ca69a9ba3fdcc3dbbedd4844680fe9b",
+  "abi": 4,
+  "wasm_sha256": "73d36eff51ec218ba20d2019232900530fa3c1cee9aaa50f48267bd649df767f",
+  "source_sha256": "f85d5f0d1ae61c1ae2571f93102619a32e0167deb0a57f0508ce337d8911f4e1",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
-  "qualification": "prototype_only",
+  "qualification": "test_live_candidate",
   "path_remapping": true,
   "source_files": [
     "bench/planner-engine.json",
@@ -44,7 +44,13 @@
     "supabase/functions/_shared/planner-wasm/probe.ts",
     "supabase/functions/_shared/planner-wasm/ready-problem.ts",
     "supabase/functions/_shared/planner-wasm/ready-schema.ts",
+    "supabase/functions/_shared/planner-wasm/rule-policy.ts",
+    "supabase/functions/_shared/planner/battery-plan-execution.ts",
     "supabase/functions/_shared/planner/device-models.ts",
-    "supabase/functions/_shared/planner/energy-price-shape.ts"
+    "supabase/functions/_shared/planner/energy-price-shape.ts",
+    "supabase/functions/_shared/planner/measurement-isolation.ts",
+    "supabase/functions/_shared/planner/operating-scope.ts",
+    "supabase/functions/_shared/planner/pool-devices.ts",
+    "supabase/functions/_shared/rules-planner.ts"
   ]
 }

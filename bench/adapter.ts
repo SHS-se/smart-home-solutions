@@ -57,7 +57,7 @@ interface PlannerModule {
 interface BasisModule { freezePlanningBasis?(snapshot: Json, archive: unknown[], gridImports: unknown[]): unknown }
 
 export interface LoadedPlanner {
-  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort" | "ready-wasm-v2" | "ready-wasm-v3";
+  generation: "snapshot" | "snapshot+basis" | "snapshot+comfort" | "ready-wasm-v2" | "ready-wasm-v3" | "ready-wasm-v4";
   /** `scale` multiplies what the planner's value curves are worth (lanes.ts); 1 is the planner as it runs live. */
   plan(c: BenchCase, household: Household, scale?: number, criteria?: CriteriaOverrides): { record: PlanRecord; cpuMs: number };
 }
@@ -315,7 +315,7 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
     const planner = await candidate.loadWasmCandidate(root);
     return {
       // Historical bench engines carry and load their own committed wire codec.
-      generation: planner.version.startsWith("wasm-v3:") ? "ready-wasm-v3" : "ready-wasm-v2",
+      generation: planner.version.startsWith("wasm-v4:") ? "ready-wasm-v4" : planner.version.startsWith("wasm-v3:") ? "ready-wasm-v3" : "ready-wasm-v2",
       plan(c, household, scale = 1, criteria = {}) {
         const p = candidate.readyProblem(c, household, criteria);
         const result = planner.plan(p);

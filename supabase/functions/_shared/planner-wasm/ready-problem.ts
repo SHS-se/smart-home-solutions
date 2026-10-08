@@ -2,12 +2,14 @@ import type {
   BatteryModel,
   CarBatteryModel,
   ChargerModel,
-  HeatPumpResponse,
   HeaterState,
+  HeatPumpResponse,
   ThermalStoreModel,
 } from "../planner/device-models.ts";
 
 export type BatteryOperation =
+  | "idle"
+  | "solar_charge"
   | "hold"
   | "self_consumption"
   | "grid_charge"
@@ -52,10 +54,11 @@ export interface ReadySlot {
   import_price: number;
   export_price: number;
   published: boolean;
+  ev_available: boolean;
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 3;
+  abi: 4;
   work_grant: number;
   recipe: {
     beam_width: number;
@@ -65,23 +68,28 @@ export interface ReadyProblem {
     repair_trials: number;
   };
   slots: ReadySlot[];
-  battery: BatteryModel;
-  car: CarBatteryModel;
-  charger: ChargerModel;
-  pool_store: ThermalStoreModel;
+  battery: BatteryModel | null;
+  car: CarBatteryModel | null;
+  charger: ChargerModel | null;
+  pool_store: ThermalStoreModel | null;
   heater: {
     compressor_w: number;
     auxiliary_w: number;
     heat_w: number;
     response: HeatPumpResponse;
-  };
+  } | null;
+  pool_stop_c: number | null;
   initial: {
-    battery_kwh: number;
-    ev_kwh: number;
-    pool_c: number;
-    heater_state: HeaterState;
+    battery_kwh: number | null;
+    ev_kwh: number | null;
+    pool_c: number | null;
+    heater_state: HeaterState | null;
   };
-  targets: { pool_c: number; ev_km: number; ev_limit_kwh: number };
+  targets: {
+    pool_c: number | null;
+    ev_km: number | null;
+    ev_limit_kwh: number | null;
+  };
   limits: {
     import_w: number;
     export_w: number;

@@ -293,6 +293,95 @@ impl Heater {
     }
 }
 
+/// Hardware thermostat clips delivered electricity and heat, never the published permit.
+pub struct PoolConditions {
+    pub water_c: f64,
+    pub outdoor_c: f64,
+    pub seconds: f64,
+    pub stop_c: Option<f64>,
+}
+pub struct PoolTransition {
+    pub electric_w: f64,
+    pub compressor_w: f64,
+    pub auxiliary_w: f64,
+    pub heat_w: f64,
+    pub water_c: f64,
+    pub next: HeaterState,
+    pub start: Option<HeaterStart>,
+}
+impl Heater {
+    pub fn pool_transition(
+        &self,
+        store: &ThermalStore,
+        state: HeaterState,
+        on: bool,
+        conditions: PoolConditions,
+    ) -> PoolTransition {
+        let PoolConditions {
+            water_c,
+            outdoor_c,
+            seconds,
+            stop_c,
+        } = conditions;
+        let permitted = on && stop_c.is_none_or(|stop| water_c < stop);
+        let full = self.transition(state, permitted, seconds);
+        let end = store.step(water_c, full.heat_w, outdoor_c, seconds / 3600.0);
+        let active_seconds = if permitted && stop_c.is_some_and(|stop| end > stop) {
+            let stop = stop_c.unwrap();
+            let (mut low, mut high) = (0.0, seconds);
+            for _ in 0..48 {
+                let mid = (low + high) / 2.0;
+                let heat = self.transition(state, true, mid).heat_w;
+                if store.step(water_c, heat, outdoor_c, mid / 3600.0) < stop {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            (low + high) / 2.0
+        } else if permitted {
+            seconds
+        } else {
+            0.0
+        };
+        if active_seconds == 0.0 {
+            return PoolTransition {
+                electric_w: 0.0,
+                compressor_w: 0.0,
+                auxiliary_w: 0.0,
+                heat_w: 0.0,
+                water_c: end,
+                next: full.next,
+                start: None,
+            };
+        }
+        let active = self.transition(state, true, active_seconds);
+        let fraction = active_seconds / seconds;
+        let mut water = store.step(water_c, active.heat_w, outdoor_c, active_seconds / 3600.0);
+        let next = if active_seconds < seconds {
+            water = store.step(
+                stop_c.expect("thermostat ended the run"),
+                0.0,
+                outdoor_c,
+                (seconds - active_seconds) / 3600.0,
+            );
+            self.transition(active.next, false, seconds - active_seconds)
+                .next
+        } else {
+            active.next
+        };
+        PoolTransition {
+            electric_w: active.electric_w * fraction,
+            compressor_w: (active.electric_w - self.auxiliary_w) * fraction,
+            auxiliary_w: self.auxiliary_w * fraction,
+            heat_w: active.heat_w * fraction,
+            water_c: water,
+            next,
+            start: active.start,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

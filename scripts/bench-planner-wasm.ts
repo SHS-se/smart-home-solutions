@@ -55,7 +55,7 @@ for (const scenario of data.cases) {
   );
 }
 const report = {
-  qualification: 'prototype_only',
+  qualification: 'test_live_candidate',
   version: planner.version,
   artifact_bytes: planner.artifact_bytes,
   cold_compile_ms: planner.cold_compile_ms,
