@@ -1228,6 +1228,9 @@ pub(crate) mod tests {
             evaluations: 0,
             witness_trials: 0,
             repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
         };
         let index = policy::index(p, &mut work).unwrap();
         let q = physics::projection(p, commands).unwrap();

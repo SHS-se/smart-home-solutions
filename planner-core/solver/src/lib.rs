@@ -1,5 +1,6 @@
 //! One complete causal rule-led solve. No persistence, history or external I/O.
 mod builder;
+mod move_resize;
 mod physics;
 mod policy;
 mod thermal_buffer;
@@ -368,6 +369,9 @@ pub struct Work {
     pub evaluations: u64,
     pub witness_trials: u64,
     pub repairs: u64,
+    pub move_resize_trials: u64,
+    pub move_resize_passes: u64,
+    pub move_resize_improvements: u64,
 }
 impl Work {
     pub(crate) fn spend(&mut self, amount: u64) -> bool {

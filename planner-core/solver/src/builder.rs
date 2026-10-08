@@ -479,14 +479,7 @@ enum EvaluationIssue {
     GrantUnavailable,
     Infeasible,
 }
-fn evaluate(
-    p: &Problem,
-    index: &Index,
-    commands: Vec<Command>,
-    work: &mut Work,
-) -> Result<Candidate, EvaluationIssue> {
-    // Every candidate receives the same complete bounded audit allocation.
-    // Decline a new candidate before projection when its audit cannot be paid.
+fn audit_cost(p: &Problem, unit_cost: u64) -> u64 {
     let n = p.slots.len() as u64;
     let cap = p.recipe.witness_trials.clamp(1, 16) as u64;
     let audit_cost =
@@ -500,14 +493,25 @@ fn evaluate(
                     .saturating_mul(n)
                     .saturating_mul(
                         96 + u64::from(p.charger.as_ref().map_or(0, |c| c.max_current_a))
-                            + work.unit_cost * 2,
+                            + unit_cost * 2,
                     ),
             );
+    audit_cost.saturating_add(n * unit_cost * 3)
+}
+fn evaluate(
+    p: &Problem,
+    index: &Index,
+    commands: Vec<Command>,
+    work: &mut Work,
+) -> Result<Candidate, EvaluationIssue> {
+    // Every candidate receives the same complete bounded audit allocation.
+    // Decline a new candidate before projection when its audit cannot be paid.
+    let audit_cost = audit_cost(p, work.unit_cost);
     if work
         .limit
         .saturating_sub(work.used)
         .saturating_sub(work.reserved)
-        < audit_cost.saturating_add(n * work.unit_cost * 3)
+        < audit_cost
     {
         return Err(EvaluationIssue::GrantUnavailable);
     }
@@ -532,6 +536,169 @@ fn evaluate(
         account,
         audit,
     })
+}
+struct Preview {
+    commands: Vec<Command>,
+    account: Account,
+    destination: move_resize::Destination,
+}
+/// Direct points plus possible positive witness credit bound the complete score.
+/// Reserve enough for at least one full audit; no preview may replace the incumbent.
+fn improve(
+    p: &Problem,
+    index: &Index,
+    mut best: Candidate,
+    work: &mut Work,
+    declined: &mut bool,
+) -> Candidate {
+    if p.recipe.repair_trials == 0 {
+        return best;
+    }
+    let n = p.slots.len() as u64;
+    loop {
+        let audit = audit_cost(p, work.unit_cost);
+        if work
+            .limit
+            .saturating_sub(work.used)
+            .saturating_sub(work.reserved)
+            < audit + n * work.unit_cost * 3
+        {
+            *declined = true;
+            break;
+        }
+        work.reserved += audit;
+        let edits = move_resize::proposals(p, index, &best.commands, work);
+        work.reserved -= audit;
+        let Some(edits) = edits else {
+            *declined = true;
+            break;
+        };
+        let mut shortlist: Vec<Preview> = Vec::new();
+        work.move_resize_passes += 1;
+        for edit in edits
+            .into_iter()
+            .take(p.recipe.repair_trials.saturating_mul(32))
+        {
+            if work
+                .limit
+                .saturating_sub(work.used)
+                .saturating_sub(work.reserved)
+                < audit + n * work.unit_cost * 3
+            {
+                *declined = true;
+                break;
+            }
+            let commands = edit.apply(&best.commands);
+            if commands == best.commands || shortlist.iter().any(|c| c.commands == commands) {
+                continue;
+            }
+            work.move_resize_trials += 1;
+            let Some(quarters) = physics::project_metered(p, &commands, work) else {
+                continue;
+            };
+            if !work.spend(n * work.unit_cost) {
+                *declined = true;
+                break;
+            }
+            let mut account = policy::account(p, &quarters, index);
+            // Include positive witness points and negative direct points a
+            // witness exclusion can remove. Economic certificates only deduct.
+            let witnessed = |key| {
+                matches!(
+                    key,
+                    RuleKey::LargeLoadOverlap | RuleKey::PoolShortGap | RuleKey::EvShortGap
+                )
+            };
+            account.points += p
+                .rules
+                .iter()
+                .map(|r| {
+                    if witnessed(r.key) {
+                        r.points.max(0)
+                    } else if r.unless.is_some_and(witnessed) {
+                        (-r.points).max(0)
+                    } else {
+                        0
+                    }
+                })
+                .sum::<i32>()
+                * p.slots.len() as i32;
+            if !policy::better(&account, &best.account) {
+                continue;
+            }
+            shortlist.push(Preview {
+                commands,
+                account,
+                destination: edit.destination(),
+            });
+            shortlist.sort_by(|a, b| {
+                b.account.points.cmp(&a.account.points).then(
+                    (a.account.cash_sek + a.account.wear_sek)
+                        .total_cmp(&(b.account.cash_sek + b.account.wear_sek)),
+                )
+            });
+            // Keep a points-ranked representative for each destination day and
+            // device before filling the remaining audit slots. Adjacent near-
+            // identical starts must not exclude a different overnight event.
+            let mut destinations = std::collections::BTreeSet::new();
+            let mut chosen: Vec<usize> = shortlist
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    destinations
+                        .insert((c.destination.device, c.destination.day))
+                        .then_some(i)
+                })
+                .take(p.recipe.repair_trials)
+                .collect();
+            let mut shapes: std::collections::BTreeSet<_> =
+                chosen.iter().map(|i| shortlist[*i].destination).collect();
+            for (i, candidate) in shortlist.iter().enumerate() {
+                if chosen.len() == p.recipe.repair_trials {
+                    break;
+                }
+                if !chosen.contains(&i) && shapes.insert(candidate.destination) {
+                    chosen.push(i);
+                }
+            }
+            for i in 0..shortlist.len() {
+                if chosen.len() == p.recipe.repair_trials {
+                    break;
+                }
+                if !chosen.contains(&i) {
+                    chosen.push(i);
+                }
+            }
+            shortlist = shortlist
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, c)| chosen.contains(&i).then_some(c))
+                .collect();
+        }
+        let mut improved = false;
+        for preview in shortlist {
+            work.repairs += 1;
+            match evaluate(p, index, preview.commands, work) {
+                Ok(candidate) if policy::better(&candidate.account, &best.account) => {
+                    best = candidate;
+                    improved = true;
+                }
+                Ok(_) | Err(EvaluationIssue::Infeasible) => {}
+                Err(EvaluationIssue::GrantUnavailable) => {
+                    *declined = true;
+                    break;
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+        work.move_resize_improvements += 1;
+        if *declined {
+            break;
+        }
+    }
+    best
 }
 fn runs(p: &Problem, commands: &[Command], account: &Account) -> Vec<RunPurpose> {
     let mut out = Vec::new();
@@ -620,6 +787,9 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         evaluations: 0,
         witness_trials: 0,
         repairs: 0,
+        move_resize_trials: 0,
+        move_resize_passes: 0,
+        move_resize_improvements: 0,
     };
     let index = policy::index(p, &mut work)?;
     let proposals = construct(p, &index, &mut work)?;
@@ -703,6 +873,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             }
         })
         .ok_or("no_complete_candidate")?;
+    let best = improve(p, &index, best, &mut work, &mut budget_declined);
     work.reserved = 0;
     let certified = physics::project_metered(p, &best.commands, &mut work)
         .ok_or("work_grant_cannot_certify")?;
@@ -742,4 +913,113 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         runs: run_purposes,
         work,
     })
+}
+
+#[cfg(test)]
+mod move_resize_tests {
+    use super::*;
+    fn work(p: &Problem) -> Work {
+        Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 10000,
+            unit_cost: 128,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        }
+    }
+    fn idle() -> Command {
+        Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::Hold,
+            charge_limit_w: 1000.0,
+            discharge_limit_w: 4000.0,
+        }
+    }
+    #[test]
+    fn complete_points_trials_move_and_lengthen_each_flexible_device_despite_higher_cash() {
+        for device in [
+            move_resize::Device::Pool,
+            move_resize::Device::Ev,
+            move_resize::Device::Battery,
+        ] {
+            let mut p = witnesses::tests::problem(24);
+            p.recipe.repair_trials = 4;
+            p.initial.heater_state = Some(HeaterState::Off { seconds: 0.0 });
+            p.rules = vec![
+                Rule {
+                    key: RuleKey::CheapBuy,
+                    threshold: 0.3,
+                    points: 2,
+                    required: false,
+                    unless: None,
+                },
+                Rule {
+                    key: RuleKey::PoolRestart,
+                    threshold: 12.0,
+                    points: -2,
+                    required: false,
+                    unless: None,
+                },
+            ];
+            for (i, slot) in p.slots.iter_mut().enumerate() {
+                slot.import_price = if i < 8 { 0.9 } else { 1.1 };
+            }
+            let mut commands = vec![idle(); 24];
+            match device {
+                move_resize::Device::Pool => commands[18].pool_on = true,
+                move_resize::Device::Ev => commands[18].ev_amps = 6,
+                move_resize::Device::Battery => commands[18].battery = Operation::GridCharge,
+            }
+            // An accepted prefix cannot be moved, resized or overwritten.
+            p.accepted = Some(commands[..4].to_vec());
+            p.locked_through_seconds = 3600.0;
+            let mut work = work(&p);
+            let index = policy::index(&p, &mut work).unwrap();
+            let before = evaluate(&p, &index, commands, &mut work).ok().unwrap();
+            let old = before.account.clone();
+            let mut declined = false;
+            let after = improve(&p, &index, before, &mut work, &mut declined);
+            assert!(after.account.points > old.points, "{device:?}");
+            assert!(
+                after.account.cash_sek > old.cash_sek,
+                "points must win even with higher cash: {device:?}"
+            );
+            assert_eq!(&after.commands[..4], p.accepted.as_ref().unwrap());
+            assert!(
+                !after.commands[18].pool_on
+                    && after.commands[18].ev_amps == 0
+                    && after.commands[18].battery != Operation::GridCharge
+            );
+            assert!(work.move_resize_improvements > 0);
+            if device == move_resize::Device::Pool {
+                assert_eq!(after.account.contributions[4][1], -2);
+                assert!(after.commands[4..8].iter().all(|c| c.pool_on));
+            }
+            assert!(work.used + work.reserved <= work.limit);
+        }
+    }
+    #[test]
+    fn exhausted_improvement_budget_keeps_a_fully_audited_incumbent_and_certification_reserve() {
+        let p = witnesses::tests::problem(8);
+        let mut work = work(&p);
+        let index = policy::index(&p, &mut work).unwrap();
+        let before = evaluate(&p, &index, vec![idle(); 8], &mut work)
+            .ok()
+            .unwrap();
+        let expected = before.commands.clone();
+        work.limit = work.used + work.reserved + 1;
+        let mut declined = false;
+        let after = improve(&p, &index, before, &mut work, &mut declined);
+        assert_eq!(after.commands, expected);
+        assert!(declined);
+        assert_eq!(work.reserved, 10000);
+        assert!(work.used + work.reserved <= work.limit);
+    }
 }
