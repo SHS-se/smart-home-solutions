@@ -19,23 +19,17 @@ function series(prices: number[]): BenchSeries {
 }
 const only = (key: string) => Object.fromEntries(Object.keys(RULE_DEFAULTS).filter(k => k !== key).map(k => [k, { enabled: false }]));
 
-Deno.test('the cheap share stretches from 25 % to 32.5 % through a valley of eight quarters; a spike ends the valley', () => {
+Deno.test('a valley of eight cheap quarters stretches from 25 % to 32.5 %; a shorter one does not', () => {
   assertEquals([PRICE_BRIDGE_STRETCH, PRICE_BRIDGE_MIN_QUARTERS], [1.3, 8]);
   // Forty quarters: the cheapest quarter of them is the ten priced 1.00 to 1.09; the stretch reaches the next three, 1.10 to 1.12.
   const prices = Array.from({ length: 40 }, (_, i) => 2 + i / 100);
-  // A valley of eight: 1.10 widens it at its start, 1.11 is a gap inside it, and 1.13 ends it.
-  prices.splice(2, 9, 1.10, 1.00, 1.01, 1.11, 1.02, 1.03, 1.04, 1.05, 1.13);
-  // A spike splits what would be a valley of eight, leaving runs too short to stretch through.
-  prices.splice(20, 7, 1.12, 1.06, 1.07, 3.00, 1.08, 1.09, 1.12);
+  // Eight cheap quarters stretch through 1.10 before them, 1.11 after them and the cheap quarter beyond it.
+  prices.splice(2, 11, 1.10, 1.00, 1.01, 1.02, 1.03, 1.04, 1.05, 1.06, 1.07, 1.11, 1.08);
+  // A single cheap quarter is no valley: the 1.12 beside it gains nothing.
+  prices.splice(20, 2, 1.12, 1.09);
   const scores = scoreQuarters(series(prices), only('cheap_buy')).quarters.map(q => q.score);
-  assertEquals(scores.slice(0, 12), [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0]);
-  assertEquals(scores.slice(20, 27), [
-    0, // 1.12 is within the stretch, but its run is only three quarters
-    1, 1,
-    0, // the spike
-    1, 1,
-    0,
-  ]);
+  assertEquals(scores.slice(0, 14), [0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]);
+  assertEquals(scores.slice(19, 23), [0, 0, 1, 0]);
 });
 
 Deno.test('the very cheap share never stretches, and its two points need a kilowatt', () => {
@@ -59,13 +53,14 @@ Deno.test('the dear shares stay exact: a dip between dear quarters is not counte
   assertEquals(scores.slice(0, 6), [-1, -1, 0, -1, -1, -1]);
 });
 
-Deno.test('a valley needs a quarter in the share, eight quarters, and nothing beyond the stretch', () => {
-  const rank = new Array<number>(40).fill(0.9);
-  rank.splice(2, 8, 0.32, 0.10, 0.30, 0.10, 0.10, 0.10, 0.10, 0.32);
-  // Eight quarters within the stretch but none in the share.
-  rank.splice(12, 8, ...new Array<number>(8).fill(0.30));
-  // The stretch stops at 32.5 % exactly.
-  rank.splice(31, 9, 0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2);
+Deno.test('only eight consecutive quarters in the share make a valley, and the stretch stops at its limit', () => {
+  const rank = new Array<number>(50).fill(0.9);
+  // Seven in the share are no valley, however many lie within reach.
+  rank.splice(2, 11, 0.3, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.3, 0.3);
+  // Neither are eight split by a quarter out of the share.
+  rank.splice(15, 9, 0.1, 0.1, 0.1, 0.1, 0.3, 0.1, 0.1, 0.1, 0.1);
+  // Eight make one, and the stretch stops at 32.5 % exactly.
+  rank.splice(40, 10, 0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2);
   const valley = stretchedValleys(rank, 0.25);
-  assertEquals(valley.flatMap((counts, i) => counts ? [i] : []), [2, 3, 4, 5, 6, 7, 8, 9, 32, 33, 34, 35, 36, 37, 38, 39]);
+  assertEquals(valley.flatMap((counts, i) => counts ? [i] : []), [41, 42, 43, 44, 45, 46, 47, 48, 49]);
 });

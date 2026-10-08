@@ -25,10 +25,10 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
 //     Prices come in waves, so the cheapest quarter stretches to keep a
-//     valley whole: a quarter also gains the one point inside an unbroken run
-//     of PRICE_BRIDGE_MIN_QUARTERS or more, each within PRICE_BRIDGE_STRETCH
-//     times the share (25 % reaches 32.5 %), that holds a quarter in the share
-//     (stretchedValleys). The cheapest tenth and the dear shares stay exact.
+//     valley whole: an unbroken run of PRICE_BRIDGE_MIN_QUARTERS or more in
+//     the share also gains the one point through every adjoining quarter
+//     within PRICE_BRIDGE_STRETCH times the share (25 % reaches 32.5 %;
+//     stretchedValleys). The cheapest tenth and the dear shares stay exact.
 //     Imported base load of at least FLEXIBLE_W loses one point in the dearest
 //     quarter of prices, or two in the dearest tenth, when spare battery power
 //     and energy can cover it fully.
@@ -158,29 +158,33 @@ const pct = (t: number) => `${Math.round(t * 100)} %`;
  * The planner kernel applies the same stretch (`PRICE_BRIDGE_STRETCH`, planner-core policy.rs).
  */
 export const PRICE_BRIDGE_STRETCH = 1.3;
-/** The shortest valley the stretch applies through, in quarters. */
+/** The shortest valley the stretch applies to, in quarters, before stretching. */
 export const PRICE_BRIDGE_MIN_QUARTERS = 8;
 /**
- * The quarters of every valley the cheap share stretches through. A fixed
+ * The quarters the cheap share reaches by stretching its valleys. A fixed
  * share cuts through a wave of prices, and quarters a hair over the line split
  * one valley into runs too short to use. A valley is an unbroken run of
- * quarters, each within PRICE_BRIDGE_STRETCH times the share, that holds at
- * least one quarter in the share and lasts PRICE_BRIDGE_MIN_QUARTERS or more.
- * A quarter beyond the stretch ends it; shorter runs stay as they were.
+ * PRICE_BRIDGE_MIN_QUARTERS or more quarters in the share. It stretches
+ * through every adjoining quarter within PRICE_BRIDGE_STRETCH times the share,
+ * so it grows at both ends and joins what lies within reach. A quarter beyond
+ * the stretch ends it; shorter runs in the share stay as they were.
  */
 export function stretchedValleys(rank: readonly number[], share: number): boolean[] {
   const n = rank.length, reach = share * PRICE_BRIDGE_STRETCH;
   const valley = new Array<boolean>(n).fill(false);
   for (let from = 0; from < n; from++) {
-    let to = from, held = false;
-    for (; to < n && rank[to] < reach; to++) held ||= rank[to] < share;
-    if (held && to - from >= PRICE_BRIDGE_MIN_QUARTERS) valley.fill(true, from, to);
+    let to = from, run = 0, longest = 0;
+    for (; to < n && rank[to] < reach; to++) {
+      run = rank[to] < share ? run + 1 : 0;
+      longest = Math.max(longest, run);
+    }
+    if (longest >= PRICE_BRIDGE_MIN_QUARTERS) valley.fill(true, from, to);
     from = to;
   }
   return valley;
 }
 const cheapShare = (t: number) =>
-  `price in cheapest ${pct(t)}, or up to ${+(t * PRICE_BRIDGE_STRETCH * 100).toFixed(1)} % inside an unbroken run of at least ${PRICE_BRIDGE_MIN_QUARTERS} such quarters that holds one in the cheapest ${pct(t)}`;
+  `price in cheapest ${pct(t)}, or up to ${+(t * PRICE_BRIDGE_STRETCH * 100).toFixed(1)} % in an unbroken run adjoining at least ${PRICE_BRIDGE_MIN_QUARTERS} consecutive quarters in the cheapest ${pct(t)}`;
 const poolHeatingPast = (q: QuarterView, threshold: number) => {
   const before = poolBeforeC(q.s, q.i);
   return !!q.s.comfort && before !== null && before >= q.s.comfort.pool_target_c + threshold

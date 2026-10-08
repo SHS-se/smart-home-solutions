@@ -55,17 +55,18 @@ pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 
 /// How far the cheap share may stretch along a valley: 25 % reaches 32.5 %.
 /// The bench referee applies the same stretch (`PRICE_BRIDGE_STRETCH`, score.ts).
 pub(crate) const PRICE_BRIDGE_STRETCH: f64 = 1.3;
-/// The shortest valley the stretch applies through, in quarters.
+/// The shortest valley the stretch applies to, in quarters, before stretching.
 pub(crate) const PRICE_BRIDGE_MIN_QUARTERS: usize = 8;
 /// Flexible load a quarter needs for the very cheap reward, W. The cheap
 /// reward and the price penalties keep the 500 W floor.
 pub(crate) const VERY_CHEAP_LOAD_W: f64 = 1000.0;
-/// The quarters of every valley the cheap share stretches through. Prices come
+/// The quarters the cheap share reaches by stretching its valleys. Prices come
 /// in waves, and a fixed share cuts through them: quarters a hair over the line
 /// split one valley into runs too short to use. A valley is an unbroken run of
-/// quarters, each within `PRICE_BRIDGE_STRETCH` times the share, that holds at
-/// least one quarter in the share and lasts `PRICE_BRIDGE_MIN_QUARTERS` or
-/// more. A quarter beyond the stretch ends it; shorter runs stay as they were.
+/// `PRICE_BRIDGE_MIN_QUARTERS` or more quarters in the share. It stretches
+/// through every adjoining quarter within `PRICE_BRIDGE_STRETCH` times the
+/// share, so it grows at both ends and joins what lies within reach. A quarter
+/// beyond the stretch ends it; shorter runs in the share stay as they were.
 pub(crate) fn stretched_valleys(rank: &[f64], share: f64) -> Vec<bool> {
     let n = rank.len();
     let reach = share * PRICE_BRIDGE_STRETCH;
@@ -73,7 +74,12 @@ pub(crate) fn stretched_valleys(rank: &[f64], share: f64) -> Vec<bool> {
     let mut from = 0;
     while from < n {
         let to = (from..n).find(|i| rank[*i] >= reach).unwrap_or(n);
-        if to - from >= PRICE_BRIDGE_MIN_QUARTERS && rank[from..to].iter().any(|r| *r < share) {
+        let (mut run, mut longest) = (0, 0);
+        for r in &rank[from..to] {
+            run = if *r < share { run + 1 } else { 0 };
+            longest = longest.max(run);
+        }
+        if longest >= PRICE_BRIDGE_MIN_QUARTERS {
             valley[from..to].fill(true);
         }
         from = to + 1;
@@ -649,24 +655,24 @@ mod tests {
         assert_eq!(account(&p, &q, &index).contributions[287], vec![0, -1, 2]);
     }
     #[test]
-    fn the_cheap_share_stretches_only_through_valleys_of_eight_quarters() {
-        // Ranks of forty quarters: the share is 0.25 and reaches 0.325.
-        let mut rank = vec![0.9; 40];
-        // A valley of eight: a gap at 0.30 inside it and 0.32 at each end.
-        rank[2..10].copy_from_slice(&[0.32, 0.10, 0.30, 0.10, 0.10, 0.10, 0.10, 0.32]);
-        // A spike ends a valley, leaving seven quarters: too short to stretch.
-        rank[12..20].copy_from_slice(&[0.9, 0.30, 0.10, 0.10, 0.10, 0.10, 0.10, 0.30]);
-        // Eight quarters within the stretch but none in the share.
-        rank[22..30].copy_from_slice(&[0.30; 8]);
+    fn the_cheap_share_stretches_only_valleys_of_eight_quarters() {
+        // Ranks of fifty quarters: the share is 0.25 and reaches 0.325.
+        let mut rank = vec![0.9; 50];
+        // Eight quarters in the share stretch through 0.32 before them, a gap
+        // at 0.30 after them and the single cheap quarter beyond that gap.
+        rank[2..14].copy_from_slice(&[
+            0.32, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.30, 0.1, 0.32,
+        ]);
+        // Seven in the share are no valley, however many lie within reach.
+        rank[16..27].copy_from_slice(&[0.3, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.3, 0.3]);
+        // Neither are eight split by a quarter out of the share.
+        rank[29..38].copy_from_slice(&[0.1, 0.1, 0.1, 0.1, 0.3, 0.1, 0.1, 0.1, 0.1]);
         // The stretch stops at 0.325 exactly.
-        rank[31..40].copy_from_slice(&[0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]);
+        rank[40..50].copy_from_slice(&[0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]);
         let valley = stretched_valleys(&rank, 0.25);
-        let quarters = |from: usize, to: usize| valley[from..to].iter().filter(|v| **v).count();
-        assert_eq!(quarters(0, 12), 8);
-        assert!(valley[2] && valley[4] && valley[9]);
-        assert_eq!(quarters(12, 31), 0);
-        assert_eq!(quarters(31, 40), 8);
-        assert!(!valley[31] && valley[32]);
+        let counted: Vec<usize> = (0..50).filter(|i| valley[*i]).collect();
+        let expected: Vec<usize> = (2..14).chain(41..50).collect();
+        assert_eq!(counted, expected);
     }
     #[test]
     fn very_cheap_needs_a_kilowatt_and_never_stretches() {
