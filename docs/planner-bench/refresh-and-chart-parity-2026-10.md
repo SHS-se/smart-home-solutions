@@ -31,6 +31,8 @@ const chart = projectPlanChart({ rows, prices, range, timeZone, devices: series.
 
 `bench/scope.ts` owns required lanes and target selection. Explicit SHAs do not
 implicitly expand to the environment heads. The runner resolves exact identities,
+enforces head/base scope for automatic `workflow_run` events (whose workflow
+definition GitHub takes from main even when the harness is checked out from dev),
 registers environment metadata before solving, prepares cases once, and preserves
 the serial store pacing. Scoped verification requires every requested base result
 and all its independent audit evidence; unrequested history and diagnostics cannot

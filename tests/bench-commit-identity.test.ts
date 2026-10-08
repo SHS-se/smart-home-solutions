@@ -67,6 +67,12 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     assertEquals(new Set(first.slice(1).map(r => r.planner_version)).size, 1);
     await run();
     assertEquals(await store.runs(), first, 'repeated runs keep branch marks and every equal-code commit');
+    const automatic = await command(Deno.execPath(), [
+      'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
+      '--shas', 'all', '--current', 'main', '--test', 'dev', '--local', cases, '--out', out,
+    ], { GITHUB_EVENT_NAME: 'workflow_run' });
+    assert(automatic.includes('Refresh: 2 planner(s), lanes told/nominal'));
+    assert(!automatic.includes('Original planner'), 'automatic deployments must not expand stored history');
     // An environment may itself point to a commit with no planner. Its identity stays exact.
     await command(Deno.execPath(), [
       'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,

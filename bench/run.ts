@@ -56,7 +56,7 @@ import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreR
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
 import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
-import { refreshTargets, requiredLanes } from "./scope.ts";
+import { refreshRequest, refreshTargets, requiredLanes } from "./scope.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -69,6 +69,13 @@ for (let i = 0; i < Deno.args.length; i++) {
   else if ((VALUED as readonly string[]).includes(name) && Deno.args[i + 1] !== undefined) {
     args[name as (typeof VALUED)[number]] = Deno.args[++i];
   } else throw new Error(`Unknown or incomplete option: ${Deno.args[i]}`);
+}
+// GitHub loads workflow_run definitions from main while this harness lives on dev.
+// Automatic refresh policy belongs here too; only explicit dispatches expand history.
+if (!args.worker) {
+  const request = refreshRequest(Deno.env.get("GITHUB_EVENT_NAME"), args.shas, args.scope);
+  args.shas = request.selection;
+  args.scope = request.scope;
 }
 
 function store(): BenchStore {

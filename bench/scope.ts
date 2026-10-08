@@ -2,6 +2,11 @@ import { BASE_LANE, LANES, type LaneId } from "../src/lib/planner-bench/lanes.ts
 
 /** Alternative solver inputs are explicit diagnostics, never routine work. */
 export type BenchScope = "base" | "diagnostics";
+/** Automatic deployment refresh is always bounded, independent of workflow branch. */
+export function refreshRequest(event: string | undefined, selection = "HEAD", scope: string = "base") {
+  return event === "workflow_run" ? { selection: "heads", scope: "base" } : { selection, scope };
+}
+
 export function requiredLanes(scope: string = "base"): readonly LaneId[] {
   if (scope === "base") return [BASE_LANE];
   if (scope === "diagnostics") return [BASE_LANE, ...LANES.filter(l => l !== BASE_LANE)];
