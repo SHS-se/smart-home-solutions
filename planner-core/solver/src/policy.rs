@@ -109,21 +109,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         let buffer_rule = rule(p, RuleKey::PoolBuffer).filter(|r| r.points > 0);
         let goal = if thermal_buffer.causes[i].is_some() {
             buffer_rule.map_or(p.targets.pool_c.unwrap_or(0.0), |r| {
-                p.targets.pool_c.unwrap_or(0.0)
-                    + r.threshold
-                    + 0.0005
-                    + (p.pool_store.as_ref().map_or(
-                        p.targets.pool_c.unwrap_or(0.0) + r.threshold,
-                        |store| {
-                            store.step(
-                                p.targets.pool_c.unwrap_or(0.0) + r.threshold,
-                                p.heater.as_ref().map_or(0.0, |h| h.heat_w),
-                                s.outdoor_c,
-                                h,
-                            )
-                        },
-                    ) - (p.targets.pool_c.unwrap_or(0.0) + r.threshold))
-                        .max(0.0)
+                p.targets.pool_c.unwrap_or(0.0) + r.threshold
             })
         } else {
             p.targets.pool_c.unwrap_or(0.0)
@@ -220,7 +206,7 @@ pub(crate) fn witnessed(
     index: &Index,
 ) {
     let prepared = prepared(p, q, index);
-    let mut episode = thermal_buffer::Credit::new(p.slots.len());
+    let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
     for (i, row) in account.contributions.iter_mut().enumerate() {
         let earns = buffer_credit(p, index, i, &q[i], &mut episode);
         let mut fired = raw_quarter(p, index, i, &q[i], prepared, earns);
@@ -343,7 +329,7 @@ pub(crate) fn measured(value: f64, scale: f64) -> f64 {
 }
 pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     let prepared = prepared(p, q, index);
-    let mut episode = thermal_buffer::Credit::new(p.slots.len());
+    let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
     let contributions: Vec<Vec<i32>> = q
         .iter()
         .enumerate()
@@ -357,25 +343,41 @@ pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     }
 }
 
+struct PoolScoring {
+    earns_buffer: bool,
+    before_c: f64,
+}
 fn buffer_credit(
     p: &Problem,
     index: &Index,
     i: usize,
     v: &Quarter,
     episode: &mut thermal_buffer::Credit,
-) -> bool {
-    let warm = rule(p, RuleKey::PoolBuffer).is_some_and(|r| {
+) -> PoolScoring {
+    let before_c = measured(episode.water_c, 1000.0);
+    episode.water_c = v.pool_c.unwrap_or(0.0);
+    let buffer = rule(p, RuleKey::PoolBuffer);
+    let warm = buffer.is_some_and(|r| {
         measured(v.pool_c.unwrap_or(0.0), 1000.0) > p.targets.pool_c.unwrap_or(0.0) + r.threshold
     });
-    thermal_buffer::advance(
+    let earns_buffer = thermal_buffer::advance(
         episode,
         v.pool_start,
         p.pool_cycle_seconds,
         i,
-        warm,
-        p.slots[i].local_month,
+        thermal_buffer::Warmth {
+            warm,
+            heating_past_target: buffer
+                .is_some_and(|r| before_c >= p.targets.pool_c.unwrap_or(0.0) + r.threshold)
+                && (measured(v.pool_w, 10.0) > 0.0 || v.pool_start.is_some()),
+            month: p.slots[i].local_month,
+        },
         index.thermal_buffer.causes[i],
-    )
+    );
+    PoolScoring {
+        earns_buffer,
+        before_c,
+    }
 }
 fn raw_quarter(
     p: &Problem,
@@ -383,7 +385,7 @@ fn raw_quarter(
     i: usize,
     v: &Quarter,
     prepared: bool,
-    buffer_credit: bool,
+    pool: PoolScoring,
 ) -> Vec<bool> {
     let s = &p.slots[i];
     let pool_w = measured(v.pool_w, 10.0);
@@ -402,6 +404,15 @@ fn raw_quarter(
     let export = measured((-v.net_w).max(0.0), 10.0);
     let load = measured(s.base_w + v.pool_w + v.ev_w, 10.0);
     let flexible = pool_w + ev_w + charge;
+    let heating = pool_w > 0.0 || v.pool_start.is_some();
+    let past_hot_target = |t: f64| pool.before_c >= p.targets.pool_c.unwrap_or(0.0) + t;
+    let rewarding_flexible = ev_w
+        + charge
+        + if rule(p, RuleKey::PoolHot).is_some_and(|r| past_hot_target(r.threshold)) {
+            0.0
+        } else {
+            pool_w
+        };
     let house_battery = (discharge - export).max(0.0);
     let flexible_grid = measured((flexible - house_battery).max(0.0).min(imported), 10.0);
     let base_grid = measured(
@@ -427,15 +438,17 @@ fn raw_quarter(
             PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
             PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
             PoolHot => {
-                pool_c > p.targets.pool_c.unwrap_or(0.0) + t && index.buffer[i] == Some(false)
+                heating && past_hot_target(t)
+                    || pool_c > p.targets.pool_c.unwrap_or(0.0) + t
+                        && index.buffer[i] == Some(false)
             }
             PoolRestart => v
                 .pool_start
                 .is_some_and(|s| s.off_seconds.is_some_and(|off| off < t * 3600.0)),
-            PoolBuffer => buffer_credit,
+            PoolBuffer => pool.earns_buffer,
             EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
             EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
-            CheapBuy | CheapestBuy => flexible >= 500.0 && index.cheap[i] < t,
+            CheapBuy | CheapestBuy => rewarding_flexible >= 500.0 && index.cheap[i] < t,
             DearLoad | DearestLoad => flexible_grid >= 500.0 && index.dear[i] < t,
             BaseLoadDearImport | BaseLoadDearestImport => {
                 base_grid >= 500.0 && spare >= base_grid && index.dear[i] < t
@@ -500,6 +513,78 @@ fn prepared(p: &Problem, q: &[Quarter], index: &Index) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reserve_crossing_coasts_but_extra_heating_loses_both_buffer_and_cheap_credit() {
+        let mut p = crate::witnesses::tests::problem(288);
+        p.initial.pool_c = Some(31.99);
+        p.heater.as_mut().unwrap().heat_w = 4000.0;
+        p.pool_store.as_mut().unwrap().loss = shs_planner_models::StandingLoss::Measured {
+            points: vec![shs_planner_models::LossPoint {
+                at_c: 30.0,
+                c_per_h: -0.04,
+            }],
+        };
+        p.rules = [
+            (RuleKey::PoolBuffer, 2.0, 1),
+            (RuleKey::PoolHot, 2.0, -1),
+            (RuleKey::CheapestBuy, 0.1, 2),
+        ]
+        .map(|(key, threshold, points)| Rule {
+            key,
+            threshold,
+            points,
+            required: false,
+            unless: None,
+        })
+        .to_vec();
+        for s in &mut p.slots[96..] {
+            s.import_price = 2.0;
+        }
+        // The final day remains cheap: overheating cannot escape via missing next-day evidence.
+        p.slots[287].import_price = 1.0;
+        let mut work = Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 0,
+            unit_cost: 100,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        };
+        let index = index(&p, &mut work).unwrap();
+        let off = Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        };
+        let mut coast = vec![off.clone(); 288];
+        coast[0].pool_on = true;
+        let q = crate::physics::projection(&p, &coast).unwrap();
+        let good = account(&p, &q, &index);
+        assert_eq!(good.contributions.iter().map(|r| r[0]).sum::<i32>(), 8);
+        assert_eq!(good.contributions[0], vec![1, 0, 2]);
+        assert_eq!(good.contributions[1], vec![1, 0, 0]);
+        let mut heat = vec![off; 288];
+        for c in &mut heat {
+            c.pool_on = true;
+        }
+        let q = crate::physics::projection(&p, &heat).unwrap();
+        let bad = account(&p, &q, &index);
+        assert_eq!(bad.contributions[0], vec![1, 0, 2]);
+        assert_eq!(bad.contributions[1], vec![0, -1, 0]);
+        assert_eq!(bad.contributions[287], vec![0, -1, 0]);
+        assert!(good.points > bad.points);
+        // A concurrent useful car load earns the ordinary household cheap reward.
+        heat[287].ev_amps = 6;
+        let q = crate::physics::projection(&p, &heat).unwrap();
+        assert_eq!(account(&p, &q, &index).contributions[287], vec![0, -1, 2]);
+    }
     #[test]
     fn exclusions_use_raw_firing_across_direct_and_witness_rules() {
         let rules = vec![

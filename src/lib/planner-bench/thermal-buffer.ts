@@ -12,6 +12,10 @@ export interface BufferEvent {
 }
 export interface BufferQuarter { earns: boolean; event: BufferEvent | null }
 
+/** Stored trajectories measure quarter ends; the first boundary is the captured reading. */
+export const poolBeforeC = (s: BenchSeries, i: number): number | null =>
+  s.comfort ? i === 0 ? Math.round(s.comfort.pool_start_c * 1000) / 1000 : s.poolC[i - 1] : null;
+
 /** Null marks stale evaluations that need physical evidence recomputed. */
 export function thermalBufferTrace(s: BenchSeries, threshold: number, reheatMargin: number, cycleSeconds: number): BufferQuarter[] | null {
   const n = s.start.length, context = s.poolThermal;
@@ -48,6 +52,9 @@ export function thermalBufferTrace(s: BenchSeries, threshold: number, reheatMarg
       if (off >= cycleSeconds) { phase = 'available'; event = null; }
       else if (phase === 'active') { phase = 'spent'; event = null; }
     }
+    const before = poolBeforeC(s, i);
+    const heating = s.poolW[i] > 0 || s.poolStart![i] !== null;
+    if (heating && before !== null && before >= s.comfort!.pool_target_c + threshold) { phase = 'spent'; event = null; }
     const warm = s.poolC[i] !== null && s.poolC[i]! > s.comfort!.pool_target_c + threshold;
     if (phase === 'available' && warm && need && !claimed.has(need.from)) {
       claimed.add(need.from); event = need; phase = 'active';

@@ -62,11 +62,6 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     // cheap-load point has no proposal; this is guidance, not a physical ceiling.
     let target = p.targets.pool_c.unwrap_or(0.0);
     let pool_goal = match label.buffer_episode.episode {
-        thermal_buffer::Episode::Active(need) if i <= need.quarter => {
-            policy::rule(p, RuleKey::PoolBuffer)
-                .filter(|r| r.points > 0)
-                .map_or(target, |r| target + r.threshold + 0.0005)
-        }
         thermal_buffer::Episode::Available
             if label
                 .buffer_episode
@@ -89,7 +84,8 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     },
                 )
                 .min(p.slots.len() - i) as f64;
-        store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
+        policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
+            && store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut ev_levels = vec![0];
@@ -266,8 +262,7 @@ fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
             let buffer = if l.buffer_episode.episode == thermal_buffer::Episode::Spent {
                 target
             } else {
-                policy::rule(p, RuleKey::PoolBuffer)
-                    .map_or(target, |r| target + r.threshold + 0.0005)
+                policy::rule(p, RuleKey::PoolBuffer).map_or(target, |r| target + r.threshold)
             };
             let share = (l.state.pool - floor) / (buffer - floor).max(f64::EPSILON);
             let warming = ((buffer - floor).max(0.0) * store.capacity_kwh_per_c
@@ -283,11 +278,11 @@ fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
                         0.0
                     }
                 }
-                thermal_buffer::Episode::Active(need) => {
+                thermal_buffer::Episode::Active(need) => future.buffer_quarters.min(
                     need.quarter.saturating_sub(i) as f64
                         * policy::rule(p, RuleKey::PoolBuffer)
-                            .map_or(0.0, |r| r.points.max(0) as f64)
-                }
+                            .map_or(0.0, |r| r.points.max(0) as f64),
+                ),
                 thermal_buffer::Episode::Spent => 0.0,
             };
             (future.useful_pool_quarters + buffer_points).min(warming) * share.clamp(0.0, 1.0)
@@ -335,7 +330,7 @@ fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64
 fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Command>>, String> {
     let mut arena = Vec::new();
     let mut labels = vec![Label {
-        buffer_episode: thermal_buffer::Credit::new(p.slots.len()),
+        buffer_episode: thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0)),
         state: physics::initial(p),
         parent: usize::MAX,
         points: 0,

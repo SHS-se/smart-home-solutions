@@ -1,4 +1,4 @@
-import { thermalBufferTrace, type BufferQuarter } from './thermal-buffer';
+import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-buffer';
 // Scoring a plan, and the run score built from it.
 //
 // Every point is worth the same and they all add up: a case's points are the
@@ -14,9 +14,10 @@ import { thermalBufferTrace, type BufferQuarter } from './thermal-buffer';
 //     that follows (the plan's next 24 hours against the 24 it is in): heat
 //     held for a modeled future reheating event gains points in one consecutive
 //     episode per heating cycle and event; low-solar credit is May–September.
-//     The separate next-day comparison still judges overheating:
-//     heat held for neither loses one as overheating. A quarter in
-//     which the pool, battery charging and car together draw FLEXIBLE_W or
+//     After the crossing quarter, the heater must stop: continued heating
+//     ends buffer credit and loses overheating points, even on the final day.
+//     Coasting heat held for neither still loses one as overheating. A quarter in
+//     which useful pool heating, battery charging and car together draw FLEXIBLE_W or
 //     more gains a point when its real price is among the cheapest quarter of
 //     the plan's, or two when among the cheapest tenth. Where FLEXIBLE_W or
 //     more of that load is bought from the grid, the quarter loses a point
@@ -64,7 +65,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVE
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 25;
+export const SCORER_VERSION = 26;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
@@ -85,8 +86,8 @@ export interface QuarterView {
   priceRank: number;
   /** Share of the plan's quarters priced strictly above this one, 0-1. */
   dearRank: number;
-  /** Pool + battery charging + car, W. */
-  flexibleW: number;
+  /** Pool heating below its enabled overheating threshold + battery charging + car, W. */
+  rewardingFlexibleW: number;
   /** Flexible demand left after battery supply, capped by actual grid imports, W. */
   flexibleGridW: number;
   /** The battery can cover all grid-attributed base load in this quarter. */
@@ -141,7 +142,12 @@ const carFrom = (s: BenchSeries, t: number) =>
   s.comfort && s.carKm ? dueFrom(s.comfort.carReachableKm, s.comfort.ev_start_km, s.comfort.ev_target_km - t) : Infinity;
 
 const pct = (t: number) => `${Math.round(t * 100)} %`;
-const cheapBuy = (q: QuarterView, t: number) => q.flexibleW >= FLEXIBLE_W && q.priceRank < t;
+const poolHeatingPast = (q: QuarterView, threshold: number) => {
+  const before = poolBeforeC(q.s, q.i);
+  return !!q.s.comfort && before !== null && before >= q.s.comfort.pool_target_c + threshold
+    && (q.s.poolW[q.i] > 0 || !!q.s.poolStart?.[q.i]);
+};
+const cheapBuy = (q: QuarterView, t: number) => q.rewardingFlexibleW >= FLEXIBLE_W && q.priceRank < t;
 const dearBuy = (q: QuarterView, t: number) => q.flexibleGridW >= FLEXIBLE_W && q.dearRank < t;
 const baseLoadDearBuy = (q: QuarterView, t: number) => q.baseLoadCoverable && q.dearRank < t;
 
@@ -178,10 +184,11 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
   },
   // Warm water is a store. Above the target it is one or the other: heat kept for a dearer or duller day, or waste.
   {
-    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `more than ${t} °C above target, the next day neither dearer nor less sunny`, fires: (q, t) => poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
+    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `heating after reaching target +${t} °C, or warmer than that with the next day neither dearer nor less sunny`,
+    fires: (q, t) => poolHeatingPast(q, t) || poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
   },
   {
-    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `more than ${t} °C above target in one consecutive episode per heating cycle and future reheating event; high prices or low solar in May–September`, fires: q => q.thermalBuffer, eligibleFrom: poolAny,
+    key: 'pool_buffer', about: 'pool', label: 'Warm thermal buffer', describe: t => `reaching target +${t} °C, then coasting above it with heating off, in one consecutive episode per heating cycle and future reheating event; high prices or low solar in May–September`, fires: q => q.thermalBuffer, eligibleFrom: poolAny,
   },
   {
     key: 'pool_restart', about: 'pool', label: 'Pool heater restarted too soon',
@@ -199,10 +206,10 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
     key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}`, fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `price in cheapest ${pct(t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}`, fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `price in cheapest ${pct(t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
     key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => `price in dearest ${pct(t)}`, fires: dearBuy, eligibleFrom: () => 0,
@@ -400,13 +407,16 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   const histogram: Record<string, number> = {};
   const quarters: QuarterScore[] = [];
   let sum = 0;
+  const hot = rules.find(r => r.key === 'pool_hot');
   for (let i = 0; i < n; i++) {
     const baseGridW = baseLoadGridSupplyW(s, i);
-    const flexibleW = s.poolW[i] + s.batteryChargeW[i] + s.carW[i];
+    const before = poolBeforeC(s, i);
+    const rewardingFlexibleW = s.batteryChargeW[i] + s.carW[i]
+      + (hot && before !== null && s.comfort && before >= s.comfort.pool_target_c + hot.threshold ? 0 : s.poolW[i]);
     const q: QuarterView = {
       s, i, due: due(i), thermalBuffer: thermalBuffer?.[i].earns ?? false, ahead: aheadOf(i), priceRank: n ? below(s.importPrice[i]) / n : 0,
       dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
-      flexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
+      rewardingFlexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
       baseLoadCoverable: !batteryEvidenceMissing && baseGridW >= FLEXIBLE_W
         && s.baseLoadBatteryCoverW[i] >= baseGridW,
       avoidableOverlap: overlapQuarters.has(i),

@@ -82,3 +82,10 @@ day. Search therefore finds higher points at substantially higher cash cost.
 No arbitrary thermal ceiling or extra objective was added to conceal this
 result. A subsequent rule refinement should reward heating demonstrably
 displaced during the adverse event rather than indefinite warm holding.
+
+The subsequent [stop-and-coast refinement](thermal-buffer-events.md) closes this
+incentive in the point rules. The original 39.343°C July trial cannot prolong its
+buffer credit by continuing to heat, earns no cheap-load credit for pool heating
+past the reserve, and incurs overheating deductions. A new replay peaks at
+32.519°C and costs 116.60 kr. The earlier table records the prior rule version;
+its point totals cannot be compared directly with scores under the refined rules.

@@ -546,8 +546,9 @@ Deno.test("deployed runtime configuration is generated from the measured recipe 
 });
 
 Deno.test("native frozen-event credit matches independent replay across restarts, seasons and point overrides", () => {
-  for (const month of [7, 1]) for (const points of [2, -1]) {
+  for (const month of [7, 1]) for (const points of [2, -1]) for (const heatingPrefix of [true, false]) {
     const p = bufferProblem();
+    if (!heatingPrefix) p.accepted = p.accepted!.map(() => command(false));
     p.rules[0].points = points;
     p.slots.forEach(slot => { slot.local_month = month; });
     const result = solve(p);
@@ -560,6 +561,8 @@ Deno.test("native frozen-event credit matches independent replay across restarts
       battery_charge_w: new Array(288).fill(0), battery_discharge_w: new Array(288).fill(0),
     }).series;
     // Save the physical facts from the synthetic problem, not native earned flags.
+    series.comfort!.pool_start_c = p.initial.pool_c;
+    series.poolW = q.map(v => Math.round(v.pool_w * 10) / 10);
     series.poolC = q.map(v => Math.round(v.pool_c! * 1000) / 1000);
     series.poolStart = q.map(v => v.pool_start);
     series.importPrice = p.slots.map(v => v.import_price);
@@ -568,8 +571,8 @@ Deno.test("native frozen-event credit matches independent replay across restarts
     const independent = scoreQuarters(series, { pool_buffer: { points } });
     assertEquals(result.selection.account.contributions.map(row => row[0]), independent.thermalBuffer!.map(v => v.earns ? points : 0));
     if (month === 7) {
-      assertEquals(independent.thermalBuffer![0].earns, true);
-      assertEquals(independent.thermalBuffer![2].earns, false);
+      assertEquals(independent.thermalBuffer![0].earns, !heatingPrefix);
+      if (heatingPrefix) assertEquals(independent.thermalBuffer![2].earns, false);
       assertEquals(independent.thermalBuffer![282].earns, false);
     } else assertEquals(independent.counts.pool_buffer, undefined);
   }
