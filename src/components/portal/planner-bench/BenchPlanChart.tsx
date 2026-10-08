@@ -12,9 +12,13 @@
 // have spent by every point in the period shown. It never follows the
 // current/test toggle, and it counts from the start of the period, as the
 // chart's own "cost so far" does.
+//
+// The storage and temperature panels carry the same comparison while the test
+// plan is shown: the current planner's battery, car and pool, dashed. Shown on
+// its own the current plan has nothing to be dashed against.
 
 import React, { useMemo } from 'react';
-import PlanPanels, { type PlanCostLine } from '@/components/portal/energy/plan/PlanPanels';
+import PlanPanels, { type PlanCostLine, type PlanStoreLines } from '@/components/portal/energy/plan/PlanPanels';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import { benchChartData } from '@/lib/planner-bench/chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -67,6 +71,12 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, lane, timeZone, qua
     ];
   }, [current, test, range.from, range.to, t]);
 
+  const storeLines = useMemo((): PlanStoreLines | undefined => {
+    if (!current || series === current) return undefined;
+    const view = (values: readonly (number | null)[]) => values.slice(range.from, range.to);
+    return { name: t('Nuvarande', 'Current'), homeSoc: view(current.homeSoc), evSoc: view(current.carSoc), poolC: view(current.poolC) };
+  }, [current, series, range.from, range.to, t]);
+
   const scores = quarters?.slice(range.from, range.to).map(q => q.score) ?? undefined;
   const selectedInView = selected !== null && selected >= range.from && selected < range.to ? selected - range.from : -1;
   const tab = (active: boolean) =>
@@ -96,6 +106,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, lane, timeZone, qua
         realPrices={chart.realPrices}
         poolTargetC={series.comfort?.pool_target_c ?? null}
         costLines={costLines}
+        storeLines={storeLines}
         selectedIndex={selectedInView}
         onQuarterClick={index => onSelect(range.from + index)}
       />

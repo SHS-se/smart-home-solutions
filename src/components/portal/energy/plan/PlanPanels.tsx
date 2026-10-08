@@ -8,7 +8,8 @@
 // stacked over the same quarters, so reading a moment in time is reading a
 // column: what it cost, where the power came from, what used it, what was left
 // in store, and how warm it was. The planner bench adds a last strip: what each
-// of the planners it compares had spent by then.
+// of the planners it compares had spent by then. It also draws the planner the
+// plan is compared with as dashed lines in the storage and temperature panels.
 //
 // The consumption stack draws individual meters, never categories: the planner
 // dispatches individual devices, so a band labelled "Kitchen & cold" would
@@ -60,6 +61,19 @@ export interface PlanCostLine {
   /** SEK spent from the start of the window to the end of each quarter, aligned with `rows`. */
   values: readonly (number | null)[];
 }
+
+/** Another planner's stores over the same quarters, for the bench's storage and temperature panels. */
+export interface PlanStoreLines {
+  name: string;
+  /** Per cent, aligned with `rows`. */
+  homeSoc: readonly (number | null)[];
+  evSoc: readonly (number | null)[];
+  poolC: readonly (number | null)[];
+}
+
+/** How the planner a plan is compared with is drawn, in every panel that draws it. */
+const COMPARED_DASH = '5 3';
+const COMPARED_WIDTH = 1.6;
 
 const PanelHeading: React.FC<{ title: string; unit: string; y: number }> = ({ title, unit, y }) => (
   <>
@@ -159,10 +173,15 @@ const PlanPanels: React.FC<{
    * panel. The portal never passes it.
    */
   costLines?: readonly PlanCostLine[];
+  /**
+   * Planner bench: the stores of the planner this plan is compared with, drawn
+   * dashed under the plan's own lines. The portal never passes it.
+   */
+  storeLines?: PlanStoreLines;
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false, poolTargetC = null,
-  costLines,
+  costLines, storeLines,
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -186,6 +205,8 @@ const PlanPanels: React.FC<{
     const poolC = rows.map(row => row.poolTemperatureC ?? null);
     const knownPoolC = poolC.filter((value): value is number => value !== null);
     const showPool = knownPoolC.length > 0;
+    const comparedPoolC = (storeLines?.poolC.slice(0, n) ?? [])
+      .filter((value): value is number => value !== null && Number.isFinite(value));
     const pool: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: showPool ? 96 : 0 };
     const knownCost = (costLines ?? []).flatMap(line => line.values.slice(0, n))
       .filter((value): value is number => value !== null && Number.isFinite(value));
@@ -246,7 +267,7 @@ const PlanPanels: React.FC<{
     const socY = linearScale([0, 100], [soc.top + soc.height, soc.top]);
 
     // Half a degree of air around the readings and the target, on whole half degrees.
-    const poolBounds = [...knownPoolC, ...(poolTargetC === null ? [] : [poolTargetC])];
+    const poolBounds = [...knownPoolC, ...comparedPoolC, ...(poolTargetC === null ? [] : [poolTargetC])];
     const poolMin = Math.floor((Math.min(...poolBounds) - 0.3) * 2) / 2;
     const poolMax = Math.ceil((Math.max(...poolBounds) + 0.3) * 2) / 2;
     const poolY = linearScale([poolMin, poolMax], [pool.top + pool.height, pool.top]);
@@ -274,7 +295,7 @@ const PlanPanels: React.FC<{
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC, costLines]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC, costLines, storeLines]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -347,6 +368,7 @@ const PlanPanels: React.FC<{
   };
 
   const hovered = hover === null ? null : rows[hover];
+  const comparedNote = storeLines ? ` · ${t('streckat', 'dashed')} = ${storeLines.name}` : '';
   const planWidth = dividerIndex >= n ? 0 : x(n) - x(dividerIndex);
 
   return (
@@ -604,20 +626,36 @@ const PlanPanels: React.FC<{
 
           {/* -------------------------------------------------- Storage --- */}
           {showSoc && (
-            <>
-              <PanelHeading title={t('Lager', 'Storage')} unit="%" y={soc.top - 14} />
+            <g id="plan-storage">
+              <PanelHeading title={t('Lager', 'Storage')} unit={`%${comparedNote}`} y={soc.top - 14} />
               <Gridlines ticks={[0, 50, 100]} y={socY} format={tick => String(tick)} />
               {hasBattery && (
-                <>
-                  <path
-                    d={stepAreaPath(rows.map(row => row.homeSoc), x, socY, 0)}
-                    fill={PLAN_COLOURS.battery} fillOpacity={0.2}
-                  />
-                  <path
-                    d={stepLinePath(rows.map(row => row.homeSoc), x, socY)}
-                    fill="none" stroke={PLAN_COLOURS.battery} strokeWidth={2}
-                  />
-                </>
+                <path
+                  d={stepAreaPath(rows.map(row => row.homeSoc), x, socY, 0)}
+                  fill={PLAN_COLOURS.battery} fillOpacity={0.2}
+                />
+              )}
+              {/* Under the plan's own lines: where the two planners agree there
+                  is one line, and a dash only shows where they part. */}
+              {storeLines && hasBattery && (
+                <path
+                  d={stepLinePath(storeLines.homeSoc.slice(0, n), x, socY)}
+                  fill="none" stroke={PLAN_COLOURS.battery}
+                  strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH}
+                />
+              )}
+              {storeLines && hasEvBattery && (
+                <path
+                  d={midpointLinePath(storeLines.evSoc.slice(0, n), x, socY)}
+                  fill="none" stroke={PLAN_COLOURS.ev}
+                  strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH}
+                />
+              )}
+              {hasBattery && (
+                <path
+                  d={stepLinePath(rows.map(row => row.homeSoc), x, socY)}
+                  fill="none" stroke={PLAN_COLOURS.battery} strokeWidth={2}
+                />
               )}
               {hasEvBattery && (
                 <path
@@ -635,7 +673,7 @@ const PlanPanels: React.FC<{
                   {`${t('bil', 'car')} ${Math.round(rows[n - 1].evSoc as number)}%`}
                 </EndLabel>
               )}
-            </>
+            </g>
           )}
 
           {/* ---------------------------------------------- Temperature --- */}
@@ -643,7 +681,7 @@ const PlanPanels: React.FC<{
             <g id="plan-temperature">
               <PanelHeading
                 title={t('Temperatur', 'Temperature')}
-                unit={t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}
+                unit={`${t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}${comparedNote}`}
                 y={pool.top - 14}
               />
               <Gridlines ticks={niceTicks(poolMin, poolMax, 4)} y={poolY} format={tick => tick.toFixed(1)} />
@@ -657,6 +695,13 @@ const PlanPanels: React.FC<{
                     {`${poolTargetC} °C ${t('mål', 'target')}`}
                   </text>
                 </>
+              )}
+              {storeLines && (
+                <path
+                  d={midpointLinePath(storeLines.poolC.slice(0, n), x, poolY)} fill="none"
+                  stroke={POOL_COLOUR} strokeWidth={COMPARED_WIDTH} strokeLinejoin="round"
+                  strokeDasharray={COMPARED_DASH}
+                />
               )}
               <path
                 d={midpointLinePath(poolC, x, poolY)} fill="none"
@@ -691,8 +736,8 @@ const PlanPanels: React.FC<{
               {costLines.map(line => (
                 <path
                   key={line.key} d={stepLinePath(line.values.slice(0, n), x, costY)} fill="none"
-                  stroke={line.colour} strokeWidth={line.dashed ? 1.6 : 2.2} strokeLinejoin="round"
-                  strokeDasharray={line.dashed ? '5 3' : undefined}
+                  stroke={line.colour} strokeWidth={line.dashed ? COMPARED_WIDTH : 2.2} strokeLinejoin="round"
+                  strokeDasharray={line.dashed ? COMPARED_DASH : undefined}
                 />
               ))}
               {costEnds.map(end => (
@@ -794,6 +839,7 @@ const PlanPanels: React.FC<{
           hasEvBattery={hasEvBattery}
           realPrices={realPrices}
           costLines={showCost ? costLines : undefined}
+          storeLines={storeLines}
           left={pointer.left}
           top={pointer.top}
           bounds={wrapRef.current?.getBoundingClientRect() ?? null}
@@ -822,11 +868,13 @@ const PlanTooltip: React.FC<{
   hasEvBattery: boolean;
   realPrices: boolean;
   costLines?: readonly PlanCostLine[];
+  storeLines?: PlanStoreLines;
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, left, top, bounds,
+  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
+  left, top, bounds,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -850,7 +898,17 @@ const PlanTooltip: React.FC<{
   // Flip to the other side of the pointer rather than run off the edge, and
   // keep the whole card inside the chart.
   const offset = bounds && left + width + 24 > bounds.width ? -width - 16 : 16;
-  const estimated = 190 + (running.length + (costLines?.length ?? 0)) * 16;
+  // The compared planner's reading, under the plan's own, where it has one.
+  const compared = (
+    name: string, colour: string | undefined, values: readonly (number | null)[] | undefined,
+    format: (value: number) => string,
+  ) => {
+    const value = values?.[index];
+    return value === null || value === undefined || !Number.isFinite(value) ? null : (
+      <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
+    );
+  };
+  const estimated = 190 + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -899,11 +957,17 @@ const PlanTooltip: React.FC<{
             value={`${Math.round(row.homeSoc)} %`}
           />
         )}
+        {hasBattery && compared(
+          t('Hembatteri', 'Home battery'), PLAN_COLOURS.battery, storeLines?.homeSoc, value => `${Math.round(value)} %`,
+        )}
         {hasEvBattery && row.evSoc !== null && (
           <Reading
             name={t('Bilbatteri', 'Car battery')} colour={PLAN_COLOURS.ev}
             value={`${Math.round(row.evSoc)} %`}
           />
+        )}
+        {hasEvBattery && compared(
+          t('Bilbatteri', 'Car battery'), PLAN_COLOURS.ev, storeLines?.evSoc, value => `${Math.round(value)} %`,
         )}
         {row.importPriceSekPerKwh !== null && (
           <Reading
@@ -937,6 +1001,7 @@ const PlanTooltip: React.FC<{
             value={`${row.poolTemperatureC.toFixed(1)} °C`}
           />
         )}
+        {compared(t('Pooltemperatur', 'Pool temperature'), undefined, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
         {costLines
           ? costLines.map(line => {
             const value = line.values[index];

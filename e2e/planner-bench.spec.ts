@@ -690,12 +690,19 @@ test.describe('planner bench', () => {
     await expect(testCost).toHaveAttribute('d', wholeCase!);
     // So is the pool's temperature, with the owner's target drawn in.
     await expect(page.locator('#plan-temperature')).toContainText(/30\.5 °C (target|mål)/);
+    // The test plan is drawn against the current planner's battery and pool, dashed.
+    const compared = page.locator('#plan-storage path[stroke-dasharray="5 3"], #plan-temperature path[stroke-dasharray="5 3"]');
+    await expect(compared).toHaveCount(2);
+    await expect(page.locator('#plan-storage')).toContainText(/(dashed|streckat) = (Current|Nuvarande)/);
+    await expect(page.locator('#plan-temperature')).toContainText(/(dashed|streckat) = (Current|Nuvarande)/);
     await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
     const drawn = await chart.innerHTML();
     await page.locator('#bench-show-current').click();
     await expect(async () => expect(await chart.innerHTML()).not.toBe(drawn)).toPass({ timeout: 10_000 });
+    // The current plan shown on its own has nothing to be dashed against.
+    await expect(compared).toHaveCount(0);
 
     // Case costs live in the top summary, labelled separately from totals across all cases.
     const summary = page.locator('#bench-summary');
