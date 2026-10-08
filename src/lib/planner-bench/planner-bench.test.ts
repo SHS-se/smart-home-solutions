@@ -176,22 +176,23 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
 
 Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one two, and never both', () => {
   const series = comfortSeries(() => 30, () => 300);
-  // Prices rise through the plan; the pool runs for the first 40 quarters, then once late at a dear price.
-  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
+  // Prices rise steeply through the plan; the pool runs for the first 40 quarters, then once late at a dear price.
+  series.importPrice = series.importPrice.map((_, i) => 1 + i / 10);
   series.poolW = series.poolW.map((_, i) => i < 40 || i === 200 ? 3000 : 0);
   const score = scoreQuarters(series);
-  // The cheapest tenth is 28.8 quarters: 29 at +2, the next 11 at +1, the dear one nothing.
-  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [29, 11]);
-  assertEquals([score.quarters[0].score, score.quarters[30].score, score.quarters[200].score], [2, 1, 0]);
-  assertEquals([score.sum, score.points], [69, 69]);
+  // The cheapest tenth is 28.8 quarters, the dearest of them at 3.8. Its valley reaches 3.8 × 1.2 = 4.56,
+  // so 36 quarters gain 2, the next 4 gain 1 (price-valleys.test.ts), and the dear one nothing.
+  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [36, 4]);
+  assertEquals([score.quarters[0].score, score.quarters[38].score, score.quarters[200].score], [2, 1, 0]);
+  assertEquals([score.sum, score.points], [76, 76]);
   // Without the very cheap rule, the cheap one covers those quarters too.
   assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
 });
 
 Deno.test('flexible load bought in a dear quarter loses a point, in a very dear one two, and never both', () => {
   const series = comfortSeries(() => 30, () => 300);
-  // Prices rise through the plan; the car charges once at a middling price, then through the last 40 quarters.
-  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
+  // Prices rise steeply through the plan; the car charges once at a middling price, then through the last 40 quarters.
+  series.importPrice = series.importPrice.map((_, i) => 1 + i / 10);
   series.carW = series.carW.map((_, i) => i === 150 || i >= 248 ? 3000 : 0);
   series.gridImportW = series.carW.map(w => w + 400);
   const score = scoreQuarters(series);

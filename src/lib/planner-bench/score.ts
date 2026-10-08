@@ -23,10 +23,11 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 //     more of that load is bought from the grid, the quarter loses a point
 //     when the price is among the dearest quarter of the plan's, or two when
 //     among the dearest tenth. Load the sun or the battery carries loses nothing.
-//     Prices come in waves, so these shares stretch to keep a valley or a
-//     plateau whole: a quarter between two that count also counts when it and
-//     every quarter between them are within PRICE_BRIDGE_STRETCH times the
-//     share (bridgedRanks). A run never widens at its ends.
+//     Prices come in waves, so the cheap shares widen to keep a valley whole:
+//     a quarter also counts when an unbroken run of quarters priced within
+//     VALLEY_PRICE_STRETCH times the share's dearest price joins it to a
+//     quarter in the share (valleyRanks). The dear shares stay exact: a short
+//     dip between dear quarters is worth using.
 //     Imported base load of at least FLEXIBLE_W loses one point in the dearest
 //     quarter of prices, or two in the dearest tenth, when spare battery power
 //     and energy can cover it fully.
@@ -86,9 +87,9 @@ export const ARBITRAGE_SALE_PRICE = 4;
 export interface QuarterView {
   s: BenchSeries;
   i: number;
-  /** Share of the plan's quarters priced strictly below this one, 0-1, with enclosed gaps bridged. */
+  /** The cheap share this quarter counts from, 0-1: the share of quarters priced strictly below it, or its valley's (valleyRanks). */
   priceRank: number;
-  /** Share of the plan's quarters priced strictly above this one, 0-1, with enclosed gaps bridged. */
+  /** Share of the plan's quarters priced strictly above this one, 0-1. */
   dearRank: number;
   /** Pool heating below its enabled overheating threshold + battery charging + car, W. */
   rewardingFlexibleW: number;
@@ -148,32 +149,38 @@ const carFrom = (s: BenchSeries, t: number) =>
 const pct = (t: number) => `${Math.round(t * 100)} %`;
 
 /**
- * How far a price share may stretch to keep a valley or plateau unbroken.
- * The planner kernel applies the same stretch (`PRICE_BRIDGE_STRETCH`, planner-core policy.rs).
+ * How far above the dearest cheap price a quarter of the same valley may be
+ * priced and still count as cheap. The planner kernel applies the same stretch
+ * (`VALLEY_PRICE_STRETCH`, planner-core policy.rs).
  */
-export const PRICE_BRIDGE_STRETCH = 1.5;
+export const VALLEY_PRICE_STRETCH = 1.2;
 /**
- * Price ranks with enclosed gaps bridged. A fixed share cuts through a wave of
- * prices, and quarters a hair over the line split one valley into runs too
- * short to use. A quarter between two quarters that pass a threshold passes it
- * too, when it and every quarter between them stay within PRICE_BRIDGE_STRETCH
- * times that threshold. Each returned rank is the lowest share its quarter
- * passes, so it holds for every threshold. Only gaps close: a run never widens
- * at its ends, and a spike stays out.
+ * Cheap ranks with every valley widened and its gaps closed. A fixed share
+ * cuts through a wave of prices, and quarters a hair over the line split one
+ * valley into runs too short to use. For any share, a quarter counts when an
+ * unbroken run of quarters priced within VALLEY_PRICE_STRETCH times the
+ * dearest price in that share joins it to a quarter in the share. Each
+ * returned rank is the share its quarter counts from, so it holds for every
+ * threshold. A quarter beyond the stretch ends the valley, and a quarter
+ * within it that touches no valley gains nothing.
  */
-export function bridgedRanks(rank: readonly number[]): number[] {
-  const n = rank.length;
-  // The lowest threshold with a passing quarter on that side and nothing beyond the stretch in between.
-  const left = new Array<number>(n).fill(Infinity), right = new Array<number>(n).fill(Infinity);
-  for (let i = 1; i < n; i++) {
-    left[i] = Math.min(rank[i - 1], Math.max(left[i - 1], rank[i - 1] / PRICE_BRIDGE_STRETCH));
-    const j = n - 1 - i;
-    right[j] = Math.min(rank[j + 1], Math.max(right[j + 1], rank[j + 1] / PRICE_BRIDGE_STRETCH));
+export function valleyRanks(prices: readonly number[]): number[] {
+  const n = prices.length;
+  const rank = (price: number) => prices.reduce((count, other) => count + (other < price ? 1 : 0), 0) / n;
+  const ranks = prices.map(rank);
+  for (const core of [...new Set(prices)].sort((a, b) => a - b)) {
+    const limit = core + (VALLEY_PRICE_STRETCH - 1) * Math.abs(core), share = rank(core);
+    for (let from = 0; from < n; from++) {
+      let to = from, joined = false;
+      for (; to < n && prices[to] <= limit; to++) joined ||= prices[to] <= core;
+      if (joined) for (let i = from; i < to; i++) ranks[i] = Math.min(ranks[i], share);
+      from = to;
+    }
   }
-  return rank.map((own, i) => Math.min(own, Math.max(own / PRICE_BRIDGE_STRETCH, left[i], right[i])));
+  return ranks;
 }
-const share = (end: 'cheapest' | 'dearest', t: number) =>
-  `price in ${end} ${pct(t)}, or up to ${+(t * PRICE_BRIDGE_STRETCH * 100).toFixed(1)} % in a gap between such quarters`;
+const cheapShare = (t: number) =>
+  `price in cheapest ${pct(t)}, or within ${Math.round((VALLEY_PRICE_STRETCH - 1) * 100)} % above the dearest such price in an unbroken run reaching one`;
 const poolHeatingPast = (q: QuarterView, threshold: number) => {
   const before = poolBeforeC(q.s, q.i);
   return !!q.s.comfort && before !== null && before >= q.s.comfort.pool_target_c + threshold
@@ -238,25 +245,25 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
     key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `${share('cheapest', t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheap_buy', about: 'price', label: 'Flexible load in a cheap quarter', describe: t => `${cheapShare(t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `${share('cheapest', t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
+    key: 'cheapest_buy', about: 'price', label: 'Flexible load in a very cheap quarter', describe: t => `${cheapShare(t)}; pool heating after the overheating threshold earns no cheap-load credit`, fires: cheapBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => share('dearest', t), fires: dearBuy, eligibleFrom: () => 0,
+    key: 'dear_load', about: 'price', label: 'Flexible load bought in a dear quarter', describe: t => `price in dearest ${pct(t)}`, fires: dearBuy, eligibleFrom: () => 0,
   },
   {
-    key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => share('dearest', t), fires: dearBuy, eligibleFrom: () => 0,
+    key: 'dearest_load', about: 'price', label: 'Flexible load bought in a very dear quarter', describe: t => `price in dearest ${pct(t)}`, fires: dearBuy, eligibleFrom: () => 0,
   },
   {
     key: 'base_load_dear_import', about: 'price', label: 'Dear base-load import the battery could cover',
-    describe: t => `${share('dearest', t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
+    describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
     fires: baseLoadDearBuy, eligibleFrom: () => 0,
   },
   {
     key: 'base_load_dearest_import', about: 'price', label: 'Very dear base-load import the battery could cover',
-    describe: t => `${share('dearest', t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
+    describe: t => `price in dearest ${pct(t)}, battery can cover all imported base load of at least ${FLEXIBLE_W} W`,
     fires: baseLoadDearBuy, eligibleFrom: () => 0,
   },
   {
@@ -424,8 +431,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     return lo;
   };
 
-  const priceRank = bridgedRanks(s.importPrice.map(price => n ? below(price) / n : 0));
-  const dearRank = bridgedRanks(s.importPrice.map(price => n ? (n - below(price, true)) / n : 0));
+  const priceRank = valleyRanks(s.importPrice);
 
   // Each plan day's mean price and solar, to judge warmth held for the day after.
   const days = Array.from({ length: Math.ceil(n / DAY_QUARTERS) }, (_, d) => {
@@ -450,7 +456,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       + (hot && before !== null && s.comfort && before >= s.comfort.pool_target_c + hot.threshold ? 0 : s.poolW[i]);
     const q: QuarterView = {
       s, i, due: due(i), thermalBuffer: thermalBuffer?.[i].earns ?? false, ahead: aheadOf(i), priceRank: priceRank[i],
-      dearRank: dearRank[i],
+      dearRank: n ? (n - below(s.importPrice[i], true)) / n : 0,
       rewardingFlexibleW, flexibleGridW: flexibleGridSupplyW(s, i),
       baseLoadCoverable: !batteryEvidenceMissing && baseGridW >= FLEXIBLE_W
         && s.baseLoadBatteryCoverW[i] >= baseGridW,

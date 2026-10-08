@@ -1,9 +1,9 @@
 import { assert, assertEquals } from '@std/assert';
 import { RULE_DEFAULTS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy.ts';
-import { bridgedRanks, PRICE_BRIDGE_STRETCH, scoreQuarters } from './score.ts';
+import { scoreQuarters, valleyRanks, VALLEY_PRICE_STRETCH } from './score.ts';
 import type { BenchSeries } from './types.ts';
 
-/** Twenty quarters of pool heating bought from the grid, at the given prices. */
+/** Pool heating bought from the grid in every quarter, at the given prices. */
 function series(prices: number[]): BenchSeries {
   const each = <T>(value: T) => prices.map(() => value);
   return {
@@ -19,32 +19,40 @@ function series(prices: number[]): BenchSeries {
 }
 const only = (key: string) => Object.fromEntries(Object.keys(RULE_DEFAULTS).filter(k => k !== key).map(k => [k, { enabled: false }]));
 
-Deno.test('a quarter a hair over the cheap share inside a valley counts; a spike and the valley edge do not', () => {
-  // The cheapest quarter of twenty is five quarters: 1.00 to 1.04.
-  const prices = [1.00, 1.06, 1.01, 1.02, 3.00, 1.03, 1.04, 1.07, ...Array.from({ length: 12 }, (_, i) => 2 + i / 100)];
+Deno.test('a cheap valley widens and closes its gaps within the price stretch; a spike and dearer quarters stay out', () => {
+  // The cheapest quarter of twenty is five quarters, 1.00 to 1.04, so the valley reaches 1.04 × 1.2 = 1.248.
+  const prices = [1.30, 1.10, 1.00, 1.06, 1.01, 1.02, 3.00, 1.03, 1.04, 1.24, 1.25, ...Array.from({ length: 9 }, (_, i) => 2 + i / 100)];
+  assertEquals(VALLEY_PRICE_STRETCH, 1.2);
   const scores = scoreQuarters(series(prices), only('cheap_buy')).quarters.map(q => q.score);
-  assertEquals(scores.slice(0, 8), [
+  assertEquals(scores.slice(0, 11), [
+    0, // 1.30 is beyond the stretch
+    1, // 1.10 widens the valley at its start
     1,
-    1, // 1.06 is sixth cheapest, between two cheap quarters
+    1, // 1.06 is a gap inside it
     1, 1,
-    0, // the spike stays out
+    0, // the spike stays out and splits the valley
     1, 1,
-    0, // 1.07 ends the valley: nothing cheap beyond it
+    1, // 1.24 widens it at its end
+    0, // 1.25 is beyond the stretch
   ]);
-  assert(scores.slice(8).every(score => score === 0));
+  assert(scores.slice(11).every(score => score === 0));
 });
 
-Deno.test('a gap closes only while every quarter in it is within the stretched share, at either end of the prices', () => {
-  // Bridged: 0.30 < 0.25 × 1.5. Not bridged at 25 %: 0.40.
-  assert(bridgedRanks([0.2, 0.3, 0.2])[1] < 0.25);
-  assert(bridgedRanks([0.2, 0.4, 0.2])[1] >= 0.25);
-  // A long gap closes as one; one quarter beyond the stretch keeps both sides apart.
-  assert(bridgedRanks([0.24, 0.3, 0.36, 0.3, 0.24]).every(rank => rank < 0.25));
-  const apart = bridgedRanks([0.2, 0.3, 0.9, 0.3, 0.2]);
-  assertEquals([apart[1], apart[3]], [0.3, 0.3]);
-  // The very cheap share stretches by the same factor, and no rank ever rises.
-  assert(bridgedRanks([0.05, 0.14, 0.05])[1] < 0.1);
-  assertEquals(bridgedRanks([0.05, 0.16, 0.05])[1], 0.16 / PRICE_BRIDGE_STRETCH);
-  const ranks = [0.5, 0.1, 0.33, 0.02, 0.7, 0.26, 0.2];
-  bridgedRanks(ranks).forEach((rank, i) => assert(rank <= ranks[i]));
+Deno.test('the dear shares stay exact: a dip between dear quarters is not counted with them', () => {
+  // The dearest quarter of twenty is five quarters, 3.00 to 3.04; 2.99 sits between them.
+  const prices = [3.00, 3.01, 2.99, 3.02, 3.03, 3.04, ...Array.from({ length: 14 }, (_, i) => 1 + i / 100)];
+  const scores = scoreQuarters(series(prices), only('dear_load')).quarters.map(q => q.score);
+  assertEquals(scores.slice(0, 6), [-1, -1, 0, -1, -1, -1]);
+});
+
+Deno.test('a valley counts from the share its cheapest quarter is in, and only where an unbroken run reaches it', () => {
+  // A quarter within the stretch that no valley reaches gains nothing.
+  assertEquals(valleyRanks([1.0, 5.0, 1.1, 5.0, 5.0, 5.0, 5.0, 5.0])[2], 0.125);
+  // The very cheap share widens by the same factor.
+  assertEquals(valleyRanks([1.0, 1.1, 1.15, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]).slice(0, 4), [0, 0, 0, 0.3]);
+  // Prices at or below zero stretch upwards too, and no rank ever rises.
+  assertEquals(valleyRanks([-1.0, -0.9, 1.0, 1.0])[1], 0);
+  const prices = [1.5, 1.1, 1.33, 1.02, 1.7, 1.26, 1.2];
+  const exact = prices.map(price => prices.filter(other => other < price).length / prices.length);
+  valleyRanks(prices).forEach((rank, i) => assert(rank <= exact[i]));
 });
