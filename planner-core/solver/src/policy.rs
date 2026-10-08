@@ -13,6 +13,8 @@ pub(crate) struct FutureNeeds {
 pub(crate) struct Index {
     pub due: [usize; 4],
     pub cheap: Vec<f64>,
+    /// Quarters the cheap rule also counts: its share stretched along a valley.
+    pub cheap_valley: Vec<bool>,
     pub dear: Vec<f64>,
     pub buffer: Vec<Option<bool>>,
     pub thermal_buffer: thermal_buffer::Evidence,
@@ -34,43 +36,49 @@ pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
 pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
     p.rules.iter().find(|r| r.key == key && applicable(p, key))
 }
+impl Index {
+    /// Whether a quarter's price is in a cheap rule's share. Only the cheap
+    /// rule stretches along a valley; the very cheap share stays exact.
+    pub(crate) fn cheap_price(&self, r: &Rule, i: usize) -> bool {
+        self.cheap[i] < r.threshold || r.key == RuleKey::CheapBuy && self.cheap_valley[i]
+    }
+}
 /// Forecast incentive only: actual draw, source attribution and overheating
 /// still decide whether the projected quarter earns this reward.
 pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 {
     let fires = |r: &Rule| {
-        matches!(r.key, RuleKey::CheapBuy | RuleKey::CheapestBuy) && index.cheap[i] < r.threshold
+        matches!(r.key, RuleKey::CheapBuy | RuleKey::CheapestBuy) && index.cheap_price(r, i)
     };
     let fired: Vec<_> = p.rules.iter().map(fires).collect();
     contributions(&p.rules, &fired).iter().sum()
 }
-/// How far a cheap share may stretch along a valley: 25 % reaches 30 %.
-/// The bench referee applies the same stretch (`VALLEY_SHARE_STRETCH`, score.ts).
-pub(crate) const VALLEY_SHARE_STRETCH: f64 = 1.2;
-/// Cheap ranks with every valley widened. Prices come in waves, and a fixed
-/// share cuts through them: quarters a hair over the line split one valley into
-/// runs too short to use. For any share, a quarter counts when an unbroken run
-/// of quarters, each within `VALLEY_SHARE_STRETCH` times the share, joins it to
-/// a quarter in the share. The returned rank is the share a quarter counts
-/// from, so it holds for every threshold. A quarter beyond the stretch ends the
-/// valley, and a quarter within it that touches no valley gains nothing.
-pub(crate) fn valley_ranks(prices: &[f64]) -> Vec<f64> {
-    let n = prices.len();
-    let rank: Vec<f64> = prices
-        .iter()
-        .map(|v| prices.iter().filter(|a| *a < v).count() as f64 / n as f64)
-        .collect();
-    // The lowest share with a quarter in it on that side and nothing beyond
-    // its stretch in between.
-    let mut left = vec![f64::INFINITY; n];
-    let mut right = vec![f64::INFINITY; n];
-    for i in 1..n {
-        left[i] = rank[i - 1].min(left[i - 1].max(rank[i - 1] / VALLEY_SHARE_STRETCH));
-        let j = n - 1 - i;
-        right[j] = rank[j + 1].min(right[j + 1].max(rank[j + 1] / VALLEY_SHARE_STRETCH));
+/// How far the cheap share may stretch along a valley: 25 % reaches 32.5 %.
+/// The bench referee applies the same stretch (`PRICE_BRIDGE_STRETCH`, score.ts).
+pub(crate) const PRICE_BRIDGE_STRETCH: f64 = 1.3;
+/// The shortest valley the stretch applies through, in quarters.
+pub(crate) const PRICE_BRIDGE_MIN_QUARTERS: usize = 8;
+/// Flexible load a quarter needs for the very cheap reward, W. The cheap
+/// reward and the price penalties keep the 500 W floor.
+pub(crate) const VERY_CHEAP_LOAD_W: f64 = 1000.0;
+/// The quarters of every valley the cheap share stretches through. Prices come
+/// in waves, and a fixed share cuts through them: quarters a hair over the line
+/// split one valley into runs too short to use. A valley is an unbroken run of
+/// quarters, each within `PRICE_BRIDGE_STRETCH` times the share, that holds at
+/// least one quarter in the share and lasts `PRICE_BRIDGE_MIN_QUARTERS` or
+/// more. A quarter beyond the stretch ends it; shorter runs stay as they were.
+pub(crate) fn stretched_valleys(rank: &[f64], share: f64) -> Vec<bool> {
+    let n = rank.len();
+    let reach = share * PRICE_BRIDGE_STRETCH;
+    let mut valley = vec![false; n];
+    let mut from = 0;
+    while from < n {
+        let to = (from..n).find(|i| rank[*i] >= reach).unwrap_or(n);
+        if to - from >= PRICE_BRIDGE_MIN_QUARTERS && rank[from..to].iter().any(|r| *r < share) {
+            valley[from..to].fill(true);
+        }
+        from = to + 1;
     }
-    (0..n)
-        .map(|i| rank[i].min((rank[i] / VALLEY_SHARE_STRETCH).max(left[i].min(right[i]))))
-        .collect()
+    valley
 }
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
@@ -82,7 +90,14 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         .iter()
         .map(|s| measured(s.import_price, 10000.0))
         .collect();
-    let cheap = valley_ranks(&prices);
+    let cheap: Vec<f64> = prices
+        .iter()
+        .map(|v| prices.iter().filter(|a| *a < v).count() as f64 / n as f64)
+        .collect();
+    let cheap_valley = rule(p, RuleKey::CheapBuy).map_or_else(
+        || vec![false; n],
+        |r| stretched_valleys(&cheap, r.threshold),
+    );
     let dear = prices
         .iter()
         .map(|v| prices.iter().filter(|a| *a > v).count() as f64 / n as f64)
@@ -210,6 +225,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     Ok(Index {
         due,
         cheap,
+        cheap_valley,
         dear,
         buffer,
         thermal_buffer,
@@ -468,7 +484,8 @@ fn raw_quarter(
             PoolBuffer => pool.earns_buffer,
             EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
             EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
-            CheapBuy | CheapestBuy => rewarding_flexible >= 500.0 && index.cheap[i] < t,
+            CheapBuy => rewarding_flexible >= 500.0 && index.cheap_price(r, i),
+            CheapestBuy => rewarding_flexible >= VERY_CHEAP_LOAD_W && index.cheap_price(r, i),
             DearLoad | DearestLoad => flexible_grid >= 500.0 && index.dear[i] < t,
             BaseLoadDearImport | BaseLoadDearestImport => {
                 base_grid >= 500.0 && spare >= base_grid && index.dear[i] < t
@@ -632,29 +649,96 @@ mod tests {
         assert_eq!(account(&p, &q, &index).contributions[287], vec![0, -1, 2]);
     }
     #[test]
-    fn cheap_ranks_widen_a_valley_within_the_share_stretch_only() {
-        // Twenty quarters: the cheapest quarter of them is the five from 1.00 to
-        // 1.04, and the stretch takes the sixth, 1.06, where it touches them.
-        let mut prices = vec![1.07, 1.06, 1.00, 1.01, 3.00, 1.02, 1.03, 1.04, 1.07];
-        prices.extend((0..11).map(|i| 2.0 + f64::from(i) / 100.0));
-        let cheap: Vec<bool> = valley_ranks(&prices).iter().map(|r| *r < 0.25).collect();
-        // 1.06 widens the valley at its start; the seventh cheapest (1.07), the
-        // spike and everything dearer stay out.
-        let expected = [0, 1, 1, 1, 0, 1, 1, 1, 0];
-        assert_eq!(cheap[..9], expected.map(|v| v == 1));
-        assert!(cheap[9..].iter().all(|v| !v));
-        // The same sixth-cheapest price gains nothing where no valley touches it.
-        let mut apart = vec![1.00, 1.01, 1.02, 1.03, 1.04, 3.00, 1.06];
-        apart.extend((0..13).map(|i| 2.0 + f64::from(i) / 100.0));
-        assert_eq!(valley_ranks(&apart)[6], 0.25);
-        // A gap inside a valley closes too, and no rank ever rises.
-        let mut gap = vec![1.00, 1.01, 1.06, 1.02, 1.03, 1.04];
-        gap.extend((0..14).map(|i| 2.0 + f64::from(i) / 100.0));
-        let ranks = valley_ranks(&gap);
-        assert!(ranks[2] < 0.25);
-        assert!(ranks.iter().zip(&gap).all(|(rank, price)| {
-            *rank <= gap.iter().filter(|a| *a < price).count() as f64 / 20.0
-        }));
+    fn the_cheap_share_stretches_only_through_valleys_of_eight_quarters() {
+        // Ranks of forty quarters: the share is 0.25 and reaches 0.325.
+        let mut rank = vec![0.9; 40];
+        // A valley of eight: a gap at 0.30 inside it and 0.32 at each end.
+        rank[2..10].copy_from_slice(&[0.32, 0.10, 0.30, 0.10, 0.10, 0.10, 0.10, 0.32]);
+        // A spike ends a valley, leaving seven quarters: too short to stretch.
+        rank[12..20].copy_from_slice(&[0.9, 0.30, 0.10, 0.10, 0.10, 0.10, 0.10, 0.30]);
+        // Eight quarters within the stretch but none in the share.
+        rank[22..30].copy_from_slice(&[0.30; 8]);
+        // The stretch stops at 0.325 exactly.
+        rank[31..40].copy_from_slice(&[0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]);
+        let valley = stretched_valleys(&rank, 0.25);
+        let quarters = |from: usize, to: usize| valley[from..to].iter().filter(|v| **v).count();
+        assert_eq!(quarters(0, 12), 8);
+        assert!(valley[2] && valley[4] && valley[9]);
+        assert_eq!(quarters(12, 31), 0);
+        assert_eq!(quarters(31, 40), 8);
+        assert!(!valley[31] && valley[32]);
+    }
+    #[test]
+    fn very_cheap_needs_a_kilowatt_and_never_stretches() {
+        let mut p = crate::witnesses::tests::problem(40);
+        p.car = None;
+        p.charger = None;
+        p.initial.ev_kwh = None;
+        p.targets.ev_km = None;
+        p.targets.ev_limit_kwh = None;
+        p.rules = vec![
+            Rule {
+                key: RuleKey::CheapBuy,
+                threshold: 0.25,
+                points: 1,
+                required: false,
+                unless: Some(RuleKey::CheapestBuy),
+            },
+            Rule {
+                key: RuleKey::CheapestBuy,
+                threshold: 0.1,
+                points: 2,
+                required: false,
+                unless: None,
+            },
+        ];
+        // Four very cheap quarters, six cheap, three a hair dearer, then dear.
+        for (i, s) in p.slots.iter_mut().enumerate() {
+            s.import_price = match i {
+                0..4 => 1.0,
+                4..10 => 1.1,
+                10..13 => 1.2,
+                _ => 3.0,
+            };
+        }
+        let mut work = Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 0,
+            unit_cost: 100,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        };
+        let index = index(&p, &mut work).unwrap();
+        let charge = |watts: f64| {
+            let commands = vec![
+                Command {
+                    pool_on: false,
+                    ev_amps: 0,
+                    battery: Operation::GridCharge,
+                    charge_limit_w: watts,
+                    discharge_limit_w: 0.0,
+                };
+                40
+            ];
+            let q = crate::physics::projection(&p, &commands).unwrap();
+            account(&p, &q, &index).contributions
+        };
+        // 1 kW: very cheap pays 2, the cheap share 1, and so does its valley.
+        let full = charge(1000.0);
+        assert_eq!(full[0], vec![0, 2]);
+        assert_eq!(full[4], vec![1, 0]);
+        assert_eq!(full[12], vec![1, 0]);
+        assert_eq!(full[13], vec![0, 0]);
+        // 500 W: a very cheap quarter pays the cheap point only.
+        let thin = charge(500.0);
+        assert_eq!(thin[0], vec![1, 0]);
+        assert_eq!(thin[4], vec![1, 0]);
     }
     #[test]
     fn exclusions_use_raw_firing_across_direct_and_witness_rules() {

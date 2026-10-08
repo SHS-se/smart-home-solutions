@@ -51,7 +51,7 @@ Deno.test("forecast opportunities defer safe expensive opening loads and beat th
   assertEquals(projected.quarters, s.quarters);
 });
 
-Deno.test("a cheap opening still supports immediate EV charging", () => {
+Deno.test("a cheap opening is still used at once for charging", () => {
   const p = forecastProblem();
   for (let i = 0; i < p.slots.length; i++) {
     p.slots[i].import_price = 1 - .8 * Math.cos(i % 96 / 96 * 2 * Math.PI);
@@ -59,7 +59,10 @@ Deno.test("a cheap opening still supports immediate EV charging", () => {
   }
   const result = solve(p);
   assert(result.kind === "selected");
-  assert(result.selection.commands[0].ev_amps > 0);
+  // Until the very cheap reward needed 1 kW, the car took this quarter beside a
+  // thin battery charge. Either store charging at a kilowatt or more uses it.
+  const opening = result.selection.quarters[0];
+  assert(opening.ev_w >= 1000 || opening.charge_w >= 1000);
 });
 
 function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {

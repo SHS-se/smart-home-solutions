@@ -180,11 +180,10 @@ Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one t
   series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
   series.poolW = series.poolW.map((_, i) => i < 40 || i === 200 ? 3000 : 0);
   const score = scoreQuarters(series);
-  // The cheapest tenth is 28.8 quarters and stretches along its valley to 12 %, 34.6 quarters:
-  // 35 at +2, the next 5 at +1 (price-valleys.test.ts), the dear one nothing.
-  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [35, 5]);
-  assertEquals([score.quarters[0].score, score.quarters[38].score, score.quarters[200].score], [2, 1, 0]);
-  assertEquals([score.sum, score.points], [75, 75]);
+  // The cheapest tenth is 28.8 quarters: 29 at +2, the next 11 at +1, the dear one nothing.
+  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [29, 11]);
+  assertEquals([score.quarters[0].score, score.quarters[30].score, score.quarters[200].score], [2, 1, 0]);
+  assertEquals([score.sum, score.points], [69, 69]);
   // Without the very cheap rule, the cheap one covers those quarters too.
   assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
 });

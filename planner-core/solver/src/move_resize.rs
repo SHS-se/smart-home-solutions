@@ -86,7 +86,7 @@ impl Edit {
 // Direct tariff rules order proposals only. Every retained alternative is fully scored.
 fn tariff_points(p: &Problem, index: &policy::Index, i: usize, watts: f64) -> i32 {
     let fires = |r: &Rule| match r.key {
-        RuleKey::CheapBuy | RuleKey::CheapestBuy => index.cheap[i] < r.threshold,
+        RuleKey::CheapBuy | RuleKey::CheapestBuy => index.cheap_price(r, i),
         RuleKey::DearLoad | RuleKey::DearestLoad => {
             index.dear[i] < r.threshold && p.slots[i].solar_w < p.slots[i].base_w + watts
         }

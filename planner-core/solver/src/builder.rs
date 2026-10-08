@@ -990,7 +990,7 @@ mod move_resize_tests {
                 },
             ];
             // A third of the quarters are cheaper than the rest: beyond the
-            // cheap share even stretched along its valley (0.25 × 1.2 = 0.30).
+            // cheap share even stretched along its valley (0.25 × 1.3 = 0.325).
             for (i, slot) in p.slots.iter_mut().enumerate() {
                 slot.import_price = if i < 8 { 0.9 } else { 1.1 };
             }
