@@ -4,6 +4,14 @@ import type {
   ReadyProblem,
 } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { syntheticReadyProblem } from "../scripts/planner-synthetic.fixture.ts";
+
+/** Expensive opening; the pool can coast safely into later cheap/surplus sun. */
+export function forecastProblem(): ReadyProblem {
+  const p = syntheticReadyProblem();
+  p.initial.pool_c = 29.7;
+  return p;
+}
 
 export const command = (pool_on = false): NativeCommand => ({
   pool_on,

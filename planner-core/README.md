@@ -20,7 +20,8 @@ deno task test
 ```
 
 `models` owns pure device transitions. `solver/physics.rs` owns coupled
-projection, `policy.rs` owns additive measurements and construction guidance,
+projection, `policy.rs` owns additive measurements, `opportunity.rs` owns
+forecast continuation values used only for construction guidance,
 `witnesses.rs` owns feasible alternatives, and `builder.rs` owns bounded joint
 construction and repairs. The TypeScript wrapper passes one prepared
 problem through one Wasm call. Each invocation has private mutable memory.
@@ -90,8 +91,10 @@ readings; realistic above-target readings remain usable.
 
 The rule-driven builder maps all 19 quarter rules and 11 economic families.
 Rules carry their configured thresholds, signs, required flags and exclusions.
-Construction uses a reverse opportunity index and a forward beam of coupled
-native commands, followed by bounded complete-plan audits and span repairs.
+Construction uses backward forecast continuation tables and a forward beam of
+coupled native commands, followed by bounded complete-plan audits and span repairs.
+The [forecast search comparison](../docs/energy-optimisation/forecast-opportunity-search.md)
+records the first-quarter regression, fresh same-input scores and runtime tradeoffs.
 Two sweeps does not mean two total simulations. Exact projection decides physical
 feasibility; separate known-price and forecast certificates keep forecast-only
 savings from earning published-price penalties. Reports include every signed

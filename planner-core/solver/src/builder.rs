@@ -1,3 +1,4 @@
+use crate::opportunity::Opportunity;
 use crate::physics::{self, State};
 use crate::policy::{self, Index};
 use crate::*;
@@ -58,8 +59,9 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     let s = &p.slots[i];
     let h = physics::projected_hours(s);
     let f = &index.future[i];
-    // Purpose: service or forecast thermal reserve. Extra heat merely to earn a
-    // cheap-load point has no proposal; this is guidance, not a physical ceiling.
+    // Service, thermal reserve and cheap-window proposals compete on the same
+    // complete score. The policy's overheating threshold limits cheap credit;
+    // a comfort target must not silently exclude otherwise scoring heat.
     let target = p.targets.pool_c.unwrap_or(0.0);
     let pool_goal = match label.buffer_episode.episode {
         thermal_buffer::Episode::Available
@@ -85,7 +87,8 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 )
                 .min(p.slots.len() - i) as f64;
         policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
+            && (store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
+                || policy::cheap_load_incentive(p, index, i) > 0)
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut ev_levels = vec![0];
@@ -216,16 +219,20 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             }
         }
     }
-    // Round-robin pool/EV template order avoids truncating all alternatives of
-    // one device. Every tested action, including rejected ones, is metered.
+    // Round-robin the whole pool/current cross product. Truncating halves of
+    // the flat list erased high-current EV actions when battery variants grew.
     if out.len() > p.recipe.max_actions {
-        let all = out;
+        let mut groups = std::collections::BTreeMap::<(bool, u32), Vec<Command>>::new();
+        for c in out {
+            groups.entry((c.pool_on, c.ev_amps)).or_default().push(c);
+        }
         out = Vec::new();
-        let half = all.len().div_ceil(2);
-        for k in 0..half {
-            for j in [k, k + half] {
-                if j < all.len() && out.len() < p.recipe.max_actions {
-                    out.push(all[j].clone());
+        for variant in 0..groups.values().map(Vec::len).max().unwrap_or(0) {
+            for group in groups.values() {
+                if let Some(c) = group.get(variant) {
+                    if out.len() < p.recipe.max_actions {
+                        out.push(c.clone());
+                    }
                 }
             }
         }
@@ -233,21 +240,6 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     out
 }
 fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
-    let mut service = 0.0;
-    if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-        let max_gain =
-            charger.watts(charger.max_current_a).unwrap() * 0.25 / 1000.0 * car.charge_efficiency;
-        for (level, key) in [RuleKey::EvLow, RuleKey::EvShort].into_iter().enumerate() {
-            if let Some(r) = policy::rule(p, key) {
-                let deficit = (p.targets.ev_km.unwrap() - p.service_guard.ev[level])
-                    * car.kwh_per_km
-                    - l.state.ev;
-                let catchup = (deficit.max(0.0) / max_gain).ceil() as usize;
-                service -= (i + catchup).saturating_sub(index.due[2 + level].max(i + 1)) as f64
-                    * (-r.points).max(0) as f64;
-            }
-        }
-    }
     let pool = p
         .heater
         .as_ref()
@@ -285,27 +277,19 @@ fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
                 ),
                 thermal_buffer::Episode::Spent => 0.0,
             };
-            (future.useful_pool_quarters + buffer_points).min(warming) * share.clamp(0.0, 1.0)
+            buffer_points.min(warming) * share.clamp(0.0, 1.0)
         });
-    pool + service + l.gap_estimate
+    pool + l.gap_estimate
 }
 
-fn rank(p: &Problem, index: &Index, i: usize, l: &Label) -> (f64, f64) {
-    let future = estimate(p, index, i, l);
-    let mut stored = p.battery.as_ref().map_or(0.0, |b| {
-        (l.state.battery - b.min_soc * b.capacity_kwh).max(0.0) * b.discharge_efficiency
-    });
-    let mut value = 0.0;
-    for &(demand, price) in &index.future[i].battery_value_curve {
-        let used = stored.min(demand);
-        value += used * price;
-        stored -= used;
-        if stored <= 0.0 {
-            break;
-        }
-    }
-    (f64::from(l.points) + future, l.cash + l.wear - value)
+fn rank(p: &Problem, index: &Index, opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
+    let future = opportunity.to_go(i + 1, &l.state);
+    (
+        f64::from(l.points) + future.points + estimate(p, index, i, l),
+        l.cash + l.wear + future.cost,
+    )
 }
+
 fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64 {
     let Some(last) = last else { return 0.0 };
     let gap = i - last - 1;
@@ -327,9 +311,8 @@ fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64
         0.0
     }
 }
-fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Command>>, String> {
-    let mut arena = Vec::new();
-    let mut labels = vec![Label {
+fn initial_label(p: &Problem) -> Label {
+    Label {
         buffer_episode: thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0)),
         state: physics::initial(p),
         parent: usize::MAX,
@@ -342,7 +325,17 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
         ev_last: None,
         gap_estimate: 0.0,
         rank: (0.0, 0.0),
-    }];
+    }
+}
+
+fn construct(
+    p: &Problem,
+    index: &Index,
+    opportunity: &Opportunity,
+    work: &mut Work,
+) -> Result<Vec<Vec<Command>>, String> {
+    let mut arena = Vec::new();
+    let mut labels = vec![initial_label(p)];
     for i in 0..p.slots.len() {
         let arena_base = arena.len();
         let mut expanded = Vec::new();
@@ -351,9 +344,7 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
                 return Err("work_grant_cannot_complete_construction".into());
             }
             for c in actions(p, index, i, l) {
-                if !work
-                    .spend(work.unit_cost + index.future[i].battery_value_curve.len() as u64 * 8)
-                {
+                if !work.spend(work.unit_cost + 128) {
                     return Err("work_grant_cannot_complete_construction".into());
                 }
                 work.expansions += 1;
@@ -384,7 +375,7 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
                     next.gap_estimate += gap_estimate(p, i, l.ev_last, RuleKey::EvShortGap);
                     next.ev_last = Some(i);
                 }
-                next.rank = rank(p, index, i, &next);
+                next.rank = rank(p, index, opportunity, i, &next);
                 let parent = arena.len();
                 arena.push(Node {
                     parent: l.parent,
@@ -406,27 +397,25 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
             let rb = b.rank;
             rb.0.total_cmp(&ra.0).then(ra.1.total_cmp(&rb.1))
         });
-        // Preserve one useful-store alternative per owner, preventing an early
-        // local reward from erasing all slower-starting useful trajectories.
-        let mut chosen: Vec<usize> =
-            (0..p.recipe.beam_width.saturating_sub(3).min(expanded.len())).collect();
-        for owner in 0..3 {
-            let best = (0..expanded.len())
-                .filter(|k| !chosen.contains(k))
-                .max_by(|a, b| {
-                    let inventory = |l: &Label| match owner {
-                        0 => l.state.pool.min(index.future[i].pool_goal),
-                        1 => l.state.ev.min(index.future[i].ev_goal),
-                        _ => l.state.battery,
-                    };
-                    inventory(&expanded[*a])
-                        .total_cmp(&inventory(&expanded[*b]))
-                        .then(b.cmp(a))
-                });
-            if let Some(best) = best {
-                if chosen.len() < p.recipe.beam_width {
-                    chosen.push(best);
-                }
+        // Prefer distinct joint inventory/startup cells before keeping siblings.
+        // Cells are proposal diversity, not state equivalence or dominance: all
+        // retained labels keep their exact physics and rule histories.
+        let mut cells = std::collections::BTreeSet::new();
+        let mut chosen = Vec::new();
+        for (j, l) in expanded.iter().enumerate() {
+            if cells.insert(opportunity.cell(&l.state)) {
+                chosen.push(j);
+            }
+            if chosen.len() == p.recipe.beam_width {
+                break;
+            }
+        }
+        for j in 0..expanded.len() {
+            if chosen.len() == p.recipe.beam_width {
+                break;
+            }
+            if !chosen.contains(&j) {
+                chosen.push(j);
             }
         }
         if chosen.is_empty() {
@@ -452,7 +441,9 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
             .then((a.cash + a.wear).total_cmp(&(b.cash + b.wear)))
     });
     let mut out = Vec::new();
-    for l in labels.into_iter().take(p.recipe.finalists) {
+    let mut profiles = std::collections::BTreeSet::new();
+    let mut siblings = Vec::new();
+    for l in labels {
         if !work.spend(p.slots.len() as u64 * work.unit_cost) {
             break;
         }
@@ -463,6 +454,37 @@ fn construct(p: &Problem, index: &Index, work: &mut Work) -> Result<Vec<Vec<Comm
             at = arena[at].parent;
         }
         commands.reverse();
+        let mut profile = Vec::new();
+        for owner in 0..3 {
+            let active = |c: &Command| match owner {
+                0 => c.pool_on,
+                1 => c.ev_amps > 0,
+                _ => c.battery == Operation::GridCharge,
+            };
+            let mut start = None;
+            for i in 0..=commands.len() {
+                if i < commands.len() && active(&commands[i]) {
+                    if start.is_none() {
+                        start = Some(i);
+                    }
+                } else if let Some(from) = start.take() {
+                    profile.push((owner, from, i));
+                }
+            }
+        }
+        if profiles.insert(profile) {
+            out.push(commands);
+        } else {
+            siblings.push(commands);
+        }
+        if out.len() == p.recipe.finalists {
+            break;
+        }
+    }
+    for commands in siblings {
+        if out.len() == p.recipe.finalists {
+            break;
+        }
         out.push(commands);
     }
     if out.is_empty() {
@@ -770,6 +792,9 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         })
         .and_then(|v| v.checked_add(reserved))
         .ok_or("work_recipe_overflow")?;
+    let construction = construction
+        .checked_add(opportunity::work_bound(p, unit).ok_or("work_recipe_overflow")?)
+        .ok_or("work_recipe_overflow")?;
     if p.work_grant < construction {
         return Err("work_grant_cannot_construct_and_certify".into());
     }
@@ -787,7 +812,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         move_resize_improvements: 0,
     };
     let index = policy::index(p, &mut work)?;
-    let proposals = construct(p, &index, &mut work)?;
+    let opportunity = Opportunity::prepare(p, &index, &mut work)?;
+    let proposals = construct(p, &index, &opportunity, &mut work)?;
 
     let mut candidates = Vec::new();
     let mut budget_declined = false;
@@ -1016,5 +1042,187 @@ mod move_resize_tests {
         assert!(declined);
         assert_eq!(work.reserved, 10000);
         assert!(work.used + work.reserved <= work.limit);
+    }
+}
+
+#[cfg(test)]
+mod forecast_tests {
+    use super::*;
+    fn work(p: &Problem) -> Work {
+        Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 10000,
+            unit_cost: 128,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        }
+    }
+    fn pool_problem() -> Problem {
+        let mut p = witnesses::tests::problem(12);
+        p.battery = None;
+        p.initial.battery_kwh = None;
+        p.car = None;
+        p.charger = None;
+        p.initial.ev_kwh = None;
+        p.targets.ev_km = None;
+        p.targets.ev_limit_kwh = None;
+        p.initial.pool_c = Some(29.7);
+        p.pool_store.as_mut().unwrap().loss = shs_planner_models::StandingLoss::Linear {
+            kw_per_c: 0.05,
+            surroundings_c: Some(20.0),
+        };
+        p.recipe.beam_width = 32;
+        p.recipe.max_actions = 32;
+        p.recipe.finalists = 4;
+        p.recipe.witness_trials = 12;
+        p.recipe.repair_trials = 8;
+        p.rules = vec![
+            Rule {
+                key: RuleKey::PoolLow,
+                threshold: 1.0,
+                points: -1,
+                required: false,
+                unless: None,
+            },
+            Rule {
+                key: RuleKey::PoolCold,
+                threshold: 2.0,
+                points: -1,
+                required: true,
+                unless: None,
+            },
+            Rule {
+                key: RuleKey::PoolHot,
+                threshold: 2.0,
+                points: -1,
+                required: false,
+                unless: None,
+            },
+            Rule {
+                key: RuleKey::CheapBuy,
+                threshold: 0.25,
+                points: 2,
+                required: false,
+                unless: None,
+            },
+            Rule {
+                key: RuleKey::DearLoad,
+                threshold: 0.25,
+                points: -2,
+                required: false,
+                unless: None,
+            },
+        ];
+        for (i, s) in p.slots.iter_mut().enumerate() {
+            s.import_price = if (4..7).contains(&i) {
+                0.5
+            } else {
+                2.0 + i as f64 / 100.0
+            };
+        }
+        p
+    }
+    #[test]
+    fn pool_search_matches_exhaustive_fully_audited_small_horizon() {
+        for variant in 0..4 {
+            let mut p = pool_problem();
+            match variant {
+                1 => {
+                    for (i, s) in p.slots.iter_mut().enumerate() {
+                        s.import_price = if i < 3 { 0.5 } else { 2.0 + i as f64 / 100.0 };
+                    }
+                }
+                2 => {
+                    p.initial.pool_c = Some(28.05);
+                    p.pool_store.as_mut().unwrap().loss =
+                        shs_planner_models::StandingLoss::Linear {
+                            kw_per_c: 0.5,
+                            surroundings_c: Some(20.0),
+                        };
+                }
+                3 => {
+                    p.accepted = Some(
+                        (0..4)
+                            .map(|i| Command {
+                                pool_on: i % 2 == 0,
+                                ..idle()
+                            })
+                            .collect(),
+                    );
+                    p.locked_through_seconds = 3600.0;
+                }
+                _ => {}
+            }
+            let mut w = work(&p);
+            let index = policy::index(&p, &mut w).unwrap();
+            let mut oracle: Option<Account> = None;
+            for bits in 0..1usize << p.slots.len() {
+                let commands: Vec<_> = (0..p.slots.len())
+                    .map(|i| Command {
+                        pool_on: bits & (1 << i) != 0,
+                        ..idle()
+                    })
+                    .collect();
+                let Ok(candidate) = evaluate(&p, &index, commands, &mut work(&p)) else {
+                    continue;
+                };
+                if oracle
+                    .as_ref()
+                    .is_none_or(|old| policy::better(&candidate.account, old))
+                {
+                    oracle = Some(candidate.account);
+                }
+            }
+            let selected = solve(&p).unwrap();
+            let oracle = oracle.unwrap();
+            assert_eq!(selected.account.points, oracle.points, "variant {variant}");
+            assert!(
+                (selected.account.cash_sek - oracle.cash_sek).abs() < 1e-8,
+                "variant {variant}: {} vs {}",
+                selected.account.cash_sek,
+                oracle.cash_sek
+            );
+            match variant {
+                0 => assert!(!selected.commands[0].pool_on),
+                1 | 2 => assert!(selected.commands[0].pool_on),
+                3 => assert_eq!(&selected.commands[..4], p.accepted.as_ref().unwrap()),
+                _ => unreachable!(),
+            }
+        }
+    }
+    fn idle() -> Command {
+        Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        }
+    }
+    #[test]
+    fn action_limit_preserves_high_ev_current_with_pool_and_battery_choices() {
+        let mut p = witnesses::tests::problem(24);
+        p.recipe.max_actions = 32;
+        p.initial.pool_c = Some(29.0);
+        p.targets.ev_km = Some(250.0);
+        p.rules.clear();
+        for s in &mut p.slots {
+            s.base_w = 1000.0;
+        }
+        let index = policy::index(&p, &mut work(&p)).unwrap();
+        let choices = actions(&p, &index, 0, &initial_label(&p));
+        assert_eq!(choices.len(), p.recipe.max_actions);
+        for pool_on in [false, true] {
+            assert!(choices
+                .iter()
+                .any(|c| c.pool_on == pool_on
+                    && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
+        }
     }
 }

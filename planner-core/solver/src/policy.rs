@@ -5,12 +5,10 @@ use crate::*;
 pub(crate) struct FutureNeeds {
     pub pool_goal: f64,
     pub ev_goal: f64,
-    pub useful_pool_quarters: f64,
     pub buffer_quarters: f64,
     pub next_cheaper: usize,
     pub demand_kwh: f64,
     pub refill_demand_kwh: f64,
-    pub battery_value_curve: Vec<(f64, f64)>,
 }
 pub(crate) struct Index {
     pub due: [usize; 4],
@@ -35,6 +33,15 @@ pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
 }
 pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
     p.rules.iter().find(|r| r.key == key && applicable(p, key))
+}
+/// Forecast incentive only: actual draw, source attribution and overheating
+/// still decide whether the projected quarter earns this reward.
+pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 {
+    let fires = |r: &Rule| {
+        matches!(r.key, RuleKey::CheapBuy | RuleKey::CheapestBuy) && index.cheap[i] < r.threshold
+    };
+    let fired: Vec<_> = p.rules.iter().map(fires).collect();
+    contributions(&p.rules, &fired).iter().sum()
 }
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
@@ -91,16 +98,13 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         FutureNeeds {
             pool_goal: p.targets.pool_c.unwrap_or(0.0),
             ev_goal,
-            useful_pool_quarters: 0.0,
             buffer_quarters: 0.0,
             next_cheaper: n,
             demand_kwh: 0.0,
             refill_demand_kwh: 0.0,
-            battery_value_curve: Vec::new(),
         };
         n
     ];
-    let mut useful = 0.0;
     let mut demand = 0.0_f64;
     // Reverse opportunity sweep. Estimates guide construction, never add earned points.
     for i in (0..n).rev() {
@@ -114,11 +118,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         } else {
             p.targets.pool_c.unwrap_or(0.0)
         };
-        for (j, key) in [RuleKey::PoolLow, RuleKey::PoolCold].iter().enumerate() {
-            if i >= due[j] {
-                useful += rule(p, *key).map_or(0.0, |r| (-r.points).max(0) as f64);
-            }
-        }
         let heat_load =
             p.pool_store
                 .as_ref()
@@ -144,17 +143,15 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         future[i] = FutureNeeds {
             pool_goal: goal,
             ev_goal,
-            useful_pool_quarters: useful,
             buffer_quarters: thermal_buffer.best[i]
                 * buffer_rule.map_or(0.0, |r| f64::from(r.points)),
             next_cheaper,
             demand_kwh: demand,
             refill_demand_kwh: 0.0,
-            battery_value_curve: Vec::new(),
         };
     }
-    // Stored energy displaces chronological demand up to the next useful
-    // cheaper refill or solar window. It is never all valued at the peak price.
+    // Useful refill quantities stop at the next cheaper or solar opportunity.
+    // Time-dependent inventory values belong to opportunity tables.
     for (i, f) in future.iter_mut().enumerate() {
         let end = (i + 1..n)
             .find(|&j| {
@@ -182,9 +179,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             let demand =
                 (s.base_w + maintenance - s.solar_w).max(0.0) * projected_hours(s) / 1000.0;
             f.refill_demand_kwh += demand;
-            if demand > 0.0 {
-                f.battery_value_curve.push((demand, s.import_price));
-            }
         }
     }
     Ok(Index {
@@ -483,6 +477,32 @@ fn contributions(rules: &[Rule], fired: &[bool]) -> Vec<i32> {
             }
         })
         .collect()
+}
+/// Relaxed continuation tables share the actual rule predicates. Episode and
+/// charge-history rules are excluded by the table owner, not approximated here.
+pub(crate) fn guidance_quarter(
+    p: &Problem,
+    index: &Index,
+    i: usize,
+    v: &Quarter,
+    before_c: f64,
+) -> i32 {
+    contributions(
+        &p.rules,
+        &raw_quarter(
+            p,
+            index,
+            i,
+            v,
+            false,
+            PoolScoring {
+                earns_buffer: false,
+                before_c: measured(before_c, 1000.0),
+            },
+        ),
+    )
+    .iter()
+    .sum()
 }
 pub(crate) fn quarter(
     p: &Problem,

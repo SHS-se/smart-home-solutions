@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v4:2642b3d8c9c61fd3fcb64b3dfa9ba75511caf9de00c8c39fa4093d3ac0e8dd89",
+    "model_version": "rules-planner-v4:2e1740bf34702a9e5b9384a7e6c420cc145c1042bc9e378afeb277889cbfb4d1",
     "decision_diagnostics_version": 2,
     "plan_id": "c22f37ca-7791-4b9c-a1ec-793ba6e226bd",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -4911,24 +4911,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.7495196786213322,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -4936,14 +4936,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             }
           },
@@ -4983,7 +4983,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 0,
             "curtailed_w": 0,
@@ -5033,24 +5033,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5058,14 +5058,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             }
           },
@@ -5105,7 +5105,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5166,7 +5166,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5227,7 +5227,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5288,7 +5288,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5349,7 +5349,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5410,7 +5410,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5471,7 +5471,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5521,24 +5521,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5546,14 +5546,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             }
           },
@@ -5593,7 +5593,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5654,7 +5654,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5715,7 +5715,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5776,7 +5776,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5837,7 +5837,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5898,7 +5898,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5959,7 +5959,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -6009,24 +6009,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
             "battery_soc": 0.9977912494177923,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -6034,14 +6034,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             }
           },
@@ -8849,24 +8849,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.7495196786213322,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8874,14 +8874,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             }
           },
@@ -8921,7 +8921,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 0,
             "curtailed_w": 0,
@@ -8971,24 +8971,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8996,14 +8996,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             }
           },
@@ -9043,7 +9043,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9104,7 +9104,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9165,7 +9165,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9226,7 +9226,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9287,7 +9287,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9348,7 +9348,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9409,7 +9409,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.8322768688868188,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9459,24 +9459,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9484,14 +9484,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             }
           },
@@ -9531,7 +9531,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9592,7 +9592,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9653,7 +9653,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9714,7 +9714,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9775,7 +9775,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9836,7 +9836,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9897,7 +9897,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9150340591523056,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9947,24 +9947,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
             "battery_soc": 0.9977912494177923,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9972,14 +9972,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             }
           },

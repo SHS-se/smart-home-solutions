@@ -8,7 +8,7 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
-import { bufferProblem, causalCase, command, problem } from "./planner-wasm.fixture.ts";
+import { bufferProblem, causalCase, command, forecastProblem, problem } from "./planner-wasm.fixture.ts";
 import {
   projectHeatPumpResponse,
   stepThermalStore,
@@ -30,6 +30,78 @@ const bytes = await Deno.readFile(
 );
 const core = createWasmPlanner(bytes);
 const solve = (p: ReadyProblem) => core.solve(p).outcome;
+
+Deno.test("forecast opportunities defer safe expensive opening loads and beat the old score", () => {
+  const p = forecastProblem();
+  const result = solve(p);
+  assert(result.kind === "selected");
+  const s = result.selection;
+  assertEquals(s.commands[0].pool_on, false);
+  assertEquals(s.commands[0].ev_amps, 0);
+  assert(s.commands[0].battery !== "grid_charge");
+  const first = s.commands.findIndex(c => c.pool_on);
+  assert(first > 0);
+  assert(p.slots[first].import_price < p.slots[0].import_price);
+  // Measured previous kernel: 70 points, pool-on at quarter zero. Rules and
+  // forecasts are fixed; this tests a score improvement, not just a later start.
+  assert(s.account.points > 70);
+  assert(s.work_used <= p.work_grant);
+  const projected = core.project(p, s.commands).outcome;
+  assert(projected.kind === "projected");
+  assertEquals(projected.quarters, s.quarters);
+});
+
+Deno.test("a cheap opening still supports immediate EV charging", () => {
+  const p = forecastProblem();
+  for (let i = 0; i < p.slots.length; i++) {
+    p.slots[i].import_price = 1 - .8 * Math.cos(i % 96 / 96 * 2 * Math.PI);
+    p.slots[i].export_price = p.slots[i].import_price - .5;
+  }
+  const result = solve(p);
+  assert(result.kind === "selected");
+  assert(result.selection.commands[0].ev_amps > 0);
+});
+
+function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
+  const p = problem();
+  p.battery = null;
+  p.initial.battery_kwh = null;
+  if (!ev) {
+    p.car = null; p.charger = null; p.initial.ev_kwh = null;
+    p.targets.ev_km = null; p.targets.ev_limit_kwh = null;
+  } else {
+    p.initial.ev_kwh = 10;
+  }
+  p.initial.pool_c = 29.8;
+  p.limits.import_w = 1000;
+  p.slots = p.slots.map((s, i) => ({ ...s, base_w: 1000,
+    solar_w: i === 0 ? solarW : 0, import_price: 2, export_price: 1,
+    ev_available: i === 0 }));
+  p.rules = [
+    { key: "cheap_buy", threshold: .25, points: 1, required: false, unless: null },
+    { key: "dear_load", threshold: .25, points: -2, required: false, unless: null },
+  ];
+  return p;
+}
+
+Deno.test("solar opportunities use surplus after base consumption", () => {
+  for (const solar of [1500, 6000]) {
+    const result = solve(solarCompetitionProblem(solar));
+    assert(result.kind === "selected");
+    assertEquals(result.selection.commands[0].pool_on, solar === 6000);
+  }
+});
+
+Deno.test("joint loads compete for one solar surplus and one quarter reward", () => {
+  const p = solarCompetitionProblem(6000, true);
+  const result = solve(p);
+  assert(result.kind === "selected");
+  const s = result.selection;
+  assert(s.commands[0].pool_on || s.commands[0].ev_amps > 0);
+  assert(!(s.commands[0].pool_on && s.commands[0].ev_amps > 0));
+  assertEquals(s.account.contributions[0][0], 1);
+  for (const q of s.quarters) assert(q.net_w <= p.limits.import_w + 1e-7);
+});
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);

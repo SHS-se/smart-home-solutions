@@ -1,7 +1,7 @@
 import { HOUSEHOLD } from '../src/lib/planner-bench/household.ts';
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { assertEquals } from "@std/assert";
-import { bufferProblem, causalCase, command, problem } from "../tests/planner-wasm.fixture.ts";
+import { bufferProblem, causalCase, command, forecastProblem, problem } from "../tests/planner-wasm.fixture.ts";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import recipe from "../planner-core/recipe.json" with { type: "json" };
 
@@ -22,7 +22,7 @@ committed.heater.response = {
     { elapsed_seconds: 1200, electric_fraction: 1, heat_fraction: 1 },
   ],
 };
-for (const input of [base, committed, bufferProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
+for (const input of [base, committed, bufferProblem(), forecastProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
   input.work_grant = recipe.work_grant;
   input.recipe = builderRecipe(recipe);
   const process = new Deno.Command(

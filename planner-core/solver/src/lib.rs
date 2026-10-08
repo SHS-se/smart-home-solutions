@@ -1,6 +1,7 @@
 //! One complete causal rule-led solve. No persistence, history or external I/O.
 mod builder;
 mod move_resize;
+mod opportunity;
 mod physics;
 mod policy;
 mod thermal_buffer;

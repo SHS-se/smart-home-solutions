@@ -1,7 +1,7 @@
 {
   "abi": 5,
-  "wasm_sha256": "88b9f29d4798174a3b0f86ece6e48d17e4adfd8ff8a5646983eea669230468cb",
-  "source_sha256": "f5414e9c27a4375292f506c1cc6695f172886067186e3f45d3a712b454b881ac",
+  "wasm_sha256": "8930eff6660ad9cd899dd8c801a57149c3298e6966a6aedcf88463f0800a6aed",
+  "source_sha256": "9a6d104cecfd790ba8b9cf8c8fb4e2fefb8b3c1d9a78a9cd357a12aa305bb1a3",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -22,6 +22,7 @@
     "planner-core/solver/src/lib.rs",
     "planner-core/solver/src/main.rs",
     "planner-core/solver/src/move_resize.rs",
+    "planner-core/solver/src/opportunity.rs",
     "planner-core/solver/src/physics.rs",
     "planner-core/solver/src/policy.rs",
     "planner-core/solver/src/thermal_buffer.rs",
