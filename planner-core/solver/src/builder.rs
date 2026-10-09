@@ -656,15 +656,16 @@ fn improve(
         return (best, None);
     }
     let mut battery_dirty = true;
+    let mut allocation = None;
     loop {
         loop {
             // A whole-horizon battery allocation before appliance edits, then
             // once more when an adopted appliance schedule changes its draw.
             if battery_dirty {
-                if let Some(commands) =
-                    battery_schedule::propose(p, index, &best.commands, &best.quarters, work)
+                if let Some(next) =
+                    battery_schedule::allocate(p, index, &best.commands, &best.quarters, work)
                 {
-                    match score(p, index, commands, work) {
+                    match score(p, index, next.commands.clone(), work) {
                         Ok(c) if c.better(&best) => best = c,
                         Ok(_) | Err(EvaluationIssue::Infeasible) => {}
                         Err(EvaluationIssue::GrantUnavailable) => {
@@ -672,6 +673,7 @@ fn improve(
                             break;
                         }
                     }
+                    allocation = Some(next);
                 }
             }
             if *declined {
@@ -682,6 +684,7 @@ fn improve(
                 .iter()
                 .map(|c| (c.pool_on, c.ev_amps))
                 .collect();
+            let epoch = best.commands.clone();
             let Some(edits) =
                 move_resize::proposals(p, index, &best.commands, &best.quarters, work)
             else {
@@ -689,24 +692,66 @@ fn improve(
                 break;
             };
             work.move_resize_passes += 1;
+            // These complete appliance moves compete with their battery response,
+            // including moves infeasible under the inherited battery commands.
+            let mut joint_adopted = 0;
+            if let Some(response) = &allocation {
+                for edit in &edits.coordinated {
+                    let Some(commands) = carry(&epoch, &edit.apply(&epoch), &best.commands) else {
+                        continue;
+                    };
+                    let commands = match response.respond(p, index, &commands, &best.quarters, work)
+                    {
+                        Ok(commands) => commands,
+                        Err(battery_schedule::ResponseIssue::Infeasible) => continue,
+                        Err(battery_schedule::ResponseIssue::GrantUnavailable) => break,
+                    };
+                    work.move_resize_trials += 1;
+                    match score(p, index, commands, work) {
+                        Ok(c) if c.better(&best) => {
+                            best = c;
+                            joint_adopted += 1;
+                        }
+                        Ok(_) | Err(EvaluationIssue::Infeasible) => {}
+                        Err(EvaluationIssue::GrantUnavailable) => break,
+                    }
+                }
+            }
+            let edits = edits.singles;
             let count = edits.len().min(p.recipe.repair_trials.saturating_mul(32));
             let (scored, adopted) = adopt(
                 p,
                 index,
                 &mut best,
                 count,
-                |base, k| edits[k].apply(base),
+                |base, k| match carry(&epoch, &edits[k].apply(&epoch), base) {
+                    Some(commands) => commands,
+                    None => base.to_vec(),
+                },
                 work,
                 declined,
             );
             work.move_resize_trials += scored;
-            work.move_resize_improvements += adopted;
+            work.move_resize_improvements += adopted + joint_adopted;
             battery_dirty = best
                 .commands
                 .iter()
                 .zip(&appliance_before)
                 .any(|(c, before)| (c.pool_on, c.ev_amps) != *before);
-            if adopted == 0 || *declined {
+            if battery_dirty {
+                if let Some(response) = &allocation {
+                    if let Ok(commands) =
+                        response.respond(p, index, &best.commands, &best.quarters, work)
+                    {
+                        if let Ok(c) = score(p, index, commands, work) {
+                            if c.better(&best) {
+                                best = c;
+                            }
+                        }
+                    }
+                }
+            }
+            if adopted + joint_adopted == 0 || *declined {
                 break;
             }
         }

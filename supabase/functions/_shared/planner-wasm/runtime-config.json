@@ -1,6 +1,6 @@
 {
   "recipe": {
-    "version": "rule-forecast-opportunity-v6",
+    "version": "rule-forecast-opportunity-v7",
     "work_grant": 760000000,
     "beam_width": 16,
     "max_actions": 32,

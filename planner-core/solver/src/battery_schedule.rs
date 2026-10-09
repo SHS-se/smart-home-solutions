@@ -12,7 +12,7 @@ struct Context<'a> {
     index: &'a policy::Index,
     commands: &'a [Command],
     planned: &'a [Quarter],
-    axes: Vec<Vec<f64>>,
+    axes: &'a [Vec<f64>],
 }
 impl Context<'_> {
     fn demand(&self, i: usize) -> (f64, f64) {
@@ -280,22 +280,110 @@ fn axes(p: &Problem, planned: &[Quarter]) -> Vec<Vec<f64>> {
         })
         .collect()
 }
+/// Immutable continuation values from one complete battery allocation.
+/// Forward responses use exact native household physics before whole-plan scoring.
+pub(crate) struct Allocation {
+    pub commands: Vec<Command>,
+    axes: Vec<Vec<f64>>,
+    values: Values,
+}
+#[derive(Debug)]
+pub(crate) enum ResponseIssue {
+    GrantUnavailable,
+    Infeasible,
+}
+impl Allocation {
+    pub fn respond(
+        &self,
+        p: &Problem,
+        index: &policy::Index,
+        commands: &[Command],
+        planned: &[Quarter],
+        work: &mut Work,
+    ) -> Result<Vec<Command>, ResponseIssue> {
+        let ctx = Context {
+            p,
+            index,
+            commands,
+            planned,
+            axes: &self.axes,
+        };
+        // Keep the completed response's score payable while metering each
+        // exact transition. A partial response is never a candidate.
+        let score = p.slots.len() as u64 * work.unit_cost * 4 + witnesses::bound(p, work.unit_cost);
+        if score > work.free() {
+            return Err(ResponseIssue::GrantUnavailable);
+        }
+        work.reserved += score;
+        let response = (|| {
+            let mut state = physics::initial(p);
+            let mut out = Vec::with_capacity(commands.len());
+            for (i, command) in commands.iter().enumerate() {
+                let mut options = ctx.options(i, state.battery);
+                if !physics::locked(p, i) {
+                    let b = p.battery.as_ref().unwrap();
+                    let mut full_supply = command.clone();
+                    full_supply.battery = Operation::SelfConsumption;
+                    full_supply.charge_limit_w = b.charge_max_w;
+                    full_supply.discharge_limit_w = b.discharge_max_w;
+                    options.push(full_supply);
+                }
+                let size = self.axes[i + 1].len() as u64;
+                let amount = size * 24
+                    + options.len() as u64
+                        * (work.unit_cost + 64 + p.rules.len() as u64 * 6 + size * 8);
+                if !work.spend(amount) {
+                    return Err(ResponseIssue::GrantUnavailable);
+                }
+                let mut best = None;
+                for mut c in options {
+                    let mut next = state.clone();
+                    let Ok(q) = physics::step(p, i, &c, &mut next) else {
+                        continue;
+                    };
+                    let value = f64::from(policy::guidance_quarter(p, index, i, &q, state.pool))
+                        - q.cost
+                        - q.wear
+                        + self.values.at(&ctx, i + 1, next.battery);
+                    if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
+                        if !physics::locked(p, i) {
+                            if c.battery == Operation::GridCharge {
+                                c.charge_limit_w = q.charge_w;
+                            }
+                            if c.battery == Operation::Export {
+                                c.discharge_limit_w = q.discharge_w;
+                            }
+                        }
+                        best = Some((c, next, value));
+                    }
+                }
+                let (c, next, _) = best.ok_or(ResponseIssue::Infeasible)?;
+                out.push(c);
+                state = next;
+            }
+            Ok(out)
+        })();
+        work.reserved -= score;
+        response
+    }
+}
 /// None means a complete optional pass plus its full score could not be paid.
 /// The builder alone scores and adopts the returned whole-horizon proposal.
-pub(crate) fn propose(
+pub(crate) fn allocate(
     p: &Problem,
     index: &policy::Index,
     commands: &[Command],
     planned: &[Quarter],
     work: &mut Work,
-) -> Option<Vec<Command>> {
+) -> Option<Allocation> {
     p.battery.as_ref()?;
+    let axes = axes(p, planned);
     let ctx = Context {
         p,
         index,
         commands,
         planned,
-        axes: axes(p, planned),
+        axes: &axes,
     };
     let admission = ctx.bound(work.unit_cost)?;
     if admission > work.free() {
@@ -330,7 +418,11 @@ pub(crate) fn propose(
         proposal.push(c);
         kwh = end;
     }
-    (proposal != commands).then_some(proposal)
+    Some(Allocation {
+        commands: proposal,
+        axes,
+        values,
+    })
 }
 
 #[cfg(test)]
@@ -370,7 +462,9 @@ mod tests {
         let mut w = work(p);
         let index = policy::index(p, &mut w).unwrap();
         let planned = physics::projection(p, commands).unwrap();
-        let out = propose(p, &index, commands, &planned, &mut w).unwrap();
+        let out = allocate(p, &index, commands, &planned, &mut w)
+            .unwrap()
+            .commands;
         assert!(w.used + w.reserved <= w.limit);
         physics::projection(p, &out).unwrap();
         out
@@ -517,12 +611,13 @@ mod tests {
         let planned = physics::projection(&p, &commands).unwrap();
         let mut w = work(&p);
         let index = policy::index(&p, &mut w).unwrap();
+        let test_axes = axes(&p, &planned);
         let ctx = Context {
             p: &p,
             index: &index,
             commands: &commands,
             planned: &planned,
-            axes: axes(&p, &planned),
+            axes: &test_axes,
         };
         let mut e = p.initial.battery_kwh.unwrap();
         for (i, (c, expected)) in commands.iter().zip(&planned).enumerate() {
@@ -541,6 +636,82 @@ mod tests {
         }
     }
     #[test]
+    fn appliance_move_losing_alone_wins_with_the_cached_battery_response() {
+        let mut p = problem(2);
+        p.battery.as_mut().unwrap().capacity_kwh = 2.0;
+        p.initial.battery_kwh = Some(1.0);
+        p.slots[0].base_w = 1000.0;
+        p.slots[0].import_price = 0.1;
+        p.slots[1].import_price = 0.9;
+        p.rules = vec![Rule {
+            key: RuleKey::EvFromHomeBattery,
+            threshold: 0.0,
+            points: -1,
+            required: false,
+            unless: None,
+        }];
+        let mut base = vec![idle(); 2];
+        base[0].battery = Operation::SelfConsumption;
+        base[0].discharge_limit_w = 4000.0;
+        base[1].ev_amps = 6;
+        let mut w = work(&p);
+        let index = policy::index(&p, &mut w).unwrap();
+        let planned = physics::projection(&p, &base).unwrap();
+        let before = policy::account(&p, &planned, &index).score_sek;
+        let allocation = allocate(&p, &index, &base, &planned, &mut w).unwrap();
+        let mut changed = base.clone();
+        changed[0].ev_amps = 6;
+        changed[1].ev_amps = 0;
+        let alone = physics::projection(&p, &changed).unwrap();
+        assert!(policy::account(&p, &alone, &index).score_sek < before);
+        let commands = allocation
+            .respond(&p, &index, &changed, &planned, &mut w)
+            .unwrap();
+        let q = physics::projection(&p, &commands).unwrap();
+        let after = policy::account(&p, &q, &index);
+        assert!(after.score_sek > before + 0.2);
+        assert_eq!(after.points, 0);
+        assert_eq!((commands[0].ev_amps, commands[1].ev_amps), (6, 0));
+        assert!(w.used + w.reserved <= w.limit);
+    }
+    #[test]
+    fn response_repairs_stale_grid_infeasibility_and_restores_reserve_on_exhaustion() {
+        let mut p = problem(3);
+        p.limits.import_w = 1000.0;
+        p.limits.battery_export_enabled = false;
+        let mut base = vec![idle(); 3];
+        base[2].ev_amps = 6;
+        base[2].battery = Operation::SelfConsumption;
+        base[2].discharge_limit_w = 4000.0;
+        p.accepted = Some(base[..1].to_vec());
+        p.locked_through_seconds = 900.0;
+        let mut w = work(&p);
+        let index = policy::index(&p, &mut w).unwrap();
+        let planned = physics::projection(&p, &base).unwrap();
+        let allocation = allocate(&p, &index, &base, &planned, &mut w).unwrap();
+        let mut changed = base.clone();
+        changed[1].ev_amps = 6;
+        changed[2].ev_amps = 0;
+        assert!(physics::projection(&p, &changed).is_err());
+        let commands = allocation
+            .respond(&p, &index, &changed, &planned, &mut w)
+            .unwrap();
+        assert_eq!(&commands[..1], p.accepted.as_ref().unwrap());
+        assert!(physics::projection(&p, &commands)
+            .unwrap()
+            .iter()
+            .all(|q| q.net_w <= 1000.0));
+        let held = w.reserved;
+        let scoring = p.slots.len() as u64 * w.unit_cost * 4 + witnesses::bound(&p, w.unit_cost);
+        w.limit = w.used + held + scoring + 1;
+        assert!(matches!(
+            allocation.respond(&p, &index, &changed, &planned, &mut w),
+            Err(ResponseIssue::GrantUnavailable)
+        ));
+        assert_eq!(w.reserved, held);
+        assert!(w.used + w.reserved <= w.limit);
+    }
+    #[test]
     fn locks_survive_and_unaffordable_pass_preserves_the_work_reserve() {
         let mut p = problem(8);
         let mut commands = vec![idle(); 8];
@@ -557,7 +728,7 @@ mod tests {
         let q = physics::projection(&p, &commands).unwrap();
         w.limit = w.used + w.reserved + 1;
         let used = w.used;
-        assert!(propose(&p, &index, &commands, &q, &mut w).is_none());
+        assert!(allocate(&p, &index, &commands, &q, &mut w).is_none());
         assert_eq!(w.used, used);
         assert_eq!(w.reserved, 1000);
     }

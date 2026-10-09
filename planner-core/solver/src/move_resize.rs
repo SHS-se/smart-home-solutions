@@ -170,13 +170,18 @@ fn tariff_points(p: &Problem, index: &policy::Index, i: usize, watts: f64) -> i3
         .sum()
 }
 
+pub(crate) struct Proposals {
+    pub singles: Vec<Edit>,
+    pub coordinated: Vec<Edit>,
+}
+
 pub(crate) fn proposals(
     p: &Problem,
     index: &policy::Index,
     commands: &[Command],
     quarters: &[Quarter],
     work: &mut Work,
-) -> Option<Vec<Edit>> {
+) -> Option<Proposals> {
     let n = commands.len();
     let mut sources = Vec::new();
     for device in [Device::Pool, Device::Ev] {
@@ -340,7 +345,33 @@ pub(crate) fn proposals(
     // Every run's steps first, then the likeliest edit of every source and
     // destination, then the next of each: no run or device takes every trial.
     ranked.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(&b.2)));
-    Some(ranked.into_iter().map(|(_, _, edit)| edit).collect())
+    // Charge the additional copy, economic ordering and shortlist traversal.
+    let ordering = ranked.len() as u64 * (ranked.len().max(1).ilog2() as u64 + 2) * 2;
+    if !work.spend(ordering) {
+        return None;
+    }
+    let mut joint = ranked.clone();
+    joint.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.2.cmp(&b.2)));
+    let mut seen = BTreeSet::new();
+    let mut per_device = [0; 2];
+    let coordinated = joint
+        .into_iter()
+        .filter_map(|(_, _, edit)| {
+            let k = if edit.device == Device::Pool { 0 } else { 1 };
+            if edit.to - edit.from != edit.end - edit.start
+                || per_device[k] >= 2
+                || !seen.insert((edit.device, edit.from, edit.to, edit.destination()))
+            {
+                return None;
+            }
+            per_device[k] += 1;
+            Some(edit)
+        })
+        .collect();
+    Some(Proposals {
+        singles: ranked.into_iter().map(|(_, _, edit)| edit).collect(),
+        coordinated,
+    })
 }
 
 #[cfg(test)]
@@ -401,7 +432,9 @@ mod tests {
         assert!((gain(9, 11) + 1.5).abs() < 1e-9);
         // The steps come first, a shift of eight quarters onto cheap power
         // ahead of the others; then the rest by what they should gain.
-        let edits = proposals(&p, &index, &commands, &q, &mut work).unwrap();
+        let edits = proposals(&p, &index, &commands, &q, &mut work)
+            .unwrap()
+            .singles;
         let at = |start, end| {
             edits
                 .iter()
