@@ -367,6 +367,13 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
   if (solved.kind === "failed") return fail(solved.issue);
   const selected = solved.selection;
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
+  // Only the selected schedule has a rule account; the baseline and the execution forecast were never scored.
+  priority.generated.slots.forEach((slot, i) => {
+    slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {
+      const points = selected.account.contributions[i][r];
+      return points ? [[rule.key, points]] : [];
+    }));
+  });
   const baselineCommands = selected.commands.map((c, i) => input.problem.accepted?.[i] ?? {
     ...c, battery: p.battery ? "self_consumption" as const : "idle" as const,
     charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,

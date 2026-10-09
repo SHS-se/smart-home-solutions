@@ -10,6 +10,13 @@
 // eight cycled colours. Both problems were structural rather than cosmetic:
 // nothing said which axis a curve belonged to, and no band in that stack could
 // be looked up.
+//
+// Under the chart is the plan's score: the points its rules gave and took in
+// each planned quarter, as the planner itself counted them when it chose this
+// schedule (`rule_points`), and why the picked quarter scored what it did. The
+// planner bench shows the same section for the plans it compares. Measured
+// history has no score, and neither has a plan from a planner without rules;
+// the section then holds only its last part, the replay download.
 
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -29,11 +36,16 @@ import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import PlanReplayDownload from '../PlanReplayDownload';
+import { replayDescription } from '@/lib/energy-shift/plan-replay';
 import PlanPanels from '../PlanPanels';
+import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
+import { DEFAULT_RULES } from '@/lib/planner-bench/score';
 import { loadColour, PLAN_COLOURS } from '../types';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
 const QUARTER_W_TO_KWH = 4_000;
+const RULE_LABEL = new Map(DEFAULT_RULES.map(rule => [rule.key, rule.label]));
+const total = (points: Record<string, number>) => Object.values(points).reduce((a, b) => a + b, 0);
 
 const PowerSection: React.FC<{
   model: PlanModel;
@@ -83,6 +95,23 @@ const PowerSection: React.FC<{
   const selectedIndex = selectedQuarterStart === null
     ? -1
     : view.findIndex(row => Date.parse(row.start) === Date.parse(selectedQuarterStart));
+
+  const rulePoints = useMemo(() => new Map(model.active.slots.flatMap(slot =>
+    slot.rule_points ? [[Date.parse(slot.start), slot.rule_points] as const] : [])), [model.active.slots]);
+  const scored = (index: number) => view[index] && !view[index].measured ? rulePoints.get(view[index].startMs) : undefined;
+  const quarterScores = rulePoints.size ? view.map((_, index) => {
+    const fired = scored(index);
+    return fired ? total(fired) : null;
+  }) : undefined;
+  const explained = ((): QuarterScoreExplanation | null => {
+    const fired = scored(selectedIndex), row = panelRows[selectedIndex];
+    if (!fired || !row) return null;
+    return {
+      score: total(fired), when: row.label, price: row.importPriceSekPerKwh,
+      priceNote: row.importPriceQuoted ? t('publicerat', 'published') : t('uppskattat', 'estimated'),
+      lines: Object.entries(fired).map(([key, points]) => ({ key, points, label: RULE_LABEL.get(key) ?? key })),
+    };
+  })();
 
   const attribution = useMemo(() => {
     const slots: SupplySlotInput[] = view.map(row => ({
@@ -141,6 +170,14 @@ const PowerSection: React.FC<{
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
         poolTargetC={poolTargetC}
+        quarterScores={quarterScores}
+        scoreDetail={(quarterScores || model.active.slots.length > 0) && (
+          <QuarterScoreDetail
+            id="plan-quarter-explanation" quarter={explained}
+            empty={quarterScores ? undefined : replayDescription(t)}
+            action={<PlanReplayDownload model={model} rows={rows} range={range} selectedStart={selectedQuarterStart} />}
+          />
+        )}
         selectedIndex={selectedIndex}
         onQuarterClick={index => {
           const row = view[index];
@@ -158,14 +195,6 @@ const PowerSection: React.FC<{
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
       />
-      <div className="mt-6 border-t pt-6">
-        <PlanReplayDownload
-          model={model}
-          rows={rows}
-          range={range}
-          selectedStart={selectedQuarterStart}
-        />
-      </div>
       <div className="mt-6">
         <h3 className="text-sm font-medium">
           {t('Förbrukning per enhet', 'Consumption by device')}

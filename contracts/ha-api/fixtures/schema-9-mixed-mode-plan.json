@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v4:e8cc5e10c3d095034b03f277a09c00b737e9b47bf99fe0b2ebb949629df3b60a",
+    "model_version": "rules-planner-v4:db6ee96d1b39a3808c646f73c0f77af8baacf8841c9576df9e1080e30f274201",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -1556,6 +1556,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -1630,6 +1633,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -1704,6 +1710,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -1778,6 +1787,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -1852,6 +1864,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -1926,6 +1941,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -2000,6 +2018,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -2074,6 +2095,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -2148,7 +2172,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:15:00.000Z",
@@ -2222,7 +2247,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:30:00.000Z",
@@ -2296,7 +2322,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:45:00.000Z",
@@ -2370,7 +2397,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:00:00.000Z",
@@ -2444,7 +2472,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:15:00.000Z",
@@ -2518,7 +2547,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:30:00.000Z",
@@ -2592,7 +2622,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:45:00.000Z",
@@ -2666,7 +2697,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           }
         ],
         "summary": {
@@ -2786,6 +2818,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -2860,6 +2895,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -2934,6 +2972,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3008,6 +3049,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3082,6 +3126,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3156,6 +3203,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3230,6 +3280,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3304,6 +3357,9 @@
                 "limit_binding": false,
                 "reason": "balanced"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -3378,7 +3434,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:15:00.000Z",
@@ -3452,7 +3509,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:30:00.000Z",
@@ -3526,7 +3584,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:45:00.000Z",
@@ -3600,7 +3659,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:00:00.000Z",
@@ -3674,7 +3734,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:15:00.000Z",
@@ -3748,7 +3809,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:30:00.000Z",
@@ -3822,7 +3884,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:45:00.000Z",
@@ -3896,7 +3959,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           }
         ],
         "summary": {
@@ -4015,7 +4079,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "rules-planner-v4:e8cc5e10c3d095034b03f277a09c00b737e9b47bf99fe0b2ebb949629df3b60a",
+      "model_version": "rules-planner-v4:db6ee96d1b39a3808c646f73c0f77af8baacf8841c9576df9e1080e30f274201",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -6781,6 +6845,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -6855,6 +6922,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -6929,6 +6999,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7003,6 +7076,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7077,6 +7153,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7151,6 +7230,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7225,6 +7307,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7299,6 +7384,9 @@
                   "limit_binding": false,
                   "reason": "balanced"
                 }
+              },
+              "rule_points": {
+                "cheapest_buy": 2
               }
             },
             {
@@ -7373,7 +7461,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:15:00.000Z",
@@ -7447,7 +7536,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:30:00.000Z",
@@ -7521,7 +7611,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:45:00.000Z",
@@ -7595,7 +7686,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:00:00.000Z",
@@ -7669,7 +7761,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:15:00.000Z",
@@ -7743,7 +7836,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:30:00.000Z",
@@ -7817,7 +7911,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:45:00.000Z",
@@ -7891,7 +7986,8 @@
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             }
           ],
           "summary": {
@@ -7942,7 +8038,7 @@
       "generation": 1,
       "mode": "controlling",
       "scope_revision": "fixture-whole-house",
-      "model_revision": "rules-planner-v4:e8cc5e10c3d095034b03f277a09c00b737e9b47bf99fe0b2ebb949629df3b60a:ac-constant-efficiency:0.95:0.95",
+      "model_revision": "rules-planner-v4:db6ee96d1b39a3808c646f73c0f77af8baacf8841c9576df9e1080e30f274201:ac-constant-efficiency:0.95:0.95",
       "energy_basis": "stored_energy_mwh",
       "capacity_mwh": 18080000,
       "minimum_mwh": 904000,

@@ -94,10 +94,17 @@ entry point before hashing code or launching a worker. These commits have no
 score and do not count toward executable benchmark coverage. Missing imports
 or runtime errors in an existing planner still fail the benchmark normally.
 
-## Current and test planner
+## The two planners compared
 
-- **Current:** the exact `main` branch-head commit, marked `is_current` by CI.
-- **Test:** defaults to the exact `dev` branch-head commit, marked `is_test` by CI. The dropdown also allows historical comparisons.
+- **main:** the exact `main` branch-head commit, in production, marked `is_current` by CI.
+- **dev:** the exact `dev` branch-head commit, on the test site, marked `is_test` by CI. It is the default to compare with main; the dropdown also offers earlier commits.
+
+The page names a planner by its branch where the commit is a branch head, and
+by its short hash otherwise. A picker row is that name, the commit time and the
+points, nothing else. Points are shown only when the commit has a result for
+every measured case from today's scorer; any other commit reads **needs a
+rerun**, because points from another scorer or another set of cases cannot be
+compared with these.
 
 Both marks belong to the same run only when main and dev point to the same SHA.
 The workflow fetches and marks both branch heads before each planning run.
@@ -107,6 +114,16 @@ rescores and does not change these marks. Environment marks cannot be changed
 from the page.
 
 The totals table compares only the cases both runs have results for.
+
+Under the chart is one section, the same as on the live plan page: the score
+strip (rule points per quarter), why the picked quarter scored what it did, and
+a download. On the bench **Download chart data (JSON)** saves what the chart
+shows for the period in view, one day or the full 72 hours: every quarter of
+both planners with prices, flows, stores, cost, points and the rules that fired
+(`src/lib/planner-bench/chart-export.ts`). It is for debugging and analysis; it
+is not a test case and cannot be added as one. On the live plan page the same
+place holds the replay download, and the strip shows the points the rules
+planner counted for its own plan (`rule_points` on each planned quarter).
 
 ## Scoring
 
@@ -119,11 +136,13 @@ the whole bench, not per case. See the [complete scoring rules](scoring.md) and
 [architecture decision](scoring-design.md). Costs remain visible in SEK at real
 prices; six optional diagnostic lanes separate price information from valuation
 strength. Normal refreshes use only the nominal lane with prices known at start.
-Saving rules refreshes the branch heads, including new solves when rules affect
-planner decisions. **Recompute scores** re-evaluates stored decisions without
+Saving rules refreshes every commit on the bench, including new solves when rules
+affect planner decisions. **Recompute scores** re-evaluates stored decisions without
 running planners; this does not make old rule-driven decisions newly optimized.
-Routine refreshes verify their requested results; stale history stays excluded
-from current comparisons until explicitly refreshed. Its saved points remain visible.
+Refreshes after a deployment cover the branch heads only, so they stay bounded.
+Everything started from the page covers every commit on the bench: **Run missing
+results**, a new case, an edited start state and saved rules. A result that is
+already current is skipped, so this costs one solve per stale case and commit.
 
 The benchmark store serializes its requests and leaves idle time of at least
 250 ms, or the preceding request's duration if longer, between them. This limits
@@ -141,8 +160,8 @@ writes reduce rewrites and network traffic without eliminating all JSON reads.
 ## Running it
 
 **Add a case:** upload a replay file on the page. It is converted to a test case,
-and once its 72 hours are recorded the current dev/main heads run for it. Saved
-historical planners can be selected explicitly. From the command line:
+and once its 72 hours are recorded every commit on the bench runs for it. From
+the command line:
 
 ```bash
 deno run -A --sloppy-imports --config deno.json bench/seed.ts NAME=path/to/plan-replay.json

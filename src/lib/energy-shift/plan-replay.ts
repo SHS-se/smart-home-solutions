@@ -46,3 +46,9 @@ export function replayHistory(
     slots: timeline.filter(row => row.measured),
   };
 }
+
+/** What the replay file holds, said beside its button where the plan has no score to explain. */
+export const replayDescription = (t: (sv: string, en: string) => string) => t(
+  'Hela planen med indata, uppmätt historik och anropet som återskapar den.',
+  'The whole plan with its inputs, measured history, and the call that reproduces it.',
+);

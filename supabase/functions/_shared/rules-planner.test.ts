@@ -56,6 +56,15 @@ Deno.test("rules native solve materializes missing devices and exact physical ba
   }
   assertEquals(result.plan.plans.cost.label, "Rule-based plan (same selected schedule)");
 });
+Deno.test("rules plan publishes the points each fired rule gave or took, on the selected schedule only", () => {
+  const s = snapshot();
+  s.slots = s.slots.map((slot, i) => ({ ...slot, import_price_sek_per_kwh: i < 2 ? 0.4 : 1.5 }));
+  const { plans } = generateRulesPlan(prepare(s)).plan;
+  // The car charges in the two cheap quarters; the very cheap reward replaces the cheap one.
+  assertEquals(plans.priority.slots.map(slot => slot.rule_points),
+    plans.priority.slots.map((_, i) => i < 2 ? { cheapest_buy: 2 } : {}));
+  assert(plans.baseline.slots.every(slot => slot.rule_points === undefined));
+});
 Deno.test("rules partial-quarter commitment locks five exact intervals without a fabricated suffix", () => {
   const s = snapshot();
   const first = generateRulesPlan(prepare(s)).plan;

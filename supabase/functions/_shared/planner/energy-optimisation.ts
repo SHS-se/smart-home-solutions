@@ -730,6 +730,15 @@ export interface PlannedSlot {
   export_revenue_sek: number | null;
   /** Recorded planner arithmetic; the portal must not reconstruct decisions. */
   decision: QuarterDecisionDiagnostic;
+  /**
+   * The rules that fired in this quarter of the selected schedule and the
+   * points each gave or took, by rule key (planner-wasm/rule-policy.ts).
+   *
+   * The rules planner's own account, on the prices it planned with: what it
+   * maximised, not a referee's verdict. Empty when no rule fired; absent on
+   * every other scenario and on plans from a planner without rules.
+   */
+  rule_points?: Record<string, number>;
 }
 
 export interface PlanSummary {

@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": true
     },
-    "model_version": "rules-planner-v4:e8cc5e10c3d095034b03f277a09c00b737e9b47bf99fe0b2ebb949629df3b60a",
+    "model_version": "rules-planner-v4:db6ee96d1b39a3808c646f73c0f77af8baacf8841c9576df9e1080e30f274201",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -3828,7 +3828,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -3882,7 +3883,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -3936,7 +3938,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -3990,7 +3993,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -4044,7 +4048,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -4098,7 +4103,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -4152,7 +4158,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -4206,7 +4213,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
@@ -4260,6 +4268,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4314,6 +4325,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4368,6 +4382,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4422,6 +4439,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4476,6 +4496,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4530,6 +4553,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4584,6 +4610,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4638,6 +4667,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4692,6 +4724,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4746,6 +4781,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4800,6 +4838,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4854,6 +4895,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4908,6 +4952,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -4962,6 +5009,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5016,6 +5066,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5070,6 +5123,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5124,6 +5180,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5178,6 +5237,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5232,6 +5294,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5286,6 +5351,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5340,6 +5408,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5394,6 +5465,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5448,6 +5522,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -5502,7 +5579,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -5556,7 +5634,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -5610,7 +5689,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -5664,7 +5744,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -5718,7 +5799,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -5772,7 +5854,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -5826,7 +5909,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -5880,7 +5964,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -5934,7 +6019,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -5988,7 +6074,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -6042,7 +6129,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -6096,7 +6184,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -6150,7 +6239,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -6204,7 +6294,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -6258,7 +6349,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -6312,7 +6404,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -6366,7 +6459,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -6420,7 +6514,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -6474,7 +6569,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -6528,7 +6624,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -6582,7 +6679,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -6636,7 +6734,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -6690,7 +6789,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -6744,7 +6844,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -6798,7 +6899,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -6852,7 +6954,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -6906,7 +7009,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -6960,7 +7064,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -7014,7 +7119,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -7068,7 +7174,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -7122,7 +7229,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -7176,7 +7284,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -7230,7 +7339,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           }
         ],
         "summary": {
@@ -7370,7 +7480,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -7424,7 +7535,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -7478,7 +7590,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -7532,7 +7645,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -7586,7 +7700,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -7640,7 +7755,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -7694,7 +7810,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -7748,7 +7865,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
@@ -7802,6 +7920,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -7856,6 +7977,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -7910,6 +8034,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -7964,6 +8091,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8018,6 +8148,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8072,6 +8205,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8126,6 +8262,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8180,6 +8319,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8234,6 +8376,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8288,6 +8433,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8342,6 +8490,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8396,6 +8547,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8450,6 +8604,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8504,6 +8661,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8558,6 +8718,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8612,6 +8775,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8666,6 +8832,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8720,6 +8889,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8774,6 +8946,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8828,6 +9003,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8882,6 +9060,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8936,6 +9117,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -8990,6 +9174,9 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
+            },
+            "rule_points": {
+              "cheapest_buy": 2
             }
           },
           {
@@ -9044,7 +9231,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:00:00.000Z",
@@ -9098,7 +9286,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:15:00.000Z",
@@ -9152,7 +9341,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:30:00.000Z",
@@ -9206,7 +9396,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T17:45:00.000Z",
@@ -9260,7 +9451,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:00:00.000Z",
@@ -9314,7 +9506,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:15:00.000Z",
@@ -9368,7 +9561,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:30:00.000Z",
@@ -9422,7 +9616,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T18:45:00.000Z",
@@ -9476,7 +9671,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:00:00.000Z",
@@ -9530,7 +9726,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:15:00.000Z",
@@ -9584,7 +9781,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:30:00.000Z",
@@ -9638,7 +9836,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T19:45:00.000Z",
@@ -9692,7 +9891,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:00:00.000Z",
@@ -9746,7 +9946,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:15:00.000Z",
@@ -9800,7 +10001,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:30:00.000Z",
@@ -9854,7 +10056,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T20:45:00.000Z",
@@ -9908,7 +10111,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:00:00.000Z",
@@ -9962,7 +10166,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:15:00.000Z",
@@ -10016,7 +10221,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:30:00.000Z",
@@ -10070,7 +10276,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T21:45:00.000Z",
@@ -10124,7 +10331,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:00:00.000Z",
@@ -10178,7 +10386,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:15:00.000Z",
@@ -10232,7 +10441,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:30:00.000Z",
@@ -10286,7 +10496,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T22:45:00.000Z",
@@ -10340,7 +10551,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:00:00.000Z",
@@ -10394,7 +10606,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:15:00.000Z",
@@ -10448,7 +10661,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:30:00.000Z",
@@ -10502,7 +10716,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T23:45:00.000Z",
@@ -10556,7 +10771,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:00:00.000Z",
@@ -10610,7 +10826,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:15:00.000Z",
@@ -10664,7 +10881,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:30:00.000Z",
@@ -10718,7 +10936,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           },
           {
             "start": "2026-08-21T00:45:00.000Z",
@@ -10772,7 +10991,8 @@
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
               }
-            }
+            },
+            "rule_points": {}
           }
         ],
         "summary": {

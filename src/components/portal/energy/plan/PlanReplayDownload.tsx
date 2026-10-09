@@ -11,6 +11,9 @@
 // snapshot it was derived from and the entrypoint that turns one back into the
 // other, where a debugger can query it instead of scrolling it. So the table is
 // gone and the download it lived beside is not.
+//
+// The button sits at the end of the chart's score section (QuarterScoreDetail),
+// where the planner bench has its own download of the chart it shows.
 
 import React from 'react';
 import { FileJson, Loader2 } from 'lucide-react';
@@ -23,7 +26,8 @@ import type { TimelineRange, TimelineRow } from '@/lib/energy-shift/energy-timel
 import type { PlanModel } from './usePlanModel';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
-import { replayHistory, replayPlanSelection } from '@/lib/energy-shift/plan-replay';
+import { replayDescription, replayHistory, replayPlanSelection } from '@/lib/energy-shift/plan-replay';
+import { downloadJson } from '@/lib/download-json';
 
 const PlanReplayDownload: React.FC<{
   model: PlanModel;
@@ -109,17 +113,7 @@ const PlanReplayDownload: React.FC<{
         ...replayPlanSelection(capturedPlan, model.active.key, slot.start),
         history: replayHistory(timeline, range, homeTimeZone, selectedStart),
       };
-      const url = URL.createObjectURL(new Blob(
-        [`${JSON.stringify(bundle, null, 2)}\n`],
-        { type: 'application/json;charset=utf-8' },
-      ));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `plan-replay-${model.plan.plan_id}-${slot.start.replace(/[:.]/g, '-')}.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadJson(`plan-replay-${model.plan.plan_id}-${slot.start.replace(/[:.]/g, '-')}.json`, bundle);
     } catch (error) {
       toast({
         title: t('Kunde inte skapa replayfilen', 'Could not create replay file'),
@@ -137,30 +131,22 @@ const PlanReplayDownload: React.FC<{
   const quarter = formatHomeStamp(replaySlot.start, homeTimeZone);
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-xs text-muted-foreground">
-        {t(
-          'Hela planen med indata, uppmätt historik och anropet som återskapar den.',
-          'The whole plan with its inputs, measured history, and the call that reproduces it.',
-        )}
-      </p>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={!canReplay || replayLoading}
-        title={!canReplay
-          ? t('Nästa plan kommer att innehålla exakta replaydata.', 'The next plan will contain exact replay data.')
-          : t(`Pekar ut kvarten ${quarter}. Klicka i grafen för att välja en annan.`,
-            `Points at the quarter ${quarter}. Click the chart to pick another.`)}
-        onClick={() => void downloadReplay(replaySlot)}
-      >
-        {replayLoading
-          ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-          : <FileJson className="mr-1.5 h-4 w-4" />}
-        {t('Ladda ned repris (JSON)', 'Download replay (JSON)')}
-      </Button>
-    </div>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={!canReplay || replayLoading}
+      title={!canReplay
+        ? t('Nästa plan kommer att innehålla exakta replaydata.', 'The next plan will contain exact replay data.')
+        : `${replayDescription(t)} ${t(`Pekar ut kvarten ${quarter}. Klicka i grafen för att välja en annan.`,
+          `Points at the quarter ${quarter}. Click the chart to pick another.`)}`}
+      onClick={() => void downloadReplay(replaySlot)}
+    >
+      {replayLoading
+        ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+        : <FileJson className="mr-1.5 h-4 w-4" />}
+      {t('Ladda ned repris (JSON)', 'Download replay (JSON)')}
+    </Button>
   );
 };
 

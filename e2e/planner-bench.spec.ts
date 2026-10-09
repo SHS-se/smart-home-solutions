@@ -8,6 +8,7 @@
  * real prices, the scoring rules listed for the period shown, a start state
  * saved into its case, and an uploaded replay converted to a test case.
  */
+import { readFileSync } from 'node:fs';
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { planStats } from '../src/lib/planner-bench/stats';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from '../src/lib/planner-bench/opportunities';
@@ -168,7 +169,6 @@ const PLANS: Record<string, BenchSeries> = {
   [`${CURRENT.sha}/${CASES[1].id}`]: series(200, 30),
   [`${TEST.sha}/${CASES[1].id}`]: series(20, 16),
 };
-const SAVED_TEST_POINTS = CASES.reduce((sum, c) => sum + storedScore(PLANS[`${TEST.sha}/${c.id}`]).points, 0);
 
 function fakeJwt(sub: string, email: string): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -413,7 +413,7 @@ test.describe('planner bench', () => {
     const row = page.locator('#bench-rule-ev_short_gap');
     await expect(row).toContainText(/4 (q|kv) · −4/);
     await row.getByRole('button').first().click();
-    await row.getByRole('button', { name: /^Test: 4 / }).click();
+    await row.getByRole('button', { name: /^dev: 4 / }).click();
     const explanation = page.locator('#bench-quarter-explanation');
     await expect(explanation).toContainText('16/06 03:00');
     await expect(explanation).toContainText('−1 Short interruption in EV charging');
@@ -435,7 +435,7 @@ test.describe('planner bench', () => {
       await expect(row).toContainText(new RegExp(`${quarters} (q|kv) · −${quarters}`));
       await row.getByRole('button').first().click();
       await expect(row).toContainText(/both bordering running quarters|båda angränsande driftkvartarna/);
-      await row.getByRole('button', { name: new RegExp(`^Test: ${quarters} `) }).click();
+      await row.getByRole('button', { name: new RegExp(`^dev: ${quarters} `) }).click();
       await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
       await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
       await expect(explanation).toContainText(/(?:larger of|större av) 10 .*öre/);
@@ -470,13 +470,13 @@ test.describe('planner bench', () => {
     await expect(missed).toContainText(/4 (q|kv) · −4/);
     await missed.getByRole('button').first().click();
     await expect(missed).toContainText(/already at or above target|redan är vid eller över målet/);
-    await missed.getByRole('button', { name: /^Test: 4 / }).click();
+    await missed.getByRole('button', { name: /^dev: 4 / }).click();
     const explanation = page.locator('#bench-quarter-explanation');
     await expect(explanation).toContainText('24/09 12:00');
     await expect(explanation).toContainText('Missed cheap charging or heating quarter');
     const taken = page.locator('#bench-rule-cheapest_buy');
     await taken.getByRole('button').first().click();
-    await taken.getByRole('button', { name: /^Test: 16 / }).click();
+    await taken.getByRole('button', { name: /^dev: 16 / }).click();
     await expect(explanation).toContainText('24/09 08:00');
     await expect(explanation).not.toContainText('Missed cheap charging or heating quarter');
   });
@@ -487,7 +487,7 @@ test.describe('planner bench', () => {
     await page.goto('/portal/planner-bench');
     const rule = page.locator('#bench-rule-large_load_overlap');
     await rule.getByRole('button').first().click();
-    await rule.getByRole('button', { name: /^Test: 1 / }).click();
+    await rule.getByRole('button', { name: /^dev: 1 / }).click();
     const explanation = page.locator('#bench-quarter-explanation');
     const overlap = explanation.getByRole('listitem').filter({ hasText: 'Large workloads overlap' });
     await expect(overlap).toContainText(/−1 Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
@@ -593,8 +593,45 @@ test.describe('planner bench', () => {
     await login(page);
     await page.goto('/portal/planner-bench');
     await expect(page.locator('#bench-total-score')).toBeVisible();
-    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/T [−-]?\d+/);
+    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/dev [−-]?\d+/);
     expect(offsets).toContain(1000);
+  });
+
+  test('downloads the data the chart shows: the whole period, or only the day in view', async ({ context, page }) => {
+    await mockBackend(context);
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    const button = page.locator('#bench-chart-download');
+    const saved = async () => {
+      const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
+      return { name: download.suggestedFilename(), file: JSON.parse(readFileSync(await download.path(), 'utf8')) };
+    };
+    // The button closes the score section, beside the quarter's explanation.
+    const why = (await page.locator('#bench-quarter-explanation').boundingBox())!, at = (await button.boundingBox())!;
+    expect(Math.abs(at.y - why.y)).toBeLessThan(8);
+
+    const all = await saved();
+    expect(all.file.format).toBe('shs-planner-bench-chart');
+    expect(all.file.case.name).toBe('Cheap night');
+    expect(all.file.plans.map((p: { name: string; shown: boolean }) => [p.name, p.shown])).toEqual([['main', false], ['dev', true]]);
+    const whole = PLANS[`${TEST.sha}/${CASES[0].id}`].start.length;
+    expect(all.file.period.quarters).toBe(whole);
+    expect(all.file.plans[1].quarters).toHaveLength(whole);
+    expect(all.name).toMatch(/^bench-Cheap-night-dev-.*\.json$/);
+
+    // One day in view: that day only, for the planner now shown.
+    await page.locator('#bench-day-1').click();
+    await page.locator('#bench-show-current').click();
+    const day = await saved();
+    expect(day.file.period.quarters).toBeLessThan(whole);
+    expect(day.file.period.from_quarter).toBeGreaterThan(0);
+    for (const plan of day.file.plans) {
+      expect(plan.quarters).toHaveLength(day.file.period.quarters);
+      expect(plan.quarters[0].index).toBe(day.file.period.from_quarter);
+      expect(plan.quarters[0].start).toBe(day.file.period.start);
+    }
+    expect(day.file.plans.map((p: { name: string; shown: boolean }) => [p.name, p.shown])).toEqual([['main', true], ['dev', false]]);
+    expect(day.name).toMatch(/^bench-Cheap-night-main-/);
   });
 
   test('withholds a suite comparison when one measured case has no result', async ({ context, page }) => {
@@ -613,7 +650,7 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-coverage')).toContainText(/1 measured cases.*1 waiting|1 uppmätta testfall.*1 väntar/);
     await expect(page.locator('#bench-total-score')).toBeVisible();
     const pending = page.locator(`#bench-case-${CASES[1].id}`);
-    await expect(pending).not.toContainText(/T [−-]?\d+|[CN] [−-]?\d+/);
+    await expect(pending).not.toContainText(/dev [−-]?\d+|main [−-]?\d+/);
     await pending.click();
     await expect(page.getByText(/measurement window ends tomorrow/)).toBeVisible();
     await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
@@ -633,7 +670,7 @@ test.describe('planner bench', () => {
     await page.goto('/portal/planner-bench');
     await page.locator('#bench-test-run').click();
     // The two older versions scored what the current planner does, so the changes in them moved nothing.
-    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /]);
+    await expect(page.getByRole('option')).toHaveText([/^main · ccccccc · /, /^dev · ddddddd · /]);
     await page.getByRole('listbox').screenshot({ path: test.info().outputPath('planner-options.png') });
   });
 
@@ -644,20 +681,22 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
     await page.locator('#bench-test-run').click();
-    await expect(page.getByText(/^(Current branches|Aktuella grenar)$/)).toBeVisible();
-    await expect(page.getByText(/^(Saved benchmark history|Sparad bänkhistorik)$/)).toBeVisible();
-    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /, /^bbbbbbb · .* · (history|historik)/, /^fffffff · .* · (history|historik)/]);
+    await expect(page.getByText(/^(Branches|Grenar)$/)).toBeVisible();
+    await expect(page.getByText(/^(Earlier commits|Tidigare commits)$/)).toBeVisible();
+    // A branch head goes by its branch; any other commit by its hash, the date and its points, nothing else.
+    const options = [/^main · ccccccc · .* · -?\d+ (pts|p)$/, /^dev · ddddddd · .* · -?\d+ (pts|p)$/, /^bbbbbbb · .* · -?\d+ (pts|p)$/, /^fffffff · .* · -?\d+ (pts|p)$/];
+    await expect(page.getByRole('option')).toHaveText(options);
     await page.getByRole('option').filter({ hasText: /^bbbbbbb · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('bbbbbbb');
     await expect(page.locator('#bench-current-run')).toContainText('ccccccc');
     await page.locator('#bench-test-run').click();
     // Dev stays available even after selecting history and a newer run has its score.
-    await expect(page.getByRole('option')).toHaveText([/^ccccccc · /, /^ddddddd · /, /^bbbbbbb · .* · (history|historik)/, /^fffffff · .* · (history|historik)/]);
-    await page.getByRole('option').filter({ hasText: /^ddddddd · / }).click();
+    await expect(page.getByRole('option')).toHaveText(options);
+    await page.getByRole('option').filter({ hasText: /^dev · ddddddd · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('ddddddd');
   });
 
-  test('retains historical scores and scrolls a long picker without moving or skipping rows', async ({ context, page }) => {
+  test('gives a commit scored by an older scorer no points and scrolls a long picker without moving or skipping rows', async ({ context, page }) => {
     await mockBackend(context, { savedHistory: true });
     await login(page);
     await page.goto('/portal/planner-bench');
@@ -666,8 +705,8 @@ test.describe('planner bench', () => {
     const viewport = list.locator('[data-radix-select-viewport]');
     await expect(viewport).toHaveCSS('scrollbar-width', 'thin');
     await expect(page.getByRole('option')).toHaveCount(SAVED_HISTORY.length + 2);
-    await expect(page.getByRole('option').filter({ hasText: /^saved-1 · / })).toContainText(`${SAVED_TEST_POINTS} `);
-    await expect(page.getByRole('option').filter({ hasText: /^saved-1 · / })).toContainText(/saved score.*v24|sparad poäng.*v24/);
+    // Points from another scorer cannot be compared, so the commit asks for a rerun instead of showing them.
+    await expect(page.getByRole('option').filter({ hasText: /^saved-1 · / })).toHaveText(/^saved-1 · .* · (needs a rerun|behöver köras om)$/);
     await list.screenshot({ path: test.info().outputPath('saved-history-picker.png') });
     const bounds = (await list.boundingBox())!;
     expect(bounds.height).toBeLessThanOrEqual(320);
@@ -685,7 +724,7 @@ test.describe('planner bench', () => {
     await expect(page.getByRole('option').last()).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#bench-test-run')).toContainText('saved-30');
-    await expect(page.locator('#bench-saved-score')).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.locator('#bench-incomplete')).toBeVisible();
     await expect(page.locator('#bench-total-score')).toHaveCount(0);
     await page.locator('#bench-test-run').click();
     await page.keyboard.press('Home');
@@ -705,7 +744,7 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-total-score')).toHaveCount(0);
     await expect(page.locator('#bench-incomplete')).toContainText(/one does not contain a planner|saknar planerare/);
     await page.locator('#bench-test-run').click();
-    await page.getByRole('option').filter({ hasText: /^ccccccc · / }).click();
+    await page.getByRole('option').filter({ hasText: /^main · ccccccc · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText(/no planner|saknar planerare/);
     await expect(page.locator('#bench-total-score')).toHaveCount(0);
   });
@@ -721,19 +760,19 @@ test.describe('planner bench', () => {
     await page.locator('#bench-current-run').locator('xpath=ancestor::div[contains(@class,"grid")][1]').screenshot({ path: test.info().outputPath('planner-boxes.png') });
     await page.goto('/portal/planner-bench');
 
-    // Runs are named by commit, time and score; the newest is the default test run.
-    await expect(page.locator('#bench-test-run')).toContainText(/ddddddd · .* · -?\d+ (pts|p)/);
-    await expect(page.getByText(/ccccccc · .* · -?\d+ (pts|p) · (current|nuvarande)/)).toBeVisible();
+    // Branch heads are named by branch, then commit, time and score; dev is the default to compare.
+    await expect(page.locator('#bench-test-run')).toHaveText(/^dev · ddddddd · .* · -?\d+ (pts|p)$/);
+    await expect(page.locator('#bench-current-run')).toHaveText(/^main · ccccccc · .* · -?\d+ (pts|p)$/);
 
     // Totals over every case, current against test.
-    await expect(page.locator('#bench-total-score')).toContainText(/Test planner is (better|worse)|No score difference|Testplaneraren är (bättre|sämre)|Ingen skillnad i poäng/);
+    await expect(page.locator('#bench-total-score')).toContainText(/dev is (better|worse) than main|No score difference|dev är (bättre|sämre) än main|Ingen skillnad i poäng/);
     const caseTexts = await page.locator('[id^="bench-case-"]').allTextContents();
-    const caseTotal = (side: 'C' | 'N' | 'T') => caseTexts.reduce((sum, text) => {
+    const caseTotal = (side: 'main' | 'dev') => caseTexts.reduce((sum, text) => {
       const match = text.match(new RegExp(`${side} ([−-]?\\d+)`));
       return sum + (match ? Number(match[1].replace('−', '-')) : 0);
     }, 0);
-    expect(Number(await page.locator('#bench-score-current').textContent())).toBe(caseTotal('N'));
-    expect(Number(await page.locator('#bench-score-test').textContent())).toBe(caseTotal('T'));
+    expect(Number(await page.locator('#bench-score-current').textContent())).toBe(caseTotal('main'));
+    expect(Number(await page.locator('#bench-score-test').textContent())).toBe(caseTotal('dev'));
     await expect(page.locator('#bench-total-grid_cost_sek')).toContainText(/-?\d+\.\d.*-?\d+\.\d\s*kr/);
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
@@ -741,8 +780,13 @@ test.describe('planner bench', () => {
     await expect(page.getByText('Synthetic evaluation: load and solar use forecasts.', { exact: true })).toBeVisible();
     await expect(page.locator('#bench-day-all')).toHaveAttribute('aria-pressed', 'true');
 
-    // Every quarter of the shown plan carries its score in a strip above the chart.
-    await expect(page.getByText(/comfort loss per quarter|komfortförlust per kvart/)).toBeVisible();
+    // Every quarter of the shown plan carries its score in a strip under the chart, with its explanation below it.
+    await expect(page.locator('#plan-score')).toContainText(/rule points per quarter|regelpoäng per kvart/);
+    const strip = (await page.locator('#plan-score').boundingBox())!, axis = (await page.locator('#plan-cost').boundingBox())!;
+    const why = (await page.locator('#bench-quarter-explanation').boundingBox())!;
+    expect(strip.y).toBeGreaterThan(axis.y + axis.height);
+    expect(why.y).toBeGreaterThan(strip.y);
+    expect(why.y - (strip.y + strip.height)).toBeLessThan(40);
 
     // Clicking a quarter explains its score.
     const plan = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
@@ -766,8 +810,8 @@ test.describe('planner bench', () => {
     // The test plan is drawn against the current planner's battery and pool, dashed.
     const compared = page.locator('#plan-storage path[stroke-dasharray="5 3"], #plan-temperature path[stroke-dasharray="5 3"]');
     await expect(compared).toHaveCount(2);
-    await expect(page.locator('#plan-storage')).toContainText(/(dashed|streckat) = (Current|Nuvarande)/);
-    await expect(page.locator('#plan-temperature')).toContainText(/(dashed|streckat) = (Current|Nuvarande)/);
+    await expect(page.locator('#plan-storage')).toContainText(/(dashed|streckat) = main/);
+    await expect(page.locator('#plan-temperature')).toContainText(/(dashed|streckat) = main/);
     await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
@@ -944,7 +988,7 @@ test.describe('planner bench', () => {
     expect(captured.rules[0]).toMatchObject({ id: true, criteria: { pool_low: { threshold: 1.5 } } });
     expect(captured.updated).toEqual([]);
     await expect.poll(() => captured.dispatched.length).toBe(1);
-    expect(captured.dispatched[0]).toMatchObject({ shas: 'heads' });
+    expect(captured.dispatched[0]).toMatchObject({ shas: 'all' });
 
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(rules).toBeVisible();
@@ -952,13 +996,11 @@ test.describe('planner bench', () => {
     await rules.screenshot({ path: test.info().outputPath('rules-mobile.png') });
   });
 
-  test('shows saved points while withholding current comparisons and stale witnesses', async ({ context, page }) => {
+  test('shows no points for a run from an older scorer and withholds its comparison and stale witnesses', async ({ context, page }) => {
     await mockBackend(context, { missingAudit: true });
     await login(page);
     await page.goto('/portal/planner-bench');
-    await expect(page.locator('#bench-test-run')).toContainText(`${SAVED_TEST_POINTS} `);
-    await expect(page.locator('#bench-test-run')).toContainText(/saved score.*v2|sparad poäng.*v2/);
-    await expect(page.locator('#bench-saved-score')).toContainText(`${SAVED_TEST_POINTS} `);
+    await expect(page.locator('#bench-test-run')).toHaveText(/^dev · ddddddd · .* · (needs a rerun|behöver köras om)$/);
     await expect(page.locator('#bench-total-score')).toHaveCount(0);
     await expect(page.locator('#bench-rules')).toContainText(/Missing evidence|Saknar underlag/);
     await page.locator('#bench-untriggered-rules > button').click();
@@ -1027,6 +1069,6 @@ test.describe('planner bench', () => {
     // Nothing of another planner's work or the replay's bulk is.
     expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);
-    expect(captured.dispatched[0]).toMatchObject({ shas: 'heads', scenario: '33333333-3333-4333-8333-333333333333' });
+    expect(captured.dispatched[0]).toMatchObject({ shas: 'all', scenario: '33333333-3333-4333-8333-333333333333' });
   });
 });

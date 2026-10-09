@@ -50,17 +50,9 @@ Deno.test('complete coverage remains correct beyond 1000 cases without a partial
   assertEquals([partial.ready, partial.scored, partial.score], [1203, 1202, null]);
 });
 
-Deno.test('saved run points remain readable when evaluator, rules or case coverage change', () => {
+Deno.test('points from another scorer, rule set or case revision never stand in for a run score', () => {
   const old = { ...summary, score: { ...summary.score!, version: 24, points: 123 },
     referee_version: 0, planner_generation: 'ready-wasm-v3', planner_criteria: '{"pool_restart":{"points":-1}}' };
-  const results = new Map([[scenario.id, old]]);
-  const coverage = runCoverage([scenario], results, {});
-  assertEquals([coverage.score, coverage.scored], [null, 0]);
-  assertEquals(coverage.saved, { score: 123, scored: 1, versions: [24] });
-  assertEquals(runCoverage([{ ...scenario, revision: 'changed' }], results, {}).saved, coverage.saved);
-  assertEquals(runCoverage([{ ...scenario, id: 'new-case' }], results, {}).saved, coverage.saved);
-  results.set('failed', { ...summary, status: 'error', score: old.score });
-  results.set('unscored', { ...summary, score: null });
-  assertEquals(runCoverage([scenario], results, {}).saved, coverage.saved);
-  assertEquals(runCoverage([scenario], new Map(), {}).saved.score, null);
+  const coverage = runCoverage([scenario], new Map([[scenario.id, old]]), {});
+  assertEquals([coverage.score, coverage.scored, coverage.scores.get(scenario.id)], [null, 0, null]);
 });

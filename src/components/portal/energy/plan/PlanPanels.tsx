@@ -11,6 +11,10 @@
 // of the planners it compares had spent by then. It also draws the planner the
 // plan is compared with as dashed lines in the storage and temperature panels.
 //
+// Under the time axis sits the score: the points the plan's rules gave and took
+// in each quarter, and below it why the picked quarter scored what it did. The
+// two are one section, the same on the live plan and on the bench.
+//
 // The consumption stack draws individual meters, never categories: the planner
 // dispatches individual devices, so a band labelled "Kitchen & cold" would
 // describe something no schedule can act on. It stays legible by drawing
@@ -30,6 +34,7 @@ import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSerie
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { loadColour, PLAN_COLOURS } from './types';
+import { scoreColour } from './quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime, homeHourMinute } from '@/lib/energy-shift/home-time';
 
@@ -157,10 +162,13 @@ const PlanPanels: React.FC<{
   selectedIndex?: number;
   onQuarterClick?: (index: number) => void;
   /**
-   * Planner bench: comfort loss per quarter, drawn as its own strip
-   * above the price panel. The portal never passes it.
+   * The points the plan's rules gave and took in each quarter, drawn as a
+   * strip under the time axis; null where a quarter has no score, as measured
+   * history has none.
    */
   quarterScores?: readonly (number | null)[];
+  /** Why the picked quarter scored what it did, shown under the score strip (QuarterScoreDetail). */
+  scoreDetail?: React.ReactNode;
   /**
    * Planner bench: every row's price is what the quarter really cost, and
    * the planner was given it.
@@ -180,7 +188,7 @@ const PlanPanels: React.FC<{
   storeLines?: PlanStoreLines;
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
-  selectedIndex = -1, onQuarterClick, quarterScores, realPrices = false, poolTargetC = null,
+  selectedIndex = -1, onQuarterClick, quarterScores, scoreDetail, realPrices = false, poolTargetC = null,
   costLines, storeLines,
 }) => {
   const { t } = useLanguage();
@@ -197,8 +205,7 @@ const PlanPanels: React.FC<{
   const geometry = useMemo(() => {
     const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, RIGHT]);
 
-    const scoreStrip: Panel | null = quarterScores ? { top: 30, height: 16 } : null;
-    const price: Panel = { top: scoreStrip ? scoreStrip.top + scoreStrip.height + GAP : 30, height: 68 };
+    const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
     const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
@@ -214,6 +221,8 @@ const PlanPanels: React.FC<{
     const cost: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showCost ? 90 : 0 };
     const axisY = showCost ? cost.top + cost.height
       : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
+    // The score is a section of its own, below the axis labels of the panels above.
+    const scoreStrip: Panel | null = quarterScores ? { top: axisY + 42 + GAP, height: 16 } : null;
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -285,7 +294,7 @@ const PlanPanels: React.FC<{
     });
 
     return {
-      x, axisY, height: axisY + 42, scoreStrip,
+      x, axisY, height: scoreStrip ? scoreStrip.top + scoreStrip.height + 10 : axisY + 42, scoreStrip,
       price, priceY, priceMin, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
@@ -371,7 +380,8 @@ const PlanPanels: React.FC<{
 
   return (
     <div ref={wrapRef} className="relative">
-      <div className="overflow-x-auto rounded-lg border bg-card">
+      <div className="rounded-lg border bg-card">
+        <div className="overflow-x-auto">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${VIEW_W} ${height}`}
@@ -422,39 +432,6 @@ const PlanPanels: React.FC<{
               width={planWidth} height={axisY - price.top + 14}
               fill="var(--plan-wash)"
             />
-          )}
-
-          {/* ----------------------------------------------- Bench score --- */}
-          {scoreStrip && quarterScores && (
-            <g>
-              <PanelHeading
-                title={t('Poäng', 'Score')}
-                unit={t('komfortförlust per kvart', 'comfort loss per quarter')}
-                y={scoreStrip.top - 6}
-              />
-              {quarterScores.map((score, index) => {
-                if (score === null || score === undefined) return null;
-                const left = x(index), width = x(index + 1) - left;
-                const colour = `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(score))})`;
-                // Digits need about 10 units; narrower quarters (a three-day
-                // view) fall back to a coloured cell of the same colour.
-                return width >= 9.5 ? (
-                  <text
-                    key={index} x={left + width / 2} y={scoreStrip.top + 12}
-                    textAnchor="middle" fill={colour}
-                    className="text-[8.5px] font-mono font-semibold"
-                  >
-                    {score < 0 ? `−${-score}` : String(score)}
-                  </text>
-                ) : (
-                  <rect
-                    key={index} x={left} y={scoreStrip.top + 3}
-                    width={Math.max(0.5, width - 0.3)} height={scoreStrip.height - 6}
-                    fill={colour}
-                  />
-                );
-              })}
-            </g>
           )}
 
           {/* ---------------------------------------------------- Price --- */}
@@ -807,7 +784,59 @@ const PlanPanels: React.FC<{
               </text>
             </g>
           ))}
+          {/* ---------------------------------------------------- Score --- */}
+          {scoreStrip && quarterScores && (
+            <g id="plan-score">
+              <line
+                x1={MARGIN_LEFT} x2={RIGHT} y1={scoreStrip.top - 22} y2={scoreStrip.top - 22}
+                className="stroke-border" strokeWidth={1}
+              />
+              <PanelHeading
+                title={t('Poäng', 'Score')}
+                unit={t('regelpoäng per kvart', 'rule points per quarter')}
+                y={scoreStrip.top - 6}
+              />
+              {quarterScores.map((score, index) => {
+                if (score === null || score === undefined) return null;
+                const left = x(index), width = x(index + 1) - left;
+                const colour = scoreColour(score);
+                // Digits need about 10 units; narrower quarters (a three-day
+                // view) fall back to a coloured cell of the same colour.
+                return width >= 9.5 ? (
+                  <text
+                    key={index} data-score={score} x={left + width / 2} y={scoreStrip.top + 12}
+                    textAnchor="middle" fill={colour}
+                    className="text-[8.5px] font-mono font-semibold"
+                  >
+                    {score < 0 ? `−${-score}` : String(score)}
+                  </text>
+                ) : (
+                  <rect
+                    key={index} data-score={score} x={left} y={scoreStrip.top + 3}
+                    width={Math.max(0.5, width - 0.3)} height={scoreStrip.height - 6}
+                    fill={colour}
+                  />
+                );
+              })}
+              {selectedIndex >= 0 && selectedIndex < n && (
+                <rect
+                  x={x(selectedIndex)} y={scoreStrip.top}
+                  width={Math.max(2, x(selectedIndex + 1) - x(selectedIndex))} height={scoreStrip.height}
+                  className="fill-none stroke-foreground" strokeWidth={1.25}
+                />
+              )}
+              {hover !== null && (
+                <rect
+                  x={x(hover)} y={scoreStrip.top}
+                  width={Math.max(1.5, x(hover + 1) - x(hover))} height={scoreStrip.height}
+                  className="fill-foreground" fillOpacity={0.07} pointerEvents="none"
+                />
+              )}
+            </g>
+          )}
         </svg>
+        </div>
+        {scoreDetail && <div className="border-t px-3 py-2 text-sm">{scoreDetail}</div>}
       </div>
 
       {hovered && pointer && (

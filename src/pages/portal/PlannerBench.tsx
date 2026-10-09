@@ -41,6 +41,9 @@ import type {
   BenchResultDetail, BenchResultSummary, BenchRun, BenchScenario, BenchSeries, CriteriaOverrides,
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
+import BenchChartDownload from '@/components/portal/planner-bench/BenchChartDownload';
+import QuarterScoreDetail, { type QuarterScoreLine } from '@/components/portal/energy/plan/QuarterScoreDetail';
+import { signedPoints as signed } from '@/components/portal/energy/plan/quarter-score';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import BenchOverlapMove from '@/components/portal/planner-bench/BenchOverlapMove';
@@ -60,6 +63,12 @@ async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: str
 }
 
 const key = (sha: string, scenario: string) => `${sha}/${scenario}`;
+
+/** A commit at a branch head goes by the branch: main is production, dev the test site. Any other goes by its hash. */
+const runName = (run: BenchRun) => [run.is_current && 'main', run.is_test && 'dev'].filter(Boolean).join(' · ') || run.short_sha;
+/** What the two compared planners go by wherever the page tells them apart. */
+type RunNames = { current: string; test: string };
+const exportedRun = ({ sha, committed_at, subject }: BenchRun) => ({ sha, committed_at, subject });
 
 /** PostgREST's answer when a table is not in the schema: this is not the test project. */
 const isMissingTable = (error: unknown) => /PGRST205|bench_\w+.*(does not exist|schema cache)/i.test(String((error as Error)?.message ?? error));
@@ -164,7 +173,7 @@ const Bench: React.FC = () => {
 
   const currentScores = currentRun ? scoresFor(currentRun.sha) : null;
   const testScores = testRun ? scoresFor(testRun.sha) : null;
-  const savedTestScore = testRun ? coverage.get(testRun.sha)?.saved : null;
+  const names: RunNames = { current: currentRun ? runName(currentRun) : 'main', test: testRun ? runName(testRun) : 'dev' };
 
   /** Both complete runs use the entire recorded cohort; never a partial intersection. */
   const totals = useMemo(() => {
@@ -243,7 +252,8 @@ const Bench: React.FC = () => {
       setPending(null);
       setCaseId(id);
       refresh();
-      dispatch.mutate({ shas: 'heads', scenario: id });
+      // Every planner on the bench, so earlier commits stay comparable with the branch heads.
+      dispatch.mutate({ shas: 'all', scenario: id });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara testfallet', 'Could not save the test case'), description: error.message, variant: 'destructive' }),
   });
@@ -267,7 +277,7 @@ const Bench: React.FC = () => {
     },
     onSuccess: () => {
       refresh();
-      dispatch.mutate({ shas: comparisonShas, scenario: selectedCase!.id });
+      dispatch.mutate({ shas: 'all', scenario: selectedCase!.id });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara starttillståndet', 'Could not save the start state'), description: error.message, variant: 'destructive' }),
   });
@@ -283,22 +293,20 @@ const Bench: React.FC = () => {
       refresh();
       toast({ title: t('Reglerna sparade', 'Rules saved'), description: t('Gäller alla testfall och alla planerare.', 'They apply to every test case and every planner.') });
       // Rule-driven decisions must be optimized again; unchanged legacy inputs skip solve.
-      dispatch.mutate({ shas: 'heads' });
+      dispatch.mutate({ shas: 'all' });
     },
     onError: (error: Error) => toast({ title: t('Kunde inte spara reglerna', 'Could not save the rules'), description: error.message, variant: 'destructive' }),
   });
 
   const loading = runs.isLoading || scenarios.isLoading || summaries.isLoading;
   const loadError = runs.error ?? scenarios.error ?? summaries.error;
+  // One score means one thing: every measured case, today's scorer. A run without that has no points to show.
   const runLabel = (run: BenchRun) => {
-    const currentScore = runScores.get(run.sha);
-    const status = run.status === 'pending' ? ` · ${t('väntar på körning', 'awaiting run')}` : run.status === 'running' ? ` · ${t('kör', 'running')}` : run.status === 'failed' ? ` · ${t('misslyckades', 'failed')}` : run.status === 'unavailable' ? ` · ${t('saknar planerare', 'no planner')}` : '';
-    const cov = coverage.get(run.sha);
-    const score = currentScore ?? cov?.saved.score;
-    const saved = currentScore == null && score != null
-      ? ` · ${t('sparad poäng', 'saved score')} · v${cov!.saved.versions.join('/v')} · ${cov!.saved.scored} ${t('testfall', 'cases')}` : '';
-    const incomplete = cov && cov.scored < cov.ready ? ` · ${cov.scored}/${cov.ready} ${t('aktuella testfall', 'current cases')}` : '';
-    return `${run.short_sha} · ${formatHomeStamp(run.committed_at, TZ)} · ${score ?? '—'} ${t('p', 'pts')}${run.is_current ? ` · ${t('nuvarande', 'current')}` : ''}${run.is_test ? ' · dev' : !run.is_current ? ` · ${t('historik', 'history')}` : ''}${status}${saved}${incomplete}`;
+    const score = runScores.get(run.sha);
+    const state = run.status === 'pending' ? t('väntar på körning', 'awaiting run') : run.status === 'running' ? t('kör', 'running')
+      : run.status === 'failed' ? t('misslyckades', 'failed') : run.status === 'unavailable' ? t('saknar planerare', 'no planner')
+      : score == null ? t('behöver köras om', 'needs a rerun') : `${score} ${t('p', 'pts')}`;
+    return `${runName(run)}${run.is_current || run.is_test ? ` · ${run.short_sha}` : ''} · ${formatHomeStamp(run.committed_at, TZ)} · ${state}`;
   };
 
   const shortRun = (sha: string | null) => {
@@ -335,7 +343,7 @@ const Bench: React.FC = () => {
         <div className={`flex flex-wrap gap-2 ${tab === 'bench' ? '' : 'hidden'}`}>
           <input ref={fileInput} id="bench-replay-file" type="file" accept="application/json,.json" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
           <Button variant="outline" onClick={() => fileInput.current?.click()}><Upload className="h-4 w-4 mr-2" />{t('Lägg till testfall', 'Add test case')}</Button>
-          <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'heads' })}>
+          <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'all' })}>
             {dispatch.isPending || job.active ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             {t('Kör saknade', 'Run missing results')}
           </Button>
@@ -406,8 +414,8 @@ const Bench: React.FC = () => {
                   <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
                   {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
                   {stateLabel && <span className="text-xs opacity-70">{stateLabel}</span>}
-                  {currentScore && <span className="font-mono text-xs opacity-70">{t('N', 'C')} {signed(currentScore.points)}</span>}
-                  {testScore && <span className="font-mono text-xs opacity-70">T {signed(testScore.points)}</span>}
+                  {currentScore && <span className="font-mono text-xs opacity-70">{names.current} {signed(currentScore.points)}</span>}
+                  {testScore && testRun?.sha !== currentRun?.sha && <span className="font-mono text-xs opacity-70">{names.test} {signed(testScore.points)}</span>}
                 </button>
               );
             })}
@@ -417,18 +425,18 @@ const Bench: React.FC = () => {
             <CardContent className="pt-6 space-y-4">
               <div className="grid items-start gap-4 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <div className="text-xs text-muted-foreground">{t('Nuvarande planerare (produktion · main)', 'Current planner (production · main)')}</div>
+                  <div className="text-xs text-muted-foreground">{t('Planerare i produktion', 'Planner in production')}</div>
                   <div id="bench-current-run" className="flex h-10 items-center font-mono text-sm rounded-md border px-3"><span className="truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</span></div>
                   <RunDetails run={currentRun} />
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-0">
-                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{testRun?.is_test ? t('Dev-kandidat · planerarbänken', 'Dev candidate · planner bench') : t('Historisk planerare', 'Historical planner')}</label>
+                  <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Jämförs med', 'Compared with')}</label>
                   <div className="flex items-center gap-2">
                     <Select value={testRun?.sha ?? ''} onValueChange={setTestSha}>
                       <SelectTrigger id="bench-test-run" className="font-mono text-sm"><SelectValue placeholder={t('Inga körningar ännu', 'No runs yet')} /></SelectTrigger>
                       <SelectContent scrollButtons={false} className="max-h-[min(20rem,var(--radix-select-content-available-height))]">
                         {[true, false].map(environment => <SelectGroup key={String(environment)}>
-                          <SelectLabel>{environment ? t('Aktuella grenar', 'Current branches') : t('Sparad bänkhistorik', 'Saved benchmark history')}</SelectLabel>
+                          <SelectLabel>{environment ? t('Grenar', 'Branches') : t('Tidigare commits', 'Earlier commits')}</SelectLabel>
                           {listedRuns.filter(run => Boolean(run.is_current || run.is_test) === environment).map(run =>
                             <SelectItem key={run.sha} value={run.sha} className="font-mono text-sm">{runLabel(run)}</SelectItem>)}
                         </SelectGroup>)}
@@ -442,20 +450,15 @@ const Bench: React.FC = () => {
                 {t(`${cases.filter(c => c.dataset && c.recorded_at).length} uppmätta testfall · ${cases.filter(c => !c.recorded_at).length} väntar på mätningar`,
                   `${cases.filter(c => c.dataset && c.recorded_at).length} measured cases · ${cases.filter(c => !c.recorded_at).length} waiting for measurements`)}
               </p>
-              {!totals && savedTestScore?.score != null && <p id="bench-saved-score" className="text-sm">
-                {t('Sparad poäng för körningen', 'Saved run score')}: <span className="font-mono font-semibold">{savedTestScore.score} {t('p', 'pts')}</span>
-                {' · '}{savedTestScore.scored} {t('testfall', 'cases')}
-                {' · '}{t('poängsättare', 'scorer')} v{savedTestScore.versions.join('/v')}
-              </p>}
               {!totals && cases.some(c => c.recorded_at) && <p id="bench-incomplete" className="text-sm text-muted-foreground">
                 {currentRun?.status === 'unavailable' || testRun?.status === 'unavailable'
                   ? t('Jämförelsen kan inte göras eftersom en av dessa commits saknar planerare.',
                     'These commits cannot be compared because one does not contain a planner.')
-                  : t('Jämförelsen väntar på aktuella resultat för alla uppmätta testfall. Kör saknade resultat.',
-                    'Comparison awaits current results for every measured case. Run missing results.')}
+                  : t('Jämförelsen behöver resultat för alla uppmätta testfall från båda planerarna. Kör saknade resultat.',
+                    'The comparison needs a result for every measured case from both planners. Run missing results.')}
               </p>}
-              {totals && <SuiteTable totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
-              {selectedCase?.recorded_at && series.data && <CaseCostSummary scenario={selectedCase} details={series.data} />}
+              {totals && <SuiteTable names={names} totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
+              {selectedCase?.recorded_at && series.data && <CaseCostSummary names={names} scenario={selectedCase} details={series.data} />}
               {!cases.length && <p className="text-sm text-muted-foreground">{t('Inga testfall ännu. Lägg till en replay-fil.', 'No test cases yet. Add a replay file to start.')}</p>}
             </CardContent>
           </Card>
@@ -466,6 +469,7 @@ const Bench: React.FC = () => {
               scenario={selectedCase}
               currentRun={currentRun}
               testRun={testRun}
+              names={names}
               summaryByKey={summaryByKey}
               details={selectedCase.recorded_at ? series.data ?? null : null}
               seriesLoading={series.isLoading}
@@ -515,9 +519,10 @@ const Bench: React.FC = () => {
 
 
 const CaseCostSummary: React.FC<{
+  names: RunNames;
   scenario: BenchScenario;
   details: { current: BenchResultDetail | null; test: BenchResultDetail | null };
-}> = ({ scenario, details }) => {
+}> = ({ names, scenario, details }) => {
   const { t } = useLanguage();
   if (!details.current?.outcome && !details.test?.outcome) return null;
   return <section id="bench-selected-cost-summary" aria-labelledby="bench-selected-cost-title" className="space-y-2 border-t pt-4">
@@ -525,7 +530,7 @@ const CaseCostSummary: React.FC<{
     <div id="bench-real-cost" className="grid gap-3 text-sm sm:grid-cols-2">
       {([['current', details.current], ['test', details.test]] as const).map(([which, d]) => d?.outcome && (
         <div key={which} className="rounded-md border px-3 py-2">
-          <div className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
+          <div className="font-medium">{names[which]}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
           <div className="text-xs text-muted-foreground">
             {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
             {' · '}{t('kvar i lagren vid slutet', 'left in the stores at the end')} <span className="font-mono">{signed(d.outcome.terminal.credit_sek, 1)} kr</span>
@@ -568,7 +573,7 @@ const delta = (a: number | null, b: number | null, digits: number) => {
 
 interface SuiteLine { key: keyof SuiteStats; label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better }
 
-const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test: SuiteStats }; scores: { current: number | null; test: number | null } }> = ({ totals, scores }) => {
+const SuiteTable: React.FC<{ names: RunNames; totals: { cases: number; current: SuiteStats; test: SuiteStats }; scores: { current: number | null; test: number | null } }> = ({ names, totals, scores }) => {
   const { t } = useLanguage();
   const { current: c, test: x } = totals;
   const line = (label: string, unit: string, digits: number, key: keyof SuiteStats, better: Better): SuiteLine =>
@@ -611,8 +616,9 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
           {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta)})</span>}
         </div>
         <div className="font-medium">
-          {scores.current === null || scores.test === null ? t('Väntar på poäng', 'Awaiting scores') : scoreTone === 'better' ? t('Testplaneraren är bättre', 'Test planner is better')
-            : scoreTone === 'worse' ? t('Testplaneraren är sämre', 'Test planner is worse')
+          {scores.current === null || scores.test === null ? t('Väntar på poäng', 'Awaiting scores')
+            : scoreTone === 'better' ? t(`${names.test} är bättre än ${names.current}`, `${names.test} is better than ${names.current}`)
+            : scoreTone === 'worse' ? t(`${names.test} är sämre än ${names.current}`, `${names.test} is worse than ${names.current}`)
             : t('Ingen skillnad i poäng', 'No score difference')}
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
@@ -625,16 +631,16 @@ const SuiteTable: React.FC<{ totals: { cases: number; current: SuiteStats; test:
       <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
         {groups.map(([title, lines]) => (
           <div key={title}>
-            <div className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b pb-1 text-xs text-muted-foreground">
+            <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_4.5rem] items-center gap-x-3 border-b pb-1 text-xs text-muted-foreground">
               <span className="font-medium uppercase tracking-wide">{title}</span>
-              <span className="text-right">{t('Nuv.', 'Current')}</span>
-              <span className="text-right">Test</span>
+              <span className="truncate text-right">{names.current}</span>
+              <span className="truncate text-right">{names.test}</span>
               <span />
             </div>
             {lines.map(l => {
               const tone = toneOf(l.a, l.b, l.better);
               return (
-                <div key={l.key} id={`bench-total-${l.key}`} className="grid grid-cols-[minmax(0,1fr)_3.5rem_6rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
+                <div key={l.key} id={`bench-total-${l.key}`} className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
                   <span className="truncate">{l.label}</span>
                   <span className="text-right font-mono tabular-nums text-muted-foreground">{fmt(l.a, l.digits)}</span>
                   <span className={`text-right font-mono tabular-nums ${tone === 'better' || tone === 'worse' ? 'font-semibold' : ''}`}>
@@ -658,6 +664,7 @@ interface CaseViewProps {
   scenario: BenchScenario;
   currentRun: BenchRun | null;
   testRun: BenchRun | null;
+  names: RunNames;
   summaryByKey: Map<string, BenchResultSummary>;
   details: { current: BenchResultDetail | null; test: BenchResultDetail | null } | null;
   seriesLoading: boolean;
@@ -673,12 +680,8 @@ interface CaseViewProps {
   onRerun: () => void;
 }
 
-// The palette runs −2…+2; anything worse than −2 takes the darkest red.
-const SCORE_COLOUR = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(score))})`;
-const signed = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
-
 const CaseView: React.FC<CaseViewProps> = ({
-  scenario, currentRun, testRun, summaryByKey,
+  scenario, currentRun, testRun, names, summaryByKey,
   details, seriesLoading, savingStartState, onSaveStartState, shown, onShown, draft, unsaved, onDraft, onSaveRules, onRerun,
 }) => {
   const { t } = useLanguage();
@@ -705,6 +708,7 @@ const CaseView: React.FC<CaseViewProps> = ({
   const days = useMemo(() => benchDays(starts ?? [], TZ), [starts]);
   const [period, setPeriod] = useState<BenchPeriod>('all');
   const range = periodRange(days, period, starts?.length ?? 0);
+  const periodLabel = period === 'all' ? t('hela 72 h', 'full 72 h') : days[Math.min(period, days.length - 1)]?.label ?? '';
   /** Explain a quarter, moving a single-day view to the day it is in. */
   const select = (quarter: number) => {
     setSelected(quarter);
@@ -718,6 +722,27 @@ const CaseView: React.FC<CaseViewProps> = ({
   const errors = [errorFor(currentRun), errorFor(testRun)].filter(s => s?.status === 'error');
   const ruleLabel = new Map(rules.map(r => [r.key, r]));
 
+  /** The selected quarter of the shown plan: its points, and each rule that fired with the evidence for it. */
+  const explained = (() => {
+    const q = selected === null ? undefined : shownScore?.quarters[selected];
+    if (selected === null || !q || !shownSeries || !shownScore) return null;
+    const lines: QuarterScoreLine[] = q.fired.map(k => {
+      const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)! : null;
+      const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
+        ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
+        : null;
+      return { key: k, points: ruleLabel.get(k)!.points, label: <>
+        {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event
+          ? <BenchBufferEvent event={shownScore.thermalBuffer[selected].event!} series={shownSeries} timeZone={TZ} />
+          : ruleLabel.get(k)!.label}
+        {move && <BenchOverlapMove move={move} series={shownSeries} timeZone={TZ} onSelect={select} />}
+        {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
+          {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('priser inom det större av', 'prices within the larger of')} {Math.round(ruleLabel.get(k)!.threshold * 100)} {t('öre/kWh eller', 'öre/kWh or')} {SHORT_GAP_PRICE_FRACTION * 100}% {t('av varje avbrottskvarts absoluta pris, jämfört med båda angränsande driftkvartarna', "of each gap quarter's absolute price, compared with both bordering running quarters")}</>}
+      </> };
+    });
+    return { score: q.score, when: formatHomeDayMonthTime(shownSeries.start[selected], TZ), price: shownSeries.importPrice[selected], lines };
+  })();
+
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-baseline justify-between gap-2 space-y-0">
@@ -727,7 +752,7 @@ const CaseView: React.FC<CaseViewProps> = ({
             {(['current', 'test'] as const).map(value => (
               <button key={value} id={`bench-show-${value}`} aria-pressed={shown === value} onClick={() => onShown(value)}
                 className={`px-3 py-1.5 text-sm ${shown === value ? 'bg-foreground text-background' : 'bg-card hover:bg-muted'}`}>
-                {value === 'current' ? t('Nuvarande planerare', 'Current planner') : t('Testplanerare', 'Test planner')}
+                {names[value]}
               </button>
             ))}
           </div>
@@ -750,7 +775,7 @@ const CaseView: React.FC<CaseViewProps> = ({
               {([['current', currentRun, currentScore], ['test', testRun, testScore]] as const).map(([which, run, score]) => run && (
                 <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
-                    <span className="font-medium">{which === 'current' ? t('Nuvarande', 'Current') : 'Test'} <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></span>
+                    <span className="font-medium">{names[which]}{names[which] !== run.short_sha && <> <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></>}</span>
                     <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
                   {score && (!score.audit || score.auditPending) && <div className="mt-1 text-xs text-muted-foreground">{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</div>}
@@ -758,44 +783,16 @@ const CaseView: React.FC<CaseViewProps> = ({
               ))}
             </div>
             {shownSeries ? (
-              <>
-                <BenchPlanChart series={shownSeries} compared={series} timeZone={TZ} quarters={shownScore?.quarters ?? null}
-                  selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
-                <div id="bench-quarter-explanation" className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
-                  {selected === null || !shownScore?.quarters[selected]
-                    ? <span className="text-muted-foreground">{t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
-                    : (() => {
-                      const q = shownScore.quarters[selected];
-                      return (
-                        <div className="space-y-1">
-                          <div>
-                            <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
-                            <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
-                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh</span>
-                          </div>
-                          {q.fired.length
-                            ? <ul className="text-xs space-y-0.5">{q.fired.map(k => {
-                              const move = k === 'large_load_overlap'
-                                ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
-                                : null;
-                              const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
-                                ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
-                                : null;
-                              return <li key={k} className="font-mono">
-                                {signed(ruleLabel.get(k)!.points)} {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event
-                                  ? <BenchBufferEvent event={shownScore.thermalBuffer[selected].event!} series={shownSeries} timeZone={TZ} />
-                                  : ruleLabel.get(k)!.label}
-                                {move && <BenchOverlapMove move={move} series={shownSeries} timeZone={TZ} onSelect={select} />}
-                                {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
-                                  {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('priser inom det större av', 'prices within the larger of')} {Math.round(ruleLabel.get(k)!.threshold * 100)} {t('öre/kWh eller', 'öre/kWh or')} {SHORT_GAP_PRICE_FRACTION * 100}% {t('av varje avbrottskvarts absoluta pris, jämfört med båda angränsande driftkvartarna', "of each gap quarter's absolute price, compared with both bordering running quarters")}</>}
-                              </li>;
-                            })}</ul>
-                            : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
-                        </div>
-                      );
-                    })()}
-                </div>
-              </>
+              <BenchPlanChart series={shownSeries} compared={series} names={names} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+                selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod}
+                scoreDetail={<QuarterScoreDetail id="bench-quarter-explanation" quarter={explained} action={<BenchChartDownload input={{
+                  scenario: { id: scenario.id, name: scenario.name, captured_at: scenario.captured_at, revision: scenario.revision, start_state: scenario.dataset?.start_state },
+                  timeZone: TZ, period: { label: periodLabel, ...range }, shown, rules,
+                  plans: {
+                    current: currentRun && series.current ? { ...exportedRun(currentRun), name: names.current, series: series.current, score: currentScore } : null,
+                    test: testRun && series.test ? { ...exportedRun(testRun), name: names.test, series: series.test, score: testScore } : null,
+                  },
+                }} />} />} />
             ) : <p className="text-sm text-muted-foreground">{t('Ingen plan för den här planeraren ännu.', 'No plan from this planner yet.')}</p>}
             {scenario.dataset && (
               <BenchStartState value={scenario.dataset.start_state} unread={scenario.dataset.start_state_unread ?? []}
@@ -807,9 +804,9 @@ const CaseView: React.FC<CaseViewProps> = ({
         {draftErrors.length > 0
           ? <Alert variant="destructive"><AlertDescription>{draftErrors.join(' · ')} <Button variant="outline" size="sm" onClick={() => onDraft(null)}>{t('Återställ regler', 'Reset rules')}</Button></AlertDescription></Alert>
           : <BenchRuleList current={series?.current ?? null} test={series?.test ?? null}
-            currentScore={currentScore} testScore={testScore} draft={draft} onDraft={onDraft} unsaved={unsaved}
+            currentScore={currentScore} testScore={testScore} names={names} draft={draft} onDraft={onDraft} unsaved={unsaved}
             onSave={onSaveRules} timeZone={TZ}
-            range={range} periodLabel={period === 'all' ? t('hela 72 h', 'full 72 h') : days[Math.min(period, days.length - 1)]?.label ?? ''}
+            range={range} periodLabel={periodLabel}
             dayStarts={days.map(d => d.from)}
             onSelect={(which, quarter) => { onShown(which); select(quarter); }} />}
       </CardContent>

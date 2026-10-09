@@ -244,6 +244,42 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('partial-consumption.png') });
   });
 
+  test('a plan made by rules shows its score under the chart and explains the picked quarter', async ({ page }, testInfo) => {
+    // A plan from a planner without rules has no score to show.
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByRole('img', { name: /effektflöden|power flows/i }).first()).toBeVisible();
+    await expect(page.locator('#plan-score')).toHaveCount(0);
+    // The replay download closes the chart's section either way, and says what it holds while there is no score.
+    const download = page.getByRole('button', { name: /Ladda ned repris|Download replay/ });
+    await expect(page.locator('#plan-quarter-explanation')).toContainText(/Hela planen med indata|The whole plan with its inputs/);
+    await expect(download).toBeVisible();
+
+    // The rules planner publishes which rules fired in each planned quarter.
+    replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority,
+      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { dearest_load: -2, pool_low: -1 } : {} })) } } };
+    await page.reload();
+    const strip = page.locator('#plan-score');
+    await expect(strip).toContainText(/regelpoäng per kvart|rule points per quarter/);
+    const explanation = page.locator('#plan-quarter-explanation');
+    await expect(explanation).toContainText(/Klicka på en kvart|Click a quarter/);
+    // Only planned quarters are scored, and the strip sits between the chart and the explanation.
+    await expect(strip.locator('[data-score="-3"]').first()).toBeVisible();
+    await expect(strip.locator('[data-score="0"]').first()).toBeVisible();
+    await strip.locator('[data-score="-3"]').first().click();
+    await expect(explanation).toContainText('−3');
+    await expect(explanation).toContainText('−2 Flexible load bought in a very dear quarter');
+    await expect(explanation).toContainText('−1 Pool below target');
+    await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
+    const chart = (await page.getByRole('img', { name: /effektflöden|power flows/i }).first().boundingBox())!;
+    const cell = (await strip.locator('[data-score="-3"]').first().boundingBox())!, why = (await explanation.boundingBox())!;
+    expect(cell.y).toBeGreaterThan(chart.y + chart.height * 0.8);
+    expect(why.y).toBeGreaterThan(cell.y);
+    const button = (await download.boundingBox())!;
+    expect(Math.abs(button.y - why.y)).toBeLessThan(8);
+    expect(button.x).toBeGreaterThan(why.x + why.width - 1);
+    await page.screenshot({ path: testInfo.outputPath('plan-score.png'), fullPage: true });
+  });
+
   test('returning to a hidden tab refreshes measured pool temperature immediately', async ({ page }) => {
     const start = Date.parse(CAPTURED_AT);
     replan.history = [2, 1].map(quartersAgo => ({

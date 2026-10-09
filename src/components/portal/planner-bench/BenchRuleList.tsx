@@ -32,6 +32,8 @@ interface Range { from: number; to: number }
 interface Props {
   current: BenchSeries | null; test: BenchSeries | null;
   currentScore: CaseScore | null; testScore: CaseScore | null;
+  /** What each planner goes by: its branch, or its commit. */
+  names: Record<Side, string>;
   /** The rules, the same for every case and planner; `unsaved` while a change is only being tried here. */
   draft: CriteriaOverrides; onDraft: (draft: CriteriaOverrides) => void; onSave: () => void; unsaved: boolean;
   timeZone: string; onSelect: (side: Side, quarter: number) => void;
@@ -112,12 +114,12 @@ function WitnessPlot({ before, after, from, to, unit, label }: {
 }
 
 export default function BenchRuleList({
-  current, test, currentScore, testScore, draft, onDraft, onSave, unsaved, timeZone, onSelect, range, periodLabel, dayStarts,
+  current, test, currentScore, testScore, names, draft, onDraft, onSave, unsaved, timeZone, onSelect, range, periodLabel, dayStarts,
 }: Props) {
   const { t } = useLanguage();
   const sides = [
-    { side: 'current' as const, label: t('Nuvarande', 'Current'), series: current, score: currentScore },
-    { side: 'test' as const, label: 'Test', series: test, score: testScore },
+    { side: 'current' as const, label: names.current, series: current, score: currentScore },
+    { side: 'test' as const, label: names.test, series: test, score: testScore },
   ];
   type SideData = typeof sides[number];
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
@@ -437,8 +439,8 @@ export default function BenchRuleList({
       <div className={`${COLUMNS} border-b pb-1 text-xs text-muted-foreground`}>
         <span className={`${NAME} pl-5`}>{t('Regel', 'Rule')}</span>
         <span className={POINTS}>{t('P/kvart', 'Pts/q')}</span>
-        <span className="text-right">{t('Nuvarande', 'Current')}</span>
-        <span className="text-right">Test</span>
+        <span className="truncate text-right">{names.current}</span>
+        <span className="truncate text-right">{names.test}</span>
       </div>
       {triggered.map(renderRow)}
       {!triggered.length && <p className="py-3 text-sm text-muted-foreground">{t('Ingen regel slog till i perioden.', 'No rule triggered in this period.')}</p>}
