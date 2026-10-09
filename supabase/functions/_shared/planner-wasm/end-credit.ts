@@ -18,6 +18,7 @@
 // hand the planner the same terms from the prices it was told.
 
 import type { BatteryModel, CarBatteryModel, ThermalStoreModel } from "../planner/device-models.ts";
+import type { ReadyProblem } from "./ready-problem.ts";
 
 /** One store's credit terms. The unit is kWh stored, or °C for the pool. */
 export interface StoreTerm {
@@ -75,6 +76,18 @@ export function endCreditTerms(input: {
       grid_kwh_per_unit: 1 / car.battery.charge_efficiency,
     },
   };
+}
+
+/** The terms a prepared planner problem carries: the same caps and conversions, at the prices the planner is told. */
+export function problemEndCredit(p: Pick<ReadyProblem, "battery" | "car" | "pool_store" | "heater" | "targets" | "slots">): EndCreditTerms {
+  return endCreditTerms({
+    battery: p.battery,
+    pool: p.pool_store && p.heater && p.targets.pool_c !== null
+      ? { store: p.pool_store, draw_w: p.heater.compressor_w + p.heater.auxiliary_w, heat_w: p.heater.heat_w, target_c: p.targets.pool_c } : null,
+    car: p.car && p.targets.ev_km !== null && p.targets.ev_limit_kwh !== null
+      ? { battery: p.car, target_km: p.targets.ev_km, limit_kwh: p.targets.ev_limit_kwh } : null,
+    import_sek_per_kwh: p.slots.map(slot => slot.import_price),
+  });
 }
 
 /** The level of a store that counts: no further than its cap. */

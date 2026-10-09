@@ -7,7 +7,6 @@ pub(crate) struct FutureNeeds {
     pub ev_goal: f64,
     pub buffer_quarters: f64,
     pub next_cheaper: usize,
-    pub demand_kwh: f64,
     pub refill_demand_kwh: f64,
 }
 pub(crate) struct Index {
@@ -148,16 +147,13 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             ev_goal,
             buffer_quarters: 0.0,
             next_cheaper: n,
-            demand_kwh: 0.0,
             refill_demand_kwh: 0.0,
         };
         n
     ];
-    let mut demand = 0.0_f64;
     // Reverse opportunity sweep. Estimates guide construction, never add earned points.
     for i in (0..n).rev() {
         let s = &p.slots[i];
-        let h = projected_hours(s);
         let buffer_rule = rule(p, RuleKey::PoolBuffer).filter(|r| r.points > 0);
         let goal = if thermal_buffer.causes[i].is_some() {
             buffer_rule.map_or(p.targets.pool_c.unwrap_or(0.0), |r| {
@@ -166,18 +162,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         } else {
             p.targets.pool_c.unwrap_or(0.0)
         };
-        let heat_load =
-            p.pool_store
-                .as_ref()
-                .zip(p.heater.as_ref())
-                .map_or(0.0, |(store, heater)| {
-                    (-store.idle_per_hour(goal, s.outdoor_c)).max(0.0)
-                        * store.capacity_kwh_per_c
-                        * 1000.0
-                        / heater.heat_w
-                        * (heater.compressor_w + heater.auxiliary_w)
-                });
-        demand += (s.base_w + heat_load - s.solar_w).max(0.0) * h / 1000.0;
         let next_cheaper = (i + 1..n)
             .find(|j| {
                 p.slots[*j].import_price < s.import_price
@@ -194,7 +178,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             buffer_quarters: thermal_buffer.best[i]
                 * buffer_rule.map_or(0.0, |r| f64::from(r.points)),
             next_cheaper,
-            demand_kwh: demand,
             refill_demand_kwh: 0.0,
         };
     }
@@ -250,12 +233,22 @@ pub(crate) fn witnessed(
 ) {
     let prepared = prepared(p, q, index);
     let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
+    // One pause, one deduction: a pool gap whose restart the restart rule
+    // charges is not charged again.
+    let restart_owns = |i: usize| {
+        let to = (i..q.len()).find(|j| !audit.gaps[*j][0]).unwrap_or(q.len());
+        rule(p, RuleKey::PoolRestart).is_some_and(|r| {
+            q.get(to)
+                .and_then(|v| v.pool_start)
+                .is_some_and(|s| s.off_seconds.is_some_and(|off| off < r.threshold * 3600.0))
+        })
+    };
     for (i, row) in account.contributions.iter_mut().enumerate() {
         let earns = buffer_credit(p, index, i, &q[i], &mut episode);
         let mut fired = raw_quarter(p, index, i, &q[i], prepared, earns);
         for (j, r) in p.rules.iter().enumerate() {
             match r.key {
-                RuleKey::PoolShortGap => fired[j] = audit.gaps[i][0],
+                RuleKey::PoolShortGap => fired[j] = audit.gaps[i][0] && !restart_owns(i),
                 RuleKey::EvShortGap => fired[j] = audit.gaps[i][1],
                 RuleKey::LargeLoadOverlap => fired[j] = audit.overlap[i],
                 RuleKey::EarlyGridCharge => fired[j] = audit.early[i],
@@ -264,18 +257,41 @@ pub(crate) fn witnessed(
         }
         *row = contributions(&p.rules, &fired);
     }
+    // What an economic certificate proves is on the bill already; it takes no points.
     account.points = account.contributions.iter().flatten().sum::<i32>();
-    let mut keys = std::collections::HashSet::new();
-    for hit in audit.economic.iter().filter(|hit| hit.published) {
-        for &i in &hit.quarters {
-            keys.insert((hit.rule, i));
-        }
-    }
-    account.points -= keys.len() as i32;
+    account.rescore();
 }
+/// A thousandth of a krona separates two plans; less is rounding.
+pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
 pub(crate) fn better(a: &Account, b: &Account) -> bool {
-    a.points > b.points
-        || a.points == b.points && a.cash_sek + a.wear_sek < b.cash_sek + b.wear_sek - 1e-9
+    a.score_sek > b.score_sek + MIN_GAIN_SEK
+}
+impl Account {
+    /// The score from its parts, after any of them changed.
+    pub(crate) fn rescore(&mut self) {
+        self.score_sek = f64::from(self.points) - (self.cash_sek + self.wear_sek - self.credit_sek);
+    }
+}
+/// The level of a store that counts: no further than its cap.
+fn counted(start: f64, end: f64, cap: f64) -> f64 {
+    end.min(cap) - start.min(cap)
+}
+/// One store's end credit in kronor from the level it ends at.
+pub(crate) fn store_credit(
+    p: &Problem,
+    term: &Option<StoreTerm>,
+    start: Option<f64>,
+    end: f64,
+) -> f64 {
+    term.as_ref().zip(start).map_or(0.0, |(t, start)| {
+        p.end_credit.reference_sek_per_kwh * t.grid_kwh_per_unit * counted(start, end, t.cap)
+    })
+}
+/// What the stores are credited for ending where they do (end-credit.ts).
+pub(crate) fn end_credit(p: &Problem, battery_kwh: f64, pool_c: f64, ev_kwh: f64) -> f64 {
+    store_credit(p, &p.end_credit.battery, p.initial.battery_kwh, battery_kwh)
+        + store_credit(p, &p.end_credit.pool, p.initial.pool_c, pool_c)
+        + store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, ev_kwh)
 }
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
@@ -379,12 +395,24 @@ pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
         .enumerate()
         .map(|(i, v)| quarter(p, index, i, v, prepared, &mut episode))
         .collect();
-    Account {
+    let last = q.last();
+    let mut account = Account {
+        score_sek: 0.0,
         points: contributions.iter().flatten().sum(),
         cash_sek: q.iter().map(|v| v.cost).sum(),
         wear_sek: q.iter().map(|v| v.wear).sum(),
+        credit_sek: last.map_or(0.0, |v| {
+            end_credit(
+                p,
+                v.battery_kwh.unwrap_or(0.0),
+                v.pool_c.unwrap_or(0.0),
+                v.ev_kwh.unwrap_or(0.0),
+            )
+        }),
         contributions,
-    }
+    };
+    account.rescore();
+    account
 }
 
 struct PoolScoring {

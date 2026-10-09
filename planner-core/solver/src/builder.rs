@@ -159,8 +159,13 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             let grid_room = (p.limits.import_w - demand).max(0.0);
             let stored = (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0)
                 * battery.discharge_efficiency;
-            let useful = (f.demand_kwh - stored).max(0.0) * 1000.0 / h / battery.charge_efficiency;
-            let cap = battery.charge_max_w.min(grid_room).min(useful);
+            // Charging is worth doing up to a full battery: what it leaves at
+            // the end is credited (end credit), so no demand-only ceiling.
+            let headroom = (battery.max_soc * battery.capacity_kwh - label.state.battery).max(0.0)
+                * 1000.0
+                / h
+                / battery.charge_efficiency;
+            let cap = battery.charge_max_w.min(grid_room).min(headroom);
             // Joint templates compete through exact coupled physics. EV-on can
             // coexist with house-only supply; no blanket battery prohibition.
             out.push(command(
@@ -185,10 +190,6 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             ));
             out.push(command(p, on, amps, Operation::Idle, 0.0, 0.0));
             if cap > 0.0 {
-                // The same useful energy can be spread over cheaper quarters;
-                // native battery power is continuous, unlike EV amp commands.
-                let thin = cap.min(500.0);
-                out.push(command(p, on, amps, Operation::GridCharge, thin, 0.0));
                 let refill = ((f.refill_demand_kwh - stored).max(0.0) * 1000.0
                     / h
                     / battery.charge_efficiency)
@@ -197,12 +198,9 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     out.push(command(p, on, amps, Operation::GridCharge, refill, 0.0));
                 }
                 out.push(command(p, on, amps, Operation::GridCharge, cap, 0.0));
-                let overlap =
-                    policy::rule(p, RuleKey::LargeLoadOverlap).map_or(cap, |r| r.threshold);
-                let broad = cap.min(overlap);
-                if broad > 0.0 {
-                    out.push(command(p, on, amps, Operation::GridCharge, broad, 0.0));
-                }
+                // Battery power is continuous: half power is a real alternative
+                // where the connection or the price curve does not suit all of it.
+                out.push(command(p, on, amps, Operation::GridCharge, cap * 0.5, 0.0));
             }
             if p.limits.battery_export_enabled
                 && s.export_price >= p.limits.battery_export_min_price
@@ -283,10 +281,12 @@ fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
 }
 
 fn rank(p: &Problem, index: &Index, opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
+    // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
+    let cost = l.cash + l.wear + future.cost;
     (
-        f64::from(l.points) + future.points + estimate(p, index, i, l),
-        l.cash + l.wear + future.cost,
+        f64::from(l.points) + future.points + estimate(p, index, i, l) - cost,
+        cost,
     )
 }
 
@@ -299,6 +299,10 @@ fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64
     let Some(r) = policy::rule(p, key) else {
         return 0.0;
     };
+    // A pool pause is charged at its restart, a direct rule; not again here.
+    if key == RuleKey::PoolShortGap && policy::rule(p, RuleKey::PoolRestart).is_some() {
+        return 0.0;
+    }
     // Only a dearer gap can excuse the pause. Whether the sun or the battery
     // could have carried it is left to the certificate (witnesses.rs).
     let border = p.slots[last].import_price.min(p.slots[i].import_price);
@@ -435,11 +439,11 @@ fn construct(
             })
             .collect();
     }
-    labels.sort_by(|a, b| {
-        b.points
-            .cmp(&a.points)
-            .then((a.cash + a.wear).total_cmp(&(b.cash + b.wear)))
-    });
+    let finished = |l: &Label| {
+        f64::from(l.points) - (l.cash + l.wear)
+            + policy::end_credit(p, l.state.battery, l.state.pool, l.state.ev)
+    };
+    labels.sort_by(|a, b| finished(b).total_cmp(&finished(a)));
     let mut out = Vec::new();
     let mut profiles = std::collections::BTreeSet::new();
     let mut siblings = Vec::new();
@@ -643,6 +647,7 @@ fn improve(
                 })
                 .sum::<i32>()
                 * p.slots.len() as i32;
+            account.rescore();
             if !policy::better(&account, &best.account) {
                 continue;
             }
@@ -651,12 +656,7 @@ fn improve(
                 account,
                 destination: edit.destination(),
             });
-            shortlist.sort_by(|a, b| {
-                b.account.points.cmp(&a.account.points).then(
-                    (a.account.cash_sek + a.account.wear_sek)
-                        .total_cmp(&(b.account.cash_sek + b.account.wear_sek)),
-                )
-            });
+            shortlist.sort_by(|a, b| b.account.score_sek.total_cmp(&a.account.score_sek));
             // Keep a points-ranked representative for each destination day and
             // device before filling the remaining audit slots. Adjacent near-
             // identical starts must not exclude a different overnight event.
@@ -827,17 +827,12 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             Err(EvaluationIssue::Infeasible) => {}
         }
     }
-    candidates.sort_by(|a, b| {
-        b.account.points.cmp(&a.account.points).then(
-            (a.account.cash_sek + a.account.wear_sek)
-                .total_cmp(&(b.account.cash_sek + b.account.wear_sek)),
-        )
-    });
+    candidates.sort_by(|a, b| b.account.score_sek.total_cmp(&a.account.score_sek));
     let best = candidates.first().ok_or("no_complete_candidate")?;
     let mut repairs = best.audit.repairs.clone();
     repairs.sort_by(|a, b| {
-        b.expected_points
-            .cmp(&a.expected_points)
+        b.expected_gain
+            .total_cmp(&a.expected_gain)
             .then(a.family.cmp(&b.family))
     });
     // Combine independent, nonconflicting gap edits as one extra proposal.
@@ -848,7 +843,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     let mut combined = 0;
     for repair in &repairs {
         if !matches!(repair.family.as_str(), "pool_short_gap" | "ev_short_gap")
-            || repair.expected_points <= 0
+            || repair.expected_gain <= 0.0
         {
             continue;
         }
@@ -908,6 +903,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     policy::witnessed(p, &mut account, &best.audit, &certified, &index);
     if certified != best.quarters
         || account.points != best.account.points
+        || account.score_sek != best.account.score_sek
         || account.cash_sek != best.account.cash_sek
         || account.wear_sek != best.account.wear_sek
         || account.contributions != best.account.contributions

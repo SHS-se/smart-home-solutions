@@ -29,6 +29,8 @@ Historical scorer versions are not comparable. Refresh the current branch compar
 
 The rules are one set for the whole bench (`bench_rules`, a single row of changes to the defaults): every case and every planner is scored with the same thresholds and points, so their totals can be compared. Each rule has a role, deduction or evidence (`rule-policy.ts`); an evidence rule's points are what it once counted, shown and never scored. `measuredQuarters` (`score.ts`) reads every rule at its points, as a lens.
 
+The rule-driven planner optimises this same number (`planner-core`, policy `kronor-score-v6`): it is sent the deduction rules and the end-credit terms, never the evidence rules.
+
 The 11-case table of stored plans, with no planner run: `deno task bench:score-table <export.json> <label>=<report.json> …`.
 
 ## Rule catalogue

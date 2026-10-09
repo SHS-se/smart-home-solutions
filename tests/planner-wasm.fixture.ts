@@ -42,7 +42,9 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   return {
-    abi: 5,
+    abi: 6,
+    // No end credit unless a test asks for one.
+    end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     pool_cycle_seconds: 43200,
     work_grant: 12_000_000,
     recipe: {

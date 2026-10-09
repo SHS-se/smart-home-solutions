@@ -58,9 +58,11 @@ export const solveOutcome = z.discriminatedUnion("kind", [
       commands: command.array(),
       quarters: quarter.array(),
       account: z.object({
+        score_sek: z.number().finite(),
         points: z.number().int(),
         cash_sek: z.number().finite(),
         wear_sek: z.number().finite(),
+        credit_sek: z.number().finite(),
         contributions: z.number().int().array().array(),
       }),
       work_used: z.number().int().nonnegative(),

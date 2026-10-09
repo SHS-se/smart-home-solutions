@@ -9,6 +9,7 @@ const { recipe, policy_manifest: policyManifest } = runtime;
 import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
 import { createWasmPlanner, type NativeQuarter } from "./planner-wasm/core.ts";
 import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
+import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/fixed-energy-plan.ts";
 import type { GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/energy-optimisation.ts";
@@ -52,7 +53,7 @@ let compiled: ReturnType<typeof createWasmPlanner> | undefined;
 function planner(): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
   const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 5 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
+  if (artifact.abi !== 6 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
     return fail("Rules planner artifact is missing, obsolete or corrupt");
   }
   compiled = createWasmPlanner(bytes);
@@ -219,7 +220,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 5, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 6, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -249,9 +250,12 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0 },
     rules: approved.rules, service_guard: approved.service_guard,
+    // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
+    end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: reference ? locked.map(slot => nativeCommand(slot, snapshot)) : null,
     locked_through_seconds: reference ? 3600 : 0,
   };
+  problem.end_credit = problemEndCredit(problem);
   return { snapshot, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, reference_plan_id: reference?.plan_id ?? null,
     members, passive_w: passive, boiler_w: boilerW, boiler_permitted: permitted, base_w: baseW };

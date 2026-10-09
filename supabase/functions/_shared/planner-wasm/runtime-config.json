@@ -10,20 +10,27 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "rule-capped-buffer-coast-v5",
+    "version": "kronor-score-v6",
     "qualification": "test_live_candidate",
     "ordering": [
-      "additive_rule_points",
-      "cash_plus_declared_wear"
+      "score_sek"
     ],
+    "score": "rule_points_minus_cash_minus_discharge_wear_plus_capped_end_store_credit",
     "direct_rules": [
       "pool_low",
       "pool_cold",
       "pool_hot",
-      "pool_buffer",
       "pool_restart",
       "ev_low",
       "ev_short",
+      "ev_from_home_battery"
+    ],
+    "witness_rules": [
+      "pool_short_gap",
+      "ev_short_gap"
+    ],
+    "evidence_rules": [
+      "pool_buffer",
       "cheap_buy",
       "cheapest_buy",
       "dear_load",
@@ -33,12 +40,7 @@
       "missed_cheap_quarter",
       "arbitrage_no_export",
       "arbitrage_not_full",
-      "ev_from_home_battery"
-    ],
-    "witness_rules": [
       "large_load_overlap",
-      "pool_short_gap",
-      "ev_short_gap",
       "early_grid_charge"
     ],
     "economic_rules": [
@@ -54,7 +56,15 @@
       "ev_timing",
       "uneconomic_cycling"
     ],
-    "coverage": "bounded_causal_certificates_with_reported_exhaustion",
-    "new_terminal_credit": false
+    "end_store_credit": {
+      "price": "upper_median_told_import_floor_zero",
+      "caps": {
+        "battery": "full",
+        "pool": "comfort_target",
+        "ev": "min_target_km_charge_limit"
+      },
+      "owner": "supabase/functions/_shared/planner-wasm/end-credit.ts"
+    },
+    "coverage": "bounded_causal_certificates_with_reported_exhaustion"
   }
 }

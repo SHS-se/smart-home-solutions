@@ -102,7 +102,7 @@ export function createPlannerProbe(
         (b) => b.toString(16).padStart(2, "0"),
       ).join("");
       if (
-        hash !== build.wasm_sha256 || build.abi !== 5 ||
+        hash !== build.wasm_sha256 || build.abi !== 6 ||
         build.qualification !== "test_live_candidate"
       ) throw new Error("Invalid TEST candidate artifact.");
       try {

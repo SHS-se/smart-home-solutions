@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v4:790ff55fc9dc6b9b85370b1fcb3dbd0de2a02da9bbceeea315ca57bfa150e308",
+    "model_version": "rules-planner-v4:77c142efb96a959bff04a37a5bbbd1f7fb60e21f13575cecba148f70c4c4fc42",
     "decision_diagnostics_version": 2,
     "plan_id": "c22f37ca-7791-4b9c-a1ec-793ba6e226bd",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -4184,8 +4184,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4214,9 +4214,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -4248,8 +4246,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4278,9 +4276,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -4312,8 +4308,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4342,9 +4338,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -4376,8 +4370,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4406,9 +4400,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -4440,8 +4432,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4470,9 +4462,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -4504,8 +4494,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4534,9 +4524,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -4568,8 +4556,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4598,9 +4586,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -4632,8 +4618,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -4662,9 +4648,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
@@ -4691,24 +4675,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 95.01385041551134,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "grid_charge",
-              "charge_limit_w": 95.01385041551134,
+              "operation": "idle",
+              "charge_limit_w": 0,
               "discharge_limit_w": 0,
-              "allow_grid_charge": true,
+              "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.501248107824872,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 6204.986149584489,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.15512465373961223,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -4716,11 +4700,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 95.01385041551134,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6204.986149584489,
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -4753,24 +4737,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.5840052980903587,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -4778,19 +4762,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:30:00.000Z",
@@ -4817,24 +4799,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6667624883558454,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -4842,19 +4824,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:45:00.000Z",
@@ -4881,24 +4861,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7495196786213322,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -4906,19 +4886,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:00:00.000Z",
@@ -4956,7 +4934,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7495196786213322,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5007,24 +4985,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5032,19 +5010,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:30:00.000Z",
@@ -5082,7 +5058,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5133,24 +5109,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5577986725663717,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5158,11 +5134,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -5195,24 +5171,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6155973451327433,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5220,11 +5196,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -5257,24 +5233,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5282,14 +5258,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -5330,7 +5306,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5392,7 +5368,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5443,24 +5419,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.7811117256637168,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5468,14 +5444,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -5505,24 +5481,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5530,11 +5506,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -5567,24 +5543,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5592,19 +5568,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T14:45:00.000Z",
@@ -5642,7 +5616,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5704,7 +5678,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5766,7 +5740,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5828,7 +5802,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -5879,24 +5853,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8967090707964602,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5904,11 +5878,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -5941,24 +5915,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.9794662610619469,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -5966,14 +5940,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -6014,7 +5988,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.9794662610619469,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -6065,24 +6039,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 781.5789473684208,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
-              "allow_grid_charge": false,
+              "operation": "grid_charge",
+              "charge_limit_w": 781.5789473684208,
+              "discharge_limit_w": 0,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9897331305309736,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 5518.421052631579,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.13796052631578948,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -6090,19 +6064,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 781.5789473684208,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 5518.421052631579,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T16:45:00.000Z",
@@ -6129,24 +6101,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 781.5789473684133,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 1,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 5518.4210526315865,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.13796052631578967,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -6154,11 +6126,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 781.5789473684133,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 5518.4210526315865,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -6192,22 +6164,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9876026141127153,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6217,13 +6189,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6254,22 +6226,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9774139788076384,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6279,13 +6251,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6316,22 +6288,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9672253435025615,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6341,13 +6313,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6378,22 +6350,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9570367081974845,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6403,13 +6375,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6440,22 +6412,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9468480728924076,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6465,13 +6437,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6502,22 +6474,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9366594375873306,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6527,13 +6499,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6564,22 +6536,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9264708022822536,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6589,13 +6561,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6626,22 +6598,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9162821669771768,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6651,13 +6623,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6688,22 +6660,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9060935316720998,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6713,13 +6685,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6750,22 +6722,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8959048963670229,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6775,13 +6747,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6812,22 +6784,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8857162610619459,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6837,13 +6809,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6874,22 +6846,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.875527625756869,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6899,13 +6871,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6936,22 +6908,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8653389904517922,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -6961,13 +6933,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -6998,22 +6970,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8551503551467153,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7023,13 +6995,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7060,22 +7032,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8449617198416385,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7085,13 +7057,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7122,22 +7094,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8347730845365616,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7147,13 +7119,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7184,22 +7156,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8245844492314848,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7209,13 +7181,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7246,22 +7218,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8143958139264079,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7271,13 +7243,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7308,22 +7280,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8042071786213312,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7333,13 +7305,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7370,22 +7342,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7940185433162543,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7395,13 +7367,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7432,22 +7404,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7838299080111775,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7457,13 +7429,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7494,22 +7466,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7736412727061006,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7519,13 +7491,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7556,22 +7528,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7634526374010238,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7581,13 +7553,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7618,22 +7590,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7532640020959469,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7643,13 +7615,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7680,22 +7652,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.74307536679087,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7705,13 +7677,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7742,22 +7714,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7328867314857932,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7767,13 +7739,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7804,22 +7776,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7226980961807163,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7829,13 +7801,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7866,22 +7838,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7125094608756395,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7891,13 +7863,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7928,22 +7900,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7023208255705626,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -7953,13 +7925,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -7990,22 +7962,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6921321902654858,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -8015,13 +7987,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -8052,22 +8024,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6819435549604089,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -8077,13 +8049,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -8114,22 +8086,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6717549196553321,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -8139,13 +8111,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -8155,15 +8127,15 @@
           "load_kwh": 11.200000000000008,
           "flexible_load_kwh": 0,
           "pv_kwh": 42,
-          "grid_import_kwh": 1.4000000000000001,
-          "grid_export_kwh": 28.326246537396116,
+          "grid_import_kwh": 6.999999999999996,
+          "grid_export_kwh": 28.284210526315785,
           "curtailed_kwh": 0,
-          "priced_import_kwh": 1.4000000000000001,
-          "priced_export_kwh": 28.326246537396116,
-          "net_cost_sek": -2.692624653739613,
-          "terminal_adjusted_cost_sek": -2.692624653739613,
+          "priced_import_kwh": 6.999999999999996,
+          "priced_export_kwh": 28.284210526315785,
+          "net_cost_sek": 14.111578947368425,
+          "terminal_adjusted_cost_sek": 14.111578947368425,
           "battery_soc_start": 0.5,
-          "battery_soc_end": 0.6717549196553321,
+          "battery_soc_end": 1,
           "battery_soc_low": 0.5,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,
@@ -8214,8 +8186,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8244,9 +8216,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:15:00.000Z",
@@ -8278,8 +8248,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8308,9 +8278,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:30:00.000Z",
@@ -8342,8 +8310,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8372,9 +8340,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T09:45:00.000Z",
@@ -8406,8 +8372,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8436,9 +8402,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:00:00.000Z",
@@ -8470,8 +8434,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8500,9 +8464,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:15:00.000Z",
@@ -8534,8 +8496,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8564,9 +8526,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:30:00.000Z",
@@ -8598,8 +8558,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8628,9 +8588,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T10:45:00.000Z",
@@ -8662,8 +8620,8 @@
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "hold",
+              "charge_limit_w": 8800,
               "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
@@ -8692,9 +8650,7 @@
                 "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "missed_cheap_quarter": -1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:00:00.000Z",
@@ -8721,24 +8677,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 95.01385041551134,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "grid_charge",
-              "charge_limit_w": 95.01385041551134,
+              "operation": "idle",
+              "charge_limit_w": 0,
               "discharge_limit_w": 0,
-              "allow_grid_charge": true,
+              "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.501248107824872,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 6204.986149584489,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.15512465373961223,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8746,11 +8702,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 95.01385041551134,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6204.986149584489,
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -8783,24 +8739,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.5840052980903587,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8808,19 +8764,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:30:00.000Z",
@@ -8847,24 +8801,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6667624883558454,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8872,19 +8826,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T11:45:00.000Z",
@@ -8911,24 +8863,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7495196786213322,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -8936,19 +8888,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:00:00.000Z",
@@ -8986,7 +8936,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7495196786213322,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9037,24 +8987,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9062,19 +9012,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T12:30:00.000Z",
@@ -9112,7 +9060,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9163,24 +9111,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.5577986725663717,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9188,11 +9136,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -9225,24 +9173,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6155973451327433,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9250,11 +9198,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -9287,24 +9235,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9312,14 +9260,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -9360,7 +9308,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9422,7 +9370,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.6983545353982301,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9473,24 +9421,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.7811117256637168,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9498,14 +9446,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -9535,24 +9483,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8322768688868188,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9560,11 +9508,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -9597,24 +9545,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 0,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "operation": "idle",
+              "charge_limit_w": 0,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 6300,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.1575,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9622,19 +9570,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 0,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 6300,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T14:45:00.000Z",
@@ -9672,7 +9618,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9734,7 +9680,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9796,7 +9742,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9858,7 +9804,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8389103982300885,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -9909,24 +9855,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 4400,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
+              "operation": "grid_charge",
+              "charge_limit_w": 4400,
               "discharge_limit_w": 0,
-              "allow_grid_charge": false,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.8967090707964602,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 1900,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.0475,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9934,11 +9880,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 4400,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 1900,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -9971,24 +9917,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 6300,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.9794662610619469,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -9996,14 +9942,14 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 6300,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "export",
-                "power_w": 6300,
+                "direction": "balanced",
+                "power_w": 0,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "residual_after_dispatch"
+                "reason": "balanced"
               }
             },
             "rule_points": {}
@@ -10044,7 +9990,7 @@
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9150340591523056,
+            "battery_soc": 0.9794662610619469,
             "grid_import_w": 0,
             "grid_export_w": 6300,
             "curtailed_w": 0,
@@ -10095,24 +10041,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 6300,
+            "battery_charge_w": 781.5789473684208,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
-              "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
-              "allow_grid_charge": false,
+              "operation": "grid_charge",
+              "charge_limit_w": 781.5789473684208,
+              "discharge_limit_w": 0,
+              "allow_grid_charge": true,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 0.9897331305309736,
             "grid_import_w": 0,
-            "grid_export_w": 0,
+            "grid_export_w": 5518.421052631579,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0,
+            "export_revenue_sek": 0.13796052631578948,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -10120,19 +10066,17 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 6300,
+                "battery_charge_w": 781.5789473684208,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "export",
+                "power_w": 5518.421052631579,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
-            "rule_points": {
-              "cheap_buy": 1
-            }
+            "rule_points": {}
           },
           {
             "start": "2026-08-20T16:45:00.000Z",
@@ -10159,24 +10103,24 @@
             "ev_soc": null,
             "ev_connected": false,
             "load_w": 700,
-            "battery_charge_w": 0,
+            "battery_charge_w": 781.5789473684133,
             "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "idle",
-              "charge_limit_w": 0,
-              "discharge_limit_w": 0,
+              "operation": "self_consumption",
+              "charge_limit_w": 8800,
+              "discharge_limit_w": 9600,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9977912494177923,
+            "battery_soc": 1,
             "grid_import_w": 0,
-            "grid_export_w": 6300,
+            "grid_export_w": 5518.4210526315865,
             "curtailed_w": 0,
             "unserved_w": 0,
             "import_cost_sek": 0,
-            "export_revenue_sek": 0.1575,
+            "export_revenue_sek": 0.13796052631578967,
             "decision": {
               "schema_version": 1,
               "store_allocations": [],
@@ -10184,11 +10128,11 @@
               "grid_balance": {
                 "load_w": 700,
                 "pv_w": 7000,
-                "battery_charge_w": 0,
+                "battery_charge_w": 781.5789473684133,
                 "battery_discharge_w": 0,
                 "residual_w": -6300,
                 "direction": "export",
-                "power_w": 6300,
+                "power_w": 5518.4210526315865,
                 "limit_w": 15000,
                 "limit_binding": false,
                 "reason": "residual_after_dispatch"
@@ -10222,22 +10166,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9876026141127153,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10247,13 +10191,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10284,22 +10228,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9774139788076384,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10309,13 +10253,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10346,22 +10290,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9672253435025615,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10371,13 +10315,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10408,22 +10352,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9570367081974845,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10433,13 +10377,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10470,22 +10414,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9468480728924076,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10495,13 +10439,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10532,22 +10476,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9366594375873306,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10557,13 +10501,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10594,22 +10538,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9264708022822536,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10619,13 +10563,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10656,22 +10600,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9162821669771768,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10681,13 +10625,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10718,22 +10662,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.9060935316720998,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10743,13 +10687,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10780,22 +10724,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8959048963670229,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10805,13 +10749,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10842,22 +10786,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8857162610619459,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10867,13 +10811,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10904,22 +10848,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.875527625756869,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10929,13 +10873,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -10966,22 +10910,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8653389904517922,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -10991,13 +10935,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11028,22 +10972,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8551503551467153,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11053,13 +10997,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11090,22 +11034,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8449617198416385,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11115,13 +11059,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11152,22 +11096,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8347730845365616,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11177,13 +11121,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11214,22 +11158,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8245844492314848,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11239,13 +11183,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11276,22 +11220,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8143958139264079,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11301,13 +11245,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11338,22 +11282,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.8042071786213312,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11363,13 +11307,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11400,22 +11344,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7940185433162543,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11425,13 +11369,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11462,22 +11406,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7838299080111775,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11487,13 +11431,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11524,22 +11468,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7736412727061006,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11549,13 +11493,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11586,22 +11530,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7634526374010238,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11611,13 +11555,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11648,22 +11592,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7532640020959469,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11673,13 +11617,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11710,22 +11654,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.74307536679087,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11735,13 +11679,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11772,22 +11716,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7328867314857932,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11797,13 +11741,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11834,22 +11778,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7226980961807163,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11859,13 +11803,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11896,22 +11840,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7125094608756395,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11921,13 +11865,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -11958,22 +11902,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.7023208255705626,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -11983,13 +11927,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -12020,22 +11964,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6921321902654858,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -12045,13 +11989,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -12082,22 +12026,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6819435549604089,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -12107,13 +12051,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -12144,22 +12088,22 @@
             "ev_connected": false,
             "load_w": 700,
             "battery_charge_w": 0,
-            "battery_discharge_w": 700,
+            "battery_discharge_w": 0,
             "battery_export_w": 0,
             "battery_command": {
               "schema_version": 3,
-              "operation": "self_consumption",
+              "operation": "hold",
               "charge_limit_w": 8800,
-              "discharge_limit_w": 9600,
+              "discharge_limit_w": 0,
               "allow_grid_charge": false,
               "allow_battery_export": false
             },
-            "battery_soc": 0.6717549196553321,
-            "grid_import_w": 0,
+            "battery_soc": 1,
+            "grid_import_w": 700,
             "grid_export_w": 0,
             "curtailed_w": 0,
             "unserved_w": 0,
-            "import_cost_sek": 0,
+            "import_cost_sek": 0.5249999999999999,
             "export_revenue_sek": 0,
             "decision": {
               "schema_version": 1,
@@ -12169,13 +12113,13 @@
                 "load_w": 700,
                 "pv_w": 0,
                 "battery_charge_w": 0,
-                "battery_discharge_w": 700,
+                "battery_discharge_w": 0,
                 "residual_w": 700,
-                "direction": "balanced",
-                "power_w": 0,
+                "direction": "import",
+                "power_w": 700,
                 "limit_w": 15000,
                 "limit_binding": false,
-                "reason": "balanced"
+                "reason": "residual_after_dispatch"
               }
             },
             "rule_points": {}
@@ -12185,15 +12129,15 @@
           "load_kwh": 11.200000000000008,
           "flexible_load_kwh": 0,
           "pv_kwh": 42,
-          "grid_import_kwh": 1.4000000000000001,
-          "grid_export_kwh": 28.326246537396116,
+          "grid_import_kwh": 6.999999999999996,
+          "grid_export_kwh": 28.284210526315785,
           "curtailed_kwh": 0,
-          "priced_import_kwh": 1.4000000000000001,
-          "priced_export_kwh": 28.326246537396116,
-          "net_cost_sek": -2.692624653739613,
-          "terminal_adjusted_cost_sek": -2.692624653739613,
+          "priced_import_kwh": 6.999999999999996,
+          "priced_export_kwh": 28.284210526315785,
+          "net_cost_sek": 14.111578947368425,
+          "terminal_adjusted_cost_sek": 14.111578947368425,
           "battery_soc_start": 0.5,
-          "battery_soc_end": 0.6717549196553321,
+          "battery_soc_end": 1,
           "battery_soc_low": 0.5,
           "battery_end_of_solar_soc": {},
           "service_required_kwh": 0,

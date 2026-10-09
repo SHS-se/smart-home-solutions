@@ -1,5 +1,14 @@
 # Rule-driven builder — 7 October 2026
 
+> **Objective changed 9 October 2026 (owner's decision, ABI 6, policy `kronor-score-v6`).** The builder no longer maximises rule points with kronor as a tie-break. It maximises one number, a point a krona: what the deduction rules take, less the net bill (grid cost, battery wear on discharge, less the energy left in the stores up to their targets). That is the bench's score ([scoring](../planner-bench/scoring.md)).
+>
+> - The problem carries `end_credit` terms, made by the producers from the prices the planner is told (`planner-wasm/end-credit.ts`); the solver applies them and seeds its continuation tables with them at the horizon end.
+> - Only the deduction rules are sent (`resolveRulePolicy`): the price rules are evidence on the bench and the builder never sees them. The 500 W "thin" grid charge, which existed to reach the cheap-quarter reward's floor, is gone; so is the demand ceiling on charging, since a charge left at the end is credited.
+> - An economic certificate no longer takes points: what it proves is on the bill. Its repair is ranked by the kronor it saves, forecast prices and published ones alike, and each ledger's latest repair holds all its accepted edits.
+> - A short pool pause is charged once, at its restart.
+>
+> On the eleven bench cases (real-price lane) the score went from −1,183 to −783, the grid bill from 1,494 to 1,346 kr, and the bench's proven avoidable cost from 207 to 73 kr. The text below describes the builder as first built; where it says points rank before cash, read the above.
+
 ## Problem
 
 Replace the diagnostic profile/pair-swap solver with a rule-driven builder. The

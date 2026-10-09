@@ -565,7 +565,7 @@ export interface StoredScore {
 export const criteriaFingerprint = (overrides: CriteriaOverrides = {}) =>
   JSON.stringify(Object.keys(overrides).filter(k => !REMOVED_RULE_KEYS.includes(k)).sort().map(k => [k, overrides[k]]));
 
-/** The effective rule inputs, including defaults, used by the rule-driven solver. */
+/** The effective rule inputs, including defaults, used by the rule-driven solver: the deduction rules, which are all it is sent. */
 export const plannerInputsFingerprint = (rules: readonly {
   key: string; threshold: number; points: number; required?: boolean; unless?: string | null;
 }[], guard: ServiceGuard) => JSON.stringify({
@@ -573,7 +573,7 @@ export const plannerInputsFingerprint = (rules: readonly {
     required: r.required ?? false, unless: r.unless ?? null })), service_guard: guard,
 });
 export const plannerRulesFingerprint = (overrides: CriteriaOverrides = {}) =>
-  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled), serviceGuard(overrides));
+  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled && r.role === 'deduction'), serviceGuard(overrides));
 
 /** Full supplied inputs: historical planners may consume rules today's scorer removed. */
 export const plannerCriteriaFingerprint = (overrides: CriteriaOverrides = {}) => canonicalJson(overrides);

@@ -3,6 +3,7 @@ import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { RULE_KEYS } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { resolveRules } from "../src/lib/planner-bench/score.ts";
+import { problemEndCredit } from "../supabase/functions/_shared/planner-wasm/end-credit.ts";
 import recipe from "../planner-core/recipe.json" with { type: "json" };
 
 export function syntheticReadyProblem(): ReadyProblem {
@@ -10,8 +11,8 @@ export function syntheticReadyProblem(): ReadyProblem {
     { length: 288 },
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
-  return {
-    abi: 5,
+  const problem: ReadyProblem = {
+    abi: 6,
     pool_cycle_seconds: 43200,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -71,7 +72,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       wear_per_kwh: .05,
     },
     rules: resolveRules({}).flatMap((r) =>
-      r.enabled
+      r.enabled && r.role === "deduction"
         ? RULE_KEYS.filter((k) => k === r.key).map((key) => ({
           key,
           threshold: r.threshold,
@@ -82,7 +83,10 @@ export function syntheticReadyProblem(): ReadyProblem {
         : []
     ),
     service_guard: { pool: [1, 2], ev: [50, 100] },
+    end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: null,
     locked_through_seconds: 0,
   };
+  problem.end_credit = problemEndCredit(problem);
+  return problem;
 }

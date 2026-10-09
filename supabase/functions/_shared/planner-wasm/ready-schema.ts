@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RULE_KEYS } from "./ready-problem.ts";
 
 const number = z.number().finite();
+const storeTerm = z.object({ cap: number, grid_kwh_per_unit: number.nonnegative() }).strict();
 const age = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("off_unobserved") }),
   z.object({ kind: z.literal("off"), seconds: number.nonnegative() }),
@@ -24,7 +25,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(5),
+  abi: z.literal(6),
   pool_cycle_seconds: number.nonnegative(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -117,6 +118,12 @@ export const readyProblemSchema = z.object({
     battery_export_min_price: number,
     wear_per_kwh: number,
   }),
+  end_credit: z.object({
+    reference_sek_per_kwh: number.nonnegative(),
+    battery: storeTerm.nullable(),
+    pool: storeTerm.nullable(),
+    ev: storeTerm.nullable(),
+  }).strict(),
   rules: z.object({
     key: z.enum(RULE_KEYS),
     threshold: number,

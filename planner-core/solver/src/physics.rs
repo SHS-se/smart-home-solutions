@@ -135,7 +135,8 @@ fn transition(
         return Err("shared_grid_limit".into());
     }
     let cost = (net.max(0.0) * s.import_price - (-net).max(0.0) * s.export_price) * hours / 1000.0;
-    let wear = (charge + discharge) * hours / 1000.0 * p.limits.wear_per_kwh;
+    // Wear is declared on what the battery discharges, as the bench bills it.
+    let wear = discharge * hours / 1000.0 * p.limits.wear_per_kwh;
     if let Some(h) = &pool {
         state.pool = h.water_c;
         state.heater = h.next;

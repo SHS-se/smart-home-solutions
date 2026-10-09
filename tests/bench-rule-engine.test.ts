@@ -51,7 +51,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     pool_low: { enabled: false },
     pool_buffer: { points: -2 },
   };
-  assertEquals(planner.generation, "ready-wasm-v5");
+  assertEquals(planner.generation, "ready-wasm-v6");
   for (const lane of LANES) {
     const scale = laneParts(lane).scale;
     const actual = planner.plan(toldCase(c, lane), HOUSEHOLD, scale, criteria);
@@ -66,7 +66,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     });
     assertEquals(actual.record.curves, []);
   }
-  assert((await plannerVersion(diskTree(root))).startsWith("v5-rule-wasm:"));
+  assert((await plannerVersion(diskTree(root))).startsWith("v6-rule-wasm:"));
 });
 
 Deno.test("configured rule engine versions change with artifacts and cannot silently use TypeScript", async () => {

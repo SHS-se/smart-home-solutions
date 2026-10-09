@@ -43,9 +43,18 @@ Deno.test("forecast opportunities defer safe expensive opening loads and beat th
   const first = s.commands.findIndex(c => c.pool_on);
   assert(first > 0);
   assert(p.slots[first].import_price < p.slots[0].import_price);
-  // Measured previous kernel: 70 points, pool-on at quarter zero. Rules and
-  // forecasts are fixed; this tests a score improvement, not just a later start.
-  assert(s.account.points > 70);
+  // One number ranks the plan, a point a krona: what the rules took, less the net bill.
+  assertAlmostEquals(
+    s.account.score_sek,
+    s.account.points - (s.account.cash_sek + s.account.wear_sek - s.account.credit_sek),
+    1e-9,
+  );
+  // Starting the heat pump in the dear opening instead scores worse.
+  const early = s.commands.map((c, i) => i === 0 ? { ...c, pool_on: true } : c);
+  const earlier = core.project(p, early).outcome;
+  assert(earlier.kind === "projected");
+  const bill = (quarters: typeof s.quarters) => quarters.reduce((sum, q) => sum + q.cost + q.wear, 0);
+  assert(bill(earlier.quarters) > bill(s.quarters));
   assert(s.work_used <= p.work_grant);
   const projected = core.project(p, s.commands).outcome;
   assert(projected.kind === "projected");
@@ -109,7 +118,7 @@ Deno.test("joint loads compete for one solar surplus and one quarter reward", ()
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v5:"));
+  assert(planner.version.startsWith("wasm-v6:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -457,9 +466,14 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
     [...RULE_KEYS].sort(),
     resolveRules({}).map((r) => r.key).sort(),
   );
+  // Every rule is either sent to the planner, as a deduction, or kept by the bench as evidence.
+  assertEquals(
+    [...policy.direct_rules, ...policy.witness_rules, ...policy.evidence_rules].sort(),
+    [...RULE_KEYS].sort(),
+  );
   assertEquals(
     [...policy.direct_rules, ...policy.witness_rules].sort(),
-    [...RULE_KEYS].sort(),
+    resolveRules({}).filter((r) => r.role === "deduction").map((r) => r.key).sort(),
   );
   assertEquals(
     policy.economic_rules.toSorted(),
@@ -467,12 +481,15 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
   );
   const criteria = {
     pool_low: { enabled: false },
+    pool_restart: { threshold: 6, points: -1 },
+    // An evidence rule's settings never reach the planner.
     pool_buffer: { threshold: 1.2, points: -2 },
   };
   const p = readyProblem(causalCase(), HOUSEHOLD, criteria);
+  assertEquals(p.rules.map((r) => r.key).includes("pool_buffer"), false);
   assertEquals(
     p.rules,
-    resolveRules(criteria).filter((r) => r.enabled).map((r) => ({
+    resolveRules(criteria).filter((r) => r.enabled && r.role === "deduction").map((r) => ({
       key: r.key,
       threshold: r.threshold,
       points: r.points,
@@ -489,7 +506,7 @@ Deno.test("native restart events and signed scores match the referee at the twel
   const criteria = Object.fromEntries(
     resolveRules().map(
       (r) => [r.key, {
-        enabled: r.key === "pool_restart" || r.key === "cheapest_buy",
+        enabled: r.key === "pool_restart",
       }],
     ),
   );
@@ -529,12 +546,12 @@ Deno.test("native restart events and signed scores match the referee at the twel
     assert(poolC !== null);
     assertAlmostEquals(poolC, series.poolC[i]!, 0.00051);
   }
-  assertEquals(selected.account.contributions[0], [-2, 2]);
-  assertEquals(selected.account.contributions[3], [0, 2]);
+  assertEquals(selected.account.contributions[0], [-2]);
+  assertEquals(selected.account.contributions[3], [0]);
   p.initial.heater_state = { kind: "off", seconds: 43200 };
   const boundary = solve(p);
   if (boundary.kind !== "selected") throw new Error(boundary.issue);
-  assertEquals(boundary.selection.account.contributions[0], [0, 2]);
+  assertEquals(boundary.selection.account.contributions[0], [0]);
 });
 
 Deno.test("ready ABI rejects obsolete heater inputs rather than assuming an off heater", () => {
@@ -554,18 +571,20 @@ Deno.test("every selected result reports bounded witnesses and exact work accoun
   assertEquals(s.work.limit, p.work_grant);
   assertEquals(s.work.reserved, 0);
   assertEquals(s.work.evaluations, s.evaluations);
+  // The overlap and early-charge certificates stay in the catalogue; their rules are evidence and are not sent.
   assertEquals(
     s.witness_coverage.map((c) => c.family).sort(),
-    [...policy.witness_rules, ...policy.economic_rules].sort(),
+    [...policy.witness_rules, ...policy.economic_rules, "large_load_overlap", "early_grid_charge"].sort(),
   );
-  const economic = new Set(
-    s.economic.filter((hit) => hit.published).flatMap((hit) =>
-      hit.quarters.map((i) => `${hit.rule}:${i}`)
-    ),
-  ).size;
+  // What an economic certificate proves is on the bill; it takes no points.
   assertEquals(
     s.account.points,
-    s.account.contributions.flat().reduce((a, b) => a + b, 0) - economic,
+    s.account.contributions.flat().reduce((a, b) => a + b, 0),
+  );
+  assertAlmostEquals(
+    s.account.score_sek,
+    s.account.points - (s.account.cash_sek + s.account.wear_sek - s.account.credit_sek),
+    1e-9,
   );
 });
 

@@ -1053,6 +1053,9 @@ pub(crate) fn audit(
     // own accepted edits. Both ledgers are covered by preparation's copy charge.
     let mut economic_commands = [commands.to_vec(), commands.to_vec()];
     let mut economic_q = [quarters.to_vec(), quarters.to_vec()];
+    // What each economic ledger's accepted edits have saved so far: its latest
+    // repair holds them all.
+    let mut economic_saved = [0.0_f64; 2];
     let mut cursors = vec![0usize; queues.len()];
     let mut trials = 0usize;
     let mut stopped = false;
@@ -1147,7 +1150,7 @@ pub(crate) fn audit(
                     .enumerate()
                     .filter_map(|(i, (a, b))| (a != b).then_some(i))
                     .collect();
-                let points;
+                let gain;
                 if family < 2 {
                     let Proposal::Gap {
                         device, from, to, ..
@@ -1158,16 +1161,23 @@ pub(crate) fn audit(
                     for row in &mut out.gaps[from..to] {
                         row[device] = true;
                     }
-                    points = -policy::rule(
-                        p,
-                        if device == 0 {
-                            RuleKey::PoolShortGap
-                        } else {
-                            RuleKey::EvShortGap
-                        },
-                    )
-                    .map_or(0, |r| r.points)
-                        * (to - from) as i32;
+                    // A pool pause is charged once, at its restart; a car gap per quarter.
+                    let per_gap = (device == 0)
+                        .then(|| policy::rule(p, RuleKey::PoolRestart))
+                        .flatten()
+                        .map(|r| -r.points);
+                    gain = f64::from(per_gap.unwrap_or_else(|| {
+                        -policy::rule(
+                            p,
+                            if device == 0 {
+                                RuleKey::PoolShortGap
+                            } else {
+                                RuleKey::EvShortGap
+                            },
+                        )
+                        .map_or(0, |r| r.points)
+                            * (to - from) as i32
+                    }));
                 } else if family == 2 {
                     let Proposal::Overlap { from, to, .. } = candidate.proposal else {
                         unreachable!()
@@ -1177,7 +1187,9 @@ pub(crate) fn audit(
                     prior_delivery.extend(edited.deliveries);
                     overlap_commands = edited.commands.clone();
                     overlap_q = after;
-                    points = -policy::rule(p, RuleKey::LargeLoadOverlap).map_or(0, |r| r.points);
+                    gain = f64::from(
+                        -policy::rule(p, RuleKey::LargeLoadOverlap).map_or(0, |r| r.points),
+                    );
                 } else if family == EARLY {
                     let Proposal::Early { from, to, ev } = candidate.proposal else {
                         unreachable!()
@@ -1209,8 +1221,10 @@ pub(crate) fn audit(
                     );
                     early_commands = edited.commands.clone();
                     early_q = after;
-                    points = -policy::rule(p, RuleKey::EarlyGridCharge).map_or(0, |r| r.points)
-                        * early_moves;
+                    gain = f64::from(
+                        -policy::rule(p, RuleKey::EarlyGridCharge).map_or(0, |r| r.points)
+                            * early_moves,
+                    );
                 } else {
                     let saving = cost(baseline) - cost(&after);
                     if saving <= 1e-7 {
@@ -1236,7 +1250,10 @@ pub(crate) fn audit(
                         quarters: changed.clone(),
                         saving_sek: saving,
                     });
-                    points = if published { changed.len() as i32 } else { 0 };
+                    // The saving is on the bill the plan is scored by, whichever
+                    // prices it rests on.
+                    economic_saved[economic_ledger] += saving;
+                    gain = economic_saved[economic_ledger];
                     economic_commands[economic_ledger] = edited.commands.clone();
                     economic_q[economic_ledger] = after;
                 }
@@ -1244,7 +1261,7 @@ pub(crate) fn audit(
                 out.repairs.push(Repair {
                     commands: edited.commands,
                     family: (*family_name).into(),
-                    expected_points: points,
+                    expected_gain: gain,
                 });
             }
         }
@@ -1271,7 +1288,14 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 5,
+            abi: 6,
+            // No end credit unless a test asks for one.
+            end_credit: EndCreditTerms {
+                reference_sek_per_kwh: 0.0,
+                battery: None,
+                pool: None,
+                ev: None,
+            },
             pool_cycle_seconds: 43200.0,
             work_grant: 100_000_000,
             recipe: Recipe {
@@ -1467,7 +1491,7 @@ pub(crate) mod tests {
         assert!(!run(&p, &c, 192).overlap[0]);
     }
     #[test]
-    fn uneconomic_cycle_proves_saving_and_never_scores_unpublished_prices() {
+    fn uneconomic_cycle_proves_saving_and_a_forecast_saving_counts_like_a_published_one() {
         let mut p = problem(2);
         p.slots[0].import_price = 3.0;
         p.slots[1].base_w = 1000.0;
@@ -1492,7 +1516,7 @@ pub(crate) mod tests {
             .repairs
             .iter()
             .filter(|r| r.family == "uneconomic_cycling")
-            .all(|r| r.expected_points == 0));
+            .all(|r| r.expected_gain > 0.0));
     }
     #[test]
     fn published_certificates_never_inherit_forecast_repairs() {
@@ -1515,22 +1539,30 @@ pub(crate) mod tests {
         let result = run(&p, &commands, 192);
         assert!(result.economic.iter().any(|hit| hit.published));
         assert!(result.economic.iter().any(|hit| !hit.published));
-        let forecast_at = result
+        // Each economic certificate leaves one repair, in the same order.
+        let repairs: Vec<&Repair> = result
             .repairs
             .iter()
-            .position(|r| r.family == "uneconomic_cycling" && r.expected_points == 0)
-            .unwrap();
-        let known_at = result
-            .repairs
-            .iter()
-            .position(|r| r.family == "uneconomic_cycling" && r.expected_points > 0)
-            .unwrap();
+            .filter(|r| {
+                !matches!(
+                    r.family.as_str(),
+                    "pool_short_gap" | "ev_short_gap" | "large_load_overlap" | "early_grid_charge"
+                )
+            })
+            .collect();
+        assert_eq!(repairs.len(), result.economic.len());
+        let forecast_at = result.economic.iter().position(|h| !h.published).unwrap();
+        let known_at = result.economic.iter().position(|h| h.published).unwrap();
         assert!(
             forecast_at < known_at,
             "exercise a known repair after a forecast repair"
         );
-        for repair in result.repairs.iter().filter(|r| r.expected_points > 0) {
-            assert_eq!(&repair.commands[..2], &commands[..2]);
+        for (hit, repair) in result.economic.iter().zip(&repairs) {
+            // Either saving is on the bill; only the known ledger must stay clear of forecast edits.
+            assert!(repair.expected_gain > 0.0);
+            if hit.published {
+                assert_eq!(&repair.commands[..2], &commands[..2]);
+            }
         }
         for hit in result.economic.iter().filter(|hit| hit.published) {
             assert!(hit.quarters.iter().all(|&i| p.slots[i].published));
@@ -1632,7 +1664,7 @@ pub(crate) mod tests {
             .iter()
             .rfind(|r| r.family == "early_grid_charge")
             .unwrap();
-        assert_eq!(repair.expected_points, 2);
+        assert_eq!(repair.expected_gain, 2.0);
         let after = physics::projection(&p, &repair.commands).unwrap();
         assert!(after[0].charge_w < EPS && after[2].charge_w < EPS);
         assert!((after[3].charge_w - 2000.0).abs() < EPS);

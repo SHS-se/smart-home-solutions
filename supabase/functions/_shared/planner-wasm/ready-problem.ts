@@ -7,6 +7,8 @@ import type {
   ThermalStoreModel,
 } from "../planner/device-models.ts";
 
+import type { EndCreditTerms } from "./end-credit.ts";
+
 export type BatteryOperation =
   | "idle"
   | "solar_charge"
@@ -60,7 +62,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 5;
+  abi: 6;
   /** Shared cycle clock even when the restart deduction is disabled. */
   pool_cycle_seconds: number;
   work_grant: number;
@@ -102,6 +104,9 @@ export interface ReadyProblem {
     battery_export_min_price: number;
     wear_per_kwh: number;
   };
+  /** What the energy left in the stores is worth to the plan's score (end-credit.ts). */
+  end_credit: EndCreditTerms;
+  /** The deduction rules: evidence rules are measured by the bench and never sent. */
   rules: {
     key: PlannerRuleKey;
     threshold: number;

@@ -14,8 +14,9 @@ impl Value {
             cost: self.cost + (other.cost - self.cost) * weight,
         }
     }
+    /// A point is a krona: the better value has the higher points less cost.
     fn better(self, other: Self) -> bool {
-        self.points > other.points || self.points == other.points && self.cost < other.cost
+        self.points - self.cost > other.points - other.cost
     }
 }
 #[derive(Clone, Copy)]
@@ -142,6 +143,7 @@ impl Table {
             m.initial.pool_c = None;
             m.initial.heater_state = None;
             m.targets.pool_c = None;
+            m.end_credit.pool = None;
         }
         if !matches!(self.device, Device::Ev) {
             m.car = None;
@@ -149,10 +151,12 @@ impl Table {
             m.initial.ev_kwh = None;
             m.targets.ev_km = None;
             m.targets.ev_limit_kwh = None;
+            m.end_credit.ev = None;
         }
         if !matches!(self.device, Device::Battery) {
             m.battery = None;
             m.initial.battery_kwh = None;
+            m.end_credit.battery = None;
         }
         m.rules
             .retain(|r| !matches!(r.key, RuleKey::PoolBuffer | RuleKey::ArbitrageNotFull));
@@ -309,7 +313,7 @@ fn tables(p: &Problem) -> Vec<Table> {
                 ..idle()
             },
         ];
-        for watts in [500.0_f64.min(b.charge_max_w), b.charge_max_w] {
+        for watts in [b.charge_max_w * 0.25, b.charge_max_w * 0.5, b.charge_max_w] {
             options.push(Command {
                 battery: Operation::GridCharge,
                 charge_limit_w: watts,
@@ -368,6 +372,28 @@ impl Opportunity {
             let m = t.mask(p);
             let cells = t.axis.len() * t.phases.len();
             t.values = vec![Value::default(); (p.slots.len() + 1) * cells];
+            // The horizon ends on what the device's own store is credited for.
+            let n = p.slots.len();
+            for phase in 0..t.phases.len() {
+                for node in 0..t.axis.len() {
+                    let level = t.axis[node];
+                    let credit = match t.device {
+                        Device::Pool => {
+                            policy::store_credit(p, &p.end_credit.pool, p.initial.pool_c, level)
+                        }
+                        Device::Ev => {
+                            policy::store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, level)
+                        }
+                        Device::Battery => policy::store_credit(
+                            p,
+                            &p.end_credit.battery,
+                            p.initial.battery_kwh,
+                            level,
+                        ),
+                    };
+                    t.values[(n * t.phases.len() + phase) * t.axis.len() + node].cost = -credit;
+                }
+            }
             for i in (0..p.slots.len()).rev() {
                 for phase in 0..t.phases.len() {
                     for node in 0..t.axis.len() {

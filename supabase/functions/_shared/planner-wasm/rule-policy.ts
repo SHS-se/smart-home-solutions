@@ -54,9 +54,10 @@ export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
 export function resolveRulePolicy(overrides: CriteriaOverrides = {}): ReadyRulePolicy {
   const errors = criteriaErrors(overrides);
   if (errors.length) throw new CriteriaError(errors.join(" "));
+  // The planner optimises the score: only the rules that take points go to it.
   const rules = Object.entries(RULE_DEFAULTS).flatMap(([key, rule]) => {
     const o = overrides[key] ?? {};
-    return (o.enabled ?? true) ? [{key: key as PlannerRuleKey, threshold:o.threshold ?? rule.threshold,
+    return rule.role === "deduction" && (o.enabled ?? true) ? [{key: key as PlannerRuleKey, threshold:o.threshold ?? rule.threshold,
       points:o.points ?? rule.points, required:rule.required ?? false, unless:rule.unless ?? null}] : [];
   });
   const threshold = (key: PlannerRuleKey) => overrides[key]?.threshold ?? RULE_DEFAULTS[key].threshold;

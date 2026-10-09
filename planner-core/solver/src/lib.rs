@@ -98,6 +98,22 @@ pub struct Rule {
     pub required: bool,
     pub unless: Option<RuleKey>,
 }
+/// One store's end credit: the level it counts up to, and the grid electricity
+/// one unit of it (kWh stored, or a degree of pool water) takes to put there.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct StoreTerm {
+    pub cap: f64,
+    pub grid_kwh_per_unit: f64,
+}
+/// What the energy a plan leaves in its stores is worth. The producer owns the
+/// caps, conversions and reference price (end-credit.ts); the solver applies them.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EndCreditTerms {
+    pub reference_sek_per_kwh: f64,
+    pub battery: Option<StoreTerm>,
+    pub pool: Option<StoreTerm>,
+    pub ev: Option<StoreTerm>,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ServiceGuard {
     pub pool: [f64; 2],
@@ -129,6 +145,7 @@ pub struct Problem {
     pub targets: Targets,
     pub limits: Limits,
     pub rules: Vec<Rule>,
+    pub end_credit: EndCreditTerms,
     pub service_guard: ServiceGuard,
     /// None means first-ever plan. A partial accepted prefix is never silently filled.
     pub accepted: Option<Vec<Command>>,
@@ -158,9 +175,14 @@ pub struct Quarter {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
+    /// The plan's score, a point a krona: points − (cash + wear − credit).
+    pub score_sek: f64,
+    /// What the rules took and gave, in whole kronor.
     pub points: i32,
     pub cash_sek: f64,
     pub wear_sek: f64,
+    /// The energy left in the stores, each up to its cap.
+    pub credit_sek: f64,
     /// Contributions retain individual signs, including net-zero quarters.
     pub contributions: Vec<Vec<i32>>,
 }
@@ -186,8 +208,20 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 5 || p.slots.is_empty() {
+    if p.abi != 6 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
+    }
+    // A store without a term is simply not credited; a term never changes what a device can do.
+    let terms = [&p.end_credit.battery, &p.end_credit.pool, &p.end_credit.ev];
+    if !p.end_credit.reference_sek_per_kwh.is_finite()
+        || p.end_credit.reference_sek_per_kwh < 0.0
+        || terms.iter().any(|term| {
+            term.as_ref().is_some_and(|t| {
+                !t.cap.is_finite() || !t.grid_kwh_per_unit.is_finite() || t.grid_kwh_per_unit < 0.0
+            })
+        })
+    {
+        return bad("invalid_end_credit");
     }
     if !p.pool_cycle_seconds.is_finite()
         || p.pool_cycle_seconds < 0.0
@@ -344,7 +378,8 @@ pub struct EconomicHit {
 pub(crate) struct Repair {
     pub commands: Vec<Command>,
     pub family: String,
-    pub expected_points: i32,
+    /// What adopting it should add to the score, in kronor.
+    pub expected_gain: f64,
 }
 #[derive(Default)]
 pub(crate) struct WitnessAudit {
