@@ -4,6 +4,7 @@ import { loadWasmCandidate, readyProblem } from '../bench/wasm-planner.ts';
 import { loadCase } from '../src/lib/planner-bench/case.ts';
 import { evaluate } from '../src/lib/planner-bench/evaluate.ts';
 import { HOUSEHOLD } from '../src/lib/planner-bench/household.ts';
+import { BASE_LANE, toldCase } from '../src/lib/planner-bench/lanes.ts';
 import { scoreQuarters } from '../src/lib/planner-bench/score.ts';
 import type { CriteriaOverrides } from '../src/lib/planner-bench/types.ts';
 
@@ -29,10 +30,11 @@ const results: (ReturnType<typeof evaluate> & {
 for (const scenario of data.cases) {
   const c = loadCase(scenario.dataset, scenario.recorded);
   const preparedAt = performance.now();
-  const problem = readyProblem(c, HOUSEHOLD, data.rules);
+  // The bench's base lane: the planner is given the case's real prices.
+  const problem = readyProblem(toldCase(c, BASE_LANE), HOUSEHOLD, data.rules);
   const preparation_ms = performance.now() - preparedAt;
   const { record, elapsed_ms, outcome, wasm_memory_bytes } = planner.plan(problem);
-  const evaluated = evaluate(c, record, data.rules);
+  const evaluated = evaluate(c, record, data.rules, BASE_LANE);
   const quarters = scoreQuarters(evaluated.series, data.rules).quarters;
   results.push({
     name: scenario.name,
