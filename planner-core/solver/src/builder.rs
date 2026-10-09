@@ -299,12 +299,12 @@ fn gap_estimate(p: &Problem, i: usize, last: Option<usize>, key: RuleKey) -> f64
     let Some(r) = policy::rule(p, key) else {
         return 0.0;
     };
-    let border = p.slots[last].import_price;
-    let restart = p.slots[i].import_price;
+    // Only a dearer gap can excuse the pause. Whether the sun or the battery
+    // could have carried it is left to the certificate (witnesses.rs).
+    let border = p.slots[last].import_price.min(p.slots[i].import_price);
     if (last + 1..i).all(|j| {
         let price = p.slots[j].import_price;
-        let t = r.threshold.max(price.abs() * 0.1);
-        (price - border).abs() <= t + 1e-9 && (price - restart).abs() <= t + 1e-9
+        price - border <= r.threshold.max(price.abs() * 0.1) + 1e-9
     }) {
         f64::from(r.points) * gap as f64
     } else {
@@ -623,7 +623,10 @@ fn improve(
             let witnessed = |key| {
                 matches!(
                     key,
-                    RuleKey::LargeLoadOverlap | RuleKey::PoolShortGap | RuleKey::EvShortGap
+                    RuleKey::LargeLoadOverlap
+                        | RuleKey::PoolShortGap
+                        | RuleKey::EvShortGap
+                        | RuleKey::EarlyGridCharge
                 )
             };
             account.points += p

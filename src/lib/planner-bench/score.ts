@@ -40,12 +40,19 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 //     Two large workloads in one quarter lose one point when the stored audit
 //     proves one can move to a strictly cheaper quarter without worse service,
 //     final inventory or equipment limits. This uses price order across 72 h.
+//     A quarter in which battery or car charging buys FLEXIBLE_W or more from
+//     the grid loses one point when the stored audit proves all of it can move
+//     to a later quarter that is clearly cheaper, without worse service, lower
+//     final stores or a higher bill (early-charge.ts). Never both in a quarter.
+//     A pause of one to four quarters in pool heating or car charging loses a
+//     point per quarter when a continuous run is proven possible; a dearer gap
+//     quarter excuses it only where running would have had to be bought.
 //
 //   Energy timing. The money the plan could have saved by moving energy
 //     in time with the same comfort and the same stores at the end, as proven
 //     by the opportunity audit (opportunities.ts). Only what was knowable from
-//     published prices counts; what took hindsight is shown beside it. Each
-//     distinct changed quarter loses one point under its primary rule.
+//     published prices counts; what took hindsight is shown beside it. It is
+//     evidence in kronor and takes no points (ENERGY_TIMING_SCORES).
 //
 // Apart from points, a plan that asks for what the household cannot do
 // (referee.ts) fails the case, whatever its points; a plan whose audit could
@@ -64,6 +71,7 @@ import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } f
 import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
 import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
 import { SHORT_GAP_PRICE_FRACTION, type GapDevice } from './short-gaps';
+import { EARLY_CHARGE_GRID_W, EARLY_CHARGE_PRICE_FRACTION } from './early-charge';
 import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, ruleDefaults, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
@@ -71,7 +79,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVE
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 27;
+export const SCORER_VERSION = 28;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
@@ -85,6 +93,12 @@ export const VERY_CHEAP_FLEXIBLE_W = 1000;
 export const CHEAP_CHARGE_BATTERY_SOC = 100;
 /** Sale-price threshold for the two arbitrage preferences, SEK/kWh. */
 export const ARBITRAGE_SALE_PRICE = 4;
+/**
+ * Whether the energy-timing audit takes points. Off: at a point per changed
+ * quarter a 0.09 kr finding weighed as much as a 5 kr one, and the audit took
+ * more than every other rule gave. Its kronor are shown beside the points.
+ */
+export const ENERGY_TIMING_SCORES = false;
 
 /** What a rule can see about one quarter. */
 export interface QuarterView {
@@ -111,6 +125,8 @@ export interface QuarterView {
   avoidableOverlap: boolean;
   /** Devices whose avoidable short gap includes this quarter. */
   shortGapDevices: ReadonlySet<GapDevice>;
+  /** Charging bought from the grid here has a proven move to a clearly cheaper later quarter. */
+  earlyGridCharge: boolean;
   /** Home-battery power left for EV charging after exports and other household loads, W. */
   evBatteryW: number;
   /** The last charge before the first high-sale quarter ended full, or the case started full without a later charge. */
@@ -303,9 +319,14 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
   ...(['ev', 'pool'] as const).map((device): Omit<QuarterRule, "threshold" | "points" | "required" | "unless"> => ({
     key: `${device}_short_gap`, about: 'price',
     label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
-    describe: t => `an avoidable 1–4-quarter gap, each gap price within the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price, compared with both bordering running quarters`,
+    describe: t => `an avoidable 1–4-quarter gap; a gap quarter dearer than a bordering running quarter by more than the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price excuses the pause only where ${device === 'ev' ? 'the sun' : 'the sun and spare battery'} could not have carried it`,
     fires: q => q.shortGapDevices.has(device), eligibleFrom: () => 0,
   })),
+  {
+    key: 'early_grid_charge', about: 'price', label: 'Grid charge with a clearly cheaper quarter in reach',
+    describe: t => `battery or car charging buys at least ${EARLY_CHARGE_GRID_W} W from the grid, and all of it has a feasible move to a later quarter cheaper by more than the larger of ${Math.round(t * 100)} öre/kWh or ${EARLY_CHARGE_PRICE_FRACTION * 100}% of this quarter's absolute price, without a higher bill`,
+    fires: q => q.earlyGridCharge, eligibleFrom: () => 0,
+  },
 ];
 
 export const DEFAULT_RULES: QuarterRule[] = QUARTER_RULES.map(rule => ({...rule, ...ruleDefaults(rule.key)}));
@@ -338,9 +359,9 @@ export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
   return { pool: [t.pool_low, t.pool_cold], ev: [t.ev_low, t.ev_short] };
 }
 
-/** One point per changed quarter under a primary rule; explanatory tags add no points. */
+/** What the audit takes: one point per changed quarter under a primary rule while ENERGY_TIMING_SCORES is on, else none. Explanatory tags add no points. */
 export const economicPoints = (audit: OpportunityAudit) =>
-  -Object.values(audit.rules).reduce((sum, rule) => sum + rule.knownQuarters.length, 0);
+  ENERGY_TIMING_SCORES ? -Object.values(audit.rules).reduce((sum, rule) => sum + rule.knownQuarters.length, 0) : 0;
 
 export interface QuarterScore {
   score: number;
@@ -356,7 +377,7 @@ export interface ServiceApplicability {
 }
 
 export interface CaseScore {
-  /** The quarter rules' points plus the energy-timing ones. While the audit is pending, the quarter rules' alone. */
+  /** The quarter rules' points plus whatever energy timing takes (ENERGY_TIMING_SCORES). While the audit is pending, the quarter rules' alone. */
   points: number;
   /** Null without an audit, or while the audit awaits recomputing under these thresholds. */
   economicPoints: number | null;
@@ -390,7 +411,7 @@ const sameGuard = (a: ServiceGuard, b: ServiceGuard) =>
 /** Whether every stored witness still holds under other comfort thresholds, from its stored traces. */
 function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGuard): boolean {
   if (sameGuard(audit.guard, guard)) return true;
-  if (audit.overlap.overlappingQuarters.length || audit.shortGaps.candidates.length) return false;
+  if (audit.overlap.overlappingQuarters.length || audit.shortGaps.candidates.length || audit.earlyCharge.candidates.length) return false;
   const comfort = s.comfort;
   if (!comfort) return false;
   // A finding moves only its own device's store; the battery has no comfort level.
@@ -417,9 +438,11 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
       || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
-      || audit.shortGaps.priceTolerance.pool !== gapThresholds.pool_short_gap)));
+      || audit.shortGaps.priceTolerance.pool !== gapThresholds.pool_short_gap
+      || audit.earlyCharge.priceTolerance !== gapThresholds.early_grid_charge)));
   const overlapQuarters = new Set(audit && !auditPending ? audit.overlap.moves.map(m => m.from) : []);
   const shortGaps = audit && !auditPending ? audit.shortGaps.gaps : [];
+  const earlyCharges = new Set(audit && !auditPending ? audit.earlyCharge.moves.map(m => m.from) : []);
   // The first quarter from which each level counts, found once per level.
   const dueAt = new Map<string, number>();
   const due = (i: number): QuarterView['due'] => (reachable, start, level) => {
@@ -469,6 +492,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
         && s.baseLoadBatteryCoverW[i] >= baseGridW,
       avoidableOverlap: overlapQuarters.has(i),
       shortGapDevices: new Set(shortGaps.filter(gap => gap.from <= i && i < gap.to).map(gap => gap.device)),
+      earlyGridCharge: earlyCharges.has(i),
       evBatteryW: evBatterySupplyW(s, i),
       arbitragePrepared: preparation.prepared,
     };

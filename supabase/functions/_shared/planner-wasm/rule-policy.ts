@@ -18,6 +18,7 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
   arbitrage_no_export:{threshold:4,points:-1}, arbitrage_not_full:{threshold:4,points:-1},
   ev_from_home_battery:{threshold:0,points:-1}, large_load_overlap:{threshold:2000,points:-1},
   pool_short_gap:{threshold:.1,points:-1}, ev_short_gap:{threshold:.1,points:-1},
+  early_grid_charge:{threshold:.1,points:-1,unless:"large_load_overlap"},
 };
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;

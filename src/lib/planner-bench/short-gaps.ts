@@ -1,9 +1,12 @@
-// Short interruptions at similar prices are a scheduling preference, not a
-// claim of bill savings. A witness joins adjacent runs with the same booked
-// energy, keeping legal device levels, service and final inventories.
+// Short interruptions are a scheduling preference, not a claim of bill
+// savings. A dearer gap quarter excuses the pause only when running through it
+// would have had to be bought: where the sun and spare battery power could
+// have carried the device, the gap counts whatever its price. A witness joins
+// adjacent runs with the same booked energy, keeping legal device levels,
+// service and final inventories.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
-import { evLevels, poolLevels, type Decisions, type Simulation } from './referee';
+import { evLevels, HOURS, poolLevels, type Decisions, type Simulation } from './referee';
 import { scheduleWitness } from './schedule-witness';
 import type { ServiceGuard } from './service';
 
@@ -14,13 +17,25 @@ export const SHORT_GAP_PRICE_FRACTION = 0.1;
 export const shortGapPriceTolerance = (gapPrice: number, minimum: number) =>
   Math.max(minimum, SHORT_GAP_PRICE_FRACTION * Math.abs(gapPrice));
 export type GapDevice = 'pool' | 'ev';
+/**
+ * Whether the device could have run through a quarter without buying: on the
+ * sun left over by the rest of the house and, for the pool, on what the
+ * battery could still give. The home battery never supplies the car.
+ */
+export function carriedWithoutGrid(h: Household, sim: Simulation, device: GapDevice, i: number, drawW: number): boolean {
+  const neededW = sim.netW[i] + sim.dischargeW[i] - sim.chargeW[i] + drawW;
+  if (neededW <= 1e-6) return true;
+  if (device === 'ev') return false;
+  const storedKwh = (i ? sim.batteryKwh[i - 1] : sim.start.batteryKwh) - h.battery.min_soc * h.battery.capacity_kwh;
+  return neededW <= Math.min(h.battery.discharge_max_w, Math.max(0, storedKwh) * h.battery.discharge_efficiency / HOURS * 1_000) + 1e-6;
+}
 export interface ShortGap { device: GapDevice; from: number; /** Exclusive: the restart quarter. */ to: number }
 export interface GapChange { quarter: number; beforeW: number; afterW: number }
 export interface ShortGapWitness extends ShortGap { changes: GapChange[] }
 export interface ShortGapAudit {
   /** Configured minima; each gap quarter also allows 10% of its absolute price. */
   priceTolerance: Record<GapDevice, number>;
-  /** All bracketed 1–4-quarter gaps, before the price and feasibility checks. */
+  /** All bracketed 1–4-quarter gaps, before the price, supply and feasibility checks. */
   candidates: ShortGap[];
   gaps: ShortGapWitness[];
 }
@@ -46,11 +61,10 @@ export function auditShortGaps(
       if (to === values.length || length > SHORT_GAP_MAX_QUARTERS) continue;
       const gap = { device, from, to };
       out.candidates.push(gap);
-      if (prices.slice(from, to).some(p => {
-        const tolerance = shortGapPriceTolerance(p, priceTolerance[device]);
-        return Math.abs(p - prices[from - 1]) > tolerance + 1e-9
-          || Math.abs(p - prices[to]) > tolerance + 1e-9;
-      })) continue;
+      // Dearer than a bordering running quarter, and nothing but the grid to run on.
+      if (prices.slice(from, to).some((p, k) =>
+        p - Math.min(prices[from - 1], prices[to]) > shortGapPriceTolerance(p, priceTolerance[device]) + 1e-9
+          && !carriedWithoutGrid(h, original, device, from + k, min))) continue;
       let left = from - 1, right = to + 1;
       while (left > 0 && values[left - 1] > 0) left--;
       while (right < values.length && values[right] > 0) right++;

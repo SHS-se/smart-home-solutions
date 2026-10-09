@@ -33,7 +33,6 @@ import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { resultState, runCoverage } from '@/lib/planner-bench/coverage';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
 import { benchDays, periodRange, type BenchPeriod } from '@/lib/planner-bench/days';
-import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import {
   distinctScoreRuns, isStale, resolveRules, scoreQuarters, criteriaErrors,
 } from '@/lib/planner-bench/score';
@@ -727,7 +726,8 @@ const CaseView: React.FC<CaseViewProps> = ({
     const q = selected === null ? undefined : shownScore?.quarters[selected];
     if (selected === null || !q || !shownSeries || !shownScore) return null;
     const lines: QuarterScoreLine[] = q.fired.map(k => {
-      const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)! : null;
+      const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
+        : k === 'early_grid_charge' ? shownScore.audit!.earlyCharge.moves.find(m => m.from === selected)! : null;
       const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
         ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
         : null;
@@ -737,7 +737,7 @@ const CaseView: React.FC<CaseViewProps> = ({
           : ruleLabel.get(k)!.label}
         {move && <BenchOverlapMove move={move} series={shownSeries} timeZone={TZ} onSelect={select} />}
         {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
-          {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('priser inom det större av', 'prices within the larger of')} {Math.round(ruleLabel.get(k)!.threshold * 100)} {t('öre/kWh eller', 'öre/kWh or')} {SHORT_GAP_PRICE_FRACTION * 100}% {t('av varje avbrottskvarts absoluta pris, jämfört med båda angränsande driftkvartarna', "of each gap quarter's absolute price, compared with both bordering running quarters")}</>}
+          {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('sammanhängande drift var möjlig', 'a continuous run was possible')}</>}
       </> };
     });
     return { score: q.score, when: formatHomeDayMonthTime(shownSeries.start[selected], TZ), price: shownSeries.importPrice[selected], lines };

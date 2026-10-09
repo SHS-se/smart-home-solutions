@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v4:db6ee96d1b39a3808c646f73c0f77af8baacf8841c9576df9e1080e30f274201",
+    "model_version": "rules-planner-v4:197e7be82fff757a1a3efffe3acb9ca0dd2bf027057860d5e551c8b57afe446d",
     "decision_diagnostics_version": 2,
     "plan_id": "c22f37ca-7791-4b9c-a1ec-793ba6e226bd",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",

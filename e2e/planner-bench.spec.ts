@@ -15,6 +15,7 @@ import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } f
 import { REFEREE_VERSION } from '../src/lib/planner-bench/referee';
 import { storedScore } from '../src/lib/planner-bench/score';
 import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
+import { EARLY_CHARGE_PRICE_TOLERANCE } from '../src/lib/planner-bench/early-charge';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
@@ -129,6 +130,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
     overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
     shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
+    earlyCharge: { priceTolerance: EARLY_CHARGE_PRICE_TOLERANCE, candidates: [], moves: [] },
     guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],
@@ -434,12 +436,12 @@ test.describe('planner bench', () => {
       const row = page.locator(`#bench-rule-${device}_short_gap`);
       await expect(row).toContainText(new RegExp(`${quarters} (q|kv) · −${quarters}`));
       await row.getByRole('button').first().click();
-      await expect(row).toContainText(/both bordering running quarters|båda angränsande driftkvartarna/);
+      await expect(row).toContainText(/dearer than a bordering running quarter|dyrare än en angränsande driftkvart/);
+      await expect(row).toContainText(/(?:larger of|större av) 10 öre\/kWh (?:or|eller) 10% (?:of its own absolute price|av sitt eget absoluta pris)/);
       await row.getByRole('button', { name: new RegExp(`^dev: ${quarters} `) }).click();
       await expect(explanation).toContainText(`−1 Short interruption in ${label}`);
       await expect(explanation).toContainText(`24/09 ${start} → 24/09 ${end}`);
-      await expect(explanation).toContainText(/(?:larger of|större av) 10 .*öre/);
-      await expect(explanation).toContainText(/10% (?:of each gap quarter's absolute price|av varje avbrottskvarts absoluta pris)/);
+      await expect(explanation).toContainText(/a continuous run was possible|sammanhängande drift var möjlig/);
       await expect(row).toContainText(/Zero prices use the öre threshold|Nollpris använder öresgränsen/);
       await expect(row).toContainText(/negative prices use their magnitude|vid negativa priser används prisets storlek/);
       await row.locator('details').last().locator('summary').click();
@@ -929,7 +931,8 @@ test.describe('planner bench', () => {
     const row = (key: string) => page.locator(`#bench-rule-${key}`);
 
     // Triggered rules are rows with their points per quarter and the quarters they fired in.
-    await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · −2/);
+    // Energy timing is evidence in kronor: the quarters it would change, and no points.
+    await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
     // Flexible load in a very cheap quarter earns two points, in a cheap one a single point.
     await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · \+\d+/);
@@ -959,7 +962,7 @@ test.describe('planner bench', () => {
 
     // The list follows the day the chart shows: the battery finding sits in the first hours only.
     await page.locator('#bench-day-2').click();
-    await expect(row('battery_price_spread')).not.toContainText(/−2/);
+    await expect(row('battery_price_spread')).not.toContainText(/1\.25 kr/);
     await page.locator('#bench-day-all').click();
 
     // A click opens the explanation; a second click closes it.

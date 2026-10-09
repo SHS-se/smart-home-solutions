@@ -4,7 +4,9 @@ use crate::physics::{locked, project_metered, projected_hours};
 use crate::*;
 
 const EPS: f64 = 1e-6;
-const FAMILIES: [&str; 14] = [
+/// The early-grid-charge family: last, so the economic family numbers stand.
+const EARLY: usize = 14;
+const FAMILIES: [&str; 15] = [
     "pool_short_gap",
     "ev_short_gap",
     "large_load_overlap",
@@ -19,6 +21,7 @@ const FAMILIES: [&str; 14] = [
     "pool_cheaper_heating",
     "ev_timing",
     "uneconomic_cycling",
+    "early_grid_charge",
 ];
 
 #[derive(Clone, Copy)]
@@ -26,6 +29,8 @@ enum Transfer {
     AddCycle,
     CutCycle,
     ChargeMove,
+    /// A charge move of no more than the source bought from the grid.
+    BoughtMove,
     DischargeMove,
 }
 #[derive(Clone, Copy)]
@@ -55,6 +60,12 @@ enum Proposal {
         transfer: Transfer,
     },
     Overlap {
+        from: usize,
+        to: usize,
+        ev: bool,
+    },
+    /// Charging bought from the grid, moved to a clearly cheaper later quarter.
+    Early {
         from: usize,
         to: usize,
         ev: bool,
@@ -203,6 +214,42 @@ fn set_discharge(c: &mut Command, power: f64, export: bool, battery: &Battery) {
         0.0
     };
 }
+/// A device's charging power the grid met: no more than the quarter imports.
+fn bought(q: &Quarter, ev: bool) -> f64 {
+    (if ev { q.ev_w } else { q.charge_w }).min(q.net_w.max(0.0))
+}
+/// Whether the device could have run through a quarter without buying: on the
+/// sun the rest of the house leaves and, for the pool, on what the battery
+/// could still give. The home battery never supplies the car.
+fn carried_without_grid(p: &Problem, q: &[Quarter], device: usize, i: usize) -> bool {
+    let draw = if device == 0 {
+        p.heater
+            .as_ref()
+            .map_or(0.0, |h| h.compressor_w + h.auxiliary_w)
+    } else {
+        p.charger
+            .as_ref()
+            .and_then(|c| c.watts(c.min_current_a))
+            .unwrap_or(0.0)
+    };
+    let needed = q[i].net_w + q[i].discharge_w - q[i].charge_w + draw;
+    if needed <= EPS {
+        return true;
+    }
+    let Some(battery) = p.battery.as_ref().filter(|_| device == 0) else {
+        return false;
+    };
+    let before = if i == 0 {
+        p.initial.battery_kwh
+    } else {
+        q[i - 1].battery_kwh
+    };
+    let stored = before.unwrap_or(0.0) - battery.capacity_kwh * battery.min_soc;
+    needed
+        <= battery.discharge_max_w.min(
+            stored.max(0.0) * battery.discharge_efficiency / projected_hours(&p.slots[i]) * 1000.0,
+        ) + EPS
+}
 fn valid_amps(p: &Problem, amps: u32) -> bool {
     p.charger.as_ref().is_some_and(|c| c.watts(amps).is_some())
 }
@@ -248,11 +295,12 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
             if to == n || to - from > 4 {
                 continue;
             }
+            // Dearer than a bordering running quarter, and nothing but the grid to run on.
+            let border = p.slots[from - 1].import_price.min(p.slots[to].import_price);
             if (from..to).any(|i| {
                 let price = p.slots[i].import_price;
-                let tol = rule.threshold.max(0.1 * price.abs());
-                (price - p.slots[from - 1].import_price).abs() > tol + 1e-9
-                    || (price - p.slots[to].import_price).abs() > tol + 1e-9
+                price - border > rule.threshold.max(0.1 * price.abs()) + 1e-9
+                    && !carried_without_grid(p, q, device, i)
             }) {
                 continue;
             }
@@ -298,16 +346,51 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
         }
     }
     let overlap = policy::rule(p, RuleKey::LargeLoadOverlap).map(|r| r.threshold);
+    let early = policy::rule(p, RuleKey::EarlyGridCharge).map(|r| r.threshold);
     for from in 0..n {
         if locked(p, from) {
             continue;
         }
         let source_surplus = (-q[from].net_w).max(0.0);
+        // The two cheapest later quarters with the power for all that was
+        // bought, per device: battery, then car.
+        let mut early_to: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+        let early_margin =
+            early.map(|threshold| threshold.max(0.1 * p.slots[from].import_price.abs()));
         for to in 0..n {
             if to == from || locked(p, to) {
                 continue;
             }
             let delta = p.slots[from].import_price - p.slots[to].import_price;
+            if to > from && early_margin.is_some_and(|margin| delta > margin + 1e-9) {
+                for ev in [false, true] {
+                    let power = bought(&q[from], ev);
+                    let room = if ev {
+                        p.charger.as_ref().map_or(0.0, |c| {
+                            c.watts(c.max_current_a).unwrap_or(0.0) - q[to].ev_w
+                        })
+                    } else if q[to].discharge_w > EPS {
+                        0.0
+                    } else {
+                        p.battery
+                            .as_ref()
+                            .map_or(0.0, |b| b.charge_max_w - q[to].charge_w)
+                    }
+                    .min(p.limits.import_w - q[to].net_w);
+                    if power < 500.0 || room + EPS < power {
+                        continue;
+                    }
+                    let best = &mut early_to[usize::from(ev)];
+                    best.push(to);
+                    best.sort_by(|a, b| {
+                        p.slots[*a]
+                            .import_price
+                            .total_cmp(&p.slots[*b].import_price)
+                            .then(a.cmp(b))
+                    });
+                    best.truncate(2);
+                }
+            }
             let dest_surplus = (-q[to].net_w).max(0.0);
             let dest_import = q[to].net_w.max(0.0);
             if overlap.is_some_and(|threshold| {
@@ -475,6 +558,25 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                 battery(13, Transfer::CutCycle, q[from].charge_w + q[to].discharge_w);
             }
         }
+        // Every source's cheapest quarter is tried before any source's second.
+        for (device, choices) in early_to.iter().enumerate() {
+            for (choice, &to) in choices.iter().enumerate() {
+                let ev = device == 1;
+                let saved =
+                    (p.slots[from].import_price - p.slots[to].import_price) * bought(&q[from], ev);
+                offer(
+                    &mut queues,
+                    days,
+                    EARLY,
+                    Trial {
+                        source: from,
+                        priority: saved + if choice == 0 { 1e9 } else { 0.0 },
+                        proposal: Proposal::Early { from, to, ev },
+                    },
+                    cap,
+                );
+            }
+        }
     }
     for queue in &mut queues {
         queue.sort_by(|a, b| {
@@ -581,7 +683,9 @@ fn edit(
                 c.pool_on = true;
             }
         }
-        Proposal::Ev { from, to } | Proposal::Overlap { from, to, ev: true } => {
+        Proposal::Ev { from, to }
+        | Proposal::Overlap { from, to, ev: true }
+        | Proposal::Early { from, to, ev: true } => {
             let source = commands[from].ev_amps;
             let dest = commands[to].ev_amps;
             let ha = projected_hours(&p.slots[from]);
@@ -631,6 +735,22 @@ fn edit(
                 &mut deliveries,
                 (from, to),
                 Transfer::ChargeMove,
+                false,
+            )?;
+        }
+        Proposal::Early {
+            from,
+            to,
+            ev: false,
+        } => {
+            // Only what was bought moves; charging the sun carried stays.
+            battery_edit(
+                p,
+                q,
+                &mut commands,
+                &mut deliveries,
+                (from, to),
+                Transfer::BoughtMove,
                 false,
             )?;
         }
@@ -711,6 +831,10 @@ fn battery_edit(
             (q[a].charge_w * ha * ce).min(charge_room(b) * hb * ce) / 1000.0,
             a > b,
         ),
+        Transfer::BoughtMove => (
+            (bought(&q[a], false) * ha * ce).min(charge_room(b) * hb * ce) / 1000.0,
+            a > b,
+        ),
         Transfer::DischargeMove => (
             (q[a].discharge_w * ha / de).min(discharge_room(b) * hb / de) / 1000.0,
             a < b,
@@ -740,7 +864,7 @@ fn battery_edit(
             q[a].charge_w - energy * 1000.0 / (ha * ce),
             q[b].discharge_w - energy * 1000.0 * de / hb,
         ),
-        Transfer::ChargeMove => (
+        Transfer::ChargeMove | Transfer::BoughtMove => (
             Flow::Charge,
             Flow::Charge,
             q[a].charge_w - energy * 1000.0 / (ha * ce),
@@ -814,7 +938,7 @@ fn economic_key(proposal: Proposal, before: &[Quarter], after: &[Quarter]) -> Ec
             );
             match transfer {
                 Transfer::CutCycle => UneconomicCycling,
-                Transfer::ChargeMove => {
+                Transfer::ChargeMove | Transfer::BoughtMove => {
                     let solar = share(-before[to].net_w, after[to].charge_w - before[to].charge_w);
                     if solar {
                         if to > from {
@@ -852,7 +976,7 @@ fn economic_key(proposal: Proposal, before: &[Quarter], after: &[Quarter]) -> Ec
                 }
             }
         }
-        Proposal::Gap { .. } | Proposal::Overlap { .. } => {
+        Proposal::Gap { .. } | Proposal::Overlap { .. } | Proposal::Early { .. } => {
             unreachable!("only economic proposals have economic attribution")
         }
     }
@@ -867,7 +991,8 @@ fn proposal_published(p: &Problem, proposal: Proposal) -> bool {
             .all(|i| p.slots[i].published),
         Proposal::Ev { from, to }
         | Proposal::Battery { from, to, .. }
-        | Proposal::Overlap { from, to, .. } => p.slots[from].published && p.slots[to].published,
+        | Proposal::Overlap { from, to, .. }
+        | Proposal::Early { from, to, .. } => p.slots[from].published && p.slots[to].published,
         Proposal::Gap { left, right, .. } => (left..right).all(|i| p.slots[i].published),
     }
 }
@@ -885,6 +1010,7 @@ pub(crate) fn audit(
     let mut out = WitnessAudit {
         gaps: vec![[false; 2]; n],
         overlap: vec![false; n],
+        early: vec![false; n],
         coverage: FAMILIES
             .iter()
             .map(|f| WitnessCoverage {
@@ -918,6 +1044,11 @@ pub(crate) fn audit(
     let mut overlap_q = quarters.to_vec();
     let mut destinations = vec![false; n];
     let mut prior_delivery = Vec::new();
+    // Early charges accumulate too, and one cheap quarter may take several.
+    let mut early_commands = commands.to_vec();
+    let mut early_q = quarters.to_vec();
+    let mut early_delivery: Vec<Delivery> = Vec::new();
+    let mut early_moves = 0;
     // Each causal basis starts at the original plan and accumulates only its
     // own accepted edits. Both ledgers are covered by preparation's copy charge.
     let mut economic_commands = [commands.to_vec(), commands.to_vec()];
@@ -955,6 +1086,8 @@ pub(crate) fn audit(
                 let economic_ledger = usize::from(!published_proposal);
                 let (base, baseline): (&[Command], &[Quarter]) = if family == 2 {
                     (&overlap_commands, &overlap_q)
+                } else if family == EARLY {
+                    (&early_commands, &early_q)
                 } else if family >= 3 {
                     (
                         &economic_commands[economic_ledger],
@@ -973,6 +1106,11 @@ pub(crate) fn audit(
                 } = candidate.proposal
                 {
                     if (from..to).any(|i| out.gaps[i][device]) {
+                        continue;
+                    }
+                }
+                if let Proposal::Early { from, .. } = candidate.proposal {
+                    if out.early[from] {
                         continue;
                     }
                 }
@@ -1040,6 +1178,39 @@ pub(crate) fn audit(
                     overlap_commands = edited.commands.clone();
                     overlap_q = after;
                     points = -policy::rule(p, RuleKey::LargeLoadOverlap).map_or(0, |r| r.points);
+                } else if family == EARLY {
+                    let Proposal::Early { from, to, ev } = candidate.proposal else {
+                        unreachable!()
+                    };
+                    // All the plan bought here has left the quarter, no other
+                    // accepted move is curtailed, and the bill is no higher.
+                    if bought(&after[from], ev)
+                        > bought(&baseline[from], ev) - bought(&quarters[from], ev) + 1.0
+                        || cost(&after) > cost(baseline) + 1e-9
+                        || !early_delivery.iter().all(|e| {
+                            e.slot == from
+                                || e.slot == to
+                                || (delivered(&after[e.slot], e.flow) - e.watts).abs() <= 1.0
+                        })
+                    {
+                        continue;
+                    }
+                    out.early[from] = true;
+                    early_moves += 1;
+                    // The cheaper quarter's booking has to stand from here on,
+                    // and so does a source that an earlier move had filled.
+                    let refilled = early_delivery.iter().any(|e| e.slot == from);
+                    early_delivery.retain(|e| e.slot != from && e.slot != to);
+                    early_delivery.extend(
+                        edited
+                            .deliveries
+                            .iter()
+                            .filter(|e| e.slot == to || refilled),
+                    );
+                    early_commands = edited.commands.clone();
+                    early_q = after;
+                    points = -policy::rule(p, RuleKey::EarlyGridCharge).map_or(0, |r| r.points)
+                        * early_moves;
                 } else {
                     let saving = cost(baseline) - cost(&after);
                     if saving <= 1e-7 {
@@ -1404,5 +1575,98 @@ pub(crate) mod tests {
         set_charge(&mut c, 0.0);
         assert_eq!(c.battery, Operation::Idle);
         assert_eq!(c.charge_limit_w, 0.0);
+    }
+    #[test]
+    fn dearer_pool_gap_is_excused_only_when_it_would_have_to_be_bought() {
+        let mut p = problem(3);
+        p.slots[1].import_price = 2.0;
+        let mut c = vec![idle(); 3];
+        c[0].pool_on = true;
+        c[2].pool_on = true;
+        // A half-full battery could have carried the heat pump: the gap counts.
+        assert!(run(&p, &c, 192).gaps[1][0]);
+        // An empty one leaves only the grid, and the dearer quarter excuses it.
+        p.initial.battery_kwh = Some(0.0);
+        assert!(!run(&p, &c, 192).gaps[1][0]);
+        // The sun carries it instead.
+        p.slots[1].solar_w = 3000.0;
+        assert!(run(&p, &c, 192).gaps[1][0]);
+        // A cheaper gap is never an excuse.
+        p.slots[1].solar_w = 0.0;
+        p.slots[1].import_price = 0.5;
+        assert!(run(&p, &c, 192).gaps[1][0]);
+    }
+    #[test]
+    fn dearer_ev_gap_is_never_carried_by_the_home_battery() {
+        let mut p = problem(3);
+        p.slots[1].import_price = 2.0;
+        let mut c = vec![idle(); 3];
+        c[0].ev_amps = 16;
+        c[2].ev_amps = 16;
+        assert!(!run(&p, &c, 192).gaps[1][1]);
+        // The charger's lowest current on the sun alone.
+        p.slots[1].solar_w = 6.0 * 230.0;
+        assert!(run(&p, &c, 192).gaps[1][1]);
+    }
+    #[test]
+    fn early_grid_charges_move_into_one_clearly_cheaper_quarter() {
+        let mut p = problem(4);
+        p.rules.push(Rule {
+            key: RuleKey::EarlyGridCharge,
+            threshold: 0.1,
+            points: -1,
+            required: false,
+            unless: None,
+        });
+        for s in &mut p.slots[..3] {
+            s.import_price = 1.4;
+        }
+        let mut c = vec![idle(); 4];
+        set_charge(&mut c[0], 1000.0);
+        set_charge(&mut c[2], 1000.0);
+        let yes = run(&p, &c, 192);
+        assert_eq!(yes.early, vec![true, false, true, false]);
+        // The last repair holds both moves: one cheap quarter takes all of it.
+        let repair = yes
+            .repairs
+            .iter()
+            .rfind(|r| r.family == "early_grid_charge")
+            .unwrap();
+        assert_eq!(repair.expected_points, 2);
+        let after = physics::projection(&p, &repair.commands).unwrap();
+        assert!(after[0].charge_w < EPS && after[2].charge_w < EPS);
+        assert!((after[3].charge_w - 2000.0).abs() < EPS);
+        // Charging the sun carries is not bought, so it stays.
+        p.slots[0].solar_w = 1000.0;
+        assert_eq!(run(&p, &c, 192).early, vec![false, false, true, false]);
+        p.slots[0].solar_w = 0.0;
+        // 14 öre is 10% of 1.40: exactly that is not clearly cheaper.
+        p.slots[3].import_price = 1.26;
+        assert!(!run(&p, &c, 192).early[0]);
+        // No power left in the cheaper quarter for all that was bought.
+        p.slots[3].import_price = 1.0;
+        set_charge(&mut c[3], 3500.0);
+        assert!(!run(&p, &c, 192).early[0]);
+    }
+    #[test]
+    fn early_grid_charge_stays_where_a_later_purchase_would_cost_more() {
+        let mut p = problem(4);
+        p.rules.push(Rule {
+            key: RuleKey::EarlyGridCharge,
+            threshold: 0.1,
+            points: -1,
+            required: false,
+            unless: None,
+        });
+        for s in &mut p.slots[..3] {
+            s.import_price = 1.4;
+        }
+        // The charge is sold at 3.00 before the cheaper quarter comes.
+        p.initial.battery_kwh = Some(0.0);
+        p.slots[1].export_price = 3.0;
+        let mut c = vec![idle(); 4];
+        set_charge(&mut c[0], 1000.0);
+        set_discharge(&mut c[1], 1000.0, true, p.battery.as_ref().unwrap());
+        assert!(!run(&p, &c, 192).early[0]);
     }
 }

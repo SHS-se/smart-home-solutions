@@ -30,6 +30,7 @@ pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
         EvLow | EvShort | EvShortGap => p.car.is_some(),
         BaseLoadDearImport | BaseLoadDearestImport | ArbitrageNotFull => p.battery.is_some(),
         EvFromHomeBattery => p.car.is_some() && p.battery.is_some(),
+        EarlyGridCharge => p.car.is_some() || p.battery.is_some(),
         _ => true,
     }
 }
@@ -257,6 +258,7 @@ pub(crate) fn witnessed(
                 RuleKey::PoolShortGap => fired[j] = audit.gaps[i][0],
                 RuleKey::EvShortGap => fired[j] = audit.gaps[i][1],
                 RuleKey::LargeLoadOverlap => fired[j] = audit.overlap[i],
+                RuleKey::EarlyGridCharge => fired[j] = audit.early[i],
                 _ => {}
             }
         }
@@ -508,7 +510,7 @@ fn raw_quarter(
             ArbitrageNoExport => measured(s.export_price, 10000.0) > t && export <= 0.0,
             ArbitrageNotFull => measured(s.export_price, 10000.0) > t && !prepared,
             EvFromHomeBattery => ev_battery > t,
-            LargeLoadOverlap | PoolShortGap | EvShortGap => false,
+            LargeLoadOverlap | PoolShortGap | EvShortGap | EarlyGridCharge => false,
         }
     };
     p.rules.iter().map(rule_fires).collect()

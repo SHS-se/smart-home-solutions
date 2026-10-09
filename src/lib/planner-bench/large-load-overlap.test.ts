@@ -23,7 +23,10 @@ Deno.test('two large bookings incur one penalty with a feasible cheaper quarter,
   const evaluated = evaluate(c, record, {});
   assertEquals(evaluated.score.counts.large_load_overlap, 1);
   assert(evaluated.series.audit!.overlap.moves[0].movedW > 0);
-  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false } }).points, evaluated.score.points + 1);
+  // The same purchase is also an early grid charge; the two never take a quarter together.
+  assertEquals(evaluated.score.counts.early_grid_charge, undefined);
+  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false } }).counts.early_grid_charge, 1);
+  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false }, early_grid_charge: { enabled: false } }).points, evaluated.score.points + 1);
   // Threshold changes require new witnesses; the browser never invents a move.
   assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { threshold: 5000 } }).auditPending, true);
   assertEquals(evaluate(c, record, { large_load_overlap: { threshold: 5000 } }).score.counts.large_load_overlap, undefined);

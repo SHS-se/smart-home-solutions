@@ -7,7 +7,7 @@ import {
   findOpportunities, MAX_TRIALS, NOT_MODELLED, OPPORTUNITY_RULES, ruleState, summariseAudit, type OpportunityAudit,
 } from './opportunities.ts';
 import { referee, type Decisions } from './referee.ts';
-import { economicPoints, scoreQuarters, storedPassed, storedScore } from './score.ts';
+import { economicPoints, ENERGY_TIMING_SCORES, scoreQuarters, storedPassed, storedScore } from './score.ts';
 import { DEFAULT_SERVICE_GUARD, serviceNotWorse, type ServiceExposure, type ServiceGuard } from './service.ts';
 import type { PlanRecord } from './types.ts';
 import { TARGETS, clockPlan, plan, realisticWorld, within, world } from './world.fixture.ts';
@@ -357,20 +357,24 @@ Deno.test('a case scores each affected known-price quarter under its primary rul
   assertEquals(score.audit, summariseAudit(audit));
   assertEquals([score.audit.findingCount, 'findings' in score.audit], [audit.findings.length, false]);
   assertEquals(score.sum, 0);
-  // The monetary saving is evidence; raw points count changed quarters under primary rules.
+  // The monetary saving is evidence; where energy timing scores, points count changed quarters under primary rules.
   assertAlmostEquals(audit.scaleSek, 74, 1e-6);
   assert(audit.knownSek > 0);
-  assertEquals(score.economic_points, -sum(Object.values(audit.rules).map(r => r.knownQuarters.length)));
+  const changed = sum(Object.values(audit.rules).map(r => r.knownQuarters.length));
+  assert(changed > 0);
+  assertEquals(score.economic_points, ENERGY_TIMING_SCORES ? -changed : 0);
   assertEquals([score.points, economicPoints(audit)], [score.sum + score.economic_points, score.economic_points]);
   // The same miss, unknowable when planned: shown, not scored.
   const unforeseen = evaluate(spilled(40), record(plan()), unheated, 'told/nominal');
   assert(unforeseen.series.audit!.hindsightSek > 15);
   assertEquals(unforeseen.score.economic_points, 0);
-  assert(evaluate(spilled(40), record(plan()), unheated, 'oracle/nominal').score.economic_points < 0);
+  const foreseen = evaluate(spilled(40), record(plan()), unheated, 'oracle/nominal');
+  assert(foreseen.series.audit!.knownSek > 15 && foreseen.score.economic_points === economicPoints(foreseen.series.audit!));
   // A plan that takes the opportunity is left with next to nothing.
   const taken = evaluate(spilled(), record(plan({ charge: i => within(i, 40, 64) ? 2500 : 0, discharge: i => within(i, 68, 88) ? 2700 : 0 })), unheated, 'told/nominal');
   assertEquals(taken.outcome.violations, []);
-  assert(taken.score.points > lost.score.points && taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.score.points} ${taken.series.audit!.knownSek}`);
+  assert(taken.series.audit!.knownSek < 0.15 * lost.series.audit!.knownSek, `${taken.series.audit!.knownSek}`);
+  if (ENERGY_TIMING_SCORES) assert(taken.score.points > lost.score.points, `${taken.score.points}`);
 });
 
 Deno.test('the page scores a stored plan without replaying it, and never shows an audit its thresholds do not support', () => {

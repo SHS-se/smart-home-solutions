@@ -52,26 +52,43 @@ Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous 
   }
 });
 
-Deno.test('gap prices use the larger of 10 öre and 10% of their own magnitude, inclusive at both boundaries', () => {
+/** Nothing but the grid to run on: no sun, and a battery at its cut-off. */
+const gridOnly = { start: { battery_soc: HOUSEHOLD.battery.min_soc } };
+
+Deno.test('a dearer gap excuses the pause beyond the larger of 10 öre and 10% of its own magnitude, inclusive, when it would have to be bought', () => {
   for (const device of ['ev', 'pool'] as const) {
     const d = interrupted(device, 2);
     for (const price of [-3, -1, -0.05, 0, 0.05, 1, 3]) {
       const tolerance = Math.max(0.1, Math.abs(price) * 0.1);
-      const buy = (i: number) => within(i, 8, 10) ? price : i < 8 ? price - tolerance : price + tolerance;
-      assertEquals(audit(world({ buy }), d).gaps.length, 1, `${device}, ${price}`);
-      // Either bordering running price can disqualify the whole gap.
+      const buy = (i: number) => within(i, 8, 10) ? price : price - tolerance;
+      assertEquals(audit(world({ buy, ...gridOnly }), d).gaps.length, 1, `${device}, ${price}`);
+      // Either bordering running quarter a hair cheaper excuses the whole gap.
       for (const border of [7, 10]) {
-        assertEquals(audit(world({ buy: i => i === border ? buy(i) + (border === 7 ? -0.0001 : 0.0001) : buy(i) }), d).gaps.length, 0);
+        assertEquals(audit(world({ buy: i => i === border ? buy(i) - 0.0001 : buy(i), ...gridOnly }), d).gaps.length, 0, `${device}, ${price}, ${border}`);
       }
+      // A cheaper gap is never an excuse.
+      assertEquals(audit(world({ buy: i => within(i, 8, 10) ? price - 1 : price, ...gridOnly }), d).gaps.length, 1, `${device}, ${price}, cheaper`);
     }
   }
 });
 
-Deno.test('each idle quarter uses its own tolerance, not the maximum or average price of the gap', () => {
+Deno.test('each idle quarter is judged at its own price, not the average of the gap', () => {
   for (const device of ['ev', 'pool'] as const) {
-    const c = world({ buy: i => i === 8 ? 2 : i === 9 ? 1.63 : 1.8 });
-    assertEquals(audit(c, interrupted(device, 2)).gaps, []);
+    // 2.00 is within its own 10% of 1.80; averaged with the cheap quarter beside it, it would not be.
+    assertEquals(audit(world({ buy: i => i === 8 ? 2 : i === 9 ? 1 : 1.8, ...gridOnly }), interrupted(device, 2)).gaps.length, 1);
+    assertEquals(audit(world({ buy: i => i === 8 ? 2.01 : i === 9 ? 1 : 1.8, ...gridOnly }), interrupted(device, 2)).gaps, []);
   }
+});
+
+Deno.test('a dearer gap the sun or spare battery could have carried is no excuse; the battery never carries the car', () => {
+  const dear = (i: number) => within(i, 8, 10) ? 3 : 1;
+  const sunny = (i: number) => within(i, 8, 10) ? 5000 : 0;
+  // A half-full battery carries the heat pump and the house through both quarters.
+  assertEquals(audit(world({ buy: dear }), interrupted('pool', 2)).gaps.length, 1);
+  assertEquals(audit(world({ buy: dear, ...gridOnly }), interrupted('pool', 2)).gaps, []);
+  assertEquals(audit(world({ buy: dear, solar: sunny, ...gridOnly }), interrupted('pool', 2)).gaps.length, 1);
+  assertEquals(audit(world({ buy: dear }), interrupted('ev', 2)).gaps, []);
+  assertEquals(audit(world({ buy: dear, solar: sunny }), interrupted('ev', 2)).gaps.length, 1);
 });
 
 Deno.test('the combined tolerance accepts the discussed 1-, 2- and 4-quarter gap price windows for both devices', () => {

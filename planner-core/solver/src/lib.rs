@@ -88,6 +88,7 @@ pub enum RuleKey {
     LargeLoadOverlap,
     PoolShortGap,
     EvShortGap,
+    EarlyGridCharge,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Rule {
@@ -349,6 +350,8 @@ pub(crate) struct Repair {
 pub(crate) struct WitnessAudit {
     pub gaps: Vec<[bool; 2]>,
     pub overlap: Vec<bool>,
+    /// Quarters whose grid-bought charging has a certified move to a clearly cheaper later quarter.
+    pub early: Vec<bool>,
     pub economic: Vec<EconomicHit>,
     pub repairs: Vec<Repair>,
     pub coverage: Vec<WitnessCoverage>,

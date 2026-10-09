@@ -1,7 +1,7 @@
 {
   "abi": 5,
-  "wasm_sha256": "b4c2d23d83c005b2da81e83b4d0ea429c1e94b11d6061bac5e6bf61922cc3b6e",
-  "source_sha256": "98bed738dc0ffb0c1ea1a89a810c84963219d6b3d9298232502d99fab8cafa2b",
+  "wasm_sha256": "6c3f456487ec139d48ce2d59a426d67c4589b58fb37695b9c08671c81d7fa350",
+  "source_sha256": "0168492381d49fd756742d0286fa2c4527eb75ea8258f8dd01c0d94157106a36",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -33,6 +33,7 @@
     "scripts/rustc-wasm-wrapper.rs",
     "src/lib/planner-bench/case.ts",
     "src/lib/planner-bench/devices.ts",
+    "src/lib/planner-bench/early-charge.ts",
     "src/lib/planner-bench/lanes.ts",
     "src/lib/planner-bench/large-load-overlap.ts",
     "src/lib/planner-bench/opportunities.ts",

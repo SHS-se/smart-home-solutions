@@ -32,6 +32,6 @@ export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOve
   const { series, ...outcome } = referee(c, HOUSEHOLD, targets, record.decisions, believed);
   const thresholds = Object.fromEntries(resolveRules(criteria).map(r => [r.key, r.threshold]));
   series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard, thresholds.large_load_overlap,
-    { pool: thresholds.pool_short_gap, ev: thresholds.ev_short_gap });
+    { pool: thresholds.pool_short_gap, ev: thresholds.ev_short_gap }, thresholds.early_grid_charge);
   return { series, stats: planStats(series), outcome, score: storedScore(series, criteria), referee_version: REFEREE_VERSION };
 }

@@ -1,4 +1,5 @@
 import { SHORT_GAP_PRICE_TOLERANCE } from './short-gaps.ts';
+import { EARLY_CHARGE_PRICE_TOLERANCE } from './early-charge.ts';
 import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from './opportunities.ts';
 import { planSeries } from './series.fixture.ts';
@@ -6,7 +7,7 @@ import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, evBatterySupplyW, flexibleGridSupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, ENERGY_TIMING_SCORES, evBatterySupplyW, flexibleGridSupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -168,7 +169,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'ev_short_gap', 'pool_short_gap']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'ev_short_gap', 'pool_short_gap', 'early_grid_charge']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
@@ -274,6 +275,7 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
   overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
   shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
+  earlyCharge: { priceTolerance: EARLY_CHARGE_PRICE_TOLERANCE, candidates: [], moves: [] },
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],
   rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as OpportunityAudit['rules'],
@@ -281,7 +283,7 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   ...over,
 });
 
-Deno.test('case points add raw comfort and each known-price quarter once per economic rule', () => {
+Deno.test('case points add raw comfort and, where energy timing scores, each known-price quarter once per economic rule', () => {
   const cold = comfortSeries(() => 28.5, () => 300);
   const worst = scoreQuarters(cold);
   assertEquals(worst.sum, -288);
@@ -293,7 +295,9 @@ Deno.test('case points add raw comfort and each known-price quarter once per eco
   audit.rules.battery_price_spread.knownQuarters = [4, 5, 8];
   audit.rules.export_before_import.knownQuarters = [8, 12];
   const audited = scoreQuarters({ ...cold, audit });
-  assertEquals([economicPoints(audit), audited.economicPoints, audited.points, audited.complete], [-5, -5, -293, true]);
+  // Five changed quarters: evidence in kronor, and five points only where energy timing scores.
+  const taken = ENERGY_TIMING_SCORES ? -5 : 0;
+  assertEquals([economicPoints(audit), audited.economicPoints, audited.points, audited.complete], [taken, taken, -288 + taken, true]);
   // Hindsight savings have no points.
   assertEquals(scoreQuarters({ ...cold, audit: auditOf({ hindsightSek: 30, avoidableSek: 30 }) }).economicPoints, 0);
   // An audit of another version is not read.
@@ -301,8 +305,8 @@ Deno.test('case points add raw comfort and each known-price quarter once per eco
   assertEquals([dated.auditPending, dated.economicPoints], [true, null]);
 
   const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit });
-  assertEquals([stored.sum, stored.economic_points, stored.physical_failed], [0, -5, false]);
-  assertEquals(stored.points, -5);
+  assertEquals([stored.sum, stored.economic_points, stored.physical_failed], [0, taken, false]);
+  assertEquals(stored.points, taken);
   assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [5, 0, 0]);
   assertEquals(isStale(stored), false);
   assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);

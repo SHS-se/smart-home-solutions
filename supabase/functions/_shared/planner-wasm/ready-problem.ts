@@ -43,6 +43,7 @@ export const RULE_KEYS = [
   "large_load_overlap",
   "pool_short_gap",
   "ev_short_gap",
+  "early_grid_charge",
 ] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];
 export interface ReadySlot {
