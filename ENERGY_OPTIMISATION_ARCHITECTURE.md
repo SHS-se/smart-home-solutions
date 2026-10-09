@@ -1,5 +1,24 @@
 # Energy optimisation architecture
 
+## Rule-based planner objective — 6–7 October 2026
+
+The [planner score-card redesign](docs/energy-optimisation/planner-scorecard-redesign-2026-10.md)
+replaces the planner objective in the documents below. The planner is now a
+measurement-driven, rule-based planner in Rust/Wasm (`planner-core/`). It
+maximises the planner-bench score card (`planner-core/policy.json`,
+`supabase/functions/_shared/planner-wasm/rule-policy.ts`) and uses kronor only
+to break ties. Editable cost-value curves and their UI, marginal-value bidding,
+the auction and settlement passes, and the “Build a plan” editor are removed.
+This supersedes the curve-valued objective in the
+[server planner](docs/energy-optimisation/planner.md) and the 13 September
+adoption of editable service curves under “Authority and status” below. See the
+[rule-builder design](docs/energy-optimisation/rule-builder-design-2026-10.md),
+[rule-builder checkpoint](docs/energy-optimisation/rule-builder-checkpoint-2026-10.md),
+[Rust/Wasm checkpoint](docs/energy-optimisation/planner-wasm-checkpoint-2026-10.md)
+and [TEST live rules planner](docs/energy-optimisation/test-live-rules-planner-2026-10-08.md).
+Dev/TEST runs the rules planner; production `main` keeps the earlier planner
+until dev is promoted.
+
 ## Replacement controller authority — 17 September 2026
 
 [Plan execution and deviation accounting](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/controller-plan-execution.md)
@@ -40,7 +59,8 @@ The server plans the longer horizon and delegates an executable policy to Home A
 | [Authoritative plan and truthful interfaces](docs/energy-optimisation/authoritative-plan-contract.md) | Current: one selected plan for both UIs and execution in every mode, price-release rebids, replan recommendations, measured state and impossible readings |
 | [Plan execution and deviation accounting](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/controller-plan-execution.md) | Current replacement: planner authority, measured debt/credit, authorised recovery, plan handover and acceptance evidence |
 | [Earlier executable economic policy](docs/energy-optimisation/controller-policy.md) | Superseded controller decision design retained for rationale and historical evidence |
-| [Server planner](docs/energy-optimisation/planner.md) | Joint scheduling, objective, storage value, uncertainty, delegated bid policy and solver claims |
+| [Planner score-card redesign](docs/energy-optimisation/planner-scorecard-redesign-2026-10.md) | Current planner objective: rule-based Rust/Wasm planner that maximises the planner-bench score card, with kronor as a tie-break |
+| [Earlier server planner](docs/energy-optimisation/planner.md) | Superseded cost-less-service-value objective, curves, bidding and solver claims; physical limits and control boundary apply where consistent with the redesign |
 | [Shared entities and reconciliation](docs/energy-optimisation/control-reconciliation.md) | Mode-owned control authority, external drift, transport/physical outcomes, automatic retry/reconciliation, handover and durable operation journal |
 | [Earlier unified control design](docs/energy-optimisation/reactive-controls.md) | Historical economic decision model; execution/authority requirements apply only where consistent with the replacement |
 | [Contracts and data](docs/energy-optimisation/contracts-and-data.md) | Ownership, snapshots, API versions, plan acceptance/expiry, provenance, and data boundaries |

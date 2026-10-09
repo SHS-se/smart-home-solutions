@@ -1,5 +1,12 @@
 # Energy optimisation — decision register
 
+## D10. Rule-based planner objective — 6–7 October 2026
+
+Settled: the [planner score-card redesign](docs/energy-optimisation/planner-scorecard-redesign-2026-10.md) replaces the curve-valued objective. The planner is a measurement-driven, rule-based planner in Rust/Wasm (`planner-core/`) that maximises the planner-bench score card (`planner-core/policy.json`, `supabase/functions/_shared/planner-wasm/rule-policy.ts`), with kronor as a tie-break. Cost-value curves and their UI, marginal-value bidding, auction and settlement passes, and the “Build a plan” editor are removed. This supersedes the editable-curve service decisions in D1 and D2 and the single cost-less-service-value objective in D3, including the [planner](docs/energy-optimisation/planner.md) v24 cap cited there. Physical/equipment protections and the remaining decisions stay in force where consistent.
+
+See the [rule-builder design](docs/energy-optimisation/rule-builder-design-2026-10.md), [rule-builder checkpoint](docs/energy-optimisation/rule-builder-checkpoint-2026-10.md), [Rust/Wasm checkpoint](docs/energy-optimisation/planner-wasm-checkpoint-2026-10.md) and [TEST live rules planner](docs/energy-optimisation/test-live-rules-planner-2026-10-08.md).
+Dev/TEST runs the rules planner; production `main` keeps the earlier planner until dev is promoted.
+
 ## D9. Participation ownership and explicit battery supply — 15 September 2026
 
 Settled: HA Devices owns Included/Excluded; the website owns Monitoring/Planned; HA Schedule shows only Planned equipment in Verification (default) or Controlling. Exclusion removes future device-specific metadata as well as readings. Grey is gross base consumption, with omitted Planned series kept in Other planned devices. Battery intent explicitly selects None, Whole house, Base, Selected Planned devices, or Base+selected, using measured eligible demand and future-cost ranking. Solar is shared proportionally across gross consumption, with the selected scope receiving its share of self-consumed PV; no automatic max-discharge rule or new fallback is authorized. This supersedes the earlier review treating beneficiary accounting as optional/outside scope.

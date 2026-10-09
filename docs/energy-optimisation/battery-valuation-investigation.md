@@ -10,6 +10,8 @@ Documentation only; replacement implementation and coordinated rollout remain pe
 Historical experiment, not a competing current specification or current unresolved
 questionnaire. Preserve its capsule arithmetic and limitations; subsequent decisions
 and implementation are in the [planner](planner.md) and [decision register](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md).
+Their curve-valued objective was superseded on 6–7 October 2026 by the
+[planner score-card redesign](planner-scorecard-redesign-2026-10.md).
 
 Source: the household's `plan-2026-09-06-16-30.json` workbench export, captured at 16:30 UTC on 6 September. It contains 288 quarters, EV and battery stores, and both planner and manual schedules. The pool is absent from this export.
 

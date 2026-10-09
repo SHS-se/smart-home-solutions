@@ -1,5 +1,28 @@
 # Server planner
 
+> **Objective superseded — 6–7 October 2026.**
+> The [planner score-card redesign](planner-scorecard-redesign-2026-10.md)
+> replaces the objective below. The planner no longer minimises whole-home cost
+> less service value. It is a measurement-driven, rule-based planner in Rust/Wasm
+> (`planner-core/`). It maximises the planner-bench score card
+> (`planner-core/policy.json`, `supabase/functions/_shared/planner-wasm/rule-policy.ts`)
+> and uses kronor (cash plus wear) only to break ties. Cost-value curves and
+> their UI, marginal-value bidding and the auction, settlement and refinement
+> passes, and the “Build a plan” editor are removed. This supersedes
+> “Objective, units, and commitments”, “Cost and continuity policy (v24)”,
+> “Heat-pump run settlement (v26)”, the curve and continuation valuation in
+> “Storage value and uncertainty”, “Solver claims and status”, the curve evidence
+> in “Decision evidence”, “Fixed plans from the workbench”, and the
+> auction, bid and response-ranking parts of the later sections. See the
+> [rule-builder design](rule-builder-design-2026-10.md),
+> [rule-builder checkpoint](rule-builder-checkpoint-2026-10.md),
+> [Rust/Wasm checkpoint](planner-wasm-checkpoint-2026-10.md) and
+> [TEST live rules planner](test-live-rules-planner-2026-10-08.md). Physical and
+> equipment limits, local protections and the server/HA control boundary still
+> apply where they are consistent with those documents. Dev/TEST runs the rules
+> planner; production `main` keeps the earlier planner until dev is promoted.
+> The content below is kept as a historical record.
+
 > **Execution contract update — 17 September 2026.**
 > [Plan execution and deviation accounting](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/controller-plan-execution.md)
 > replaces the delegated economic-controller requirements below. The planner must

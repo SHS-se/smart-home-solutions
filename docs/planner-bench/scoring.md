@@ -154,7 +154,7 @@ Solar/base-load series and outdoor temperature are shared bench inputs. Where th
 
 Room heating, hot water, pool season/closure, EV arrivals/departures, manual overrides, actuator failures, subquarter PV spikes, uncertainty/risk reserves, actual demand tariffs, and real controller response need explicit test inputs/models before they can receive scores. Equipment start costs, native heater run protection and charger current quantization are not established by the quarter-average referee. “Feasible” here means feasible in the documented bench model, not a certification of controller execution.
 
-The wider condition matrix in [models and delivery](../energy-optimisation/history/models-and-delivery.md#legacy-section-10.2) remains a source of scenarios. Current [planner requirements](../energy-optimisation/planner.md) and [constraint requirements](../energy-optimisation/constraint-requirements.md) take precedence over superseded historical assumptions.
+The wider condition matrix in [models and delivery](../energy-optimisation/history/models-and-delivery.md#legacy-section-10.2) remains a source of scenarios. The [planner score-card redesign](../energy-optimisation/planner-scorecard-redesign-2026-10.md) (6–7 October 2026) and [constraint requirements](../energy-optimisation/constraint-requirements.md) take precedence over superseded historical assumptions. The cost-less-service-value objective in the earlier [server planner](../energy-optimisation/planner.md) is superseded.
 
 ## Rescoring
 
