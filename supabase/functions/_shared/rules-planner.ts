@@ -1,4 +1,5 @@
-import { localMonths } from "./planner-wasm/calendar.ts";
+import { demandLevel } from "./planner/demand-outlook.ts";
+import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
  * This boundary has no database, history, source fetching or model fitting API.
  */
@@ -217,7 +218,10 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const spreads = snapshot.slots.flatMap(s => s.import_price_sek_per_kwh === null || s.export_price_sek_per_kwh === null ? [] : [s.import_price_sek_per_kwh - s.export_price_sek_per_kwh]).sort((a, b) => a - b);
   if (!spreads.length && snapshot.slots.some(s => s.export_price_sek_per_kwh === null)) return fail("Resolved export forecast needs a published tariff spread");
   const spread = spreads[Math.floor(spreads.length / 2)] ?? 0;
-  const baseW = snapshot.slots.map(s => s.base_load_forecast_w);
+  // Reuse the same matured-home level correction as the main planner. No
+  // demand margin or future measured load enters the prepared forecast.
+  const level = demandLevel(snapshot.demand_outlook?.days, localDay(snapshot.captured_at, snapshot.timezone));
+  const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
     abi: 6, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),

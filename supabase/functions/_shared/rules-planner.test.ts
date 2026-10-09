@@ -213,3 +213,27 @@ Deno.test("schema9 without optional execution feedback publishes native authorit
   assertEquals(result.plan.battery_value_curve, null);
   assertEquals(result.plan.resolved_value_stores, []);
 });
+
+Deno.test("rules preparation levels only base load from matured evidence at local capture", () => {
+  const s = snapshot();
+  // UTC is still yesterday, but local Stockholm capture is already August 10.
+  s.timezone = "Europe/Stockholm";
+  s.captured_at = "2026-08-09T22:30:00Z";
+  s.slots = s.slots.map((slot, i) => ({ ...slot, start: new Date(Date.parse(s.captured_at) + i * 900000).toISOString() }));
+  const days = Array.from({ length: 5 }, (_, i) => ({
+    day: `2026-08-0${9-i}`, forecast_kwh: 20, actual_kwh: 24,
+  }));
+  s.demand_outlook = { days };
+  s.device_models.push({ key: "fridge", name: "Fridge", statistic_id: "fridge", category: "other",
+    suggested_load_type: "duty_cycle", load_type: "duty_cycle", planning_role: "controllable", control_type: "permit_inhibit",
+    active_power_w: 300, profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => 120) });
+  const before = JSON.stringify(s);
+  const p = prepare(s, null, "2026-08-12T00:00:00Z");
+  assert(p.base_w[0] > s.slots[0].base_load_forecast_w * 1.15);
+  assert(p.base_w[0] < s.slots[0].base_load_forecast_w * 1.2);
+  assertEquals(p.problem.slots[0].base_w, p.base_w[0] + 120);
+  assertEquals(JSON.stringify(s), before);
+  s.demand_outlook.days.push({ day: "2026-08-10", forecast_kwh: 20, actual_kwh: 1000 },
+    { day: "2026-08-11", forecast_kwh: 20, actual_kwh: 1000 });
+  assertEquals(prepare(s).base_w, p.base_w);
+});

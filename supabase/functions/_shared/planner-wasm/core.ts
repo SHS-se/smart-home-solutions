@@ -65,7 +65,6 @@ export const solveOutcome = z.discriminatedUnion("kind", [
         credit_sek: z.number().finite(),
         contributions: z.number().int().array().array(),
       }),
-      objective_sek: z.number().finite(),
       work_used: z.number().int().nonnegative(),
       evaluations: z.number().int().nonnegative(),
       termination: z.enum(["grant_exhausted", "bounded_complete"]),

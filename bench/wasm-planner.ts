@@ -1,4 +1,5 @@
-import { localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
+import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
+import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Fixture publisher and adapter for the nonpublishing candidate. No observed
@@ -29,7 +30,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v6";
+export const READY_PRODUCER_VERSION = "bench-ready-v7";
 
 /** This runs as forecast preparation, outside solve; production will consume ready artifacts. */
 export function readyProblem(
@@ -40,6 +41,7 @@ export function readyProblem(
 ): ReadyProblem {
   const starts = quarterStarts(c.start);
   const months = localMonths(starts, c.timezone);
+  const level = demandLevel(c.recorded.history.demand_days, localDay(c.start, c.timezone));
   const priceRows = c.recorded.history.prices.import_sek_per_kwh.flatMap((
     price,
     i,
@@ -87,7 +89,7 @@ export function readyProblem(
       local_month: months[i],
       start_seconds: i * 900,
       hours: 0.25,
-      base_w: c.base_load_forecast_w[i],
+      base_w: c.base_load_forecast_w[i] * (level?.factor ?? 1),
       solar_w: c.solar_forecast_w[i],
       // The bench gives all planners this measured weather as a perfect forecast.
       outdoor_c: c.recorded.outdoor_temperature_c[i],

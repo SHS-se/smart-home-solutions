@@ -76,7 +76,7 @@ Deno.test("a cheap opening is still used at once for charging", () => {
 });
 
 function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
-  const p = problem();
+  const p: ReadyProblem = problem();
   p.battery = null;
   p.initial.battery_kwh = null;
   if (!ev) {
@@ -671,4 +671,21 @@ Deno.test("native frozen-event credit matches independent replay across restarts
       assertEquals(independent.thermalBuffer![282].earns, false);
     } else assertEquals(independent.counts.pool_buffer, undefined);
   }
+});
+
+Deno.test("bench ready input levels demand from prior days and excludes future outcomes", () => {
+  const c = causalCase();
+  c.start = "2026-08-09T22:30:00Z";
+  c.timezone = "Europe/Stockholm";
+  c.recorded.history.demand_days = Array.from({ length: 5 }, (_, i) => ({
+    day: `2026-08-0${9-i}`, forecast_kwh: 20, actual_kwh: 24,
+  }));
+  const before = structuredClone(c);
+  const ready = readyProblem(c, HOUSEHOLD);
+  assert(ready.slots[0].base_w > c.base_load_forecast_w[0] * 1.15);
+  assert(ready.slots[0].base_w < c.base_load_forecast_w[0] * 1.2);
+  assertEquals(c, before);
+  c.recorded.history.demand_days.push({ day: "2026-08-10", forecast_kwh: 20, actual_kwh: 1000 });
+  c.recorded.actual = { base_load_w: c.base_load_forecast_w.map(() => 100000), solar_w: c.solar_forecast_w.map(() => 0) };
+  assertEquals(readyProblem(c, HOUSEHOLD).slots, ready.slots);
 });

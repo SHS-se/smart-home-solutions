@@ -1,4 +1,4 @@
-use crate::physics::{self, projected_hours};
+use crate::physics::projected_hours;
 use crate::*;
 
 #[derive(Clone)]
@@ -274,48 +274,6 @@ impl Account {
     pub(crate) fn rescore(&mut self) {
         self.score_sek = f64::from(self.points) - (self.cash_sek + self.wear_sek - self.credit_sek);
     }
-}
-/// The days a plan is judged on beside its forecast: the household's own load
-/// a quarter heavier with a quarter less sun, and the reverse. A forecast is
-/// never the day that comes, and a plan is carried out as booked: a battery
-/// charged for exactly the forecast runs dry on a heavier day, at that hour's
-/// price. A plan that only pays on its forecast is not preferred to one that
-/// pays either way.
-pub(crate) const STRESS_DAYS: [physics::Day; 2] = [
-    physics::Day {
-        base: 1.25,
-        solar: 0.75,
-    },
-    physics::Day {
-        base: 0.75,
-        solar: 1.25,
-    },
-];
-/// The share of a plan's objective judged on the stress days; the rest on its forecast.
-pub(crate) const STRESS_WEIGHT: f64 = 0.5;
-/// What the search maximises: the plan's score, with the stressed share of its
-/// bill taken as the mean of the stress days'. A plan's deductions and what its
-/// pool and car hold are its forecast's on every day; its grid cost, battery
-/// wear and what its battery ends with are each day's own.
-pub(crate) fn objective(
-    p: &Problem,
-    account: &Account,
-    commands: &[Command],
-    q: &[Quarter],
-) -> f64 {
-    let Some(end) = q.last().and_then(|v| v.battery_kwh) else {
-        return account.score_sek;
-    };
-    let forecast = account.cash_sek + account.wear_sek - battery_credit(p, end);
-    let stressed = STRESS_DAYS
-        .iter()
-        .map(|day| {
-            let (cost, end) = physics::carried(p, commands, q, *day);
-            cost - battery_credit(p, end)
-        })
-        .sum::<f64>()
-        / STRESS_DAYS.len() as f64;
-    account.score_sek - STRESS_WEIGHT * (stressed - forecast)
 }
 /// What the battery is credited for ending where it does.
 pub(crate) fn battery_credit(p: &Problem, end_kwh: f64) -> f64 {

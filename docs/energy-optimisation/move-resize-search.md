@@ -1,3 +1,5 @@
+> Superseded on 9 October for battery scheduling and selection: see [whole-horizon battery allocation](battery-schedule-search.md). The guessed stress objective below has been removed at the user’s request; selection uses the supplied forecast score. Pool/EV span edits remain.
+
 # Points-first move-and-resize trials
 
 > **Changed 9 October 2026 (recipe `rule-forecast-opportunity-v4`).** The sections below record the original design, in which a trial was previewed against a bound and a shortlist was then given the full witness audit. That is no longer how a trial is judged:

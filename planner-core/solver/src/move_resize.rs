@@ -6,45 +6,30 @@ use std::collections::BTreeSet;
 pub(crate) enum Device {
     Pool,
     Ev,
-    Battery,
 }
 impl Device {
     fn active(self, c: &Command) -> bool {
         match self {
             Self::Pool => c.pool_on,
             Self::Ev => c.ev_amps > 0,
-            Self::Battery => c.battery == Operation::GridCharge,
         }
     }
     fn same(self, a: &Command, b: &Command) -> bool {
         match self {
             Self::Pool => a.pool_on == b.pool_on,
             Self::Ev => a.ev_amps == b.ev_amps,
-            Self::Battery => {
-                a.battery == b.battery
-                    && a.charge_limit_w == b.charge_limit_w
-                    && a.discharge_limit_w == b.discharge_limit_w
-            }
         }
     }
     fn clear(self, c: &mut Command) {
         match self {
             Self::Pool => c.pool_on = false,
             Self::Ev => c.ev_amps = 0,
-            Self::Battery => {
-                c.battery = Operation::SelfConsumption;
-            }
         }
     }
     fn copy(self, to: &mut Command, from: &Command) {
         match self {
             Self::Pool => to.pool_on = from.pool_on,
             Self::Ev => to.ev_amps = from.ev_amps,
-            Self::Battery => {
-                to.battery = from.battery;
-                to.charge_limit_w = from.charge_limit_w;
-                to.discharge_limit_w = from.discharge_limit_w;
-            }
         }
     }
 }
@@ -117,17 +102,11 @@ impl Estimate {
             let own = match device {
                 Device::Pool => v.pool_w,
                 Device::Ev => v.ev_w,
-                Device::Battery => v.charge_w,
             };
             // Sun the export limit curtails is free; exported sun is worth its
-            // sale price; the rest is bought. A charge also ends a discharge.
+            // sale price; the rest is bought.
             let surplus = (-v.net_w).max(0.0);
-            let extra = watts
-                + if device == Device::Battery {
-                    v.discharge_w
-                } else {
-                    0.0
-                };
+            let extra = watts;
             let unpaid = (extra - v.curtailed_w).max(0.0);
             let add =
                 unpaid.min(surplus) * s.export_price + (unpaid - surplus).max(0.0) * s.import_price;
@@ -145,7 +124,6 @@ impl Estimate {
         let (term, end) = match device {
             Device::Pool => (&p.end_credit.pool, q.last().and_then(|v| v.pool_c)),
             Device::Ev => (&p.end_credit.ev, q.last().and_then(|v| v.ev_kwh)),
-            Device::Battery => (&p.end_credit.battery, q.last().and_then(|v| v.battery_kwh)),
         };
         if term.as_ref().zip(end).is_some_and(|(t, end)| end < t.cap) {
             out.stored = p.end_credit.reference_sek_per_kwh;
@@ -201,7 +179,7 @@ pub(crate) fn proposals(
 ) -> Option<Vec<Edit>> {
     let n = commands.len();
     let mut sources = Vec::new();
-    for device in [Device::Pool, Device::Ev, Device::Battery] {
+    for device in [Device::Pool, Device::Ev] {
         let mut i = 0;
         while i < n {
             if physics::locked(p, i) || !device.active(&commands[i]) {
@@ -232,7 +210,6 @@ pub(crate) fn proposals(
             Device::Ev => p.charger.as_ref().map_or(0.0, |h| {
                 c.ev_amps as f64 * h.voltage_v * h.phase_count as f64
             }),
-            Device::Battery => c.charge_limit_w,
         };
         let points: Vec<i32> = (0..n).map(|i| tariff_points(p, index, i, watts)).collect();
         let estimate = Estimate::new(p, index, device, watts, quarters);
@@ -470,18 +447,5 @@ mod tests {
         assert_eq!(ev[6].ev_amps, 0);
         assert_eq!(ev[2].ev_amps, 7);
         assert_eq!(ev[6].pool_on, base[6].pool_on);
-        let mut charging = base.clone();
-        charging[6].battery = Operation::GridCharge;
-        let battery = Edit {
-            device: Device::Battery,
-            from: 6,
-            to: 7,
-            start: 2,
-            end: 4,
-        }
-        .apply(&charging);
-        assert_eq!(battery[6].battery, Operation::SelfConsumption);
-        assert_eq!(battery[2].battery, Operation::GridCharge);
-        assert_eq!(battery[6].pool_on, charging[6].pool_on);
     }
 }

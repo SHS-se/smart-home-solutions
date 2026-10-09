@@ -29,12 +29,10 @@ struct Candidate {
     account: Account,
     /// The certificates its account rests on (`witnesses::Scope::Scored`).
     audit: WitnessAudit,
-    /// What the search maximises (`policy::objective`).
-    objective: f64,
 }
 impl Candidate {
     fn better(&self, than: &Candidate) -> bool {
-        self.objective > than.objective + policy::MIN_GAIN_SEK
+        self.account.score_sek > than.account.score_sek + policy::MIN_GAIN_SEK
     }
 }
 
@@ -540,17 +538,11 @@ fn score(
     if audit.fires() {
         policy::witnessed(p, &mut account, &audit, &quarters, index);
     }
-    // The stress days cost a fraction of a projection: battery and grid only.
-    if !work.spend(n * work.unit_cost / 2) {
-        return Err(EvaluationIssue::GrantUnavailable);
-    }
-    let objective = policy::objective(p, &account, &commands, &quarters);
     Ok(Candidate {
         commands,
         quarters,
         account,
         audit,
-        objective,
     })
 }
 /// A proposal made from `base`, carried onto a plan that has since moved on.
@@ -607,10 +599,10 @@ fn adopt(
         scored += 1;
         match score(p, index, commands, work) {
             Ok(c) if c.better(best) => {
-                improving.push((c.objective, k));
+                improving.push((c.account.score_sek, k));
                 if leader
                     .as_ref()
-                    .is_none_or(|(_, l)| c.objective > l.objective)
+                    .is_none_or(|(_, l)| c.account.score_sek > l.account.score_sek)
                 {
                     leader = Some((k, c));
                 }
@@ -663,27 +655,33 @@ fn improve(
     if p.recipe.repair_trials == 0 {
         return (best, None);
     }
+    let mut battery_dirty = true;
     loop {
         loop {
-            // The battery's commands on their own first: they are cheap to
-            // judge, and every span edit is then scored beside a battery
-            // that already does its best.
-            let mut gained = false;
-            if let Some(commands) =
-                battery_modes::improve(p, index, &best.commands, &best.quarters, work)
-            {
-                match score(p, index, commands, work) {
-                    Ok(c) if c.better(&best) => {
-                        best = c;
-                        gained = true;
-                    }
-                    Ok(_) | Err(EvaluationIssue::Infeasible) => {}
-                    Err(EvaluationIssue::GrantUnavailable) => {
-                        *declined = true;
-                        break;
+            // A whole-horizon battery allocation before appliance edits, then
+            // once more when an adopted appliance schedule changes its draw.
+            if battery_dirty {
+                if let Some(commands) =
+                    battery_schedule::propose(p, index, &best.commands, &best.quarters, work)
+                {
+                    match score(p, index, commands, work) {
+                        Ok(c) if c.better(&best) => best = c,
+                        Ok(_) | Err(EvaluationIssue::Infeasible) => {}
+                        Err(EvaluationIssue::GrantUnavailable) => {
+                            *declined = true;
+                            break;
+                        }
                     }
                 }
             }
+            if *declined {
+                break;
+            }
+            let appliance_before: Vec<_> = best
+                .commands
+                .iter()
+                .map(|c| (c.pool_on, c.ev_amps))
+                .collect();
             let Some(edits) =
                 move_resize::proposals(p, index, &best.commands, &best.quarters, work)
             else {
@@ -703,7 +701,12 @@ fn improve(
             );
             work.move_resize_trials += scored;
             work.move_resize_improvements += adopted;
-            if (adopted == 0 && !gained) || *declined {
+            battery_dirty = best
+                .commands
+                .iter()
+                .zip(&appliance_before)
+                .any(|(c, before)| (c.pool_on, c.ev_amps) != *before);
+            if adopted == 0 || *declined {
                 break;
             }
         }
@@ -733,6 +736,7 @@ fn improve(
             declined,
         );
         work.repairs += scored;
+        battery_dirty = adopted > 0;
         if adopted == 0 {
             return (best, Some(audit));
         }
@@ -909,7 +913,6 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         commands: best.commands,
         quarters: certified,
         account,
-        objective_sek: best.objective,
         work_used: work.used,
         evaluations: work.evaluations,
         termination,
@@ -949,11 +952,7 @@ mod move_resize_tests {
     }
     #[test]
     fn complete_points_trials_move_and_lengthen_each_flexible_device_despite_higher_cash() {
-        for device in [
-            move_resize::Device::Pool,
-            move_resize::Device::Ev,
-            move_resize::Device::Battery,
-        ] {
+        for device in [move_resize::Device::Pool, move_resize::Device::Ev] {
             let mut p = witnesses::tests::problem(24);
             p.recipe.repair_trials = 4;
             p.initial.heater_state = Some(HeaterState::Off { seconds: 0.0 });
@@ -982,17 +981,13 @@ mod move_resize_tests {
             match device {
                 move_resize::Device::Pool => commands[18].pool_on = true,
                 move_resize::Device::Ev => commands[18].ev_amps = 6,
-                move_resize::Device::Battery => commands[18].battery = Operation::GridCharge,
             }
             // The pool's and the car's spans are tested without a battery,
             // which could take the cheap quarters' reward in their place.
-            if device != move_resize::Device::Battery {
-                p.battery = None;
-                p.initial.battery_kwh = None;
-                for c in &mut commands {
-                    (c.battery, c.charge_limit_w, c.discharge_limit_w) =
-                        (Operation::Idle, 0.0, 0.0);
-                }
+            p.battery = None;
+            p.initial.battery_kwh = None;
+            for c in &mut commands {
+                (c.battery, c.charge_limit_w, c.discharge_limit_w) = (Operation::Idle, 0.0, 0.0);
             }
             // An accepted prefix cannot be moved, resized or overwritten.
             p.accepted = Some(commands[..4].to_vec());
@@ -1014,9 +1009,7 @@ mod move_resize_tests {
                     && after.commands[18].ev_amps == 0
                     && after.commands[18].battery != Operation::GridCharge
             );
-            // The battery's own commands are searched before any span: its
-            // charge may reach the cheap quarters without a span edit.
-            assert!(device == move_resize::Device::Battery || work.move_resize_improvements > 0);
+            assert!(work.move_resize_improvements > 0);
             if device == move_resize::Device::Pool {
                 let rows = policy::account(&p, &after.quarters, &index).contributions;
                 assert_eq!(rows[4][1], -2);
