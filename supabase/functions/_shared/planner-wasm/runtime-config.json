@@ -1,7 +1,7 @@
 {
   "recipe": {
-    "version": "rule-forecast-opportunity-v4",
-    "work_grant": 700000000,
+    "version": "rule-forecast-opportunity-v5",
+    "work_grant": 760000000,
     "beam_width": 16,
     "max_actions": 32,
     "finalists": 4,
@@ -10,10 +10,10 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v7",
+    "version": "kronor-score-v8",
     "qualification": "test_live_candidate",
     "ordering": [
-      "score_sek"
+      "objective_sek"
     ],
     "score": "rule_points_minus_cash_minus_discharge_wear_plus_capped_end_store_credit",
     "direct_rules": [
@@ -64,6 +64,22 @@
       },
       "owner": "supabase/functions/_shared/planner-wasm/end-credit.ts"
     },
-    "coverage": "bounded_causal_certificates_with_reported_exhaustion"
+    "coverage": "bounded_causal_certificates_with_reported_exhaustion",
+    "objective": "score_with_half_its_bill_as_the_mean_of_the_stress_days",
+    "forecast_stress": {
+      "weight": 0.5,
+      "days": [
+        {
+          "base_load": 1.25,
+          "solar": 0.75
+        },
+        {
+          "base_load": 0.75,
+          "solar": 1.25
+        }
+      ],
+      "carried": "battery_follows_the_house_within_its_limits_grid_charge_and_sale_at_booked_power",
+      "owner": "planner-core/solver/src/policy.rs"
+    }
   }
 }

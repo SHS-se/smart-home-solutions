@@ -22,7 +22,8 @@ deno task test
 `models` owns pure device transitions. `solver/physics.rs` owns coupled
 projection, `policy.rs` owns additive measurements, `opportunity.rs` owns
 forecast continuation values used only for construction guidance,
-`witnesses.rs` owns feasible alternatives, and `builder.rs` owns bounded joint
+`witnesses.rs` owns feasible alternatives, `battery_modes.rs` owns the search of
+the battery's commands on their own, and `builder.rs` owns bounded joint
 construction and repairs. The TypeScript wrapper passes one prepared
 problem through one Wasm call. Each invocation has private mutable memory.
 Neither crate has database, history, forecast-fetching or training dependencies.

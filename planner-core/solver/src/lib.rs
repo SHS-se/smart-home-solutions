@@ -1,4 +1,5 @@
 //! One complete causal rule-led solve. No persistence, history or external I/O.
+mod battery_modes;
 mod builder;
 mod move_resize;
 mod opportunity;
@@ -189,7 +190,11 @@ pub struct Account {
 pub struct Selection {
     pub commands: Vec<Command>,
     pub quarters: Vec<Quarter>,
+    /// The plan's account on its forecast.
     pub account: Account,
+    /// What the search maximised: the account's score with half of its bill
+    /// taken on the stress days (`policy::objective`).
+    pub objective_sek: f64,
     pub work_used: u64,
     pub evaluations: u64,
     pub termination: &'static str,

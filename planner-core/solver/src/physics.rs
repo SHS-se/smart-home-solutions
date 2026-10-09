@@ -88,43 +88,14 @@ fn transition(
         0.0
     };
     let demand = s.base_w + pool_w + ev_w - s.solar_w;
-    let (charge, discharge) = if let Some(battery) = &p.battery {
-        let charge_cap = command
-            .charge_limit_w
-            .min(battery.available_charge_w(state.battery, hours));
-        let discharge_cap = command
-            .discharge_limit_w
-            .min(battery.available_discharge_w(state.battery, hours));
-        let solar = (-demand).max(0.0).min(charge_cap);
-        match command.battery {
-            Operation::Idle => (0.0, 0.0),
-            Operation::Hold | Operation::SolarCharge => (solar, 0.0),
-            Operation::SelfConsumption | Operation::SupplyHouse => {
-                (solar, demand.max(0.0).min(discharge_cap))
-            }
-            Operation::GridCharge => (charge_cap.min((p.limits.import_w - demand).max(0.0)), 0.0),
-            Operation::Export => {
-                if !p.limits.battery_export_enabled
-                    || (!external
-                        && !locked(p, i)
-                        && s.export_price < p.limits.battery_export_min_price)
-                {
-                    return Err("export_without_permission".into());
-                }
-                let reserve =
-                    (state.battery - p.limits.battery_export_reserve_kwh).max(0.0) * 1000.0 / hours
-                        * battery.discharge_efficiency;
-                (
-                    0.0,
-                    discharge_cap
-                        .min(reserve)
-                        .min((p.limits.export_w + demand).max(0.0)),
-                )
-            }
-        }
-    } else {
-        (0.0, 0.0)
-    };
+    if command.battery == Operation::Export
+        && p.battery.is_some()
+        && (!p.limits.battery_export_enabled
+            || (!external && !locked(p, i) && s.export_price < p.limits.battery_export_min_price))
+    {
+        return Err("export_without_permission".into());
+    }
+    let (charge, discharge) = battery_flows(p, command, demand, state.battery, hours, None);
     let physical_net = demand + charge - discharge;
     if physical_net > p.limits.import_w + 1e-7 {
         return Err("shared_grid_limit".into());
@@ -134,7 +105,7 @@ fn transition(
     if -net > p.limits.export_w + 1e-7 {
         return Err("shared_grid_limit".into());
     }
-    let cost = (net.max(0.0) * s.import_price - (-net).max(0.0) * s.export_price) * hours / 1000.0;
+    let cost = grid_cost(s, net, hours);
     // Wear is declared on what the battery discharges, as the bench bills it.
     let wear = discharge * hours / 1000.0 * p.limits.wear_per_kwh;
     if let Some(h) = &pool {
@@ -171,18 +142,164 @@ fn transition(
         pool_start: pool.and_then(|h| h.start),
         cost,
         wear,
-        spare_battery_cover_w: p.battery.as_ref().map_or(0.0, |battery| {
-            if charge > 0.0 {
-                0.0
-            } else {
-                (battery.discharge_max_w - discharge).max(0.0).min(
-                    (state.battery - battery.min_soc * battery.capacity_kwh).max(0.0) * 1000.0
-                        / hours
-                        * battery.discharge_efficiency,
-                )
-            }
-        }),
+        spare_battery_cover_w: spare_cover(p, charge, discharge, state.battery, hours),
     })
+}
+/// What the battery could still have given the house in a quarter, W: none
+/// while it charges, else its spare power as far as what it holds afterwards.
+pub(crate) fn spare_cover(
+    p: &Problem,
+    charge: f64,
+    discharge: f64,
+    battery_kwh: f64,
+    hours: f64,
+) -> f64 {
+    p.battery.as_ref().map_or(0.0, |battery| {
+        if charge > 0.0 {
+            0.0
+        } else {
+            (battery.discharge_max_w - discharge).max(0.0).min(
+                (battery_kwh - battery.min_soc * battery.capacity_kwh).max(0.0) * 1000.0 / hours
+                    * battery.discharge_efficiency,
+            )
+        }
+    })
+}
+
+/// What the battery does in a quarter for a house asking `demand` W of it and
+/// the grid. A projection decides a grid charge or a sale by the command's own
+/// limits. On another day each runs at the power the plan `booked`, as far as
+/// the pack can take or give it: a plan books a power, not a level to reach.
+pub(crate) fn battery_flows(
+    p: &Problem,
+    command: &Command,
+    demand: f64,
+    battery_kwh: f64,
+    hours: f64,
+    booked: Option<(f64, f64)>,
+) -> (f64, f64) {
+    let Some(battery) = &p.battery else {
+        return (0.0, 0.0);
+    };
+    let room = battery.available_charge_w(battery_kwh, hours);
+    let stored = battery.available_discharge_w(battery_kwh, hours);
+    let charge_cap = command.charge_limit_w.min(room);
+    let discharge_cap = command.discharge_limit_w.min(stored);
+    let solar = (-demand).max(0.0).min(charge_cap);
+    match command.battery {
+        Operation::Idle => (0.0, 0.0),
+        Operation::Hold | Operation::SolarCharge => (solar, 0.0),
+        Operation::SelfConsumption | Operation::SupplyHouse => {
+            (solar, demand.max(0.0).min(discharge_cap))
+        }
+        Operation::GridCharge => (
+            booked
+                .map_or(charge_cap, |(charge, _)| charge.min(room))
+                .min((p.limits.import_w - demand).max(0.0)),
+            0.0,
+        ),
+        Operation::Export => {
+            let power = booked.map_or_else(
+                || {
+                    let reserve = (battery_kwh - p.limits.battery_export_reserve_kwh).max(0.0)
+                        * 1000.0
+                        / hours
+                        * battery.discharge_efficiency;
+                    discharge_cap.min(reserve)
+                },
+                |(_, discharge)| discharge.min(stored),
+            );
+            (0.0, power.min((p.limits.export_w + demand).max(0.0)))
+        }
+    }
+}
+fn grid_cost(s: &Slot, net: f64, hours: f64) -> f64 {
+    (net.max(0.0) * s.import_price - (-net).max(0.0) * s.export_price) * hours / 1000.0
+}
+
+/// A day that differs from its forecast: the household's own load and the sun,
+/// each scaled.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Day {
+    pub base: f64,
+    pub solar: f64,
+}
+impl Day {
+    pub(crate) const FORECAST: Day = Day {
+        base: 1.0,
+        solar: 1.0,
+    };
+    /// What the house asks of the battery and the grid in a quarter of this
+    /// day, and its sun. The pool and the car draw what the plan projected:
+    /// what they are booked does not depend on the rest of the house.
+    pub(crate) fn demand(self, s: &Slot, planned: &Quarter) -> (f64, f64) {
+        let solar_w = s.solar_w * self.solar;
+        (
+            s.base_w * self.base + planned.pool_w + planned.ev_w - solar_w,
+            solar_w,
+        )
+    }
+}
+/// The battery and the grid in one quarter of a carried plan.
+pub(crate) struct CarriedQuarter {
+    pub charge: f64,
+    pub discharge: f64,
+    pub net: f64,
+    pub curtailed: f64,
+    /// Grid cost and battery wear.
+    pub cost: f64,
+    pub battery_kwh: f64,
+}
+/// One quarter of a plan carried through a day: the battery does what its
+/// command permits for the house there is (`battery_flows`), and the grid
+/// takes the rest.
+pub(crate) fn carry(
+    p: &Problem,
+    s: &Slot,
+    command: &Command,
+    (demand, solar_w): (f64, f64),
+    battery_kwh: f64,
+    booked: Option<(f64, f64)>,
+) -> CarriedQuarter {
+    let hours = projected_hours(s);
+    let (charge, discharge) = battery_flows(p, command, demand, battery_kwh, hours, booked);
+    let physical_net = demand + charge - discharge;
+    let curtailed = (-physical_net - p.limits.export_w).max(0.0).min(solar_w);
+    let net = physical_net + curtailed;
+    CarriedQuarter {
+        charge,
+        discharge,
+        net,
+        curtailed,
+        cost: grid_cost(s, net, hours) + discharge * hours / 1000.0 * p.limits.wear_per_kwh,
+        battery_kwh: p.battery.as_ref().map_or(battery_kwh, |battery| {
+            battery.step(battery_kwh, charge, discharge, hours)
+        }),
+    }
+}
+/// A projected plan's bill on a day that differs from its forecast, and where
+/// its battery ends: grid cost and wear, each quarter carried as booked.
+pub(crate) fn carried(
+    p: &Problem,
+    commands: &[Command],
+    planned: &[Quarter],
+    day: Day,
+) -> (f64, f64) {
+    let mut battery_kwh = p.initial.battery_kwh.unwrap_or(0.0);
+    let mut cost = 0.0;
+    for ((s, c), q) in p.slots.iter().zip(commands).zip(planned) {
+        let quarter = carry(
+            p,
+            s,
+            c,
+            day.demand(s, q),
+            battery_kwh,
+            Some((q.charge_w, q.discharge_w)),
+        );
+        cost += quarter.cost;
+        battery_kwh = quarter.battery_kwh;
+    }
+    (cost, battery_kwh)
 }
 
 pub(crate) fn projection(p: &Problem, commands: &[Command]) -> Result<Vec<Quarter>, String> {

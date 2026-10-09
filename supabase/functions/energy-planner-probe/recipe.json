@@ -1,6 +1,6 @@
 {
-  "version": "rule-forecast-opportunity-v4",
-  "work_grant": 700000000,
+  "version": "rule-forecast-opportunity-v5",
+  "work_grant": 760000000,
   "beam_width": 16,
   "max_actions": 32,
   "finalists": 4,

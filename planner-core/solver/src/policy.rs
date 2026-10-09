@@ -1,4 +1,4 @@
-use crate::physics::projected_hours;
+use crate::physics::{self, projected_hours};
 use crate::*;
 
 #[derive(Clone)]
@@ -269,14 +269,57 @@ pub(crate) fn restart_charged(p: &Problem, q: &[Quarter], to: usize) -> bool {
 }
 /// A thousandth of a krona separates two plans; less is rounding.
 pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
-pub(crate) fn better(a: &Account, b: &Account) -> bool {
-    a.score_sek > b.score_sek + MIN_GAIN_SEK
-}
 impl Account {
     /// The score from its parts, after any of them changed.
     pub(crate) fn rescore(&mut self) {
         self.score_sek = f64::from(self.points) - (self.cash_sek + self.wear_sek - self.credit_sek);
     }
+}
+/// The days a plan is judged on beside its forecast: the household's own load
+/// a quarter heavier with a quarter less sun, and the reverse. A forecast is
+/// never the day that comes, and a plan is carried out as booked: a battery
+/// charged for exactly the forecast runs dry on a heavier day, at that hour's
+/// price. A plan that only pays on its forecast is not preferred to one that
+/// pays either way.
+pub(crate) const STRESS_DAYS: [physics::Day; 2] = [
+    physics::Day {
+        base: 1.25,
+        solar: 0.75,
+    },
+    physics::Day {
+        base: 0.75,
+        solar: 1.25,
+    },
+];
+/// The share of a plan's objective judged on the stress days; the rest on its forecast.
+pub(crate) const STRESS_WEIGHT: f64 = 0.5;
+/// What the search maximises: the plan's score, with the stressed share of its
+/// bill taken as the mean of the stress days'. A plan's deductions and what its
+/// pool and car hold are its forecast's on every day; its grid cost, battery
+/// wear and what its battery ends with are each day's own.
+pub(crate) fn objective(
+    p: &Problem,
+    account: &Account,
+    commands: &[Command],
+    q: &[Quarter],
+) -> f64 {
+    let Some(end) = q.last().and_then(|v| v.battery_kwh) else {
+        return account.score_sek;
+    };
+    let forecast = account.cash_sek + account.wear_sek - battery_credit(p, end);
+    let stressed = STRESS_DAYS
+        .iter()
+        .map(|day| {
+            let (cost, end) = physics::carried(p, commands, q, *day);
+            cost - battery_credit(p, end)
+        })
+        .sum::<f64>()
+        / STRESS_DAYS.len() as f64;
+    account.score_sek - STRESS_WEIGHT * (stressed - forecast)
+}
+/// What the battery is credited for ending where it does.
+pub(crate) fn battery_credit(p: &Problem, end_kwh: f64) -> f64 {
+    store_credit(p, &p.end_credit.battery, p.initial.battery_kwh, end_kwh)
 }
 /// The level of a store that counts: no further than its cap.
 fn counted(start: f64, end: f64, cap: f64) -> f64 {
@@ -435,6 +478,27 @@ fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
     account
 }
 
+/// Home-battery power reaching the car, W: what is left of the discharge
+/// after exports, battery charging and the rest of the household.
+pub(crate) fn ev_battery_w(
+    base_w: f64,
+    pool_w: f64,
+    ev_w: f64,
+    charge_w: f64,
+    discharge_w: f64,
+    net_w: f64,
+) -> f64 {
+    let ev = measured(ev_w, 10.0);
+    let export = measured((-net_w).max(0.0), 10.0);
+    let load = measured(base_w + pool_w + ev_w, 10.0);
+    let house_battery = (measured(discharge_w, 10.0) - export).max(0.0);
+    measured(
+        (house_battery - measured(charge_w, 10.0) - (load - ev).max(0.0))
+            .max(0.0)
+            .min(ev),
+        10.0,
+    )
+}
 struct PoolScoring {
     earns_buffer: bool,
     before_c: f64,
@@ -514,17 +578,19 @@ fn raw_quarter(
             pool_w
         };
     let house_battery = (discharge - export).max(0.0);
+    let ev_battery = ev_battery_w(
+        s.base_w,
+        v.pool_w,
+        v.ev_w,
+        v.charge_w,
+        v.discharge_w,
+        v.net_w,
+    );
     let flexible_grid = measured((flexible - house_battery).max(0.0).min(imported), 10.0);
     let base_grid = measured(
         (imported - flexible_grid)
             .max(0.0)
             .min((load - pool_w - ev_w).max(0.0)),
-        10.0,
-    );
-    let ev_battery = measured(
-        (house_battery - charge - (load - ev_w).max(0.0))
-            .max(0.0)
-            .min(ev_w),
         10.0,
     );
     let spare = (v.spare_battery_cover_w * 10.0).floor() / 10.0;

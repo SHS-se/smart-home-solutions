@@ -9,6 +9,8 @@
 >
 > **Search changed later the same day (recipe `rule-forecast-opportunity-v4`, policy `kronor-score-v7`).** A candidate is scored from one projection of its commands. Since no economic certificate takes points, the audit of every family is no part of a score: it runs on the incumbent, as a source of proposals, and once more for the selected plan's report. Each proposal, a span edit or a certificate's repair, is scored exactly and adopted when it improves the score; the other improving proposals of the same pass are carried onto the new incumbent and re-scored. Only a rule that scores by certificate is audited per candidate (`witnesses::Scope::Scored`), and with the restart rule on none has anything to certify. The car-charging gap rule (`ev_short_gap`) is removed from the bench and the builder. See [move and resize](move-resize-search.md).
 >
+> **Objective changed 10 October 2026 (policy `kronor-score-v8`).** The search maximises the score with half of its bill taken on two stress days (load ±25 %, sun ∓25 %), each carried as booked, and the battery's commands are searched on their own (`battery_modes.rs`). The account a plan reports is still its forecast's. See the same note.
+>
 > On the eleven bench cases (real-price lane) the score went from −1,183 to −783, the grid bill from 1,494 to 1,346 kr, and the bench's proven avoidable cost from 207 to 73 kr. The text below describes the builder as first built; where it says points rank before cash, read the above.
 
 ## Problem
