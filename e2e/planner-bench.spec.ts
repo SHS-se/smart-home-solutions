@@ -16,7 +16,8 @@ import { storedScore } from '../src/lib/planner-bench/score';
 import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
-import { LANES } from '../src/lib/planner-bench/lanes';
+import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
+import { priceEstimates, summariseEstimates, type EstimateSeries } from '../src/lib/planner-bench/price-estimates';
 import { evaluate } from '../src/lib/planner-bench/evaluate';
 import { shortEvRestartFixture } from '../src/lib/planner-bench/world.fixture';
 
@@ -41,6 +42,34 @@ const CASES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Cheap night', captured_at: '2026-09-19T13:06:00Z' },
   { id: '22222222-2222-4222-8222-222222222222', name: 'Dear week', captured_at: '2026-09-24T07:25:00Z' },
 ];
+
+/**
+ * Three days of price estimates beside what the market then published: a day
+ * with a morning and an evening peak, estimated at another level and with a
+ * lower evening peak than it had.
+ */
+const PRICE_SERIES: EstimateSeries = (() => {
+  const day = (level: number, evening: number, from = 0, to = 96) => Array.from({ length: 96 }, (_, q) => q < from || q >= to ? null
+    : Math.round(level * (0.8 + 0.3 * Math.exp(-(((q - 32) / 8) ** 2)) + evening * Math.exp(-(((q - 74) / 9) ** 2))) * 1e4) / 1e4);
+  const estimate = (issued_on: string, target_day: string, basis: string, quarters: (number | null)[]) => ({
+    home_id: 'home', home_name: 'Test home', issued_on, issued_at: `${issued_on}T09:47:00Z`, target_day, basis, timezone: 'Europe/Stockholm', quarters,
+  });
+  return {
+    estimates: [
+      estimate('2026-10-01', '2026-10-02', 'recent_norm', day(1.0, 0.5)),
+      estimate('2026-10-01', '2026-10-03', 'recent_norm', day(1.1, 0.5)),
+      estimate('2026-10-02', '2026-10-04', 'wind', day(2.4, 0.5)),
+      estimate('2026-10-02', '2026-10-05', 'wind', day(1.6, 0.5, 0, 52)),
+      estimate('2026-10-03', '2026-10-05', 'wind', day(1.5, 0.5)),
+    ],
+    actuals: [
+      { home_id: 'home', day: '2026-10-01', quarters: day(1.3, 0.6) },
+      { home_id: 'home', day: '2026-10-02', quarters: day(2.0, 0.9) },
+      { home_id: 'home', day: '2026-10-03', quarters: day(1.6, 0.4) },
+      { home_id: 'home', day: '2026-10-04', quarters: day(1.9, 1.1) },
+    ],
+  };
+})();
 
 /** 72 hours of a plausible plan: night-cheap prices and one pool run. */
 function series(runStart: number, runQuarters: number): BenchSeries {
@@ -279,17 +308,8 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
     const request = route.request();
     const url = new URL(request.url());
     const table = url.pathname.split('/').pop() || '';
-    if (table === 'get_price_estimate_accuracy') {
-      const estimate = (issued_on: string, target_day: string, basis: string, estimated: number, actual: number | null) => ({
-        home_id: 'home', issued_on, target_day, lead_days: 2, basis,
-        quarters: 96, estimated_sek_per_kwh: estimated, actual_sek_per_kwh: actual, quarter_mae_sek_per_kwh: actual === null ? null : 0.4,
-      });
-      await route.fulfill({ json: [
-        estimate('2026-10-03', '2026-10-05', 'wind', 1.5, null),
-        estimate('2026-10-02', '2026-10-04', 'wind', 2.1, 1.9),
-        estimate('2026-10-01', '2026-10-03', 'wind', 1.2, 1.6),
-        estimate('2026-09-30', '2026-10-02', 'recent_norm', 1.0, 2.0),
-      ] });
+    if (table === 'get_price_estimate_series') {
+      await route.fulfill({ json: PRICE_SERIES });
       return;
     }
     if (request.method() !== 'GET') {
@@ -344,7 +364,7 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
     let resultRows = rows;
     if (table === 'bench_result_summaries') {
       if (manyResults) resultRows = [...Array.from({ length: 1200 }, (_, i) => ({
-        ...(rows[0] as Record<string, unknown>), lane: 'told/nominal', sha: `0${String(i).padStart(39, '0')}`,
+        ...(rows[0] as Record<string, unknown>), lane: BASE_LANE, sha: `0${String(i).padStart(39, '0')}`,
       })), ...rows];
       if (missingResult) resultRows = resultRows.filter(row => {
         const r = row as Record<string, unknown>;
@@ -498,16 +518,69 @@ test.describe('planner bench', () => {
     await explanation.screenshot({ path: test.info().outputPath('overlap-quarter-mobile.png') });
   });
 
-  test('shows staff how far the price estimate was from the published prices', async ({ context, page }) => {
+  test('explains each price estimate on its own tab: a chart against the real prices and a table of the same days', async ({ context, page }) => {
     await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
-    const card = page.getByTestId('price-estimate-accuracy');
-    // Two days ahead on wind: off by 0.2 and 0.4, and too low by 0.1 on average.
-    await expect(card.getByRole('row', { name: /^2 (wind|vind) 2 0\.30 -0\.10 0\.40$/ })).toBeVisible();
-    await expect(card.getByRole('row', { name: /^2 norm 1 1\.00 -1\.00 0\.40$/ })).toBeVisible();
-    // A day the market has not published yet waits, and is left out of the means.
-    await expect(card.getByRole('row', { name: /2026-10-05 2026-10-03 (wind|vind) 1\.50 – (waiting|väntar)/ })).toBeVisible();
+    // The bench tab carries no price estimate; the accuracy view has its own tab, kept in the URL.
+    await expect(page.getByTestId('price-estimate-accuracy')).toHaveCount(0);
+    await page.locator('#bench-tab-prices').click();
+    await expect(page).toHaveURL(/tab=prices/);
+    const view = page.getByTestId('price-estimate-accuracy');
+    const made = priceEstimates(PRICE_SERIES);
+    const two = (value: number) => value.toFixed(2);
+
+    // It opens on the newest estimate with a published day to judge it by: the second of three.
+    await expect(view.locator('#price-estimate-title')).toContainText(/2 (Oct|okt)/);
+    await expect(view.getByText(/^2 (of|av) 3$/)).toBeVisible();
+    await expect(view.locator('#price-estimate-chart #price-estimate-line')).toHaveAttribute('d', /M/);
+    await expect(view.locator('#price-estimate-chart #price-estimate-gap')).toHaveAttribute('d', /M/);
+    // The table lists exactly the days the chart marks a level for, with the figures drawn.
+    const rows = view.locator('#price-estimate-days tbody tr');
+    await expect(rows).toHaveCount(2);
+    await expect(view.locator('#price-estimate-chart [data-level]')).toHaveCount(2);
+    const [dayA, dayB] = made[1].days;
+    await expect(rows.nth(0)).toContainText(new RegExp(`${two(dayA.believed)}\\s*${two(dayA.was!)}\\s*[+-]${two(Math.abs(dayA.levelError!))}\\s*${two(dayA.quarterError!)}`));
+    await expect(view.locator('#price-estimate-chart')).toContainText(new RegExp(`(level error|nivåfel) [+-]${two(Math.abs(dayA.levelError!))}`));
+    // The plan's last day is estimated in part and not published yet: it waits.
+    await expect(rows.nth(1)).toContainText(new RegExp(`${dayB.quarters} (of|av) 96`));
+    await expect(rows.nth(1)).toContainText(/waiting|väntar/);
+    await expect(view.locator('#price-estimate-method')).toContainText(/wind forecast|vindprognosen/);
+    await view.screenshot({ path: test.info().outputPath('price-estimate-desktop.png') });
+    await page.screenshot({ path: test.info().outputPath('price-estimate-desktop-page.png') });
+
+    // Previous and next step through the days estimates were made on, by button or arrow key.
+    await view.locator('#price-estimate-previous').click();
+    await expect(view.locator('#price-estimate-title')).toContainText(/1 (Oct|okt)/);
+    await expect(page).toHaveURL(/estimate=2026-10-01/);
+    await expect(view.locator('#price-estimate-previous')).toBeDisabled();
+    await expect(view.locator('#price-estimate-method')).toContainText(/median/);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await expect(view.locator('#price-estimate-title')).toContainText(/3 (Oct|okt)/);
+    await expect(view.locator('#price-estimate-next')).toBeDisabled();
+    await expect(view.locator('#price-estimate-days tbody tr')).toHaveCount(1);
+
+    // Every estimate together: one day ahead on the norm, two days ahead on wind.
+    const summary = summariseEstimates(made);
+    const totals = view.locator('#price-estimate-summary tbody tr');
+    await expect(totals).toHaveCount(summary.length);
+    await expect(totals.nth(0)).toContainText(new RegExp(`${summary[0].days}\\s*${two(summary[0].levelError)}\\s*${two(summary[0].quarterError)}`));
+
+    // Hovering the chart reads one quarter-hour: real, estimate and the gap between them.
+    await view.locator('#price-estimate-previous').click();
+    const box = (await view.locator('#price-estimate-chart').boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5);
+    await expect(view.locator('#price-estimate-tooltip')).toContainText(/(Error|Fel): [+-]\d\.\d\d/);
+
+    // The link opens the same tab and estimate.
+    await page.goto('/portal/planner-bench?tab=prices&estimate=2026-10-01');
+    await expect(page.getByTestId('price-estimate-accuracy').locator('#price-estimate-title')).toContainText(/1 (Oct|okt)/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('#price-estimate-chart')).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('price-estimate-mobile-page.png') });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.getByTestId('price-estimate-accuracy').screenshot({ path: test.info().outputPath('price-estimate-mobile.png') });
   });
 
   test('loads every result beyond the API cap before showing suite scores', async ({ context, page }) => {
@@ -716,8 +789,8 @@ test.describe('planner bench', () => {
     await summary.screenshot({ path: test.info().outputPath('cost-summary-desktop.png') });
     await expect(page.getByText(/Value curves used|Värdekurvor som användes/)).toHaveCount(0);
 
-    // Planned from the starting prices, the planner's own estimate is drawn against the real price.
-    await expect(page.locator('#plan-planner-price')).toHaveCount(1);
+    // Every planner on the bench is given the real prices, so no estimate is drawn beside them.
+    await expect(page.locator('#plan-planner-price')).toHaveCount(0);
     await expect(page.locator('#bench-lanes')).toHaveCount(0);
 
     // The start state belongs to the case: an edit is saved into it and the case is run again.

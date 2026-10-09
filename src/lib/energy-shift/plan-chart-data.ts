@@ -32,11 +32,6 @@ export interface PlanPanelRow {
    * horizon, so this is false for most of a plan.
    */
   importPriceQuoted: boolean;
-  /**
-   * Where the row's price is the real one and the planner planned with
-   * another: what it expected instead. Only the planner bench sets it.
-   */
-  plannerImportPriceSekPerKwh?: number | null;
   /** Running net cost from the start of the window. */
   cumulativeCostSek: number;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
@@ -44,9 +39,8 @@ export interface PlanPanelRow {
 }
 
 export interface ChartDevice { key: string; name: string; schedulable: boolean }
-export type ChartPrices = { kind: 'live' } | {
-  kind: 'bench'; known: readonly boolean[]; believed: readonly (number | null)[];
-};
+/** `bench`: every price is the real one, and the planner was given it. */
+export type ChartPrices = { kind: 'live' } | { kind: 'bench' };
 const quoted = (value: number | null) => value !== null && Number.isFinite(value);
 const priced = (value: number | null, shadow: number | null) => quoted(value) ? value
   : shadow !== null && Number.isFinite(shadow) ? shadow : null;
@@ -56,14 +50,10 @@ export function projectPlanChart(input: {
   devices: readonly ChartDevice[]; prices: ChartPrices;
 }) {
   const { rows, range, timeZone, devices, prices } = input;
-  if (prices.kind === 'bench' && (prices.known.length !== rows.length || prices.believed.length !== rows.length)) {
-    throw new Error('Bench price evidence must align with its physical trajectory.');
-  }
   const view = rows.slice(range.from, range.to);
   let running = 0;
   const panelRows: PlanPanelRow[] = view.map((row, i) => {
     running += row.costSek ?? 0;
-    const index = range.from + i;
     return {
       startMs: row.startMs, label: formatHomeDayMonthTime(row.start, timeZone),
       measured: row.measured, missing: row.missing,
@@ -73,8 +63,7 @@ export function projectPlanChart(input: {
       evSoc: row.evSoc === null ? null : row.evSoc * 100,
       importPriceSekPerKwh: prices.kind === 'bench' ? row.importPriceSekPerKwh : priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
       exportPriceSekPerKwh: prices.kind === 'bench' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
-      importPriceQuoted: prices.kind === 'bench' ? prices.known[index] : quoted(row.importPriceSekPerKwh),
-      ...(prices.kind === 'bench' ? { plannerImportPriceSekPerKwh: prices.known[index] ? null : prices.believed[index] } : {}),
+      importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),
       cumulativeCostSek: running, poolTemperatureC: row.poolC ?? null,
     };
   });

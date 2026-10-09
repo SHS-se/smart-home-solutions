@@ -4,7 +4,7 @@ import { plannerVersion, usesRulePlanner } from "../bench/planner-version.ts";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { diskTree, type SourceTree } from "../scripts/module-graph.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
-import { laneParts, LANES, toldCase } from "../src/lib/planner-bench/lanes.ts";
+import { BASE_LANE, laneParts, LANES, toldCase } from "../src/lib/planner-bench/lanes.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { plannerCriteriaFingerprint, plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import type { CriteriaOverrides } from "../src/lib/planner-bench/types.ts";
@@ -29,7 +29,7 @@ Deno.test('default bench worker solves ten measured cases once each and skips th
     assertEquals((await run()).match(/^ {2}START /gm)?.length, 10);
     const first = JSON.parse(await Deno.readTextFile(output));
     assertEquals(first.results.length, 10);
-    assert(first.results.every((r: { lane: string }) => r.lane === 'told/nominal'));
+    assert(first.results.every((r: { lane: string }) => r.lane === BASE_LANE));
     assertEquals((await run()).match(/^ {2}START /gm), null);
     assertEquals(JSON.parse(await Deno.readTextFile(output)), first);
     // Missing solve provenance requires a real solve, never a score-only repair.

@@ -163,7 +163,7 @@ const PlanPanels: React.FC<{
   quarterScores?: readonly (number | null)[];
   /**
    * Planner bench: every row's price is what the quarter really cost, and
-   * `importPriceQuoted` says whether the planner was given it.
+   * the planner was given it.
    */
   realPrices?: boolean;
   /** The pool temperature the owner asked for, drawn as a reference line. */
@@ -223,11 +223,9 @@ const PlanPanels: React.FC<{
     // so the two abut exactly at the changeover with no seam and no overlap.
     const quotedBuy = rows.map(row => row.importPriceQuoted ? row.importPriceSekPerKwh : null);
     const modelledBuy = rows.map(row => row.importPriceQuoted ? null : row.importPriceSekPerKwh);
-    const plannerBuy = rows.map(row => row.plannerImportPriceSekPerKwh ?? null);
-    const hasPlannerPrice = plannerBuy.some(value => value !== null);
     const hasModelledPrice = !realPrices && modelledBuy.some(value => value !== null);
     const bands = priceBands(buy);
-    const [priceMin, priceMax] = priceDomain(buy, sell, plannerBuy);
+    const [priceMin, priceMax] = priceDomain(buy, sell);
     const priceY = linearScale([priceMin, priceMax], [price.top + price.height, price.top]);
 
     // --- Flows: into the house above zero, out of it below ----------------
@@ -289,7 +287,7 @@ const PlanPanels: React.FC<{
     return {
       x, axisY, height: axisY + 42, scoreStrip,
       price, priceY, priceMin, priceMax, buy, sell, bands,
-      quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
+      quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
@@ -299,7 +297,7 @@ const PlanPanels: React.FC<{
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
-    quotedBuy, modelledBuy, hasModelledPrice, plannerBuy, hasPlannerPrice,
+    quotedBuy, modelledBuy, hasModelledPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
@@ -462,12 +460,7 @@ const PlanPanels: React.FC<{
           {/* ---------------------------------------------------- Price --- */}
           <PanelHeading
             title={t('Pris', 'Price')}
-            unit={hasPlannerPrice
-              ? t(
-                'SEK/kWh · köp, verkligt pris · streckat = köppriset planeraren räknade med',
-                'SEK/kWh · buy, real price · dashed = the buy price the planner expected',
-              )
-              : realPrices
+            unit={realPrices
                 ? t('SEK/kWh · köp, verkligt pris', 'SEK/kWh · buy, real price')
                 : hasModelledPrice
                   ? t(
@@ -526,16 +519,6 @@ const PlanPanels: React.FC<{
             <path
               d={stepLinePath(modelledBuy, x, priceY)} fill="none"
               stroke={priceStroke} strokeWidth={2} strokeLinejoin="round"
-              strokeDasharray="5 4"
-            />
-          )}
-          {/* On the bench the solid line is what the quarter really cost; the
-              planner's own estimate is drawn against it where it had no price. */}
-          {hasPlannerPrice && (
-            <path
-              id="plan-planner-price"
-              d={stepLinePath(plannerBuy, x, priceY)} fill="none"
-              className="stroke-foreground" strokeWidth={2} strokeLinejoin="round"
               strokeDasharray="5 4"
             />
           )}
@@ -977,12 +960,6 @@ const PlanTooltip: React.FC<{
                 ? t('Köp', 'Buy')
                 : t('Köp (uppskattat)', 'Buy (estimated)')}
             value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
-          />
-        )}
-        {row.plannerImportPriceSekPerKwh != null && (
-          <Reading
-            name={t('Köp (förväntat)', 'Buy (expected)')}
-            value={`${row.plannerImportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
           />
         )}
         {row.exportPriceSekPerKwh !== null && (

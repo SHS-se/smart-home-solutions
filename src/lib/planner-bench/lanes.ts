@@ -11,7 +11,10 @@
 //              two, about the gap between a cheap night and an ordinary day.
 //
 // Every lane is refereed on the original case at real prices. The base lane,
-// told/nominal, is the planner as it runs live; the others exist to explain it.
+// oracle/nominal, is what the bench shows and scores: it judges how a planner
+// plans, not how well it guesses prices, so every planner is given the real
+// ones. The price estimate is judged on its own page (PriceEstimateAccuracy);
+// the told lanes remain as diagnostics.
 
 import type { BenchCase } from './case';
 
@@ -23,7 +26,7 @@ export const VARIANT_SCALE: Record<Variant, number> = { low: Math.SQRT1_2, nomin
 export const PRICE_LANES: PriceLane[] = ['told', 'oracle'];
 export const VARIANTS: Variant[] = ['low', 'nominal', 'high'];
 export const LANES: LaneId[] = PRICE_LANES.flatMap(prices => VARIANTS.map(variant => `${prices}/${variant}` as LaneId));
-export const BASE_LANE: LaneId = 'told/nominal';
+export const BASE_LANE: LaneId = 'oracle/nominal';
 
 export const laneParts = (lane: LaneId) => {
   const [prices, variant] = lane.split('/') as [PriceLane, Variant];
@@ -50,9 +53,9 @@ export interface LaneResult {
 }
 
 export interface Diagnosis {
-  /** What the base lane's plan cost, net of what it left in the stores. */
+  /** What the told lane's plan cost, net of what it left in the stores. */
   net_sek: number;
-  /** What knowing the real prices would have saved: base net cost minus oracle/nominal's. */
+  /** What knowing the real prices would have saved: told/nominal's net cost minus oracle/nominal's. */
   price_estimate_sek: number;
   /** What a different valuation would have saved, with real prices known: oracle/nominal minus the best oracle variant. */
   valuation_sek: number;
@@ -63,7 +66,7 @@ export interface Diagnosis {
 const net = (r: LaneResult) => r.cost_sek - r.credit_sek;
 
 /**
- * Split the base lane's cost into what the price estimate cost and what the
+ * Split the told lane's cost into what the price estimate cost and what the
  * valuation cost. Null until every lane has a result. What is left after both,
  * against a perfect plan, is the planner's dispatch logic; the bench has no
  * perfect plan to measure that against yet.
@@ -76,7 +79,7 @@ export function diagnose(byLane: Partial<Record<LaneId, LaneResult>>): Diagnosis
       .filter(variant => byLane[`${prices}/${variant}`]!.points >= nominal.points)
       .reduce((a, b) => net(byLane[`${prices}/${b}`]!) < net(byLane[`${prices}/${a}`]!) ? b : a, 'nominal' as Variant);
   };
-  const told = byLane[BASE_LANE]!, oracle = byLane['oracle/nominal']!;
+  const told = byLane['told/nominal']!, oracle = byLane['oracle/nominal']!;
   const bestOracle = best('oracle');
   return {
     net_sek: net(told),

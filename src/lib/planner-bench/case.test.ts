@@ -146,9 +146,9 @@ Deno.test('an evaluation is derived wholly from the stored decisions', () => {
   assertEquals(first, again);
   assertEquals(first.series.believedImportPrice![0], 2);
   assertEquals(first.series.importPrice[0], 1);
-  // The audit is part of the stored account, made for the plan's own lane; the default lane is the live one.
+  // The audit is part of the stored account, made for the plan's own lane; the default lane is the bench's, on real prices.
   assertEquals([first.series.audit!.lane, first.series.audit!.status, first.score.audit.lane], ['told/nominal', 'complete', 'told/nominal']);
-  assertEquals(evaluate(c, record, {}), first);
+  assertEquals(evaluate(c, record, {}), evaluate(c, record, {}, 'oracle/nominal'));
   assertEquals(evaluate(c, record, {}, 'oracle/high').series.audit!.lane, 'oracle/high');
   // Criteria that cannot be scored with are refused before anything is replayed.
   assertThrows(() => evaluate(c, record, { pool_low: { points: 3 } }), CriteriaError);

@@ -235,7 +235,13 @@ same real prices:
 | | low (0.71×) | nominal (1×) | high (1.41×) |
 |---|---|---|---|
 | **told** the published prices | | the planner as it runs live | |
-| **oracle**: told the real prices | | | |
+| **oracle**: told the real prices | | the base lane: what the page shows and scores | |
+
+Since 2026-10-09 the base lane is oracle/nominal. The bench judges how a
+planner plans, so every planner is given the real prices of all 72 hours; how
+well prices are estimated is shown on the page's own **Price estimate
+accuracy** tab instead. A routine run plans the base lane only; the other
+lanes are run with `--scope diagnostics`.
 
 From these the page works out, per case:
 

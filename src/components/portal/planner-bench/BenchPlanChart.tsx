@@ -4,8 +4,7 @@
 // The bench stores plans as compact series (src/lib/planner-bench/referee.ts);
 // this adapts them to PlanPanels' rows so a bench plan reads exactly like the
 // plan a customer sees. Every quarter is on the plan side of "now". The price
-// drawn is the real one; where the lane's planner had to estimate it, its
-// estimate is drawn beside it. Score
+// drawn is the real one, which every planner on the bench is given. Score
 // digits need a single day's width; the three-day view shows coloured cells.
 //
 // The last panel is the comparison the bench exists for: what both planners
@@ -24,7 +23,6 @@ import { benchChartData } from '@/lib/planner-bench/chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
 import type { QuarterScore } from '@/lib/planner-bench/score';
-import { type LaneId } from '@/lib/planner-bench/lanes';
 import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
 const CURRENT_COLOUR = 'hsl(var(--muted-foreground))';
@@ -34,8 +32,6 @@ interface Props {
   series: BenchSeries;
   /** Both planners' plans for the case, whichever is shown; null where a planner has none. */
   compared: { current: BenchSeries | null; test: BenchSeries | null };
-  /** The lane the plan was made under: it decides which prices the planner was given. */
-  lane: LaneId;
   timeZone: string;
   quarters: QuarterScore[] | null;
   /** Index into the whole series of the quarter to explain, or null. */
@@ -47,15 +43,15 @@ interface Props {
   onPeriod: (period: BenchPeriod) => void;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, compared, lane, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, timeZone, quarters, selected, onSelect, days, period, onPeriod }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
 
   const chart = useMemo(() => {
-    const data = benchChartData(series, lane);
+    const data = benchChartData(series);
     return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices });
-  }, [series, lane, timeZone, range.from, range.to]);
+  }, [series, timeZone, range.from, range.to]);
   const { rows, consumption } = chart;
 
   const { current, test } = compared;

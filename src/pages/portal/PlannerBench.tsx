@@ -3,8 +3,13 @@ import BenchBufferEvent from '@/components/portal/planner-bench/BenchBufferEvent
 // scored, and compared against the planner currently deployed
 // (docs/planner-bench/README.md). Staff only. The bench tables exist only in
 // the TEST Supabase project, so elsewhere the page points to the test site.
+//
+// Two tabs, kept in the URL. The bench gives every planner the real prices of
+// a case, so it judges planning alone; how well unpublished prices are
+// estimated has its own tab (PriceEstimateAccuracy).
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { Loader2, Play, Upload } from 'lucide-react';
@@ -12,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectGroup, SelectLabel, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -22,7 +28,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
-import { BASE_LANE, plannerKnewPrice } from '@/lib/planner-bench/lanes';
+import { BASE_LANE } from '@/lib/planner-bench/lanes';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { resultState, runCoverage } from '@/lib/planner-bench/coverage';
 import { suiteStats, type SuiteStats } from '@/lib/planner-bench/stats';
@@ -74,6 +80,13 @@ const Bench: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'prices' ? 'prices' : 'bench';
+  const setTab = (value: string) => {
+    const next = new URLSearchParams(params);
+    if (value === 'prices') next.set('tab', 'prices'); else next.delete('tab');
+    setParams(next, { replace: true });
+  };
 
   const runs = useQuery({
     queryKey: ['bench', 'runs'],
@@ -315,11 +328,11 @@ const Bench: React.FC = () => {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold">{t('Planerarbänk', 'Planner bench')}</h1>
           <p className="text-sm text-muted-foreground max-w-3xl">
-            {t('Varje planerarversion körs på samma testfall och jämförs med den planerare som körs nu.',
-              'Every planner version replays the same test cases and is compared with the planner running now.')}
+            {t('Varje planerarversion körs på samma testfall, med testfallets verkliga priser, och jämförs med den planerare som körs nu.',
+              'Every planner version replays the same test cases, on each case’s real prices, and is compared with the planner running now.')}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className={`flex flex-wrap gap-2 ${tab === 'bench' ? '' : 'hidden'}`}>
           <input ref={fileInput} id="bench-replay-file" type="file" accept="application/json,.json" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
           <Button variant="outline" onClick={() => fileInput.current?.click()}><Upload className="h-4 w-4 mr-2" />{t('Lägg till testfall', 'Add test case')}</Button>
           <Button variant="outline" disabled={dispatch.isPending || job.active} onClick={() => dispatch.mutate({ shas: 'heads' })}>
@@ -329,6 +342,12 @@ const Bench: React.FC = () => {
         </div>
       </div>
 
+      <Tabs value={tab} onValueChange={setTab} className="space-y-5">
+      <TabsList className="h-auto max-w-full flex-wrap justify-start">
+        <TabsTrigger id="bench-tab-bench" value="bench" className="min-h-9">{t('Planerarbänk', 'Planner bench')}</TabsTrigger>
+        <TabsTrigger id="bench-tab-prices" value="prices" className="min-h-9">{t('Prisuppskattningens träffsäkerhet', 'Price estimate accuracy')}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="bench" className="mt-0 space-y-5">
       {loadError && (isMissingTable(loadError)
         ? <Alert><AlertDescription>
             {t('Bänken finns bara på testsajten, eftersom testfallen ligger i testdatabasen.',
@@ -464,7 +483,11 @@ const Bench: React.FC = () => {
         </>
       )}
 
-      <PriceEstimateAccuracy />
+      </TabsContent>
+      <TabsContent value="prices" className="mt-0">
+        <PriceEstimateAccuracy />
+      </TabsContent>
+      </Tabs>
 
       <Dialog open={pending !== null} onOpenChange={open => { if (!open) setPending(null); }}>
         <DialogContent>
@@ -736,7 +759,7 @@ const CaseView: React.FC<CaseViewProps> = ({
             </div>
             {shownSeries ? (
               <>
-                <BenchPlanChart series={shownSeries} compared={series} lane={BASE_LANE} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+                <BenchPlanChart series={shownSeries} compared={series} timeZone={TZ} quarters={shownScore?.quarters ?? null}
                   selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod} />
                 <div id="bench-quarter-explanation" className="rounded-md border px-3 py-2 text-sm min-h-[3rem]" aria-live="polite">
                   {selected === null || !shownScore?.quarters[selected]
@@ -748,11 +771,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                           <div>
                             <span className="font-mono font-semibold" style={{ color: SCORE_COLOUR(q.score) }}>{signed(q.score)}</span>{' '}
                             <span className="font-medium">{formatHomeDayMonthTime(shownSeries.start[selected], TZ)}</span>{' '}
-                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh {plannerKnewPrice(BASE_LANE, shownSeries.published[selected])
-                              ? shownSeries.published[selected] ? t('publicerat', 'published') : t('verkligt, givet till planeraren', 'real, given to the planner')
-                              : shownDetail?.outcome
-                                ? t(`verkligt, planeraren trodde ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`, `real, the planner expected ${shownSeries.believedImportPrice?.[selected]?.toFixed(2) ?? '—'}`)
-                                : t('uppskattat', 'estimated')}</span>
+                            <span className="text-muted-foreground">· {shownSeries.importPrice[selected].toFixed(2)} kr/kWh</span>
                           </div>
                           {q.fired.length
                             ? <ul className="text-xs space-y-0.5">{q.fired.map(k => {

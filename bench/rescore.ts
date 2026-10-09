@@ -211,7 +211,7 @@ export function rescoreMarkdown(report: RescoreReport): string {
     `Cases: ${report.readyCases} ready, ${report.unreadyCases} unready, ${report.archivedCases} archived. Unready and archived cases were not changed.`,
     `Stale case inputs: ${report.staleInputs}; existing planner errors: ${report.plannerErrors}; absent planner/case/lanes: ${report.missingLanes}. These need planner runs, not rescoring.`,
     "",
-    "Nominal scores use told/nominal only; parentheses show scored/ready cases. Passes are automatic rule verdicts. Scores with different coverage are not directly comparable.",
+    `Nominal scores use ${BASE_LANE} only; parentheses show scored/ready cases. Passes are automatic rule verdicts. Scores with different coverage are not directly comparable.`,
     "",
     "| Planner | Previous score (coverage) | Current score (coverage) | Passes / scored | Current lanes / expected | Planner errors | Missing lanes |",
     "|---|---:|---:|---:|---:|---:|---:|",

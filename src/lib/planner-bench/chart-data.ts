@@ -1,17 +1,15 @@
 import type { TimelineRow } from '../energy-shift/energy-timeline';
 import type { ChartPrices } from '../energy-shift/plan-chart-data';
-import { plannerKnewPrice, type LaneId } from './lanes';
 import type { BenchSeries } from './types';
 
 /** Stored physical outputs become timeline rows without recalculating a device. */
-export function benchChartData(series: BenchSeries, lane: LaneId): { rows: TimelineRow[]; prices: ChartPrices } {
+export function benchChartData(series: BenchSeries): { rows: TimelineRow[]; prices: ChartPrices } {
   if (!Array.isArray(series.devices) || !series.deviceW || series.devices.some(d => series.deviceW[d.key]?.length !== series.start.length)) {
     throw new Error('Device projections are missing; recompute this bench evaluation.');
   }
   const fraction = (value: number | null) => value === null ? null : value / 100;
   return {
-    prices: { kind: 'bench', known: series.published.map(p => plannerKnewPrice(lane, p)),
-      believed: series.believedImportPrice ?? series.start.map(() => null) },
+    prices: { kind: 'bench' },
     rows: series.start.map((start, i) => ({
       startMs: Date.parse(start), start, measured: false,
       solarW: series.solarW[i], loadW: series.loadW[i], baseW: null,

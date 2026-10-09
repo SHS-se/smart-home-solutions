@@ -15,6 +15,22 @@ points you control.
 Page: **Planner bench** in the staff menu, on the test site
 (`https://test.smarthomesolutions.se/portal/planner-bench`).
 
+## The page's two tabs
+
+`/portal/planner-bench` has two tabs, kept in the URL (`?tab=prices`):
+
+- **Planner bench**: the cases, scores and plans described below. Every planner
+  is given the real prices of a case's 72 hours (the oracle lane), so the bench
+  judges planning alone and its charts draw no price estimate.
+- **Price estimate accuracy**: how well unpublished prices are estimated, from
+  the live homes' kept estimates (`energy_price_estimate_days`,
+  `get_price_estimate_series`). One estimate at a time: a chart of the estimate
+  against the real prices, a table of the same days, and how it was produced;
+  previous/next step through the days estimates were made on. The figures are
+  worked out in `src/lib/planner-bench/price-estimates.ts` from the quarters
+  the chart draws: level error is the gap between a day's estimated and real
+  mean, quarter error the mean gap per quarter-hour.
+
 ## Pieces
 
 | Piece | Where | What it does |
@@ -58,7 +74,8 @@ independent referee continues to judge every plan on the original case.
 The low/nominal/high valuation lanes remain available for comparison, but their
 decisions are identical for this planner because it has no cost-value curves;
 its valuation metadata reports `none`. Told and oracle price lanes still differ
-in the price information supplied.
+in the price information supplied; the page shows and scores the oracle lane,
+where the planner is given the real prices.
 
 The dropdown keeps the newest commit in each consecutive group with equal,
 complete scores. Unscored, running and failed commits stay visible, as do the
