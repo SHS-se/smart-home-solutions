@@ -3,7 +3,7 @@ import { auditEarlyCharge, EARLY_CHARGE_PRICE_TOLERANCE } from './early-charge.t
 import { HOUSEHOLD } from './household.ts';
 import { simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
-import { scoreQuarters } from './score.ts';
+import { measuredQuarters, scoreQuarters } from './score.ts';
 import { evaluate } from './evaluate.ts';
 import { TARGETS, plan, within, world } from './world.fixture.ts';
 import type { BenchCase } from './case.ts';
@@ -21,13 +21,15 @@ Deno.test('three thin grid charges move into one clearly cheaper quarter, and ea
   // One cheaper quarter takes all three: 6 kW of the battery's 8.8.
   assertEquals(evidence.moves, [0, 2, 5].map(from => ({ from, to: 7, device: 'battery', movedW: 2000 })));
   const evaluated = evaluate(c, record(c, d), {});
-  assertEquals(evaluated.score.counts.early_grid_charge, 3);
+  // Evidence: noted where it fires, and taking no points.
+  assertEquals([evaluated.score.noted.early_grid_charge, evaluated.score.counts.early_grid_charge], [3, undefined]);
   const scored = scoreQuarters(evaluated.series);
-  assertEquals(scored.quarters.flatMap((q, i) => q.fired.includes('early_grid_charge') ? [i] : []), [0, 2, 5]);
-  assertEquals(scoreQuarters(evaluated.series, { early_grid_charge: { enabled: false } }).sum, scored.sum + 3);
+  assertEquals(scored.quarters.flatMap((q, i) => q.noted.includes('early_grid_charge') ? [i] : []), [0, 2, 5]);
+  assertEquals(scoreQuarters(evaluated.series, { early_grid_charge: { enabled: false } }).sum, scored.sum);
+  assertEquals(measuredQuarters(evaluated.series).counts.early_grid_charge, 3);
   // A new price margin needs new witnesses; the page never invents a move.
   assertEquals(scoreQuarters(evaluated.series, { early_grid_charge: { threshold: 0.5 } }).auditPending, true);
-  assertEquals(evaluate(c, record(c, d), { early_grid_charge: { threshold: 0.5 } }).score.counts.early_grid_charge, undefined);
+  assertEquals(evaluate(c, record(c, d), { early_grid_charge: { threshold: 0.5 } }).score.noted.early_grid_charge, undefined);
 });
 
 Deno.test('the later quarter must be cheaper by more than the larger of 10 öre and 10% of the charging price', () => {
@@ -80,9 +82,9 @@ Deno.test('the car moves in whole amps, and the rule never takes a quarter the o
   const c = morning(), d = plan({ ev: i => i === 0 ? 4140 : 0 });
   const evidence = audit(c, d);
   assertEquals(evidence.moves, [{ from: 0, to: 7, device: 'ev', movedW: 4140 }]);
-  assertEquals(evaluate(c, record(c, d), {}).score.counts.early_grid_charge, 1);
+  assertEquals(evaluate(c, record(c, d), {}).score.noted.early_grid_charge, 1);
   // With the heat pump beside it the same quarter is a large-workload overlap, scored once.
   const both = evaluate(c, record(c, plan({ ev: i => i === 0 ? 4140 : 0, pool: i => i === 0 ? 3764 : 0 })), {});
-  assertEquals([both.score.counts.large_load_overlap, both.score.counts.early_grid_charge], [1, undefined]);
+  assertEquals([both.score.noted.large_load_overlap, both.score.noted.early_grid_charge], [1, undefined]);
   assert(both.series.audit!.earlyCharge.moves.length === 1);
 });

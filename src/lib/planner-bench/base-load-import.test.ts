@@ -1,7 +1,7 @@
 import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { HOUSEHOLD } from './household.ts';
 import { referee } from './referee.ts';
-import { BASE_LOAD_DEAR_RULE_KEYS, DEFAULT_RULES, scoreQuarters, storedScore } from './score.ts';
+import { BASE_LOAD_DEAR_RULE_KEYS, DEFAULT_RULES, measuredQuarters as scoreQuarters, storedScore } from './score.ts';
 import { baseLoadGridSupplyW } from './supply.ts';
 import type { BenchSeries } from './types.ts';
 import { TARGETS, plan, world } from './world.fixture.ts';
@@ -14,16 +14,16 @@ Deno.test('base-load imports lose one or two points by price rank, never both, r
   const s = referee(world({ buy: highPrices, load: () => 1960, start: { battery_soc: 1 } }), HOUSEHOLD, TARGETS, plan()).series;
   assertEquals(s.baseLoadBatteryCoverW.slice(0, 2), [1960, 1960]);
   const scored = scoreQuarters(s, onlyBase);
-  assertEquals(scored.quarters[0], { score: -1, fired: ['base_load_dear_import'] });
-  assertEquals(scored.quarters[1], { score: -1, fired: ['base_load_dear_import'] });
-  assertEquals(scored.quarters[240], { score: -2, fired: ['base_load_dearest_import'] });
-  assertEquals(scored.quarters[2], { score: 0, fired: [] });
+  assertEquals(scored.quarters[0], { score: -1, fired: ['base_load_dear_import'], noted: [] });
+  assertEquals(scored.quarters[1], { score: -1, fired: ['base_load_dear_import'], noted: [] });
+  assertEquals(scored.quarters[240], { score: -2, fired: ['base_load_dearest_import'], noted: [] });
+  assertEquals(scored.quarters[2], { score: 0, fired: [], noted: [] });
   s.importPrice[287] = 6.11;
   assertEquals(scoreQuarters(s, onlyBase).quarters.slice(0, 2), scored.quarters.slice(0, 2));
   s.importPrice[287] = 20;
   assertEquals(scoreQuarters(s, onlyBase).quarters.slice(0, 2), scored.quarters.slice(0, 2));
   assertEquals(scoreQuarters(s, { ...onlyBase, base_load_dearest_import: { enabled: false } }).quarters[240],
-    { score: -1, fired: ['base_load_dear_import'] });
+    { score: -1, fired: ['base_load_dear_import'], noted: [] });
   assertEquals(scoreQuarters(s, { ...onlyBase, base_load_dear_import: { threshold: 0.1 } }).quarters[0].score, 0);
 });
 

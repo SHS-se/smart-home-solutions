@@ -4,7 +4,7 @@ import { HOUSEHOLD } from './household.ts';
 import { referee, simulate, type Decisions } from './referee.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { scheduleWitness } from './schedule-witness.ts';
-import { scoreQuarters } from './score.ts';
+import { measuredQuarters, scoreQuarters } from './score.ts';
 import { evaluate } from './evaluate.ts';
 import { TARGETS, plan, within, world } from './world.fixture.ts';
 import type { BenchCase } from './case.ts';
@@ -21,15 +21,17 @@ Deno.test('two large bookings incur one penalty with a feasible cheaper quarter,
   assertEquals(evidence.moves[0].device, 'ev');
   const record = { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } };
   const evaluated = evaluate(c, record, {});
-  assertEquals(evaluated.score.counts.large_load_overlap, 1);
+  assertEquals(evaluated.score.noted.large_load_overlap, 1);
   assert(evaluated.series.audit!.overlap.moves[0].movedW > 0);
-  // The same purchase is also an early grid charge; the two never take a quarter together.
-  assertEquals(evaluated.score.counts.early_grid_charge, undefined);
-  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false } }).counts.early_grid_charge, 1);
-  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false }, early_grid_charge: { enabled: false } }).points, evaluated.score.points + 1);
+  // The same purchase is also an early grid charge; the two never note a quarter together.
+  assertEquals(evaluated.score.noted.early_grid_charge, undefined);
+  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false } }).noted.early_grid_charge, 1);
+  // Both are evidence: switching them off changes no points.
+  assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { enabled: false }, early_grid_charge: { enabled: false } }).points, evaluated.score.points);
+  assertEquals(measuredQuarters(evaluated.series).sum, measuredQuarters(evaluated.series, { large_load_overlap: { enabled: false }, early_grid_charge: { enabled: false } }).sum - 1);
   // Threshold changes require new witnesses; the browser never invents a move.
   assertEquals(scoreQuarters(evaluated.series, { large_load_overlap: { threshold: 5000 } }).auditPending, true);
-  assertEquals(evaluate(c, record, { large_load_overlap: { threshold: 5000 } }).score.counts.large_load_overlap, undefined);
+  assertEquals(evaluate(c, record, { large_load_overlap: { threshold: 5000 } }).score.noted.large_load_overlap, undefined);
 });
 
 Deno.test('a cheaper isolated pool quarter cannot justify splitting a heating cycle when battery charging cannot move', () => {
@@ -53,7 +55,7 @@ Deno.test('a cheaper isolated pool quarter cannot justify splitting a heating cy
   const evidence = audit(c, d);
   assertEquals(evidence.overlappingQuarters, [100]);
   assertEquals(evidence.moves, []);
-  assertEquals(evaluate(c, { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } }, {}).score.counts.large_load_overlap, undefined);
+  assertEquals(evaluate(c, { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } }, {}).score.noted.large_load_overlap, undefined);
 });
 
 Deno.test('filled cheapest quarter is skipped for the next cheapest with feasible room', () => {
@@ -97,7 +99,7 @@ Deno.test('one cheaper destination justifies only one penalty even with spare ch
   });
   assertEquals(audit(c, d).moves.map(m => [m.from, m.to]), [[100, 0]]);
   const record = { decisions: d, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } };
-  assertEquals(evaluate(c, record, {}).score.counts.large_load_overlap, 1);
+  assertEquals(evaluate(c, record, {}).score.noted.large_load_overlap, 1);
 });
 
 Deno.test('a destination is reserved across devices, not just for the moved device', () => {

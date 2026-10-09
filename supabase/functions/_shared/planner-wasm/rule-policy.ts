@@ -3,22 +3,29 @@ import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
 export interface CriterionOverride { enabled?: boolean; threshold?: number; points?: number }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
 export type ReadyRulePolicy = Pick<ReadyProblem, "rules" | "service_guard" | "pool_cycle_seconds">;
-type RuleDefault = { threshold: number; points: number; required?: boolean; unless?: PlannerRuleKey };
+/**
+ * Whether a rule takes points or is measured and noted only. A case's score is its net bill and its
+ * deductions (src/lib/planner-bench/score.ts): what the price rules describe is on the bill, so they are evidence.
+ */
+export type RuleRole = "deduction" | "evidence";
+type RuleDefault = { threshold: number; points: number; role: RuleRole; required?: boolean; unless?: PlannerRuleKey };
+const deduction = "deduction", evidence = "evidence";
 /** Shared approved policy parameters; model transitions and the independent referee own measurements. */
 export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
-  pool_low: {threshold:1,points:-1}, pool_cold:{threshold:2,points:-1,required:true},
-  pool_hot:{threshold:2,points:-1}, pool_buffer:{threshold:2,points:1},
-  pool_restart:{threshold:12,points:-2},
-  ev_low:{threshold:50,points:-1}, ev_short:{threshold:100,points:-1,required:true},
-  cheap_buy:{threshold:.25,points:1,unless:"cheapest_buy"}, cheapest_buy:{threshold:.1,points:2},
-  dear_load:{threshold:.25,points:-1,unless:"dearest_load"}, dearest_load:{threshold:.1,points:-2},
-  base_load_dear_import:{threshold:.25,points:-1,unless:"base_load_dearest_import"},
-  base_load_dearest_import:{threshold:.1,points:-2},
-  missed_cheap_quarter:{threshold:1,points:-1},
-  arbitrage_no_export:{threshold:4,points:-1}, arbitrage_not_full:{threshold:4,points:-1},
-  ev_from_home_battery:{threshold:0,points:-1}, large_load_overlap:{threshold:2000,points:-1},
-  pool_short_gap:{threshold:.1,points:-1}, ev_short_gap:{threshold:.1,points:-1},
-  early_grid_charge:{threshold:.1,points:-1,unless:"large_load_overlap"},
+  pool_low: {threshold:1,points:-1,role:deduction}, pool_cold:{threshold:2,points:-1,role:deduction,required:true},
+  pool_hot: {threshold:2,points:-1,role:deduction}, pool_buffer:{threshold:2,points:1,role:evidence},
+  pool_restart:{threshold:12,points:-2,role:deduction},
+  ev_low: {threshold:50,points:-1,role:deduction}, ev_short:{threshold:100,points:-1,role:deduction,required:true},
+  cheap_buy:{threshold:.25,points:1,role:evidence,unless:"cheapest_buy"}, cheapest_buy:{threshold:.1,points:2,role:evidence},
+  dear_load:{threshold:.25,points:-1,role:evidence,unless:"dearest_load"}, dearest_load:{threshold:.1,points:-2,role:evidence},
+  base_load_dear_import:{threshold:.25,points:-1,role:evidence,unless:"base_load_dearest_import"},
+  base_load_dearest_import:{threshold:.1,points:-2,role:evidence},
+  missed_cheap_quarter:{threshold:1,points:-1,role:evidence},
+  arbitrage_no_export:{threshold:4,points:-1,role:evidence}, arbitrage_not_full:{threshold:4,points:-1,role:evidence},
+  ev_from_home_battery:{threshold:0,points:-1,role:deduction}, large_load_overlap:{threshold:2000,points:-1,role:evidence},
+  // A pool pause is charged once, at its restart; its gap deducts only where the restart rule does not.
+  pool_short_gap:{threshold:.1,points:-1,role:deduction}, ev_short_gap:{threshold:.1,points:-1,role:deduction},
+  early_grid_charge:{threshold:.1,points:-1,role:evidence,unless:"large_load_overlap"},
 };
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;

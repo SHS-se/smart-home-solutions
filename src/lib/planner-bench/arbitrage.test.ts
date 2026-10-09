@@ -1,7 +1,7 @@
 import { assertEquals } from '@std/assert';
 import { evaluate } from './evaluate.ts';
 import { HOUSEHOLD } from './household.ts';
-import { arbitragePreparation, resolveRules, scoreQuarters } from './score.ts';
+import { arbitragePreparation, measuredQuarters as scoreQuarters, resolveRules } from './score.ts';
 import type { BenchSeries, CriteriaOverrides, PlanRecord } from './types.ts';
 import { plan, world } from './world.fixture.ts';
 
@@ -92,9 +92,10 @@ Deno.test('real referee decisions preserve initial SOC and full-charge history i
   const evaluated = evaluate(c, record, onlyArbitrage);
   assertEquals(evaluated.series.homeStartSoc, 90);
   assertEquals(evaluated.series.homeSoc[1], 100);
-  assertEquals(evaluated.score.sum, 0);
-  assertEquals(evaluated.score.points, scoreQuarters(evaluated.series, onlyArbitrage).points);
+  assertEquals(evaluated.score.noted, {});
+  assertEquals(scoreQuarters(evaluated.series, onlyArbitrage).sum, 0);
   record.decisions.battery_charge_w.fill(0);
   const unprepared = evaluate(c, record, onlyArbitrage);
-  assertEquals(unprepared.score.counts, { arbitrage_not_full: 3 });
+  // Evidence: noted in the stored score, and taking none of its points.
+  assertEquals([unprepared.score.noted, unprepared.score.counts, unprepared.score.sum], [{ arbitrage_not_full: 3 }, {}, 0]);
 });

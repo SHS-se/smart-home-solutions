@@ -14,6 +14,8 @@ export interface QuarterScoreLine {
   points: number;
   /** What the rule is, with any evidence for this quarter. */
   label: React.ReactNode;
+  /** Measured and shown, but taking no points. */
+  noted?: boolean;
 }
 
 export interface QuarterScoreExplanation {
@@ -49,7 +51,7 @@ const QuarterScoreDetail: React.FC<{
               </div>
               {quarter.lines.length
                 ? <ul className="text-xs space-y-0.5">{quarter.lines.map(line =>
-                  <li key={line.key} className="font-mono">{signedPoints(line.points)} {line.label}</li>)}</ul>
+                  <li key={line.key} className={`font-mono ${line.noted ? 'text-muted-foreground' : ''}`}>{line.noted ? t('noteras', 'noted') : signedPoints(line.points)} {line.label}</li>)}</ul>
                 : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
             </div>
           )}

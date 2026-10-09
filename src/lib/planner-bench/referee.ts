@@ -27,6 +27,9 @@ import { localMonths } from '../../../supabase/functions/_shared/planner-wasm/ca
 // judged against what the planner was told: running dry because the day turned
 // out heavier is a cost, not an impossible request.
 //
+// The bill a plan is scored on is made here too (billOf): grid cost and battery
+// wear, less the energy the plan leaves in its stores up to their targets.
+//
 // Bump REFEREE_VERSION whenever the arithmetic changes: stored outcomes are
 // then recognised as stale and recomputed from the stored decisions, with no
 // planner run.
@@ -37,10 +40,11 @@ import {
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import { baseLoadGridSupplyW } from './supply';
-import type { BenchSeries } from './types';
+import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
+import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 14;
+export const REFEREE_VERSION = 15;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -244,6 +248,33 @@ function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW
   return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 };
 }
 
+/**
+ * A carried-out plan's bill: what it bought and sold at real prices, the wear
+ * on what its battery discharged, and the credit for what it leaves in the
+ * stores (end-credit.ts).
+ */
+export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simulation): Bill {
+  const last = QUARTERS - 1, level = poolLevels(h).at(-1)!;
+  const terms = endCreditTerms({
+    battery: h.battery,
+    pool: { store: h.pool.store, draw_w: level.draw_w, heat_w: level.heat_w, target_c: targets.pool_c },
+    car: { battery: h.car.battery, target_km: targets.ev_km, limit_kwh: evLimitKwh(c, h) },
+    import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh,
+  });
+  const credit = endCredit(terms,
+    { battery_kwh: sim.start.batteryKwh, pool_c: sim.start.poolC, ev_kwh: sim.start.evKwh },
+    { battery_kwh: sim.batteryKwh[last], pool_c: sim.poolC[last], ev_kwh: sim.evKwh[last] });
+  const wear = sim.dischargeW.reduce((sum, w) => sum + w, 0) * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh;
+  const round = (store: typeof credit.battery) => store && {
+    start: r4(store.start), end: r4(store.end), cap: r4(store.cap), counted: r4(store.counted), grid_kwh: r4(store.grid_kwh), credit_sek: r4(store.credit_sek),
+  };
+  return {
+    grid_sek: r4(sim.cost), wear_sek: r4(wear),
+    credit: { reference_sek_per_kwh: r4(credit.reference_sek_per_kwh), battery: round(credit.battery), pool: round(credit.pool), ev: round(credit.ev), credit_sek: r4(credit.credit_sek) },
+    net_sek: r4(sim.cost + wear - credit.credit_sek),
+  };
+}
+
 /** Where each store could be at best, at the end of every quarter: full power from the first. */
 export function reachability(c: BenchCase, h: Household): { poolC: number[]; carKm: number[] } {
   const carMaxW = evMaxW(h);
@@ -299,7 +330,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
-    carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [],
+    carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [], wearSek: [],
     comfort: {
       pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
       pool_start_c: sim.start.poolC, ev_start_km: r1(sim.start.evKwh / h.car.battery.kwh_per_km),
@@ -339,7 +370,9 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.carConnected.push(1);
     series.poolC.push(Math.round(sim.poolC[i] * 1000) / 1000);
     series.costSek.push(r4(sim.costSek[i]));
+    series.wearSek!.push(r4(sim.dischargeW[i] * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh));
   }
+  series.bill = billOf(c, h, targets, sim);
 
   // What the plan leaves behind, as the grid electricity it would take to put it there.
   const batteryKwh = sim.batteryKwh[QUARTERS - 1], poolC = sim.poolC[QUARTERS - 1], evKwh = sim.evKwh[QUARTERS - 1];

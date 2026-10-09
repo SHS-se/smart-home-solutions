@@ -7,7 +7,7 @@ import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, distinctScoreRuns, economicPoints, ENERGY_TIMING_SCORES, evBatterySupplyW, flexibleGridSupplyW, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, evBatterySupplyW, flexibleGridSupplyW, isStale, measuredQuarters, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -84,10 +84,10 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   // Exactly 1 °C below and exactly 50 km short are still fine; just past them lose a point each.
   assertEquals(scoreQuarters(comfortSeries(() => 29, () => 250)).sum, 0);
   const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 249));
-  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'] });
+  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'], noted: [] });
   // More than 2 °C below and more than 100 km short lose a second point each; a store never loses more than two.
   const far = scoreQuarters(comfortSeries(() => 27.9, () => 199));
-  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'] });
+  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], noted: [] });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
   // A car above its target loses nothing.
@@ -103,14 +103,14 @@ Deno.test('a modeled future adverse reheating day credits one episode and preser
   };
   // The same every day: nothing to hold the heat for. The last day has no next day and is not judged.
   const waste = hot(() => 1, () => 1000);
-  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'] }, { score: 0, fired: [] }]);
+  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'], noted: [] }, { score: 0, fired: [], noted: [] }]);
   assertEquals([waste.counts.pool_hot, waste.counts.pool_buffer, waste.sum, waste.passed], [192, undefined, -192, true]);
-  // Dearer on the second day only: day one is a buffer, day two is not.
+  // Dearer on the second day only: day one is a buffer, noted and worth no points; day two is not.
   const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
-  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 1, fired: ['pool_buffer'] }, { score: 0, fired: ['pool_hot', 'pool_buffer'] }]);
-  assertEquals(dearer.sum, 1);
+  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [], noted: ['pool_buffer'] }, { score: -1, fired: ['pool_hot'], noted: ['pool_buffer'] }]);
+  assertEquals(dearer.sum, -96);
   // Less sun the next day counts the same; a difference within the margin does not.
-  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, ['pool_buffer']);
+  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].noted, ['pool_buffer']);
   assertEquals(hot(day => 1 + day * 0.05, () => 1000).quarters[0].fired, ['pool_hot']);
   // At the target nothing fires.
   assertEquals(scoreQuarters(comfortSeries(() => 31.9, () => 300)).counts.pool_hot, undefined);
@@ -175,46 +175,46 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
 });
 
-Deno.test('flexible load in a cheap quarter gains a point, in a very cheap one two, and never both', () => {
+Deno.test('flexible load in a cheap quarter is measured as a point, in a very cheap one two, and never both', () => {
   const series = comfortSeries(() => 30, () => 300);
   // Prices rise through the plan; the pool runs for the first 40 quarters, then once late at a dear price.
   series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
   series.poolW = series.poolW.map((_, i) => i < 40 || i === 200 ? 3000 : 0);
-  const score = scoreQuarters(series);
+  const score = measuredQuarters(series);
   // The cheapest tenth is 28.8 quarters: 29 at +2, the next 11 at +1, the dear one nothing.
   assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [29, 11]);
   assertEquals([score.quarters[0].score, score.quarters[30].score, score.quarters[200].score], [2, 1, 0]);
   assertEquals([score.sum, score.points], [69, 69]);
   // Without the very cheap rule, the cheap one covers those quarters too.
-  assertEquals(scoreQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
+  assertEquals(measuredQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
 });
 
-Deno.test('flexible load bought in a dear quarter loses a point, in a very dear one two, and never both', () => {
+Deno.test('flexible load bought in a dear quarter is measured as a lost point, in a very dear one two, and never both', () => {
   const series = comfortSeries(() => 30, () => 300);
   // Prices rise through the plan; the car charges once at a middling price, then through the last 40 quarters.
   series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
   series.carW = series.carW.map((_, i) => i === 150 || i >= 248 ? 3000 : 0);
   series.gridImportW = series.carW.map(w => w + 400);
-  const score = scoreQuarters(series);
+  const score = measuredQuarters(series);
   // The dearest tenth is 28.8 quarters: 29 at −2, the 11 before them at −1, the middling one nothing.
   assertEquals([score.counts.dearest_load, score.counts.dear_load, score.counts.cheap_buy], [29, 11, undefined]);
   assertEquals([score.quarters[287].score, score.quarters[250].score, score.quarters[150].score], [-2, -1, 0]);
   assertEquals([score.sum, score.points], [-69, -69]);
   // Without the very dear rule, the dear one covers those quarters too.
-  assertEquals(scoreQuarters(series, { dearest_load: { enabled: false } }).sum, -40);
+  assertEquals(measuredQuarters(series, { dearest_load: { enabled: false } }).sum, -40);
   // Only what is bought counts: with the sun or the battery carrying all but 499 W of it, the charging loses nothing.
   series.gridImportW = series.carW.map(w => w ? 499 : 0);
-  assertEquals(scoreQuarters(series).sum, 0);
+  assertEquals(measuredQuarters(series).sum, 0);
   series.gridImportW = series.carW.map(w => w ? 500 : 0);
-  assertEquals(scoreQuarters(series).sum, -69);
+  assertEquals(measuredQuarters(series).sum, -69);
   // Below the flexible threshold nothing is counted, however dear the quarter and however much the house imports.
   series.carW = series.carW.map(w => w ? 400 : 0);
   series.gridImportW = series.carW.map(() => 5000);
-  assertEquals(scoreQuarters(series).sum, 0);
+  assertEquals(measuredQuarters(series).sum, 0);
   // Where every quarter costs the same, each is as cheap as it is dear, and the two cancel.
   series.importPrice = series.importPrice.map(() => 1);
   series.carW = series.carW.map(() => 3000);
-  assertEquals([scoreQuarters(series).sum, scoreQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
+  assertEquals([measuredQuarters(series).sum, measuredQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
 });
 
 Deno.test('dear-price rules exclude battery-supplied flexible demand even when base load imports from the grid', () => {
@@ -237,7 +237,7 @@ Deno.test('dear-price rules exclude battery-supplied flexible demand even when b
   ], null);
   s.importPrice.fill(2);
   assertEquals(s.start.map((_, i) => flexibleGridSupplyW(s, i)), [0, 500, 499.9, 500, 0, 2000, 0, 0, 500, 0, 500]);
-  const events = (key: string, overrides = {}) => scoreQuarters(s, overrides).quarters.flatMap((q, i) => q.fired.includes(key) ? [i] : []);
+  const events = (key: string, overrides = {}) => measuredQuarters(s, overrides).quarters.flatMap((q, i) => q.fired.includes(key) ? [i] : []);
   assertEquals(events('dearest_load'), [1, 3, 5, 8, 10]);
   assertEquals(events('dear_load', { dearest_load: { enabled: false } }), [1, 3, 5, 8, 10]);
   assertEquals(events('dear_load'), []);
@@ -262,12 +262,12 @@ Deno.test('EV battery supply is charged only after battery exports and other hou
     slot(8, { load_w: 9000.3, ev_w: 4000.2, battery_discharge_w: 5000.1 }),
   ], null);
   assertEquals(series.start.map((_, i) => evBatterySupplyW(series, i)), [0, 0.1, 4000, 1000, 0, 0, 0, 0, 0]);
-  const score = scoreQuarters(series);
+  const score = measuredQuarters(series);
   assertEquals(score.counts.ev_from_home_battery, 3);
   assertEquals(score.quarters.flatMap((q, i) => q.fired.includes('ev_from_home_battery') ? [i] : []), [1, 2, 3]);
-  assertEquals(scoreQuarters(series, { ev_from_home_battery: { enabled: false } }).sum, score.sum + 3);
-  assertEquals(scoreQuarters(series, { ev_from_home_battery: { threshold: 1000 } }).counts.ev_from_home_battery, 1);
-  assertEquals(scoreQuarters(series, { ev_from_home_battery: { points: -2 } }).sum, score.sum - 3);
+  assertEquals(measuredQuarters(series, { ev_from_home_battery: { enabled: false } }).sum, score.sum + 3);
+  assertEquals(measuredQuarters(series, { ev_from_home_battery: { threshold: 1000 } }).counts.ev_from_home_battery, 1);
+  assertEquals(measuredQuarters(series, { ev_from_home_battery: { points: -2 } }).sum, score.sum - 3);
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
@@ -283,37 +283,41 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   ...over,
 });
 
-Deno.test('case points add raw comfort and, where energy timing scores, each known-price quarter once per economic rule', () => {
+Deno.test('case points are the deductions less the net bill, a point a krona; evidence takes none', () => {
   const cold = comfortSeries(() => 28.5, () => 300);
   const worst = scoreQuarters(cold);
   assertEquals(worst.sum, -288);
-  assertEquals([worst.audit, worst.economicPoints, worst.complete], [null, null, false]);
+  assertEquals([worst.audit, worst.bill, worst.complete], [null, null, false]);
+  // Without its bill or its audit a case shows its deductions alone, and has no stored score.
   assertEquals(worst.points, -288);
   assertThrows(() => storedScore(cold), Error, 'opportunity audit');
 
   const audit = auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 });
   audit.rules.battery_price_spread.knownQuarters = [4, 5, 8];
   audit.rules.export_before_import.knownQuarters = [8, 12];
-  const audited = scoreQuarters({ ...cold, audit });
-  // Five changed quarters: evidence in kronor, and five points only where energy timing scores.
-  const taken = ENERGY_TIMING_SCORES ? -5 : 0;
-  assertEquals([economicPoints(audit), audited.economicPoints, audited.points, audited.complete], [taken, taken, -288 + taken, true]);
-  // Hindsight savings have no points.
-  assertEquals(scoreQuarters({ ...cold, audit: auditOf({ hindsightSek: 30, avoidableSek: 30 }) }).economicPoints, 0);
+  const bill = { grid_sek: 100, wear_sek: 2, net_sek: 72, credit: { reference_sek_per_kwh: 2, battery: null, pool: null, ev: null, credit_sek: 30 } };
+  assertEquals(scoreQuarters({ ...cold, audit }).complete, false);
+  assertThrows(() => storedScore({ ...cold, audit }), Error, 'bill');
+  const audited = scoreQuarters({ ...cold, audit, bill });
+  // 288 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
+  assertEquals([audited.points, audited.sum, audited.complete], [-360, -288, true]);
+  // Evidence rules are noted and change no points: a cheap load everywhere gives nothing back.
+  const busy = { ...cold, audit, bill, carW: cold.carW.map(() => 3000) };
+  assertEquals([scoreQuarters(busy).points, (scoreQuarters(busy).noted.cheapest_buy ?? 0) > 0], [-360, true]);
   // An audit of another version is not read.
-  const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }) });
-  assertEquals([dated.auditPending, dated.economicPoints], [true, null]);
+  const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }), bill });
+  assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -288]);
 
-  const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit });
-  assertEquals([stored.sum, stored.economic_points, stored.physical_failed], [0, taken, false]);
-  assertEquals(stored.points, taken);
+  const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit, bill });
+  assertEquals([stored.sum, stored.points, stored.physical_failed], [0, -72, false]);
+  assertEquals([stored.grid_sek, stored.wear_sek, stored.credit_sek], [100, 2, 30]);
   assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [5, 0, 0]);
   assertEquals(isStale(stored), false);
   assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);
   assertEquals(isStale({ ...stored, version: 2 }), true);
   assertEquals(isStale({ ...stored, audit: { ...stored.audit, version: OPPORTUNITY_AUDIT_VERSION + 1 } }), true);
   // A score stored by the comfort-only scorer has no audit at all.
-  const { audit: _audit, economic_points: _economic, physical_failed: _failed, ...v2 } = stored;
+  const { audit: _audit, physical_failed: _failed, ...v2 } = stored;
   assertEquals(isStale({ ...v2, version: 2 } as StoredScore), true);
   assertEquals([storedPassed(stored, null), storedPassed(stored, 'fail'), storedPassed({ ...stored, required_fired: ['pool_cold'] }, 'pass')], [true, false, true]);
   assertEquals(storedPassed({ ...stored, physical_failed: true }, 'pass'), false);

@@ -121,6 +121,12 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   }
   s.deviceW = { pool: s.poolW, hotWater: s.hotWaterW, car: s.carW };
   s.carKm = new Array(n).fill(0);
+  // The bill the score is made of: this fixture's grid cost, no wear and nothing left in the stores.
+  s.wearSek = new Array(n).fill(0);
+  const grid = Math.round(s.costSek.reduce((a, b) => a + b, 0) * 10_000) / 10_000;
+  // The battery ends 2.3 kWh below its start: a debit of 3.4 kr at 1.40 kr/kWh.
+  const battery = { start: 8, end: 5.7, cap: 17, counted: -2.3, grid_kwh: -2.4286, credit_sek: -3.4 };
+  s.bill = { grid_sek: grid, wear_sek: 0, net_sek: Math.round((grid + 3.4) * 10_000) / 10_000, credit: { reference_sek_per_kwh: 1.4, battery, pool: null, ev: null, credit_sek: -3.4 } };
   s.comfort = { pool_target_c: 30.5, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
     poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
   // A synthetic transport fixture for the audit UI, not an optimiser correctness test.
@@ -434,6 +440,7 @@ test.describe('planner bench', () => {
       ['ev', 'EV charging', '08:00', '08:30', '3.45', 2], ['pool', 'pool heating', '09:00', '09:15', '3.76', 1],
     ]) {
       const row = page.locator(`#bench-rule-${device}_short_gap`);
+      // Neither pause has a restart the restart rule charges here, so each gap takes its own points.
       await expect(row).toContainText(new RegExp(`${quarters} (q|kv) · −${quarters}`));
       await row.getByRole('button').first().click();
       await expect(row).toContainText(/dearer than a bordering running quarter|dyrare än en angränsande driftkvart/);
@@ -469,7 +476,7 @@ test.describe('planner bench', () => {
     const missed = page.locator('#bench-rule-missed_cheap_quarter');
     // Sixteen heating quarters avoid a penalty; only the four idle cheap
     // quarters after the run are missed, despite the battery staying at 46%.
-    await expect(missed).toContainText(/4 (q|kv) · −4/);
+    await expect(missed).toContainText(/4 (q|kv) · (noted|noteras)/);
     await missed.getByRole('button').first().click();
     await expect(missed).toContainText(/already at or above target|redan är vid eller över målet/);
     await missed.getByRole('button', { name: /^dev: 4 / }).click();
@@ -492,7 +499,7 @@ test.describe('planner bench', () => {
     await rule.getByRole('button', { name: /^dev: 1 / }).click();
     const explanation = page.locator('#bench-quarter-explanation');
     const overlap = explanation.getByRole('listitem').filter({ hasText: 'Large workloads overlap' });
-    await expect(overlap).toContainText(/−1 Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
+    await expect(overlap).toContainText(/(noted|noteras) Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
     await expect(overlap).toContainText(/Home battery charging.*3.00 kW|Hembatteriladdning.*3.00 kW/);
     await expect(overlap).toContainText(/24\/09 08:00 · (real price|verkligt pris): 0.94 SEK\/kWh/);
     await expect(overlap).toContainText(/25\/09 04:00 · (real price|verkligt pris): 0.84 SEK\/kWh/);
@@ -686,7 +693,7 @@ test.describe('planner bench', () => {
     await expect(page.getByText(/^(Branches|Grenar)$/)).toBeVisible();
     await expect(page.getByText(/^(Earlier commits|Tidigare commits)$/)).toBeVisible();
     // A branch head goes by its branch; any other commit by its hash, the date and its points, nothing else.
-    const options = [/^main · ccccccc · .* · -?\d+ (pts|p)$/, /^dev · ddddddd · .* · -?\d+ (pts|p)$/, /^bbbbbbb · .* · -?\d+ (pts|p)$/, /^fffffff · .* · -?\d+ (pts|p)$/];
+    const options = [/^main · ccccccc · .* · -?\d+\.\d (pts|p)$/, /^dev · ddddddd · .* · -?\d+\.\d (pts|p)$/, /^bbbbbbb · .* · -?\d+\.\d (pts|p)$/, /^fffffff · .* · -?\d+\.\d (pts|p)$/];
     await expect(page.getByRole('option')).toHaveText(options);
     await page.getByRole('option').filter({ hasText: /^bbbbbbb · / }).click();
     await expect(page.locator('#bench-test-run')).toContainText('bbbbbbb');
@@ -763,18 +770,19 @@ test.describe('planner bench', () => {
     await page.goto('/portal/planner-bench');
 
     // Branch heads are named by branch, then commit, time and score; dev is the default to compare.
-    await expect(page.locator('#bench-test-run')).toHaveText(/^dev · ddddddd · .* · -?\d+ (pts|p)$/);
-    await expect(page.locator('#bench-current-run')).toHaveText(/^main · ccccccc · .* · -?\d+ (pts|p)$/);
+    await expect(page.locator('#bench-test-run')).toHaveText(/^dev · ddddddd · .* · -?\d+\.\d (pts|p)$/);
+    await expect(page.locator('#bench-current-run')).toHaveText(/^main · ccccccc · .* · -?\d+\.\d (pts|p)$/);
 
     // Totals over every case, current against test.
     await expect(page.locator('#bench-total-score')).toContainText(/dev is (better|worse) than main|No score difference|dev är (bättre|sämre) än main|Ingen skillnad i poäng/);
     const caseTexts = await page.locator('[id^="bench-case-"]').allTextContents();
     const caseTotal = (side: 'main' | 'dev') => caseTexts.reduce((sum, text) => {
-      const match = text.match(new RegExp(`${side} ([−-]?\\d+)`));
+      const match = text.match(new RegExp(`${side} ([−-]?\\d+\\.\\d)`));
       return sum + (match ? Number(match[1].replace('−', '-')) : 0);
     }, 0);
-    expect(Number(await page.locator('#bench-score-current').textContent())).toBe(caseTotal('main'));
-    expect(Number(await page.locator('#bench-score-test').textContent())).toBe(caseTotal('dev'));
+    // A point is a krona: the suite's score is the sum of its cases', each shown to a decimal.
+    expect(Math.abs(Number(await page.locator('#bench-score-current').textContent()) - caseTotal('main'))).toBeLessThan(0.1 * caseTexts.length);
+    expect(Math.abs(Number(await page.locator('#bench-score-test').textContent()) - caseTotal('dev'))).toBeLessThan(0.1 * caseTexts.length);
     await expect(page.locator('#bench-total-grid_cost_sek')).toContainText(/-?\d+\.\d.*-?\d+\.\d\s*kr/);
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
@@ -827,7 +835,7 @@ test.describe('planner bench', () => {
     const summary = page.locator('#bench-summary');
     await expect(summary.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
     await expect(summary.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
-    await expect(summary.locator('#bench-real-cost')).toContainText(/−3\.4 kr/);
+    await expect(summary.locator('#bench-real-cost')).toContainText(/−3\.4/);
     await expect(summary.locator('#bench-selected-cost-title')).toContainText('Cheap night');
     await expect(page.locator('#bench-real-cost')).toHaveCount(1);
     const caseCard = page.locator('#bench-show-current').locator('xpath=ancestor::*[contains(@class,"rounded-lg")][1]');
@@ -877,15 +885,14 @@ test.describe('planner bench', () => {
     const box = (await chart.boundingBox())!;
     const explanation = page.locator('#bench-quarter-explanation');
     for (const [quarter, price, key, points] of [
-      [27, '3.93', 'base_load_dear_import', '−1'],
-      [28, '6.11', 'base_load_dearest_import', '−2'],
+      [27, '3.93', 'base_load_dear_import', 'noted'],
+      [28, '6.11', 'base_load_dearest_import', 'noted'],
     ] as const) {
       await chart.click({ position: { x: box.width * (58 + (quarter + 0.5) / 288 * 1010) / 1160, y: box.height * 0.2 } });
       await expect(explanation).toContainText(price);
-      await expect(explanation).toContainText(points);
-      await expect(explanation).toContainText(/base-load import the battery could cover/);
+      await expect(explanation).toContainText(new RegExp(`(${points}|noteras) .*base-load import the battery could cover`));
       const row = page.locator(`#bench-rule-${key}`);
-      await expect(row).toContainText(new RegExp(`1 (q|kv) · ${points}`));
+      await expect(row).toContainText(new RegExp(`1 (q|kv) · (${points}|noteras)`));
       await row.getByRole('button').first().click();
       await expect(row).toContainText(/remaining discharge power|återstående urladdningseffekt/);
       await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue(key === 'base_load_dear_import' ? '0.25' : '0.1');
@@ -894,7 +901,7 @@ test.describe('planner bench', () => {
     const row = page.locator('#bench-rule-base_load_dearest_import');
     await row.getByRole('button').first().click();
     await page.locator('#bench-base_load_dearest_import-on').click();
-    await expect(explanation).toContainText('−1');
+    await expect(explanation).toContainText(/(noted|noteras) Dear base-load import/);
     await expect(explanation).not.toContainText('Very dear base-load import');
   });
 
@@ -904,7 +911,7 @@ test.describe('planner bench', () => {
     await page.goto('/portal/planner-bench');
     const row = (key: string) => page.locator(`#bench-rule-${key}`);
     for (const key of ['arbitrage_no_export', 'arbitrage_not_full']) {
-      await expect(row(key)).toContainText(/3 (q|kv) · −3/);
+      await expect(row(key)).toContainText(/3 (q|kv) · (noted|noteras)/);
       await row(key).getByRole('button').first().click();
       await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue('4');
       await expect(row(key).getByLabel(/Sale price above \(SEK\/kWh\)|Säljpris över \(SEK\/kWh\)/)).toBeVisible();
@@ -935,15 +942,14 @@ test.describe('planner bench', () => {
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
     // Flexible load in a very cheap quarter earns two points, in a cheap one a single point.
-    await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · \+\d+/);
-    await expect(row('cheapest_buy')).toContainText('+2');
+    // The price rules are measured and noted; they take and give no points.
+    await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
     // The same load in a very dear quarter loses two; the explanation names flexible loads, not the devices.
-    await expect(row('dearest_load')).toContainText(/\d+ (q|kv) · −\d+/);
-    await expect(row('dearest_load')).toContainText('−2');
+    await expect(row('dearest_load')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
     await row('dearest_load').getByRole('button').first().click();
     await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W from the grid .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W från nätet .* dyraste 10 %/);
     await row('dearest_load').getByRole('button').first().click();
-    await expect(row('missed_cheap_quarter')).toContainText(/\d+ (q|kv) · −\d+/);
+    await expect(row('missed_cheap_quarter')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
     await row('missed_cheap_quarter').getByRole('button').first().click();
     await expect(row('missed_cheap_quarter')).toContainText(/purchase price is below 1 SEK\/kWh|inköpspriset är under 1 SEK\/kWh/);
     await expect(row('missed_cheap_quarter')).toContainText(/home battery target is 100%|hembatteriets mål är 100%/);

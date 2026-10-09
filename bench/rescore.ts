@@ -212,6 +212,7 @@ export function rescoreMarkdown(report: RescoreReport): string {
     `Stale case inputs: ${report.staleInputs}; existing planner errors: ${report.plannerErrors}; absent planner/case/lanes: ${report.missingLanes}. These need planner runs, not rescoring.`,
     "",
     `Nominal scores use ${BASE_LANE} only; parentheses show scored/ready cases. Passes are automatic rule verdicts. Scores with different coverage are not directly comparable.`,
+    "A score is a case's deductions less its net bill, a point a krona. A previous score made by an older scorer is in that scorer's own points and does not compare with the current one.",
     "",
     "| Planner | Previous score (coverage) | Current score (coverage) | Passes / scored | Current lanes / expected | Planner errors | Missing lanes |",
     "|---|---:|---:|---:|---:|---:|---:|",

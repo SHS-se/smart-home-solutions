@@ -24,7 +24,7 @@ Deno.test('the whole period exports every quarter of both planners as the chart 
   assertEquals(file.plans.map(p => [p.name, p.role, p.shown, p.quarters.length]), [['main', 'production', false, n], ['dev', 'compared', true, n]]);
   const dev = file.plans[1];
   assertEquals(dev.quarters.map(q => q.score), score.quarters.map(q => q.score));
-  assertEquals(dev.period.quarter_rule_points, score.sum);
+  assertEquals(dev.period.deduction_points, score.sum);
   assertEquals(dev.quarters.at(-1)!.cumulative_cost_sek, series.costSek.reduce((a, b) => a + b, 0));
   // A fired rule carries the points it gave or took, so a quarter's rules add up to its score.
   for (const q of dev.quarters) assertEquals(Object.values(q.rules_fired).reduce((a: number, b) => a + (b ?? 0), 0), q.score);
@@ -37,9 +37,9 @@ Deno.test('a single day exports only that day, with its cost counted from the st
   assertEquals([file.period.quarters, file.period.start, dev.quarters[0].index, dev.quarters.at(-1)!.index], [96, series.start[96], 96, 191]);
   assertEquals(file.period.end, new Date(Date.parse(series.start[191]) + 900_000).toISOString());
   assertEquals(dev.quarters[0].cumulative_cost_sek, series.costSek[96]);
-  assertEquals(dev.period.quarter_rule_points, score.quarters.slice(96, 192).reduce((a, q) => a + q.score, 0));
+  assertEquals(dev.period.deduction_points, score.quarters.slice(96, 192).reduce((a, q) => a + q.score, 0));
   // The case's own totals stay the case's, whatever the period.
-  assertEquals(dev.case, { points: score.points, quarter_rule_points: score.sum, energy_timing_points: score.economicPoints });
+  assertEquals([dev.case!.points, dev.case!.deduction_points, dev.case!.net_bill_sek], [score.complete ? score.points : null, score.sum, score.bill?.net_sek ?? null]);
 });
 
 Deno.test('one commit on both sides is exported once, and the file is named after what it holds', () => {

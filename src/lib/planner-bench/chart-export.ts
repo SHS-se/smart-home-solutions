@@ -28,7 +28,7 @@ export interface BenchChartExportInput {
   shown: 'current' | 'test';
   plans: Record<'current' | 'test', ExportedPlanSource | null>;
   /** The rules in force, as the page scores with them. */
-  rules: readonly { key: string; label: string; points: number; threshold: number; enabled: boolean }[];
+  rules: readonly { key: string; label: string; points: number; threshold: number; enabled: boolean; role: 'deduction' | 'evidence' }[];
 }
 
 const overlaps = (f: OpportunityFinding, from: number, to: number) =>
@@ -54,10 +54,13 @@ function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', show
       home_soc_percent: s.homeSoc[i], car_soc_percent: s.carSoc[i], car_km: s.carKm?.[i] ?? null, car_connected: s.carConnected[i] === 1,
       pool_c: s.poolC[i],
       cost_sek: s.costSek[i],
+      wear_sek: s.wearSek?.[i] ?? null,
       // Counted from the start of the period, as the chart's cost panel does.
       cumulative_cost_sek: running,
+      // What the quarter's deductions took, a point a krona; the rules noted took nothing.
       score: scored?.score ?? null,
       rules_fired: Object.fromEntries((scored?.fired ?? []).map(key => [key, points.get(key) ?? null])),
+      rules_noted: scored?.noted ?? [],
     };
   });
   return {
@@ -65,9 +68,14 @@ function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', show
     sha: source.sha, committed_at: source.committed_at, subject: source.subject,
     devices: s.devices,
     targets: s.comfort ? { pool_c: s.comfort.pool_target_c, car_km: s.comfort.ev_target_km } : null,
-    period: { quarter_rule_points: score ? quarterPoints : null, cost_sek: running },
-    // The case's points are the quarter rules' over all 72 hours plus the energy-timing findings'; a day has no share of the latter.
-    case: score ? { points: score.complete ? score.points : null, quarter_rule_points: score.sum, energy_timing_points: score.economicPoints } : null,
+    period: { deduction_points: score ? quarterPoints : null, cost_sek: running },
+    // The case's points are its deductions less its net bill over all 72 hours, a point a krona; a day has no share of the store credit.
+    case: score ? {
+      points: score.complete ? score.points : null, deduction_points: score.sum,
+      grid_sek: score.bill?.grid_sek ?? null, wear_sek: score.bill?.wear_sek ?? null,
+      store_credit_sek: score.bill?.credit.credit_sek ?? null, net_bill_sek: score.bill?.net_sek ?? null,
+      store_credit: score.bill?.credit ?? null,
+    } : null,
     energy_timing_findings: audit ? audit.findings.filter(f => overlaps(f, from, to)).map(f => ({
       id: f.id, rule: f.rule, tags: f.tags, device: f.device, basis: f.basis,
       from_quarter: f.from, from_quarter_end: f.fromEnd, to_quarter: f.to, to_quarter_end: f.toEnd,
@@ -85,7 +93,7 @@ export function benchChartExport(input: BenchChartExportInput) {
   const points = new Map(input.rules.map(rule => [rule.key, rule.points]));
   return {
     format: 'shs-planner-bench-chart',
-    schema_version: 1,
+    schema_version: 2,
     case: { id: scenario.id, name: scenario.name, captured_at: scenario.captured_at, revision: scenario.revision, start_state: scenario.start_state ?? null },
     period: {
       label: period.label, time_zone: input.timeZone, from_quarter: from, to_quarter: to, quarters: to - from,
@@ -94,7 +102,7 @@ export function benchChartExport(input: BenchChartExportInput) {
     },
     // Every planner on the bench is given the real prices, and is costed at them.
     price_basis: 'real',
-    rules: input.rules.filter(rule => rule.enabled).map(({ key, label, points: p, threshold }) => ({ key, label, points: p, threshold })),
+    rules: input.rules.filter(rule => rule.enabled).map(({ key, label, points: p, threshold, role }) => ({ key, label, points: p, threshold, role })),
     plans: (['current', 'test'] as const).flatMap(role => {
       const source = plans[role];
       // The same commit on both sides is one plan, not two.

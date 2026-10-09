@@ -135,8 +135,8 @@ async function worker(sha: string, root: string) {
         await bench.saveResult({ ...base, status: "ok", error: null, cpu_ms: Math.round(cpuMs), record, ...evaluation });
         console.log(`  TIMING prepare=${Math.round(solved - started - cpuMs)} ms, solver=${Math.round(cpuMs)} ms, independent evaluation=${Math.round(evaluated - solved)} ms, store=${Math.round(performance.now() - evaluated)} ms`);
         console.log(`  ${scenario.name} ${lane}: ${record.status}, ${Math.round(cpuMs)} ms, ${evaluation.outcome.cost_sek.toFixed(1)} kr at real prices`
-          + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), left in stores ${evaluation.outcome.terminal.credit_sek.toFixed(1)} kr,`
-          + ` score ${evaluation.score.points} (quarter rules ${evaluation.score.sum}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
+          + ` (planner expected ${record.beliefs.grid_cost_sek?.toFixed(1) ?? "?"}), wear ${evaluation.score.wear_sek.toFixed(1)} kr, left in stores up to their targets ${evaluation.score.credit_sek.toFixed(1)} kr,`
+          + ` score ${evaluation.score.points.toFixed(1)} (deductions ${evaluation.score.sum}), pool ${evaluation.stats.pool_kwh.toFixed(1)} kWh, car ${evaluation.stats.ev_kwh.toFixed(1)} kWh`);
       } catch (error) {
         failures++;
         const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}`.slice(0, 4000) : String(error);

@@ -6,25 +6,34 @@ The car is deliberately treated as always plugged in. There are no arrival, depa
 
 ## Reading the result
 
-- **Comfort:** how long the pool and car miss their target levels after those levels could have been reached.
-- **Cheap and dear quarters:** a reward for running flexible load (pool, battery charging, car) where the price was among the plan's cheapest, and the matching loss for buying it from the grid where the price was among the plan's dearest.
-- **Dear base-load imports:** −1 when at least 500 W of base load is grid-supplied in the dearest 25% of quarters and spare battery power and energy could cover all of it; −2 in the dearest 10%, never both.
-- **Missed cheap quarters:** −1 when purchase price is below 1 SEK/kWh and a flexible store is below target, but no EV charging, home battery charging or pool heating draws at least 500 W.
-- **High-sale arbitrage:** two independent losses per quarter with sale price strictly above 4 SEK/kWh: −1 for no grid export and −1 for missing full-charge preparation before the first opportunity.
-- **Large workload overlap:** −1 when two loads each exceed 2 kW in the same quarter and a legal EV or home-battery charging move to a cheaper quarter is demonstrated, keeping pool heating fixed.
-- **Short interruptions:** −1 per quarter of an avoidable 1–4-quarter gap in EV charging or pool heating. A gap quarter dearer than a bordering running quarter by more than the larger of 10 öre/kWh or 10% of its own absolute price excuses the pause only where running through it would have had to be bought.
-- **Early grid charges:** −1 when battery or car charging buys at least 500 W from the grid and all of it has a demonstrated move to a clearly cheaper later quarter, without a higher bill.
-- **Energy timing:** cost improvements demonstrated by a bounded search, shown in SEK and attributed to the decisions they change. Evidence only: it takes no points.
-- **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the numeric score.
+Since scorer v29 (2026-10-09, the owner's decision) a case has **one score, and a point of it is a krona**:
+
+```
+points   = deductions − net bill
+net bill = grid cost + battery wear − the energy left in the stores
+```
+
+Higher is better. A score compares planners on one case, not cases with each other: −258 on a cold week with a cold pool is not a worse plan than −7 on a summer case. A planner's score is the sum over its cases.
+
+- **Grid cost:** purchases less export revenue at real prices over the 72 hours.
+- **Battery wear:** 0.05 SEK per kWh the home battery discharged.
+- **Energy left in the stores:** each store's change from its start to its end, counted **up to its target and no further**, as the grid electricity it takes to put that energy there, at the case's median import price (never below zero). The pool counts to its comfort temperature, the car to the range asked for (within its charge limit), the home battery to a full charge; battery and car convert at their charging efficiency, the pool at its heat pump's electricity per degree, pump included. Energy above a target is worth nothing either way: a store that starts above it and coasts down to it is credited nothing. Below the target a loss is a debit. One definition serves the referee and the planner (`supabase/functions/_shared/planner-wasm/end-credit.ts`).
+- **Deductions:** the comfort and conduct rules, in whole kronor per quarter: pool and car short of their targets (two tiers each), a pool heated past its target + 2 °C, a heater restarted within 12 hours (−2), a short pause in car charging, home-battery power reaching the car. A short pause in pool heating is charged once, by the restart rule; the gap rule charges it only where the restart rule does not (rule switched off, or its threshold shorter than the pause).
+- **Evidence:** the price rules below are still measured and drawn, and listed per quarter as *noted*. They take and give no points: what they describe is on the bill. They are: cheap and very cheap quarters, dear and very dear loads, dear base-load imports, missed cheap quarters, high-sale arbitrage, large workloads together, grid charges before a clearly cheaper quarter, the warm buffer. The energy-timing audit is evidence in kronor.
+- **Physical failures:** requested actions the bench household cannot carry out. These fail the automatic verdict independently of the score.
 - **Coverage:** which conditions the case exercises, whether a rule found a loss, and which behaviours the bench does not model.
 
-Every point is an integer. A comfort rule loses its configured points in each eligible quarter it fires. Since scorer v28 a demonstrated economic miss takes no points (`ENERGY_TIMING_SCORES` in `score.ts`): at one point for each distinct quarter changed by accepted transfers a 0.09 SEK finding weighed as much as a 5 SEK one, and on the eleven cases the audit would have taken about 1,360 points against the 1,073 every other rule gave. The quarters each primary rule changed are still stored and shown, with their SEK. A quarter with at least 500 W of flexible load gains 1 point when its real price is among the cheapest 25 % of the plan's quarters or in a stretched valley, or 2 points when among the cheapest 10 % with at least 1 kW of that load; the two never stack. A quarter in which at least 500 W of flexible load is bought from the grid loses 1 point when the price is among the dearest 25 %, or 2 points when among the dearest 10 %, likewise never both. Every point is worth the same: a case score is the plain sum of what every rule gave and took, with no per-quarter cap. The planner score is the sum of its displayed case scores, with no caps, weights, averaging or 100–1000 conversion. SEK savings remain evidence beside the points; they do not set the point value. Physical failures determine pass/fail separately.
+Why the price rules stopped counting: under scorer v28 the two cheap-quarter rewards gave +1,192 of 1,024 points over eleven cases and every deduction together took 168, so the score was the number of cheap quarters carrying at least 500 W or 1 kW. A planner maximising it spread thin charges over every cheap quarter (161 quarters at exactly 500 W) and its bill rose with its score. A rule laid against that (`early_grid_charge`, −1) was cancelled by the reward it sat on.
 
 Historical scorer versions are not comparable. Refresh the current branch comparisons when the scorer, referee or rules change. Historical results and diagnostic lanes remain excluded until explicitly refreshed or rescored; saving rules also reruns rule-driven planners whose decisions depend on them.
 
-The rules are one set for the whole bench (`bench_rules`, a single row of changes to the defaults): every case and every planner is scored with the same thresholds and points, so their totals can be compared. No rule scores 0.
+The rules are one set for the whole bench (`bench_rules`, a single row of changes to the defaults): every case and every planner is scored with the same thresholds and points, so their totals can be compared. Each rule has a role, deduction or evidence (`rule-policy.ts`); an evidence rule's points are what it once counted, shown and never scored. `measuredQuarters` (`score.ts`) reads every rule at its points, as a lens.
+
+The 11-case table of stored plans, with no planner run: `deno task bench:score-table <export.json> <label>=<report.json> …`.
 
 ## Rule catalogue
+
+The sections below say what each rule measures. Where they speak of points gained or lost by a price rule, read them as what the rule notes: since v29 only the deduction rules above take points.
 
 ### Cheap and dear quarters
 

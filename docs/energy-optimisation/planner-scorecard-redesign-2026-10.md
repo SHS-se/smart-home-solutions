@@ -210,6 +210,8 @@ Production and benchmark share definitions, units and golden examples where usef
 
 The search compares complete native trajectories through one account. Search estimates never redefine that account.
 
+> **Reversed 9 October 2026 (owner's decision):** the bench score is one number per case, a point a krona: deductions less the net bill ([scoring](../planner-bench/scoring.md)). The prohibition below on converting a point to one SEK no longer holds for the bench score, and the planner is to optimise that same number.
+
 Cash remains SEK, wear retains its explicit throughput basis, service exposure remains degrees-hours or kilometres-hours, and rule preferences retain their declared points or units. Use explicit additive groups and priority ordering when adopted; do not invent a conversion from one point to one SEK. To reproduce the current scorecard's ordinary preferences, their contributions belong in one additive group: mild service does not automatically outrank every timing rule. Physical admissibility, required-rule benchmark verdict and production preference ordering remain distinct.
 
 The first policy manifest must cover every existing rule and classify it as a forecast-based preference, external measurement, or witness with a separately defined planning interpretation. It must also locate the existing configured shaping, continuity, start and terminal-value accounts and state which semantics are retained or intentionally changed. Preserve quoted-price, export and authority permissions unless an explicitly reviewed policy change modifies them. This prevents inconvenient penalties or existing requirements from being silently omitted.

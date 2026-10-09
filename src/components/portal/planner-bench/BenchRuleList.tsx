@@ -12,7 +12,7 @@ import BenchOverlapMove from './BenchOverlapMove';
 import BenchBufferEvent from './BenchBufferEvent';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, BASE_LOAD_DEAR_RULE_KEYS, ENERGY_TIMING_SCORES, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, BASE_LOAD_DEAR_RULE_KEYS, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
 import { EARLY_CHARGE_GRID_W, EARLY_CHARGE_PRICE_FRACTION } from '@/lib/planner-bench/early-charge';
@@ -56,6 +56,8 @@ interface Row {
   label: string;
   /** Points per quarter; null for the physical limits, which fail the case instead. */
   perQuarter: number | null;
+  /** A row that takes no points: an evidence rule is noted, an energy-timing rule is shown in kronor. */
+  unscored?: 'noted' | 'kr';
   required: boolean;
   cells: Record<Side, Cell>;
   triggered: boolean;
@@ -158,40 +160,40 @@ export default function BenchRuleList({
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        return (rule.about !== 'price' && !s.series?.comfort) || !s.score ? nothing(t('Saknar underlag', 'Missing evidence'))
-          : !rule.enabled ? nothing(t('Av', 'Off'))
-            : application && !application.applicable ? nothing('N/A')
-              : counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
+        if ((rule.about !== 'price' && !s.series?.comfort) || !s.score) return nothing(t('Saknar underlag', 'Missing evidence'));
+        if (!rule.enabled) return nothing(t('Av', 'Off'));
+        if (application && !application.applicable) return nothing('N/A');
+        const charged = counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
+        const seen = s.score.quarters.flatMap((q, i) => q.noted.includes(rule.key) ? [i] : []).filter(inRange);
+        // A rule that was only noted still shows where, with no points beside it.
+        return charged.events.length || !seen.length ? charged
+          : { events: seen, points: 0, note: `${seen.length} ${t('kv', 'q')} · ${t('noteras', 'noted')}` };
       });
-      return { key: rule.key, label: rule.label, perQuarter: rule.points, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
+      return { key: rule.key, label: rule.label, perQuarter: rule.points, unscored: rule.role === 'evidence' ? 'noted' : undefined, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
     }),
     ...OPPORTUNITY_RULES.map((rule): Row => {
       const cells = bySide(s => {
         const audit = s.score?.audit;
         if (!audit || s.score?.auditPending) return nothing(t('Väntar på omräkning', 'Awaiting rescore'));
         if (audit.status !== 'complete') return nothing(t('Ej bedömd', 'Not assessed'));
-        const cell = counted(audit.rules[rule.key].knownQuarters, ENERGY_TIMING_SCORES ? -1 : 0);
+        const cell = counted(audit.rules[rule.key].knownQuarters, 0);
         const found = findingsOf(s, rule.key);
-        // Without points the row says what its own known findings are worth.
+        // The row says what its own known findings are worth; the money is on the bill already.
         const sek = found.filter(f => f.rule === rule.key && f.basis === 'known').reduce((sum, f) => sum + f.savingSek, 0);
-        return cell.events.length ? (ENERGY_TIMING_SCORES ? cell : { ...cell, note: `${cell.events.length} ${t('kv', 'q')} · ${sek.toFixed(2)} kr` })
-          : found.length ? nothing(t(`${found.length} fynd · 0 p`, `${found.length} found · 0 pts`))
+        return cell.events.length ? { ...cell, note: `${cell.events.length} ${t('kv', 'q')} · ${sek.toFixed(2)} kr` }
+          : found.length ? nothing(t(`${found.length} fynd`, `${found.length} found`))
             : audit.applicability[rule.key].applicable ? cell : nothing('N/A');
       });
-      return { key: rule.key, label: rule.label, perQuarter: ENERGY_TIMING_SCORES ? -1 : 0, required: false, cells, triggered: fired(cells), energy: rule };
+      return { key: rule.key, label: rule.label, perQuarter: 0, unscored: 'kr', required: false, cells, triggered: fired(cells), energy: rule };
     }),
   ];
   const triggered = rows.filter(row => row.triggered);
   const idle = rows.filter(row => !row.triggered);
 
-  /** Points lost within the period; null while the energy audit is missing. */
+  /** What the deductions took within the period; null while the audit their witnesses come from is missing. */
   const total = (s: SideData) => {
-    if (!s.score) return null;
-    const audit = auditOf(s);
-    if (!audit) return null;
-    const comfort = s.score.quarters.slice(range.from, range.to).reduce((sum, q) => sum + q.score, 0);
-    const energy = ENERGY_TIMING_SCORES && audit.status === 'complete' ? Object.values(audit.rules).reduce((sum, r) => sum + r.knownQuarters.filter(inRange).length, 0) : 0;
-    return comfort - energy;
+    if (!s.score || !auditOf(s)) return null;
+    return s.score.quarters.slice(range.from, range.to).reduce((sum, q) => sum + q.score, 0);
   };
 
   const stamp = (s: SideData, quarter: number) => s.series ? formatHomeDayMonthTime(s.series.start[quarter], timeZone) : '';
@@ -202,7 +204,7 @@ export default function BenchRuleList({
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      {rule.role === 'deduction' && <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>}
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
@@ -371,12 +373,8 @@ export default function BenchRuleList({
     const shown = witness?.rule === rule.key ? sides.find(s => s.side === witness.side) : undefined;
     const finding = shown && findingsOf(shown, rule.key).find(f => f.id === witness?.id);
     return <>
-      <p>{rule.description} {ENERGY_TIMING_SCORES
-        ? t('−1 poäng för varje kvart som en billigare flytt hade ändrat, när priserna redan var publicerade.', '−1 point for each quarter a cheaper move would have changed, where prices were already published.')
-        : t('Visas i kronor och ger inga poängavdrag.', 'Shown in kronor; it takes no points.')}</p>
-      <p className="text-xs text-muted-foreground">{ENERGY_TIMING_SCORES
-        ? t('Efterklokhet: flytten krävde priser som inte var publicerade när planen gjordes, så den visas men kostar inga poäng. En flytt som passar flera regler ger avdrag under en enda.', 'Hindsight: the move needed prices that were not published when the plan was made, so it is shown but costs no points. A move that fits several rules is scored under one only.')
-        : t('Efterklokhet: flytten krävde priser som inte var publicerade när planen gjordes. En flytt som passar flera regler räknas under en enda.', 'Hindsight: the move needed prices that were not published when the plan was made. A move that fits several rules is counted under one only.')}</p>
+      <p>{rule.description} {t('Visas i kronor och ger inga poängavdrag: pengarna finns redan på elräkningen.', 'Shown in kronor; it takes no points: the money is on the bill already.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Efterklokhet: flytten krävde priser som inte var publicerade när planen gjordes. En flytt som passar flera regler räknas under en enda.', 'Hindsight: the move needed prices that were not published when the plan was made. A move that fits several rules is counted under one only.')}</p>
       {sides.map(s => {
         const audit = s.score?.audit;
         const application = audit?.applicability[rule.key];
@@ -391,7 +389,7 @@ export default function BenchRuleList({
             className={`flex w-full flex-wrap justify-between gap-x-3 rounded-md border bg-background px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted aria-pressed:border-primary aria-pressed:bg-primary/10 ${focus}`}>
             <span>{f.kwh.toFixed(2)} kWh · {stamp(s, f.from)} → {stamp(s, f.to)}</span>
             <span><strong>{f.savingSek.toFixed(2)} SEK</strong> · {f.basis === 'hindsight' ? t('efterklokhet · 0 p', 'hindsight · 0 pts')
-              : f.rule === rule.key ? (ENERGY_TIMING_SCORES ? t('känt i förväg · ger poängavdrag här', 'known in advance · scored here') : t('känt i förväg', 'known in advance'))
+              : f.rule === rule.key ? t('känt i förväg', 'known in advance')
                 : t(`känt i förväg · räknas under ”${ruleLabel(f.rule)}”`, `known in advance · counted under “${ruleLabel(f.rule)}”`)}</span>
           </button>)}
         </div>;
@@ -422,12 +420,14 @@ export default function BenchRuleList({
           <ChevronRight aria-hidden="true" className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`} />
           <span className="min-w-0">{row.label}{row.required && row.perQuarter !== null && <span className="text-xs text-muted-foreground"> · {t('krav', 'required')}</span>}</span>
         </span>
-        <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.perQuarter === null ? undefined : scoreColour(row.perQuarter) }}>
-          {row.perQuarter === null ? <span className="text-destructive">{t('Fel', 'Fail')}</span> : row.perQuarter === 0 ? <span className="text-muted-foreground">kr</span> : signed(row.perQuarter)}
+        <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.perQuarter === null || row.unscored ? undefined : scoreColour(row.perQuarter) }}>
+          {row.perQuarter === null ? <span className="text-destructive">{t('Fel', 'Fail')}</span>
+            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">{row.unscored === 'kr' ? 'kr' : t('noteras', 'noted')}</span> : signed(row.perQuarter)}
         </span>
         {(['current', 'test'] as const).map(side => <span key={side} className={`text-right font-mono text-xs tabular-nums ${row.cells[side].events.length ? '' : 'text-muted-foreground'}`}>{cellText(row, row.cells[side])}</span>)}
       </button>
       {expanded && <div className="mb-2 ml-5 space-y-2 rounded-md bg-muted/40 p-3 text-sm min-w-0">
+        {row.unscored === 'noted' && <p className="text-xs font-medium">{t('Noteras bara: regeln mäts och visas men ger inga poäng. Det den beskriver finns redan på elräkningen, som poängen räknas från. Texten nedan beskriver vad som mäts.', 'Noted only: the rule is measured and shown but takes no points. What it describes is already on the bill the score is made from. The text below says what is measured.')}</p>}
         {row.comfort ? comfortDetail(row.comfort) : row.energy ? energyDetail(row.energy) : <>
           <p>{t('Planen ber om något hushållet inte kan göra: effektgränser, lagringsgränser eller ogiltiga beslut. En enda överträdelse underkänner fallet, oavsett poäng.', 'The plan asks for something the household cannot do: power limits, storage limits or invalid decisions. A single violation fails the case, whatever its points.')}</p>
           {sides.map(s => {

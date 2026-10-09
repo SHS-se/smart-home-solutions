@@ -1,6 +1,6 @@
 import { assert, assertEquals } from '@std/assert';
 import { RULE_DEFAULTS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy.ts';
-import { PRICE_BRIDGE_MIN_QUARTERS, PRICE_BRIDGE_STRETCH, scoreQuarters, stretchedValleys } from './score.ts';
+import { PRICE_BRIDGE_MIN_QUARTERS, PRICE_BRIDGE_STRETCH, measuredQuarters as scoreQuarters, stretchedValleys } from './score.ts';
 import type { BenchSeries } from './types.ts';
 
 /** Pool heating bought from the grid in every quarter, at the given prices. */

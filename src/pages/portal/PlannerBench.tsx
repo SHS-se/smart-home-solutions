@@ -304,7 +304,7 @@ const Bench: React.FC = () => {
     const score = runScores.get(run.sha);
     const state = run.status === 'pending' ? t('väntar på körning', 'awaiting run') : run.status === 'running' ? t('kör', 'running')
       : run.status === 'failed' ? t('misslyckades', 'failed') : run.status === 'unavailable' ? t('saknar planerare', 'no planner')
-      : score == null ? t('behöver köras om', 'needs a rerun') : `${score} ${t('p', 'pts')}`;
+      : score == null ? t('behöver köras om', 'needs a rerun') : `${score.toFixed(1)} ${t('p', 'pts')}`;
     return `${runName(run)}${run.is_current || run.is_test ? ` · ${run.short_sha}` : ''} · ${formatHomeStamp(run.committed_at, TZ)} · ${state}`;
   };
 
@@ -413,8 +413,8 @@ const Bench: React.FC = () => {
                   <span>{formatHomeDayMonthTime(c.captured_at, TZ)}</span>
                   {!c.recorded_at && <span className="text-xs opacity-70" title={c.pending_reason ?? undefined}>{t('väntar', 'waiting')}</span>}
                   {stateLabel && <span className="text-xs opacity-70">{stateLabel}</span>}
-                  {currentScore && <span className="font-mono text-xs opacity-70">{names.current} {signed(currentScore.points)}</span>}
-                  {testScore && testRun?.sha !== currentRun?.sha && <span className="font-mono text-xs opacity-70">{names.test} {signed(testScore.points)}</span>}
+                  {currentScore && <span className="font-mono text-xs opacity-70">{names.current} {signed(currentScore.points, 1)}</span>}
+                  {testScore && testRun?.sha !== currentRun?.sha && <span className="font-mono text-xs opacity-70">{names.test} {signed(testScore.points, 1)}</span>}
                 </button>
               );
             })}
@@ -530,9 +530,21 @@ const CaseCostSummary: React.FC<{
       {([['current', details.current], ['test', details.test]] as const).map(([which, d]) => d?.outcome && (
         <div key={which} className="rounded-md border px-3 py-2">
           <div className="font-medium">{names[which]}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
+          {d.series?.bill && <div className="text-xs" data-testid="bench-bill">
+            {t('Nettokostnad', 'Net bill')} <span className="font-mono">{d.series.bill.net_sek.toFixed(1)} kr</span>
+            {' = '}{t('nät', 'grid')} <span className="font-mono">{d.series.bill.grid_sek.toFixed(1)}</span>
+            {' + '}{t('batterislitage', 'battery wear')} <span className="font-mono">{d.series.bill.wear_sek.toFixed(1)}</span>
+            {' − '}{t('kvar i lagren', 'left in the stores')} <span className="font-mono">{d.series.bill.credit.credit_sek.toFixed(1)}</span>
+            <span className="text-muted-foreground">
+              {' ('}{[
+                ...([['battery', t('batteri', 'battery')], ['pool', 'pool'], ['ev', t('bil', 'car')]] as const)
+                  .flatMap(([store, label]) => d.series!.bill!.credit[store] ? [`${label} ${signed(d.series!.bill!.credit[store]!.credit_sek, 1)}`] : []),
+                `${t('upp till målen, vid', 'up to the targets, at')} ${d.series.bill.credit.reference_sek_per_kwh.toFixed(2)} kr/kWh`,
+              ].join(' · ')}{')'}
+            </span>
+          </div>}
           <div className="text-xs text-muted-foreground">
             {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
-            {' · '}{t('kvar i lagren vid slutet', 'left in the stores at the end')} <span className="font-mono">{signed(d.outcome.terminal.credit_sek, 1)} kr</span>
             {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
             {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
           </div>
@@ -609,10 +621,10 @@ const SuiteTable: React.FC<{ names: RunNames; totals: { cases: number; current: 
       <div id="bench-total-score" className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
         <div className="flex items-baseline gap-2">
           <span className="text-xs uppercase tracking-wide opacity-80">{t('Poäng', 'Score')}</span>
-          <span id="bench-score-current" className="font-mono tabular-nums text-foreground">{scores.current ?? '—'}</span>
+          <span id="bench-score-current" className="font-mono tabular-nums text-foreground">{scores.current?.toFixed(1) ?? '—'}</span>
           <span className="opacity-60">→</span>
-          <span id="bench-score-test" className="font-mono tabular-nums text-2xl font-semibold">{scores.test ?? '—'}</span>
-          {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta)})</span>}
+          <span id="bench-score-test" className="font-mono tabular-nums text-2xl font-semibold">{scores.test?.toFixed(1) ?? '—'}</span>
+          {scoreDelta !== null && <span className="font-mono tabular-nums font-semibold">({signed(scoreDelta, 1)})</span>}
         </div>
         <div className="font-medium">
           {scores.current === null || scores.test === null ? t('Väntar på poäng', 'Awaiting scores')
@@ -725,13 +737,13 @@ const CaseView: React.FC<CaseViewProps> = ({
   const explained = (() => {
     const q = selected === null ? undefined : shownScore?.quarters[selected];
     if (selected === null || !q || !shownSeries || !shownScore) return null;
-    const lines: QuarterScoreLine[] = q.fired.map(k => {
+    const lines: QuarterScoreLine[] = [...q.fired, ...q.noted].map((k, n) => {
       const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
         : k === 'early_grid_charge' ? shownScore.audit!.earlyCharge.moves.find(m => m.from === selected)! : null;
       const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
         ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
         : null;
-      return { key: k, points: ruleLabel.get(k)!.points, label: <>
+      return { key: k, points: ruleLabel.get(k)!.points, noted: n >= q.fired.length, label: <>
         {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event
           ? <BenchBufferEvent event={shownScore.thermalBuffer[selected].event!} series={shownSeries} timeZone={TZ} />
           : ruleLabel.get(k)!.label}
@@ -776,7 +788,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                 <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span className="font-medium">{names[which]}{names[which] !== run.short_sha && <> <span className="font-mono text-xs text-muted-foreground">{run.short_sha}</span></>}</span>
-                    <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points)} ${t('p', 'pts')}` : '—'}</span>
+                    <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
                   {score && (!score.audit || score.auditPending) && <div className="mt-1 text-xs text-muted-foreground">{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</div>}
                 </div>

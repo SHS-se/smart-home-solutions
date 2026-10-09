@@ -1,6 +1,6 @@
 import { assertEquals } from '@std/assert';
 import { evaluate } from './evaluate.ts';
-import { scoreQuarters, type QuarterScore } from './score.ts';
+import { measuredQuarters as scoreQuarters, type QuarterScore } from './score.ts';
 import type { BenchSeries, PlanRecord } from './types.ts';
 import { plan, TARGETS, world } from './world.fixture.ts';
 
@@ -19,8 +19,8 @@ function series(): BenchSeries {
 
 const onlyMissedCheap = { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false },
   dear_load: { enabled: false }, dearest_load: { enabled: false } };
-const missed: QuarterScore = { score: -1, fired: ['missed_cheap_quarter'] };
-const taken: QuarterScore = { score: 0, fired: [] };
+const missed: QuarterScore = { score: -1, fired: ['missed_cheap_quarter'], noted: [] };
+const taken: QuarterScore = { score: 0, fired: [], noted: [] };
 
 Deno.test('a flexible store below its exact target needs charging or heating of at least 500 W in a cheap quarter', () => {
   for (const [state, watts, below, target] of [
@@ -109,6 +109,5 @@ Deno.test('isolated first and unpublished cheap quarters are stored and displaye
   const evaluated = evaluate(c, record, {});
   const live = scoreQuarters(evaluated.series);
   assertEquals(live.quarters.flatMap((q, i) => q.fired.includes('missed_cheap_quarter') ? [i] : []), [0, 200]);
-  assertEquals(evaluated.score.counts.missed_cheap_quarter, 2);
-  assertEquals(evaluated.score.points, live.points);
+  assertEquals([evaluated.score.noted.missed_cheap_quarter, evaluated.score.counts.missed_cheap_quarter], [2, undefined]);
 });

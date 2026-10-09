@@ -94,16 +94,16 @@ Deno.test('a crossing quarter earns credit, followed by seven warm coasting quar
   s.poolC = s.poolC.map((_, i) => Math.round((32.58 - i * .01) * 1000) / 1000);
   assertEquals(trace(s).filter(q => q.earns).length, 8);
   const coasting = scoreQuarters(s);
-  assertEquals(coasting.counts.pool_buffer, 8);
-  assertEquals(coasting.quarters[0].fired, ['pool_buffer', 'cheapest_buy']);
-  assertEquals(coasting.quarters[1].fired, ['pool_buffer']);
+  assertEquals([coasting.noted.pool_buffer, coasting.counts.pool_buffer, coasting.sum], [8, undefined, 0]);
+  assertEquals(coasting.quarters[0].noted, ['pool_buffer', 'cheapest_buy']);
+  assertEquals(coasting.quarters[1].noted, ['pool_buffer']);
   // An extra heating quarter cannot extend credit, even after the heater stops.
   s.poolW[1] = 4000;
   s.poolC.fill(39, 1);
   assertEquals(trace(s).filter(q => q.earns).length, 1);
   const continued = scoreQuarters(s);
   assertEquals(continued.quarters[1].fired, ['pool_hot']);
-  assertEquals(continued.counts.pool_buffer, 1);
+  assertEquals(continued.noted.pool_buffer, 1);
 });
 
 Deno.test('heating at the buffer boundary loses overheating points on the final day; other devices retain cheap credit', () => {
@@ -115,12 +115,13 @@ Deno.test('heating at the buffer boundary loses overheating points on the final 
   const hot = scoreQuarters(s);
   assertEquals(hot.quarters[0].fired, ['pool_hot']);
   assertEquals(hot.quarters[287].fired, ['pool_hot']);
-  assertEquals(hot.counts.cheapest_buy, undefined);
+  assertEquals(hot.noted.cheapest_buy, undefined);
+  const at287 = (q: ReturnType<typeof scoreQuarters>) => [q.quarters[287].fired, q.quarters[287].noted];
   s.carW[287] = 1000;
-  assertEquals(scoreQuarters(s).quarters[287].fired, ['pool_hot', 'cheapest_buy']);
+  assertEquals(at287(scoreQuarters(s)), [['pool_hot'], ['cheapest_buy']]);
   s.carW[287] = 0;
   s.batteryChargeW[287] = 1000;
-  assertEquals(scoreQuarters(s).quarters[287].fired, ['pool_hot', 'cheapest_buy']);
-  // Rule controls still apply: disabling overheating also removes its price-credit exclusion.
-  assertEquals(scoreQuarters(s, { pool_hot: { enabled: false } }).quarters[0].fired, ['cheapest_buy']);
+  assertEquals(at287(scoreQuarters(s)), [['pool_hot'], ['cheapest_buy']]);
+  // Rule controls still apply: disabling overheating also removes its price-evidence exclusion.
+  assertEquals(scoreQuarters(s, { pool_hot: { enabled: false } }).quarters[0].noted, ['cheapest_buy']);
 });

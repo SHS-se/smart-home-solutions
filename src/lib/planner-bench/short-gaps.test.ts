@@ -42,12 +42,25 @@ Deno.test('EV and pool gaps of 1–4 quarters have energy-preserving continuous 
       assertEquals(after.violations, []);
       for (const store of ['batteryKwh', 'evKwh', 'poolC'] as const) assert(after[store][287] >= before[store][287] - 1e-6);
       const evaluated = evaluate(c, recordOf(c, d), {});
-      assertEquals(evaluated.score.counts[`${device}_short_gap`], length);
       assertEquals(evaluated.series.audit!.shortGaps.gaps.length, 1);
       assert(evaluated.series.audit!.shortGaps.gaps[0].changes.length > 0);
-      const scored = scoreQuarters(evaluated.series);
-      assertEquals(scored.quarters.flatMap((q, i) => q.fired.includes(`${device}_short_gap`) ? [i] : []), Array.from({ length }, (_, i) => 8 + i));
-      assertEquals(scoreQuarters(evaluated.series, { [`${device}_short_gap`]: { enabled: false } }).sum, scored.sum + length);
+      const scored = scoreQuarters(evaluated.series), rule = `${device}_short_gap`, gapQuarters = Array.from({ length }, (_, i) => 8 + i);
+      const where = (list: 'fired' | 'noted', key: string, from = scored) => from.quarters.flatMap((q, i) => q[list].includes(key) ? [i] : []);
+      if (device === 'ev') {
+        // The car has no restart rule: every gap quarter loses its point.
+        assertEquals([evaluated.score.counts[rule], where('fired', rule)], [length, gapQuarters]);
+        assertEquals(scoreQuarters(evaluated.series, { [rule]: { enabled: false } }).sum, scored.sum + length);
+      } else {
+        // One pause, one deduction: the restart takes its two points and the gap is noted.
+        assertEquals([evaluated.score.counts[rule], evaluated.score.noted[rule], where('noted', rule)], [undefined, length, gapQuarters]);
+        assertEquals(where('fired', 'pool_restart'), [8 + length]);
+        assertEquals(scoreQuarters(evaluated.series, { [rule]: { enabled: false } }).sum, scored.sum);
+        // Where the restart rule does not charge the pause, the gap rule does.
+        const unowned = scoreQuarters(evaluated.series, { pool_restart: { enabled: false } });
+        assertEquals([where('fired', rule, unowned), unowned.sum], [gapQuarters, scored.sum + 2 - length]);
+        const brief = scoreQuarters(evaluated.series, { pool_restart: { threshold: 0.1 } });
+        assertEquals(where('fired', rule, brief), gapQuarters);
+      }
     }
   }
 });
@@ -101,7 +114,8 @@ Deno.test('the combined tolerance accepts the discussed 1-, 2- and 4-quarter gap
     const c = world({ buy: i => i >= 7 && i < 7 + prices.length ? prices[i - 7] : 1.8 });
     for (const device of ['ev', 'pool'] as const) {
       const result = evaluate(c, recordOf(c, interrupted(device, prices.length - 2)), {});
-      assertEquals(result.score.counts[`${device}_short_gap`], prices.length - 2);
+      // The car's gap is charged; the pool's is noted, its restart charged instead.
+      assertEquals(result.score[device === 'ev' ? 'counts' : 'noted'][`${device}_short_gap`], prices.length - 2);
     }
   }
 });

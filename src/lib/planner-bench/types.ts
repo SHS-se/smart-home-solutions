@@ -53,6 +53,13 @@ export interface BenchSeries {
   poolC: (number | null)[];
   /** Net grid cost of the quarter, SEK (import cost minus export revenue). */
   costSek: number[];
+  /** Battery wear per quarter, on what it discharged, SEK. Absent on a result from before the bill, which awaits recomputing. */
+  wearSek?: number[];
+  /**
+   * The plan's bill over the whole window, which the score is made of (score.ts):
+   * grid cost and wear, less the energy left in the stores up to their targets.
+   */
+  bill?: Bill;
   /**
    * What the owner wanted and what was reachable, for scoring comfort: the
    * targets, and where each store would be at the end of every quarter if it
@@ -70,6 +77,18 @@ export interface BenchSeries {
    * the audit, which is stale and awaits rescoring; never filled in by the page.
    */
   audit?: import('./opportunities').OpportunityAudit;
+}
+
+/** A plan's bill, rule-independent: every planner's is made the same way from its trajectory. */
+export interface Bill {
+  /** Purchases less export revenue at real prices, SEK. */
+  grid_sek: number;
+  /** Battery wear on discharged energy, SEK. */
+  wear_sek: number;
+  /** Energy left in the stores beyond the start, each store up to its target (end-credit.ts). */
+  credit: import('../../../supabase/functions/_shared/planner-wasm/end-credit').EndCredit;
+  /** grid_sek + wear_sek − credit.credit_sek. */
+  net_sek: number;
 }
 
 /** Per-case totals over the whole 72-hour plan. */

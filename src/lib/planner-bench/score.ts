@@ -1,85 +1,67 @@
 import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-buffer';
 // Scoring a plan, and the run score built from it.
 //
-// Every point is worth the same and they all add up: a case's points are the
-// sum of what its rules gave and took, a run's points the sum of its cases.
+// A case has one score, and a point of it is a krona:
 //
-//   Quarter rules. Each quarter gains or loses the points of every rule that
-//     fires in it. Comfort is measured from the owner's target: the pool more
-//     than 1 °C below it, and again when more than 2 °C below; the car more
-//     than 50 km short, and again when more than 100 km short. Such a rule
-//     cannot fire until its level was reachable: where full power from the
-//     first quarter would have got the store there, plus a day to choose the
-//     hours. A pool more than 2 °C above its target is judged by the day
-//     that follows (the plan's next 24 hours against the 24 it is in): heat
-//     held for a modeled future reheating event gains points in one consecutive
-//     episode per heating cycle and event; low-solar credit is May–September.
-//     After the crossing quarter, the heater must stop: continued heating
-//     ends buffer credit and loses overheating points, even on the final day.
-//     Coasting heat held for neither still loses one as overheating. A quarter in
-//     which useful pool heating, battery charging and car together draw FLEXIBLE_W or
-//     more gains a point when its real price is among the cheapest quarter of
-//     the plan's, or two when among the cheapest tenth and the load is
-//     VERY_CHEAP_FLEXIBLE_W or more. Where FLEXIBLE_W or
-//     more of that load is bought from the grid, the quarter loses a point
-//     when the price is among the dearest quarter of the plan's, or two when
-//     among the dearest tenth. Load the sun or the battery carries loses nothing.
-//     Prices come in waves, so the cheapest quarter stretches to keep a
-//     valley whole: an unbroken run of PRICE_BRIDGE_MIN_QUARTERS or more in
-//     the share also gains the one point through every adjoining quarter
-//     within PRICE_BRIDGE_STRETCH times the share (25 % reaches 32.5 %;
-//     stretchedValleys). The cheapest tenth and the dear shares stay exact.
-//     Imported base load of at least FLEXIBLE_W loses one point in the dearest
-//     quarter of prices, or two in the dearest tenth, when spare battery power
-//     and energy can cover it fully.
-//     A quarter below 1 SEK/kWh loses one point when a flexible store is below
-//     target but no charging or pool heating draws at least FLEXIBLE_W.
-//     Each quarter with a sale price above 4 SEK/kWh loses a point without
-//     export, and another if the last charge before the first such quarter
-//     did not finish full. Discharge after that charge does not undo preparation.
-//     Two large workloads in one quarter lose one point when the stored audit
-//     proves one can move to a strictly cheaper quarter without worse service,
-//     final inventory or equipment limits. This uses price order across 72 h.
-//     A quarter in which battery or car charging buys FLEXIBLE_W or more from
-//     the grid loses one point when the stored audit proves all of it can move
-//     to a later quarter that is clearly cheaper, without worse service, lower
-//     final stores or a higher bill (early-charge.ts). Never both in a quarter.
-//     A pause of one to four quarters in pool heating or car charging loses a
-//     point per quarter when a continuous run is proven possible; a dearer gap
-//     quarter excuses it only where running would have had to be bought.
+//   points = deductions − net bill
+//   net bill = grid cost + battery wear − the energy left in the stores
 //
-//   Energy timing. The money the plan could have saved by moving energy
-//     in time with the same comfort and the same stores at the end, as proven
-//     by the opportunity audit (opportunities.ts). Only what was knowable from
-//     published prices counts; what took hindsight is shown beside it. It is
-//     evidence in kronor and takes no points (ENERGY_TIMING_SCORES).
+// The net bill is the referee's (referee.ts billOf): purchases less export
+// revenue at real prices, wear on what the battery discharged, and a credit
+// for the energy each store ends with beyond its start, up to its target, at
+// the case's median price (end-credit.ts). It is the same for every rule
+// setting. Higher is better; a score is comparable between planners on one
+// case, not between cases, and a run's score is the sum of its cases'.
+//
+//   Deductions. Each quarter loses the points of every deduction rule that
+//     fires in it, in whole kronor. Comfort is measured from the owner's
+//     target: the pool more than 1 °C below it, and again when more than 2 °C
+//     below; the car more than 50 km short, and again when more than 100 km
+//     short. Such a rule cannot fire until its level was reachable: where full
+//     power from the first quarter would have got the store there, plus a day
+//     to choose the hours. A pool heated past its target + 2 °C, or held there
+//     with the next day neither dearer nor duller, loses a point. A heater
+//     restarted within 12 hours of stopping loses two at the restart. A pause
+//     of one to four quarters in car charging loses a point per quarter when a
+//     continuous run is proven possible; the same pause in pool heating is
+//     charged once, by the restart rule, and only where that rule does not
+//     charge it does the gap rule. Home-battery power reaching the car loses a
+//     point.
+//
+//   Evidence. The price rules (cheap and dear quarters, dear base-load
+//     imports, missed cheap quarters, high-sale arbitrage, large workloads
+//     together, grid charges before a clearly cheaper quarter, the warm
+//     buffer) are still measured and drawn, and listed per quarter as noted.
+//     They take and give no points: what they describe is on the bill. The
+//     energy-timing audit (opportunities.ts) likewise proves, in kronor, what
+//     moving energy in time would have saved.
 //
 // Apart from points, a plan that asks for what the household cannot do
 // (referee.ts) fails the case, whatever its points; a plan whose audit could
 // not be made is failed the same way, not given invented points.
 //
-// Scoring reads only the stored plan series, audit included, so the page can
-// preview points and enabled changes without replaying anything. Threshold
-// changes that need new witnesses are marked pending. A stored score is never
-// made without its audit.
+// Scoring reads only the stored plan series, bill and audit included, so the
+// page can preview points and enabled changes without replaying anything.
+// Threshold changes that need new witnesses are marked pending. A stored score
+// is never made without its audit and its bill.
 //
 // Bump SCORER_VERSION whenever a rule or default changes, so stored scores
 // are recognised as stale and recomputed.
 
 import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type OpportunityAuditSummary } from './opportunities';
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
-import type { BenchSeries, CriteriaOverrides, Verdict } from './types';
+import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
 import { SHORT_GAP_PRICE_FRACTION, type GapDevice } from './short-gaps';
 import { EARLY_CHARGE_GRID_W, EARLY_CHARGE_PRICE_FRACTION } from './early-charge';
 import { canonicalJson } from './case';
-import { criteriaErrors, CriteriaError, ruleDefaults, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
-export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVED_RULE_KEYS } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
+import { criteriaErrors, CriteriaError, ruleDefaults, REMOVED_RULE_KEYS, type RuleRole } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
+export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVED_RULE_KEYS, type RuleRole } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 28;
+export const SCORER_VERSION = 29;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
@@ -93,12 +75,6 @@ export const VERY_CHEAP_FLEXIBLE_W = 1000;
 export const CHEAP_CHARGE_BATTERY_SOC = 100;
 /** Sale-price threshold for the two arbitrage preferences, SEK/kWh. */
 export const ARBITRAGE_SALE_PRICE = 4;
-/**
- * Whether the energy-timing audit takes points. Off: at a point per changed
- * quarter a 0.09 kr finding weighed as much as a 5 kr one, and the audit took
- * more than every other rule gave. Its kronor are shown beside the points.
- */
-export const ENERGY_TIMING_SCORES = false;
 
 /** What a rule can see about one quarter. */
 export interface QuarterView {
@@ -138,8 +114,10 @@ export interface QuarterRule {
   label: string;
   describe: (threshold: number) => string;
   threshold: number;
-  /** Signed points added when the rule fires; never 0, since a rule that scores nothing says nothing. */
+  /** Signed points (kronor) a deduction takes when it fires; an evidence rule's are what it once counted, shown and not scored. */
   points: number;
+  /** Whether the rule takes points, or is measured and noted only (rule-policy.ts). */
+  role: RuleRole;
   /** What the rule measures, for explaining it; nothing in the scoring depends on it. */
   about: 'pool' | 'car' | 'price';
   /** Does not fire in a quarter where this other rule fired, so the two never stack. */
@@ -235,7 +213,7 @@ export function arbitragePreparation(s: BenchSeries, salePrice: number): {
   return { firstQuarter, lastChargeQuarter, prepared: firstQuarter >= 0 && soc !== null && soc >= 100 };
 }
 
-const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "unless">[] = [
+const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "role" | "required" | "unless">[] = [
   {
     key: 'pool_low', about: 'pool', label: 'Pool below target', describe: t => `more than ${t} °C below`, fires: poolBelow, eligibleFrom: poolFrom,
   },
@@ -316,7 +294,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required" | "un
     fires: (q, t) => q.evBatteryW > t,
     eligibleFrom: () => 0,
   },
-  ...(['ev', 'pool'] as const).map((device): Omit<QuarterRule, "threshold" | "points" | "required" | "unless"> => ({
+  ...(['ev', 'pool'] as const).map((device): Omit<QuarterRule, "threshold" | "points" | "role" | "required" | "unless"> => ({
     key: `${device}_short_gap`, about: 'price',
     label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
     describe: t => `an avoidable 1–4-quarter gap; a gap quarter dearer than a bordering running quarter by more than the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price excuses the pause only where ${device === 'ev' ? 'the sun' : 'the sun and spare battery'} could not have carried it`,
@@ -359,14 +337,13 @@ export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
   return { pool: [t.pool_low, t.pool_cold], ev: [t.ev_low, t.ev_short] };
 }
 
-/** What the audit takes: one point per changed quarter under a primary rule while ENERGY_TIMING_SCORES is on, else none. Explanatory tags add no points. */
-export const economicPoints = (audit: OpportunityAudit) =>
-  ENERGY_TIMING_SCORES ? -Object.values(audit.rules).reduce((sum, rule) => sum + rule.knownQuarters.length, 0) : 0;
-
 export interface QuarterScore {
+  /** What the quarter's deductions took, in points (kronor); never above 0 with the default rules. */
   score: number;
-  /** Rule keys that fired, in rule order. */
+  /** Deduction rules that fired, in rule order. */
   fired: string[];
+  /** Rules that were measured here and take no points: evidence rules, and a pool gap its restart is charged for. */
+  noted: string[];
 }
 
 export interface ServiceApplicability {
@@ -377,24 +354,26 @@ export interface ServiceApplicability {
 }
 
 export interface CaseScore {
-  /** The quarter rules' points plus whatever energy timing takes (ENERGY_TIMING_SCORES). While the audit is pending, the quarter rules' alone. */
+  /** The case score: deductions less the net bill. While the bill or the audit is missing or pending, the deductions alone. */
   points: number;
-  /** Null without an audit, or while the audit awaits recomputing under these thresholds. */
-  economicPoints: number | null;
   /** Whether `points` holds both parts. */
   complete: boolean;
+  /** Null on a series from before the bill, awaiting recomputing. */
+  bill: Bill | null;
   /** Null, explicitly, when the series carries none: a result from before the audit, awaiting rescoring. */
   audit: OpportunityAudit | null;
   /** The audit's witnesses do not hold under these thresholds, or it is of another version: recompute before reading it. */
   auditPending: boolean;
   /** The plan asked for what the household cannot do. */
   physicalFailed: boolean;
-  /** Sum of every quarter's score: what the quarter rules gave and took. */
+  /** Sum of every quarter's score: what the deductions took. */
   sum: number;
   quarters: QuarterScore[];
   thermalBuffer: BufferQuarter[] | null;
-  /** How often each quarter rule fired. */
+  /** How often each deduction was charged. */
   counts: Record<string, number>;
+  /** How often each rule was measured without taking points. */
+  noted: Record<string, number>;
   /** How many quarters scored each value. */
   histogram: Record<string, number>;
   requiredFired: string[];
@@ -422,6 +401,20 @@ function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGu
 }
 
 export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {}, verdict: Verdict | null = null): CaseScore {
+  return tally(s, overrides, verdict, false);
+}
+
+/**
+ * What every enabled rule measured, each at its declared points, the evidence
+ * rules included and no gap yielding to its restart: the lens the price rules
+ * are read through. No score is made of it; `points` is the sum alone.
+ */
+export function measuredQuarters(s: BenchSeries, overrides: CriteriaOverrides = {}): CaseScore {
+  const measured = tally(s, overrides, null, true);
+  return { ...measured, points: measured.sum, complete: false };
+}
+
+function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | null, measureAll: boolean): CaseScore {
   const resolved = resolveRules(overrides);
   const rules = resolved.filter(r => r.enabled);
   const n = s.start.length;
@@ -442,6 +435,12 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
       || audit.earlyCharge.priceTolerance !== gapThresholds.early_grid_charge)));
   const overlapQuarters = new Set(audit && !auditPending ? audit.overlap.moves.map(m => m.from) : []);
   const shortGaps = audit && !auditPending ? audit.shortGaps.gaps : [];
+  // One pause, one deduction: where the restart rule charges a pool pause's restart, its gap is noted, not charged again.
+  const restartRule = rules.find(r => r.key === 'pool_restart' && r.role === 'deduction');
+  const yieldedPoolGap = new Set(shortGaps.filter(gap => {
+    const start = gap.device === 'pool' ? s.poolStart?.[gap.to] : null;
+    return !!restartRule && !!start && start.off_seconds !== null && start.off_seconds < restartRule.threshold * 3600;
+  }).flatMap(gap => Array.from({ length: gap.to - gap.from }, (_, k) => gap.from + k)));
   const earlyCharges = new Set(audit && !auditPending ? audit.earlyCharge.moves.map(m => m.from) : []);
   // The first quarter from which each level counts, found once per level.
   const dueAt = new Map<string, number>();
@@ -475,6 +474,7 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   };
 
   const counts: Record<string, number> = {};
+  const noted: Record<string, number> = {};
   const histogram: Record<string, number> = {};
   const quarters: QuarterScore[] = [];
   let sum = 0;
@@ -498,16 +498,21 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
     };
     const firing = rules.filter(rule => rule.fires(q, rule.threshold));
     let score = 0;
-    const fired: string[] = [];
+    const fired: string[] = [], seen: string[] = [];
     for (const rule of firing) {
       if (rule.unless && firing.some(other => other.key === rule.unless)) continue;
+      if (!measureAll && (rule.role === 'evidence' || rule.key === 'pool_short_gap' && yieldedPoolGap.has(i))) {
+        seen.push(rule.key);
+        noted[rule.key] = (noted[rule.key] ?? 0) + 1;
+        continue;
+      }
       score += rule.points;
       fired.push(rule.key);
       counts[rule.key] = (counts[rule.key] ?? 0) + 1;
     }
     histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
     sum += score;
-    quarters.push({ score, fired });
+    quarters.push({ score, fired, noted: seen });
   }
   const requiredFired = rules.filter(r => r.required && counts[r.key]).map(r => r.key);
 
@@ -523,12 +528,12 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   }));
 
   const physicalFailed = !!audit && audit.violations.length > 0;
-  const economic = !audit || auditPending ? null
-    : audit.status === 'complete' ? economicPoints(audit) : 0;
-  const points = sum + (economic ?? 0);
+  const bill = s.bill ?? null;
+  const complete = !!audit && !auditPending && !!bill;
+  const points = complete ? Math.round((sum - bill.net_sek) * 10_000) / 10_000 : sum;
   return {
-    points, economicPoints: economic, complete: economic !== null, audit, auditPending, physicalFailed,
-    sum, quarters, thermalBuffer, counts, histogram, requiredFired, applicability, verdict,
+    points, complete, bill, audit, auditPending, physicalFailed,
+    sum, quarters, thermalBuffer, counts, noted, histogram, requiredFired, applicability, verdict,
     passed: !physicalFailed && (verdict ? verdict === 'pass' : requiredFired.length === 0),
   };
 }
@@ -538,13 +543,18 @@ export interface StoredScore {
   version: number;
   /** Fingerprint of the rule overrides the score was computed with. */
   criteria: string;
-  /** sum + economic_points. */
+  /** The case score, a point a krona: sum − (grid_sek + wear_sek − credit_sek). */
   points: number;
-  economic_points: number;
-  /** What the quarter rules gave and took, with its histogram and counts. */
+  /** What the deductions took, with its histogram and counts. */
   sum: number;
+  /** The bill the score is made of (referee.ts billOf). */
+  grid_sek: number;
+  wear_sek: number;
+  credit_sek: number;
   histogram: Record<string, number>;
   counts: Record<string, number>;
+  /** How often each rule was measured without taking points. */
+  noted: Record<string, number>;
   required_fired: string[];
   /** The plan asked for what the household cannot do: the case fails whatever its points. */
   physical_failed: boolean;
@@ -578,15 +588,16 @@ export function plannerRuleInputsCurrent(result: {
 
 export function storedScore(s: BenchSeries, overrides: CriteriaOverrides = {}): StoredScore {
   const c = scoreQuarters(s, overrides);
-  if (!c.audit || c.economicPoints === null) {
+  if (!c.audit || c.auditPending) {
     throw new Error(c.audit
       ? 'The plan\'s opportunity audit needs recomputing for these rule thresholds or this audit version; evaluate the plan again (evaluate.ts).'
       : 'A score needs the plan\'s opportunity audit; evaluate the plan (evaluate.ts) rather than scoring a bare series.');
   }
+  if (!c.bill) throw new Error('A score needs the plan\'s bill; evaluate the plan (evaluate.ts) rather than scoring a series from before it.');
   return {
     version: SCORER_VERSION, criteria: criteriaFingerprint(overrides),
-    points: c.points, economic_points: c.economicPoints, sum: c.sum,
-    histogram: c.histogram, counts: c.counts, required_fired: c.requiredFired,
+    points: c.points, sum: c.sum, grid_sek: c.bill.grid_sek, wear_sek: c.bill.wear_sek, credit_sek: c.bill.credit.credit_sek,
+    histogram: c.histogram, counts: c.counts, noted: c.noted, required_fired: c.requiredFired,
     physical_failed: c.physicalFailed, audit: summariseAudit(c.audit),
   };
 }
@@ -602,7 +613,7 @@ export const storedPassed = (score: StoredScore, verdict: Verdict | null) =>
 /** Sum of the displayed case points; null until at least one case has a result. */
 export function runScore(casePoints: readonly number[]): number | null {
   if (!casePoints.length) return null;
-  return casePoints.reduce((a, b) => a + b, 0);
+  return Math.round(casePoints.reduce((a, b) => a + b, 0) * 10_000) / 10_000;
 }
 
 /**
@@ -613,7 +624,8 @@ export function runScore(casePoints: readonly number[]): number | null {
 export function distinctScoreRuns<T>(runs: readonly T[], scoreOf: (run: T) => number | null, keep: (run: T) => boolean = () => false): T[] {
   return runs.filter((run, i) => {
     if (i === runs.length - 1 || keep(run)) return true;
-    const score = scoreOf(run);
-    return score === null || score !== scoreOf(runs[i + 1]);
+    // Scores are kronor: two that agree to the öre are the same.
+    const score = scoreOf(run), next = scoreOf(runs[i + 1]);
+    return score === null || next === null || Math.round(score * 100) !== Math.round(next * 100);
   });
 }

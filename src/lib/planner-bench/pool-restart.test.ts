@@ -70,9 +70,10 @@ Deno.test('startup electricity and thermal energy remain independent and restart
   assert(sim.poolW[0] < sim.poolW[1]);
   assert(first.heat_w / heater.heat_w < first.electric_w / (heater.compressor_w + heater.auxiliary_w));
   const series = referee(c, HOUSEHOLD, TARGETS, d).series;
+  // The restart takes its two points; the very cheap quarter is noted and gives none back.
   const stacked = scoreQuarters(series, { ...isolated, cheapest_buy: { enabled: true } });
-  assertEquals(stacked.quarters[0], { score: 0, fired: ['pool_restart', 'cheapest_buy'] });
-  assertEquals(stacked.quarters[1], { score: 2, fired: ['cheapest_buy'] });
+  assertEquals(stacked.quarters[0], { score: -2, fired: ['pool_restart'], noted: ['cheapest_buy'] });
+  assertEquals(stacked.quarters[1], { score: 0, fired: [], noted: ['cheapest_buy'] });
   // A command can start with zero actual draw. The event is still recorded.
   const zero = stepHeater({ ...heater, auxiliary_w: 0 }, c.start_state.pool_heater, true, 300);
   assertEquals([zero.electric_w, zero.heat_w, zero.start], [0, 0, { off_seconds: 3600 }]);

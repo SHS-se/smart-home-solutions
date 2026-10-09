@@ -14,7 +14,8 @@ import {
   stepThermalStore,
 } from "../supabase/functions/_shared/planner/device-models.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
-import { resolveRules, scoreQuarters } from "../src/lib/planner-bench/score.ts";
+// The kernel still measures every rule at its points until it is given the kronor score; the scorer's lens reads them the same way.
+import { measuredQuarters as scoreQuarters, resolveRules } from "../src/lib/planner-bench/score.ts";
 import { referee } from "../src/lib/planner-bench/referee.ts";
 import { caseTargets, QUARTERS } from "../src/lib/planner-bench/case.ts";
 import { createPlannerProbe } from "../supabase/functions/_shared/planner-wasm/probe.ts";
