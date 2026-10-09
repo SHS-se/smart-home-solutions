@@ -44,7 +44,6 @@ export const RULE_KEYS = [
   "ev_from_home_battery",
   "large_load_overlap",
   "pool_short_gap",
-  "ev_short_gap",
   "early_grid_charge",
 ] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];

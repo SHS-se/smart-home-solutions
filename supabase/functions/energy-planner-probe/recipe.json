@@ -1,10 +1,10 @@
 {
-  "version": "rule-forecast-opportunity-v3",
-  "work_grant": 900000000,
-  "beam_width": 32,
+  "version": "rule-forecast-opportunity-v4",
+  "work_grant": 700000000,
+  "beam_width": 16,
   "max_actions": 32,
   "finalists": 4,
   "witness_trials": 96,
-  "repair_trials": 8,
+  "repair_trials": 24,
   "qualification": "test_live_candidate"
 }

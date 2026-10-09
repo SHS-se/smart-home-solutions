@@ -1,5 +1,5 @@
 {
-  "version": "kronor-score-v6",
+  "version": "kronor-score-v7",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"
@@ -15,8 +15,7 @@
     "ev_from_home_battery"
   ],
   "witness_rules": [
-    "pool_short_gap",
-    "ev_short_gap"
+    "pool_short_gap"
   ],
   "evidence_rules": [
     "pool_buffer",

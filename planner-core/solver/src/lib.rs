@@ -87,7 +87,6 @@ pub enum RuleKey {
     EvFromHomeBattery,
     LargeLoadOverlap,
     PoolShortGap,
-    EvShortGap,
     EarlyGridCharge,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -374,22 +373,29 @@ pub struct EconomicHit {
     pub quarters: Vec<usize>,
     pub saving_sek: f64,
 }
-#[derive(Clone)]
-pub(crate) struct Repair {
-    pub commands: Vec<Command>,
-    pub family: String,
-    /// What adopting it should add to the score, in kronor.
-    pub expected_gain: f64,
-}
 #[derive(Default)]
 pub(crate) struct WitnessAudit {
-    pub gaps: Vec<[bool; 2]>,
+    /// Quarters of a pool pause with a certified joined alternative.
+    pub gaps: Vec<bool>,
     pub overlap: Vec<bool>,
     /// Quarters whose grid-bought charging has a certified move to a clearly cheaper later quarter.
     pub early: Vec<bool>,
     pub economic: Vec<EconomicHit>,
-    pub repairs: Vec<Repair>,
+    /// The commands of each proven alternative: proposals, scored like any plan.
+    pub repairs: Vec<Vec<Command>>,
     pub coverage: Vec<WitnessCoverage>,
+    /// The work grant ran out before every retained trial was tried.
+    pub stopped: bool,
+}
+impl WitnessAudit {
+    /// Whether any certificate changes what the direct rules alone would score.
+    pub(crate) fn fires(&self) -> bool {
+        self.gaps
+            .iter()
+            .chain(&self.overlap)
+            .chain(&self.early)
+            .any(|fired| *fired)
+    }
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct RunPurpose {
@@ -413,13 +419,14 @@ pub struct Work {
     pub move_resize_improvements: u64,
 }
 impl Work {
+    /// What is left to spend once the reserve is set aside.
+    pub(crate) fn free(&self) -> u64 {
+        self.limit
+            .saturating_sub(self.used)
+            .saturating_sub(self.reserved)
+    }
     pub(crate) fn spend(&mut self, amount: u64) -> bool {
-        if amount
-            > self
-                .limit
-                .saturating_sub(self.used)
-                .saturating_sub(self.reserved)
-        {
+        if amount > self.free() {
             return false;
         }
         self.used += amount;

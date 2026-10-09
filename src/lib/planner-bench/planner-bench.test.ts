@@ -166,10 +166,10 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
   // The quarter-by-quarter money rules were replaced by the opportunity audit. An override left under their
   // names is not an error and not applied: it changes neither the rules nor the fingerprint.
-  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge']);
+  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge', 'ev_short_gap']);
   const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
   assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'ev_short_gap', 'pool_short_gap', 'early_grid_charge']);
+  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'pool_short_gap', 'early_grid_charge']);
   assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
   assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
@@ -274,7 +274,7 @@ Deno.test('EV battery supply is charged only after battery exports and other hou
 const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
   overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
-  shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
+  shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
   earlyCharge: { priceTolerance: EARLY_CHARGE_PRICE_TOLERANCE, candidates: [], moves: [] },
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],

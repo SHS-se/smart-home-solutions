@@ -92,7 +92,9 @@ readings; realistic above-target readings remain usable.
 The rule-driven builder maps all 19 quarter rules and 11 economic families.
 Rules carry their configured thresholds, signs, required flags and exclusions.
 Construction uses backward forecast continuation tables and a forward beam of
-coupled native commands, followed by bounded complete-plan audits and span repairs.
+coupled native commands. A climb follows in which every proposal, a span edit
+or a certificate's repair, is scored exactly from one projection; the audit of
+every family proposes, and reports on the selected plan.
 The [forecast search comparison](../docs/energy-optimisation/forecast-opportunity-search.md)
 records the first-quarter regression, fresh same-input scores and runtime tradeoffs.
 Two sweeps does not mean two total simulations. Exact projection decides physical

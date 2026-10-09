@@ -7,6 +7,8 @@
 > - An economic certificate no longer takes points: what it proves is on the bill. Its repair is ranked by the kronor it saves, forecast prices and published ones alike, and each ledger's latest repair holds all its accepted edits.
 > - A short pool pause is charged once, at its restart.
 >
+> **Search changed later the same day (recipe `rule-forecast-opportunity-v4`, policy `kronor-score-v7`).** A candidate is scored from one projection of its commands. Since no economic certificate takes points, the audit of every family is no part of a score: it runs on the incumbent, as a source of proposals, and once more for the selected plan's report. Each proposal, a span edit or a certificate's repair, is scored exactly and adopted when it improves the score; the other improving proposals of the same pass are carried onto the new incumbent and re-scored. Only a rule that scores by certificate is audited per candidate (`witnesses::Scope::Scored`), and with the restart rule on none has anything to certify. The car-charging gap rule (`ev_short_gap`) is removed from the bench and the builder. See [move and resize](move-resize-search.md).
+>
 > On the eleven bench cases (real-price lane) the score went from −1,183 to −783, the grid bill from 1,494 to 1,346 kr, and the bench's proven avoidable cost from 207 to 73 kr. The text below describes the builder as first built; where it says points rank before cash, read the above.
 
 ## Problem
@@ -115,7 +117,7 @@ means no proof found, never proof of optimality or of an unavoidable interruptio
 | missed_cheap_quarter | Exact any-store-below/no-flexible-draw predicate; useful charge/heat choices rather than purposeless cycles. |
 | arbitrage_no_export/not_full | Permitted useful export and exact first-sale/last-preceding-charge preparation. |
 | ev_from_home_battery | Exact post-household source attribution; joint choices rather than a blanket discharge prohibition. |
-| pool/ev_short_gap | A legal equal-energy joining alternative at the stated price tolerance, with each store's service and closing inventory preserved. |
+| pool_short_gap | A legal equal-energy joining alternative at the stated price tolerance, with each store's service and closing inventory preserved. |
 | large_load_overlap | Proved EV/battery moves to distinct cheaper quarters with pool fixed; raw overlap is not a penalty. |
 | export_before_import, battery_headroom_solar | Useful storage of surplus and making room before solar. |
 | import_avoidable_by_storage, battery_price_spread, battery_preserve | Fund or retime useful charge/discharge pairs after losses/wear. |

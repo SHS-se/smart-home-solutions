@@ -740,8 +740,8 @@ const CaseView: React.FC<CaseViewProps> = ({
     const lines: QuarterScoreLine[] = [...q.fired, ...q.noted].map((k, n) => {
       const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
         : k === 'early_grid_charge' ? shownScore.audit!.earlyCharge.moves.find(m => m.from === selected)! : null;
-      const gap = k === 'ev_short_gap' || k === 'pool_short_gap'
-        ? shownScore.audit!.shortGaps.gaps.find(g => `${g.device}_short_gap` === k && g.from <= selected && selected < g.to)!
+      const gap = k === 'pool_short_gap'
+        ? shownScore.audit!.shortGaps.gaps.find(g => g.device === 'pool' && g.from <= selected && selected < g.to)!
         : null;
       return { key: k, points: ruleLabel.get(k)!.points, noted: n >= q.fired.length, label: <>
         {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event

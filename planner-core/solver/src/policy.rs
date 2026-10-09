@@ -26,7 +26,7 @@ pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
         PoolLow | PoolCold | PoolHot | PoolBuffer | PoolRestart | PoolShortGap => {
             p.heater.is_some()
         }
-        EvLow | EvShort | EvShortGap => p.car.is_some(),
+        EvLow | EvShort => p.car.is_some(),
         BaseLoadDearImport | BaseLoadDearestImport | ArbitrageNotFull => p.battery.is_some(),
         EvFromHomeBattery => p.car.is_some() && p.battery.is_some(),
         EarlyGridCharge => p.car.is_some() || p.battery.is_some(),
@@ -49,8 +49,7 @@ pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 
     let fires = |r: &Rule| {
         matches!(r.key, RuleKey::CheapBuy | RuleKey::CheapestBuy) && index.cheap_price(r, i)
     };
-    let fired: Vec<_> = p.rules.iter().map(fires).collect();
-    contributions(&p.rules, &fired).iter().sum()
+    points(&p.rules, fired_where(&p.rules, fires))
 }
 /// How far the cheap share may stretch along a valley: 25 % reaches 32.5 %.
 /// The bench referee applies the same stretch (`PRICE_BRIDGE_STRETCH`, score.ts).
@@ -236,30 +235,37 @@ pub(crate) fn witnessed(
     // One pause, one deduction: a pool gap whose restart the restart rule
     // charges is not charged again.
     let restart_owns = |i: usize| {
-        let to = (i..q.len()).find(|j| !audit.gaps[*j][0]).unwrap_or(q.len());
-        rule(p, RuleKey::PoolRestart).is_some_and(|r| {
-            q.get(to)
-                .and_then(|v| v.pool_start)
-                .is_some_and(|s| s.off_seconds.is_some_and(|off| off < r.threshold * 3600.0))
-        })
+        let to = (i..q.len()).find(|j| !audit.gaps[*j]).unwrap_or(q.len());
+        restart_charged(p, q, to)
     };
-    for (i, row) in account.contributions.iter_mut().enumerate() {
-        let earns = buffer_credit(p, index, i, &q[i], &mut episode);
-        let mut fired = raw_quarter(p, index, i, &q[i], prepared, earns);
+    let mut rows = Vec::with_capacity(q.len());
+    for (i, v) in q.iter().enumerate() {
+        let earns = buffer_credit(p, index, i, v, &mut episode);
+        let mut fired = raw_quarter(p, index, i, v, prepared, earns);
         for (j, r) in p.rules.iter().enumerate() {
-            match r.key {
-                RuleKey::PoolShortGap => fired[j] = audit.gaps[i][0] && !restart_owns(i),
-                RuleKey::EvShortGap => fired[j] = audit.gaps[i][1],
-                RuleKey::LargeLoadOverlap => fired[j] = audit.overlap[i],
-                RuleKey::EarlyGridCharge => fired[j] = audit.early[i],
-                _ => {}
-            }
+            let certified = match r.key {
+                RuleKey::PoolShortGap => audit.gaps[i] && !restart_owns(i),
+                RuleKey::LargeLoadOverlap => audit.overlap[i],
+                RuleKey::EarlyGridCharge => audit.early[i],
+                _ => continue,
+            };
+            fired = fired & !(1 << j) | Fired::from(certified) << j;
         }
-        *row = contributions(&p.rules, &fired);
+        rows.push(contributions(&p.rules, fired));
     }
+    account.contributions = rows;
     // What an economic certificate proves is on the bill already; it takes no points.
     account.points = account.contributions.iter().flatten().sum::<i32>();
     account.rescore();
+}
+/// Whether the restart rule charges the pool start in quarter `to`: a pause
+/// that ends there is charged by it, and not again as a gap.
+pub(crate) fn restart_charged(p: &Problem, q: &[Quarter], to: usize) -> bool {
+    rule(p, RuleKey::PoolRestart).is_some_and(|r| {
+        q.get(to)
+            .and_then(|v| v.pool_start)
+            .is_some_and(|s| s.off_seconds.is_some_and(|off| off < r.threshold * 3600.0))
+    })
 }
 /// A thousandth of a krona separates two plans; less is rounding.
 pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
@@ -387,18 +393,32 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
 pub(crate) fn measured(value: f64, scale: f64) -> f64 {
     (value * scale + 0.5).floor() / scale
 }
+/// A plan's account with every quarter's contributions: the selected plan's.
 pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
+    tally(p, q, index, true)
+}
+/// A plan's account without its rows, which a candidate in the search is never
+/// asked for. The totals are the same.
+pub(crate) fn totals(p: &Problem, q: &[Quarter], index: &Index) -> Account {
+    tally(p, q, index, false)
+}
+fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
     let prepared = prepared(p, q, index);
     let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
-    let contributions: Vec<Vec<i32>> = q
-        .iter()
-        .enumerate()
-        .map(|(i, v)| quarter(p, index, i, v, prepared, &mut episode))
-        .collect();
+    let mut contributions = Vec::with_capacity(if rows { q.len() } else { 0 });
+    let mut total = 0;
+    for (i, v) in q.iter().enumerate() {
+        let earns = buffer_credit(p, index, i, v, &mut episode);
+        let fired = raw_quarter(p, index, i, v, prepared, earns);
+        total += points(&p.rules, fired);
+        if rows {
+            contributions.push(self::contributions(&p.rules, fired));
+        }
+    }
     let last = q.last();
     let mut account = Account {
         score_sek: 0.0,
-        points: contributions.iter().flatten().sum(),
+        points: total,
         cash_sek: q.iter().map(|v| v.cost).sum(),
         wear_sek: q.iter().map(|v| v.wear).sum(),
         credit_sek: last.map_or(0.0, |v| {
@@ -451,6 +471,14 @@ fn buffer_credit(
         before_c,
     }
 }
+/// Which rules fired in a quarter: bit `j` is rule `j` of the problem.
+type Fired = u32;
+fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
+    rules
+        .iter()
+        .enumerate()
+        .fold(0, |fired, (j, r)| fired | Fired::from(fires(r)) << j)
+}
 fn raw_quarter(
     p: &Problem,
     index: &Index,
@@ -458,7 +486,7 @@ fn raw_quarter(
     v: &Quarter,
     prepared: bool,
     pool: PoolScoring,
-) -> Vec<bool> {
+) -> Fired {
     let s = &p.slots[i];
     let pool_w = measured(v.pool_w, 10.0);
     let ev_w = measured(v.ev_w, 10.0);
@@ -538,24 +566,38 @@ fn raw_quarter(
             ArbitrageNoExport => measured(s.export_price, 10000.0) > t && export <= 0.0,
             ArbitrageNotFull => measured(s.export_price, 10000.0) > t && !prepared,
             EvFromHomeBattery => ev_battery > t,
-            LargeLoadOverlap | PoolShortGap | EvShortGap | EarlyGridCharge => false,
+            LargeLoadOverlap | PoolShortGap | EarlyGridCharge => false,
         }
     };
-    p.rules.iter().map(rule_fires).collect()
+    fired_where(&p.rules, rule_fires)
 }
-fn contributions(rules: &[Rule], fired: &[bool]) -> Vec<i32> {
-    let active = |key| rules.iter().zip(fired).any(|(r, f)| r.key == key && *f);
-    rules
-        .iter()
-        .zip(fired)
-        .map(|(r, f)| {
-            if *f && !r.unless.is_some_and(active) {
-                r.points
-            } else {
-                0
-            }
-        })
+/// What rule `j` takes or gives in a quarter: nothing where the rule it yields to fired.
+fn contribution(rules: &[Rule], fired: Fired, j: usize) -> i32 {
+    let active = |key| {
+        rules
+            .iter()
+            .enumerate()
+            .any(|(k, r)| r.key == key && fired >> k & 1 == 1)
+    };
+    if fired >> j & 1 == 1 && !rules[j].unless.is_some_and(active) {
+        rules[j].points
+    } else {
+        0
+    }
+}
+fn contributions(rules: &[Rule], fired: Fired) -> Vec<i32> {
+    (0..rules.len())
+        .map(|j| contribution(rules, fired, j))
         .collect()
+}
+/// A quarter's points without its row.
+fn points(rules: &[Rule], fired: Fired) -> i32 {
+    if fired == 0 {
+        return 0;
+    }
+    (0..rules.len())
+        .map(|j| contribution(rules, fired, j))
+        .sum()
 }
 /// Relaxed continuation tables share the actual rule predicates. Episode and
 /// charge-history rules are excluded by the table owner, not approximated here.
@@ -566,9 +608,9 @@ pub(crate) fn guidance_quarter(
     v: &Quarter,
     before_c: f64,
 ) -> i32 {
-    contributions(
+    points(
         &p.rules,
-        &raw_quarter(
+        raw_quarter(
             p,
             index,
             i,
@@ -580,8 +622,6 @@ pub(crate) fn guidance_quarter(
             },
         ),
     )
-    .iter()
-    .sum()
 }
 pub(crate) fn quarter(
     p: &Problem,
@@ -590,9 +630,9 @@ pub(crate) fn quarter(
     v: &Quarter,
     prepared: bool,
     episode: &mut thermal_buffer::Credit,
-) -> Vec<i32> {
+) -> i32 {
     let earns = buffer_credit(p, index, i, v, episode);
-    contributions(&p.rules, &raw_quarter(p, index, i, v, prepared, earns))
+    points(&p.rules, raw_quarter(p, index, i, v, prepared, earns))
 }
 fn prepared(p: &Problem, q: &[Quarter], index: &Index) -> bool {
     index.first_sale.is_some_and(|sale| {
@@ -794,8 +834,9 @@ mod tests {
                 unless: None,
             },
         ];
-        assert_eq!(contributions(&rules, &[true, true]), vec![0, -2]);
-        assert_eq!(contributions(&rules, &[true, false]), vec![-1, 0]);
-        assert_eq!(contributions(&rules, &[false, true]), vec![0, -2]);
+        assert_eq!(contributions(&rules, 0b11), vec![0, -2]);
+        assert_eq!(contributions(&rules, 0b01), vec![-1, 0]);
+        assert_eq!(contributions(&rules, 0b10), vec![0, -2]);
+        assert_eq!(points(&rules, 0b11), -2);
     }
 }

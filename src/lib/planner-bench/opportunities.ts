@@ -46,7 +46,7 @@ import { auditShortGaps, SHORT_GAP_PRICE_TOLERANCE, type GapDevice, type ShortGa
 import { auditEarlyCharge, EARLY_CHARGE_PRICE_TOLERANCE, type EarlyChargeAudit } from './early-charge';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 11;
+export const OPPORTUNITY_AUDIT_VERSION = 12;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -331,7 +331,7 @@ function rangeMin(perQuarter: (q: number) => number): Float64Array {
 export function auditOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
   largeWorkloadW = LARGE_WORKLOAD_W,
-  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE },
+  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE },
   earlyChargeTolerance = EARLY_CHARGE_PRICE_TOLERANCE,
 ): OpportunityAudit {
   return findOpportunities(c, h, targets, decisions, lane, guard, largeWorkloadW, gapPriceTolerance, earlyChargeTolerance).audit;
@@ -341,7 +341,7 @@ export function auditOpportunities(
 export function findOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
   largeWorkloadW = LARGE_WORKLOAD_W,
-  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE, ev: SHORT_GAP_PRICE_TOLERANCE },
+  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE },
   earlyChargeTolerance = EARLY_CHARGE_PRICE_TOLERANCE,
 ): { audit: OpportunityAudit; improved: Decisions } {
   assertDecisions(decisions);

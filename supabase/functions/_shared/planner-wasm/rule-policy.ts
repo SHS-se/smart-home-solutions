@@ -24,12 +24,13 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
   arbitrage_no_export:{threshold:4,points:-1,role:evidence}, arbitrage_not_full:{threshold:4,points:-1,role:evidence},
   ev_from_home_battery:{threshold:0,points:-1,role:deduction}, large_load_overlap:{threshold:2000,points:-1,role:evidence},
   // A pool pause is charged once, at its restart; its gap deducts only where the restart rule does not.
-  pool_short_gap:{threshold:.1,points:-1,role:deduction}, ev_short_gap:{threshold:.1,points:-1,role:deduction},
+  pool_short_gap:{threshold:.1,points:-1,role:deduction},
   early_grid_charge:{threshold:.1,points:-1,role:evidence,unless:"large_load_overlap"},
 };
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
-export const REMOVED_RULE_KEYS: readonly string[] = ["solar_spill", "idle_battery", "dear_buy", "dearest_buy", "estimated_buy", "unplugged_charge"];
+/** Rules that no longer exist; an override stored under one of these names is ignored. A pause in car charging (`ev_short_gap`) costs only what is on the bill. */
+export const REMOVED_RULE_KEYS: readonly string[] = ["solar_spill", "idle_battery", "dear_buy", "dearest_buy", "estimated_buy", "unplugged_charge", "ev_short_gap"];
 export class CriteriaError extends Error {}
 
 export function ruleDefaults(key: string): RuleDefault {

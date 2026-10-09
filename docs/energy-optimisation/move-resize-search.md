@@ -1,5 +1,15 @@
 # Points-first move-and-resize trials
 
+> **Changed 9 October 2026 (recipe `rule-forecast-opportunity-v4`).** The sections below record the original design, in which a trial was previewed against a bound and a shortlist was then given the full witness audit. That is no longer how a trial is judged:
+>
+> - **One projection scores a trial.** The score is the kronor score ([scoring](../planner-bench/scoring.md)), and nothing in it needs an audit of every family: economic certificates take no points. `builder::score` projects the commands, accounts them, and audits only a rule that scores by certificate, which with the restart rule on has nothing to certify. There is no preview bound and no shortlist; every trial's score is exact.
+> - **A pass adopts all it can.** The best trial of a pass becomes the incumbent. The other improving trials are carried onto it in order of gain, each device's change applying where the incumbent still holds what the trial started from, and adopted where they still improve it.
+> - **Order of trials.** Tariff points no longer order anything in the usual problem, which has no tariff rules. First come each run's steps: either end moved, or the whole run shifted, by 1, 2, 4, … quarters. Then the remaining edits by an estimate of the kronor they gain on the incumbent's own flows (curtailed sun free, exported sun at its sale price, the rest bought, and a store short of its cap credited for what it gains), the likeliest of each source and destination first. The estimate orders trials only.
+> - **Certificates propose.** When no span edit improves the incumbent, the audit of every family runs on it and each proven alternative is scored as a trial; an adopted one sends the search back to the span edits. The same audit is the selected plan's report.
+> - **Recipe.** 768 trials a pass (`repair_trials` 24), beam width 16, work grant 700 million. A unit of work now buys less overpriced audit preparation and more projection, so it costs more time; 700 million holds the local solve at the 0.3 s it took before. The narrower beam leaves that much more for the climb, which gains more from it on the eleven cases at every grant tried.
+>
+> Eleven cases, real-price lane, scorer v30: −780.1 before, −739.9 after, every case better; the builder's own account −563.8 → −520.4. All eleven now end `grant_exhausted`: the climb spends what it is given.
+
 After joint construction and existing certificate repairs, the solver improves
 the fully audited incumbent with complete command-span alternatives. The
 comparison remains total additive points first, then grid cost plus declared

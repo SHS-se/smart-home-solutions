@@ -22,10 +22,10 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 //     to choose the hours. A pool heated past its target + 2 °C, or held there
 //     with the next day neither dearer nor duller, loses a point. A heater
 //     restarted within 12 hours of stopping loses two at the restart. A pause
-//     of one to four quarters in car charging loses a point per quarter when a
-//     continuous run is proven possible; the same pause in pool heating is
-//     charged once, by the restart rule, and only where that rule does not
-//     charge it does the gap rule. Home-battery power reaching the car loses a
+//     of one to four quarters in pool heating is charged once, by that restart
+//     rule; only where the restart rule does not charge it does the gap rule,
+//     a point per quarter when a continuous run is proven possible. A pause in
+//     car charging takes nothing. Home-battery power reaching the car loses a
 //     point.
 //
 //   Evidence. The price rules (cheap and dear quarters, dear base-load
@@ -52,7 +52,7 @@ import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type 
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { baseLoadGridSupplyW, flexibleGridSupplyW, evBatterySupplyW } from './supply';
-import { SHORT_GAP_PRICE_FRACTION, type GapDevice } from './short-gaps';
+import { SHORT_GAP_PRICE_FRACTION } from './short-gaps';
 import { EARLY_CHARGE_GRID_W, EARLY_CHARGE_PRICE_FRACTION } from './early-charge';
 import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, ruleDefaults, REMOVED_RULE_KEYS, type RuleRole } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
@@ -61,7 +61,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVE
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 29;
+export const SCORER_VERSION = 30;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
@@ -99,8 +99,8 @@ export interface QuarterView {
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** A legal cheaper-quarter move exists for one of this quarter's large bookings. */
   avoidableOverlap: boolean;
-  /** Devices whose avoidable short gap includes this quarter. */
-  shortGapDevices: ReadonlySet<GapDevice>;
+  /** An avoidable short gap in pool heating includes this quarter. */
+  shortPoolGap: boolean;
   /** Charging bought from the grid here has a proven move to a clearly cheaper later quarter. */
   earlyGridCharge: boolean;
   /** Home-battery power left for EV charging after exports and other household loads, W. */
@@ -294,12 +294,11 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "role" | "requir
     fires: (q, t) => q.evBatteryW > t,
     eligibleFrom: () => 0,
   },
-  ...(['ev', 'pool'] as const).map((device): Omit<QuarterRule, "threshold" | "points" | "role" | "required" | "unless"> => ({
-    key: `${device}_short_gap`, about: 'price',
-    label: device === 'ev' ? 'Short interruption in EV charging' : 'Short interruption in pool heating',
-    describe: t => `an avoidable 1–4-quarter gap; a gap quarter dearer than a bordering running quarter by more than the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price excuses the pause only where ${device === 'ev' ? 'the sun' : 'the sun and spare battery'} could not have carried it`,
-    fires: q => q.shortGapDevices.has(device), eligibleFrom: () => 0,
-  })),
+  {
+    key: 'pool_short_gap', about: 'price', label: 'Short interruption in pool heating',
+    describe: t => `an avoidable 1–4-quarter gap; a gap quarter dearer than a bordering running quarter by more than the larger of ${Math.round(t * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its absolute price excuses the pause only where the sun and spare battery could not have carried it`,
+    fires: q => q.shortPoolGap, eligibleFrom: () => 0,
+  },
   {
     key: 'early_grid_charge', about: 'price', label: 'Grid charge with a clearly cheaper quarter in reach',
     describe: t => `battery or car charging buys at least ${EARLY_CHARGE_GRID_W} W from the grid, and all of it has a feasible move to a later quarter cheaper by more than the larger of ${Math.round(t * 100)} öre/kWh or ${EARLY_CHARGE_PRICE_FRACTION * 100}% of this quarter's absolute price, without a higher bill`,
@@ -430,7 +429,6 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const auditPending = bufferEvidenceMissing || heaterEvidenceMissing || batteryEvidenceMissing || !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || (audit.status === 'complete' && (!witnessesHold(s, audit, serviceGuard(overrides))
       || audit.overlap.thresholdW !== overlapRule.threshold
-      || audit.shortGaps.priceTolerance.ev !== gapThresholds.ev_short_gap
       || audit.shortGaps.priceTolerance.pool !== gapThresholds.pool_short_gap
       || audit.earlyCharge.priceTolerance !== gapThresholds.early_grid_charge)));
   const overlapQuarters = new Set(audit && !auditPending ? audit.overlap.moves.map(m => m.from) : []);
@@ -491,7 +489,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
       baseLoadCoverable: !batteryEvidenceMissing && baseGridW >= FLEXIBLE_W
         && s.baseLoadBatteryCoverW[i] >= baseGridW,
       avoidableOverlap: overlapQuarters.has(i),
-      shortGapDevices: new Set(shortGaps.filter(gap => gap.from <= i && i < gap.to).map(gap => gap.device)),
+      shortPoolGap: shortGaps.some(gap => gap.device === 'pool' && gap.from <= i && i < gap.to),
       earlyGridCharge: earlyCharges.has(i),
       evBatteryW: evBatterySupplyW(s, i),
       arbitragePrepared: preparation.prepared,

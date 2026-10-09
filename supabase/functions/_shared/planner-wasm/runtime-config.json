@@ -1,16 +1,16 @@
 {
   "recipe": {
-    "version": "rule-forecast-opportunity-v3",
-    "work_grant": 900000000,
-    "beam_width": 32,
+    "version": "rule-forecast-opportunity-v4",
+    "work_grant": 700000000,
+    "beam_width": 16,
     "max_actions": 32,
     "finalists": 4,
     "witness_trials": 96,
-    "repair_trials": 8,
+    "repair_trials": 24,
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v6",
+    "version": "kronor-score-v7",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
@@ -26,8 +26,7 @@
       "ev_from_home_battery"
     ],
     "witness_rules": [
-      "pool_short_gap",
-      "ev_short_gap"
+      "pool_short_gap"
     ],
     "evidence_rules": [
       "pool_buffer",

@@ -1,5 +1,7 @@
 # Forecast opportunity search — 8 October 2026
 
+> Recipe `rule-forecast-opportunity-v4` (9 October 2026) changed what follows construction: a candidate is scored from one projection, the beam is 16 wide and the grant 700 million. See the note at the head of [move and resize](move-resize-search.md). The construction described here is unchanged.
+
 The planner compares loading now with what can be achieved in later forecast
 quarters before pruning its construction beam. The objective remains total
 additive rule points, then grid cost plus declared wear. Scoring rules, comfort
