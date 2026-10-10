@@ -65,6 +65,7 @@ pub struct Limits {
     pub battery_export_reserve_kwh: f64,
     pub battery_export_min_price: f64,
     pub wear_per_kwh: f64,
+    pub pool_start_cost_sek: f64,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -209,7 +210,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 6 || p.slots.is_empty() {
+    if p.abi != 7 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     // A store without a term is simply not credited; a term never changes what a device can do.

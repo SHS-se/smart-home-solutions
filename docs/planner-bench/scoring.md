@@ -10,13 +10,14 @@ Since scorer v29 (2026-10-09, the owner's decision) a case has **one score, and 
 
 ```
 points   = deductions − net bill
-net bill = grid cost + battery wear − the energy left in the stores
+net bill = grid cost + battery wear + pool-start wear − the energy left in the stores
 ```
 
 Higher is better. A score compares planners on one case, not cases with each other: −258 on a cold week with a cold pool is not a worse plan than −7 on a summer case. A planner's score is the sum over its cases.
 
 - **Grid cost:** purchases less export revenue at real prices over the 72 hours.
 - **Battery wear:** 0.05 SEK per kWh the home battery discharged.
+- **Pool-start wear (scorer v31):** 3 SEK once per actual heater start, including a start after an unknown or long stop. Continuing an already-running heater costs no new start. This is modelled wear, separate from grid cash and the existing 2 SEK recent-restart deduction. Both planner projection and the independent referee use it. Refresh old results with this charge before comparing them with new results.
 - **Energy left in the stores:** each store's change from its start to its end, counted **up to its target and no further**, as the grid electricity it takes to put that energy there, at the case's median import price (never below zero). The pool counts to its comfort temperature, the car to the range asked for (within its charge limit), the home battery to a full charge; battery and car convert at their charging efficiency, the pool at its heat pump's electricity per degree, pump included. Energy above a target is worth nothing either way: a store that starts above it and coasts down to it is credited nothing. Below the target a loss is a debit. One definition serves the referee and the planner (`supabase/functions/_shared/planner-wasm/end-credit.ts`).
 - **Deductions:** the comfort and conduct rules, in whole kronor per quarter: pool and car short of their targets (two tiers each), a pool heated past its target + 2 °C, a heater restarted within 12 hours (−2), home-battery power reaching the car. A short pause in pool heating is charged once, by the restart rule; the gap rule charges it only where the restart rule does not (rule switched off, or its threshold shorter than the pause). A pause in car charging takes nothing: the rule that charged it was removed in scorer v30 (9 October 2026), and what such a pause costs is on the bill.
 - **Evidence:** the price rules below are still measured and drawn, and listed per quarter as *noted*. They take and give no points: what they describe is on the bill. They are: cheap and very cheap quarters, dear and very dear loads, dear base-load imports, missed cheap quarters, high-sale arbitrage, large workloads together, grid charges before a clearly cheaper quarter, the warm buffer. The energy-timing audit is evidence in kronor.
@@ -29,7 +30,7 @@ Historical scorer versions are not comparable. Refresh the current branch compar
 
 The rules are one set for the whole bench (`bench_rules`, a single row of changes to the defaults): every case and every planner is scored with the same thresholds and points, so their totals can be compared. Each rule has a role, deduction or evidence (`rule-policy.ts`); an evidence rule's points are what it once counted, shown and never scored. `measuredQuarters` (`score.ts`) reads every rule at its points, as a lens.
 
-The rule-driven planner optimises this same number (`planner-core`, policy `kronor-score-v8`): it is sent the deduction rules and the end-credit terms, never the evidence rules. Since v8 it does not take its forecast for the day that comes: half of the bill it weighs is the mean of two stress days, load a quarter heavier with a quarter less sun and the reverse, carried the way the referee carries a plan through a measured day.
+The rule-driven planner optimises this same number (`planner-core`, policy `kronor-score-v10`): it is sent the deduction rules, wear costs and end-credit terms, never the evidence rules. Selection uses the supplied forecast; the referee evaluates the selected commands against recorded conditions.
 
 The 11-case table of stored plans, with no planner run: `deno task bench:score-table <export.json> <label>=<report.json> …`.
 

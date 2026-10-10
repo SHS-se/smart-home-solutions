@@ -26,9 +26,12 @@ forecast continuation values used only for construction guidance,
 construction and repairs. The TypeScript wrapper passes one prepared
 problem through one Wasm call. Each invocation has private mutable memory.
 Neither crate has database, history, forecast-fetching or training dependencies.
-ABI 3 requires the device-owned initial heater state (`off_unobserved`, known
+ABI 7 requires the device-owned initial heater state (`off_unobserved`, known
 `off` seconds, known `running` seconds, or confirmed `steady`). Native quarters
-report command start events independently of electrical/thermal startup. The
+report command start events independently of electrical/thermal startup. ABI 7
+requires the producer-owned `limits.pool_start_cost_sek`; the live and benchmark
+producers supply 3 SEK. Once-per-start wear is separate from grid cost and applies
+to unknown and long stops too, while an already-running heater continues free. The
 `pool_restart` direct rule scores −2 only on starts less than 12 hours after the
 last stop. The TEST bench now publishes the home's existing configured startup
 curve instead of steady draw. See the pool-restart design for calibration evidence
@@ -92,7 +95,8 @@ readings; realistic above-target readings remain usable.
 The rule-driven builder maps all 19 quarter rules and 11 economic families.
 Rules carry their configured thresholds, signs, required flags and exclusions.
 Construction uses backward forecast continuation tables and a forward beam of
-coupled native commands. A climb follows in which every proposal, a span edit
+coupled native commands. Each distinct finalist receives bounded refinement before the best competes
+for the remaining grant. A climb follows in which every proposal, a span edit
 or a certificate's repair, is scored exactly from one projection; the audit of
 every family proposes, and reports on the selected plan.
 The [forecast search comparison](../docs/energy-optimisation/forecast-opportunity-search.md)

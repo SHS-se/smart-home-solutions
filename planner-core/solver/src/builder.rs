@@ -899,19 +899,35 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     };
     work.reserved += held;
     let mut budget_declined = false;
-    let mut best: Option<Candidate> = None;
+    let mut candidates = Vec::new();
     for commands in proposals {
         match score(p, &index, commands, &mut work) {
-            Ok(c) => {
-                if best.as_ref().is_none_or(|b| c.better(b)) {
-                    best = Some(c);
-                }
-            }
+            Ok(c) => candidates.push(c),
             Err(EvaluationIssue::GrantUnavailable) => budget_declined = true,
             Err(EvaluationIssue::Infeasible) => {}
         }
     }
-    let best = best.ok_or("no_complete_candidate")?;
+    if candidates.is_empty() {
+        return Err("no_complete_candidate".into());
+    }
+    candidates.sort_by(|a, b| b.account.score_sek.total_cmp(&a.account.score_sek));
+    // Construction rank is not the rank after local refinement. Give every
+    // distinct finalist a share of half the remaining grant, then spend the
+    // rest climbing from the best refined candidate. All compete on the same
+    // complete objective; this is one search, not an alternate cost policy.
+    let ceiling = work.limit;
+    let trial_grant = work.free() / 2 / candidates.len() as u64;
+    let mut best: Option<Candidate> = None;
+    for candidate in candidates {
+        work.limit = work.used + work.reserved + trial_grant;
+        let mut trial_declined = false;
+        let (candidate, _) = improve(p, &index, candidate, &mut work, &mut trial_declined);
+        work.limit = ceiling;
+        if best.as_ref().is_none_or(|b| candidate.better(b)) {
+            best = Some(candidate);
+        }
+    }
+    let best = best.unwrap();
     let (best, report) = improve(p, &index, best, &mut work, &mut budget_declined);
     work.reserved -= held;
     let report = report.unwrap_or_else(|| {

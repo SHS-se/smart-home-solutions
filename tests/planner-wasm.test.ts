@@ -87,6 +87,8 @@ function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
   }
   p.initial.pool_c = 29.8;
   p.limits.import_w = 1000;
+  // Isolate shared solar/grid capacity from the separate startup-cost preference.
+  p.limits.pool_start_cost_sek = 0;
   p.slots = p.slots.map((s, i) => ({ ...s, base_w: 1000,
     solar_w: i === 0 ? solarW : 0, import_price: 2, export_price: 1,
     ev_available: i === 0 }));
@@ -118,7 +120,7 @@ Deno.test("joint loads compete for one solar surplus and one quarter reward", ()
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v6:"));
+  assert(planner.version.startsWith("wasm-v7:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),

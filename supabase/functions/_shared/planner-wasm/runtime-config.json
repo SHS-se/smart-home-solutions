@@ -1,7 +1,7 @@
 {
   "recipe": {
-    "version": "rule-forecast-opportunity-v7",
-    "work_grant": 760000000,
+    "version": "rule-forecast-opportunity-v8",
+    "work_grant": 1520000000,
     "beam_width": 16,
     "max_actions": 32,
     "finalists": 4,
@@ -10,12 +10,12 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v9",
+    "version": "kronor-score-v10",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
     ],
-    "score": "rule_points_minus_cash_minus_discharge_wear_plus_capped_end_store_credit",
+    "score": "rule_points_minus_cash_minus_discharge_and_pool_start_wear_plus_capped_end_store_credit",
     "direct_rules": [
       "pool_low",
       "pool_cold",

@@ -83,7 +83,7 @@ export interface BenchSeries {
 export interface Bill {
   /** Purchases less export revenue at real prices, SEK. */
   grid_sek: number;
-  /** Battery wear on discharged energy, SEK. */
+  /** Battery discharge wear plus 3 kr per pool-heater start, SEK. */
   wear_sek: number;
   /** Energy left in the stores beyond the start, each store up to its target (end-credit.ts). */
   credit: import('../../../supabase/functions/_shared/planner-wasm/end-credit').EndCredit;

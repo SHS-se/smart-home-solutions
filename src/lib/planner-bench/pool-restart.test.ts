@@ -101,3 +101,17 @@ Deno.test('replay conversion retains captured run age and refuses unmeasured run
     { kind: 'running', seconds: 450 });
   assertThrows(() => caseFromReplay(replay({ heating_running: true })));
 });
+
+Deno.test('pool starts add 3 kr modelled wear even after an unknown or long stop, without changing the meter bill', () => {
+  for (const state of [{ kind: 'off_unobserved' }, { kind: 'off', seconds: 86400 },
+    { kind: 'running', seconds: 300 }, { kind: 'steady' }] as const) {
+    const c = world({ start: { pool_heater: state } });
+    const d = plan({ pool: i => within(i, 0, 2) || within(i, 60, 63) ? 3764 : 0 });
+    const { series } = referee(c, HOUSEHOLD, TARGETS, d);
+    const count = series.poolStart!.filter(Boolean).length;
+    assertEquals(count, state.kind === 'running' || state.kind === 'steady' ? 1 : 2);
+    const batteryWear = series.wearSek!.reduce((sum, wear) => sum + wear, 0);
+    assertAlmostEquals(series.bill!.wear_sek, batteryWear + 3 * count, 1e-2);
+    assertAlmostEquals(series.bill!.grid_sek, series.costSek.reduce((sum, cost) => sum + cost, 0), 1e-2);
+  }
+});

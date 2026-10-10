@@ -64,7 +64,7 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
     const artifact: unknown = JSON.parse(manifest);
     if (
       typeof artifact !== "object" || artifact === null ||
-      !("abi" in artifact) || (artifact.abi !== 2 && artifact.abi !== 3 && artifact.abi !== 4 && artifact.abi !== 5 && artifact.abi !== 6) ||
+      !("abi" in artifact) || (artifact.abi !== 2 && artifact.abi !== 3 && artifact.abi !== 4 && artifact.abi !== 5 && artifact.abi !== 6 && artifact.abi !== 7) ||
       !("wasm_sha256" in artifact) ||
       typeof artifact.wasm_sha256 !== "string" ||
       !("source_sha256" in artifact) ||

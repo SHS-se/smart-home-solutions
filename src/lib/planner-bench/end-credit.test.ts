@@ -85,7 +85,7 @@ Deno.test('energy above a target earns nothing: heating the pool past it only co
   assert(coasting.series.poolC.at(-1)! > TARGETS.pool_c && heated.series.poolC.at(-1)! > coasting.series.poolC.at(-1)!);
   // Neither the cooling above the target nor the extra heat is worth anything.
   assertEquals([coasting.series.bill!.credit.pool!.credit_sek, heated.series.bill!.credit.pool!.credit_sek], [0, 0]);
-  assertAlmostEquals(coasting.score.points - heated.score.points, heated.series.bill!.grid_sek - coasting.series.bill!.grid_sek, 1e-3);
+  assertAlmostEquals(coasting.score.points - heated.score.points, heated.series.bill!.grid_sek - coasting.series.bill!.grid_sek + 3, 1e-3);
   assert(heated.score.points < coasting.score.points);
 });
 

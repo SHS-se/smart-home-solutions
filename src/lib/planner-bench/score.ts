@@ -4,10 +4,11 @@ import { poolBeforeC, thermalBufferTrace, type BufferQuarter } from './thermal-b
 // A case has one score, and a point of it is a krona:
 //
 //   points = deductions − net bill
-//   net bill = grid cost + battery wear − the energy left in the stores
+//   net bill = grid cost + battery wear + pool-start wear − the energy left in the stores
 //
 // The net bill is the referee's (referee.ts billOf): purchases less export
-// revenue at real prices, wear on what the battery discharged, and a credit
+// revenue at real prices, wear on what the battery discharged and 3 kr per pool
+// heater start, and a credit
 // for the energy each store ends with beyond its start, up to its target, at
 // the case's median price (end-credit.ts). It is the same for every rule
 // setting. Higher is better; a score is comparable between planners on one
@@ -61,7 +62,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX, REMOVE
 export { flexibleGridSupplyW, evBatterySupplyW } from './supply';
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 30;
+export const SCORER_VERSION = 31;
 /** The most a rule may take from a quarter, and the most it may give. */
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;

@@ -5,7 +5,7 @@
 // and may not cost more than the schedule it changes.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
-import { evLevels, evMaxW, HOURS, simulate, type Decisions, type Simulation } from './referee';
+import { evLevels, evMaxW, HOURS, simulate, wearOf, type Decisions, type Simulation } from './referee';
 import { scheduleWitness } from './schedule-witness';
 import type { ServiceGuard } from './service';
 import { stepMove } from './step-moves';
@@ -48,8 +48,7 @@ export function auditEarlyCharge(
   }
   if (!out.candidates.length) return out;
   const witness = scheduleWitness(c, h, targets, original, guard);
-  const wearRate = h.site.battery_degradation_sek_per_kwh;
-  const bill = (s: Simulation) => s.cost + wearRate * s.dischargeW.reduce((sum, w) => sum + w, 0) * HOURS / 1_000;
+  const bill = (s: Simulation) => s.cost + wearOf(h, s);
   let booked = d;
   let measured = original;
   let told = c.recorded.actual ? simulate(c, h, d, 'told') : original;

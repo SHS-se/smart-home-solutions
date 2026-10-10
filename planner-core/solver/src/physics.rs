@@ -101,8 +101,13 @@ fn transition(
         return Err("shared_grid_limit".into());
     }
     let cost = grid_cost(s, net, hours);
-    // Wear is declared on what the battery discharges, as the bench bills it.
-    let wear = discharge * hours / 1000.0 * p.limits.wear_per_kwh;
+    // Battery throughput and heater starts are modelled wear, not meter cash.
+    let wear = discharge * hours / 1000.0 * p.limits.wear_per_kwh
+        + if pool.as_ref().is_some_and(|h| h.start.is_some()) {
+            p.limits.pool_start_cost_sek
+        } else {
+            0.0
+        };
     if let Some(h) = &pool {
         state.pool = h.water_c;
         state.heater = h.next;
@@ -285,4 +290,58 @@ pub(crate) fn project_external(p: &Problem, commands: &[Command]) -> Result<Vec<
         .enumerate()
         .map(|(i, c)| transition(p, i, c, &mut state, true))
         .collect()
+}
+
+#[cfg(test)]
+mod startup_cost_tests {
+    use super::*;
+    fn command(on: bool) -> Command {
+        Command {
+            pool_on: on,
+            ev_amps: 0,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        }
+    }
+    #[test]
+    fn wear_charges_actual_starts_once_and_preserves_electricity_and_heat() {
+        let mut p = crate::witnesses::tests::problem(8);
+        let commands: Vec<_> = [true, true, false, true, true, false, false, true]
+            .into_iter()
+            .map(command)
+            .collect();
+        let before = projection(&p, &commands).unwrap();
+        p.limits.pool_start_cost_sek = 3.0;
+        let after = projection(&p, &commands).unwrap();
+        assert_eq!(after.iter().filter(|q| q.pool_start.is_some()).count(), 3);
+        for (a, b) in after.iter().zip(&before) {
+            assert_eq!(
+                a.wear - b.wear,
+                if a.pool_start.is_some() { 3.0 } else { 0.0 }
+            );
+            assert_eq!(a.cost, b.cost);
+            assert_eq!(a.pool_c, b.pool_c);
+            assert_eq!(a.pool_w, b.pool_w);
+        }
+    }
+    #[test]
+    fn a_running_heater_continues_without_another_start_charge() {
+        for state in [HeaterState::Steady, HeaterState::Running { seconds: 300.0 }] {
+            let mut p = crate::witnesses::tests::problem(4);
+            p.initial.heater_state = Some(state);
+            p.limits.pool_start_cost_sek = 3.0;
+            let q = projection(&p, &vec![command(true); 4]).unwrap();
+            assert!(q.iter().all(|q| q.wear == 0.0 && q.pool_start.is_none()));
+        }
+    }
+    #[test]
+    fn partial_first_interval_pays_one_start_not_a_prorated_charge() {
+        let mut p = crate::witnesses::tests::problem(4);
+        p.slots[0].start_seconds = -600.0;
+        p.limits.pool_start_cost_sek = 3.0;
+        let q = projection(&p, &vec![command(true); 4]).unwrap();
+        assert_eq!(q[0].wear, 3.0);
+        assert_eq!(q[1].wear, 0.0);
+    }
 }

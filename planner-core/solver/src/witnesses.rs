@@ -1214,7 +1214,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 6,
+            abi: 7,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -1298,6 +1298,7 @@ pub(crate) mod tests {
                 battery_export_reserve_kwh: 0.0,
                 battery_export_min_price: 0.0,
                 wear_per_kwh: 0.0,
+                pool_start_cost_sek: 0.0,
             },
             rules: vec![
                 Rule {

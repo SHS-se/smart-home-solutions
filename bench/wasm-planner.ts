@@ -1,3 +1,4 @@
+import { POOL_START_COST_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
@@ -81,7 +82,7 @@ export function readyProblem(
   const heater = publishHeater(h.pool.heater);
   const target = caseTargets(c);
   const problem: ReadyProblem = {
-    abi: 6,
+    abi: 7,
     pool_cycle_seconds: resolveRulePolicy(criteria).pool_cycle_seconds,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -125,6 +126,7 @@ export function readyProblem(
         h.battery.capacity_kwh,
       battery_export_min_price: h.site.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: h.site.battery_degradation_sek_per_kwh,
+      pool_start_cost_sek: POOL_START_COST_SEK,
     },
     // The planner optimises the score: only the rules that take points go to it.
     rules: resolveRules(criteria).flatMap((r) => {
@@ -161,7 +163,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 6 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 7 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -175,7 +177,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v6:${identity}`,
+    version: `wasm-v7:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -205,7 +207,7 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v6",
+          generation: "ready-wasm-v7",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>

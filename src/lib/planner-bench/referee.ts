@@ -1,3 +1,4 @@
+import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
 import { localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
@@ -44,7 +45,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 15;
+export const REFEREE_VERSION = 16;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -248,9 +249,15 @@ function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW
   return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 };
 }
 
+/** Mechanical wear shared by the bill and alternative-schedule audits. */
+export function wearOf(h: Household, sim: Simulation): number {
+  return sim.dischargeW.reduce((sum, w) => sum + w, 0) * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh
+    + sim.poolStart.filter(start => start !== null).length * POOL_START_COST_SEK;
+}
+
 /**
  * A carried-out plan's bill: what it bought and sold at real prices, the wear
- * on what its battery discharged, and the credit for what it leaves in the
+ * on what its battery discharged, once per pool-heater start, and the credit for what it leaves in the
  * stores (end-credit.ts).
  */
 export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simulation): Bill {
@@ -264,7 +271,7 @@ export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simula
   const credit = endCredit(terms,
     { battery_kwh: sim.start.batteryKwh, pool_c: sim.start.poolC, ev_kwh: sim.start.evKwh },
     { battery_kwh: sim.batteryKwh[last], pool_c: sim.poolC[last], ev_kwh: sim.evKwh[last] });
-  const wear = sim.dischargeW.reduce((sum, w) => sum + w, 0) * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh;
+  const wear = wearOf(h, sim);
   const round = (store: typeof credit.battery) => store && {
     start: r4(store.start), end: r4(store.end), cap: r4(store.cap), counted: r4(store.counted), grid_kwh: r4(store.grid_kwh), credit_sek: r4(store.credit_sek),
   };

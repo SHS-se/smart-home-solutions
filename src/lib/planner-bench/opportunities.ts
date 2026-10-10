@@ -11,7 +11,7 @@
 //   - leaves each store no more short of its target than before, pool and car
 //     each on its own,
 //   - ends with the battery, the pool and the car where the plan ended them,
-//   - and costs less at real prices, after the change in battery cycling wear.
+//   - and costs less at real prices, after the change in modelled wear.
 //
 // Accepted transfers are applied one on top of the other, so their savings add
 // up to exactly the difference between the plan and the improved plan. A
@@ -39,14 +39,14 @@ import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './cas
 import { thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
-import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, type Decisions, type Simulation, type Violation } from './referee';
+import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, wearOf, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
 import { auditLargeLoadOverlap, LARGE_WORKLOAD_W, type LargeLoadOverlapAudit } from './large-load-overlap';
 import { auditShortGaps, SHORT_GAP_PRICE_TOLERANCE, type GapDevice, type ShortGapAudit } from './short-gaps';
 import { auditEarlyCharge, EARLY_CHARGE_PRICE_TOLERANCE, type EarlyChargeAudit } from './early-charge';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 12;
+export const OPPORTUNITY_AUDIT_VERSION = 13;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -117,7 +117,7 @@ export const NOT_MODELLED: { key: string; label: string }[] = [
   { key: 'sub_quarter', label: 'Clouds and load changes within a quarter' },
   { key: 'tariff_peak', label: 'Peak-power tariffs' },
   { key: 'overrides', label: 'Owner overrides and the devices\' own controllers' },
-  { key: 'heater_run', label: 'Native heater protection and equipment start costs' },
+  { key: 'heater_run', label: 'Native heater protection' },
   { key: 'end_waste', label: 'Energy wasted at the very end of the window' },
 ];
 
@@ -142,7 +142,7 @@ export interface OpportunityFinding {
   to: number; toEnd: number;
   /** Energy moved, kWh on the AC side. */
   kwh: number;
-  /** Grid saving at real prices, less battery wear. */
+  /** Grid saving at real prices, less modelled wear. */
   savingSek: number;
   gridSavingSek: number;
   wearSek: number;
@@ -190,7 +190,7 @@ interface AuditCore {
   avoidableSek: number;
   knownSek: number;
   hindsightSek: number;
-  /** Signed change in battery discharge wear; negative means wear avoided. Already subtracted from savings. */
+  /** Signed change in battery discharge and pool-start wear; negative means wear avoided. Already subtracted from savings. */
   wearSek: number;
   trials: number;
   /** The search stopped on its budget with candidates left. */
@@ -303,7 +303,7 @@ interface Candidate {
   key: string;
 }
 
-interface Plan { d: Decisions; sim: Simulation; exposure: ServiceExposure; dischargedKwh: number }
+interface Plan { d: Decisions; sim: Simulation; exposure: ServiceExposure; wearSek: number }
 
 interface Transfer {
   rule: OpportunityRuleKey; tags: OpportunityRuleKey[]; device: OpportunityDevice;
@@ -403,8 +403,7 @@ export function findOpportunities(
   };
   const carKmOf = (sim: Simulation) => Array.from(sim.evKwh, v => v / h.car.battery.kwh_per_km);
   const exposureOf = (sim: Simulation) => serviceExposure(comfort, sim.poolC, carKmOf(sim), guard);
-  const dischargedOf = (sim: Simulation) => sim.dischargeW.reduce((sum, w) => sum + w * KWH, 0);
-  const planOf = (d: Decisions, sim: Simulation): Plan => ({ d, sim, exposure: exposureOf(sim), dischargedKwh: dischargedOf(sim) });
+  const planOf = (d: Decisions, sim: Simulation): Plan => ({ d, sim, exposure: exposureOf(sim), wearSek: wearOf(h, sim) });
 
   // The planner's stated battery permissions go with every alternative: the referee reads a quarter the
   // alternative changed from its decision, and without the rest no alternative ends where the plan did.
@@ -531,7 +530,7 @@ export function findOpportunities(
     if (warmer < -1e-9 || warmer > POOL_END_TOLERANCE_C) return null;
     if (!serviceNotWorse(plan.exposure, exposureOf(sim))) return null;
     const grid = plan.sim.cost - sim.cost;
-    const wear = wearRate * (dischargedOf(sim) - plan.dischargedKwh);
+    const wear = wearOf(h, sim) - plan.wearSek;
     return grid - wear >= MIN_SAVING_SEK ? { grid, wear } : null;
   };
 

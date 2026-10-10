@@ -531,7 +531,7 @@ const CaseCost: React.FC<{ detail: BenchResultDetail }> = ({ detail: d }) => {
     {d.series?.bill && <div data-testid="bench-bill">
       {t('Nettokostnad', 'Net bill')} <span className="font-mono">{d.series.bill.net_sek.toFixed(1)} kr</span>
       {' = '}{t('nät', 'grid')} <span className="font-mono">{d.series.bill.grid_sek.toFixed(1)}</span>
-      {' + '}{t('batterislitage', 'battery wear')} <span className="font-mono">{d.series.bill.wear_sek.toFixed(1)}</span>
+      {' + '}{t('modellerat slitage', 'modelled wear')} <span className="font-mono">{d.series.bill.wear_sek.toFixed(1)}</span>
       {' − '}{t('kvar i lagren', 'left in the stores')} <span className="font-mono">{d.series.bill.credit.credit_sek.toFixed(1)}</span>
       <span className="text-muted-foreground">
         {' ('}{[
@@ -643,8 +643,8 @@ const SuiteTable: React.FC<{
   ]];
   const wear: Group = [t('Slitage, modellerat', 'Wear, modelled'), [
     line(t('Batterislitage', 'Battery wear'), 'kr', 1, 'battery_wear_sek', 'lower',
-      t(`${wearRate.toFixed(2)} kr per urladdad kWh. Finns inte på elräkningen. Värmepumpen har ingen slitagekostnad i modellen.`,
-        `${wearRate.toFixed(2)} kr per kWh discharged. Not on the electricity bill. No wear cost is modelled for the heat pump.`)),
+      t(`${wearRate.toFixed(2)} kr per urladdad kWh. Finns inte på elräkningen. Värmepumpens starter kostar ytterligare 3 kr per start.`,
+        `${wearRate.toFixed(2)} kr per kWh discharged. Not on the electricity bill. Pool-heater starts cost an additional 3 kr each.`)),
     line(t('Hembatteri urladdat', 'Home battery discharged'), 'kWh', 1, 'battery_discharge_kwh', null),
   ]];
   const columns: Group[][] = [[cost, energy, wear], [solar, pool]];

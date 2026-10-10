@@ -25,7 +25,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(6),
+  abi: z.literal(7),
   pool_cycle_seconds: number.nonnegative(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -117,6 +117,7 @@ export const readyProblemSchema = z.object({
     battery_export_reserve_kwh: number,
     battery_export_min_price: number,
     wear_per_kwh: number,
+    pool_start_cost_sek: number.nonnegative(),
   }),
   end_credit: z.object({
     reference_sek_per_kwh: number.nonnegative(),

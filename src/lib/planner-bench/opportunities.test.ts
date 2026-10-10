@@ -46,6 +46,7 @@ function audited(c: BenchCase, d: Decisions, lane: LaneId = 'told/nominal', guar
   const was = scoreQuarters(before.series).counts, is = scoreQuarters(after.series).counts;
   for (const key of ['pool_low', 'pool_cold', 'ev_low', 'ev_short']) assert((is[key] ?? 0) <= (was[key] ?? 0), `${key} got worse`);
   // One saving, counted once: the findings add up to the difference between the two plans.
+  assertAlmostEquals(after.series.bill!.wear_sek - before.series.bill!.wear_sek, audit.wearSek, 2e-3);
   assertAlmostEquals(audit.originalCostSek - audit.improvedCostSek - audit.wearSek, audit.avoidableSek, 2e-3);
   assertAlmostEquals(sum(audit.findings.map(f => f.savingSek)), audit.avoidableSek, 2e-3);
   assertAlmostEquals(sum(Object.values(audit.rules).map(r => r.knownSek + r.hindsightSek)), audit.avoidableSek, 2e-3);
@@ -189,10 +190,12 @@ Deno.test('a full battery in front of the sun: using it first is found as headro
 });
 
 // A cool autumn: the heat pump works in 15 °C air, power is 2 kr and surplus solar earns 0.3 kr.
+// The positive pool-transfer fixtures below use 4 kr/kWh so their first
+// whole-hour move pays for additional 3 kr starts as well as startup heat loss.
 const autumn = { air: () => 15, buy: () => 2, sell: () => 0.3, published: 288 };
 
 Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus is found, above target if need be', () => {
-  const c = world({ ...autumn, solar: i => within(i, 40, 64) ? 5000 : 0 });
+  const c = world({ ...autumn, buy: () => 4, solar: i => within(i, 40, 64) ? 5000 : 0 });
   const audit = audited(c, plan({ pool: i => within(i, 100, 140) ? 3764 : 0 }));
   const preheat = audit.findings.find(f => f.rule === 'pool_solar_preheat')!;
   assert(preheat, rulesFound(audit).join());
@@ -210,7 +213,7 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
 
 Deno.test('a dull day before a sunny one: waiting for the sun is found, as far as the comfort band allows', () => {
   // Enough sun on the second day for the battery and the pool both.
-  const sunLater = { ...autumn, solar: (i: number) => within(i, 136, 160) ? 12_000 : 0 };
+  const sunLater = { ...autumn, buy: () => 4, solar: (i: number) => within(i, 136, 160) ? 12_000 : 0 };
   // Six hours of heat on the first evening; the sun on the second day could give all of it.
   const heatEarly = plan({ pool: i => within(i, 76, 100) ? 3764 : 0 });
   // Starting warm, the pool can coast to the sun within a degree of target.
@@ -380,8 +383,10 @@ Deno.test('a case scores its net bill; what the audit proves is evidence beside 
 });
 
 Deno.test('the page scores a stored plan without replaying it, and never shows an audit its thresholds do not support', () => {
-  const c = world({ ...autumn, solar: i => within(i, 136, 160) ? 5000 : 0, start: { pool_water_c: 30.6 } });
-  const { series, score } = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3764 : 0 })), {}, 'told/nominal');
+  const c = world({ ...autumn, buy: () => 4, solar: i => within(i, 136, 160) ? 12_000 : 0, start: { pool_water_c: 30.6 } });
+  const decisions = plan({ pool: i => within(i, 76, 100) ? 3764 : 0 });
+  const { series, score } = evaluate(c, record(decisions), {}, 'told/nominal');
+  assert(series.audit!.findings.some(f => f.rule === 'pool_wait_for_sun'));
   const live = scoreQuarters(series);
   assertEquals([live.points, live.sum], [score.points, score.sum]);
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
@@ -392,7 +397,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   assertEquals([tight.auditPending, tight.complete, tight.points], [true, false, tight.sum]);
   assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'needs recomputing for these rule thresholds or this audit version');
   // Evaluated under the tight band, the audit holds itself to it.
-  const strict = evaluate(c, record(plan({ pool: i => within(i, 60, 100) ? 3764 : 0 })), { pool_low: { threshold: 0.05 } }, 'told/nominal');
+  const strict = evaluate(c, record(decisions), { pool_low: { threshold: 0.05 } }, 'told/nominal');
   assertEquals(strict.series.audit!.guard, { pool: [0.05, 2], ev: [50, 100] });
   assertEquals(scoreQuarters(strict.series, { pool_low: { threshold: 0.05 } }).auditPending, false);
   // A series from before the audit: no economic score, said so, and no stored score to be had.

@@ -1,3 +1,4 @@
+import { POOL_START_COST_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
@@ -54,7 +55,7 @@ let compiled: ReturnType<typeof createWasmPlanner> | undefined;
 function planner(): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
   const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 6 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
+  if (artifact.abi !== 7 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
     return fail("Rules planner artifact is missing, obsolete or corrupt");
   }
   compiled = createWasmPlanner(bytes);
@@ -224,7 +225,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 6, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 7, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -252,7 +253,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       battery_export_enabled: !!battery && snapshot.policy.battery_export_enabled,
       battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,
       battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
-      wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0 },
+      wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
+      pool_start_cost_sek: POOL_START_COST_SEK },
     rules: approved.rules, service_guard: approved.service_guard,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },

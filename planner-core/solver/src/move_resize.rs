@@ -84,6 +84,8 @@ struct Estimate {
     drawn: Vec<f64>,
     /// What a kWh more in the device's store is credited at the end.
     stored: f64,
+    /// Grid-equivalent energy before the terminal store credit reaches its cap.
+    room: f64,
 }
 impl Estimate {
     fn new(p: &Problem, index: &policy::Index, device: Device, watts: f64, q: &[Quarter]) -> Self {
@@ -95,6 +97,7 @@ impl Estimate {
             booked: vec![0.0; n + 1],
             drawn: vec![0.0; n + 1],
             stored: 0.0,
+            room: 0.0,
         };
         for (i, v) in q.iter().enumerate() {
             let s = &p.slots[i];
@@ -125,8 +128,9 @@ impl Estimate {
             Device::Pool => (&p.end_credit.pool, q.last().and_then(|v| v.pool_c)),
             Device::Ev => (&p.end_credit.ev, q.last().and_then(|v| v.ev_kwh)),
         };
-        if term.as_ref().zip(end).is_some_and(|(t, end)| end < t.cap) {
+        if let Some((term, end)) = term.as_ref().zip(end) {
             out.stored = p.end_credit.reference_sek_per_kwh;
+            out.room = (term.cap - end) * term.grid_kwh_per_unit;
         }
         out
     }
@@ -145,8 +149,8 @@ impl Estimate {
         let saved = outside(&self.remove, e.from, e.to);
         let cost = outside(&self.add, e.start, e.end);
         let energy = outside(&self.booked, e.start, e.end) - outside(&self.drawn, e.from, e.to);
-        saved - cost + energy * self.stored + sum(&self.points, e.start, e.end)
-            - sum(&self.points, e.from, e.to)
+        let credit = (energy.min(self.room) - 0.0_f64.min(self.room)) * self.stored;
+        saved - cost + credit + sum(&self.points, e.start, e.end) - sum(&self.points, e.from, e.to)
     }
 }
 
@@ -196,12 +200,21 @@ pub(crate) fn proposals(
             while i < n && !physics::locked(p, i) && device.same(&commands[from], &commands[i]) {
                 i += 1;
             }
-            sources.push((device, from, i));
+            sources.push((device, from, i, false));
+            // Prefix/suffix transfers can move expensive quarters into a
+            // cheaper gap without moving the rest of a useful run. A pool
+            // split still pays its actual new start in exact scoring.
+            let mut length = 1;
+            while length < i - from {
+                sources.push((device, from, from + length, true));
+                sources.push((device, i - length, i, true));
+                length *= 2;
+            }
         }
     }
-    sources.sort_by_key(|(device, from, to)| (to - from, *device, *from));
+    sources.sort_by_key(|(device, from, to, partial)| (*partial, to - from, *device, *from));
     let mut ranked = Vec::new();
-    for (device, from, to) in sources {
+    for (device, from, to, partial) in sources {
         // Bound enumeration and ordering as well as model projection.
         if !work.spend(n as u64 * ((to - from) as u64 * 12 + 512)) {
             return None;
@@ -222,6 +235,28 @@ pub(crate) fn proposals(
             !physics::locked(p, i) && (from <= i && i < to || !device.active(&commands[i]))
         };
         let length = to - from;
+        if partial {
+            // Fixed-length transfers only. Resizing belongs to the whole
+            // source, so nested subspans do not multiply the same proposals.
+            for start in 0..=n - length {
+                let end = start + length;
+                if start == from || !(start..end).all(free) {
+                    continue;
+                }
+                let edit = Edit {
+                    device,
+                    from,
+                    to,
+                    start,
+                    end,
+                };
+                let gain = estimate.gain(&edit);
+                if gain > 0.0 {
+                    ranked.push((0, gain, edit));
+                }
+            }
+            continue;
+        }
         let mut lengths = BTreeSet::from([1, length.saturating_sub(1).max(1), length, length + 1]);
         // Geometric duration coverage complements adjacent-quarter resizing:
         // a three-quarter source must be able to try a seven-quarter run in
@@ -358,8 +393,7 @@ pub(crate) fn proposals(
         .into_iter()
         .filter_map(|(_, _, edit)| {
             let k = if edit.device == Device::Pool { 0 } else { 1 };
-            if edit.to - edit.from != edit.end - edit.start
-                || per_device[k] >= 2
+            if per_device[k] >= 2
                 || !seen.insert((edit.device, edit.from, edit.to, edit.destination()))
             {
                 return None;
@@ -480,5 +514,100 @@ mod tests {
         assert_eq!(ev[6].ev_amps, 0);
         assert_eq!(ev[2].ev_amps, 7);
         assert_eq!(ev[6].pool_on, base[6].pool_on);
+    }
+    #[test]
+    fn terminal_credit_ordering_stops_at_the_store_cap_and_debits_below_it() {
+        let mut p = crate::witnesses::tests::problem(12);
+        p.rules.clear();
+        p.end_credit.reference_sek_per_kwh = 2.0;
+        p.end_credit.ev = Some(StoreTerm {
+            cap: 10.5,
+            grid_kwh_per_unit: 1.0,
+        });
+        let mut commands = vec![
+            Command {
+                pool_on: false,
+                ev_amps: 0,
+                battery: Operation::Idle,
+                charge_limit_w: 0.0,
+                discharge_limit_w: 0.0,
+            };
+            12
+        ];
+        commands[9].ev_amps = 6;
+        let q = physics::projection(&p, &commands).unwrap();
+        let mut work = Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 0,
+            unit_cost: 100,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        };
+        let index = policy::index(&p, &mut work).unwrap();
+        let estimate = Estimate::new(&p, &index, Device::Ev, 1380.0, &q);
+        let edit = Edit {
+            device: Device::Ev,
+            from: 9,
+            to: 10,
+            start: 9,
+            end: 12,
+        };
+        // The extra 0.69 kWh costs 0.69 kr but only 0.155 kWh fits below the cap.
+        assert!((estimate.gain(&edit) - (-0.69 + 0.155 * 2.0)).abs() < 1e-9);
+        p.end_credit.ev.as_mut().unwrap().cap = 10.2;
+        let estimate = Estimate::new(&p, &index, Device::Ev, 1380.0, &q);
+        assert!((estimate.gain(&edit) + 0.69).abs() < 1e-9);
+    }
+    #[test]
+    fn a_cheaper_single_quarter_can_receive_the_tail_of_a_long_ev_run() {
+        let mut p = crate::witnesses::tests::problem(12);
+        p.rules.clear();
+        p.slots[2].import_price = 0.1;
+        let mut commands = vec![
+            Command {
+                pool_on: false,
+                ev_amps: 0,
+                battery: Operation::Idle,
+                charge_limit_w: 0.0,
+                discharge_limit_w: 0.0,
+            };
+            12
+        ];
+        for c in &mut commands[6..10] {
+            c.ev_amps = 6;
+        }
+        let q = physics::projection(&p, &commands).unwrap();
+        let mut work = Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 0,
+            unit_cost: 100,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        };
+        let index = policy::index(&p, &mut work).unwrap();
+        let edit = proposals(&p, &index, &commands, &q, &mut work)
+            .unwrap()
+            .singles
+            .into_iter()
+            .find(|e| {
+                e.device == Device::Ev && e.from == 9 && e.to == 10 && e.start == 2 && e.end == 3
+            })
+            .unwrap();
+        let after = physics::projection(&p, &edit.apply(&commands)).unwrap();
+        assert_eq!(q.last().unwrap().ev_kwh, after.last().unwrap().ev_kwh);
+        assert!(after.iter().map(|q| q.cost).sum::<f64>() < q.iter().map(|q| q.cost).sum::<f64>());
+        assert_eq!(edit.apply(&commands)[6..9], commands[6..9]);
     }
 }

@@ -61,7 +61,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 6;
+  abi: 7;
   /** Shared cycle clock even when the restart deduction is disabled. */
   pool_cycle_seconds: number;
   work_grant: number;
@@ -102,6 +102,7 @@ export interface ReadyProblem {
     battery_export_reserve_kwh: number;
     battery_export_min_price: number;
     wear_per_kwh: number;
+    pool_start_cost_sek: number;
   };
   /** What the energy left in the stores is worth to the plan's score (end-credit.ts). */
   end_credit: EndCreditTerms;

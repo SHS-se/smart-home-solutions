@@ -1,7 +1,7 @@
 {
-  "abi": 6,
-  "wasm_sha256": "94929fdb63b8011120ae0539ef64a2911ce33f5a484218f129131fb2bcce8985",
-  "source_sha256": "6f981bc7b958362470051ede97834333ce69a12f132327f095e01b70953d46a3",
+  "abi": 7,
+  "wasm_sha256": "4a112868a445589d98b7be0f1e97604c5744f6d4ffe891630d3db3ecffcb1869",
+  "source_sha256": "fd6ebea5b5253650f1dd627e8cd9bae5f64a5700bb635f887f757ca369e5f78d",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -48,6 +48,7 @@
     "src/lib/planner-bench/thermal-buffer.ts",
     "supabase/functions/_shared/planner-wasm/calendar.ts",
     "supabase/functions/_shared/planner-wasm/core.ts",
+    "supabase/functions/_shared/planner-wasm/cost-policy.ts",
     "supabase/functions/_shared/planner-wasm/end-credit.ts",
     "supabase/functions/_shared/planner-wasm/probe.ts",
     "supabase/functions/_shared/planner-wasm/ready-problem.ts",
