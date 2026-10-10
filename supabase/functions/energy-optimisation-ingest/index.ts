@@ -4,6 +4,7 @@ import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMappin
 import { prepareRulesPlanningInput } from "../_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
+import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1798,6 +1799,21 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           .eq("home_id", auth.homeId)
           .maybeSingle();
         if (poolModelError) throw new Error(poolModelError.message);
+        // The home reads the heat pump's own start and stop settings with every
+        // snapshot. The stored copy serves only a home that does not send them.
+        let reportedHardware: PoolHardware | null;
+        try {
+          reportedHardware = reportedPoolHardware(snapshot.pool);
+        } catch (error) {
+          return json({ error: "invalid_snapshot", detail: describeThrown(error) }, 400);
+        }
+        if (reportedHardware && poolModel && !samePoolHardware(poolModel.hardware, reportedHardware)) {
+          const { error } = await supabase.from("energy_optimisation_pool_model")
+            .update({ hardware: reportedHardware }).eq("home_id", auth.homeId);
+          // This plan already uses what the home reported; the next one stores it.
+          if (error) console.error("[ENERGY-OPTIMISATION] pool hardware not stored", error.message);
+        }
+        const poolHardware = reportedHardware ?? poolModel?.hardware;
         // The idle loss stands on its own; the joint fit adds the COP when it
         // has one. Either is enough to stop planning on the seeded loss.
         const copFitted = Boolean(poolModel?.loss_kw_per_k && poolModel?.rated_cop);
@@ -1812,7 +1828,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           snapshot = {
             ...snapshot,
             pool_model: {
-              ...(poolModel?.hardware ? { hardware: poolModel.hardware } : {}),
+              ...(poolHardware ? { hardware: poolHardware } : {}),
               ...(poolModel?.heater_response ? { heater_response: parseHeaterResponse(poolModel.heater_response) } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
