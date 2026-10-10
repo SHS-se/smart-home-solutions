@@ -97,6 +97,20 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     const output = new TextDecoder().decode(failure.stdout);
     assert(output.includes('Refresh: 1 planner(s)'));
     assert(!output.includes('Main head, same planner'), 'explicit candidate refresh must not solve the production head');
+
+    // History kept by the runner: a commit whose planner a head already has leaves with its results.
+    await command('git', ['switch', 'main']);
+    assertEquals((await store.runs()).map(r => r.sha).sort(), [beforePlanner, older, main, dev, broken].sort());
+    const pruned = await command(Deno.execPath(), [
+      'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
+      '--shas', 'heads', '--current', main, '--test', dev, '--history', '1', '--local', cases, '--out', out,
+    ]);
+    assert(pruned.includes('## Planner bench history'));
+    assert(pruned.includes(older.slice(0, 8)), 'the copy of the heads\' planner is named as removed');
+    // No case is ready here, so the two that remain are not compared on score.
+    assertEquals((await store.runs()).map(r => [r.sha, r.is_current, r.is_test]), [
+      [beforePlanner, false, false], [main, true, false], [dev, false, true], [broken, false, false],
+    ]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

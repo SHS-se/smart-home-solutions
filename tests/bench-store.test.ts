@@ -147,3 +147,34 @@ Deno.test('pending completion explicitly clears recorded observations in databas
     assertEquals(JSON.parse(await Deno.readTextFile(`${dir}/case.json`)), { dataset: null, recorded: null, pending_reason: 'measurements incomplete' });
   } finally { globalThis.fetch = original; await Deno.remove(dir, { recursive: true }); }
 });
+
+Deno.test("a run at neither head is removed with its results; a branch head is never removed", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "bench-delete-run-" });
+  try {
+    const store = new LocalStore(dir, `${dir}/results.json`);
+    for (const sha of ["older", "main", "dev"]) {
+      await store.saveRun({ sha, short_sha: sha, committed_at: "2026-10-07T00:00:00Z", subject: sha, branch: null, status: "done", planner_version: sha });
+      await store.saveResult({ sha, scenario_id: "case", lane: "told/nominal", status: "error", error: "x", cpu_ms: null, input_hash: "h", case_revision: null, record: null });
+    }
+    await store.markDeployed("main", "production");
+    await store.markDeployed("dev", "test");
+    assertEquals([await store.deleteRun("main"), await store.deleteRun("dev"), await store.deleteRun("missing"), await store.deleteRun("older")], [false, false, false, true]);
+    assertEquals((await store.runs()).map(run => run.sha).sort(), ["dev", "main"]);
+    assertEquals((await store.evaluatedResults()).map(result => result.sha).sort(), ["dev", "main"]);
+  } finally { await Deno.remove(dir, { recursive: true }); }
+
+  const original = globalThis.fetch;
+  const requests: { method?: string; url: URL }[] = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({ method: init?.method, url: new URL(String(input)) });
+    return Response.json(requests.length === 1 ? [{ sha: "older" }] : []);
+  };
+  try {
+    const store = new DbStore("https://bench.invalid", "test-key", immediate);
+    assertEquals([await store.deleteRun("older"), await store.deleteRun("dev")], [true, false]);
+    const { method, url } = requests[0];
+    // The head marks are in the statement itself: a run that became a head meanwhile is left.
+    assertEquals([method, url.pathname, url.searchParams.get("sha"), url.searchParams.get("is_current"), url.searchParams.get("is_test")],
+      ["DELETE", "/rest/v1/bench_runs", "eq.older", "is.false", "is.false"]);
+  } finally { globalThis.fetch = original; }
+});

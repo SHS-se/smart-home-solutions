@@ -201,6 +201,17 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   return report;
 }
 
+/**
+ * Each planner's score where it can be compared: over every ready case, by
+ * today's referee, scorer and rules. Null for a planner without that, and null
+ * altogether when no case is ready, so there is nothing to compare on.
+ */
+export function completeScores(report: RescoreReport): Map<string, number | null> | null {
+  if (!report.readyCases) return null;
+  return new Map(report.planners.map(p => [p.sha,
+    p.unavailableReason === null && p.currentLanes === p.expectedLanes ? p.score : null]));
+}
+
 /** Shared console and GitHub Actions summary, with explicit comparison coverage. */
 export function rescoreMarkdown(report: RescoreReport): string {
   const score = (value: number | null, count: number, total: number) => `${value ?? "—"} (${count}/${total})`;

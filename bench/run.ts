@@ -16,6 +16,8 @@
 //   --current <sha>         mark this commit as the production planner.
 //   --test <sha>            mark this commit as the test environment planner.
 //   --branch <name>         recorded against the run (CI passes the pushed branch).
+//   --history <n>           keep the n best earlier planners beside the heads (retention.ts);
+//                           default 10 with the database, and none dropped with --local.
 //   --local <dir> --out <file.json>
 //                           no database: cases are `{ dataset, recorded }` files in <dir>,
 //                           records go to <file.json>.
@@ -40,6 +42,11 @@
 // its planner code matches another commit. The page hides older consecutive
 // equal-score entries without changing stored commit identity.
 //
+// Beside the main and dev heads the bench keeps the ten best earlier planners
+// (retention.ts). After a run over every case, a planner that has left a head
+// joins them and the worst is dropped with its results; when a score no longer
+// holds, every earlier planner is run again before one is chosen.
+//
 // Each commit is checked out into its own git worktree and run in a fresh Deno
 // process, so versions never share module state and one version crashing
 // cannot take the others with it.
@@ -51,17 +58,17 @@ import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { plannerRuleInputsCurrent } from "../src/lib/planner-bench/score.ts";
 import { homeComfortTargets } from "./comfort.ts";
-import { laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
-import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
+import { BASE_LANE, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
+import { completeScores, rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
 import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
 import { refreshRequest, refreshTargets, requiredLanes } from "./scope.ts";
-import { BENCH_BASELINE_SHA, retainedCommit } from "./retention.ts";
+import { BENCH_BASELINE_SHA, HISTORY_KEPT, historyMarkdown, keepBestHistory, retainedCommit } from "./retention.ts";
 
 const harness = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
-const VALUED = ["shas", "scenario", "current", "test", "branch", "local", "out", "worker", "root", "scope"] as const;
+const VALUED = ["shas", "scenario", "current", "test", "branch", "local", "out", "worker", "root", "scope", "history"] as const;
 const args: Partial<Record<(typeof VALUED)[number], string>> & { force?: boolean; rerecord?: boolean } = {};
 for (let i = 0; i < Deno.args.length; i++) {
   const name = Deno.args[i].replace(/^--/, "");
@@ -230,14 +237,16 @@ async function prepareCases(bench: BenchStore) {
   }
 }
 
+/** To the console and, in CI, the workflow run's summary. */
+async function publishMarkdown(markdown: string) {
+  console.log(markdown);
+  const summary = Deno.env.get("GITHUB_STEP_SUMMARY");
+  if (summary) await Deno.writeTextFile(summary, markdown, { append: true });
+}
+
 /** Print and persist coverage even when some successful records could not be rescored. */
 async function rescoreAndReport(bench: BenchStore, requireComplete = false, scope?: EvaluationScope) {
-  const publish = async (report: RescoreReport) => {
-    const markdown = rescoreMarkdown(report);
-    console.log(markdown);
-    const summary = Deno.env.get("GITHUB_STEP_SUMMARY");
-    if (summary) await Deno.writeTextFile(summary, markdown, { append: true });
-  };
+  const publish = (report: RescoreReport) => publishMarkdown(rescoreMarkdown(report));
   try {
     const report = await rescoreExisting(bench, args.scenario, scope);
     await publish(report);
@@ -304,9 +313,10 @@ async function orchestrate() {
   console.log(`Refresh: ${requested.length} planner(s), lanes ${lanes.join(", ")}; historical runs only when explicitly selected.`);
   await prepareCases(bench);
   const scratch = await Deno.makeTempDir({ prefix: "planner-bench-" });
-  let failures = 0;
-  try {
-    for (const sha of requested) {
+  /** Plan what each commit is missing or has out of date; the number of commits whose worker failed. */
+  const solve = async (shas: readonly string[], scope = args.scope ?? "base", force = args.force) => {
+    let failed = 0;
+    for (const sha of shas) {
       const run = commits.get(sha)!;
       console.log(`${run.short_sha} ${run.subject}`);
       if (run.planner_version === null) {
@@ -320,20 +330,44 @@ async function orchestrate() {
         await Deno.symlink(`${harness}/node_modules`, `${root}/node_modules`);
         const child = await new Deno.Command(Deno.execPath(), {
           args: ["run", "-A", "--no-check", "--sloppy-imports", "--config", `${harness}/deno.json`, import.meta.filename!,
-            "--worker", sha, "--root", root, "--scope", args.scope ?? "base",
+            "--worker", sha, "--root", root, "--scope", scope,
             ...(args.scenario ? ["--scenario", args.scenario] : []),
-            ...(args.force ? ["--force"] : []),
+            ...(force ? ["--force"] : []),
             ...(args.local ? ["--local", args.local, "--out", args.out!] : [])],
           stdout: "inherit", stderr: "inherit",
         }).output();
-        if (!child.success) failures++;
+        if (!child.success) failed++;
         await bench.saveRun({ ...run, status: child.success ? "done" : "failed",
           error: child.success ? null : `worker exited with ${child.code}`, finished_at: new Date().toISOString() });
       } finally {
         await git("worktree", "remove", "--force", root);
       }
     }
+    return failed;
+  };
+  let failures = 0;
+  try {
+    failures = await solve(requested);
     await rescoreAndReport(bench, true, { shas: requested, lanes });
+    // History is judged on every case, so a run of one case leaves it alone.
+    const kept = args.history !== undefined ? Number(args.history) : args.local ? null : HISTORY_KEPT;
+    if (kept !== null && (!Number.isInteger(kept) || kept < 0)) throw new Error(`--history needs a whole number of planners to keep, not ${args.history}.`);
+    if (kept !== null && !args.scenario) {
+      const outcome = await keepBestHistory(bench, async shas => completeScores(
+        await rescoreExisting(bench, undefined, { shas, lanes: [BASE_LANE] }).catch(error => {
+          if (error instanceof RescoreIncompleteError) return error.report;
+          throw error;
+        })), async shas => {
+        const found: string[] = [];
+        for (const sha of shas) {
+          known.add(sha);
+          if (await resolve(sha)) found.push(sha);
+        }
+        const failed = await solve(found, "base", false);
+        if (failed) console.log(`${failed} earlier planner(s) failed to run; they have no score.`);
+      }, kept);
+      await publishMarkdown(historyMarkdown(outcome, kept));
+    }
   } finally {
     await Deno.remove(scratch, { recursive: true });
   }

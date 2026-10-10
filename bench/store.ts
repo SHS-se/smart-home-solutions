@@ -123,6 +123,8 @@ export interface BenchStore {
   resultHashes(sha: string): Promise<Map<string, ResultIdentity>>;
   bindResultRevision(result: ResultKey & { input_hash: string; case_revision: string }): Promise<void>;
   saveRun(run: RunRecord): Promise<void>;
+  /** Remove a run that is at neither branch head, with its results and verdicts (retention.ts). False when nothing was removed. */
+  deleteRun(sha: string): Promise<boolean>;
   markDeployed(sha: string, environment: "production" | "test"): Promise<void>;
   saveResult(result: ResultRecord): Promise<void>;
   /** Every result, including planner errors, for complete rescore coverage checks. */
@@ -243,6 +245,14 @@ export class DbStore implements BenchStore {
     });
   }
 
+  async deleteRun(sha: string) {
+    // The head marks are part of the condition, so a run that became a head meanwhile stays.
+    const removed = await this.request(`bench_runs?sha=eq.${encodeURIComponent(sha)}&is_current=is.false&is_test=is.false`, {
+      method: "DELETE", headers: { Prefer: "return=representation" },
+    }) as { sha: string }[] | null;
+    return (removed?.length ?? 0) === 1;
+  }
+
   async markDeployed(sha: string, environment: "production" | "test") {
     await this.request("rpc/bench_set_deployed", { method: "POST", body: JSON.stringify({ p_sha: sha, p_environment: environment }) });
   }
@@ -356,6 +366,14 @@ export class LocalStore implements BenchStore {
     const old = file.runs.find(r => r.sha === run.sha);
     file.runs = [...file.runs.filter(r => r.sha !== run.sha), { ...old, ...run }];
     await this.save(file);
+  }
+  async deleteRun(sha: string) {
+    const file = await this.load();
+    if (!file.runs.some(run => run.sha === sha && !run.is_current && !run.is_test)) return false;
+    file.runs = file.runs.filter(run => run.sha !== sha);
+    file.results = file.results.filter(result => result.sha !== sha);
+    await this.save(file);
+    return true;
   }
   async markDeployed(sha: string, environment: "production" | "test") {
     const file = await this.load();

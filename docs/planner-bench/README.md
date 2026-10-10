@@ -88,6 +88,29 @@ Saved totals describe the executed cases and do not enter a current comparison.
 The picker uses a bounded scrolling viewport with a scrollbar instead of
 hover-triggered scroll arrows.
 
+### History: the ten best earlier planners
+
+Beside the main and dev heads the bench keeps the ten best earlier planners
+(`bench/retention.ts`). Every bench run over all cases ends by settling this:
+
+- A commit whose planner code is the same as a head's, or as a newer commit's,
+  holds no score of its own and is removed at once. A push that changes only
+  the page therefore never takes a place in history.
+- When more than ten remain (dev has moved on, so its previous head has joined
+  them), the one with the lowest score is dropped, the older of two equal ones
+  first.
+- Scores are compared only when every earlier planner has one over every ready
+  case, by today's referee, scorer and rules. When one does not (a case was
+  added or edited, the rules changed), all of them are refreshed first: what
+  can be recomputed from stored decisions is, and the planners are run again
+  for the rest. A planner that still has no score after that is dropped before
+  any that has one. If none can be scored the run fails and nothing is dropped.
+
+A dropped run goes with its results and verdicts. Its commit stays in git, so
+running the bench with that SHA brings it back, to compete again. A run of a
+single case, a rescore (`--shas none`) and a local run (`--local`, unless
+`--history <n>` is given) leave history alone.
+
 Commits from before the planner existed retain their SHA and environment marks
 but are labelled **no planner** (`unavailable`). The runner checks for the planner
 entry point before hashing code or launching a worker. These commits have no

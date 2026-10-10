@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { rescoreExisting, rescoreMarkdown, RescoreIncompleteError } from "../bench/rescore.ts";
+import { completeScores, rescoreExisting, rescoreMarkdown, RescoreIncompleteError } from "../bench/rescore.ts";
 import { type EvaluatedResult, type ResultKey, type RunSummary, type StoredScenario, LocalStore } from "../bench/store.ts";
 import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "../src/lib/planner-bench/case.ts";
 import { evaluate, type Evaluation } from "../src/lib/planner-bench/evaluate.ts";
@@ -210,6 +210,21 @@ Deno.test("missing referee-derived artifacts are rebuilt even when score version
   const report = await rescoreExisting(store);
   assertEquals([report.processed, report.alreadyCurrent], [1, 11]);
   assertEquals(store.reads.length, 13);
+});
+
+Deno.test("only a planner scored on every ready case has a score to compare; with no ready case nobody has", async () => {
+  const store = new MemoryStore();
+  const scope = { shas: ["old-not-in-git", "new-not-in-git"], lanes: [BASE_LANE] };
+  const complete = completeScores(await rescoreExisting(store, undefined, scope))!;
+  assertEquals([...complete.keys()].sort(), ["new-not-in-git", "old-not-in-git"]);
+  assert([...complete.values()].every(score => typeof score === "number"));
+  // One planner's result is from other case inputs: it needs a planner run, and has no score until then.
+  store.rows = store.rows.map(row => row.sha === "old-not-in-git" && row.lane === BASE_LANE ? { ...row, case_revision: "previous" } : row);
+  const partial = completeScores(await rescoreExisting(store, undefined, scope))!;
+  assertEquals(partial.get("old-not-in-git"), null);
+  assertEquals(partial.get("new-not-in-git"), complete.get("new-not-in-git"));
+  store.cases = store.cases.filter(c => c.id !== "ready");
+  assertEquals(completeScores(await rescoreExisting(store, undefined, scope)), null);
 });
 
 Deno.test("totals from an older version are rebuilt even when the referee and the score are current", async () => {
