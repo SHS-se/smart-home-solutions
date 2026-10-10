@@ -297,7 +297,7 @@ function batteryCommand(command: NativeCommand): BatteryCommand {
 
 interface Materialized { generated: GeneratedPlan; rows: BatteryProjectionRow[] }
 function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters: NativeQuarter[],
-  key: "priority" | "baseline" | "cost", label: string, execution = false): Materialized {
+  key: "priority" | "baseline" | "cost", label: string): Materialized {
   const p = input.problem, snapshot = input.snapshot;
   const rows: BatteryProjectionRow[] = [];
   let binding = true;
@@ -309,7 +309,6 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     allocate(input.members.auxiliary, q.pool_auxiliary_w, loads);
     allocate(input.members.ev, q.ev_w, loads);
     allocate(input.members.boiler, input.boiler_w[i], loads);
-    if (execution) for (const [device, demand] of Object.entries(snapshot.operating_scope?.external_demands ?? {})) loads[device] = demand.forecast_w_by_slot[i];
     const unrepresented = (input.members.heater.length + input.members.auxiliary.length ? 0 : q.pool_w) +
       (input.members.ev.length ? 0 : q.ev_w) + (input.members.boiler.length ? 0 : input.boiler_w[i]);
     const load = input.base_w[i] + sum(Object.values(loads)) + unrepresented;
@@ -322,19 +321,14 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       house_w: load, residual_w: input.base_w[i] + unrepresented, device_loads_w: loads,
       charge_w: q.charge_w, discharge_w: q.discharge_w, export_w: batteryExport, curtailed_w: q.curtailed_w, unserved_w: 0 });
     const locked = input.locked_slots[i];
-    const ownerWatts = (members: DeviceMember[], modeled: number) => execution && members.some(m => m.key in (snapshot.operating_scope?.external_demands ?? {}))
-      ? sum(members.map(m => loads[m.key])) : modeled;
-    const physicalPool = ownerWatts([...input.members.heater, ...input.members.auxiliary], q.pool_w);
-    const physicalEv = ownerWatts(input.members.ev, q.ev_w);
-    const physicalBoiler = ownerWatts(input.members.boiler, input.boiler_w[i]);
     return { start: source.start, duration_hours: hours, binding,
       pv_raw_w: source.pv_forecast_w, pv_w: f.solar_w, base_w: input.base_w[i],
       import_price_sek_per_kwh: source.import_price_sek_per_kwh, export_price_sek_per_kwh: source.export_price_sek_per_kwh,
       shadow_import_sek_per_kwh: f.import_price, shadow_export_sek_per_kwh: f.export_price,
-      pool_w: physicalPool, pool_command_w: locked?.pool_command_w ?? (command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0),
+      pool_w: q.pool_w, pool_command_w: locked?.pool_command_w ?? (command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0),
       ...(q.pool_c === null ? {} : { pool_temperature_c: q.pool_c }),
-      boiler_expected_w: physicalBoiler, boiler_permitted: input.boiler_permitted[i],
-      ev_w: physicalEv, room_heating_w: {}, device_loads_w: loads, device_commands: commandMap(input, command, i),
+      boiler_expected_w: input.boiler_w[i], boiler_permitted: input.boiler_permitted[i],
+      ev_w: q.ev_w, room_heating_w: {}, device_loads_w: loads, device_commands: commandMap(input, command, i),
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: f.ev_available,
       load_w: load, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
@@ -360,15 +354,18 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     battery_soc_low: Math.min(...socs), battery_end_of_solar_soc: {},
     service_required_kwh: sum(snapshot.services.map(s => s.required_kwh)), service_delivered_kwh: energy(s => s.pool_w + s.ev_w + s.boiler_expected_w), duty_cycle_deferred_kwh: 0 };
   const indices = (test: (s: PlannedSlot) => boolean) => slots.flatMap((s, i) => test(s) ? [i] : []);
-  const serviceSlots = Object.fromEntries(snapshot.services.map(s => [s.id, indices(slot => Date.parse(slot.start) >= Date.parse(s.earliest_start) && Date.parse(slot.start) < Date.parse(s.deadline) &&
+  // A device planned as a state has no block schedule: the integration reads an
+  // empty service schedule beside `dispatched_devices`, and refuses a filled one.
+  const dispatched = [...(p.battery ? ["battery"] : []), ...(p.pool_store ? ["pool"] : []), ...(p.car ? ["ev"] : [])];
+  const serviceSlots = Object.fromEntries(snapshot.services.map(s => [s.id, dispatched.includes(s.device) ? [] : indices(slot => Date.parse(slot.start) >= Date.parse(s.earliest_start) && Date.parse(slot.start) < Date.parse(s.deadline) &&
     (s.device === "pool" ? slot.pool_w : s.device === "ev" ? slot.ev_w : slot.boiler_expected_w) > 0)]));
   return { rows, generated: { key, label, status: "ready", validation_errors: [], slots, summary,
     service_slots: serviceSlots, service_currents_a: Object.fromEntries(snapshot.services.filter(s => s.device === "ev").map(s => [s.id, serviceSlots[s.id].map(i => slots[i].ev_target_current_a)])),
     service_inhibited_slots: Object.fromEntries(snapshot.services.filter(s => s.device === "boiler").map(s => [s.id, indices(slot => !slot.boiler_permitted)])),
-    dispatched_devices: [...(p.battery ? ["battery"] : []), ...(p.pool_store ? ["pool"] : []), ...(p.car ? ["ev"] : [])], store_diagnostics: [] } };
+    dispatched_devices: dispatched, store_diagnostics: [] } };
 }
 
-/** Native physics also owns baseline and actual external-demand projections. */
+/** Native physics also owns the baseline projection. */
 export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
@@ -377,7 +374,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
   if (solved.kind === "failed") return fail(solved.issue);
   const selected = solved.selection;
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
-  // Only the selected schedule has a rule account; the baseline and the execution forecast were never scored.
+  // Only the selected schedule has a rule account; the baseline was never scored.
   priority.generated.slots.forEach((slot, i) => {
     slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {
       const points = selected.account.contributions[i][r];
@@ -409,28 +406,14 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     plans: { baseline: baseline.generated, priority: priority.generated, cost },
   };
   if (snapshot.schema_version === 9) {
-    const external = snapshot.operating_scope!.external_demands;
-    const externalPool = snapshot.operating_scope!.modes.$pool !== "controlling";
-    const externalEv = snapshot.operating_scope!.modes.$ev !== "controlling";
-    const externalBoiler = input.members.boiler.some(m => m.key in external);
-    const executionProblem: ReadyProblem = { ...p,
-      slots: p.slots.map((s, i) => ({ ...s, base_w: input.base_w[i] + sum(Object.entries(input.passive_w).map(([key, v]) => external[key]?.forecast_w_by_slot[i] ?? v[i])) +
-        (externalBoiler ? 0 : input.boiler_w[i]) + sum(Object.entries(external).filter(([key]) => !(key in input.passive_w)).map(([, d]) => d.forecast_w_by_slot[i])) })),
-      ...(externalPool ? { pool_store: null, heater: null, pool_stop_c: null } : {}),
-      ...(externalEv ? { car: null, charger: null } : {}),
-      initial: { ...p.initial, ...(externalPool ? { pool_c: null, heater_state: null } : {}), ...(externalEv ? { ev_kwh: null } : {}) },
-      targets: { ...p.targets, ...(externalPool ? { pool_c: null } : {}), ...(externalEv ? { ev_km: null, ev_limit_kwh: null } : {}) },
-      accepted: null, locked_through_seconds: 0,
-    };
-    const executionCommands = selected.commands.map(c => ({ ...c, ...(externalPool ? { pool_on: false } : {}), ...(externalEv ? { ev_amps: 0 } : {}) }));
-    const projected = core.project(executionProblem, executionCommands).outcome;
-    if (projected.kind === "failed") return fail(`Execution physical projection: ${projected.issue}`);
-    const execution = scenario(input, selected.commands, projected.quarters, "priority", "Physical execution forecast", true);
-    const executionPlan = { ...plan, schema_version: 8 as const, plans: { ...plan.plans, priority: execution.generated } };
+    // One selected schedule owns both charts, the device requests and the
+    // battery contract. A device's mode decides who writes its requests, never
+    // what the household is planned to do, so no second projection is made.
+    const executionPlan = { ...plan, schema_version: 8 as const };
     const mode = snapshot.operating_scope!.modes.$battery;
     const feedback = snapshot.battery_execution_feedback;
     const contract = p.battery && feedback && (mode === "controlling" || mode === "control_verification")
-      ? buildBatteryExecutionContract({ plan: executionPlan, rows: execution.rows, pv_w: p.slots.map(s => s.solar_w),
+      ? buildBatteryExecutionContract({ plan: executionPlan, rows: priority.rows, pv_w: p.slots.map(s => s.solar_w),
         mode, scope_revision: feedback.scope_revision!, feedback }) : undefined;
     plan = { ...plan, operating_scope: snapshot.operating_scope, execution_plan: executionPlan,
       ...(contract ? { battery_execution: contract } : {}) };

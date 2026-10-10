@@ -159,10 +159,10 @@ Deno.test("an old protocol job fails explicitly before invoking the rules worker
   assertEquals(receipt.code,"planner_upgraded");
 });
 
-Deno.test("delivery preserves distinct schema9 execution forecast and rejects conflicting snapshot identity", async () => {
+Deno.test("delivery scopes the job, expands schema9 and rejects conflicting snapshot identity", async () => {
   const full = rulesFixturePlan(mixedModeSnapshot());
   assertEquals(full.schema_version, 9);
-  assert(storedPlan(full).execution_plan, "Different actual-demand trajectory cannot be discarded as a duplicate");
+  assertEquals(storedPlan(full).execution_plan, undefined);
   const requests: Record<string, unknown>[] = [];
   const receipt: PlanningReceipt = { job_id: jobId, snapshot_id: full.snapshot_id,
     state: "published", pending: false, plan: storedPlan(full), plan_id: full.plan_id,

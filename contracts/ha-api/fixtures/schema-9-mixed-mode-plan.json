@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v4:e92c935c69e0effcb8d00c361a5e6e02adb1a49448e00af1ea4283e4bdede8a3",
+    "model_version": "rules-planner-v4:4f8aeb3f970432143bcc0abf89dcc3b3ab998df9255a7716fabe74387d66c157",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -1459,24 +1459,7 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "pool:horizon": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15
-          ]
+          "pool:horizon": []
         },
         "service_currents_a": {},
         "service_inhibited_slots": {},
@@ -2713,24 +2696,7 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "pool:horizon": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15
-          ]
+          "pool:horizon": []
         },
         "service_currents_a": {},
         "service_inhibited_slots": {},
@@ -3967,24 +3933,7 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "pool:horizon": [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            15
-          ]
+          "pool:horizon": []
         },
         "service_currents_a": {},
         "service_inhibited_slots": {},
@@ -4071,7 +4020,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "rules-planner-v4:e92c935c69e0effcb8d00c361a5e6e02adb1a49448e00af1ea4283e4bdede8a3",
+      "model_version": "rules-planner-v4:4f8aeb3f970432143bcc0abf89dcc3b3ab998df9255a7716fabe74387d66c157",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -5518,24 +5467,7 @@
             "duty_cycle_deferred_kwh": 0
           },
           "service_slots": {
-            "pool:horizon": [
-              0,
-              1,
-              2,
-              3,
-              4,
-              5,
-              6,
-              7,
-              8,
-              9,
-              10,
-              11,
-              12,
-              13,
-              14,
-              15
-            ]
+            "pool:horizon": []
           },
           "service_currents_a": {},
           "service_inhibited_slots": {},
@@ -5547,7 +5479,7 @@
         },
         "priority": {
           "key": "priority",
-          "label": "Physical execution forecast",
+          "label": "Rule-based plan",
           "status": "ready",
           "validation_errors": [],
           "slots": [
@@ -5562,15 +5494,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.31776492352589,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5587,7 +5520,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 8800,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5600,29 +5533,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 10760,
+              "grid_import_w": 11600,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.25106666666666666,
+              "import_cost_sek": 0.27066666666666667,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 8800,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 10760,
+                  "power_w": 11600,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T09:15:00.000Z",
@@ -5635,15 +5569,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.33679182694044,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5660,7 +5595,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5673,29 +5608,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T09:30:00.000Z",
@@ -5708,15 +5644,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.35581129390404,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5733,7 +5670,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5746,29 +5683,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T09:45:00.000Z",
@@ -5781,15 +5719,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.374823327323135,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5806,7 +5745,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5819,29 +5758,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T10:00:00.000Z",
@@ -5854,15 +5794,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.393827930103043,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5879,7 +5820,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5892,29 +5833,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T10:15:00.000Z",
@@ -5927,15 +5869,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.41282510514795,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -5952,7 +5895,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -5965,29 +5908,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T10:30:00.000Z",
@@ -6000,15 +5944,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.431814855360898,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6025,7 +5970,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -6038,29 +5983,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.6078908554572272,
-              "grid_import_w": 1960,
+              "grid_import_w": 2800,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.049,
+              "import_cost_sek": 0.06999999999999999,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 1960,
+                  "power_w": 2800,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T10:45:00.000Z",
@@ -6073,15 +6019,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 0.1,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.450797183643804,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6098,7 +6045,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 8800,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -6111,29 +6058,30 @@
                 "allow_battery_export": false
               },
               "battery_soc": 0.7234882005899705,
-              "grid_import_w": 10760,
+              "grid_import_w": 11600,
               "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
-              "import_cost_sek": 0.269,
+              "import_cost_sek": 0.29,
               "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 0,
                   "battery_charge_w": 8800,
                   "battery_discharge_w": 0,
-                  "residual_w": 1960,
+                  "residual_w": 2800,
                   "direction": "import",
-                  "power_w": 10760,
+                  "power_w": 11600,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:00:00.000Z",
@@ -6146,15 +6094,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.46977209289744,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6171,8 +6120,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 5040,
+              "load_w": 2800,
+              "battery_charge_w": 4200,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6183,7 +6132,7 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.7896939528023599,
+              "battery_soc": 0.7786596607669617,
               "grid_import_w": 0,
               "grid_export_w": 0,
               "curtailed_w": 0,
@@ -6195,18 +6144,19 @@
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 5040,
+                  "battery_charge_w": 4200,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "balanced",
                   "power_w": 0,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "balanced"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:15:00.000Z",
@@ -6219,15 +6169,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.488739586021453,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6244,8 +6195,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 5040,
+              "load_w": 2800,
+              "battery_charge_w": 4200,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6256,7 +6207,7 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.8558997050147492,
+              "battery_soc": 0.8338311209439528,
               "grid_import_w": 0,
               "grid_export_w": 0,
               "curtailed_w": 0,
@@ -6268,18 +6219,19 @@
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 5040,
+                  "battery_charge_w": 4200,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "balanced",
                   "power_w": 0,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "balanced"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:30:00.000Z",
@@ -6292,15 +6244,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.507699665914355,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6317,7 +6270,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -6329,30 +6282,31 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.8558997050147492,
+              "battery_soc": 0.8338311209439528,
               "grid_import_w": 0,
-              "grid_export_w": 5040,
+              "grid_export_w": 4200,
               "curtailed_w": 0,
               "unserved_w": 0,
               "import_cost_sek": 0,
-              "export_revenue_sek": 0.126,
+              "export_revenue_sek": 0.10500000000000001,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "export",
-                  "power_w": 5040,
+                  "power_w": 4200,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T11:45:00.000Z",
@@ -6365,15 +6319,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.52665233547352,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6390,7 +6345,7 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
+              "load_w": 2800,
               "battery_charge_w": 0,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
@@ -6402,30 +6357,31 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.8558997050147492,
+              "battery_soc": 0.8338311209439528,
               "grid_import_w": 0,
-              "grid_export_w": 5040,
+              "grid_export_w": 4200,
               "curtailed_w": 0,
               "unserved_w": 0,
               "import_cost_sek": 0,
-              "export_revenue_sek": 0.126,
+              "export_revenue_sek": 0.10500000000000001,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
                   "battery_charge_w": 0,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "export",
-                  "power_w": 5040,
+                  "power_w": 4200,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:00:00.000Z",
@@ -6438,15 +6394,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.5455975975952,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6463,8 +6420,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 5040,
+              "load_w": 2800,
+              "battery_charge_w": 4200,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6475,7 +6432,7 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.9221054572271385,
+              "battery_soc": 0.889002581120944,
               "grid_import_w": 0,
               "grid_export_w": 0,
               "curtailed_w": 0,
@@ -6487,18 +6444,19 @@
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 5040,
+                  "battery_charge_w": 4200,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "balanced",
                   "power_w": 0,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "balanced"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:15:00.000Z",
@@ -6511,15 +6469,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.564535455174504,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6536,8 +6495,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 5040,
+              "load_w": 2800,
+              "battery_charge_w": 4200,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6548,7 +6507,7 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 0.9883112094395279,
+              "battery_soc": 0.944174041297935,
               "grid_import_w": 0,
               "grid_export_w": 0,
               "curtailed_w": 0,
@@ -6560,18 +6519,19 @@
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 5040,
+                  "battery_charge_w": 4200,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "balanced",
                   "power_w": 0,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "balanced"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:30:00.000Z",
@@ -6584,15 +6544,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.583465911105414,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6609,8 +6570,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 889.8245614035193,
+              "load_w": 2800,
+              "battery_charge_w": 4200,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6621,30 +6582,31 @@
                 "allow_grid_charge": false,
                 "allow_battery_export": false
               },
-              "battery_soc": 1,
+              "battery_soc": 0.9993455014749262,
               "grid_import_w": 0,
-              "grid_export_w": 4150.1754385964805,
+              "grid_export_w": 0,
               "curtailed_w": 0,
               "unserved_w": 0,
               "import_cost_sek": 0,
-              "export_revenue_sek": 0.10375438596491203,
+              "export_revenue_sek": 0,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 889.8245614035193,
+                  "battery_charge_w": 4200,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
-                  "direction": "export",
-                  "power_w": 4150.1754385964805,
+                  "residual_w": -4200,
+                  "direction": "balanced",
+                  "power_w": 0,
                   "limit_w": 15000,
                   "limit_binding": false,
-                  "reason": "residual_after_dispatch"
+                  "reason": "balanced"
                 }
-              }
+              },
+              "rule_points": {}
             },
             {
               "start": "2026-08-20T12:45:00.000Z",
@@ -6657,15 +6619,16 @@
               "export_price_sek_per_kwh": 0.1,
               "shadow_import_sek_per_kwh": 3,
               "shadow_export_sek_per_kwh": 0.1,
-              "pool_w": 1260,
+              "pool_w": 2100,
               "pool_command_w": 2100,
+              "pool_temperature_c": 26.60238896828078,
               "boiler_expected_w": 0,
               "boiler_permitted": true,
               "ev_w": 0,
               "room_heating_w": {},
               "device_loads_w": {
-                "pool_heater": 840,
-                "pool_pump": 420
+                "pool_heater": 1400,
+                "pool_pump": 700
               },
               "device_commands": {
                 "pool_heater": {
@@ -6682,8 +6645,8 @@
               "ev_max_current_a": 0,
               "ev_soc": null,
               "ev_connected": false,
-              "load_w": 1960,
-              "battery_charge_w": 0,
+              "load_w": 2800,
+              "battery_charge_w": 49.82456140351731,
               "battery_discharge_w": 0,
               "battery_export_w": 0,
               "battery_command": {
@@ -6696,68 +6659,52 @@
               },
               "battery_soc": 1,
               "grid_import_w": 0,
-              "grid_export_w": 5040,
+              "grid_export_w": 4150.175438596483,
               "curtailed_w": 0,
               "unserved_w": 0,
               "import_cost_sek": 0,
-              "export_revenue_sek": 0.126,
+              "export_revenue_sek": 0.1037543859649121,
               "decision": {
                 "schema_version": 1,
                 "store_allocations": [],
                 "battery": null,
                 "grid_balance": {
-                  "load_w": 1960,
+                  "load_w": 2800,
                   "pv_w": 7000,
-                  "battery_charge_w": 0,
+                  "battery_charge_w": 49.82456140351731,
                   "battery_discharge_w": 0,
-                  "residual_w": -5040,
+                  "residual_w": -4200,
                   "direction": "export",
-                  "power_w": 5040,
+                  "power_w": 4150.175438596483,
                   "limit_w": 15000,
                   "limit_binding": false,
                   "reason": "residual_after_dispatch"
                 }
-              }
+              },
+              "rule_points": {}
             }
           ],
           "summary": {
-            "load_kwh": 7.807333333333336,
-            "flexible_load_kwh": 5.019000000000001,
+            "load_kwh": 11.15333333333333,
+            "flexible_load_kwh": 8.365000000000002,
             "pv_kwh": 14,
-            "grid_import_kwh": 8.140666666666668,
-            "grid_export_kwh": 4.8175438596491205,
+            "grid_import_kwh": 9.806666666666667,
+            "grid_export_kwh": 3.1375438596491207,
             "curtailed_kwh": 0,
-            "priced_import_kwh": 8.140666666666668,
-            "priced_export_kwh": 4.8175438596491205,
-            "net_cost_sek": 0.33231228070175456,
-            "terminal_adjusted_cost_sek": 0.33231228070175456,
+            "priced_import_kwh": 9.806666666666667,
+            "priced_export_kwh": 3.1375438596491207,
+            "net_cost_sek": 0.6669122807017545,
+            "terminal_adjusted_cost_sek": 0.6669122807017548,
             "battery_soc_start": 0.5,
             "battery_soc_end": 1,
             "battery_soc_low": 0.5,
             "battery_end_of_solar_soc": {},
             "service_required_kwh": 0,
-            "service_delivered_kwh": 5.019000000000001,
+            "service_delivered_kwh": 8.365000000000002,
             "duty_cycle_deferred_kwh": 0
           },
           "service_slots": {
-            "pool:horizon": [
-              0,
-              1,
-              2,
-              3,
-              4,
-              5,
-              6,
-              7,
-              8,
-              9,
-              10,
-              11,
-              12,
-              13,
-              14,
-              15
-            ]
+            "pool:horizon": []
           },
           "service_currents_a": {},
           "service_inhibited_slots": {},
@@ -7994,24 +7941,7 @@
             "duty_cycle_deferred_kwh": 0
           },
           "service_slots": {
-            "pool:horizon": [
-              0,
-              1,
-              2,
-              3,
-              4,
-              5,
-              6,
-              7,
-              8,
-              9,
-              10,
-              11,
-              12,
-              13,
-              14,
-              15
-            ]
+            "pool:horizon": []
           },
           "service_currents_a": {},
           "service_inhibited_slots": {},
@@ -8030,7 +7960,7 @@
       "generation": 1,
       "mode": "controlling",
       "scope_revision": "fixture-whole-house",
-      "model_revision": "rules-planner-v4:e92c935c69e0effcb8d00c361a5e6e02adb1a49448e00af1ea4283e4bdede8a3:ac-constant-efficiency:0.95:0.95",
+      "model_revision": "rules-planner-v4:4f8aeb3f970432143bcc0abf89dcc3b3ab998df9255a7716fabe74387d66c157:ac-constant-efficiency:0.95:0.95",
       "energy_basis": "stored_energy_mwh",
       "capacity_mwh": 18080000,
       "minimum_mwh": 904000,
@@ -8055,8 +7985,8 @@
           "charge_ac_mwh": 2053333,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 457333,
-          "import_mwh": 2510667,
+          "load_mwh": 653333,
+          "import_mwh": 2706667,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8077,8 +8007,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8099,8 +8029,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8121,8 +8051,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8143,8 +8073,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8165,8 +8095,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8187,8 +8117,8 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 490000,
+          "load_mwh": 700000,
+          "import_mwh": 700000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8209,8 +8139,8 @@
           "charge_ac_mwh": 2200000,
           "discharge_ac_mwh": 0,
           "pv_mwh": 0,
-          "load_mwh": 490000,
-          "import_mwh": 2690000,
+          "load_mwh": 700000,
+          "import_mwh": 2900000,
           "export_mwh": 0,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
@@ -8220,7 +8150,7 @@
           "start_ms": 1787223600000,
           "end_ms": 1787224500000,
           "stored_start_mwh": 13080667,
-          "stored_end_mwh": 14277667,
+          "stored_end_mwh": 14078167,
           "operation": "solar_charge",
           "target_kind": "stored_energy",
           "grid_charge_allowed": false,
@@ -8228,10 +8158,10 @@
           "charge_ac_limit_w": 8800,
           "discharge_ac_limit_w": 9600,
           "follows_demand": false,
-          "charge_ac_mwh": 1260000,
+          "charge_ac_mwh": 1050000,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
           "export_mwh": 0,
           "curtailed_mwh": 0,
@@ -8241,8 +8171,8 @@
         {
           "start_ms": 1787224500000,
           "end_ms": 1787225400000,
-          "stored_start_mwh": 14277667,
-          "stored_end_mwh": 15474667,
+          "stored_start_mwh": 14078167,
+          "stored_end_mwh": 15075667,
           "operation": "solar_charge",
           "target_kind": "stored_energy",
           "grid_charge_allowed": false,
@@ -8250,10 +8180,10 @@
           "charge_ac_limit_w": 8800,
           "discharge_ac_limit_w": 9600,
           "follows_demand": false,
-          "charge_ac_mwh": 1260000,
+          "charge_ac_mwh": 1050000,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
           "export_mwh": 0,
           "curtailed_mwh": 0,
@@ -8263,8 +8193,8 @@
         {
           "start_ms": 1787225400000,
           "end_ms": 1787226300000,
-          "stored_start_mwh": 15474667,
-          "stored_end_mwh": 15474667,
+          "stored_start_mwh": 15075667,
+          "stored_end_mwh": 15075667,
           "operation": "idle",
           "target_kind": "permission",
           "grid_charge_allowed": false,
@@ -8275,9 +8205,9 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
-          "export_mwh": 1260000,
+          "export_mwh": 1050000,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
           "rounding_mwh": 0
@@ -8285,8 +8215,8 @@
         {
           "start_ms": 1787226300000,
           "end_ms": 1787227200000,
-          "stored_start_mwh": 15474667,
-          "stored_end_mwh": 15474667,
+          "stored_start_mwh": 15075667,
+          "stored_end_mwh": 15075667,
           "operation": "idle",
           "target_kind": "permission",
           "grid_charge_allowed": false,
@@ -8297,9 +8227,9 @@
           "charge_ac_mwh": 0,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
-          "export_mwh": 1260000,
+          "export_mwh": 1050000,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
           "rounding_mwh": 0
@@ -8307,8 +8237,8 @@
         {
           "start_ms": 1787227200000,
           "end_ms": 1787228100000,
-          "stored_start_mwh": 15474667,
-          "stored_end_mwh": 16671667,
+          "stored_start_mwh": 15075667,
+          "stored_end_mwh": 16073167,
           "operation": "solar_charge",
           "target_kind": "stored_energy",
           "grid_charge_allowed": false,
@@ -8316,10 +8246,10 @@
           "charge_ac_limit_w": 8800,
           "discharge_ac_limit_w": 9600,
           "follows_demand": false,
-          "charge_ac_mwh": 1260000,
+          "charge_ac_mwh": 1050000,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
           "export_mwh": 0,
           "curtailed_mwh": 0,
@@ -8329,8 +8259,8 @@
         {
           "start_ms": 1787228100000,
           "end_ms": 1787229000000,
-          "stored_start_mwh": 16671667,
-          "stored_end_mwh": 17868667,
+          "stored_start_mwh": 16073167,
+          "stored_end_mwh": 17070667,
           "operation": "solar_charge",
           "target_kind": "stored_energy",
           "grid_charge_allowed": false,
@@ -8338,10 +8268,10 @@
           "charge_ac_limit_w": 8800,
           "discharge_ac_limit_w": 9600,
           "follows_demand": false,
-          "charge_ac_mwh": 1260000,
+          "charge_ac_mwh": 1050000,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
           "export_mwh": 0,
           "curtailed_mwh": 0,
@@ -8351,7 +8281,29 @@
         {
           "start_ms": 1787229000000,
           "end_ms": 1787229900000,
-          "stored_start_mwh": 17868667,
+          "stored_start_mwh": 17070667,
+          "stored_end_mwh": 18068167,
+          "operation": "solar_charge",
+          "target_kind": "stored_energy",
+          "grid_charge_allowed": false,
+          "export_allowed": false,
+          "charge_ac_limit_w": 8800,
+          "discharge_ac_limit_w": 9600,
+          "follows_demand": false,
+          "charge_ac_mwh": 1050000,
+          "discharge_ac_mwh": 0,
+          "pv_mwh": 1750000,
+          "load_mwh": 700000,
+          "import_mwh": 0,
+          "export_mwh": 0,
+          "curtailed_mwh": 0,
+          "unserved_mwh": 0,
+          "rounding_mwh": 0
+        },
+        {
+          "start_ms": 1787229900000,
+          "end_ms": 1787230800000,
+          "stored_start_mwh": 18068167,
           "stored_end_mwh": 18080000,
           "operation": "solar_charge",
           "target_kind": "stored_energy",
@@ -8360,34 +8312,12 @@
           "charge_ac_limit_w": 8800,
           "discharge_ac_limit_w": 9600,
           "follows_demand": false,
-          "charge_ac_mwh": 222456,
+          "charge_ac_mwh": 12456,
           "discharge_ac_mwh": 0,
           "pv_mwh": 1750000,
-          "load_mwh": 490000,
+          "load_mwh": 700000,
           "import_mwh": 0,
           "export_mwh": 1037544,
-          "curtailed_mwh": 0,
-          "unserved_mwh": 0,
-          "rounding_mwh": 0
-        },
-        {
-          "start_ms": 1787229900000,
-          "end_ms": 1787230800000,
-          "stored_start_mwh": 18080000,
-          "stored_end_mwh": 18080000,
-          "operation": "hold",
-          "target_kind": "permission",
-          "grid_charge_allowed": false,
-          "export_allowed": false,
-          "charge_ac_limit_w": 8800,
-          "discharge_ac_limit_w": 9600,
-          "follows_demand": false,
-          "charge_ac_mwh": 0,
-          "discharge_ac_mwh": 0,
-          "pv_mwh": 1750000,
-          "load_mwh": 490000,
-          "import_mwh": 0,
-          "export_mwh": 1260000,
           "curtailed_mwh": 0,
           "unserved_mwh": 0,
           "rounding_mwh": 0
@@ -8423,7 +8353,7 @@
           "kind": "stored_energy",
           "start_ms": 1787223600000,
           "deadline_ms": 1787225400000,
-          "target_mwh": 15474667,
+          "target_mwh": 15075667,
           "reason": "Store energy during the planner's selected charging window"
         },
         {
@@ -8431,24 +8361,16 @@
           "kind": "permission",
           "start_ms": 1787225400000,
           "deadline_ms": 1787227200000,
-          "target_mwh": 15474667,
+          "target_mwh": 15075667,
           "reason": "Keep the planner's selected battery role"
         },
         {
-          "id": "battery:stored_energy:1787229900000:9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43:1",
+          "id": "battery:stored_energy:1787230800000:9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43:1",
           "kind": "stored_energy",
           "start_ms": 1787227200000,
-          "deadline_ms": 1787229900000,
-          "target_mwh": 18080000,
-          "reason": "Store energy during the planner's selected charging window"
-        },
-        {
-          "id": "battery:permission:1787230800000:9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43:1",
-          "kind": "permission",
-          "start_ms": 1787229900000,
           "deadline_ms": 1787230800000,
           "target_mwh": 18080000,
-          "reason": "Keep the planner's selected battery role"
+          "reason": "Store energy during the planner's selected charging window"
         }
       ],
       "recovery": [],

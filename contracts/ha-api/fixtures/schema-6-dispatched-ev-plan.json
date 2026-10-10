@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": true
     },
-    "model_version": "rules-planner-v4:e92c935c69e0effcb8d00c361a5e6e02adb1a49448e00af1ea4283e4bdede8a3",
+    "model_version": "rules-planner-v4:4f8aeb3f970432143bcc0abf89dcc3b3ab998df9255a7716fabe74387d66c157",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -3711,28 +3711,10 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "ev:horizon": [
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            31
-          ]
+          "ev:horizon": []
         },
         "service_currents_a": {
-          "ev:horizon": [
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            8
-          ]
+          "ev:horizon": []
         },
         "service_inhibited_slots": {},
         "dispatched_devices": [
@@ -7287,28 +7269,10 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "ev:horizon": [
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            31
-          ]
+          "ev:horizon": []
         },
         "service_currents_a": {
-          "ev:horizon": [
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            8
-          ]
+          "ev:horizon": []
         },
         "service_inhibited_slots": {},
         "dispatched_devices": [
@@ -10863,28 +10827,10 @@
           "duty_cycle_deferred_kwh": 0
         },
         "service_slots": {
-          "ev:horizon": [
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
-            31
-          ]
+          "ev:horizon": []
         },
         "service_currents_a": {
-          "ev:horizon": [
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            5,
-            8
-          ]
+          "ev:horizon": []
         },
         "service_inhibited_slots": {},
         "dispatched_devices": [

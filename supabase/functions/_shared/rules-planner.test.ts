@@ -90,7 +90,10 @@ Deno.test("rules partial-quarter commitment locks five exact intervals without a
   }
   assertThrows(() => prepare(s, { plan_id: first.plan_id, slots: first.plans.priority.slots.slice(0, 4) }, now), Error, "unavailable");
 });
-Deno.test("rules execution contract uses external verification demand, retaining intended commands", () => {
+// User requirement, 23 September 2026: a device's mode decides who writes its
+// requests, never what the household is planned to do. Home Assistant refuses a
+// plan whose execution schedule differs from the displayed one.
+Deno.test("the execution plan is the displayed schedule whatever each device's mode", () => {
   const s = snapshot();
   s.schema_version = 9;
   s.capabilities.battery = true;
@@ -110,13 +113,13 @@ Deno.test("rules execution contract uses external verification demand, retaining
   const plan = generateRulesPlan(prepare(s, {plan_id: previous.plan_id, slots: commitment})).plan;
   assert(plan.battery_execution);
   assert(plan.execution_plan);
+  // The car is only being verified, and its planned charging is still the plan.
   assert(plan.plans.priority.slots.some(slot => slot.ev_w > 200));
-  for (const [i, slot] of plan.execution_plan.plans.priority.slots.entries()) {
-    assertEquals(slot.ev_w, 200);
-    assertEquals(slot.device_loads_w.ev, 200);
-    assertEquals(slot.battery_command, plan.plans.priority.slots[i].battery_command);
-    assertEquals(slot.ev_target_current_a, plan.plans.priority.slots[i].ev_target_current_a);
-    assertAlmostEquals(slot.load_w, s.slots[i].base_load_forecast_w + 200, 1e-8);
+  assertEquals(plan.execution_plan.schema_version, 8);
+  for (const key of ["device_models", "capabilities", "battery", "pool", "ev_battery", "plans"] as const) {
+    assertEquals(plan.execution_plan[key], plan[key]);
+  }
+  for (const [i, slot] of plan.plans.priority.slots.entries()) {
     assertEquals(plan.battery_execution.intervals[i].load_mwh, Math.round(slot.load_w * slot.duration_hours! * 1000));
   }
 });
