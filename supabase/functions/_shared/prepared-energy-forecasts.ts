@@ -151,6 +151,30 @@ export async function storePreparedForecasts(
   }
 }
 
+/**
+ * Only exchanges that keep the accepted plan publish a forecast. A home whose
+ * exchanges all plan, on a manual request or on prices newer than its plan, has
+ * none, and one back from a long silence has one that ends short of the new
+ * horizon. No later exchange would publish it, so admission prepares it once.
+ */
+export async function readOrPrepareForecasts(
+  db: PreparedForecastDatabase,
+  homeId: string,
+  snapshot: OptimisationSnapshot,
+  prepare: () => Promise<void>,
+): ReturnType<typeof readPreparedForecasts> {
+  try {
+    return await readPreparedForecasts(db, homeId, snapshot);
+  } catch (error) {
+    const missing = error instanceof PreparedForecastError &&
+      (error.code === "prepared_forecast_unavailable" ||
+        error.code === "prepared_forecast_coverage_missing");
+    if (!missing) throw error;
+  }
+  await prepare();
+  return await readPreparedForecasts(db, homeId, snapshot);
+}
+
 /** New measured input stays authoritative; only server-owned forecast fields are replaced. */
 export async function readPreparedForecasts(
   db: PreparedForecastDatabase,

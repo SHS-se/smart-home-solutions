@@ -3,6 +3,7 @@ import {
   PREPARED_FORECAST_TABLE,
   type PreparedForecastDatabase,
   PreparedForecastError,
+  readOrPrepareForecasts,
   readPreparedForecasts,
   storePreparedForecasts,
 } from "./prepared-energy-forecasts.ts";
@@ -158,6 +159,43 @@ Deno.test("prepared forecast absence and missing horizon coverage fail without f
   );
   assertEquals(missing.code, "prepared_forecast_coverage_missing");
   assertEquals(db.writes.length, 1);
+});
+
+Deno.test("admission prepares a forecast once when none is published or it ends short, and only then", async () => {
+  const db = new Store(), request = source();
+  let prepared = 0;
+  const prepare = async () => {
+    prepared++;
+    await storePreparedForecasts(db, "home-a", request, prices());
+  };
+  const first = await readOrPrepareForecasts(db, "home-a", request, prepare);
+  assertEquals(first.price_outlook.shadow_import_sek_per_kwh.length, 4);
+  await readOrPrepareForecasts(db, "home-a", request, prepare);
+  assertEquals(prepared, 1);
+  request.slots[3].start = new Date(
+    Date.parse(request.slots[3].start) + 900_000,
+  ).toISOString();
+  await readOrPrepareForecasts(db, "home-a", request, prepare);
+  assertEquals(prepared, 2);
+  // A preparation that still leaves the horizon uncovered is refused, not repeated.
+  const stale = source();
+  const short = await assertRejects(
+    () =>
+      readOrPrepareForecasts(db, "home-a", stale, () => {
+        prepared++;
+        return Promise.resolve();
+      }),
+    PreparedForecastError,
+  );
+  assertEquals(short.code, "prepared_forecast_coverage_missing");
+  assertEquals(prepared, 3);
+  db.readError = { message: "read failed" };
+  const failed = await assertRejects(
+    () => readOrPrepareForecasts(db, "home-a", request, prepare),
+    PreparedForecastError,
+  );
+  assertEquals(failed.code, "prepared_forecast_read_failed");
+  assertEquals(prepared, 3);
 });
 
 Deno.test("forecast publication refuses misaligned data and read rejects malformed stored products", async () => {

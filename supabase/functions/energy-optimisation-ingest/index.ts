@@ -3,7 +3,7 @@ import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { prepareRulesPlanningInput } from "../_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
-import { readPreparedForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
+import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -912,7 +912,7 @@ async function prepareThermalPlanning(
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
-/** Forecast/model preparation is owned by telemetry, never awaited by replanning. */
+/** Forecast/model preparation is owned by telemetry; replanning awaits it only for a home with no usable publication. */
 async function refreshPreparedForecasts(
   // deno-lint-ignore no-explicit-any
   supabase: any, customerId: string, homeId: string,
@@ -1753,6 +1753,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
 
     let planningReceipt: PlanningReceipt | null = null;
     if (snapshot !== null) {
+      // The forecast is prepared from the snapshot as the home sent it.
+      const forecastSource = snapshot;
       const models = new Map(
         snapshot.device_models.map((model) => [model.key, model]),
       );
@@ -1832,7 +1834,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       try {
-        const prepared = await readPreparedForecasts(supabase as unknown as PreparedForecastDatabase, auth.homeId, snapshot);
+        const prepared = await readOrPrepareForecasts(supabase as unknown as PreparedForecastDatabase, auth.homeId, snapshot,
+          () => refreshPreparedForecasts(supabase, auth.customerId, auth.homeId, structuredClone(forecastSource), storedDevices));
         snapshot = prepared.snapshot;
         const { data: savedRules, error: rulesError } = await supabase.from("energy_planner_rule_policy")
           .select("criteria").eq("id", true).single();
