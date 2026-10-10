@@ -271,15 +271,31 @@ export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
     type: 'single_choice',
     importance: 'required',
     dataUse: 'calculation',
-    features: ['energy_history'],
+    features: ['energy_history', 'energy_setup'],
     label: { sv: 'Huvudsäkring', en: 'Main fuse' },
     purpose: {
-      sv: 'Väljer automatiskt rätt fasta Ellevioavgift för bostadens trefasanslutning.',
-      en: 'Automatically selects the correct Ellevio fixed fee for the home’s three-phase connection.',
+      sv: 'Väljer automatiskt rätt fasta Ellevioavgift för bostadens trefasanslutning och sätter den högsta effekt energiplanen får ta från elnätet.',
+      en: 'Automatically selects the correct Ellevio fixed fee for the home’s three-phase connection and sets the most power the energy plan may draw from the grid.',
     },
     suggestedQuestion: {
       sv: 'Vilken storlek har bostadens huvudsäkring?',
       en: 'What is the home’s main fuse size?',
+    },
+  },
+  {
+    key: 'grid_import_limit_kw',
+    type: 'number',
+    importance: 'optional',
+    dataUse: 'calculation',
+    features: ['energy_setup'],
+    label: { sv: 'Högsta effekt från elnätet', en: 'Grid import limit' },
+    purpose: {
+      sv: 'Sänker energiplanens effektgräns under det huvudsäkringen klarar. Utan svar gäller säkringens gräns.',
+      en: 'Lowers the energy plan’s import limit below what the main fuse carries. Without an answer the fuse’s limit applies.',
+    },
+    suggestedQuestion: {
+      sv: 'Hur mycket effekt får bostaden högst ta från elnätet? (kW)',
+      en: 'What is the most power the home may draw from the grid? (kW)',
     },
   },
   {

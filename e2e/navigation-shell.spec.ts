@@ -601,6 +601,69 @@ test.describe('staff navigation shell', () => {
     await page.waitForURL('**/portal/customers');
   });
 
+  test('the home profile fills in the grid limit under the chosen main fuse and lets it be lowered, not raised', async ({ page, context }) => {
+    const FUSE_ID = '60000000-0000-4000-8000-000000000001';
+    const LIMIT_ID = '60000000-0000-4000-8000-000000000002';
+    const question = (id: string, fields: Record<string, unknown>) => ({
+      id, is_active: true, display_on_contact_form: false, allow_other: false, order_index: 0, parent_question_id: null, ...fields,
+    });
+    const saved: Array<Record<string, unknown>> = [];
+    const rows = (route: Parameters<Parameters<BrowserContext['route']>[1]>[0], json: unknown[]) =>
+      route.fulfill({ json, headers: { 'content-range': json.length ? `0-${json.length - 1}/${json.length}` : '*/0' } });
+    await context.route('**/rest/v1/homes*', (route) => rows(route, [{ id: PRIMARY_HOME_ID, name: 'My home' }]));
+    await context.route('**/rest/v1/home_questions*', (route) => {
+      // The form reads every active question; other readers ask for semantic keys.
+      if (new URL(route.request().url()).searchParams.has('semantic_key')) return route.fallback();
+      return rows(route, [
+        question(FUSE_ID, { question_text: 'Vilken storlek har bostadens huvudsäkring?', question_text_en: 'What is the home’s main fuse size?',
+          question_type: 'single_choice', semantic_key: 'main_fuse_a' }),
+        question(LIMIT_ID, { question_text: 'Hur mycket effekt får bostaden högst ta från elnätet? (kW)',
+          question_text_en: 'What is the most power the home may draw from the grid? (kW)',
+          question_type: 'number', semantic_key: 'grid_import_limit_kw', parent_question_id: FUSE_ID }),
+      ]);
+    });
+    await context.route('**/rest/v1/home_question_options*', (route) => rows(route, ['16', '20', '25', '35', '50', '63'].map((value, index) => ({
+      id: `opt-${value}`, question_id: FUSE_ID, value, label_sv: `${value} A`, label_en: `${value} A`, order_index: index,
+    }))));
+    await context.route('**/rest/v1/home_question_display_rules*', (route) => rows(route, [{
+      id: 'rule-limit', question_id: LIMIT_ID, depends_on_question_id: FUSE_ID, logic_group: 0,
+      operator: 'is_any_of', compare_value: ['16', '20', '25', '35', '50', '63'],
+    }]));
+    await context.route('**/rest/v1/home_answers*', (route) => {
+      if (route.request().method() !== 'POST') return rows(route, []);
+      saved.push(...(route.request().postDataJSON() as Array<Record<string, unknown>>));
+      return route.fulfill({ status: 201, json: [] });
+    });
+
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/home-profile`);
+    const limit = page.locator(`[data-question-id="${LIMIT_ID}"]`);
+    await expect(page.locator(`[data-question-id="${FUSE_ID}"]`)).toBeVisible();
+    // Nothing to limit until a fuse is chosen.
+    await expect(limit).toHaveCount(0);
+
+    await page.getByLabel('25 A').click();
+    await expect(limit.getByRole('spinbutton')).toHaveValue('17.2');
+    await expect(limit).toContainText('En säkring på 25 A klarar högst 17,2 kW');
+
+    // More than the fuse carries is brought back to the fuse.
+    await limit.getByRole('spinbutton').fill('30');
+    await expect(limit.getByRole('spinbutton')).toHaveValue('17.2');
+    await limit.getByRole('spinbutton').fill('15');
+    await page.screenshot({ path: 'test-results/home-profile-grid-limit.png', fullPage: false });
+
+    // A different fuse starts again from what that fuse carries.
+    await page.getByLabel('20 A').click();
+    await expect(limit.getByRole('spinbutton')).toHaveValue('13.8');
+    await page.getByLabel('25 A').click();
+    await limit.getByRole('spinbutton').fill('15');
+
+    await page.getByTestId('home-profile-save-button').click();
+    await expect.poll(() => saved.length).toBe(2);
+    expect(saved.find((row) => row.question_id === FUSE_ID)?.answer_value).toBe('25');
+    expect(saved.find((row) => row.question_id === LIMIT_ID)?.answer_value).toBe(15);
+  });
+
   test('index customer-view route redirects to overview', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}`);

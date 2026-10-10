@@ -5,6 +5,7 @@ import { prepareRulesPlanningInput } from "../_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
+import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1783,9 +1784,18 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km").eq("home_id", auth.homeId).maybeSingle(),
       ]);
       if (targetResult.error) throw new Error(targetResult.error.message);
+      // The grid import limit is the owner's answer in the home profile: the
+      // main fuse, or less if they chose less. The figure a snapshot carries is
+      // not used.
+      const importLimitW = await readHomeGridImportLimitW(supabase, auth.homeId);
+      if (importLimitW === null) {
+        return json({ error: "invalid_snapshot",
+          detail: "The home profile on the website has no main fuse size, so the plan has no grid import limit" }, 400);
+      }
       const { value_curves: _curves, ...withoutCurves } = snapshot;
       snapshot = {
         ...withoutCurves,
+        grid: { ...snapshot.grid, import_limit_w: importLimitW },
         comfort: comfortTargets(targetResult.data),
         value_settings: resolveValueSettings(settingsResult.data),
         battery_curve_mode: "balanced",

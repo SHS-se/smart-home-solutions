@@ -23,12 +23,14 @@ import {
   type AnswerMap,
   type QuestionType,
 } from '@/lib/questionnaire-engine';
+import { GRID_IMPORT_LIMIT_KEY, MAIN_FUSE_KEY, fuseLimitKw, mainFuseA } from '../../../../supabase/functions/_shared/home-grid-limit';
 
 interface Question extends TreeQuestion {
   question_text: string;
   question_text_en: string;
   display_on_contact_form: boolean;
   allow_other?: boolean;
+  semantic_key?: string | null;
 }
 
 interface QuestionOption {
@@ -89,7 +91,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           : basePhotoQuery.eq('visible_to_customer', true).order('uploaded_at', { ascending: false });
 
         const [qRes, aRes, pRes, oRes, rRes] = await Promise.all([
-          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other').eq('is_active', true).order('order_index'),
+          supabase.from('home_questions').select('id, question_text, question_text_en, question_type, order_index, parent_question_id, is_active, display_on_contact_form, allow_other, semantic_key').eq('is_active', true).order('order_index'),
           supabase.from('home_answers').select('question_id, answer_text, answer_value').eq('home_id', homeId),
           photoQuery,
           supabase.from('home_question_options').select('*').order('order_index'),
@@ -112,6 +114,11 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
               }
             }
           }
+          // The limit under the fuse shows the fuse's own maximum until the owner lowers it.
+          const fuseId = qRes.data?.find(q => q.semantic_key === MAIN_FUSE_KEY)?.id;
+          const limitId = qRes.data?.find(q => q.semantic_key === GRID_IMPORT_LIMIT_KEY)?.id;
+          const fuse = fuseId ? mainFuseA(map[fuseId]) : null;
+          if (limitId && fuse !== null && typeof map[limitId] !== 'number') map[limitId] = fuseLimitKw(fuse);
           setAnswers(map);
         }
         if (pRes.data) {
@@ -143,9 +150,15 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
 
   const flattened = useMemo(() => flattenTree(questions), [questions]);
 
+  const fuseQuestionId = useMemo(() => questions.find(q => q.semantic_key === MAIN_FUSE_KEY)?.id ?? null, [questions]);
+  const limitQuestionId = useMemo(() => questions.find(q => q.semantic_key === GRID_IMPORT_LIMIT_KEY)?.id ?? null, [questions]);
+
   const setAnswer = (qId: string, value: unknown) => {
     setAnswers(prev => {
       const next = { ...prev, [qId]: value };
+      // Choosing a fuse fills in the most it allows; the owner can then lower it.
+      const fuse = qId === fuseQuestionId && value !== prev[qId] ? mainFuseA(value) : null;
+      if (fuse !== null && limitQuestionId) next[limitQuestionId] = fuseLimitKw(fuse);
       // Clear children answers if this question's answer changes and makes children invisible
       // (handled reactively during render - just set the answer)
       return next;
@@ -275,7 +288,32 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
           </RadioGroup>
         );
 
-      case 'number':
+      case 'number': {
+        const fuse = q.id === limitQuestionId && fuseQuestionId ? mainFuseA(answers[fuseQuestionId]) : null;
+        if (fuse !== null) {
+          const max = fuseLimitKw(fuse);
+          return (
+            <div className="space-y-1">
+              <Input
+                type="number"
+                min={0.1}
+                max={max}
+                step={0.1}
+                value={typeof answers[q.id] === 'number' ? answers[q.id] as number : ''}
+                // The fuse is the ceiling: a higher figure is brought back to it.
+                onChange={e => setAnswer(q.id, e.target.value ? Math.min(max, Number(e.target.value)) : null)}
+                placeholder={String(max)}
+                className="max-w-[200px]"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  `En säkring på ${fuse} A klarar högst ${String(max).replace('.', ',')} kW. Ange ett lägre värde om du vill ha marginal. Energiplanen planeras inom det här värdet.`,
+                  `A ${fuse} A fuse carries at most ${max} kW. Enter a lower figure if you want a margin. The energy plan is planned within this figure.`,
+                )}
+              </p>
+            </div>
+          );
+        }
         return (
           <Input
             type="number"
@@ -285,6 +323,7 @@ const HomeProfileForm: React.FC<HomeProfileFormProps> = ({ customerId, userId, i
             className="max-w-[200px]"
           />
         );
+      }
 
       case 'date':
         return (
