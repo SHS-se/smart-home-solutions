@@ -457,11 +457,14 @@ mod supply_permission_tests {
         let mut p = crate::witnesses::tests::problem(1);
         p.slots[0].base_w = 2500.0;
         let c = command(Operation::SelfConsumption);
-        assert_eq!(projection(&p, &[c.clone()]).unwrap()[0].discharge_w, 2500.0);
+        assert_eq!(
+            projection(&p, std::slice::from_ref(&c)).unwrap()[0].discharge_w,
+            2500.0
+        );
         p.slots[0].base_w = 500.0;
         p.initial.battery_kwh = Some(10.0);
         assert_eq!(
-            project_external(&p, &[c.clone()]).unwrap()[0].discharge_w,
+            project_external(&p, std::slice::from_ref(&c)).unwrap()[0].discharge_w,
             500.0
         );
         // A previously accepted broad native limit is still constrained by current scope.
