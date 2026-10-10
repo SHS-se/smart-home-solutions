@@ -37,7 +37,8 @@ async function database() {
   await db.exec("UPDATE bench_results SET case_revision=(SELECT revision FROM bench_scenarios WHERE id=bench_results.scenario_id)");
   return db;
 }
-const observed = async (db: PGlite) => (await db.query<EvaluatedResult>('SELECT * FROM bench_result_summaries')).rows[0];
+// As the store reads it: the summary with the version of its stored totals.
+const observed = async (db: PGlite) => (await db.query<EvaluatedResult>("SELECT *, stats->'version' AS stats_version FROM bench_result_summaries")).rows[0];
 const row = async (db: PGlite) => (await db.query<Record<string, unknown>>('SELECT * FROM bench_results')).rows[0];
 
 Deno.test('the reapplied bench schema accepts unavailable commits and preserves exact environment marks', async () => {
@@ -95,6 +96,12 @@ Deno.test('bench mutations preserve exact evaluations, avoid unchanged fields, a
     assertEquals(updates.at(-1)!.kind, 'audit-score');
     assertEquals(Object.keys(updates.at(-1)!).sort(), ['audit','guard','kind','score']);
     assertEquals(await row(db), { ...before, score: value.score, series: value.series });
+    // Totals from an older version are replaced whole, though the referee and the score are current.
+    await db.exec("UPDATE bench_results SET stats=jsonb_set(stats,'{version}','1')");
+    before = await row(db);
+    await store.saveEvaluation(await observed(db), value);
+    assertEquals(updates.at(-1)!.kind, 'evaluation');
+    assertEquals(await row(db), { ...before, stats: value.stats });
     // Referee changes and missing derived artifacts require a full evaluation.
     await db.exec('UPDATE bench_results SET referee_version=0,stats=NULL');
     before = await row(db);

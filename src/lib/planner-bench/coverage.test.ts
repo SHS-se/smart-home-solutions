@@ -25,6 +25,8 @@ Deno.test('current evaluation versions do not bless results from a different cas
   assertEquals(resultState(scenario, { ...summary, case_revision: 'previous' }, {}), 'inputs-changed');
   assertEquals(resultState(scenario, { ...summary, case_revision: null }, {}), 'inputs-changed');
   assertEquals(resultState(scenario, { ...summary, referee_version: 0 }, {}), 'needs-rescore');
+  // Totals from before a figure was added cannot enter a run summary that shows it.
+  assertEquals(resultState(scenario, { ...summary, stats: { ...value.stats, version: value.stats.version - 1 } }, {}), 'needs-rescore');
   assertEquals(resultState(scenario, { ...summary, status: 'error', has_record: false }, {}), 'error');
   assertEquals(resultState(scenario, undefined, {}), 'missing');
 });

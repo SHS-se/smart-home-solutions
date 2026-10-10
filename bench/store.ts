@@ -18,7 +18,7 @@ export type EvaluationMutation =
   | { kind: "evaluation"; value: Evaluation };
 
 export function evaluationMutation(previous: EvaluatedResult, value: Evaluation): EvaluationMutation {
-  if (!previous.has_evaluation || previous.referee_version !== value.referee_version) {
+  if (!previous.has_evaluation || previous.referee_version !== value.referee_version || previous.stats_version !== value.stats.version) {
     return { kind: "evaluation", value };
   }
   if (previous.score?.criteria === value.score.criteria && canonicalJson(previous.score?.audit) === canonicalJson(value.score.audit)) {
@@ -96,6 +96,8 @@ export interface EvaluatedResult extends ResultKey {
   error: string | null;
   score: StoredScore | null;
   referee_version: number | null;
+  /** The version of the stored totals (stats.ts); null on totals from before they carried one. */
+  stats_version: number | null;
 }
 
 export interface ResultIdentity {
@@ -257,7 +259,7 @@ export class DbStore implements BenchStore {
   }
 
   async evaluatedResults() {
-    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,input_hash,case_revision,created_at,has_record,has_evaluation,planner_generation,planner_rules,planner_criteria&order=sha,scenario_id,lane");
+    return await this.pages<EvaluatedResult>("bench_result_summaries?select=sha,scenario_id,lane,status,error,score,referee_version,stats_version:stats->version,input_hash,case_revision,created_at,has_record,has_evaluation,planner_generation,planner_rules,planner_criteria&order=sha,scenario_id,lane");
   }
 
   private where = ({ sha, scenario_id, lane }: ResultKey) =>
@@ -370,7 +372,7 @@ export class LocalStore implements BenchStore {
   async evaluatedResults() {
     return (await this.load()).results
       .map(r => ({ sha: r.sha, scenario_id: r.scenario_id, lane: r.lane, status: r.status, error: r.error,
-        score: r.score ?? null, referee_version: r.referee_version ?? null, input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null,
+        score: r.score ?? null, referee_version: r.referee_version ?? null, stats_version: r.stats?.version ?? null, input_hash: r.input_hash ?? null, case_revision: r.case_revision ?? null,
         created_at: r.created_at ?? null, has_record: r.record != null,
         planner_generation: r.record?.generation ?? null, planner_rules: r.record?.planner_rules ?? null,
         planner_criteria: r.record?.planner_criteria ?? null,

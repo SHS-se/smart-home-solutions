@@ -4,7 +4,7 @@ import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from './opportunities.ts';
 import { planSeries } from './series.fixture.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
-import { planStats, suiteStats } from './stats.ts';
+import { planStats, STATS_VERSION, suiteStats } from './stats.ts';
 import {
   CriteriaError, REMOVED_RULE_KEYS,
   criteriaErrors, criteriaFingerprint, distinctScoreRuns, evBatterySupplyW, flexibleGridSupplyW, isStale, measuredQuarters, resolveRules, runScore, scoreQuarters, serviceGuard,
@@ -36,6 +36,10 @@ Deno.test('planStats splits pool energy by price source and cheapness', () => {
   assertAlmostEquals(s.pool_cheap_kwh, 1);
   assertAlmostEquals(s.pool_heating_hours, 0.5);
   assertEquals(s.pool_min_c, null);
+  // The pool's kWh at the import price of its own quarters (1 and 2 kr), not at the house's average.
+  assertAlmostEquals(s.pool_cost_sek, 3);
+  assertAlmostEquals(s.grid_import_sek, 6.5);
+  assertAlmostEquals(s.import_price_paid!, 6.5 / 3.5);
 });
 
 Deno.test('planStats separates used and exported solar and flags unplugged charging', () => {
@@ -47,14 +51,33 @@ Deno.test('planStats separates used and exported solar and flags unplugged charg
   assertAlmostEquals(s.solar_exported_kwh, 0.75);
   assertAlmostEquals(s.solar_used_kwh, 0.25);
   assertAlmostEquals(s.export_revenue_sek, 0.375);
+  assertAlmostEquals(s.solar_export_revenue_sek, 0.375);
   assertEquals(s.ev_unplugged_quarters, 1);
   assertAlmostEquals(s.ev_unplugged_kwh, 0.5);
 });
 
+Deno.test('planStats keeps battery wear apart from what the grid charged, and counts only solar as solar export', () => {
+  // The battery sells 2 kW on top of 1 kW of surplus sun: 3 kW leaves, 1 kW of it solar.
+  const series = planSeries([
+    slot(0, { pv_w: 2000, battery_discharge_w: 2000, grid_import_w: 0, grid_export_w: 3000 }),
+    slot(1),
+  ], null);
+  series.wearSek = [0.025, 0];
+  const s = planStats(series);
+  assertAlmostEquals(s.battery_discharge_kwh, 0.5);
+  assertAlmostEquals(s.battery_wear_sek, 0.025);
+  assertAlmostEquals(s.export_revenue_sek, 0.375);
+  assertAlmostEquals(s.solar_exported_kwh, 0.5);
+  assertAlmostEquals(s.solar_export_revenue_sek, 0.25);
+  assertAlmostEquals(s.grid_import_sek, 0.5);
+});
+
 const stats = (over: Partial<BenchStats>): BenchStats => ({
-  kwh_used: 50, grid_import_kwh: 40, grid_export_kwh: 0, grid_cost_sek: 60, export_revenue_sek: 0,
-  pool_kwh: 20, pool_published_kwh: 20, pool_estimated_kwh: 0, pool_cheap_kwh: 10, pool_heating_hours: 5,
-  pool_min_c: 29, pool_max_c: 31, pool_end_c: 30, battery_charge_kwh: 0, ev_kwh: 0,
+  version: STATS_VERSION,
+  kwh_used: 50, grid_import_kwh: 40, grid_export_kwh: 0, grid_cost_sek: 60, grid_import_sek: 60, export_revenue_sek: 0,
+  solar_export_revenue_sek: 0,
+  pool_kwh: 20, pool_cost_sek: 30, pool_published_kwh: 20, pool_estimated_kwh: 0, pool_cheap_kwh: 10, pool_heating_hours: 5,
+  pool_min_c: 29, pool_max_c: 31, pool_end_c: 30, battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_wear_sek: 0, ev_kwh: 0,
   ev_unplugged_kwh: 0, ev_unplugged_quarters: 0, solar_kwh: 0, solar_used_kwh: 0, solar_exported_kwh: 0,
   import_price_paid: 1.4, import_price_mean: 2, ...over,
 });
@@ -346,7 +369,13 @@ Deno.test('suiteStats sums totals and weights averages by energy', () => {
   const suite = suiteStats([stats({ grid_export_kwh: 2, export_revenue_sek: 1 }), stats({ pool_min_c: 28, grid_export_kwh: 0 })]);
   assertEquals(suite.cases, 2);
   assertEquals(suite.grid_cost_sek, 120);
-  assertAlmostEquals(suite.cost_per_kwh!, 1.2);
   assertEquals(suite.pool_min_c, 28);
   assertEquals(suite.export_price, 0.5);
+  // Per kWh bought, not per kWh used: solar in the house does not dilute the price.
+  assertAlmostEquals(suite.import_price!, 1.5);
+  assertAlmostEquals(suite.pool_price!, 1.5);
+  assertEquals(suite.solar_export_price, null);
+  const sunny = suiteStats([stats({ solar_exported_kwh: 4, solar_export_revenue_sek: 1 }), stats({ solar_exported_kwh: 1, solar_export_revenue_sek: 1.5, battery_wear_sek: 0.4 })]);
+  assertAlmostEquals(sunny.solar_export_price!, 0.5);
+  assertAlmostEquals(sunny.battery_wear_sek, 0.4);
 });

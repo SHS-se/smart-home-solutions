@@ -93,12 +93,20 @@ export interface Bill {
 
 /** Per-case totals over the whole 72-hour plan. */
 export interface BenchStats {
+  /** Which planStats made these totals (STATS_VERSION, stats.ts). */
+  version: number;
   kwh_used: number;
   grid_import_kwh: number;
   grid_export_kwh: number;
   grid_cost_sek: number;
+  /** Purchases alone, before export revenue, SEK. */
+  grid_import_sek: number;
   export_revenue_sek: number;
+  /** The part of the export revenue earned by solar sent straight out, SEK. */
+  solar_export_revenue_sek: number;
   pool_kwh: number;
+  /** The pool's electricity at the import price of the quarters it ran in, SEK. Solar is not counted as free. */
+  pool_cost_sek: number;
   pool_published_kwh: number;
   pool_estimated_kwh: number;
   /** Pool energy bought in published quarters priced at or below the published 25th percentile. */
@@ -108,6 +116,9 @@ export interface BenchStats {
   pool_max_c: number | null;
   pool_end_c: number | null;
   battery_charge_kwh: number;
+  battery_discharge_kwh: number;
+  /** Battery wear on discharged energy, SEK: modelled, not on the electricity bill. */
+  battery_wear_sek: number;
   ev_kwh: number;
   /** Car energy planned in quarters where the car is not plugged in. */
   ev_unplugged_kwh: number;

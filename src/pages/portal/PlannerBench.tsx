@@ -28,6 +28,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { FALLBACK_HOME_TIME_ZONE, formatHomeDayMonthTime, formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { caseFromReplay, type ConvertedReplay } from '@/lib/planner-bench/convert-replay';
 import type { CaseStartState } from '@/lib/planner-bench/case';
+import { HOUSEHOLD } from '@/lib/planner-bench/household';
 import { BASE_LANE } from '@/lib/planner-bench/lanes';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
 import { resultState, runCoverage } from '@/lib/planner-bench/coverage';
@@ -74,13 +75,10 @@ const isMissingTable = (error: unknown) => /PGRST205|bench_\w+.*(does not exist|
 
 const PlannerBench: React.FC = () => <Bench />;
 
-const RunDetails: React.FC<{ run: BenchRun | null }> = ({ run }) => {
+const RunError: React.FC<{ run: BenchRun | null }> = ({ run }) => {
   const { t } = useLanguage();
-  return run && <>
-    <div className="text-xs text-muted-foreground truncate">{run.subject}</div>
-    {run.error && <p role="status" className="text-xs text-destructive">{run.status === 'unavailable'
-      ? t('Den här commiten innehåller ingen planerare.', 'This commit does not contain a planner.') : run.error}</p>}
-  </>;
+  return run?.error ? <p role="status" className="text-xs text-destructive">{run.status === 'unavailable'
+    ? t('Den här commiten innehåller ingen planerare.', 'This commit does not contain a planner.') : run.error}</p> : null;
 };
 
 const Bench: React.FC = () => {
@@ -181,6 +179,18 @@ const Bench: React.FC = () => {
     const stats = (sha: string) => suiteStats(ready.map(c => summaryByKey.get(key(sha, c.id))!.stats!));
     return { cases: ready.length, current: stats(currentRun.sha), test: stats(testRun.sha) };
   }, [cases, currentRun, testRun, summaryByKey, runScores]);
+
+  /** How many measured cases the test planner scored better or worse on, at the decimal the chips show. */
+  const caseVerdicts = useMemo(() => {
+    const count = { better: 0, worse: 0, same: 0 };
+    for (const c of cases) {
+      const a = currentScores?.get(c.id), b = testScores?.get(c.id);
+      if (!a || !b) continue;
+      const d = Math.round(b.points * 10) - Math.round(a.points * 10);
+      count[d > 0 ? 'better' : d < 0 ? 'worse' : 'same']++;
+    }
+    return count;
+  }, [cases, currentScores, testScores]);
 
   const series = useQuery({
     queryKey: ['bench', 'series', selectedCase?.id, selectedCase?.revision, currentRun?.sha, testRun?.sha],
@@ -426,7 +436,7 @@ const Bench: React.FC = () => {
                 <div className="flex flex-col gap-1.5 min-w-0">
                   <div className="text-xs text-muted-foreground">{t('Planerare i produktion', 'Planner in production')}</div>
                   <div id="bench-current-run" className="flex h-10 items-center font-mono text-sm rounded-md border px-3"><span className="truncate">{currentRun ? runLabel(currentRun) : t('Ingen markerad ännu', 'None marked yet')}</span></div>
-                  <RunDetails run={currentRun} />
+                  <RunError run={currentRun} />
                 </div>
                 <div className="flex flex-col gap-1.5 min-w-0">
                   <label htmlFor="bench-test-run" className="text-xs text-muted-foreground">{t('Jämförs med', 'Compared with')}</label>
@@ -442,13 +452,9 @@ const Bench: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <RunDetails run={testRun} />
+                  <RunError run={testRun} />
                 </div>
               </div>
-              <p id="bench-coverage" className="text-sm text-muted-foreground">
-                {t(`${cases.filter(c => c.dataset && c.recorded_at).length} uppmätta testfall · ${cases.filter(c => !c.recorded_at).length} väntar på mätningar`,
-                  `${cases.filter(c => c.dataset && c.recorded_at).length} measured cases · ${cases.filter(c => !c.recorded_at).length} waiting for measurements`)}
-              </p>
               {!totals && cases.some(c => c.recorded_at) && <p id="bench-incomplete" className="text-sm text-muted-foreground">
                 {currentRun?.status === 'unavailable' || testRun?.status === 'unavailable'
                   ? t('Jämförelsen kan inte göras eftersom en av dessa commits saknar planerare.',
@@ -456,8 +462,7 @@ const Bench: React.FC = () => {
                   : t('Jämförelsen behöver resultat för alla uppmätta testfall från båda planerarna. Kör saknade resultat.',
                     'The comparison needs a result for every measured case from both planners. Run missing results.')}
               </p>}
-              {totals && <SuiteTable names={names} totals={totals} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
-              {selectedCase?.recorded_at && series.data && <CaseCostSummary names={names} scenario={selectedCase} details={series.data} />}
+              {totals && <SuiteTable names={names} totals={totals} verdicts={caseVerdicts} scores={{ current: currentRun ? runScores.get(currentRun.sha) ?? null : null, test: testRun ? runScores.get(testRun.sha) ?? null : null }} />}
               {!cases.length && <p className="text-sm text-muted-foreground">{t('Inga testfall ännu. Lägg till en replay-fil.', 'No test cases yet. Add a replay file to start.')}</p>}
             </CardContent>
           </Card>
@@ -517,41 +522,31 @@ const Bench: React.FC = () => {
 };
 
 
-const CaseCostSummary: React.FC<{
-  names: RunNames;
-  scenario: BenchScenario;
-  details: { current: BenchResultDetail | null; test: BenchResultDetail | null };
-}> = ({ names, scenario, details }) => {
+/** One planner's bill for the case in view: what it cost at real prices, what the score counts, and what the planner expected. */
+const CaseCost: React.FC<{ detail: BenchResultDetail }> = ({ detail: d }) => {
   const { t } = useLanguage();
-  if (!details.current?.outcome && !details.test?.outcome) return null;
-  return <section id="bench-selected-cost-summary" aria-labelledby="bench-selected-cost-title" className="space-y-2 border-t pt-4">
-    <h3 id="bench-selected-cost-title" className="text-sm font-medium">{t('Kostnad för valt testfall', 'Cost for selected test case')} · {scenario.name} · {formatHomeDayMonthTime(scenario.captured_at, TZ)}</h3>
-    <div id="bench-real-cost" className="grid gap-3 text-sm sm:grid-cols-2">
-      {([['current', details.current], ['test', details.test]] as const).map(([which, d]) => d?.outcome && (
-        <div key={which} className="rounded-md border px-3 py-2">
-          <div className="font-medium">{names[which]}: <span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="font-normal text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
-          {d.series?.bill && <div className="text-xs" data-testid="bench-bill">
-            {t('Nettokostnad', 'Net bill')} <span className="font-mono">{d.series.bill.net_sek.toFixed(1)} kr</span>
-            {' = '}{t('nät', 'grid')} <span className="font-mono">{d.series.bill.grid_sek.toFixed(1)}</span>
-            {' + '}{t('batterislitage', 'battery wear')} <span className="font-mono">{d.series.bill.wear_sek.toFixed(1)}</span>
-            {' − '}{t('kvar i lagren', 'left in the stores')} <span className="font-mono">{d.series.bill.credit.credit_sek.toFixed(1)}</span>
-            <span className="text-muted-foreground">
-              {' ('}{[
-                ...([['battery', t('batteri', 'battery')], ['pool', 'pool'], ['ev', t('bil', 'car')]] as const)
-                  .flatMap(([store, label]) => d.series!.bill!.credit[store] ? [`${label} ${signed(d.series!.bill!.credit[store]!.credit_sek, 1)}`] : []),
-                `${t('upp till målen, vid', 'up to the targets, at')} ${d.series.bill.credit.reference_sek_per_kwh.toFixed(2)} kr/kWh`,
-              ].join(' · ')}{')'}
-            </span>
-          </div>}
-          <div className="text-xs text-muted-foreground">
-            {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
-            {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
-            {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
-          </div>
-        </div>
-      ))}
+  if (!d.outcome) return null;
+  return <div className="mt-1 space-y-0.5 text-xs">
+    <div><span className="font-mono">{d.outcome.cost_sek.toFixed(1)} kr</span> <span className="text-muted-foreground">{t('till verkliga priser', 'at real prices')}</span></div>
+    {d.series?.bill && <div data-testid="bench-bill">
+      {t('Nettokostnad', 'Net bill')} <span className="font-mono">{d.series.bill.net_sek.toFixed(1)} kr</span>
+      {' = '}{t('nät', 'grid')} <span className="font-mono">{d.series.bill.grid_sek.toFixed(1)}</span>
+      {' + '}{t('batterislitage', 'battery wear')} <span className="font-mono">{d.series.bill.wear_sek.toFixed(1)}</span>
+      {' − '}{t('kvar i lagren', 'left in the stores')} <span className="font-mono">{d.series.bill.credit.credit_sek.toFixed(1)}</span>
+      <span className="text-muted-foreground">
+        {' ('}{[
+          ...([['battery', t('batteri', 'battery')], ['pool', 'pool'], ['ev', t('bil', 'car')]] as const)
+            .flatMap(([store, label]) => d.series!.bill!.credit[store] ? [`${label} ${signed(d.series!.bill!.credit[store]!.credit_sek, 1)}`] : []),
+          `${t('upp till målen, vid', 'up to the targets, at')} ${d.series.bill.credit.reference_sek_per_kwh.toFixed(2)} kr/kWh`,
+        ].join(' · ')}{')'}
+      </span>
+    </div>}
+    <div className="text-muted-foreground">
+      {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>
+      {d.outcome.violations.length > 0 && <>{' · '}<span className="text-red-700 dark:text-red-400">{d.outcome.violations.length} {t('beslut som hushållet inte kunde utföra', 'decisions the household could not carry out')}</span></>}
+      {d.record && d.record.status !== 'ready' && <>{' · '}<span className="text-red-700 dark:text-red-400">{t('planstatus', 'plan status')} {d.record.status}</span></>}
     </div>
-  </section>;
+  </div>;
 };
 
 /** Which way a metric should move; null when neither way is better by itself. */
@@ -582,36 +577,71 @@ const delta = (a: number | null, b: number | null, digits: number) => {
   return signed(d, Math.abs(d) < 1 && digits < 2 ? 2 : digits);
 };
 
-interface SuiteLine { key: keyof SuiteStats; label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better }
+interface SuiteLine { key: keyof SuiteStats; label: string; unit: string; digits: number; a: number | null; b: number | null; better: Better; about?: string }
 
-const SuiteTable: React.FC<{ names: RunNames; totals: { cases: number; current: SuiteStats; test: SuiteStats }; scores: { current: number | null; test: number | null } }> = ({ names, totals, scores }) => {
+/** A label, both planners' figures and the change. On a phone the label has a line of its own above the figures. */
+const ROW_GRID = 'grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_4.5rem] items-center gap-x-3';
+const ROW_LABEL = 'col-span-4 min-w-0 truncate sm:col-span-1';
+const ROW_FIRST_FIGURE = 'col-start-2 sm:col-start-auto';
+
+const VALUE_CLASS: Record<Tone, string> = {
+  better: 'font-semibold text-emerald-700 dark:text-emerald-400',
+  worse: 'font-semibold text-red-700 dark:text-red-400',
+  same: '',
+  neutral: '',
+};
+
+const SuiteTable: React.FC<{
+  names: RunNames;
+  totals: { cases: number; current: SuiteStats; test: SuiteStats };
+  /** Test cases by whether the test planner's score is above or below the current one's. */
+  verdicts: { better: number; worse: number; same: number };
+  scores: { current: number | null; test: number | null };
+}> = ({ names, totals, verdicts, scores }) => {
   const { t } = useLanguage();
   const { current: c, test: x } = totals;
-  const line = (label: string, unit: string, digits: number, key: keyof SuiteStats, better: Better): SuiteLine =>
-    ({ key, label, unit, digits, a: c[key] as number | null, b: x[key] as number | null, better });
-  const groups: [string, SuiteLine[]][] = [
-    [t('Kostnad', 'Cost'), [
-      line(t('Nätkostnad, 72 h', 'Grid cost, 72 h'), 'kr', 1, 'grid_cost_sek', 'lower'),
-      line(t('Snittkostnad per kWh', 'Average cost per kWh'), 'kr', 2, 'cost_per_kwh', 'lower'),
-      line(t('Snittpris export per kWh', 'Average export price per kWh'), 'kr', 2, 'export_price', 'higher'),
-    ]],
-    [t('Sol', 'Solar'), [
-      line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher'),
-      line(t('Solel exporterad', 'Solar exported'), 'kWh', 1, 'solar_exported_kwh', null),
-    ]],
-    [t('Energi', 'Energy'), [
-      line(t('Total förbrukning, 72 h', 'Total used, 72 h'), 'kWh', 1, 'kwh_used', null),
-      line(t('Hembatteri laddat', 'Home battery charged'), 'kWh', 1, 'battery_charge_kwh', null),
-      line(t('Elbil laddad', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
-    ]],
-    [t('Pool', 'Pool'), [
-      line(t('Poolvärme', 'Pool heating'), 'h', 1, 'pool_heating_hours', null),
-      line(t('Pool lägsta', 'Pool lowest'), '°C', 2, 'pool_min_c', null),
-      line(t('Pool högsta', 'Pool highest'), '°C', 2, 'pool_max_c', null),
-    ]],
-  ];
-  const all = groups.flatMap(([, lines]) => lines);
-  const count = (tone: Tone) => all.filter(l => toneOf(l.a, l.b, l.better) === tone).length;
+  const line = (label: string, unit: string, digits: number, key: keyof SuiteStats, better: Better, about?: string): SuiteLine =>
+    ({ key, label, unit, digits, a: c[key] as number | null, b: x[key] as number | null, better, about });
+  const wearRate = HOUSEHOLD.site.battery_degradation_sek_per_kwh;
+  type Group = [title: string, lines: SuiteLine[]];
+  // What the meter charged and paid, at each case's real prices; wear is a modelled cost and stands apart.
+  const cost: Group = [t('Kostnad, elnät', 'Cost, grid'), [
+    line(t('Nätkostnad, netto', 'Net grid cost'), 'kr', 1, 'grid_cost_sek', 'lower', t('Köpt minus sålt, till verkliga priser', 'Bought less sold, at real prices')),
+    line(t('Köpt från nätet', 'Bought from grid'), 'kr', 1, 'grid_import_sek', null),
+    line(t('Snittpris per köpt kWh', 'Avg price per kWh bought'), 'kr', 2, 'import_price', 'lower'),
+    line(t('Sålt till nätet', 'Sold to grid'), 'kr', 1, 'export_revenue_sek', null),
+    line(t('Snittpris per såld kWh', 'Avg price per kWh sold'), 'kr', 2, 'export_price', 'higher', t('All export, även batteriets', 'All export, the battery’s included')),
+  ]];
+  const energy: Group = [t('Energi', 'Energy'), [
+    line(t('Total förbrukning, 72 h', 'Total used, 72 h'), 'kWh', 1, 'kwh_used', null,
+      t('Allt huset drog, oavsett om det kom från nätet, solen eller batteriet', 'Everything the house drew, whether from the grid, the sun or the battery')),
+    line(t('Köpt från nätet', 'Bought from grid'), 'kWh', 1, 'grid_import_kwh', null),
+    line(t('Sålt till nätet', 'Sold to grid'), 'kWh', 1, 'grid_export_kwh', null),
+    line(t('Hembatteri laddat', 'Home battery charged'), 'kWh', 1, 'battery_charge_kwh', null),
+    line(t('Elbil laddad', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
+  ]];
+  const solar: Group = [t('Sol', 'Solar'), [
+    line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher'),
+    line(t('Solel exporterad', 'Solar exported'), 'kWh', 1, 'solar_exported_kwh', null),
+    line(t('Snittpris såld solel', 'Avg price, solar sold'), 'kr', 2, 'solar_export_price', 'higher',
+      t('Per kWh solel som gick direkt ut på nätet', 'Per kWh of solar sent straight out to the grid')),
+  ]];
+  const pool: Group = [t('Pool', 'Pool'), [
+    line(t('Poolvärme', 'Pool heating'), 'h', 1, 'pool_heating_hours', null),
+    line(t('Poolens el', 'Pool electricity'), 'kWh', 1, 'pool_kwh', null),
+    line(t('Snittpris poolens el', 'Avg price, pool kWh'), 'kr', 2, 'pool_price', 'lower',
+      t('Nätets pris i kvartarna poolen värmde, viktat med poolens el. Solel räknas inte som gratis.',
+        'The grid price in the quarters the pool heated, weighted by its electricity. Solar is not counted as free.')),
+    line(t('Pool lägsta', 'Pool lowest'), '°C', 2, 'pool_min_c', null),
+    line(t('Pool högsta', 'Pool highest'), '°C', 2, 'pool_max_c', null),
+  ]];
+  const wear: Group = [t('Slitage, modellerat', 'Wear, modelled'), [
+    line(t('Batterislitage', 'Battery wear'), 'kr', 1, 'battery_wear_sek', 'lower',
+      t(`${wearRate.toFixed(2)} kr per urladdad kWh. Finns inte på elräkningen. Värmepumpen har ingen slitagekostnad i modellen.`,
+        `${wearRate.toFixed(2)} kr per kWh discharged. Not on the electricity bill. No wear cost is modelled for the heat pump.`)),
+    line(t('Hembatteri urladdat', 'Home battery discharged'), 'kWh', 1, 'battery_discharge_kwh', null),
+  ]];
+  const columns: Group[][] = [[cost, energy], [solar, pool, wear]];
   const scoreTone = toneOf(scores.current, scores.test, 'higher');
   const scoreDelta = scores.current !== null && scores.test !== null ? scores.test - scores.current : null;
   const fmt = (v: number | null, digits: number) => v === null ? '—' : v.toFixed(digits);
@@ -619,7 +649,7 @@ const SuiteTable: React.FC<{ names: RunNames; totals: { cases: number; current: 
   return (
     <div className="space-y-3">
       <div id="bench-total-score" className={`flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg px-4 py-3 ${TONE_CLASS[scoreTone === 'same' ? 'neutral' : scoreTone]}`}>
-        <div className="flex items-baseline gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-xs uppercase tracking-wide opacity-80">{t('Poäng', 'Score')}</span>
           <span id="bench-score-current" className="font-mono tabular-nums text-foreground">{scores.current?.toFixed(1) ?? '—'}</span>
           <span className="opacity-60">→</span>
@@ -632,38 +662,44 @@ const SuiteTable: React.FC<{ names: RunNames; totals: { cases: number; current: 
             : scoreTone === 'worse' ? t(`${names.test} är sämre än ${names.current}`, `${names.test} is worse than ${names.current}`)
             : t('Ingen skillnad i poäng', 'No score difference')}
         </div>
-        <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+        <div id="bench-case-verdicts" className="ml-auto flex items-center gap-3 text-xs text-muted-foreground"
+          title={t('Testfall där poängen är högre respektive lägre än hos planeraren i produktion', 'Test cases whose score is above or below the production planner’s')}>
           <span>{t(`${totals.cases} testfall`, `${totals.cases} test cases`)}</span>
-          <span className="text-emerald-700 dark:text-emerald-400">● {count('better')} {t('bättre', 'better')}</span>
-          <span className="text-red-700 dark:text-red-400">● {count('worse')} {t('sämre', 'worse')}</span>
+          <span id="bench-cases-better" className="text-emerald-700 dark:text-emerald-400">● {verdicts.better} {t('bättre', 'better')}</span>
+          <span id="bench-cases-worse" className="text-red-700 dark:text-red-400">● {verdicts.worse} {t('sämre', 'worse')}</span>
+          {verdicts.same > 0 && <span id="bench-cases-same">● {verdicts.same} {t('lika', 'same')}</span>}
         </div>
       </div>
 
       <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
-        {groups.map(([title, lines]) => (
-          <div key={title}>
-            <div className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_4.5rem] items-center gap-x-3 border-b pb-1 text-xs text-muted-foreground">
-              <span className="font-medium uppercase tracking-wide">{title}</span>
-              <span className="truncate text-right">{names.current}</span>
-              <span className="truncate text-right">{names.test}</span>
-              <span />
-            </div>
-            {lines.map(l => {
-              const tone = toneOf(l.a, l.b, l.better);
-              return (
-                <div key={l.key} id={`bench-total-${l.key}`} className="grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_4.5rem] items-center gap-x-3 border-b border-border/50 py-1 text-sm last:border-0">
-                  <span className="truncate">{l.label}</span>
-                  <span className="text-right font-mono tabular-nums text-muted-foreground">{fmt(l.a, l.digits)}</span>
-                  <span className={`text-right font-mono tabular-nums ${tone === 'better' || tone === 'worse' ? 'font-semibold' : ''}`}>
-                    {fmt(l.b, l.digits)} <span className="text-xs font-normal text-muted-foreground">{l.unit}</span>
-                  </span>
-                  <span title={l.better ? undefined : t('Varken högre eller lägre är bättre i sig', 'Neither higher nor lower is better by itself')}
-                    className={`justify-self-end rounded px-1.5 py-0.5 text-right font-mono text-xs tabular-nums ${TONE_CLASS[tone]}`}>
-                    {tone === 'same' ? '≈' : delta(l.a, l.b, l.digits)}
-                  </span>
+        {columns.map((groups, column) => (
+          <div key={column} className="space-y-3">
+            {groups.map(([title, lines]) => (
+              <div key={title}>
+                <div className={`${ROW_GRID} border-b pb-1 text-xs text-muted-foreground`}>
+                  <span className={`${ROW_LABEL} font-medium uppercase tracking-wide`}>{title}</span>
+                  <span className={`${ROW_FIRST_FIGURE} truncate text-right`}>{names.current}</span>
+                  <span className="truncate text-right">{names.test}</span>
+                  <span />
                 </div>
-              );
-            })}
+                {lines.map(l => {
+                  const tone = toneOf(l.a, l.b, l.better);
+                  return (
+                    <div key={l.key} id={`bench-total-${l.key}`} data-tone={tone} className={`${ROW_GRID} border-b border-border/50 py-0.5 text-sm last:border-0`}>
+                      <span className={ROW_LABEL} title={l.about ? `${l.label}. ${l.about}` : l.label}>{l.label}</span>
+                      <span className={`${ROW_FIRST_FIGURE} text-right font-mono tabular-nums text-muted-foreground`}>{fmt(l.a, l.digits)}</span>
+                      <span className={`text-right font-mono tabular-nums ${VALUE_CLASS[tone]}`}>
+                        {fmt(l.b, l.digits)} <span className="text-xs font-normal text-muted-foreground">{l.unit}</span>
+                      </span>
+                      <span title={l.better ? undefined : t('Varken högre eller lägre är bättre i sig', 'Neither higher nor lower is better by itself')}
+                        className={`justify-self-end rounded px-1.5 py-0.5 text-right font-mono text-xs tabular-nums ${TONE_CLASS[tone]}`}>
+                        {tone === 'same' ? '≈' : delta(l.a, l.b, l.digits)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         ))}
       </div>
@@ -783,7 +819,7 @@ const CaseView: React.FC<CaseViewProps> = ({
         {seriesLoading && <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t('Laddar planer…', 'Loading plans…')}</div>}
         {series && (
           <>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div id="bench-real-cost" className="grid gap-3 sm:grid-cols-2">
               {([['current', currentRun, currentScore], ['test', testRun, testScore]] as const).map(([which, run, score]) => run && (
                 <div key={which} className={`rounded-md border px-3 py-2 ${shown === which ? 'border-foreground' : ''}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
@@ -791,6 +827,7 @@ const CaseView: React.FC<CaseViewProps> = ({
                     <span className="font-mono">{score?.complete && !score.auditPending ? `${signed(score.points, 1)} ${t('p', 'pts')}` : '—'}</span>
                   </div>
                   {score && (!score.audit || score.auditPending) && <div className="mt-1 text-xs text-muted-foreground">{t('Saknar granskning · räkna om', 'Missing audit · recompute')}</div>}
+                  {details?.[which] && <CaseCost detail={details[which]!} />}
                 </div>
               ))}
             </div>

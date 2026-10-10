@@ -5,6 +5,7 @@ import { loadCase, QUARTERS, type BenchRecorded, type BenchScenarioData } from "
 import { evaluate, type Evaluation } from "../src/lib/planner-bench/evaluate.ts";
 import { BASE_LANE, LANES } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
+import { STATS_VERSION } from "../src/lib/planner-bench/stats.ts";
 import { SCORER_VERSION, plannerRulesFingerprint } from "../src/lib/planner-bench/score.ts";
 import type { CriteriaOverrides, PlanRecord } from "../src/lib/planner-bench/types.ts";
 
@@ -40,7 +41,7 @@ class MemoryStore {
     { id: "archived", revision: "basis", name: "Archived", archived: true, dataset, recorded },
   ];
   rows: EvaluatedResult[] = ["old-not-in-git", "new-not-in-git"].flatMap(sha => LANES.map(lane => ({
-    sha, scenario_id: "ready", lane, status: "ok" as const, error: null, score: null, referee_version: 0,
+    sha, scenario_id: "ready", lane, status: "ok" as const, error: null, score: null, referee_version: 0, stats_version: null,
     case_revision: "basis", input_hash: `immutable-${sha}/ready/${lane}`, created_at: dataset.start, has_record: true, has_evaluation: false,
   })));
   records = new Map(this.rows.map(row => [keyOf(row), structuredClone(record)]));
@@ -62,7 +63,7 @@ class MemoryStore {
     this.writes.push(key);
     if (this.discardWrites) return;
     this.rows = this.rows.map(row => keyOf(row) === keyOf(key) ? { ...row, score: evaluation.score,
-      referee_version: evaluation.referee_version, has_evaluation: true } : row);
+      referee_version: evaluation.referee_version, stats_version: evaluation.stats.version, has_evaluation: true } : row);
   }
 }
 
@@ -209,6 +210,15 @@ Deno.test("missing referee-derived artifacts are rebuilt even when score version
   const report = await rescoreExisting(store);
   assertEquals([report.processed, report.alreadyCurrent], [1, 11]);
   assertEquals(store.reads.length, 13);
+});
+
+Deno.test("totals from an older version are rebuilt even when the referee and the score are current", async () => {
+  const store = new MemoryStore();
+  await rescoreExisting(store);
+  store.rows[0].stats_version = STATS_VERSION - 1;
+  const report = await rescoreExisting(store);
+  assertEquals([report.processed, report.alreadyCurrent], [1, 11]);
+  assertEquals(store.rows[0].stats_version, STATS_VERSION);
 });
 
 Deno.test("rescore-only refuses a missing local result file instead of reporting zero results", async () => {

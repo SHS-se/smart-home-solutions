@@ -5,6 +5,7 @@ import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { BASE_LANE, LANES, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
 import { isStale, plannerRuleInputsCurrent, runScore, SCORER_VERSION, storedPassed } from "../src/lib/planner-bench/score.ts";
+import { STATS_VERSION } from "../src/lib/planner-bench/stats.ts";
 import type { BenchStore, EvaluatedResult, ResultKey, StoredScenario } from "./store.ts";
 
 const keyOf = (r: ResultKey) => `${r.sha}/${r.scenario_id}/${r.lane}`;
@@ -91,7 +92,7 @@ export async function rescoreExisting(bench: RescoreStore, onlyScenario?: string
   let latestRules = rules;
   const current = (result: EvaluatedResult) =>
     !unavailable.has(result.sha) && cases.has(result.scenario_id) && result.case_revision === cases.get(result.scenario_id)!.scenario.revision && result.status === "ok" && result.has_record && result.has_evaluation
-    && result.referee_version === REFEREE_VERSION && !isStale(result.score, latestRules)
+    && result.referee_version === REFEREE_VERSION && result.stats_version === STATS_VERSION && !isStale(result.score, latestRules)
     && (!scope || plannerRuleInputsCurrent(result, latestRules));
   const eligible = before.filter(result => {
     const entry = cases.get(result.scenario_id);

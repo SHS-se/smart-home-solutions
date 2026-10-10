@@ -625,8 +625,8 @@ test.describe('planner bench', () => {
     await mockBackend(context, { waitingCase: true });
     await login(page);
     await page.goto('/portal/planner-bench');
-    await expect(page.locator('#bench-coverage')).toContainText(/1 measured cases.*1 waiting|1 uppmätta testfall.*1 väntar/);
-    await expect(page.locator('#bench-total-score')).toBeVisible();
+    await expect(page.locator('#bench-case-verdicts')).toContainText(/^1 (test cases|testfall)/);
+    await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText(/waiting|väntar/);
     const pending = page.locator(`#bench-case-${CASES[1].id}`);
     await expect(pending).not.toContainText(/dev [−-]?\d+|main [−-]?\d+/);
     await pending.click();
@@ -753,6 +753,27 @@ test.describe('planner bench', () => {
     expect(Math.abs(Number(await page.locator('#bench-score-current').textContent()) - caseTotal('main'))).toBeLessThan(0.1 * caseTexts.length);
     expect(Math.abs(Number(await page.locator('#bench-score-test').textContent()) - caseTotal('dev'))).toBeLessThan(0.1 * caseTexts.length);
     await expect(page.locator('#bench-total-grid_cost_sek')).toContainText(/-?\d+\.\d.*-?\d+\.\d\s*kr/);
+    // Better and worse count test cases by their score, as the chips show it; not the rows of the table.
+    const verdict = (text: string) => {
+      const [main, dev] = ['main', 'dev'].map(side => text.match(new RegExp(`${side} ([−-]?\\d+\\.\\d)`))?.[1].replace('−', '-'));
+      // A chip without both scores is a case neither planner is compared on.
+      if (main === undefined || dev === undefined) return null;
+      return Number(dev) > Number(main) ? 'better' : Number(dev) < Number(main) ? 'worse' : 'same';
+    };
+    for (const which of ['better', 'worse'] as const) {
+      await expect(page.locator(`#bench-cases-${which}`)).toHaveText(new RegExp(`^● ${caseTexts.filter(text => verdict(text) === which).length} `));
+    }
+    await expect(page.locator('#bench-case-verdicts')).toContainText(new RegExp(`^${caseTexts.filter(text => verdict(text)).length} (test cases|testfall)`));
+    // What a kWh cost is per kWh bought, and wear stands apart from what the grid charged.
+    await expect(page.locator('#bench-total-import_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
+    await expect(page.locator('#bench-total-pool_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
+    await expect(page.locator('#bench-total-solar_export_price')).toBeVisible();
+    await expect(page.locator('#bench-total-battery_wear_sek')).toContainText('kr');
+    await expect(page.locator('#bench-total-battery_wear_sek [title*="0.05 kr"]')).toBeVisible();
+    await expect(page.locator('#bench-total-grid_import_kwh')).toContainText('kWh');
+    // A figure with a better direction says which way it went; one without stays plain.
+    await expect(page.locator('#bench-total-grid_cost_sek')).toHaveAttribute('data-tone', /better|worse|same/);
+    await expect(page.locator('#bench-total-kwh_used')).toHaveAttribute('data-tone', /neutral|same/);
 
     // Each case has a chip with a pass/fail dot, its name and planning time.
     await expect(page.locator(`#bench-case-${CASES[1].id}`)).toContainText('Dear week');
@@ -800,16 +821,20 @@ test.describe('planner bench', () => {
     // The current plan shown on its own has nothing to be dashed against.
     await expect(compared).toHaveCount(0);
 
-    // Case costs live in the top summary, labelled separately from totals across all cases.
+    // Each planner's bill for the case in view sits in its own box in the case card, with its points; the summary holds totals only.
     const summary = page.locator('#bench-summary');
-    await expect(summary.locator('#bench-real-cost')).toContainText(/63\.2 kr/);
-    await expect(summary.locator('#bench-real-cost')).toContainText(/41\.5 kr/);
-    await expect(summary.locator('#bench-real-cost')).toContainText(/−3\.4/);
-    await expect(summary.locator('#bench-selected-cost-title')).toContainText('Cheap night');
-    await expect(page.locator('#bench-real-cost')).toHaveCount(1);
     const caseCard = page.locator('#bench-show-current').locator('xpath=ancestor::*[contains(@class,"rounded-lg")][1]');
-    await expect(caseCard.locator('#bench-real-cost')).toHaveCount(0);
-    await summary.screenshot({ path: test.info().outputPath('cost-summary-desktop.png') });
+    const bills = caseCard.locator('#bench-real-cost');
+    await expect(bills).toContainText(/main ccccccc.*63\.2 kr/);
+    await expect(bills).toContainText(/dev ddddddd.*63\.2 kr/);
+    await expect(bills).toContainText(/41\.5 kr/);
+    await expect(bills).toContainText(/−3\.4/);
+    await expect(bills.getByTestId('bench-bill')).toHaveCount(2);
+    await expect(page.locator('#bench-real-cost')).toHaveCount(1);
+    await expect(summary.locator('#bench-real-cost')).toHaveCount(0);
+    await expect(summary).not.toContainText(/Test planner|Current planner|measured cases|uppmätta testfall/);
+    await caseCard.screenshot({ path: test.info().outputPath('case-bills-desktop.png') });
+    await summary.screenshot({ path: test.info().outputPath('summary-desktop.png') });
     await expect(page.getByText(/Value curves used|Värdekurvor som användes/)).toHaveCount(0);
 
     // Every planner on the bench is given the real prices, so no estimate is drawn beside them.
@@ -824,11 +849,13 @@ test.describe('planner bench', () => {
     await expect.poll(() => captured.dispatched.length).toBe(1);
 
     await page.locator(`#bench-case-${CASES[1].id}`).click();
-    await expect(summary.locator('#bench-selected-cost-title')).toContainText('Dear week');
+    await expect(page.getByText(/^Dear week · /)).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(summary.locator('#bench-real-cost')).toBeVisible();
-    expect(await summary.locator('#bench-real-cost').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await summary.screenshot({ path: test.info().outputPath('cost-summary-mobile.png') });
+    await expect(page.locator('#bench-real-cost')).toBeVisible();
+    expect(await page.locator('#bench-real-cost').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.locator('#bench-real-cost').screenshot({ path: test.info().outputPath('case-bills-mobile.png') });
+    await summary.screenshot({ path: test.info().outputPath('summary-mobile.png') });
+    expect(await summary.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 
   });
 
