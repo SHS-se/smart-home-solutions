@@ -621,7 +621,13 @@ const SuiteTable: React.FC<{
     line(t('Elbil laddad', 'EV charged'), 'kWh', 1, 'ev_kwh', null),
   ]];
   const solar: Group = [t('Sol', 'Solar'), [
-    line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher'),
+    line(t('Solel använd', 'Solar used'), 'kWh', 1, 'solar_used_kwh', 'higher',
+      t('Solen försörjer huset innan något säljs: baslast först, sedan pool och elbil i proportion, sedan batteriladdning.',
+        'The sun serves the house before any is sold: base load first, then pool and car in proportion, then battery charging.')),
+    line(t('Sol till baslast', 'Solar to base load'), 'kWh', 1, 'solar_base_kwh', null),
+    line(t('Sol till pool', 'Solar to pool'), 'kWh', 1, 'solar_pool_kwh', null),
+    line(t('Sol till elbil', 'Solar to EV'), 'kWh', 1, 'solar_ev_kwh', null),
+    line(t('Sol till hembatteri', 'Solar to home battery'), 'kWh', 1, 'solar_battery_kwh', null),
     line(t('Solel exporterad', 'Solar exported'), 'kWh', 1, 'solar_exported_kwh', null),
     line(t('Snittpris såld solel', 'Avg price, solar sold'), 'kr', 2, 'solar_export_price', 'higher',
       t('Per kWh solel som gick direkt ut på nätet', 'Per kWh of solar sent straight out to the grid')),
@@ -641,10 +647,11 @@ const SuiteTable: React.FC<{
         `${wearRate.toFixed(2)} kr per kWh discharged. Not on the electricity bill. No wear cost is modelled for the heat pump.`)),
     line(t('Hembatteri urladdat', 'Home battery discharged'), 'kWh', 1, 'battery_discharge_kwh', null),
   ]];
-  const columns: Group[][] = [[cost, energy], [solar, pool, wear]];
+  const columns: Group[][] = [[cost, energy, wear], [solar, pool]];
   const scoreTone = toneOf(scores.current, scores.test, 'higher');
   const scoreDelta = scores.current !== null && scores.test !== null ? scores.test - scores.current : null;
-  const fmt = (v: number | null, digits: number) => v === null ? '—' : v.toFixed(digits);
+  // A sum that rounds to nothing is shown as 0, never as −0.
+  const fmt = (v: number | null, digits: number) => v === null ? '—' : (Math.abs(v) < 0.5 * 10 ** -digits ? 0 : v).toFixed(digits);
 
   return (
     <div className="space-y-3">

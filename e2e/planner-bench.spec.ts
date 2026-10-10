@@ -768,6 +768,12 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-total-import_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
     await expect(page.locator('#bench-total-pool_price')).toContainText(/\d\.\d\d.*\d\.\d\d\s*kr/);
     await expect(page.locator('#bench-total-solar_export_price')).toBeVisible();
+    // Solar by where it went; the four uses add up to the solar used, to the rounding of each figure.
+    const mainKwh = async (key: string) => Number((await page.locator(`#bench-total-${key} > span`).nth(1).textContent())!.replace('−', '-'));
+    const uses = await Promise.all(['solar_base_kwh', 'solar_pool_kwh', 'solar_ev_kwh', 'solar_battery_kwh'].map(mainKwh));
+    expect(Math.abs(uses.reduce((a, b) => a + b, 0) - await mainKwh('solar_used_kwh'))).toBeLessThan(0.21);
+    await expect(page.locator('#bench-total-solar_exported_kwh')).toContainText('kWh');
+    await expect(page.locator('#bench-summary')).not.toContainText(/[−-]0\.0+(?!\d)/);
     await expect(page.locator('#bench-total-battery_wear_sek')).toContainText('kr');
     await expect(page.locator('#bench-total-battery_wear_sek [title*="0.05 kr"]')).toBeVisible();
     await expect(page.locator('#bench-total-grid_import_kwh')).toContainText('kWh');

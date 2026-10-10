@@ -11,13 +11,36 @@ import type { BenchSeries, BenchStats } from './types';
  * older version are then recomputed from the stored decisions, with no planner
  * run and no change to the score.
  */
-export const STATS_VERSION = 2;
+export const STATS_VERSION = 3;
 export const statsCurrent = (stats: BenchStats | null | undefined): stats is BenchStats => stats?.version === STATS_VERSION;
 
 /** A pool quarter counts as heating above this, so standby noise does not. */
 const POOL_HEATING_W = 50;
 
 const kwh = (watts: number, hours: number) => watts * hours / 1_000;
+
+/**
+ * Where a quarter's solar went, W. The sun serves the house before any of it
+ * is sent out: base load first, then the pool and the car in proportion to
+ * what each drew, then battery charging; what is left is exported. So when
+ * the battery sells while the sun shines, the sale is the battery's, as the
+ * scorer counts it (supply.ts). The five parts add up to the quarter's solar.
+ */
+export function solarUse(s: BenchSeries, i: number) {
+  let left = Math.max(0, s.solarW[i]);
+  const take = (wanted: number) => {
+    const taken = Math.min(left, Math.max(0, wanted));
+    left -= taken;
+    return taken;
+  };
+  const baseW = take(s.loadW[i] - s.poolW[i] - s.carW[i]);
+  const flexibleW = s.poolW[i] + s.carW[i];
+  const toFlexibleW = take(flexibleW);
+  const share = (drawW: number) => flexibleW > 0 ? toFlexibleW * drawW / flexibleW : 0;
+  const poolW = share(s.poolW[i]), carW = share(s.carW[i]);
+  const batteryW = take(s.batteryChargeW[i]);
+  return { baseW, poolW, carW, batteryW, exportW: left };
+}
 
 export function planStats(series: BenchSeries): BenchStats {
   const n = series.start.length;
@@ -33,7 +56,7 @@ export function planStats(series: BenchSeries): BenchStats {
     pool_kwh: 0, pool_cost_sek: 0, pool_published_kwh: 0, pool_estimated_kwh: 0, pool_cheap_kwh: 0, pool_heating_hours: 0,
     pool_min_c: null, pool_max_c: null, pool_end_c: null,
     battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_wear_sek: 0, ev_kwh: 0, ev_unplugged_kwh: 0, ev_unplugged_quarters: 0,
-    solar_kwh: 0, solar_used_kwh: 0, solar_exported_kwh: 0,
+    solar_kwh: 0, solar_used_kwh: 0, solar_base_kwh: 0, solar_pool_kwh: 0, solar_ev_kwh: 0, solar_battery_kwh: 0, solar_exported_kwh: 0,
     import_price_paid: null, import_price_mean: 0,
   };
   let hoursTotal = 0, priceHours = 0;
@@ -64,12 +87,16 @@ export function planStats(series: BenchSeries): BenchStats {
     s.ev_kwh += car;
     if (!series.carConnected[i]) { s.ev_unplugged_quarters++; s.ev_unplugged_kwh += car; }
 
-    const solar = kwh(series.solarW[i], h);
-    const solarExported = Math.min(solar, exported);
-    s.solar_kwh += solar;
+    const sun = solarUse(series, i);
+    const solarExported = kwh(sun.exportW, h);
+    s.solar_kwh += kwh(series.solarW[i], h);
+    s.solar_base_kwh += kwh(sun.baseW, h);
+    s.solar_pool_kwh += kwh(sun.poolW, h);
+    s.solar_ev_kwh += kwh(sun.carW, h);
+    s.solar_battery_kwh += kwh(sun.batteryW, h);
     s.solar_exported_kwh += solarExported;
     s.solar_export_revenue_sek += solarExported * series.exportPrice[i];
-    s.solar_used_kwh += solar - solarExported;
+    s.solar_used_kwh += kwh(sun.baseW + sun.poolW + sun.carW + sun.batteryW, h);
   }
   const temps = series.poolC.filter((t): t is number => t !== null && Number.isFinite(t));
   if (temps.length) {
@@ -108,6 +135,10 @@ export interface SuiteStats {
   battery_wear_sek: number;
   ev_kwh: number;
   solar_used_kwh: number;
+  solar_base_kwh: number;
+  solar_pool_kwh: number;
+  solar_ev_kwh: number;
+  solar_battery_kwh: number;
   solar_exported_kwh: number;
   /** What a kWh of solar sent straight out earned. */
   solar_export_price: number | null;
@@ -133,6 +164,10 @@ export function suiteStats(all: readonly BenchStats[]): SuiteStats {
     battery_wear_sek: sum(s => s.battery_wear_sek),
     ev_kwh: sum(s => s.ev_kwh),
     solar_used_kwh: sum(s => s.solar_used_kwh),
+    solar_base_kwh: sum(s => s.solar_base_kwh),
+    solar_pool_kwh: sum(s => s.solar_pool_kwh),
+    solar_ev_kwh: sum(s => s.solar_ev_kwh),
+    solar_battery_kwh: sum(s => s.solar_battery_kwh),
     solar_exported_kwh: sum(s => s.solar_exported_kwh),
   };
   return {

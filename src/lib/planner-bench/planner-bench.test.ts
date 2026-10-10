@@ -67,9 +67,24 @@ Deno.test('planStats keeps battery wear apart from what the grid charged, and co
   assertAlmostEquals(s.battery_discharge_kwh, 0.5);
   assertAlmostEquals(s.battery_wear_sek, 0.025);
   assertAlmostEquals(s.export_revenue_sek, 0.375);
-  assertAlmostEquals(s.solar_exported_kwh, 0.5);
-  assertAlmostEquals(s.solar_export_revenue_sek, 0.25);
+  // The sun covers the house's 1 kW first; only its surplus kW is solar export, the rest the battery's sale.
+  assertAlmostEquals(s.solar_base_kwh, 0.25);
+  assertAlmostEquals(s.solar_exported_kwh, 0.25);
+  assertAlmostEquals(s.solar_export_revenue_sek, 0.125);
   assertAlmostEquals(s.grid_import_sek, 0.5);
+});
+
+Deno.test('planStats says where the solar went: base load, pool and car in proportion, battery, then export', () => {
+  const split = (over: Record<string, unknown>) => planStats(planSeries([slot(0, { grid_import_w: 0, ...over })], null));
+  const parts = (s: BenchStats) => [s.solar_base_kwh, s.solar_pool_kwh, s.solar_ev_kwh, s.solar_battery_kwh, s.solar_exported_kwh].map(v => Math.round(v * 1000) / 1000);
+  // Plenty of sun: every load is covered, the battery charges and the rest leaves.
+  const plenty = split({ pv_w: 12_000, load_w: 7000, pool_w: 4000, ev_w: 2000, battery_charge_w: 3000, grid_export_w: 2000 });
+  assertEquals(parts(plenty), [0.25, 1, 0.5, 0.75, 0.5]);
+  assertAlmostEquals(plenty.solar_used_kwh, 2.5);
+  // Short of sun: base load is covered, pool and car share what is left 2:1, and the battery charges from the grid.
+  const short = split({ pv_w: 4000, load_w: 7000, pool_w: 4000, ev_w: 2000, battery_charge_w: 3000, grid_import_w: 6000 });
+  assertEquals(parts(short), [0.25, 0.5, 0.25, 0, 0]);
+  for (const s of [plenty, short]) assertAlmostEquals(parts(s).reduce((a, b) => a + b, 0), s.solar_kwh);
 });
 
 const stats = (over: Partial<BenchStats>): BenchStats => ({
@@ -78,7 +93,7 @@ const stats = (over: Partial<BenchStats>): BenchStats => ({
   solar_export_revenue_sek: 0,
   pool_kwh: 20, pool_cost_sek: 30, pool_published_kwh: 20, pool_estimated_kwh: 0, pool_cheap_kwh: 10, pool_heating_hours: 5,
   pool_min_c: 29, pool_max_c: 31, pool_end_c: 30, battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_wear_sek: 0, ev_kwh: 0,
-  ev_unplugged_kwh: 0, ev_unplugged_quarters: 0, solar_kwh: 0, solar_used_kwh: 0, solar_exported_kwh: 0,
+  ev_unplugged_kwh: 0, ev_unplugged_quarters: 0, solar_kwh: 0, solar_used_kwh: 0, solar_base_kwh: 0, solar_pool_kwh: 0, solar_ev_kwh: 0, solar_battery_kwh: 0, solar_exported_kwh: 0,
   import_price_paid: 1.4, import_price_mean: 2, ...over,
 });
 

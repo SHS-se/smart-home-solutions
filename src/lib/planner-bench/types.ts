@@ -124,7 +124,13 @@ export interface BenchStats {
   ev_unplugged_kwh: number;
   ev_unplugged_quarters: number;
   solar_kwh: number;
+  /** Solar the house took: the four parts below together. */
   solar_used_kwh: number;
+  /** Where the solar went (solarUse, stats.ts); with the export they add up to solar_kwh. */
+  solar_base_kwh: number;
+  solar_pool_kwh: number;
+  solar_ev_kwh: number;
+  solar_battery_kwh: number;
   solar_exported_kwh: number;
   /** Average price of the energy actually imported, SEK/kWh. */
   import_price_paid: number | null;
