@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": true
     },
-    "model_version": "rules-planner-v4:4f8aeb3f970432143bcc0abf89dcc3b3ab998df9255a7716fabe74387d66c157",
+    "model_version": "rules-planner-v4:f60799c574d5fd7a7969772bd686e9508b3a37e701ce34b55629a4e0f22c009f",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -173,7 +173,9 @@
       "battery_export_min_price_sek_per_kwh": 0
     },
     "battery_supply_scope": {
-      "kind": "whole_house"
+      "kind": "selected",
+      "include_base": true,
+      "planned_device_keys": []
     },
     "battery": null,
     "ev_battery": {

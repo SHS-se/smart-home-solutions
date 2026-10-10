@@ -16,11 +16,12 @@ const BenchChartDownload: React.FC<{ input: BenchChartExportInput }> = ({ input 
   return (
     <Button
       id="bench-chart-download" type="button" variant="outline" size="sm" disabled={!shown}
+      className="h-auto min-h-8 max-w-full whitespace-normal text-left"
       title={t(`Det diagrammet visar för ${input.period.label}: varje kvart för båda planerarna, med poäng och regler.`,
         `What the chart shows for ${input.period.label}: every quarter of both planners, with points and rules.`)}
       onClick={() => shown && downloadJson(benchChartFilename(input.scenario.name, shown.name, input.period.label), benchChartExport(input))}
     >
-      <FileJson className="mr-1.5 h-4 w-4" />
+      <FileJson className="mr-1.5 h-4 w-4 shrink-0" aria-hidden="true" />
       {t('Ladda ned diagramdata (JSON)', 'Download chart data (JSON)')}
     </Button>
   );

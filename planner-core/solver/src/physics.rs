@@ -87,7 +87,12 @@ fn transition(
     } else {
         0.0
     };
-    let demand = s.base_w + pool_w + ev_w - s.solar_w;
+    let load = BatteryLoad {
+        gross_w: s.base_w + pool_w + ev_w,
+        solar_w: s.solar_w,
+        ev_w: ev_w + s.base_ev_w,
+    };
+    let demand = load.net_w();
     if command.battery == Operation::Export
         && p.battery.is_some()
         && (!p.limits.battery_export_enabled
@@ -95,7 +100,7 @@ fn transition(
     {
         return Err("export_without_permission".into());
     }
-    let (charge, discharge) = battery_flows(p, command, demand, state.battery, hours);
+    let (charge, discharge) = battery_flows(p, command, load, state.battery, hours);
     let (net, curtailed_w) = grid_flow(p, demand, s.solar_w, charge, discharge);
     if !within_grid(p, net) {
         return Err("shared_grid_limit".into());
@@ -142,28 +147,42 @@ fn transition(
         pool_start: pool.and_then(|h| h.start),
         cost,
         wear,
-        spare_battery_cover_w: spare_cover(p, charge, discharge, state.battery, hours),
     })
 }
-/// What the battery could still have given the house in a quarter, W: none
-/// while it charges, else its spare power as far as what it holds afterwards.
-pub(crate) fn spare_cover(
-    p: &Problem,
-    charge: f64,
-    discharge: f64,
-    battery_kwh: f64,
-    hours: f64,
-) -> f64 {
-    p.battery.as_ref().map_or(0.0, |battery| {
-        if charge > 0.0 {
-            0.0
+/// Reconciled AC household consumption and its EV member. Source permissions
+/// use proportional self-consumed PV, matching the canonical battery-supply.ts.
+#[derive(Clone, Copy)]
+pub(crate) struct BatteryLoad {
+    pub gross_w: f64,
+    pub solar_w: f64,
+    pub ev_w: f64,
+}
+impl BatteryLoad {
+    pub(crate) fn net_w(self) -> f64 {
+        self.gross_w - self.solar_w
+    }
+    pub(crate) fn house_supply_bound(self, p: &Problem) -> f64 {
+        let eligible = if p.ev_battery_supply_allowed {
+            self.gross_w
         } else {
-            (battery.discharge_max_w - discharge).max(0.0).min(
-                (battery_kwh - battery.min_soc * battery.capacity_kwh).max(0.0) * 1000.0 / hours
-                    * battery.discharge_efficiency,
-            )
+            (self.gross_w - self.ev_w).max(0.0)
+        };
+        let pv = if self.gross_w > 0.0 {
+            self.solar_w.min(self.gross_w) * eligible / self.gross_w
+        } else {
+            0.0
+        };
+        (eligible - pv).min(self.net_w()).max(0.0)
+    }
+    /// Forced export cannot evade household-supply eligibility on a shared bus.
+    pub(crate) fn discharge_bound(self, p: &Problem, export: bool) -> f64 {
+        let house = self.house_supply_bound(p);
+        if export && (p.ev_battery_supply_allowed || self.ev_w == 0.0 || self.net_w() <= 0.0) {
+            (p.limits.export_w + self.net_w()).max(0.0)
+        } else {
+            house
         }
-    })
+    }
 }
 
 /// What the battery does in a quarter for a house asking `demand` W of it and
@@ -171,13 +190,14 @@ pub(crate) fn spare_cover(
 pub(crate) fn battery_flows(
     p: &Problem,
     command: &Command,
-    demand: f64,
+    load: BatteryLoad,
     battery_kwh: f64,
     hours: f64,
 ) -> (f64, f64) {
     let Some(battery) = &p.battery else {
         return (0.0, 0.0);
     };
+    let demand = load.net_w();
     let room = battery.available_charge_w(battery_kwh, hours);
     let stored = battery.available_discharge_w(battery_kwh, hours);
     let charge_cap = command.charge_limit_w.min(room);
@@ -187,7 +207,7 @@ pub(crate) fn battery_flows(
         Operation::Idle => (0.0, 0.0),
         Operation::Hold | Operation::SolarCharge => (solar, 0.0),
         Operation::SelfConsumption | Operation::SupplyHouse => {
-            (solar, demand.max(0.0).min(discharge_cap))
+            (solar, load.house_supply_bound(p).min(discharge_cap))
         }
         Operation::GridCharge => (charge_cap.min((p.limits.import_w - demand).max(0.0)), 0.0),
         Operation::Export => {
@@ -198,7 +218,7 @@ pub(crate) fn battery_flows(
                 0.0,
                 discharge_cap
                     .min(reserve)
-                    .min((p.limits.export_w + demand).max(0.0)),
+                    .min(load.discharge_bound(p, true)),
             )
         }
     }
@@ -230,12 +250,12 @@ pub(crate) fn carry(
     p: &Problem,
     s: &Slot,
     command: &Command,
-    (demand, solar_w): (f64, f64),
+    load: BatteryLoad,
     battery_kwh: f64,
 ) -> CarriedQuarter {
     let hours = projected_hours(s);
-    let (charge, discharge) = battery_flows(p, command, demand, battery_kwh, hours);
-    let (net, curtailed) = grid_flow(p, demand, solar_w, charge, discharge);
+    let (charge, discharge) = battery_flows(p, command, load, battery_kwh, hours);
+    let (net, curtailed) = grid_flow(p, load.net_w(), load.solar_w, charge, discharge);
     CarriedQuarter {
         charge,
         discharge,
@@ -343,5 +363,129 @@ mod startup_cost_tests {
         let q = projection(&p, &vec![command(true); 4]).unwrap();
         assert_eq!(q[0].wear, 3.0);
         assert_eq!(q[1].wear, 0.0);
+    }
+}
+
+#[cfg(test)]
+mod supply_permission_tests {
+    use super::*;
+
+    fn command(operation: Operation) -> Command {
+        Command {
+            pool_on: false,
+            ev_amps: 6,
+            battery: operation,
+            charge_limit_w: 4000.0,
+            discharge_limit_w: 4000.0,
+        }
+    }
+
+    #[test]
+    fn all_native_operations_respect_proportional_ev_exclusion_and_explicit_permission() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.slots[0].base_w = 1000.0;
+        let ev_w = 1380.0;
+        for allowed in [false, true] {
+            p.ev_battery_supply_allowed = allowed;
+            for pv in [0.0, 1190.0, 1234.567891, 2380.0, 4000.0] {
+                p.slots[0].solar_w = pv;
+                let expected = if allowed {
+                    (2380.0_f64 - pv).max(0.0)
+                } else {
+                    1000.0 * (1.0 - (pv / 2380.0).min(1.0))
+                };
+                for operation in [
+                    Operation::Idle,
+                    Operation::Hold,
+                    Operation::SolarCharge,
+                    Operation::GridCharge,
+                    Operation::SelfConsumption,
+                    Operation::SupplyHouse,
+                    Operation::Export,
+                ] {
+                    let q = projection(&p, &[command(operation)]).unwrap().remove(0);
+                    let house_supply = (q.discharge_w - (-q.net_w).max(0.0)).max(0.0);
+                    assert!(
+                        house_supply <= expected + 1e-8,
+                        "{operation:?}, permission {allowed}, PV {pv}: {house_supply} > {expected}"
+                    );
+                    assert_eq!(q.ev_w, ev_w);
+                    if matches!(
+                        operation,
+                        Operation::SelfConsumption | Operation::SupplyHouse
+                    ) {
+                        assert!((q.discharge_w - expected).abs() < 1e-8);
+                    }
+                    if operation == Operation::Export && allowed {
+                        assert_eq!(
+                            q.discharge_w, 4000.0,
+                            "whole-house eligibility permits the separately authorized export"
+                        );
+                    }
+                    if operation == Operation::Export && pv >= 2380.0 {
+                        assert!(
+                            q.discharge_w > 0.0,
+                            "EV supplied by PV does not prohibit permitted export"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn passive_ev_is_excluded_even_without_a_controllable_car() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.car = None;
+        p.charger = None;
+        p.initial.ev_kwh = None;
+        p.targets.ev_km = None;
+        p.targets.ev_limit_kwh = None;
+        p.slots[0].base_w = 3000.0;
+        p.slots[0].base_ev_w = 2000.0;
+        p.slots[0].solar_w = 1500.0;
+        let mut c = command(Operation::SelfConsumption);
+        c.ev_amps = 0;
+        let q = projection(&p, &[c.clone()]).unwrap();
+        assert!((q[0].discharge_w - 500.0).abs() < 1e-8);
+        p.ev_battery_supply_allowed = true;
+        assert!((projection(&p, &[c]).unwrap()[0].discharge_w - 1500.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn external_replay_recomputes_eligibility_when_actual_demand_changes() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.slots[0].base_w = 2500.0;
+        let c = command(Operation::SelfConsumption);
+        assert_eq!(projection(&p, &[c.clone()]).unwrap()[0].discharge_w, 2500.0);
+        p.slots[0].base_w = 500.0;
+        p.initial.battery_kwh = Some(10.0);
+        assert_eq!(
+            project_external(&p, &[c.clone()]).unwrap()[0].discharge_w,
+            500.0
+        );
+        // A previously accepted broad native limit is still constrained by current scope.
+        p.accepted = Some(vec![c.clone()]);
+        p.locked_through_seconds = 3600.0;
+        assert_eq!(projection(&p, &[c]).unwrap()[0].discharge_w, 500.0);
+    }
+
+    #[test]
+    fn permission_and_passive_partition_are_required_abi_fields() {
+        let p = crate::witnesses::tests::problem(1);
+        let mut json = serde_json::to_value(&p).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("ev_battery_supply_allowed");
+        assert!(serde_json::from_value::<Problem>(json).is_err());
+        let mut json = serde_json::to_value(&p).unwrap();
+        json["slots"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("base_ev_w");
+        assert!(serde_json::from_value::<Problem>(json).is_err());
+        let mut p = p;
+        p.slots[0].base_ev_w = 1.0;
+        assert_eq!(crate::validate(&p), Err("invalid_base_ev_partition".into()));
     }
 }

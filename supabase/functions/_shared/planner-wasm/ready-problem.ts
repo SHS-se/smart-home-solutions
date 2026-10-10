@@ -24,34 +24,15 @@ export interface NativeCommand {
   charge_limit_w: number;
   discharge_limit_w: number;
 }
-export const RULE_KEYS = [
-  "pool_low",
-  "pool_cold",
-  "pool_hot",
-  "pool_buffer",
-  "pool_restart",
-  "ev_low",
-  "ev_short",
-  "cheap_buy",
-  "cheapest_buy",
-  "dear_load",
-  "dearest_load",
-  "base_load_dear_import",
-  "base_load_dearest_import",
-  "missed_cheap_quarter",
-  "arbitrage_no_export",
-  "arbitrage_not_full",
-  "ev_from_home_battery",
-  "large_load_overlap",
-  "pool_short_gap",
-  "early_grid_charge",
-] as const;
+export const RULE_KEYS = ["pool_low", "pool_cold", "pool_hot", "ev_low", "ev_short"] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];
 export interface ReadySlot {
   local_month: number;
   start_seconds: number;
   hours: number;
   base_w: number;
+  /** EV load already included in base_w, outside the controlled charger. */
+  base_ev_w: number;
   solar_w: number;
   outdoor_c: number;
   import_price: number;
@@ -61,9 +42,9 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 7;
-  /** Shared cycle clock even when the restart deduction is disabled. */
-  pool_cycle_seconds: number;
+  abi: 8;
+  /** Supply permission, independent of comfort scoring and grid capacity. */
+  ev_battery_supply_allowed: boolean;
   work_grant: number;
   recipe: {
     beam_width: number;
@@ -106,13 +87,12 @@ export interface ReadyProblem {
   };
   /** What the energy left in the stores is worth to the plan's score (end-credit.ts). */
   end_credit: EndCreditTerms;
-  /** The deduction rules: evidence rules are measured by the bench and never sent. */
+  /** Comfort deductions. Economic witnesses improve the cash-and-wear objective. */
   rules: {
     key: PlannerRuleKey;
     threshold: number;
     points: number;
     required: boolean;
-    unless: PlannerRuleKey | null;
   }[];
   service_guard: { pool: [number, number]; ev: [number, number] };
   accepted: NativeCommand[] | null;

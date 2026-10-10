@@ -8,14 +8,10 @@ import { ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import BenchOverlapMove from './BenchOverlapMove';
-import BenchBufferEvent from './BenchBufferEvent';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, BASE_LOAD_DEAR_RULE_KEYS, CHEAP_CHARGE_BATTERY_SOC, DEAR_RULE_KEYS, FLEXIBLE_W, RULE_POINTS_MAX, RULE_POINTS_MIN, arbitragePreparation, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { AHEAD_MARGIN, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
-import { SHORT_GAP_PRICE_FRACTION } from '@/lib/planner-bench/short-gaps';
-import { EARLY_CHARGE_GRID_W, EARLY_CHARGE_PRICE_FRACTION } from '@/lib/planner-bench/early-charge';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
 const focus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
@@ -56,8 +52,8 @@ interface Row {
   label: string;
   /** Points per quarter; null for the physical limits, which fail the case instead. */
   perQuarter: number | null;
-  /** A row that takes no points: an evidence rule is noted, an energy-timing rule is shown in kronor. */
-  unscored?: 'noted' | 'kr';
+  /** Economic findings are shown in kronor, without score deductions. */
+  unscored?: 'kr';
   required: boolean;
   cells: Record<Side, Cell>;
   triggered: boolean;
@@ -160,16 +156,12 @@ export default function BenchRuleList({
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        if ((rule.about !== 'price' && !s.series?.comfort) || !s.score) return nothing(t('Saknar underlag', 'Missing evidence'));
+        if (!s.series?.comfort || !s.score) return nothing(t('Saknar underlag', 'Missing evidence'));
         if (!rule.enabled) return nothing(t('Av', 'Off'));
         if (application && !application.applicable) return nothing('N/A');
-        const charged = counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
-        const seen = s.score.quarters.flatMap((q, i) => q.noted.includes(rule.key) ? [i] : []).filter(inRange);
-        // A rule that was only noted still shows where, with no points beside it.
-        return charged.events.length || !seen.length ? charged
-          : { events: seen, points: 0, note: `${seen.length} ${t('kv', 'q')} · ${t('noteras', 'noted')}` };
+        return counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
       });
-      return { key: rule.key, label: rule.label, perQuarter: rule.points, unscored: rule.role === 'evidence' ? 'noted' : undefined, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
+      return { key: rule.key, label: rule.label, perQuarter: rule.points, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
     }),
     ...OPPORTUNITY_RULES.map((rule): Row => {
       const cells = bySide(s => {
@@ -184,7 +176,7 @@ export default function BenchRuleList({
           : found.length ? nothing(t(`${found.length} fynd`, `${found.length} found`))
             : audit.applicability[rule.key].applicable ? cell : nothing('N/A');
       });
-      return { key: rule.key, label: rule.label, perQuarter: 0, unscored: 'kr', required: false, cells, triggered: fired(cells), energy: rule };
+      return { key: rule.key, label: rule.label, perQuarter: 0, unscored: 'kr', required: false, cells, triggered: sides.some(s => findingsOf(s, rule.key).length > 0), energy: rule };
     }),
   ];
   const triggered = rows.filter(row => row.triggered);
@@ -204,136 +196,14 @@ export default function BenchRuleList({
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
-      {rule.role === 'deduction' && <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>}
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
   };
 
-  const priceDetail = (rule: ResolvedRule) => {
-    if (rule.key === 'arbitrage_no_export' || rule.key === 'arbitrage_not_full') {
-      const preparationRule = rule.key === 'arbitrage_not_full';
-      return <>
-        <p>{preparationRule
-          ? t(`Varje kvart med säljpris över ${rule.threshold} SEK/kWh ger avdrag om den sista laddningen före den första sådana kvarten inte slutade på 100%. Om ingen laddning gjordes räknas ett fullt batteri vid testfallets början. Urladdning efter den fulla laddningen är tillåten.`,
-            `Every quarter with a sale price above ${rule.threshold} SEK/kWh loses a point if the last charge before the first such quarter did not finish at 100%. If there was no charge, a full battery at the case start counts. Discharge after that full charge is allowed.`)
-          : t(`Varje kvart med säljpris över ${rule.threshold} SEK/kWh ger avdrag om ingen energi exporteras till nätet. All positiv export räknas, från batteriet eller solen, utan minsta energimängd.`,
-            `Every quarter with a sale price above ${rule.threshold} SEK/kWh loses a point if no energy is exported to the grid. Any positive export counts, from battery or solar, with no minimum energy amount.`)}</p>
-        <p className="text-xs text-muted-foreground">{preparationRule
-          ? t('Förberedelsen bedöms en gång före den första möjligheten i hela testfallet. En senare delvis full laddning före den första möjligheten ersätter en tidigare full laddning. Laddning under eller efter den första möjligheten tar inte bort avdragen. Även åtskilda senare högpriskvartar räknas.',
-            'Preparation is assessed once before the first opportunity in the whole case. A later partial charge before that opportunity replaces an earlier full charge. Charging during or after the first opportunity does not remove the penalties. Separated later high-price quarters also count.')
-          : t('Exporten behöver inte vara lika stor i varje kvart. Den mest lönsamma kvarten kan få mest energi.',
-            'Export does not have to be equal across quarters. The most profitable quarter can receive the most energy.')}</p>
-        <p className="text-xs text-muted-foreground">{t('Verkliga säljpriser används, även opublicerade. De två arbitrageavdragen är oberoende och kan tillsammans ge −2 per kvart.',
-          'Actual sale prices are used, including unpublished prices. The two arbitrage deductions are independent and can total −2 per quarter.')}</p>
-        {preparationRule && sides.map(s => {
-          if (!s.series) return null;
-          const preparation = arbitragePreparation(s.series, rule.threshold);
-          if (preparation.firstQuarter < 0) return null;
-          const soc = preparation.lastChargeQuarter === null ? s.series.homeStartSoc : s.series.homeSoc[preparation.lastChargeQuarter];
-          return <div key={s.side} className="flex flex-wrap items-center gap-2 text-xs">
-            <span>{s.label} · {preparation.prepared ? t('Förberett', 'Prepared') : t('Inte förberett', 'Not prepared')} · {soc === null ? '—' : `${soc}%`}</span>
-            <span>{preparation.lastChargeQuarter === null ? t('Testfallets början', 'Case start') : t('Sista laddning', 'Last charge')}</span>
-            {preparation.lastChargeQuarter !== null && <Button size="sm" variant="outline" onClick={() => onSelect(s.side, preparation.lastChargeQuarter!)}>{stamp(s, preparation.lastChargeQuarter)}</Button>}
-            <span>→ {t('Första möjlighet', 'First opportunity')}</span>
-            <Button size="sm" variant="outline" onClick={() => onSelect(s.side, preparation.firstQuarter)}>{stamp(s, preparation.firstQuarter)}</Button>
-          </div>;
-        })}
-        {settings(rule, t('Säljpris över (SEK/kWh)', 'Sale price above (SEK/kWh)'), '0.01')}
-      </>;
-    }
-    if (BASE_LOAD_DEAR_RULE_KEYS.includes(rule.key)) return <>
-      <p>{t(`En kvart ger avdrag när priset hör till planens dyraste ${Math.round(rule.threshold * 100)} % och batteriet kunde ha täckt hela den nätförsörjda baslasten på minst ${FLEXIBLE_W} W. Tillgänglig energi över batteriets lägsta laddnivå, urladdningsförluster och återstående urladdningseffekt räknas efter kvartens befintliga batterianvändning. Ingen extra urladdning räknas medan batteriet laddas.`,
-        `A quarter loses points when its price is among the plan's dearest ${Math.round(rule.threshold * 100)} % and the battery could have covered all grid-supplied base load of at least ${FLEXIBLE_W} W. Available energy above the battery cut-off, discharge losses and remaining discharge power are checked after the quarter's existing battery use. No extra discharge is counted while the battery charges.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Nätimport tillskrivs först flexibla laster och varmvatten, sedan baslast. Detta är en preferens för batteriförsörjning i dyra kvartar, inte ett bevis på lägre totalkostnad. Varje kvart bedöms separat vid verkliga priser, även opublicerade. Att spara batteriet till senare kvartar undantar inte importen. De två baslastreglerna staplas inte. Regeln kan ge avdrag samtidigt som energigranskningen.',
-        'Grid imports are assigned to flexible loads and hot water first, then base load. This is a preference for battery supply in expensive quarters, not proof of a lower total bill. Each quarter is assessed independently at actual prices, including unpublished prices. Reserving the battery for later quarters does not exempt the import. The two base-load rules never stack. The rule can stack with the economic audit.')}</p>
-      {settings(rule, t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)'), '0.05')}
-    </>;
-    if (rule.key === 'missed_cheap_quarter') return <>
-      <p>{t(`En kvart ger avdrag när inköpspriset är under ${rule.threshold} SEK/kWh och ett flexibelt lager är under sitt mål, men ingen billaddning, hembatteriladdning eller poolvärme drar minst ${FLEXIBLE_W} W. Bilens räckvidd och poolens temperatur jämförs med komfortmålen; hembatteriets mål är ${CHEAP_CHARGE_BATTERY_SOC}% laddning.`,
-        `A quarter loses a point when the purchase price is below ${rule.threshold} SEK/kWh and a flexible store is below its target, but no EV charging, home battery charging or pool heating draws at least ${FLEXIBLE_W} W. EV range and pool temperature use their comfort targets; the home battery target is ${CHEAP_CHARGE_BATTERY_SOC}% charge.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per kvart. Även en ensam billig kvart räknas, från planens början och vid verkliga priser, även opublicerade. Lagernivåer mäts vid kvartens slut. Pågående laddning eller poolvärme med tillräcklig effekt undviker avdraget även när dess eget lager redan är vid eller över målet.',
-        'At most one deduction per quarter. Isolated cheap quarters count from the start of the plan, at actual prices including unpublished prices. Store levels are measured at the end of the quarter. Running charging or pool heating with enough power avoids the deduction even when its own store is already at or above target.')}</p>
-      {settings(rule, t('Inköpspris under (SEK/kWh)', 'Purchase price below (SEK/kWh)'), '0.01')}
-    </>;
-    if (rule.key === 'pool_short_gap') return <>
-      <p>{t(`Ett avdrag för varje kvart i ett avbrott på 1–4 kvartar i poolvärme. Lasten måste vara igång direkt före och efter avbrottet. En avbrottskvart som är dyrare än en angränsande driftkvart med mer än det större av ${Math.round(rule.threshold * 100)} öre/kWh eller ${SHORT_GAP_PRICE_FRACTION * 100}% av sitt eget absoluta pris ursäktar avbrottet, men bara om driften hade behövt köpas från nätet: kunde solen och ledig batterieffekt ha burit lasten räknas avbrottet oavsett pris. En billigare avbrottskvart är aldrig en ursäkt. Nollpris använder öresgränsen; vid negativa priser används prisets storlek utan minustecknet.`,
-        `One deduction for every quarter of a 1–4-quarter interruption in pool heating. The device must run immediately before and after the gap. A gap quarter dearer than a bordering running quarter by more than the larger of ${Math.round(rule.threshold * 100)} öre/kWh or ${SHORT_GAP_PRICE_FRACTION * 100}% of its own absolute price excuses the pause, but only where running through it would have had to be bought: where the sun and spare battery power could have carried the load, the gap counts whatever its price. A cheaper gap quarter is never an excuse. Zero prices use the öre threshold; negative prices use their magnitude without the minus sign.`)}</p>
-      <p>{t('Avdrag ges bara när befintlig energi kan flyttas inom de två angränsande driftperioderna och avbrottet till en sammanhängande period, med tillåtna effektnivåer, oförsämrad service och oförminskade slutlager. Detta är en preferens för sammanhängande drift, inte ett påstående om lägre elkostnad. Alternativen prövas var för sig mot originalplanen vid verkliga priser.',
-        'A penalty requires an alternative that rearranges existing energy within the two adjacent runs and their gap into one continuous run, with legal power levels, unchanged or better service and no reduction in final stores. This is a preference for continuous operation, not a claim of bill savings. Alternatives are tested independently against the original plan at actual prices.')}</p>
-      {sides.map(s => auditOf(s)?.shortGaps.gaps.filter(g => g.device === 'pool' && g.from < range.to && g.to > range.from).map(g => <div key={`${s.side}-${g.from}`} className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span>{s.label} · {g.to - g.from} {t('kvartar', 'quarters')}</span>
-          <Button size="sm" variant="outline" onClick={() => onSelect(s.side, g.from)}>{stamp(s, g.from)}</Button>
-          <span>→</span>
-          <Button size="sm" variant="outline" onClick={() => onSelect(s.side, g.to)}>{stamp(s, g.to)}</Button>
-        </div>
-        <details className="text-xs">
-          <summary className="cursor-pointer">{t('Möjlig sammanhängande drift', 'Feasible continuous run')}</summary>
-          <ul className="mt-1 space-y-1 font-mono">{g.changes.map(change => <li key={change.quarter}>
-            {stamp(s, change.quarter)}: {(change.beforeW / 1000).toFixed(2)} → {(change.afterW / 1000).toFixed(2)} kW
-          </li>)}</ul>
-        </details>
-      </div>))}
-      {settings(rule, t('Minsta pristolerans (SEK/kWh)', 'Minimum price tolerance (SEK/kWh)'), '0.01')}
-    </>;
-    if (rule.key === 'ev_from_home_battery') return <>
-      <p>{t(`En kvart ger avdrag när mer än ${rule.threshold} W från hembatteriet tillskrivs billaddning. Batteriet får försörja baslast, pool och andra laster samtidigt som bilen laddas. Vi räknar först bort samtidig batteriladdning och export, och tilldelar sedan batteriets effekt till alla andra hushållslaster före bilen. Bara det som återstår för bilen ger avdrag.`,
-        `A quarter loses a point when more than ${rule.threshold} W from the home battery is attributed to EV charging. The battery may supply base load, pool and other loads while the car charges. We first subtract simultaneous battery charging and exports, then assign battery power to all other household loads before the car. Only the remainder supplying the car triggers the rule.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Ett avdrag per kvart, oavsett energimängd, pris eller om en billigare flytt finns. Detta är en fördelningsregel för hushållets gemensamma elanslutning.',
-        'One deduction per quarter, regardless of energy amount, price or whether a cheaper move exists. This is an allocation convention for the shared house connection.')}</p>
-      {settings(rule, t('Batterieffekt till bilen över (W)', 'Battery power to EV above (W)'), '100')}
-    </>;
-    if (rule.key === 'early_grid_charge') return <>
-      <p>{t(`Hembatteri- eller billaddning köper minst ${EARLY_CHARGE_GRID_W} W från nätet i en kvart, fast en senare kvart är tydligt billigare: mer än det större av ${Math.round(rule.threshold * 100)} öre/kWh eller ${EARLY_CHARGE_PRICE_FRACTION * 100}% av laddkvartens absoluta pris. Avdrag ges bara när allt som köptes kan flyttas dit utan sämre komfort, mindre slutlager, överskridna utrustningsgränser eller högre kostnad.`,
-        `Home battery or EV charging buys at least ${EARLY_CHARGE_GRID_W} W from the grid in a quarter although a later quarter is clearly cheaper: by more than the larger of ${Math.round(rule.threshold * 100)} öre/kWh or ${EARLY_CHARGE_PRICE_FRACTION * 100}% of the charging quarter's absolute price. A point is deducted only when all that was bought can move there without worsening comfort, final stores or equipment limits, and without a higher bill.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Laddning som solen står för räknas inte. En billigare kvart kan ta emot flera tidigare köp så långt dess lediga laddeffekt räcker; flyttarna tillämpas tillsammans. Bedöms vid verkliga priser, även opublicerade. Ger aldrig avdrag i samma kvart som regeln om stora laster.',
-        'Charging carried by the sun does not count. One cheaper quarter can take several earlier purchases as far as its spare charging power reaches; the moves accumulate. Judged at actual prices, including unpublished prices. Never deducted in the same quarter as the large-workload rule.')}</p>
-      {sides.map(s => s.series && s.score && !s.score.auditPending && s.score.audit?.earlyCharge.moves.filter(m => inRange(m.from)).map(m => <div key={`${s.side}-${m.device}-${m.from}`} className="space-y-1 text-xs">
-        <span>{s.label}</span>
-        <BenchOverlapMove move={m} series={s.series} timeZone={timeZone} onSelect={quarter => onSelect(s.side, quarter)} />
-      </div>))}
-      {settings(rule, t('Minsta prisskillnad (SEK/kWh)', 'Minimum price difference (SEK/kWh)'), '0.01')}
-    </>;
-    if (rule.key === 'large_load_overlap') return <>
-      <p>{t(`Minst två av poolvärme, billaddning och hembatteriladdning överstiger vardera ${rule.threshold} W i samma kvart. Avdrag ges bara när billaddning eller hembatteriladdning kan flyttas till en strikt billigare kvart inom 72 timmar utan sämre komfort, mindre slutlager eller överskridna utrustningsgränser. Poolens värmecykel hålls oförändrad. Billigare kvartar prövas i prisordning.`,
-        `At least two of pool heating, EV charging and home battery charging each exceed ${rule.threshold} W in the same quarter. A point is deducted only when EV charging or home battery charging can move to a strictly cheaper quarter within 72 hours without worsening comfort, final stores or equipment limits. The pool heating cycle stays fixed. Cheaper quarters are tested in price order.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Högst ett avdrag per överlappande kvart, även med tre laster. Bedöms vid verkliga priser, även när de inte var publicerade. Varje flytt reserverar en egen billigare kvart. Flyttarna tillämpas tillsammans och måste vara genomförbara som en gemensam omplanering.',
-        'At most one deduction per overlapping quarter, even with three loads. Judged at actual prices, including unpublished prices. Each move reserves a distinct cheaper quarter. Moves accumulate and must remain feasible as one joint reschedule.')}</p>
-      {sides.map(s => s.series && s.score && !s.score.auditPending && s.score.audit?.overlap.moves.filter(m => inRange(m.from)).map(m => <div key={`${s.side}-${m.from}`} className="space-y-1 text-xs">
-        <span>{s.label}</span>
-        <BenchOverlapMove move={m} series={s.series} timeZone={timeZone} onSelect={quarter => onSelect(s.side, quarter)} />
-      </div>))}
-      {settings(rule, t('Effekt per stor last (W)', 'Power per large workload (W)'), '100')}
-    </>;
-    const share = Math.round(rule.threshold * 100);
-    const other = rule.unless && resolveRules(draft).find(r => r.key === rule.unless && r.enabled);
-    const dear = DEAR_RULE_KEYS.includes(rule.key);
-    return <>
-      <p>
-        {dear
-          ? t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W från nätet i en kvart vars pris hör till planens dyraste ${share} %. Det som solen eller batteriet står för räknas inte.`,
-            `Flexible loads together draw at least ${FLEXIBLE_W} W from the grid in a quarter whose price is among the dearest ${share} % of the plan's. What the sun or the battery supplies is not counted.`)
-          : t(`Flexibla laster drar tillsammans minst ${FLEXIBLE_W} W i en kvart vars pris hör till planens billigaste ${share} %.`,
-            `Flexible loads together draw at least ${FLEXIBLE_W} W in a quarter whose price is among the cheapest ${share} % of the plan's.`)}
-        {other && ` ${t(`Räknas inte där ”${other.label}” slår till.`, `Not counted where “${other.label}” fires.`)}`}
-      </p>
-      {dear && <p className="text-xs text-muted-foreground">{t('Batteriets urladdning till huset räknas först mot de flexibla lasterna. Bara återstående flexibel effekt, begränsad till den faktiska nätimporten, jämförs med 500 W-gränsen. Batteriexport räknas bort från tillgänglig batterieffekt. Denna regel ger inget avdrag för baslast; den separata baslastregeln bedömer sådan import.',
-        'Battery discharge serving the house is assigned to flexible loads first. Only the remaining flexible demand, capped by actual grid imports, is compared with the 500 W threshold. Battery exports are excluded from available battery power. This rule does not penalize base load; the separate base-load rule assesses those imports.')}</p>}
-      {settings(rule, dear ? t('Andel dyraste kvartar (0–1)', 'Share of dearest quarters (0–1)') : t('Andel billigaste kvartar (0–1)', 'Share of cheapest quarters (0–1)'), '0.05')}
-    </>;
-  };
-
   const comfortDetail = (rule: ResolvedRule) => {
-    if (rule.key === 'pool_restart') return <>
-      <p>{t(`En start mindre än ${rule.threshold} timmar efter poolvärmarens senaste stopp ger ${rule.points} poäng. Bara startkvarten räknas; fortsatta driftkvartar ger inget nytt avdrag. Exakt ${rule.threshold} timmar är tillåtet.`,
-        `A start less than ${rule.threshold} hours after the pool heater's last stop scores ${rule.points} points. Only the start quarter counts; continuing running quarters add no restart penalty. Exactly ${rule.threshold} hours is allowed.`)}</p>
-      <p className="text-xs text-muted-foreground">{t('Start och stopp följer kommandot, inte effektmätaren. En okänd stopptid före planens början ger inget avdrag. Regeln läggs ihop med övriga regler.',
-        'Starts and stops follow the command, not the power meter. An unknown stop time before the plan begins gives no deduction. This rule adds to the other rules.')}</p>
-      {settings(rule, t('Timmar sedan senaste stopp', 'Hours since the last stop'), '0.25')}
-    </>;
-    if (rule.about === 'price') return priceDetail(rule);
-    const pool = rule.about === 'pool', above = rule.key === 'pool_hot' || rule.key === 'pool_buffer';
+    const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;
     const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;
     const unit = pool ? '°C' : 'km';
@@ -349,16 +219,6 @@ export default function BenchRuleList({
         {rule.required && ` ${t('En enda kvart underkänner fallet.', 'A single quarter fails the case.')}`}
         {!above && ` ${t('Räknas först ett dygn efter att nivån gick att nå.', 'Counts only from a day after the level could be reached.')}`}
       </p>}
-      {rule.key === 'pool_buffer' && <>
-        <p>{t('En sammanhängande buffertperiod per värmecykel och framtida händelse. Ett kort återstart avslutar perioden; minst den inställda återstartstiden utan värme öppnar en ny cykel. Samma händelse får aldrig poäng igen i planen.',
-          'One consecutive buffer period per heating cycle and future event. A short restart ends the period; at least the configured restart interval without heating opens a new cycle. The same event cannot earn credit again in the plan.')}</p>
-        <p className="text-xs text-muted-foreground">{t('Modellen utgår från normal måltemperatur och hittar när uppvärmning behövs igen vid den milda komfortgränsen. Händelsen är det fulla 24-timmarsblock i planen som innehåller detta behov. Medelpriset ska vara mer än 10 % högre eller solenergin mer än 10 % lägre än nuvarande block. Solskäl gäller endast maj–september.',
-          'The model starts from the normal target and finds when heating is needed again at the mild comfort threshold. The event is the full 24-hour plan block containing that need. Mean price must be more than 10% higher or solar energy more than 10% lower than the current block. Solar reasons apply only in May–September.')}</p>
-        {sides.map(s => {
-          const events = [...new Map(s.score?.thermalBuffer?.flatMap((q, i) => q.earns && q.event && inRange(i) ? [[q.event.from, q.event] as const] : []) ?? []).values()];
-          return events.map(event => <p key={`${s.side}-${event.from}`} className="text-xs">{s.label}: <BenchBufferEvent event={event} series={s.series!} timeZone={timeZone} /></p>);
-        })}
-      </>}
       {sides.map(s => {
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
@@ -421,12 +281,11 @@ export default function BenchRuleList({
         </span>
         <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.perQuarter === null || row.unscored ? undefined : scoreColour(row.perQuarter) }}>
           {row.perQuarter === null ? <span className="text-destructive">{t('Fel', 'Fail')}</span>
-            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">{row.unscored === 'kr' ? 'kr' : t('noteras', 'noted')}</span> : signed(row.perQuarter)}
+            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">kr</span> : signed(row.perQuarter)}
         </span>
         {(['current', 'test'] as const).map(side => <span key={side} className={`text-right font-mono text-xs tabular-nums ${row.cells[side].events.length ? '' : 'text-muted-foreground'}`}>{cellText(row, row.cells[side])}</span>)}
       </button>
       {expanded && <div className="mb-2 ml-5 space-y-2 rounded-md bg-muted/40 p-3 text-sm min-w-0">
-        {row.unscored === 'noted' && <p className="text-xs font-medium">{t('Noteras bara: regeln mäts och visas men ger inga poäng. Det den beskriver finns redan på elräkningen, som poängen räknas från. Texten nedan beskriver vad som mäts.', 'Noted only: the rule is measured and shown but takes no points. What it describes is already on the bill the score is made from. The text below says what is measured.')}</p>}
         {row.comfort ? comfortDetail(row.comfort) : row.energy ? energyDetail(row.energy) : <>
           <p>{t('Planen ber om något hushållet inte kan göra: effektgränser, lagringsgränser eller ogiltiga beslut. En enda överträdelse underkänner fallet, oavsett poäng.', 'The plan asks for something the household cannot do: power limits, storage limits or invalid decisions. A single violation fails the case, whatever its points.')}</p>
           {sides.map(s => {

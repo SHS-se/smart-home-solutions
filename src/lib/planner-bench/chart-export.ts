@@ -28,7 +28,7 @@ export interface BenchChartExportInput {
   shown: 'current' | 'test';
   plans: Record<'current' | 'test', ExportedPlanSource | null>;
   /** The rules in force, as the page scores with them. */
-  rules: readonly { key: string; label: string; points: number; threshold: number; enabled: boolean; role: 'deduction' | 'evidence' }[];
+  rules: readonly { key: string; label: string; points: number; threshold: number; enabled: boolean }[];
 }
 
 const overlaps = (f: OpportunityFinding, from: number, to: number) =>
@@ -57,10 +57,9 @@ function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', show
       wear_sek: s.wearSek?.[i] ?? null,
       // Counted from the start of the period, as the chart's cost panel does.
       cumulative_cost_sek: running,
-      // What the quarter's deductions took, a point a krona; the rules noted took nothing.
+      // Service deductions in this quarter, a point a krona.
       score: scored?.score ?? null,
       rules_fired: Object.fromEntries((scored?.fired ?? []).map(key => [key, points.get(key) ?? null])),
-      rules_noted: scored?.noted ?? [],
     };
   });
   return {
@@ -102,7 +101,7 @@ export function benchChartExport(input: BenchChartExportInput) {
     },
     // Every planner on the bench is given the real prices, and is costed at them.
     price_basis: 'real',
-    rules: input.rules.filter(rule => rule.enabled).map(({ key, label, points: p, threshold, role }) => ({ key, label, points: p, threshold, role })),
+    rules: input.rules.filter(rule => rule.enabled).map(({ key, label, points: p, threshold }) => ({ key, label, points: p, threshold })),
     plans: (['current', 'test'] as const).flatMap(role => {
       const source = plans[role];
       // The same commit on both sides is one plan, not two.

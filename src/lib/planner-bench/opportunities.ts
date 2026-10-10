@@ -41,12 +41,9 @@ import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
 import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, wearOf, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
-import { auditLargeLoadOverlap, LARGE_WORKLOAD_W, type LargeLoadOverlapAudit } from './large-load-overlap';
-import { auditShortGaps, SHORT_GAP_PRICE_TOLERANCE, type GapDevice, type ShortGapAudit } from './short-gaps';
-import { auditEarlyCharge, EARLY_CHARGE_PRICE_TOLERANCE, type EarlyChargeAudit } from './early-charge';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 13;
+export const OPPORTUNITY_AUDIT_VERSION = 14;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -176,12 +173,6 @@ interface AuditCore {
   reason: string | null;
   /** The comfort thresholds every alternative was held to. */
   guard: ServiceGuard;
-  /** Independent feasible cheaper-quarter witnesses; their source quarters score once each. */
-  overlap: LargeLoadOverlapAudit;
-  /** Independent feasible alternatives joining short interruptions. */
-  shortGaps: ShortGapAudit;
-  /** Feasible moves of grid-bought charging to a clearly cheaper later quarter; their source quarters score once each. */
-  earlyCharge: EarlyChargeAudit;
   /** The household's cash exposure with no store acting, at absolute prices; at least 1. */
   scaleSek: number;
   originalCostSek: number;
@@ -330,19 +321,13 @@ function rangeMin(perQuarter: (q: number) => number): Float64Array {
 
 export function auditOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
-  largeWorkloadW = LARGE_WORKLOAD_W,
-  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE },
-  earlyChargeTolerance = EARLY_CHARGE_PRICE_TOLERANCE,
 ): OpportunityAudit {
-  return findOpportunities(c, h, targets, decisions, lane, guard, largeWorkloadW, gapPriceTolerance, earlyChargeTolerance).audit;
+  return findOpportunities(c, h, targets, decisions, lane, guard).audit;
 }
 
 /** The audit together with the improved plan its findings add up to, so one can be checked against the other. */
 export function findOpportunities(
   c: BenchCase, h: Household, targets: Targets, decisions: Decisions, lane: LaneId, guard: ServiceGuard = DEFAULT_SERVICE_GUARD,
-  largeWorkloadW = LARGE_WORKLOAD_W,
-  gapPriceTolerance: Record<GapDevice, number> = { pool: SHORT_GAP_PRICE_TOLERANCE },
-  earlyChargeTolerance = EARLY_CHARGE_PRICE_TOLERANCE,
 ): { audit: OpportunityAudit; improved: Decisions } {
   assertDecisions(decisions);
   const buy = c.recorded.prices.import_sek_per_kwh, sell = c.recorded.prices.export_sek_per_kwh;
@@ -374,9 +359,6 @@ export function findOpportunities(
   const original = simulate(c, h, decisions);
   const core = {
     version: OPPORTUNITY_AUDIT_VERSION, lane, guard: { pool: [...guard.pool], ev: [...guard.ev] } as ServiceGuard,
-    overlap: { thresholdW: largeWorkloadW, overlappingQuarters: [], moves: [] } as LargeLoadOverlapAudit,
-    shortGaps: { priceTolerance: { ...gapPriceTolerance }, candidates: [], gaps: [] } as ShortGapAudit,
-    earlyCharge: { priceTolerance: earlyChargeTolerance, candidates: [], moves: [] } as EarlyChargeAudit,
     scaleSek: r4(scaleSek), originalCostSek: r4(original.cost), applicability,
   };
   // Asked of the household as the planner was told it; a measured day differing from its forecast is not a violation.
@@ -391,9 +373,6 @@ export function findOpportunities(
     } };
   }
 
-  core.overlap = auditLargeLoadOverlap(c, h, targets, decisions, original, guard, largeWorkloadW);
-  core.shortGaps = auditShortGaps(c, h, targets, decisions, original, guard, gapPriceTolerance);
-  core.earlyCharge = auditEarlyCharge(c, h, targets, decisions, original, guard, earlyChargeTolerance);
 
   const reach = reachability(c, h);
   const comfort: Comfort = {

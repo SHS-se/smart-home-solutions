@@ -256,7 +256,7 @@ test.describe('requesting a replan', () => {
 
     // The rules planner publishes which rules fired in each planned quarter.
     replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority,
-      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { dearest_load: -2, pool_low: -1 } : {} })) } } };
+      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { pool_cold: -2, pool_low: -1 } : {} })) } } };
     await page.reload();
     const strip = page.locator('#plan-score');
     await expect(strip).toContainText(/regelpoäng per kvart|rule points per quarter/);
@@ -267,7 +267,7 @@ test.describe('requesting a replan', () => {
     await expect(strip.locator('[data-score="0"]').first()).toBeVisible();
     await strip.locator('[data-score="-3"]').first().click();
     await expect(explanation).toContainText('−3');
-    await expect(explanation).toContainText('−2 Flexible load bought in a very dear quarter');
+    await expect(explanation).toContainText('−2 Pool far below target');
     await expect(explanation).toContainText('−1 Pool below target');
     await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
     const chart = (await page.getByRole('img', { name: /effektflöden|power flows/i }).first().boundingBox())!;

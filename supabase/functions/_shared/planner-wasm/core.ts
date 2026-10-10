@@ -48,7 +48,6 @@ const quarter = z.object({
   }).nullable(),
   cost: z.number().finite(),
   wear: z.number().finite(),
-  spare_battery_cover_w: z.number().finite(),
 });
 export const solveOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),

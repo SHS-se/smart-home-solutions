@@ -60,8 +60,8 @@ formatting stripped by esbuild (`bench/planner-version.ts`). That hash describes
 code equivalence; it never replaces a commit's SHA or moves its environment marks.
 
 Commits selecting `rule-wasm` in `bench/planner-engine.json` run the Rust/Wasm
-rule planner in the TEST bench. This selection is scoped to the bench; production
-replanning still uses the TypeScript planner. The Wasm version hashes the verified
+rule planner in the TEST bench. The production planning worker also uses the Rust/Wasm rules planner through
+`supabase/functions/_shared/rules-planner.ts`. The Wasm version hashes the verified
 binary, its source manifest and the explicit engine selection. Missing, stale or
 unsupported configured artifacts fail the run. Historical commits without this
 selection retain their original TypeScript entry point and version.
@@ -138,19 +138,23 @@ from the page.
 
 The totals table compares only the cases both runs have results for.
 
-Under the chart is one section, the same as on the live plan page: the score
-strip (rule points per quarter), why the picked quarter scored what it did, and
-a download. On the bench **Download chart data (JSON)** saves what the chart
-shows for the period in view, one day or the full 72 hours: every quarter of
-both planners with prices, flows, stores, cost, points and the rules that fired
-(`src/lib/planner-bench/chart-export.ts`). It is for debugging and analysis; it
-is not a test case and cannot be added as one. On the live plan page the same
-place holds the replay download, and the strip shows the points the rules
-planner counted for its own plan (`rule_points` on each planned quarter).
+Under the bench chart, **Economic findings** replaces the rule-points strip.
+Pool, car and battery lanes mark each finding's source (upper half) and
+destination (lower half). Filled marks use known prices; outlined marks need
+hindsight. Selecting a quarter shows the audit family, the saving for the
+whole finding once, and buttons for both endpoints. Arrow keys browse quarters;
+Enter or Space selects one. An empty lane means no demonstrated opportunity,
+not a proof of optimality. Service deductions remain in the selected detail
+and rule list. The live plan page retains its comfort-points strip.
+
+**Download chart data (JSON)** saves both planners' prices, flows, stores,
+account, service deductions and economic findings for the selected period.
+It is debugging evidence, not a test case.
 
 ## Scoring
 
-The score combines comfort with demonstrated opportunities to reduce cost. Physical
+The score combines comfort deductions with the net bill. Demonstrated economic
+opportunities are actionable audit findings, without adding the same cost again. Physical
 violations fail the automatic verdict independently. The rule list shows one row per
 rule that fired in the period the chart shows (72 h or one day), with its points per
 quarter and the quarters it fired in for each planner; a row opens its explanation,

@@ -27,20 +27,12 @@ export interface BenchSeries {
   poolW: number[];
   /** Device-model command starts; absent on stale pre-transition evaluations. */
   poolStart?: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
-  /** Independent thermal evidence for event-based buffer scoring; absent on stale results. */
-  poolThermal?: {
-    store: import('../../../supabase/functions/_shared/planner/device-models').ThermalStoreModel;
-    outdoorC: number[];
-    localMonth: number[];
-  };
   hotWaterW: number[];
   carW: number[];
   gridImportW: number[];
   gridExportW: number[];
   batteryChargeW: number[];
   batteryDischargeW: number[];
-  /** Base-load imports the battery could cover in each quarter, W, after existing commitments. */
-  baseLoadBatteryCoverW: number[];
   /** Percentages. */
   homeSoc: (number | null)[];
   /** Home-battery SOC at the case start, percent; null when the series has no initial reading. */

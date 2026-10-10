@@ -22,6 +22,8 @@ export interface Household extends DeviceModels {
     import_limit_w: number;
     export_limit_w: number;
     battery_export_enabled: boolean;
+    /** Battery supply may cover EV charging only with this explicit permission. */
+    ev_battery_supply_allowed: boolean;
     battery_export_reserve_soc: number;
     battery_export_min_price_sek_per_kwh: number;
     battery_degradation_sek_per_kwh: number;
@@ -32,7 +34,8 @@ export interface Household extends DeviceModels {
 
 export const HOUSEHOLD: Household = {
   site: {
-    market_area: "SE3", import_limit_w: 13_200, export_limit_w: 13_200,
+    market_area: "SE3", import_limit_w: 17_200, export_limit_w: 13_200,
+    ev_battery_supply_allowed: false,
     battery_export_enabled: true, battery_export_reserve_soc: 0.8, battery_export_min_price_sek_per_kwh: 2.5,
     battery_degradation_sek_per_kwh: 0.05, battery_terminal_soc_min: 0.2,
   },

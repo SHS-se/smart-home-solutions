@@ -5,108 +5,28 @@ use crate::*;
 pub(crate) struct FutureNeeds {
     pub pool_goal: f64,
     pub ev_goal: f64,
-    pub buffer_quarters: f64,
     pub next_cheaper: usize,
     pub refill_demand_kwh: f64,
 }
 pub(crate) struct Index {
     pub due: [usize; 4],
-    pub cheap: Vec<f64>,
-    /// Quarters the cheap rule also counts: its share stretched along a valley.
-    pub cheap_valley: Vec<bool>,
-    pub dear: Vec<f64>,
     pub buffer: Vec<Option<bool>>,
-    pub thermal_buffer: thermal_buffer::Evidence,
     pub future: Vec<FutureNeeds>,
-    pub first_sale: Option<usize>,
 }
 pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
-    use RuleKey::*;
     match key {
-        PoolLow | PoolCold | PoolHot | PoolBuffer | PoolRestart | PoolShortGap => {
-            p.heater.is_some()
-        }
-        EvLow | EvShort => p.car.is_some(),
-        BaseLoadDearImport | BaseLoadDearestImport | ArbitrageNotFull => p.battery.is_some(),
-        EvFromHomeBattery => p.car.is_some() && p.battery.is_some(),
-        EarlyGridCharge => p.car.is_some() || p.battery.is_some(),
-        _ => true,
+        RuleKey::PoolLow | RuleKey::PoolCold | RuleKey::PoolHot => p.heater.is_some(),
+        RuleKey::EvLow | RuleKey::EvShort => p.car.is_some(),
     }
 }
 pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
     p.rules.iter().find(|r| r.key == key && applicable(p, key))
-}
-impl Index {
-    /// Whether a quarter's price is in a cheap rule's share. Only the cheap
-    /// rule stretches along a valley; the very cheap share stays exact.
-    pub(crate) fn cheap_price(&self, r: &Rule, i: usize) -> bool {
-        self.cheap[i] < r.threshold || r.key == RuleKey::CheapBuy && self.cheap_valley[i]
-    }
-}
-/// Forecast incentive only: actual draw, source attribution and overheating
-/// still decide whether the projected quarter earns this reward.
-pub(crate) fn cheap_load_incentive(p: &Problem, index: &Index, i: usize) -> i32 {
-    let fires = |r: &Rule| {
-        matches!(r.key, RuleKey::CheapBuy | RuleKey::CheapestBuy) && index.cheap_price(r, i)
-    };
-    points(&p.rules, fired_where(&p.rules, fires))
-}
-/// How far the cheap share may stretch along a valley: 25 % reaches 32.5 %.
-/// The bench referee applies the same stretch (`PRICE_BRIDGE_STRETCH`, score.ts).
-pub(crate) const PRICE_BRIDGE_STRETCH: f64 = 1.3;
-/// The shortest valley the stretch applies to, in quarters, before stretching.
-pub(crate) const PRICE_BRIDGE_MIN_QUARTERS: usize = 8;
-/// Flexible load a quarter needs for the very cheap reward, W. The cheap
-/// reward and the price penalties keep the 500 W floor.
-pub(crate) const VERY_CHEAP_LOAD_W: f64 = 1000.0;
-/// The quarters the cheap share reaches by stretching its valleys. Prices come
-/// in waves, and a fixed share cuts through them: quarters a hair over the line
-/// split one valley into runs too short to use. A valley is an unbroken run of
-/// `PRICE_BRIDGE_MIN_QUARTERS` or more quarters in the share. It stretches
-/// through every adjoining quarter within `PRICE_BRIDGE_STRETCH` times the
-/// share, so it grows at both ends and joins what lies within reach. A quarter
-/// beyond the stretch ends it; shorter runs in the share stay as they were.
-pub(crate) fn stretched_valleys(rank: &[f64], share: f64) -> Vec<bool> {
-    let n = rank.len();
-    let reach = share * PRICE_BRIDGE_STRETCH;
-    let mut valley = vec![false; n];
-    let mut from = 0;
-    while from < n {
-        let to = (from..n).find(|i| rank[*i] >= reach).unwrap_or(n);
-        let (mut run, mut longest) = (0, 0);
-        for r in &rank[from..to] {
-            run = if *r < share { run + 1 } else { 0 };
-            longest = longest.max(run);
-        }
-        if longest >= PRICE_BRIDGE_MIN_QUARTERS {
-            valley[from..to].fill(true);
-        }
-        from = to + 1;
-    }
-    valley
 }
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
     if !work.spend(n as u64 * work.unit_cost * 4 + (n * n) as u64 * 2) {
         return Err("work_grant_cannot_prepare".into());
     }
-    let prices: Vec<f64> = p
-        .slots
-        .iter()
-        .map(|s| measured(s.import_price, 10000.0))
-        .collect();
-    let cheap: Vec<f64> = prices
-        .iter()
-        .map(|v| prices.iter().filter(|a| *a < v).count() as f64 / n as f64)
-        .collect();
-    let cheap_valley = rule(p, RuleKey::CheapBuy).map_or_else(
-        || vec![false; n],
-        |r| stretched_valleys(&cheap, r.threshold),
-    );
-    let dear = prices
-        .iter()
-        .map(|v| prices.iter().filter(|a| *a > v).count() as f64 / n as f64)
-        .collect();
     let mean = |from: usize, to: usize, solar: bool| {
         p.slots[from..to]
             .iter()
@@ -130,12 +50,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             })
         })
         .collect();
-    let first_sale = rule(p, RuleKey::ArbitrageNotFull).and_then(|r| {
-        p.slots
-            .iter()
-            .position(|s| measured(s.export_price, 10000.0) > r.threshold)
-    });
-    let thermal_buffer = thermal_buffer::prepare(p, work)?;
     let due = eligibility(p);
     let ev_goal = p.car.as_ref().map_or(0.0, |car| {
         (p.targets.ev_km.unwrap() * car.kwh_per_km).min(p.targets.ev_limit_kwh.unwrap())
@@ -144,7 +58,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         FutureNeeds {
             pool_goal: p.targets.pool_c.unwrap_or(0.0),
             ev_goal,
-            buffer_quarters: 0.0,
             next_cheaper: n,
             refill_demand_kwh: 0.0,
         };
@@ -153,14 +66,6 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     // Reverse opportunity sweep. Estimates guide construction, never add earned points.
     for i in (0..n).rev() {
         let s = &p.slots[i];
-        let buffer_rule = rule(p, RuleKey::PoolBuffer).filter(|r| r.points > 0);
-        let goal = if thermal_buffer.causes[i].is_some() {
-            buffer_rule.map_or(p.targets.pool_c.unwrap_or(0.0), |r| {
-                p.targets.pool_c.unwrap_or(0.0) + r.threshold
-            })
-        } else {
-            p.targets.pool_c.unwrap_or(0.0)
-        };
         let next_cheaper = (i + 1..n)
             .find(|j| {
                 p.slots[*j].import_price < s.import_price
@@ -172,10 +77,8 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             })
             .unwrap_or(n);
         future[i] = FutureNeeds {
-            pool_goal: goal,
+            pool_goal: p.targets.pool_c.unwrap_or(0.0),
             ev_goal,
-            buffer_quarters: thermal_buffer.best[i]
-                * buffer_rule.map_or(0.0, |r| f64::from(r.points)),
             next_cheaper,
             refill_demand_kwh: 0.0,
         };
@@ -213,60 +116,11 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     }
     Ok(Index {
         due,
-        cheap,
-        cheap_valley,
-        dear,
         buffer,
-        thermal_buffer,
         future,
-        first_sale,
     })
 }
 
-pub(crate) fn witnessed(
-    p: &Problem,
-    account: &mut Account,
-    audit: &WitnessAudit,
-    q: &[Quarter],
-    index: &Index,
-) {
-    let prepared = prepared(p, q, index);
-    let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
-    // One pause, one deduction: a pool gap whose restart the restart rule
-    // charges is not charged again.
-    let restart_owns = |i: usize| {
-        let to = (i..q.len()).find(|j| !audit.gaps[*j]).unwrap_or(q.len());
-        restart_charged(p, q, to)
-    };
-    let mut rows = Vec::with_capacity(q.len());
-    for (i, v) in q.iter().enumerate() {
-        let earns = buffer_credit(p, index, i, v, &mut episode);
-        let mut fired = raw_quarter(p, index, i, v, prepared, earns);
-        for (j, r) in p.rules.iter().enumerate() {
-            let certified = match r.key {
-                RuleKey::PoolShortGap => audit.gaps[i] && !restart_owns(i),
-                RuleKey::LargeLoadOverlap => audit.overlap[i],
-                RuleKey::EarlyGridCharge => audit.early[i],
-                _ => continue,
-            };
-            fired = fired & !(1 << j) | Fired::from(certified) << j;
-        }
-        rows.push(contributions(&p.rules, fired));
-    }
-    account.contributions = rows;
-    // What an economic certificate proves is on the bill already; it takes no points.
-    account.points = account.contributions.iter().flatten().sum::<i32>();
-    account.rescore();
-}
-/// Whether the restart rule charges the pool start in quarter `to`: a pause
-/// that ends there is charged by it, and not again as a gap.
-pub(crate) fn restart_charged(p: &Problem, q: &[Quarter], to: usize) -> bool {
-    rule(p, RuleKey::PoolRestart).is_some_and(|r| {
-        q.get(to)
-            .and_then(|v| v.pool_start)
-            .is_some_and(|s| s.off_seconds.is_some_and(|off| off < r.threshold * 3600.0))
-    })
-}
 /// A thousandth of a krona separates two plans; less is rounding.
 pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
 impl Account {
@@ -404,13 +258,12 @@ pub(crate) fn totals(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     tally(p, q, index, false)
 }
 fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
-    let prepared = prepared(p, q, index);
-    let mut episode = thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0));
+    let mut before_c = p.initial.pool_c.unwrap_or(0.0);
     let mut contributions = Vec::with_capacity(if rows { q.len() } else { 0 });
     let mut total = 0;
     for (i, v) in q.iter().enumerate() {
-        let earns = buffer_credit(p, index, i, v, &mut episode);
-        let fired = raw_quarter(p, index, i, v, prepared, earns);
+        let fired = raw_quarter(p, index, i, v, before_c);
+        before_c = v.pool_c.unwrap_or(0.0);
         total += points(&p.rules, fired);
         if rows {
             contributions.push(self::contributions(&p.rules, fired));
@@ -436,63 +289,6 @@ fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
     account
 }
 
-/// Home-battery power reaching the car, W: what is left of the discharge
-/// after exports, battery charging and the rest of the household.
-pub(crate) fn ev_battery_w(
-    base_w: f64,
-    pool_w: f64,
-    ev_w: f64,
-    charge_w: f64,
-    discharge_w: f64,
-    net_w: f64,
-) -> f64 {
-    let ev = measured(ev_w, 10.0);
-    let export = measured((-net_w).max(0.0), 10.0);
-    let load = measured(base_w + pool_w + ev_w, 10.0);
-    let house_battery = (measured(discharge_w, 10.0) - export).max(0.0);
-    measured(
-        (house_battery - measured(charge_w, 10.0) - (load - ev).max(0.0))
-            .max(0.0)
-            .min(ev),
-        10.0,
-    )
-}
-struct PoolScoring {
-    earns_buffer: bool,
-    before_c: f64,
-}
-fn buffer_credit(
-    p: &Problem,
-    index: &Index,
-    i: usize,
-    v: &Quarter,
-    episode: &mut thermal_buffer::Credit,
-) -> PoolScoring {
-    let before_c = measured(episode.water_c, 1000.0);
-    episode.water_c = v.pool_c.unwrap_or(0.0);
-    let buffer = rule(p, RuleKey::PoolBuffer);
-    let warm = buffer.is_some_and(|r| {
-        measured(v.pool_c.unwrap_or(0.0), 1000.0) > p.targets.pool_c.unwrap_or(0.0) + r.threshold
-    });
-    let earns_buffer = thermal_buffer::advance(
-        episode,
-        v.pool_start,
-        p.pool_cycle_seconds,
-        i,
-        thermal_buffer::Warmth {
-            warm,
-            heating_past_target: buffer
-                .is_some_and(|r| before_c >= p.targets.pool_c.unwrap_or(0.0) + r.threshold)
-                && (measured(v.pool_w, 10.0) > 0.0 || v.pool_start.is_some()),
-            month: p.slots[i].local_month,
-        },
-        index.thermal_buffer.causes[i],
-    );
-    PoolScoring {
-        earns_buffer,
-        before_c,
-    }
-}
 /// Which rules fired in a quarter: bit `j` is rule `j` of the problem.
 type Fired = u32;
 fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
@@ -501,109 +297,33 @@ fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
         .enumerate()
         .fold(0, |fired, (j, r)| fired | Fired::from(fires(r)) << j)
 }
-fn raw_quarter(
-    p: &Problem,
-    index: &Index,
-    i: usize,
-    v: &Quarter,
-    prepared: bool,
-    pool: PoolScoring,
-) -> Fired {
-    let s = &p.slots[i];
-    let pool_w = measured(v.pool_w, 10.0);
-    let ev_w = measured(v.ev_w, 10.0);
-    let charge = measured(v.charge_w, 10.0);
-    let discharge = measured(v.discharge_w, 10.0);
+fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64) -> Fired {
     let pool_c = measured(v.pool_c.unwrap_or(0.0), 1000.0);
     let ev_km = p
         .car
         .as_ref()
         .map_or(0.0, |c| measured(v.ev_kwh.unwrap() / c.kwh_per_km, 10.0));
-    let soc = p.battery.as_ref().map_or(0.0, |b| {
-        measured(v.battery_kwh.unwrap() / b.capacity_kwh * 100.0, 10.0)
-    });
-    let imported = measured(v.net_w.max(0.0), 10.0);
-    let export = measured((-v.net_w).max(0.0), 10.0);
-    let load = measured(s.base_w + v.pool_w + v.ev_w, 10.0);
-    let flexible = pool_w + ev_w + charge;
-    let heating = pool_w > 0.0 || v.pool_start.is_some();
-    let past_hot_target = |t: f64| pool.before_c >= p.targets.pool_c.unwrap_or(0.0) + t;
-    let rewarding_flexible = ev_w
-        + charge
-        + if rule(p, RuleKey::PoolHot).is_some_and(|r| past_hot_target(r.threshold)) {
-            0.0
-        } else {
-            pool_w
-        };
-    let house_battery = (discharge - export).max(0.0);
-    let ev_battery = ev_battery_w(
-        s.base_w,
-        v.pool_w,
-        v.ev_w,
-        v.charge_w,
-        v.discharge_w,
-        v.net_w,
-    );
-    let flexible_grid = measured((flexible - house_battery).max(0.0).min(imported), 10.0);
-    let base_grid = measured(
-        (imported - flexible_grid)
-            .max(0.0)
-            .min((load - pool_w - ev_w).max(0.0)),
-        10.0,
-    );
-    let spare = (v.spare_battery_cover_w * 10.0).floor() / 10.0;
-    let rule_fires = |r: &Rule| {
-        use RuleKey::*;
+    fired_where(&p.rules, |r| {
         if !applicable(p, r.key) {
             return false;
         }
         let t = r.threshold;
         match r.key {
-            PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
-            PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c.unwrap_or(0.0) - t,
-            PoolHot => {
-                heating && past_hot_target(t)
-                    || pool_c > p.targets.pool_c.unwrap_or(0.0) + t
-                        && index.buffer[i] == Some(false)
+            RuleKey::PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c.unwrap() - t,
+            RuleKey::PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c.unwrap() - t,
+            RuleKey::PoolHot => {
+                (measured(v.pool_w, 10.0) > 0.0 || v.pool_start.is_some())
+                    && measured(before_c, 1000.0) >= p.targets.pool_c.unwrap() + t
+                    || pool_c > p.targets.pool_c.unwrap() + t && index.buffer[i] == Some(false)
             }
-            PoolRestart => v
-                .pool_start
-                .is_some_and(|s| s.off_seconds.is_some_and(|off| off < t * 3600.0)),
-            PoolBuffer => pool.earns_buffer,
-            EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
-            EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap_or(0.0) - t,
-            CheapBuy => rewarding_flexible >= 500.0 && index.cheap_price(r, i),
-            CheapestBuy => rewarding_flexible >= VERY_CHEAP_LOAD_W && index.cheap_price(r, i),
-            DearLoad | DearestLoad => flexible_grid >= 500.0 && index.dear[i] < t,
-            BaseLoadDearImport | BaseLoadDearestImport => {
-                base_grid >= 500.0 && spare >= base_grid && index.dear[i] < t
-            }
-            MissedCheapQuarter => {
-                measured(s.import_price, 10000.0) < t
-                    && (p.battery.is_some() && soc < 100.0
-                        || p.car.is_some() && ev_km < p.targets.ev_km.unwrap_or(0.0)
-                        || p.heater.is_some() && pool_c < p.targets.pool_c.unwrap_or(0.0))
-                    && charge < 500.0
-                    && ev_w < 500.0
-                    && pool_w < 500.0
-            }
-            ArbitrageNoExport => measured(s.export_price, 10000.0) > t && export <= 0.0,
-            ArbitrageNotFull => measured(s.export_price, 10000.0) > t && !prepared,
-            EvFromHomeBattery => ev_battery > t,
-            LargeLoadOverlap | PoolShortGap | EarlyGridCharge => false,
+            RuleKey::EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap() - t,
+            RuleKey::EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap() - t,
         }
-    };
-    fired_where(&p.rules, rule_fires)
+    })
 }
-/// What rule `j` takes or gives in a quarter: nothing where the rule it yields to fired.
+/// What service rule `j` contributes in a quarter.
 fn contribution(rules: &[Rule], fired: Fired, j: usize) -> i32 {
-    let active = |key| {
-        rules
-            .iter()
-            .enumerate()
-            .any(|(k, r)| r.key == key && fired >> k & 1 == 1)
-    };
-    if fired >> j & 1 == 1 && !rules[j].unless.is_some_and(active) {
+    if fired >> j & 1 == 1 {
         rules[j].points
     } else {
         0
@@ -623,8 +343,7 @@ fn points(rules: &[Rule], fired: Fired) -> i32 {
         .map(|j| contribution(rules, fired, j))
         .sum()
 }
-/// Relaxed continuation tables share the actual rule predicates. Episode and
-/// charge-history rules are excluded by the table owner, not approximated here.
+/// Continuation tables and complete accounts share the service predicates.
 pub(crate) fn guidance_quarter(
     p: &Problem,
     index: &Index,
@@ -632,84 +351,18 @@ pub(crate) fn guidance_quarter(
     v: &Quarter,
     before_c: f64,
 ) -> i32 {
-    points(
-        &p.rules,
-        raw_quarter(
-            p,
-            index,
-            i,
-            v,
-            false,
-            PoolScoring {
-                earns_buffer: false,
-                before_c: measured(before_c, 1000.0),
-            },
-        ),
-    )
-}
-pub(crate) fn quarter(
-    p: &Problem,
-    index: &Index,
-    i: usize,
-    v: &Quarter,
-    prepared: bool,
-    episode: &mut thermal_buffer::Credit,
-) -> i32 {
-    let earns = buffer_credit(p, index, i, v, episode);
-    points(&p.rules, raw_quarter(p, index, i, v, prepared, earns))
-}
-fn prepared(p: &Problem, q: &[Quarter], index: &Index) -> bool {
-    index.first_sale.is_some_and(|sale| {
-        let soc = q[..sale]
-            .iter()
-            .rev()
-            .find(|v| measured(v.charge_w, 10.0) > 0.0)
-            .map_or(p.initial.battery_kwh.unwrap_or(0.0), |v| {
-                v.battery_kwh.unwrap_or(0.0)
-            });
-        p.battery
-            .as_ref()
-            .is_some_and(|b| measured(soc / b.capacity_kwh * 100.0, 10.0) >= 100.0)
-    })
+    points(&p.rules, raw_quarter(p, index, i, v, before_c))
 }
 
 #[cfg(test)]
-mod tests {
+mod service_tests {
     use super::*;
-    #[test]
-    fn reserve_crossing_coasts_but_extra_heating_loses_both_buffer_and_cheap_credit() {
-        let mut p = crate::witnesses::tests::problem(288);
-        p.initial.pool_c = Some(31.99);
-        p.heater.as_mut().unwrap().heat_w = 4000.0;
-        p.pool_store.as_mut().unwrap().loss = shs_planner_models::StandingLoss::Measured {
-            points: vec![shs_planner_models::LossPoint {
-                at_c: 30.0,
-                c_per_h: -0.04,
-            }],
-        };
-        p.rules = [
-            (RuleKey::PoolBuffer, 2.0, 1),
-            (RuleKey::PoolHot, 2.0, -1),
-            (RuleKey::CheapestBuy, 0.1, 2),
-        ]
-        .map(|(key, threshold, points)| Rule {
-            key,
-            threshold,
-            points,
-            required: false,
-            unless: None,
-        })
-        .to_vec();
-        for s in &mut p.slots[96..] {
-            s.import_price = 2.0;
-        }
-        // The final day remains cheap: overheating cannot escape via missing next-day evidence.
-        p.slots[287].import_price = 1.0;
-        let mut work = Work {
+    fn work(p: &Problem) -> Work {
+        Work {
             used: 0,
             limit: p.work_grant,
             reserved: 0,
-            unit_cost: 100,
+            unit_cost: 128,
             expansions: 0,
             evaluations: 0,
             witness_trials: 0,
@@ -717,150 +370,59 @@ mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
-        };
-        let index = index(&p, &mut work).unwrap();
-        let off = Command {
+        }
+    }
+    fn rules() -> Vec<Rule> {
+        [
+            (RuleKey::PoolLow, 1.0),
+            (RuleKey::PoolCold, 2.0),
+            (RuleKey::PoolHot, 2.0),
+            (RuleKey::EvLow, 50.0),
+            (RuleKey::EvShort, 100.0),
+        ]
+        .into_iter()
+        .map(|(key, threshold)| Rule {
+            key,
+            threshold,
+            points: -1,
+            required: matches!(key, RuleKey::PoolCold | RuleKey::EvShort),
+        })
+        .collect()
+    }
+    #[test]
+    fn all_five_service_checks_keep_distinct_contributions() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.rules = rules();
+        p.initial.ev_kwh = Some(40.0);
+        p.targets.ev_km = Some(200.0);
+        let index = index(&p, &mut work(&p)).unwrap();
+        let idle = Command {
             pool_on: false,
             ev_amps: 0,
             battery: Operation::Idle,
             charge_limit_w: 0.0,
             discharge_limit_w: 0.0,
         };
-        let mut coast = vec![off.clone(); 288];
-        coast[0].pool_on = true;
-        let q = crate::physics::projection(&p, &coast).unwrap();
-        let good = account(&p, &q, &index);
-        assert_eq!(good.contributions.iter().map(|r| r[0]).sum::<i32>(), 8);
-        assert_eq!(good.contributions[0], vec![1, 0, 2]);
-        assert_eq!(good.contributions[1], vec![1, 0, 0]);
-        let mut heat = vec![off; 288];
-        for c in &mut heat {
-            c.pool_on = true;
-        }
-        let q = crate::physics::projection(&p, &heat).unwrap();
-        let bad = account(&p, &q, &index);
-        assert_eq!(bad.contributions[0], vec![1, 0, 2]);
-        assert_eq!(bad.contributions[1], vec![0, -1, 0]);
-        assert_eq!(bad.contributions[287], vec![0, -1, 0]);
-        assert!(good.points > bad.points);
-        // A concurrent useful car load earns the ordinary household cheap reward.
-        heat[287].ev_amps = 6;
-        let q = crate::physics::projection(&p, &heat).unwrap();
-        assert_eq!(account(&p, &q, &index).contributions[287], vec![0, -1, 2]);
+        let mut q = physics::projection(&p, &[idle]).unwrap();
+        q[0].pool_c = Some(27.0);
+        q[0].ev_kwh = Some(19.0);
+        assert_eq!(
+            account(&p, &q, &index).contributions[0],
+            [-1, -1, 0, -1, -1]
+        );
+        q[0].pool_c = Some(33.0);
+        q[0].pool_w = 3000.0;
+        p.initial.pool_c = Some(33.0);
+        assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1, -1]);
     }
     #[test]
-    fn the_cheap_share_stretches_only_valleys_of_eight_quarters() {
-        // Ranks of fifty quarters: the share is 0.25 and reaches 0.325.
-        let mut rank = vec![0.9; 50];
-        // Eight quarters in the share stretch through 0.32 before them, a gap
-        // at 0.30 after them and the single cheap quarter beyond that gap.
-        rank[2..14].copy_from_slice(&[
-            0.32, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.30, 0.1, 0.32,
-        ]);
-        // Seven in the share are no valley, however many lie within reach.
-        rank[16..27].copy_from_slice(&[0.3, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.3, 0.3]);
-        // Neither are eight split by a quarter out of the share.
-        rank[29..38].copy_from_slice(&[0.1, 0.1, 0.1, 0.1, 0.3, 0.1, 0.1, 0.1, 0.1]);
-        // The stretch stops at 0.325 exactly.
-        rank[40..50].copy_from_slice(&[0.325, 0.32, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]);
-        let valley = stretched_valleys(&rank, 0.25);
-        let counted: Vec<usize> = (0..50).filter(|i| valley[*i]).collect();
-        let expected: Vec<usize> = (2..14).chain(41..50).collect();
-        assert_eq!(counted, expected);
-    }
-    #[test]
-    fn very_cheap_needs_a_kilowatt_and_never_stretches() {
-        let mut p = crate::witnesses::tests::problem(40);
-        p.car = None;
-        p.charger = None;
-        p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
-        p.rules = vec![
-            Rule {
-                key: RuleKey::CheapBuy,
-                threshold: 0.25,
-                points: 1,
-                required: false,
-                unless: Some(RuleKey::CheapestBuy),
-            },
-            Rule {
-                key: RuleKey::CheapestBuy,
-                threshold: 0.1,
-                points: 2,
-                required: false,
-                unless: None,
-            },
-        ];
-        // Four very cheap quarters, six cheap, three a hair dearer, then dear.
-        for (i, s) in p.slots.iter_mut().enumerate() {
-            s.import_price = match i {
-                0..4 => 1.0,
-                4..10 => 1.1,
-                10..13 => 1.2,
-                _ => 3.0,
-            };
-        }
-        let mut work = Work {
-            used: 0,
-            limit: p.work_grant,
-            reserved: 0,
-            unit_cost: 100,
-            expansions: 0,
-            evaluations: 0,
-            witness_trials: 0,
-            repairs: 0,
-            move_resize_trials: 0,
-            move_resize_passes: 0,
-            move_resize_improvements: 0,
-        };
-        let index = index(&p, &mut work).unwrap();
-        let charge = |watts: f64| {
-            let commands = vec![
-                Command {
-                    pool_on: false,
-                    ev_amps: 0,
-                    battery: Operation::GridCharge,
-                    charge_limit_w: watts,
-                    discharge_limit_w: 0.0,
-                };
-                40
-            ];
-            let q = crate::physics::projection(&p, &commands).unwrap();
-            account(&p, &q, &index).contributions
-        };
-        // 1 kW: very cheap pays 2, the cheap share 1, and so does its valley.
-        let full = charge(1000.0);
-        assert_eq!(full[0], vec![0, 2]);
-        assert_eq!(full[4], vec![1, 0]);
-        assert_eq!(full[12], vec![1, 0]);
-        assert_eq!(full[13], vec![0, 0]);
-        // 500 W: a very cheap quarter pays the cheap point only.
-        let thin = charge(500.0);
-        assert_eq!(thin[0], vec![1, 0]);
-        assert_eq!(thin[4], vec![1, 0]);
-    }
-    #[test]
-    fn exclusions_use_raw_firing_across_direct_and_witness_rules() {
-        let rules = vec![
-            Rule {
-                key: RuleKey::PoolLow,
-                threshold: 1.0,
-                points: -1,
-                required: false,
-                unless: Some(RuleKey::PoolShortGap),
-            },
-            Rule {
-                key: RuleKey::PoolShortGap,
-                threshold: 0.2,
-                points: -2,
-                required: false,
-                unless: None,
-            },
-        ];
-        assert_eq!(contributions(&rules, 0b11), vec![0, -2]);
-        assert_eq!(contributions(&rules, 0b01), vec![-1, 0]);
-        assert_eq!(contributions(&rules, 0b10), vec![0, -2]);
-        assert_eq!(points(&rules, 0b11), -2);
+    fn unreachable_initial_targets_keep_grace_without_invalidating_the_household() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.rules = rules();
+        p.initial.pool_c = Some(0.0);
+        p.initial.ev_kwh = Some(0.0);
+        p.targets.ev_km = Some(300.0);
+        assert!(crate::validate(&p).is_ok());
+        assert_eq!(eligibility(&p), [usize::MAX; 4]);
     }
 }

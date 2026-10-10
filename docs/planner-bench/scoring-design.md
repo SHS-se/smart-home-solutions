@@ -1,5 +1,9 @@
 # Planner bench v4: architecture decision
 
+Current behavior is defined in [scoring.md](scoring.md). The v32 cleanup removes
+the obsolete quarter evidence/cycle rules, enforces EV supply permission and
+retains economic witnesses; older decisions below are historical rationale.
+
 ## Problem and caller
 
 Quarter price predicates cannot judge multi-day storage. The previous comfort-only score also ignored physical violations and penalized useful pool preheating. The bench needs independent, reproducible evidence of missed opportunities without changing planner behavior.
@@ -14,14 +18,13 @@ The runner calls `evaluate(case, record, criteria, lane)`. It invokes the refere
 | `service.ts` | Shared recovery policy and separate pool/car service exposure guards |
 | `opportunities.ts` | Rule catalogue, case applicability, deterministic search, cumulative transfers and known/hindsight evidence |
 | `score.ts` | Comfort rules, criteria validation, raw integer point totals, stale-version detection |
-| `large-load-overlap.ts` | Cumulative legal EV/home-battery charging transfers out of quarters containing multiple large workloads, keeping pool heating fixed; price-ordered destination search, one distinct destination per source |
 | `evaluate.ts` | The single composition point for referee, audit, statistics and stored score |
 | `bench/rescore.ts` | All-lane coverage, recomputation from decisions, persisted-version verification and report |
-| `BenchRuleCards.tsx` | Grouped visual rules, applicability, threshold bands and one reusable evidence viewer |
+| `BenchRuleList.tsx` | Grouped visual rules, applicability, threshold bands and one reusable evidence viewer |
 
 `OpportunityAudit` holds its version, lane, service guard, applicability, physical violations, search coverage, known/hindsight money and ordered findings. Each finding owns its saving once, may have several explanatory tags, and stores before/after pool, car and battery trajectories. `StoredScore` carries a compact summary; the existing result-series JSON carries the full evidence. No database schema change is needed.
 
-`CaseScore` retains the quarter breakdown and its `sum`, and adds nullable `economicPoints`, `complete`, `physicalFailed`, applicability and audit state. Missing or stale evidence is visibly incomplete; it cannot enter a current-version comparison. Valuation-lane diagnosis uses the same total points as the headline.
+`CaseScore` retains the quarter breakdown and its `sum`, and carries `points`, `bill`, `complete`, `physicalFailed`, applicability and audit state. Missing or stale evidence is visibly incomplete; it cannot enter a current-version comparison. Valuation-lane diagnosis uses the same total points as the headline.
 
 ## Alternatives considered
 

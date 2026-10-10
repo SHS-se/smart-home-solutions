@@ -1,21 +1,15 @@
 use crate::opportunity::Opportunity;
 use crate::physics::{self, State};
 use crate::policy::{self, Index};
-use crate::witnesses::Scope;
 use crate::*;
 
 #[derive(Clone)]
 struct Label {
-    buffer_episode: thermal_buffer::Credit,
     state: State,
     parent: usize,
     points: i32,
     cash: f64,
     wear: f64,
-    last_charge: f64,
-    prepared: bool,
-    pool_last: Option<usize>,
-    gap_estimate: f64,
     rank: (f64, f64),
 }
 #[derive(Clone)]
@@ -27,8 +21,6 @@ struct Candidate {
     commands: Vec<Command>,
     quarters: Vec<Quarter>,
     account: Account,
-    /// The certificates its account rests on (`witnesses::Scope::Scored`).
-    audit: WitnessAudit,
 }
 impl Candidate {
     fn better(&self, than: &Candidate) -> bool {
@@ -65,36 +57,18 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     let s = &p.slots[i];
     let h = physics::projected_hours(s);
     let f = &index.future[i];
-    // Service, thermal reserve and cheap-window proposals compete on the same
-    // complete score. The policy's overheating threshold limits cheap credit;
-    // a comfort target must not silently exclude otherwise scoring heat.
+    // Comfort and future demand propose heating; complete physics and score select it.
     let target = p.targets.pool_c.unwrap_or(0.0);
-    let pool_goal = match label.buffer_episode.episode {
-        thermal_buffer::Episode::Available
-            if label
-                .buffer_episode
-                .available(index.thermal_buffer.causes[i]) =>
-        {
-            f.pool_goal
-        }
-        _ => target,
-    };
+    let pool_goal = f.pool_goal;
     let pool_needed = p.pool_store.as_ref().is_some_and(|store| {
         let coast = store.idle_per_hour(pool_goal, s.outdoor_c).abs()
             * h
             * f.next_cheaper
                 .saturating_sub(i)
-                .max(
-                    if policy::rule(p, RuleKey::PoolShortGap).is_some_and(|r| r.points < 0) {
-                        5
-                    } else {
-                        1
-                    },
-                )
+                .max(1)
                 .min(p.slots.len() - i) as f64;
         policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && (store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
-                || policy::cheap_load_incentive(p, index, i) > 0)
+            && store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut ev_levels = vec![0];
@@ -161,7 +135,6 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 continue;
             };
             let demand = s.base_w + pool_w + ev_w - s.solar_w;
-            let available = battery.available_discharge_w(label.state.battery, h);
             let grid_room = (p.limits.import_w - demand).max(0.0);
             let stored = (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0)
                 * battery.discharge_efficiency;
@@ -172,19 +145,15 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 / h
                 / battery.charge_efficiency;
             let cap = battery.charge_max_w.min(grid_room).min(headroom);
-            // Joint templates compete through exact coupled physics. EV-on can
-            // coexist with house-only supply; no blanket battery prohibition.
+            // Automatic supply follows eligible measured demand. A forecast-sized
+            // cap would suppress later appliance moves and ordinary load changes.
             out.push(command(
                 p,
                 on,
                 amps,
                 Operation::SelfConsumption,
                 battery.charge_max_w,
-                if amps == 0 {
-                    battery.discharge_max_w
-                } else {
-                    (s.base_w + pool_w - s.solar_w).max(0.0).min(available)
-                },
+                battery.discharge_max_w,
             ));
             out.push(command(
                 p,
@@ -243,96 +212,20 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
     }
     out
 }
-fn estimate(p: &Problem, index: &Index, i: usize, l: &Label) -> f64 {
-    let pool = p
-        .heater
-        .as_ref()
-        .zip(p.pool_store.as_ref())
-        .map_or(0.0, |(heater, store)| {
-            let target = p.targets.pool_c.unwrap();
-            let floor = p
-                .initial
-                .pool_c
-                .unwrap()
-                .min(target - p.service_guard.pool[0]);
-            let buffer = if l.buffer_episode.episode == thermal_buffer::Episode::Spent {
-                target
-            } else {
-                policy::rule(p, RuleKey::PoolBuffer).map_or(target, |r| target + r.threshold)
-            };
-            let share = (l.state.pool - floor) / (buffer - floor).max(f64::EPSILON);
-            let warming = ((buffer - floor).max(0.0) * store.capacity_kwh_per_c
-                / (heater.heat_w / 4000.0))
-                .ceil()
-                .max(1.0);
-            let future = &index.future[i];
-            let buffer_points = match l.buffer_episode.episode {
-                thermal_buffer::Episode::Available => {
-                    if l.buffer_episode.available(index.thermal_buffer.causes[i]) {
-                        future.buffer_quarters
-                    } else {
-                        0.0
-                    }
-                }
-                thermal_buffer::Episode::Active(need) => future.buffer_quarters.min(
-                    need.quarter.saturating_sub(i) as f64
-                        * policy::rule(p, RuleKey::PoolBuffer)
-                            .map_or(0.0, |r| r.points.max(0) as f64),
-                ),
-                thermal_buffer::Episode::Spent => 0.0,
-            };
-            buffer_points.min(warming) * share.clamp(0.0, 1.0)
-        });
-    pool + l.gap_estimate
-}
-
-fn rank(p: &Problem, index: &Index, opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
+fn rank(opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
     // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
     let cost = l.cash + l.wear + future.cost;
-    (
-        f64::from(l.points) + future.points + estimate(p, index, i, l) - cost,
-        cost,
-    )
+    (f64::from(l.points) + future.points - cost, cost)
 }
 
-fn gap_estimate(p: &Problem, i: usize, last: Option<usize>) -> f64 {
-    let Some(last) = last else { return 0.0 };
-    let gap = i - last - 1;
-    if !(1..=4).contains(&gap) {
-        return 0.0;
-    }
-    let Some(r) = policy::rule(p, RuleKey::PoolShortGap) else {
-        return 0.0;
-    };
-    // A pool pause is charged at its restart, a direct rule; not again here.
-    if policy::rule(p, RuleKey::PoolRestart).is_some() {
-        return 0.0;
-    }
-    // Only a dearer gap can excuse the pause. Whether the sun or the battery
-    // could have carried it is left to the certificate (witnesses.rs).
-    let border = p.slots[last].import_price.min(p.slots[i].import_price);
-    if (last + 1..i).all(|j| {
-        let price = p.slots[j].import_price;
-        price - border <= r.threshold.max(price.abs() * 0.1) + 1e-9
-    }) {
-        f64::from(r.points) * gap as f64
-    } else {
-        0.0
-    }
-}
 fn initial_label(p: &Problem) -> Label {
     Label {
-        buffer_episode: thermal_buffer::Credit::new(p.slots.len(), p.initial.pool_c.unwrap_or(0.0)),
         state: physics::initial(p),
         parent: usize::MAX,
         points: 0,
         cash: 0.0,
         wear: 0.0,
-        last_charge: p.initial.battery_kwh.unwrap_or(0.0),
-        prepared: false,
-        pool_last: None,
-        gap_estimate: 0.0,
         rank: (0.0, 0.0),
     }
 }
@@ -361,24 +254,10 @@ fn construct(
                 let Ok(q) = physics::step(p, i, &c, &mut next.state) else {
                     continue;
                 };
-                if index.first_sale == Some(i) {
-                    next.prepared = policy::measured(
-                        l.last_charge / p.battery.as_ref().unwrap().capacity_kwh * 100.0,
-                        10.0,
-                    ) >= 100.0;
-                }
-                if policy::measured(q.charge_w, 10.0) > 0.0 {
-                    next.last_charge = q.battery_kwh.unwrap();
-                }
-                next.points +=
-                    policy::quarter(p, index, i, &q, next.prepared, &mut next.buffer_episode);
+                next.points += policy::guidance_quarter(p, index, i, &q, l.state.pool);
                 next.cash += q.cost;
                 next.wear += q.wear;
-                if c.pool_on {
-                    next.gap_estimate += gap_estimate(p, i, l.pool_last);
-                    next.pool_last = Some(i);
-                }
-                next.rank = rank(p, index, opportunity, i, &next);
+                next.rank = rank(opportunity, i, &next);
                 let parent = arena.len();
                 arena.push(Node {
                     parent: l.parent,
@@ -503,8 +382,7 @@ enum EvaluationIssue {
 /// certificates prove savings that are on the bill already, so they are no
 /// part of a score: the audit of every family is a source of proposals
 /// (`improve`) and the selected plan's report, not a cost of each candidate.
-/// Only a rule that scores by certificate is audited here, and in the usual
-/// problem none has anything to certify.
+/// Economic witnesses propose improvements; they never change this account.
 fn score(
     p: &Problem,
     index: &Index,
@@ -521,28 +399,11 @@ fn score(
     if !work.spend(n * work.unit_cost) {
         return Err(EvaluationIssue::GrantUnavailable);
     }
-    let mut account = policy::totals(p, &quarters, index);
-    let audit = witnesses::audit(
-        p,
-        &commands,
-        &quarters,
-        index,
-        work,
-        p.recipe.witness_trials,
-        Scope::Scored,
-    );
-    // An account missing a certificate it could not pay for is no account.
-    if audit.stopped {
-        return Err(EvaluationIssue::GrantUnavailable);
-    }
-    if audit.fires() {
-        policy::witnessed(p, &mut account, &audit, &quarters, index);
-    }
+    let account = policy::totals(p, &quarters, index);
     Ok(Candidate {
         commands,
         quarters,
         account,
-        audit,
     })
 }
 /// A proposal made from `base`, carried onto a plan that has since moved on.
@@ -685,8 +546,7 @@ fn improve(
                 .map(|c| (c.pool_on, c.ev_amps))
                 .collect();
             let epoch = best.commands.clone();
-            let Some(edits) =
-                move_resize::proposals(p, index, &best.commands, &best.quarters, work)
+            let Some(edits) = move_resize::proposals(p, &best.commands, &best.quarters, work)
             else {
                 *declined = true;
                 break;
@@ -769,7 +629,6 @@ fn improve(
             index,
             work,
             p.recipe.witness_trials,
-            Scope::All,
         );
         let (scored, adopted) = adopt(
             p,
@@ -791,7 +650,7 @@ fn improve(
     }
     (best, None)
 }
-fn runs(p: &Problem, commands: &[Command], account: &Account) -> Vec<RunPurpose> {
+fn runs(p: &Problem, commands: &[Command]) -> Vec<RunPurpose> {
     let mut out = Vec::new();
     for device in ["pool", "ev", "battery"] {
         let mut from = 0;
@@ -811,17 +670,6 @@ fn runs(p: &Problem, commands: &[Command], account: &Account) -> Vec<RunPurpose>
             }
             let purpose = if physics::locked(p, from) {
                 "accepted_command"
-            } else if device == "pool"
-                && p.rules
-                    .iter()
-                    .position(|r| r.key == RuleKey::PoolBuffer)
-                    .is_some_and(|j| {
-                        account.contributions[from..to]
-                            .iter()
-                            .any(|row| row[j] != 0)
-                    })
-            {
-                "thermal_buffer"
             } else if device == "battery" {
                 "forecast_demand_or_permitted_sale"
             } else {
@@ -938,7 +786,6 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             &index,
             &mut work,
             p.recipe.witness_trials,
-            Scope::All,
         )
     });
     work.reserved = 0;
@@ -947,10 +794,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     if !work.spend(n * unit) {
         return Err("work_grant_cannot_certify".into());
     }
-    let mut account = policy::account(p, &certified, &index);
-    if best.audit.fires() {
-        policy::witnessed(p, &mut account, &best.audit, &certified, &index);
-    }
+    let account = policy::account(p, &certified, &index);
     if certified != best.quarters
         || account.points != best.account.points
         || account.score_sek != best.account.score_sek
@@ -964,7 +808,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             return Err("commitment_changed".into());
         }
     }
-    let run_purposes = runs(p, &best.commands, &account);
+    let run_purposes = runs(p, &best.commands);
     let termination = if budget_declined {
         "grant_exhausted"
     } else {
@@ -1009,122 +853,6 @@ mod move_resize_tests {
             battery: Operation::Hold,
             charge_limit_w: 1000.0,
             discharge_limit_w: 4000.0,
-        }
-    }
-    #[test]
-    fn complete_points_trials_move_and_lengthen_each_flexible_device_despite_higher_cash() {
-        for device in [move_resize::Device::Pool, move_resize::Device::Ev] {
-            let mut p = witnesses::tests::problem(24);
-            p.recipe.repair_trials = 4;
-            p.initial.heater_state = Some(HeaterState::Off { seconds: 0.0 });
-            p.rules = vec![
-                Rule {
-                    key: RuleKey::CheapBuy,
-                    threshold: 0.25,
-                    points: 2,
-                    required: false,
-                    unless: None,
-                },
-                Rule {
-                    key: RuleKey::PoolRestart,
-                    threshold: 12.0,
-                    points: -2,
-                    required: false,
-                    unless: None,
-                },
-            ];
-            // A third of the quarters are cheaper than the rest: beyond the
-            // cheap share even stretched along its valley (0.25 × 1.3 = 0.325).
-            for (i, slot) in p.slots.iter_mut().enumerate() {
-                slot.import_price = if i < 8 { 0.9 } else { 1.1 };
-            }
-            let mut commands = vec![idle(); 24];
-            match device {
-                move_resize::Device::Pool => commands[18].pool_on = true,
-                move_resize::Device::Ev => commands[18].ev_amps = 6,
-            }
-            // The pool's and the car's spans are tested without a battery,
-            // which could take the cheap quarters' reward in their place.
-            p.battery = None;
-            p.initial.battery_kwh = None;
-            for c in &mut commands {
-                (c.battery, c.charge_limit_w, c.discharge_limit_w) = (Operation::Idle, 0.0, 0.0);
-            }
-            // An accepted prefix cannot be moved, resized or overwritten.
-            p.accepted = Some(commands[..4].to_vec());
-            p.locked_through_seconds = 3600.0;
-            let mut work = work(&p);
-            let index = policy::index(&p, &mut work).unwrap();
-            let before = score(&p, &index, commands, &mut work).ok().unwrap();
-            let old = before.account.clone();
-            let mut declined = false;
-            let (after, _) = improve(&p, &index, before, &mut work, &mut declined);
-            assert!(after.account.points > old.points, "{device:?}");
-            assert!(
-                after.account.cash_sek > old.cash_sek,
-                "points must win even with higher cash: {device:?}"
-            );
-            assert_eq!(&after.commands[..4], p.accepted.as_ref().unwrap());
-            assert!(
-                !after.commands[18].pool_on
-                    && after.commands[18].ev_amps == 0
-                    && after.commands[18].battery != Operation::GridCharge
-            );
-            assert!(work.move_resize_improvements > 0);
-            if device == move_resize::Device::Pool {
-                let rows = policy::account(&p, &after.quarters, &index).contributions;
-                assert_eq!(rows[4][1], -2);
-                assert!(after.commands[4..8].iter().all(|c| c.pool_on));
-            }
-            assert!(work.used + work.reserved <= work.limit);
-        }
-    }
-    #[test]
-    fn a_candidate_is_scored_from_one_projection_and_agrees_with_the_audit_of_every_family() {
-        let mut p = witnesses::tests::problem(24);
-        let rule = |key, threshold, points| Rule {
-            key,
-            threshold,
-            points,
-            required: false,
-            unless: None,
-        };
-        // Heating pauses for one quarter between two runs.
-        let mut commands = vec![idle(); 24];
-        commands[4].pool_on = true;
-        commands[6].pool_on = true;
-        for restart in [true, false] {
-            p.rules = vec![rule(RuleKey::PoolShortGap, 0.1, -1)];
-            if restart {
-                p.rules.push(rule(RuleKey::PoolRestart, 12.0, -2));
-            }
-            let mut work = work(&p);
-            let index = policy::index(&p, &mut work).unwrap();
-            let scored = score(&p, &index, commands.clone(), &mut work).ok().unwrap();
-            let (projections, trials) = (work.evaluations, work.witness_trials);
-            let audit = witnesses::audit(
-                &p,
-                &commands,
-                &scored.quarters,
-                &index,
-                &mut work,
-                p.recipe.witness_trials,
-                Scope::All,
-            );
-            let mut complete = policy::account(&p, &scored.quarters, &index);
-            policy::witnessed(&p, &mut complete, &audit, &scored.quarters, &index);
-            assert_eq!(scored.account.points, complete.points);
-            assert_eq!(scored.account.score_sek, complete.score_sek);
-            if restart {
-                // The restart is charged, the pause is not charged again, and
-                // nothing but the plan itself was projected.
-                assert_eq!(scored.account.points, -2);
-                assert_eq!((projections, trials), (1, 0));
-            } else {
-                // Only the gap rule can charge the pause, on a certificate.
-                assert_eq!(scored.account.points, -1);
-                assert!(scored.audit.gaps[5] && trials > 0);
-            }
         }
     }
     #[test]
@@ -1231,35 +959,18 @@ mod forecast_tests {
                 threshold: 1.0,
                 points: -1,
                 required: false,
-                unless: None,
             },
             Rule {
                 key: RuleKey::PoolCold,
                 threshold: 2.0,
                 points: -1,
                 required: true,
-                unless: None,
             },
             Rule {
                 key: RuleKey::PoolHot,
                 threshold: 2.0,
                 points: -1,
                 required: false,
-                unless: None,
-            },
-            Rule {
-                key: RuleKey::CheapBuy,
-                threshold: 0.25,
-                points: 2,
-                required: false,
-                unless: None,
-            },
-            Rule {
-                key: RuleKey::DearLoad,
-                threshold: 0.25,
-                points: -2,
-                required: false,
-                unless: None,
             },
         ];
         for (i, s) in p.slots.iter_mut().enumerate() {
@@ -1330,11 +1041,8 @@ mod forecast_tests {
                 selected.account.cash_sek,
                 oracle.cash_sek
             );
-            match variant {
-                0 => assert!(!selected.commands[0].pool_on),
-                1 | 2 => assert!(selected.commands[0].pool_on),
-                3 => assert_eq!(&selected.commands[..4], p.accepted.as_ref().unwrap()),
-                _ => unreachable!(),
+            if variant == 3 {
+                assert_eq!(&selected.commands[..4], p.accepted.as_ref().unwrap());
             }
         }
     }
@@ -1366,5 +1074,28 @@ mod forecast_tests {
                 .any(|c| c.pool_on == pool_on
                     && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
         }
+    }
+    #[test]
+    fn automatic_supply_proposal_follows_changed_pool_demand_without_serving_ev() {
+        let mut p = witnesses::tests::problem(1);
+        p.slots[0].base_w = 1000.0;
+        p.targets.ev_km = Some(100.0);
+        let index = policy::index(&p, &mut work(&p)).unwrap();
+        let mut c = actions(&p, &index, 0, &initial_label(&p))
+            .into_iter()
+            .find(|c| !c.pool_on && c.ev_amps == 6 && c.battery == Operation::SelfConsumption)
+            .unwrap();
+        assert_eq!(c.discharge_limit_w, 4000.0);
+        assert_eq!(
+            physics::projection(&p, &[c.clone()]).unwrap()[0].discharge_w,
+            1000.0
+        );
+        c.pool_on = true;
+        let q = physics::projection(&p, &[c.clone()]).unwrap();
+        assert_eq!(q[0].discharge_w, 4000.0);
+        assert_eq!(q[0].ev_w, 1380.0);
+        p.slots[0].solar_w = 2690.0;
+        let q = physics::project_external(&p, &[c]).unwrap();
+        assert_eq!(q[0].discharge_w, 2000.0);
     }
 }

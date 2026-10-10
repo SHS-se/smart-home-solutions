@@ -1,6 +1,6 @@
 {
   "recipe": {
-    "version": "rule-forecast-opportunity-v8",
+    "version": "rule-forecast-opportunity-v9",
     "work_grant": 1520000000,
     "beam_width": 16,
     "max_actions": 32,
@@ -10,7 +10,7 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v10",
+    "version": "kronor-score-v11",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
@@ -20,28 +20,11 @@
       "pool_low",
       "pool_cold",
       "pool_hot",
-      "pool_restart",
       "ev_low",
-      "ev_short",
-      "ev_from_home_battery"
+      "ev_short"
     ],
-    "witness_rules": [
-      "pool_short_gap"
-    ],
-    "evidence_rules": [
-      "pool_buffer",
-      "cheap_buy",
-      "cheapest_buy",
-      "dear_load",
-      "dearest_load",
-      "base_load_dear_import",
-      "base_load_dearest_import",
-      "missed_cheap_quarter",
-      "arbitrage_no_export",
-      "arbitrage_not_full",
-      "large_load_overlap",
-      "early_grid_charge"
-    ],
+    "witness_rules": [],
+    "evidence_rules": [],
     "economic_rules": [
       "export_before_import",
       "battery_headroom_solar",

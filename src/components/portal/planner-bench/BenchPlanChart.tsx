@@ -1,11 +1,11 @@
 // One planner's plan for one test case, drawn by the portal's own plan chart,
-// with the bench's quarter scores as the strip under it.
+// with economic audit findings aligned below its time axis.
 //
 // The bench stores plans as compact series (src/lib/planner-bench/referee.ts);
 // this adapts them to PlanPanels' rows so a bench plan reads exactly like the
 // plan a customer sees. Every quarter is on the plan side of "now". The price
-// drawn is the real one, which every planner on the bench is given. Score
-// digits need a single day's width; the three-day view shows coloured cells.
+// drawn is the real one. The audit distinguishes opportunities based on
+// published prices from ones only visible in hindsight.
 //
 // The last panel is the comparison the bench exists for: what both planners
 // have spent by every point in the period shown. It never follows the
@@ -17,12 +17,13 @@
 // its own the production plan has nothing to be dashed against.
 
 import React, { useMemo } from 'react';
-import PlanPanels, { type PlanCostLine, type PlanStoreLines } from '@/components/portal/energy/plan/PlanPanels';
+import PlanPanels, { type PlanCostLine, type PlanStoreLines, type PlanQuarterAudit } from '@/components/portal/energy/plan/PlanPanels';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import { benchChartData } from '@/lib/planner-bench/chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
-import type { QuarterScore } from '@/lib/planner-bench/score';
+import type { OpportunityAudit } from '@/lib/planner-bench/opportunities';
+import { OPPORTUNITY_RULES } from '@/lib/planner-bench/opportunities';
 import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
 const CURRENT_COLOUR = 'hsl(var(--muted-foreground))';
@@ -35,7 +36,7 @@ interface Props {
   /** What each planner goes by: its branch, or its commit (PlannerBench runName). */
   names: { current: string; test: string };
   timeZone: string;
-  quarters: QuarterScore[] | null;
+  audit: OpportunityAudit | null;
   /** Index into the whole series of the quarter to explain, or null. */
   selected: number | null;
   onSelect: (index: number) => void;
@@ -43,11 +44,11 @@ interface Props {
   days: BenchDay[];
   period: BenchPeriod;
   onPeriod: (period: BenchPeriod) => void;
-  /** Why the selected quarter scored what it did, under the score strip. */
+  /** Findings involving the selected quarter and its service deductions. */
   scoreDetail: React.ReactNode;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, quarters, selected, onSelect, days, period, onPeriod, scoreDetail }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
@@ -78,7 +79,27 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, qu
     return { name: currentName, homeSoc: view(current.homeSoc), evSoc: view(current.carSoc), poolC: view(current.poolC) };
   }, [current, series, range.from, range.to, currentName]);
 
-  const scores = quarters?.slice(range.from, range.to).map(q => q.score) ?? undefined;
+  const quarterAudit: PlanQuarterAudit = {
+    title: t('Ekonomiska fynd', 'Economic findings'),
+    description: t('övre: källa · nedre: destination · kontur: efterklokhet', 'upper: source · lower: destination · outline: hindsight'),
+    lanes: (['pool', 'ev', 'battery'] as const).map(device => ({
+      key: device,
+      label: device === 'pool' ? 'Pool' : device === 'ev' ? t('Bil', 'Car') : t('Batteri', 'Battery'),
+      colour: device === 'pool' ? 'var(--plan-load-2)' : device === 'ev' ? 'var(--plan-ev)' : 'var(--plan-battery)',
+      cells: rows.map((_, index) => {
+        const quarter = range.from + index;
+        const findings = audit?.status === 'complete' ? audit.findings.filter(f => f.device === device) : [];
+        const source = findings.filter(f => f.from <= quarter && f.fromEnd >= quarter);
+        const destination = findings.filter(f => f.to <= quarter && f.toEnd >= quarter);
+        const describe = (label: string, found: typeof findings) => found.map(f => `${label}: ${OPPORTUNITY_RULES.find(rule => rule.key === f.rule)!.label} (${f.basis === 'known' ? t('känt', 'known') : t('efterklokhet', 'hindsight')})`);
+        return {
+          description: [...describe(t('Källa', 'Source'), source), ...describe(t('Destination', 'Destination'), destination)].join(' · '),
+          sourceKnown: source.some(f => f.basis === 'known'), destinationKnown: destination.some(f => f.basis === 'known'),
+          sourceHindsight: source.some(f => f.basis === 'hindsight'), destinationHindsight: destination.some(f => f.basis === 'hindsight'),
+        };
+      }),
+    })),
+  };
   const selectedInView = selected !== null && selected >= range.from && selected < range.to ? selected - range.from : -1;
   const tab = (active: boolean) =>
     `px-2.5 py-1 text-xs rounded-md border ${active ? 'bg-foreground text-background border-foreground' : 'bg-card hover:bg-muted'}`;
@@ -103,7 +124,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, qu
         dividerIndex={0}
         hasBattery={series.homeSoc.some(v => v !== null)}
         hasEvBattery={series.carSoc.some(v => v !== null)}
-        quarterScores={scores}
+        quarterAudit={quarterAudit}
         scoreDetail={scoreDetail}
         realPrices={chart.realPrices}
         poolTargetC={series.comfort?.pool_target_c ?? null}

@@ -1,4 +1,4 @@
-import BenchBufferEvent from '@/components/portal/planner-bench/BenchBufferEvent';
+import BenchAuditDetail from '@/components/portal/planner-bench/BenchAuditDetail';
 // Planner bench: every planner version replayed on the same test cases,
 // scored, and compared against the planner currently deployed
 // (docs/planner-bench/README.md). Staff only. The bench tables exist only in
@@ -42,11 +42,9 @@ import type {
 } from '@/lib/planner-bench/types';
 import BenchPlanChart from '@/components/portal/planner-bench/BenchPlanChart';
 import BenchChartDownload from '@/components/portal/planner-bench/BenchChartDownload';
-import QuarterScoreDetail, { type QuarterScoreLine } from '@/components/portal/energy/plan/QuarterScoreDetail';
 import { signedPoints as signed } from '@/components/portal/energy/plan/quarter-score';
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
-import BenchOverlapMove from '@/components/portal/planner-bench/BenchOverlapMove';
 import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
 import { useBenchJob, type BenchJobRun, type BenchTask } from '@/components/portal/planner-bench/useBenchJob';
 
@@ -774,29 +772,6 @@ const CaseView: React.FC<CaseViewProps> = ({
   const shownScore = shown === 'current' ? currentScore : testScore;
   const errorFor = (run: BenchRun | null) => run ? summaryByKey.get(key(run.sha, scenario.id)) : undefined;
   const errors = [errorFor(currentRun), errorFor(testRun)].filter(s => s?.status === 'error');
-  const ruleLabel = new Map(rules.map(r => [r.key, r]));
-
-  /** The selected quarter of the shown plan: its points, and each rule that fired with the evidence for it. */
-  const explained = (() => {
-    const q = selected === null ? undefined : shownScore?.quarters[selected];
-    if (selected === null || !q || !shownSeries || !shownScore) return null;
-    const lines: QuarterScoreLine[] = [...q.fired, ...q.noted].map((k, n) => {
-      const move = k === 'large_load_overlap' ? shownScore.audit!.overlap.moves.find(m => m.from === selected)!
-        : k === 'early_grid_charge' ? shownScore.audit!.earlyCharge.moves.find(m => m.from === selected)! : null;
-      const gap = k === 'pool_short_gap'
-        ? shownScore.audit!.shortGaps.gaps.find(g => g.device === 'pool' && g.from <= selected && selected < g.to)!
-        : null;
-      return { key: k, points: ruleLabel.get(k)!.points, noted: n >= q.fired.length, label: <>
-        {k === 'pool_buffer' && shownScore.thermalBuffer?.[selected].event
-          ? <BenchBufferEvent event={shownScore.thermalBuffer[selected].event!} series={shownSeries} timeZone={TZ} />
-          : ruleLabel.get(k)!.label}
-        {move && <BenchOverlapMove move={move} series={shownSeries} timeZone={TZ} onSelect={select} />}
-        {gap && <> · {formatHomeDayMonthTime(shownSeries.start[gap.from], TZ)} → {formatHomeDayMonthTime(shownSeries.start[gap.to], TZ)}
-          {' · '}{gap.to - gap.from} {t('kvartar', 'quarters')}{' · '}{t('sammanhängande drift var möjlig', 'a continuous run was possible')}</>}
-      </> };
-    });
-    return { score: q.score, when: formatHomeDayMonthTime(shownSeries.start[selected], TZ), price: shownSeries.importPrice[selected], lines };
-  })();
 
   return (
     <Card>
@@ -839,9 +814,9 @@ const CaseView: React.FC<CaseViewProps> = ({
               ))}
             </div>
             {shownSeries ? (
-              <BenchPlanChart series={shownSeries} compared={series} names={names} timeZone={TZ} quarters={shownScore?.quarters ?? null}
+              <BenchPlanChart series={shownSeries} compared={series} names={names} timeZone={TZ} audit={shownScore && !shownScore.auditPending ? shownScore.audit : null}
                 selected={selected} onSelect={select} days={days} period={period} onPeriod={setPeriod}
-                scoreDetail={<QuarterScoreDetail id="bench-quarter-explanation" quarter={explained} action={<BenchChartDownload input={{
+                scoreDetail={<BenchAuditDetail selected={selected} series={shownSeries} score={shownScore} rules={rules} timeZone={TZ} onSelect={select} action={<BenchChartDownload input={{
                   scenario: { id: scenario.id, name: scenario.name, captured_at: scenario.captured_at, revision: scenario.revision, start_state: scenario.dataset?.start_state },
                   timeZone: TZ, period: { label: periodLabel, ...range }, shown, rules,
                   plans: {

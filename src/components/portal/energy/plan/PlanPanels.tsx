@@ -11,9 +11,8 @@
 // of the planners it compares had spent by then. It also draws the planner the
 // plan is compared with as dashed lines in the storage and temperature panels.
 //
-// Under the time axis sits the score: the points the plan's rules gave and took
-// in each quarter, and below it why the picked quarter scored what it did. The
-// two are one section, the same on the live plan and on the bench.
+// Under the time axis sits the live plan's service score or the bench's
+// economic finding markers, with details for the selected quarter below.
 //
 // The consumption stack draws individual meters, never categories: the planner
 // dispatches individual devices, so a band labelled "Kitchen & cold" would
@@ -74,6 +73,24 @@ export interface PlanStoreLines {
   homeSoc: readonly (number | null)[];
   evSoc: readonly (number | null)[];
   poolC: readonly (number | null)[];
+}
+
+/** Findings aligned with chart quarters; amounts belong to findings, never to these markers. */
+export interface PlanQuarterAudit {
+  title: string;
+  description: string;
+  lanes: readonly {
+    key: string;
+    label: string;
+    colour: string;
+    cells: readonly {
+      description: string;
+      sourceKnown: boolean;
+      destinationKnown: boolean;
+      sourceHindsight: boolean;
+      destinationHindsight: boolean;
+    }[];
+  }[];
 }
 
 /** How the planner a plan is compared with is drawn, in every panel that draws it. */
@@ -167,6 +184,8 @@ const PlanPanels: React.FC<{
    * history has none.
    */
   quarterScores?: readonly (number | null)[];
+  /** Bench economic findings, sharing the chart selection and time axis. */
+  quarterAudit?: PlanQuarterAudit;
   /** Why the picked quarter scored what it did, shown under the score strip (QuarterScoreDetail). */
   scoreDetail?: React.ReactNode;
   /**
@@ -188,7 +207,7 @@ const PlanPanels: React.FC<{
   storeLines?: PlanStoreLines;
 }> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
-  selectedIndex = -1, onQuarterClick, quarterScores, scoreDetail, realPrices = false, poolTargetC = null,
+  selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
   costLines, storeLines,
 }) => {
   const { t } = useLanguage();
@@ -222,7 +241,8 @@ const PlanPanels: React.FC<{
     const axisY = showCost ? cost.top + cost.height
       : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
     // The score is a section of its own, below the axis labels of the panels above.
-    const scoreStrip: Panel | null = quarterScores ? { top: axisY + 42 + GAP, height: 16 } : null;
+    const scoreStrip: Panel | null = quarterAudit || quarterScores
+      ? { top: axisY + 42 + GAP, height: quarterAudit ? quarterAudit.lanes.length * 28 : 16 } : null;
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -302,7 +322,7 @@ const PlanPanels: React.FC<{
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, realPrices, poolTargetC, costLines, storeLines]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -366,9 +386,14 @@ const PlanPanels: React.FC<{
   };
 
   const handleKey = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    if ((event.key === 'Enter' || event.key === ' ') && onQuarterClick) {
+      event.preventDefault();
+      onQuarterClick(hover ?? Math.max(0, selectedIndex));
+      return;
+    }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const from = hover ?? Math.min(dividerIndex, n - 1);
+    const from = hover ?? (selectedIndex >= 0 ? selectedIndex : Math.min(dividerIndex, n - 1));
     const next = Math.max(0, Math.min(n - 1, from + (event.key === 'ArrowLeft' ? -1 : 1)));
     setHover(next);
     setPointer({ left: ((next + 0.5) / n) * PLOT_W + MARGIN_LEFT, top: flow.top });
@@ -785,18 +810,38 @@ const PlanPanels: React.FC<{
             </g>
           ))}
           {/* ---------------------------------------------------- Score --- */}
-          {scoreStrip && quarterScores && (
-            <g id="plan-score">
+          {scoreStrip && (quarterAudit || quarterScores) && (
+            <g id={quarterAudit ? "plan-audit" : "plan-score"}>
               <line
                 x1={MARGIN_LEFT} x2={RIGHT} y1={scoreStrip.top - 22} y2={scoreStrip.top - 22}
                 className="stroke-border" strokeWidth={1}
               />
               <PanelHeading
-                title={t('Poäng', 'Score')}
-                unit={t('regelpoäng per kvart', 'rule points per quarter')}
+                title={quarterAudit?.title ?? t('Poäng', 'Score')}
+                unit={quarterAudit?.description ?? t('regelpoäng per kvart', 'rule points per quarter')}
                 y={scoreStrip.top - 6}
               />
-              {quarterScores.map((score, index) => {
+              {quarterAudit?.lanes.map((lane, laneIndex) => <g key={lane.key}>
+                <text x={MARGIN_LEFT - 7} y={scoreStrip.top + laneIndex * 28 + 14} textAnchor="end" className={AXIS_TEXT}>{lane.label}</text>
+                <rect x={MARGIN_LEFT} y={scoreStrip.top + laneIndex * 28} width={PLOT_W} height={24} className="fill-muted" />
+                {lane.cells.map((cell, index) => {
+                  if (!cell.description) return null;
+                  const width = x(index + 1) - x(index);
+                  return <g key={index} data-audit-quarter={index}>
+                    <title>{cell.description}</title>
+                    {([['sourceKnown', false, 0], ['sourceHindsight', true, 0], ['destinationKnown', false, 12], ['destinationHindsight', true, 12]] as const).map(([key, outlined, offset]) => {
+                      if (!cell[key]) return null;
+                      const mixed = offset === 0 ? cell.sourceKnown && cell.sourceHindsight : cell.destinationKnown && cell.destinationHindsight;
+                      return <rect key={key} data-audit-marker={key} x={x(index) + .5}
+                        y={scoreStrip.top + laneIndex * 28 + offset + 2 + (mixed && outlined ? 5 : 0)}
+                        width={Math.max(.5, width - 1)} height={mixed ? 3 : 8}
+                        fill={outlined ? 'none' : lane.colour} stroke={lane.colour} strokeWidth={outlined ? 1 : .5}
+                        strokeDasharray={outlined ? '2 1' : undefined} />;
+                    })}
+                  </g>;
+                })}
+              </g>)}
+              {!quarterAudit && quarterScores?.map((score, index) => {
                 if (score === null || score === undefined) return null;
                 const left = x(index), width = x(index + 1) - left;
                 const colour = scoreColour(score);
@@ -852,6 +897,7 @@ const PlanPanels: React.FC<{
           realPrices={realPrices}
           costLines={showCost ? costLines : undefined}
           storeLines={storeLines}
+          auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
           left={pointer.left}
           top={pointer.top}
           bounds={wrapRef.current?.getBoundingClientRect() ?? null}
@@ -881,12 +927,13 @@ const PlanTooltip: React.FC<{
   realPrices: boolean;
   costLines?: readonly PlanCostLine[];
   storeLines?: PlanStoreLines;
+  auditDescriptions?: readonly string[];
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
   row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
-  left, top, bounds,
+  left, top, bounds, auditDescriptions,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -937,6 +984,9 @@ const PlanTooltip: React.FC<{
           {gap ? gap.label : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
+      {auditDescriptions && <div className="mb-1 border-b pb-1 space-y-1">
+        {auditDescriptions.length ? auditDescriptions.map(description => <p key={description}>{description}</p>) : <p>{t('Inga ekonomiska fynd här', 'No economic findings here')}</p>}
+      </div>}
       {gap ? (
         <p className="text-muted-foreground">{gap.detail}</p>
       ) : <>

@@ -14,8 +14,6 @@ import { planStats } from '../src/lib/planner-bench/stats';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from '../src/lib/planner-bench/opportunities';
 import { REFEREE_VERSION } from '../src/lib/planner-bench/referee';
 import { storedScore } from '../src/lib/planner-bench/score';
-import { SHORT_GAP_PRICE_TOLERANCE } from '../src/lib/planner-bench/short-gaps';
-import { EARLY_CHARGE_PRICE_TOLERANCE } from '../src/lib/planner-bench/early-charge';
 import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
@@ -132,9 +130,6 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   const after = { ...before, homeSoc: before.homeSoc.map((v, i) => i >= 8 && i < 24 ? v + 2 : v) };
   s.audit = {
     version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null,
-    overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
-    shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
-    earlyCharge: { priceTolerance: EARLY_CHARGE_PRICE_TOLERANCE, candidates: [], moves: [] },
     guard: { pool: [1, 2], ev: [50, 100] }, scaleSek: 100, originalCostSek: 63.2, improvedCostSek: 61.9,
     avoidableSek: 1.25, knownSek: 1.25, hindsightSek: 0, wearSek: .05, trials: 64, limitReached: false,
     violations: [],
@@ -188,91 +183,16 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, savedHistory = false, noCurrentPlanner = false, overlap = false, gaps = false, arbitrage = false, baseLoad = false, batterySupplied = false, heatingAtTarget = false, thermalBuffer = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
-  const plans = overlap || gaps || arbitrage || baseLoad || batterySupplied || heatingAtTarget || thermalBuffer ? structuredClone(PLANS) : PLANS;
-  if (heatingAtTarget) {
-    for (const plan of Object.values(plans)) {
-      plan.importPrice = plan.importPrice.map((_, i) => i >= 24 && i < 44 ? 0.95 : 1.5);
-      plan.poolW = plan.poolW.map((_, i) => i >= 24 && i < 40 ? 3764 : 0);
-      plan.poolC.fill(31.2);
-      plan.homeSoc.fill(46);
-      plan.carKm!.fill(300);
-    }
-  }
-  if (batterySupplied) {
-    for (const plan of Object.values(plans)) {
-      plan.importPrice = plan.importPrice.map((_, i) => 1 + i / 1000);
-      plan.importPrice[27] = 2.15;
-      plan.poolW[27] = 3764;
-      plan.loadW[27] = 5884;
-      plan.solarW[27] = 664;
-      plan.batteryDischargeW[27] = 4610;
-      plan.gridImportW[27] = 610;
-      plan.gridExportW[27] = 0;
-    }
-  }
-  if (baseLoad) {
-    for (const plan of Object.values(plans)) {
-      plan.importPrice = plan.importPrice.map((_, i) => i >= 240 ? 5 : 1 + i / 1000);
-      for (const [i, price] of [[27, 3.93], [28, 6.11]]) {
-        plan.importPrice[i] = price;
-        plan.poolW[i] = 0;
-        plan.hotWaterW[i] = 0;
-        plan.carW[i] = 0;
-        plan.loadW[i] = 2440;
-        plan.solarW[i] = 480;
-        plan.gridImportW[i] = 1960;
-        plan.baseLoadBatteryCoverW[i] = 1960;
-      }
-    }
-  }
-  if (arbitrage) {
-    for (const [key, plan] of Object.entries(plans)) {
-      for (const i of [24, 25, 27]) {
-        plan.exportPrice[i] = i === 25 ? 6 : 4.25;
-        plan.gridExportW[i] = key.startsWith(TEST.sha) ? (i === 25 ? 5000 : 0.1) : 0;
-      }
-      if (key.startsWith(TEST.sha)) {
-        plan.batteryChargeW[8] = 2000;
-        plan.homeSoc[8] = 100;
-      }
-    }
-  }
-  if (overlap) {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, savedHistory = false, noCurrentPlanner = false, auditMoves = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+  const plans = auditMoves ? structuredClone(PLANS) : PLANS;
+  if (auditMoves) {
     for (const [key, plan] of Object.entries(plans)) {
       const testPlan = key.startsWith(TEST.sha);
-      const to = testPlan ? 104 : 200;
-      plan.importPrice[24] = 0.94;
-      plan.importPrice[to] = testPlan ? 0.84 : 0.74;
-      plan.poolW[24] = 3764;
-      plan.batteryChargeW[24] = testPlan ? 3000 : 0;
-      plan.carW[24] = testPlan ? 0 : 3450;
-      plan.loadW[24] = 900 + plan.poolW[24] + plan.carW[24];
-      plan.gridImportW[24] = Math.max(0, plan.loadW[24] + plan.batteryChargeW[24] - plan.solarW[24]);
-      plan.audit!.overlap = { thresholdW: 2000, overlappingQuarters: [24], moves: [
-        { from: 24, to, device: testPlan ? 'battery' : 'ev', movedW: testPlan ? 3000 : 3450 },
-      ] };
-    }
-  }
-  if (gaps) {
-    for (const plan of Object.values(plans)) {
-      plan.audit!.shortGaps = {
-        priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE },
-        candidates: [{ device: 'pool', from: 28, to: 30 }],
-        gaps: [
-          { device: 'pool', from: 28, to: 30, changes: [
-            { quarter: 26, beforeW: 3764, afterW: 0 }, { quarter: 27, beforeW: 3764, afterW: 0 },
-            { quarter: 28, beforeW: 0, afterW: 3764 }, { quarter: 29, beforeW: 0, afterW: 3764 },
-          ] },
-        ],
-      };
-    }
-  }
-  if (thermalBuffer) {
-    for (const plan of Object.values(plans)) {
-      plan.poolC.fill(32.6);
-      plan.solarW = plan.solarW.map((_, i) => i < 96 ? 1000 : 100);
-      plan.poolStart = plan.poolStart!.map(() => null);
+      const finding = plan.audit!.findings[0];
+      plan.audit!.findings.push({ ...finding, id: 'h1', device: testPlan ? 'pool' : 'ev',
+        rule: testPlan ? 'pool_cheaper_heating' : 'ev_timing', tags: [testPlan ? 'pool_cheaper_heating' : 'ev_timing'],
+        from: 24, fromEnd: 27, to: testPlan ? 104 : 200, toEnd: testPlan ? 107 : 203,
+        basis: 'hindsight', savingSek: .75, gridSavingSek: .75, wearSek: 0 });
     }
   }
   const captured: Captured = { rules: [], inserted: [], updated: [], dispatched: [], job: null };
@@ -390,110 +310,70 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
-  test('explains a thermal buffer event with cause and bounds in both rule and quarter details', async ({ context, page }) => {
-    await mockBackend(context, { thermalBuffer: true });
+  test('shows economic finding markers and supports keyboard quarter selection without repeating savings', async ({ context, page }) => {
+    await mockBackend(context);
     await login(page);
     await page.goto('/portal/planner-bench');
-    const rule = page.locator('#bench-rule-pool_buffer');
-    await rule.getByRole('button', { name: /Warm thermal buffer/ }).click();
-    await expect(rule).toContainText(/low solar event between|låg solproduktion under händelsen/);
-    await expect(rule).toContainText(/25.*02:00.*26.*02:00/);
-    await rule.getByRole('button', { name: /Show the first in the chart|Visa den första i diagrammet/ }).first().click();
-    await expect(page.locator('#bench-quarter-explanation')).toContainText(/low solar event between|låg solproduktion under händelsen/);
-  });
-
-  test('explains a short pool gap with its times and feasible continuous schedule', async ({ context, page }) => {
-    await mockBackend(context, { gaps: true });
-    await login(page);
-    await page.goto('/portal/planner-bench');
-    const explanation = page.locator('#bench-quarter-explanation');
-    // A pause in car charging is no rule.
-    await expect(page.locator('#bench-rule-ev_short_gap')).toHaveCount(0);
-    const row = page.locator('#bench-rule-pool_short_gap');
-    // The pause has no restart the restart rule charges here, so the gap takes its own points.
-    await expect(row).toContainText(/2 (q|kv) · −2/);
-    await row.getByRole('button').first().click();
-    await expect(row).toContainText(/dearer than a bordering running quarter|dyrare än en angränsande driftkvart/);
-    await expect(row).toContainText(/(?:larger of|större av) 10 öre\/kWh (?:or|eller) 10% (?:of its own absolute price|av sitt eget absoluta pris)/);
-    await row.getByRole('button', { name: /^dev: 2 / }).click();
-    await expect(explanation).toContainText('−1 Short interruption in pool heating');
-    await expect(explanation).toContainText('24/09 09:00 → 24/09 09:30');
-    await expect(explanation).toContainText(/a continuous run was possible|sammanhängande drift var möjlig/);
-    await expect(row).toContainText(/Zero prices use the öre threshold|Nollpris använder öresgränsen/);
-    await expect(row).toContainText(/negative prices use their magnitude|vid negativa priser används prisets storlek/);
-    await row.locator('details').last().locator('summary').click();
-    await expect(row.locator('details').last()).toContainText('0.00 → 3.76 kW');
-    // Selecting the second gap quarter must retain the full gap explanation.
+    const strip = page.locator('#plan-audit');
+    await expect(strip).toContainText(/Economic findings|Ekonomiska fynd/);
+    await expect(page.locator('#plan-score')).toHaveCount(0);
+    await expect(strip.locator('[data-audit-marker="sourceKnown"]')).toHaveCount(1);
+    await expect(strip.locator('[data-audit-marker="destinationKnown"]')).toHaveCount(1);
+    await expect(strip).not.toContainText('1.25');
     const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    await chart.scrollIntoViewIfNeeded();
     const box = (await chart.boundingBox())!;
-    await page.mouse.click(box.x + box.width * (58 + (29.5 / 288) * 1010) / 1160, box.y + 150);
-    await expect(explanation).toContainText('24/09 09:15');
-    await expect(explanation).toContainText('−1 Short interruption in pool heating');
-    await expect(explanation).toContainText('24/09 09:00 → 24/09 09:30');
-    await expect(explanation).toContainText(/2 (quarters|kvartar)/);
+    await chart.click({ position: { x: box.width * (58 + 24.5 / 288 * 1010) / 1160, y: box.height * .2 } });
+    const detail = page.locator('#bench-quarter-explanation');
+    await expect(detail.locator('[data-finding-id="k1"]')).toContainText('Price spread not used');
+    await expect(detail.locator('[data-finding-id="k1"]')).toContainText(/Known in advance|Känt i förväg/);
+    await expect(detail.getByText(/1.25 SEK/)).toHaveCount(1);
+    await chart.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await expect(detail).toContainText(/No economic findings involve this quarter|Inga ekonomiska fynd berör den här kvarten/);
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('Space');
+    await expect(detail.locator('[data-finding-id="k1"]')).toBeVisible();
+    await detail.getByRole('button', { name: /^(To|Till):/ }).click();
+    await expect(detail).toContainText('24/09 04:00');
+    await expect(detail.getByText(/1.25 SEK/)).toHaveCount(1);
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(explanation).toBeVisible();
-    expect(await explanation.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await explanation.screenshot({ path: test.info().outputPath('short-gap-mobile.png') });
+    await detail.scrollIntoViewIfNeeded();
+    await detail.screenshot({ path: test.info().outputPath('audit-detail-mobile.png') });
+    expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
-  test('running pool heating above target takes the cheap quarter even while the battery is short', async ({ context, page }) => {
-    await mockBackend(context, { heatingAtTarget: true });
+  test('separates device and hindsight findings and follows their destination day and selected planner', async ({ context, page }) => {
+    await mockBackend(context, { auditMoves: true });
     await login(page);
     await page.goto('/portal/planner-bench');
-    const missed = page.locator('#bench-rule-missed_cheap_quarter');
-    // Sixteen heating quarters avoid a penalty; only the four idle cheap
-    // quarters after the run are missed, despite the battery staying at 46%.
-    await expect(missed).toContainText(/4 (q|kv) · (noted|noteras)/);
-    await missed.getByRole('button').first().click();
-    await expect(missed).toContainText(/already at or above target|redan är vid eller över målet/);
-    await missed.getByRole('button', { name: /^dev: 4 / }).click();
-    const explanation = page.locator('#bench-quarter-explanation');
-    await expect(explanation).toContainText('24/09 12:00');
-    await expect(explanation).toContainText('Missed cheap charging or heating quarter');
-    const taken = page.locator('#bench-rule-cheapest_buy');
-    await taken.getByRole('button').first().click();
-    await taken.getByRole('button', { name: /^dev: 16 / }).click();
-    await expect(explanation).toContainText('24/09 08:00');
-    await expect(explanation).not.toContainText('Missed cheap charging or heating quarter');
-  });
-
-  test('explains the moved load and both real prices, and opens its cheaper destination day', async ({ context, page }) => {
-    await mockBackend(context, { overlap: true });
-    await login(page);
-    await page.goto('/portal/planner-bench');
-    const rule = page.locator('#bench-rule-large_load_overlap');
-    await rule.getByRole('button').first().click();
-    await rule.getByRole('button', { name: /^dev: 1 / }).click();
-    const explanation = page.locator('#bench-quarter-explanation');
-    const overlap = explanation.getByRole('listitem').filter({ hasText: 'Large workloads overlap' });
-    await expect(overlap).toContainText(/(noted|noteras) Large workloads overlap.*(cheaper quarter|billigare kvart): 25\/09 04:00/);
-    await expect(overlap).toContainText(/Home battery charging.*3.00 kW|Hembatteriladdning.*3.00 kW/);
-    await expect(overlap).toContainText(/24\/09 08:00 · (real price|verkligt pris): 0.94 SEK\/kWh/);
-    await expect(overlap).toContainText(/25\/09 04:00 · (real price|verkligt pris): 0.84 SEK\/kWh/);
-    await expect(rule).toContainText(/pool heating cycle stays fixed|Poolens värmecykel hålls oförändrad/);
-    await expect(rule).toContainText(/distinct cheaper quarter|egen billigare kvart/);
-    // Start on the source day. The destination button must switch days and
-    // select the actual destination rather than the same clock time today.
+    const strip = page.locator('#plan-audit');
+    await expect(strip.locator('[data-audit-marker="sourceHindsight"]')).toHaveCount(4);
+    await expect(strip.locator('[data-audit-marker="destinationHindsight"]')).toHaveCount(4);
+    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const box = (await chart.boundingBox())!;
+    await chart.click({ position: { x: box.width * (58 + 24.5 / 288 * 1010) / 1160, y: box.height * .2 } });
+    const detail = page.locator('#bench-quarter-explanation');
+    await expect(detail.locator('[data-finding-id]')).toHaveCount(2);
+    const hindsight = detail.locator('[data-finding-id="h1"]');
+    await expect(hindsight).toContainText('Pool heated at a dear time');
+    await expect(hindsight).toContainText(/Hindsight|Efterklokhet/);
+    await expect(hindsight.getByText(/0.75 SEK/)).toHaveCount(1);
     await page.locator('#bench-day-0').click();
-    await overlap.getByRole('button', { name: /(?:Show cheaper quarter|Visa billigare kvart): 25\/09 04:00/ }).click();
+    await hindsight.getByRole('button', { name: /^(To|Till):/ }).click();
     await expect(page.locator('#bench-day-1')).toHaveAttribute('aria-pressed', 'true');
-    await expect(explanation).toContainText('25/09 04:00');
-    await expect(explanation).toContainText('0.84 kr/kWh');
-    await page.locator('#bench-day-0').click();
-    await rule.getByRole('button', { name: /(?:Show source quarter|Visa från kvart): 24\/09 08:00/ }).last().click();
-    // The destination is on the next day, in the home's time zone. Switching
-    // planners must explain that planner's own witness for the same source.
+    await expect(hindsight).toBeVisible();
+    await expect(detail).toContainText('25/09 04:00');
+    await hindsight.getByRole('button', { name: /^(From|Från):/ }).click();
+    await expect(page.locator('#bench-day-0')).toHaveAttribute('aria-pressed', 'true');
     await page.locator('#bench-show-current').click();
-    await expect(overlap).toContainText(/(cheaper quarter|billigare kvart): 26\/09 04:00/);
-    await expect(overlap).toContainText(/EV charging.*3.45 kW|Billaddning.*3.45 kW/);
-    await expect(overlap).toContainText(/26\/09 04:00 · (real price|verkligt pris): 0.74 SEK\/kWh/);
-    await expect(overlap).not.toContainText('25/09');
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(overlap).toBeVisible();
-    expect(await explanation.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await explanation.screenshot({ path: test.info().outputPath('overlap-quarter-mobile.png') });
+    await expect(hindsight).toContainText('Car charged at a dear time');
+    await expect(hindsight).toContainText('26/09 04:00');
+    await page.locator('#bench-untriggered-rules > button').click();
+    for (const key of ['pool_buffer', 'pool_restart', 'pool_short_gap', 'early_grid_charge', 'large_load_overlap', 'ev_from_home_battery', 'cheapest_buy', 'base_load_dear_import', 'arbitrage_not_full']) {
+      await expect(page.locator(`#bench-rule-${key}`)).toHaveCount(0);
+    }
+    await page.locator('#plan-audit').screenshot({ path: test.info().outputPath('audit-markers.png') });
   });
 
   test('explains each price estimate on its own tab: a chart against the real prices and a table of the same days', async ({ context, page }) => {
@@ -786,19 +666,19 @@ test.describe('planner bench', () => {
     await expect(page.getByText('Synthetic evaluation: load and solar use forecasts.', { exact: true })).toBeVisible();
     await expect(page.locator('#bench-day-all')).toHaveAttribute('aria-pressed', 'true');
 
-    // Every quarter of the shown plan carries its score in a strip under the chart, with its explanation below it.
-    await expect(page.locator('#plan-score')).toContainText(/rule points per quarter|regelpoäng per kvart/);
-    const strip = (await page.locator('#plan-score').boundingBox())!, axis = (await page.locator('#plan-cost').boundingBox())!;
+    // Economic findings sit below the time axis with selected-quarter details underneath.
+    await expect(page.locator('#plan-audit')).toContainText(/Economic findings|Ekonomiska fynd/);
+    const strip = (await page.locator('#plan-audit').boundingBox())!, axis = (await page.locator('#plan-cost').boundingBox())!;
     const why = (await page.locator('#bench-quarter-explanation').boundingBox())!;
     expect(strip.y).toBeGreaterThan(axis.y + axis.height);
     expect(why.y).toBeGreaterThan(strip.y);
     expect(why.y - (strip.y + strip.height)).toBeLessThan(40);
 
-    // Clicking a quarter explains its score.
+    // Clicking a quarter opens its audit details and service deductions.
     const plan = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
     const box = (await plan.boundingBox())!;
     await plan.click({ position: { x: box.width * 0.2, y: box.height * 0.5 } });
-    await expect(page.getByText(/No rule fired|Ingen regel slog till|Flexible load|Pool/).first()).toBeVisible();
+    await expect(page.locator('#bench-quarter-explanation')).toContainText(/Service deductions|Serviceavdrag/);
 
     // Both planners' costs are a panel of the plan chart itself; the toggle swaps the rest of it.
     await expect(page.locator('#plan-cost')).toContainText(/What it costs|Kostnad/);
@@ -865,73 +745,6 @@ test.describe('planner bench', () => {
 
   });
 
-  test('does not penalize battery-supplied flexible load while base load still imports in a dear quarter', async ({ context, page }) => {
-    await mockBackend(context, { batterySupplied: true });
-    await login(page);
-    await page.goto('/portal/planner-bench');
-    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    const box = (await chart.boundingBox())!;
-    // Quarter 27 in the full 288-quarter chart, inside the plotted area.
-    await chart.click({ position: { x: box.width * (58 + 27.5 / 288 * 1010) / 1160, y: box.height * 0.2 } });
-    const explanation = page.locator('#bench-quarter-explanation');
-    await expect(explanation).toContainText('2.15');
-    await expect(explanation).toContainText(/No rule fired|Ingen regel slog till/);
-    await expect(explanation).not.toContainText(/Flexible load bought in a (very )?dear quarter/);
-  });
-
-  test('shows the two battery-coverable base-load price tiers in the chart and rule settings', async ({ context, page }) => {
-    await mockBackend(context, { baseLoad: true });
-    await login(page);
-    await page.goto('/portal/planner-bench');
-    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    const box = (await chart.boundingBox())!;
-    const explanation = page.locator('#bench-quarter-explanation');
-    for (const [quarter, price, key, points] of [
-      [27, '3.93', 'base_load_dear_import', 'noted'],
-      [28, '6.11', 'base_load_dearest_import', 'noted'],
-    ] as const) {
-      await chart.click({ position: { x: box.width * (58 + (quarter + 0.5) / 288 * 1010) / 1160, y: box.height * 0.2 } });
-      await expect(explanation).toContainText(price);
-      await expect(explanation).toContainText(new RegExp(`(${points}|noteras) .*base-load import the battery could cover`));
-      const row = page.locator(`#bench-rule-${key}`);
-      await expect(row).toContainText(new RegExp(`1 (q|kv) · (${points}|noteras)`));
-      await row.getByRole('button').first().click();
-      await expect(row).toContainText(/remaining discharge power|återstående urladdningseffekt/);
-      await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue(key === 'base_load_dear_import' ? '0.25' : '0.1');
-      await row.getByRole('button').first().click();
-    }
-    const row = page.locator('#bench-rule-base_load_dearest_import');
-    await row.getByRole('button').first().click();
-    await page.locator('#bench-base_load_dearest_import-on').click();
-    await expect(explanation).toContainText(/(noted|noteras) Dear base-load import/);
-    await expect(explanation).not.toContainText('Very dear base-load import');
-  });
-
-  test('shows independent high-sale export and full-charge preparation penalties', async ({ context, page }) => {
-    await mockBackend(context, { arbitrage: true });
-    await login(page);
-    await page.goto('/portal/planner-bench');
-    const row = (key: string) => page.locator(`#bench-rule-${key}`);
-    for (const key of ['arbitrage_no_export', 'arbitrage_not_full']) {
-      await expect(row(key)).toContainText(/3 (q|kv) · (noted|noteras)/);
-      await row(key).getByRole('button').first().click();
-      await expect(page.locator(`#bench-${key}-threshold`)).toHaveValue('4');
-      await expect(row(key).getByLabel(/Sale price above \(SEK\/kWh\)|Säljpris över \(SEK\/kWh\)/)).toBeVisible();
-      if (key === 'arbitrage_no_export') {
-        await expect(row(key)).toContainText(/Any positive export counts|All positiv export räknas/);
-      } else {
-        await expect(row(key)).toContainText(/Discharge after that full charge is allowed|Urladdning efter den fulla laddningen är tillåten/);
-        await expect(row(key)).toContainText(/Prepared · 100%|Förberett · 100%/);
-        await expect(row(key)).toContainText(/Not prepared · 50%|Inte förberett · 50%/);
-        await page.locator('#bench-rules').screenshot({ path: test.info().outputPath('arbitrage-rules-desktop.png') });
-        await page.setViewportSize({ width: 390, height: 844 });
-        expect(await row(key).evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-        await row(key).screenshot({ path: test.info().outputPath('arbitrage-rule-mobile.png') });
-      }
-      await row(key).getByRole('button').first().click();
-    }
-  });
-
   test('lists triggered rules for the shown period, explains them on click, and saves rules for every case', async ({ context, page }) => {
     const captured = await mockBackend(context);
     await login(page);
@@ -943,31 +756,11 @@ test.describe('planner bench', () => {
     // Energy timing is evidence in kronor: the quarters it would change, and no points.
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
-    // Flexible load in a very cheap quarter earns two points, in a cheap one a single point.
-    // The price rules are measured and noted; they take and give no points.
-    await expect(row('cheapest_buy')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
-    // The same load in a very dear quarter loses two; the explanation names flexible loads, not the devices.
-    await expect(row('dearest_load')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
-    await row('dearest_load').getByRole('button').first().click();
-    await expect(row('dearest_load')).toContainText(/Flexible loads together draw at least 500 W from the grid .* dearest 10 %|Flexibla laster drar tillsammans minst 500 W från nätet .* dyraste 10 %/);
-    await row('dearest_load').getByRole('button').first().click();
-    await expect(row('missed_cheap_quarter')).toContainText(/\d+ (q|kv) · (noted|noteras)/);
-    await row('missed_cheap_quarter').getByRole('button').first().click();
-    await expect(row('missed_cheap_quarter')).toContainText(/purchase price is below 1 SEK\/kWh|inköpspriset är under 1 SEK\/kWh/);
-    await expect(row('missed_cheap_quarter')).toContainText(/home battery target is 100%|hembatteriets mål är 100%/);
-    await expect(page.locator('#bench-missed_cheap_quarter-threshold')).toHaveValue('1');
-    await expect(page.getByLabel(/Purchase price below \(SEK\/kWh\)|Inköpspris under \(SEK\/kWh\)/)).toBeVisible();
-    await row('missed_cheap_quarter').getByRole('button').first().click();
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_low')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();
     await expect(row('ev_low')).toContainText('N/A');
     await expect(row('ev_timing')).toContainText('N/A');
-    await row('ev_from_home_battery').getByRole('button').first().click();
-    await expect(row('ev_from_home_battery')).toContainText(/battery may supply base load, pool and other loads|Batteriet får försörja baslast, pool och andra laster/);
-    await expect(page.locator('#bench-ev_from_home_battery-threshold')).toHaveValue('0');
-    await row('ev_from_home_battery').getByRole('button').first().click();
-
     // The list follows the day the chart shows: the battery finding sits in the first hours only.
     await page.locator('#bench-day-2').click();
     await expect(row('battery_price_spread')).not.toContainText(/1\.25 kr/);

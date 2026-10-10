@@ -1,7 +1,6 @@
 import { POOL_START_COST_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
-import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Fixture publisher and adapter for the nonpublishing candidate. No observed
 // future price/load/PV is passed through the ready-problem boundary.
@@ -31,7 +30,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v7";
+export const READY_PRODUCER_VERSION = "bench-ready-v8";
 
 /** This runs as forecast preparation, outside solve; production will consume ready artifacts. */
 export function readyProblem(
@@ -82,8 +81,8 @@ export function readyProblem(
   const heater = publishHeater(h.pool.heater);
   const target = caseTargets(c);
   const problem: ReadyProblem = {
-    abi: 7,
-    pool_cycle_seconds: resolveRulePolicy(criteria).pool_cycle_seconds,
+    abi: 8,
+    ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
     slots: starts.map((_start, i) => ({
@@ -91,6 +90,7 @@ export function readyProblem(
       start_seconds: i * 900,
       hours: 0.25,
       base_w: c.base_load_forecast_w[i] * (level?.factor ?? 1),
+      base_ev_w: 0,
       solar_w: c.solar_forecast_w[i],
       // The bench gives all planners this measured weather as a perfect forecast.
       outdoor_c: c.recorded.outdoor_temperature_c[i],
@@ -131,16 +131,12 @@ export function readyProblem(
     // The planner optimises the score: only the rules that take points go to it.
     rules: resolveRules(criteria).flatMap((r) => {
       if (!supported(r.key)) throw new Error(`Unmapped planner rule: ${r.key}`);
-      if (r.unless && !supported(r.unless)) {
-        throw new Error(`Unmapped rule exclusion: ${r.unless}`);
-      }
-      return r.enabled && r.role === "deduction"
+      return r.enabled
         ? [{
           key: r.key,
           threshold: r.threshold,
           points: r.points,
           required: r.required ?? false,
-          unless: r.unless && supported(r.unless) ? r.unless : null,
         }]
         : [];
     }),
@@ -163,7 +159,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 7 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 8 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -177,7 +173,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v7:${identity}`,
+    version: `wasm-v8:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -207,7 +203,7 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v7",
+          generation: "ready-wasm-v8",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>

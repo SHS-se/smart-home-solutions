@@ -55,7 +55,7 @@ let compiled: ReturnType<typeof createWasmPlanner> | undefined;
 function planner(): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
   const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 7 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
+  if (artifact.abi !== 8 || createHash("sha256").update(bytes).digest("hex") !== artifact.wasm_sha256) {
     return fail("Rules planner artifact is missing, obsolete or corrupt");
   }
   compiled = createWasmPlanner(bytes);
@@ -225,7 +225,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 7, pool_cycle_seconds: approved.pool_cycle_seconds, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 8, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -233,6 +233,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       if (pool?.store.loss.kind === "linear" && pool.store.loss.surroundings_c === null && !finite(outdoor)) return fail(`Pool physical forecast requires outdoor temperature at ${s.start}`);
       return { local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
         base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
+        base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
         solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
         outdoor_c: finite(outdoor) ? outdoor : 0,
         import_price: outlook.shadow_import_sek_per_kwh[i], export_price: s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread,
@@ -397,7 +398,8 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     binding_until: bindingUntil ? new Date(Date.parse(bindingUntil.start) + QUARTER_MS).toISOString() : snapshot.slots[0].start,
     timezone: snapshot.timezone, slot_minutes: 15, status: "ready", validation_errors: [], measurement_issues: snapshot.measurement_issues ?? [],
     sources: snapshot.sources, pv_calibration: snapshot.pv_calibration, price_outlook: input.price_outlook,
-    battery_value_curve: null, resolved_value_stores: [], policy: { ...snapshot.policy, battery_end_of_solar_target_soc: 0, battery_target_is_hard: false, terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0 }, battery_supply_scope: { kind: "whole_house" },
+    battery_value_curve: null, resolved_value_stores: [], policy: { ...snapshot.policy, battery_end_of_solar_target_soc: 0, battery_target_is_hard: false, terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0 }, battery_supply_scope: { kind: "selected", include_base: true,
+      planned_device_keys: snapshot.device_models.filter(m => m.category !== "ev_charging").map(m => m.key).sort() },
     battery: snapshot.battery && p.battery ? { ...snapshot.battery, ...p.battery } : null,
     ev_battery: snapshot.ev_battery && p.car ? { ...snapshot.ev_battery, ...p.car } : null,
     pool: snapshot.pool && p.heater ? { ...snapshot.pool, stop_temperature_c: p.pool_stop_c, heater_response: p.heater.response } : null,

@@ -25,8 +25,8 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(7),
-  pool_cycle_seconds: number.nonnegative(),
+  abi: z.literal(8),
+  ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
     beam_width: number.int().positive(),
@@ -40,6 +40,7 @@ export const readyProblemSchema = z.object({
     start_seconds: number,
     hours: number,
     base_w: number,
+    base_ev_w: number.nonnegative(),
     solar_w: number,
     outdoor_c: number,
     import_price: number,
@@ -130,7 +131,6 @@ export const readyProblemSchema = z.object({
     threshold: number,
     points: number.int(),
     required: z.boolean(),
-    unless: z.enum(RULE_KEYS).nullable(),
   })
     .array(),
   service_guard: z.object({

@@ -5,7 +5,6 @@ mod move_resize;
 mod opportunity;
 mod physics;
 mod policy;
-mod thermal_buffer;
 mod witnesses;
 use serde::{Deserialize, Serialize};
 use shs_planner_models::{
@@ -18,6 +17,8 @@ pub struct Slot {
     pub start_seconds: f64,
     pub hours: f64,
     pub base_w: f64,
+    /// Passive EV consumption already included in base_w.
+    pub base_ev_w: f64,
     pub solar_w: f64,
     pub outdoor_c: f64,
     pub import_price: f64,
@@ -73,23 +74,8 @@ pub enum RuleKey {
     PoolLow,
     PoolCold,
     PoolHot,
-    PoolBuffer,
-    PoolRestart,
     EvLow,
     EvShort,
-    CheapBuy,
-    CheapestBuy,
-    DearLoad,
-    DearestLoad,
-    BaseLoadDearImport,
-    BaseLoadDearestImport,
-    MissedCheapQuarter,
-    ArbitrageNoExport,
-    ArbitrageNotFull,
-    EvFromHomeBattery,
-    LargeLoadOverlap,
-    PoolShortGap,
-    EarlyGridCharge,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Rule {
@@ -97,7 +83,6 @@ pub struct Rule {
     pub threshold: f64,
     pub points: i32,
     pub required: bool,
-    pub unless: Option<RuleKey>,
 }
 /// One store's end credit: the level it counts up to, and the grid electricity
 /// one unit of it (kWh stored, or a degree of pool water) takes to put there.
@@ -132,7 +117,7 @@ pub struct Recipe {
 #[serde(deny_unknown_fields)]
 pub struct Problem {
     pub abi: u32,
-    pub pool_cycle_seconds: f64,
+    pub ev_battery_supply_allowed: bool,
     pub work_grant: u64,
     pub recipe: Recipe,
     pub slots: Vec<Slot>,
@@ -172,7 +157,6 @@ pub struct Quarter {
     pub pool_start: Option<HeaterStart>,
     pub cost: f64,
     pub wear: f64,
-    pub spare_battery_cover_w: f64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
@@ -210,7 +194,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 7 || p.slots.is_empty() {
+    if p.abi != 8 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     // A store without a term is simply not credited; a term never changes what a device can do.
@@ -225,11 +209,8 @@ fn validate(p: &Problem) -> Result<(), String> {
     {
         return bad("invalid_end_credit");
     }
-    if !p.pool_cycle_seconds.is_finite()
-        || p.pool_cycle_seconds < 0.0
-        || p.slots.iter().any(|s| !(1..=12).contains(&s.local_month))
-    {
-        return bad("invalid_pool_cycle_or_calendar");
+    if p.slots.iter().any(|s| !(1..=12).contains(&s.local_month)) {
+        return bad("invalid_calendar");
     }
     if p.battery.is_some() != p.initial.battery_kwh.is_some()
         || p.car.is_some() != p.charger.is_some()
@@ -295,6 +276,12 @@ fn validate(p: &Problem) -> Result<(), String> {
         .any(|(i, r)| p.rules[..i].iter().any(|a| a.key == r.key))
     {
         return bad("duplicate_measurement_key");
+    }
+    if p.slots
+        .iter()
+        .any(|s| !s.base_ev_w.is_finite() || s.base_ev_w < 0.0 || s.base_ev_w > s.base_w)
+    {
+        return bad("invalid_base_ev_partition");
     }
     if p.slots.iter().any(|s| s.hours <= 0.0) {
         return bad("invalid_slot_duration");
@@ -378,27 +365,12 @@ pub struct EconomicHit {
 }
 #[derive(Default)]
 pub(crate) struct WitnessAudit {
-    /// Quarters of a pool pause with a certified joined alternative.
-    pub gaps: Vec<bool>,
-    pub overlap: Vec<bool>,
-    /// Quarters whose grid-bought charging has a certified move to a clearly cheaper later quarter.
-    pub early: Vec<bool>,
     pub economic: Vec<EconomicHit>,
     /// The commands of each proven alternative: proposals, scored like any plan.
     pub repairs: Vec<Vec<Command>>,
     pub coverage: Vec<WitnessCoverage>,
     /// The work grant ran out before every retained trial was tried.
     pub stopped: bool,
-}
-impl WitnessAudit {
-    /// Whether any certificate changes what the direct rules alone would score.
-    pub(crate) fn fires(&self) -> bool {
-        self.gaps
-            .iter()
-            .chain(&self.overlap)
-            .chain(&self.early)
-            .any(|fired| *fired)
-    }
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct RunPurpose {
@@ -586,30 +558,18 @@ mod live_tests {
                     threshold: 2.0,
                     points: -1,
                     required: true,
-                    unless: None,
                 },
                 Rule {
                     key: RuleKey::EvShort,
                     threshold: 100.0,
                     points: -1,
                     required: true,
-                    unless: None,
-                },
-                Rule {
-                    key: RuleKey::ArbitrageNotFull,
-                    threshold: 1.0,
-                    points: -1,
-                    required: false,
-                    unless: None,
                 },
             ];
             p.slots[0].export_price = 2.0;
             let Outcome::Selected { selection } = solve(&p) else {
                 panic!("presence mask {mask} failed");
             };
-            if mask & 1 == 0 {
-                assert_eq!(selection.account.contributions[0][2], 0);
-            }
             for q in selection.quarters {
                 assert_eq!(q.battery_kwh.is_some(), mask & 1 != 0);
                 assert_eq!(q.ev_kwh.is_some(), mask & 2 != 0);

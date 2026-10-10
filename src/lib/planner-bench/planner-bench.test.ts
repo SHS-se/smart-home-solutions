@@ -1,13 +1,11 @@
-import { SHORT_GAP_PRICE_TOLERANCE } from './short-gaps.ts';
-import { EARLY_CHARGE_PRICE_TOLERANCE } from './early-charge.ts';
 import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { OPPORTUNITY_AUDIT_VERSION, OPPORTUNITY_RULES, type OpportunityAudit } from './opportunities.ts';
 import { planSeries } from './series.fixture.ts';
 import { DEFAULT_SERVICE_GUARD } from './service.ts';
 import { planStats, STATS_VERSION, suiteStats } from './stats.ts';
 import {
-  CriteriaError, REMOVED_RULE_KEYS,
-  criteriaErrors, criteriaFingerprint, distinctScoreRuns, evBatterySupplyW, flexibleGridSupplyW, isStale, measuredQuarters, resolveRules, runScore, scoreQuarters, serviceGuard,
+  CriteriaError,
+  criteriaErrors, criteriaFingerprint, distinctScoreRuns, isStale, resolveRules, runScore, scoreQuarters, serviceGuard,
   storedPassed, storedScore, type StoredScore,
 } from './score.ts';
 import type { BenchSeries, BenchStats } from './types.ts';
@@ -122,33 +120,33 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   // Exactly 1 °C below and exactly 50 km short are still fine; just past them lose a point each.
   assertEquals(scoreQuarters(comfortSeries(() => 29, () => 250)).sum, 0);
   const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 249));
-  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'], noted: [] });
+  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'] });
   // More than 2 °C below and more than 100 km short lose a second point each; a store never loses more than two.
   const far = scoreQuarters(comfortSeries(() => 27.9, () => 199));
-  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], noted: [] });
+  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'] });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
   // A car above its target loses nothing.
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 450)).sum, 0);
 });
 
-Deno.test('a modeled future adverse reheating day credits one episode and preserves the separate overheating rule', () => {
+Deno.test('overheating accounts for the following day’s price and solar without earning points', () => {
   const hot = (price: (day: number) => number, solar: (day: number) => number) => {
     const series = comfortSeries(() => 32.1, () => 300);
     series.importPrice = series.importPrice.map((_, i) => price(Math.floor(i / 96)));
     series.solarW = series.solarW.map((_, i) => solar(Math.floor(i / 96)));
-    return scoreQuarters(series, { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false } });
+    return scoreQuarters(series);
   };
   // The same every day: nothing to hold the heat for. The last day has no next day and is not judged.
   const waste = hot(() => 1, () => 1000);
-  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'], noted: [] }, { score: 0, fired: [], noted: [] }]);
-  assertEquals([waste.counts.pool_hot, waste.counts.pool_buffer, waste.sum, waste.passed], [192, undefined, -192, true]);
-  // Dearer on the second day only: day one is a buffer, noted and worth no points; day two is not.
+  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'] }, { score: 0, fired: [] }]);
+  assertEquals([waste.counts.pool_hot, waste.sum, waste.passed], [192, -192, true]);
+  // Dearer on the second day only: storing heat on day one avoids an overheating deduction.
   const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
-  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [], noted: ['pool_buffer'] }, { score: -1, fired: ['pool_hot'], noted: ['pool_buffer'] }]);
+  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [] }, { score: -1, fired: ['pool_hot'] }]);
   assertEquals(dearer.sum, -96);
   // Less sun the next day counts the same; a difference within the margin does not.
-  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].noted, ['pool_buffer']);
+  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, []);
   assertEquals(hot(day => 1 + day * 0.05, () => 1000).quarters[0].fired, ['pool_hot']);
   // At the target nothing fires.
   assertEquals(scoreQuarters(comfortSeries(() => 31.9, () => 300)).counts.pool_hot, undefined);
@@ -194,126 +192,23 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: -1 } }), []);
   assertEquals(criteriaErrors({ pool_low: { points: 3 } }), ['pool_low: points must be between -2 and 2, and not 0.']);
   assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
-  assertEquals(criteriaErrors({ cheap_buy: { points: 2, threshold: 0.3 }, cheapest_buy: { points: 1 } }), []);
-  assertEquals(criteriaErrors({ cheapest_buy: { points: 0 } }).length, 1);
-    assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
+  assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
   assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
   const series = comfortSeries(() => 28.5, () => 300);
   assertThrows(() => scoreQuarters(series, { pool_low: { points: 3 } }), CriteriaError);
   assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
-  // The quarter-by-quarter money rules were replaced by the opportunity audit. An override left under their
-  // names is not an error and not applied: it changes neither the rules nor the fingerprint.
-  assertEquals(REMOVED_RULE_KEYS, ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'estimated_buy', 'unplugged_charge', 'ev_short_gap']);
-  const left = { solar_spill: { points: -1, threshold: 90 }, idle_battery: { enabled: false } };
-  assertEquals(criteriaErrors(left), []);
-  assertEquals(resolveRules(left).map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'pool_buffer', 'pool_restart', 'ev_low', 'ev_short', 'cheap_buy', 'cheapest_buy', 'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter', 'arbitrage_no_export', 'arbitrage_not_full', 'large_load_overlap', 'ev_from_home_battery', 'pool_short_gap', 'early_grid_charge']);
-  assertEquals(scoreQuarters(series, left).sum, scoreQuarters(series).sum);
-  assertEquals(criteriaFingerprint({ ...left, pool_low: { threshold: 2 } }), criteriaFingerprint({ pool_low: { threshold: 2 } }));
+  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short']);
+  assertEquals(criteriaErrors({ cheap_buy: { points: 1 } }), ['Unknown rule "cheap_buy".']);
+  assertThrows(() => resolveRules({ ev_from_home_battery: { points: -1 } }), CriteriaError);
+  assertEquals(criteriaFingerprint({ pool_low: { threshold: 2 }, ev_low: { points: -2 } }),
+    criteriaFingerprint({ ev_low: { points: -2 }, pool_low: { threshold: 2 } }));
   assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
-});
-
-Deno.test('flexible load in a cheap quarter is measured as a point, in a very cheap one two, and never both', () => {
-  const series = comfortSeries(() => 30, () => 300);
-  // Prices rise through the plan; the pool runs for the first 40 quarters, then once late at a dear price.
-  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
-  series.poolW = series.poolW.map((_, i) => i < 40 || i === 200 ? 3000 : 0);
-  const score = measuredQuarters(series);
-  // The cheapest tenth is 28.8 quarters: 29 at +2, the next 11 at +1, the dear one nothing.
-  assertEquals([score.counts.cheapest_buy, score.counts.cheap_buy], [29, 11]);
-  assertEquals([score.quarters[0].score, score.quarters[30].score, score.quarters[200].score], [2, 1, 0]);
-  assertEquals([score.sum, score.points], [69, 69]);
-  // Without the very cheap rule, the cheap one covers those quarters too.
-  assertEquals(measuredQuarters(series, { cheapest_buy: { enabled: false } }).sum, 40);
-});
-
-Deno.test('flexible load bought in a dear quarter is measured as a lost point, in a very dear one two, and never both', () => {
-  const series = comfortSeries(() => 30, () => 300);
-  // Prices rise through the plan; the car charges once at a middling price, then through the last 40 quarters.
-  series.importPrice = series.importPrice.map((_, i) => 1 + i / 1000);
-  series.carW = series.carW.map((_, i) => i === 150 || i >= 248 ? 3000 : 0);
-  series.gridImportW = series.carW.map(w => w + 400);
-  const score = measuredQuarters(series);
-  // The dearest tenth is 28.8 quarters: 29 at −2, the 11 before them at −1, the middling one nothing.
-  assertEquals([score.counts.dearest_load, score.counts.dear_load, score.counts.cheap_buy], [29, 11, undefined]);
-  assertEquals([score.quarters[287].score, score.quarters[250].score, score.quarters[150].score], [-2, -1, 0]);
-  assertEquals([score.sum, score.points], [-69, -69]);
-  // Without the very dear rule, the dear one covers those quarters too.
-  assertEquals(measuredQuarters(series, { dearest_load: { enabled: false } }).sum, -40);
-  // Only what is bought counts: with the sun or the battery carrying all but 499 W of it, the charging loses nothing.
-  series.gridImportW = series.carW.map(w => w ? 499 : 0);
-  assertEquals(measuredQuarters(series).sum, 0);
-  series.gridImportW = series.carW.map(w => w ? 500 : 0);
-  assertEquals(measuredQuarters(series).sum, -69);
-  // Below the flexible threshold nothing is counted, however dear the quarter and however much the house imports.
-  series.carW = series.carW.map(w => w ? 400 : 0);
-  series.gridImportW = series.carW.map(() => 5000);
-  assertEquals(measuredQuarters(series).sum, 0);
-  // Where every quarter costs the same, each is as cheap as it is dear, and the two cancel.
-  series.importPrice = series.importPrice.map(() => 1);
-  series.carW = series.carW.map(() => 3000);
-  assertEquals([measuredQuarters(series).sum, measuredQuarters(series).quarters[0].fired], [0, ['cheapest_buy', 'dearest_load']]);
-});
-
-Deno.test('dear-price rules exclude battery-supplied flexible demand even when base load imports from the grid', () => {
-  const s = planSeries([
-    // Screenshot regression: the battery covers the pool while the house still imports 610 W.
-    slot(0, { pool_w: 3764, load_w: 5884, pv_w: 664, battery_discharge_w: 4610, grid_import_w: 610 }),
-    slot(1, { pool_w: 3000, load_w: 4000, pv_w: 500, battery_discharge_w: 2500, grid_import_w: 1000 }),
-    slot(2, { pool_w: 3000, load_w: 4000, pv_w: 500, battery_discharge_w: 2500.1, grid_import_w: 999.9 }),
-    // Discharge exported to the grid is unavailable to flexible demand.
-    slot(3, { pool_w: 3000, battery_discharge_w: 5000, grid_export_w: 5000, grid_import_w: 500 }),
-    // Simultaneous charging and discharging are netted against total flexible demand.
-    slot(4, { battery_charge_w: 3000, battery_discharge_w: 3000, grid_import_w: 500 }),
-    slot(5, { battery_charge_w: 3000, battery_discharge_w: 1000, grid_import_w: 2500 }),
-    slot(6, { ev_w: 3000, load_w: 3500, battery_discharge_w: 3000, grid_import_w: 500 }),
-    slot(7, { pool_w: 2000, ev_w: 2000, battery_charge_w: 1000, battery_discharge_w: 5000, grid_import_w: 9000 }),
-    // Stored decimal powers at the boundary must not slip below it through subtraction noise.
-    slot(8, { pool_w: 3000.1, ev_w: 2000.1, battery_charge_w: 1000.1, battery_discharge_w: 5500.3, grid_import_w: 1000 }),
-    slot(9, { pool_w: 3000, pv_w: 4000, grid_import_w: 0 }),
-    slot(10, { pool_w: 3000, battery_discharge_w: 0, grid_import_w: 500 }),
-  ], null);
-  s.importPrice.fill(2);
-  assertEquals(s.start.map((_, i) => flexibleGridSupplyW(s, i)), [0, 500, 499.9, 500, 0, 2000, 0, 0, 500, 0, 500]);
-  const events = (key: string, overrides = {}) => measuredQuarters(s, overrides).quarters.flatMap((q, i) => q.fired.includes(key) ? [i] : []);
-  assertEquals(events('dearest_load'), [1, 3, 5, 8, 10]);
-  assertEquals(events('dear_load', { dearest_load: { enabled: false } }), [1, 3, 5, 8, 10]);
-  assertEquals(events('dear_load'), []);
-});
-
-Deno.test('EV battery supply is charged only after battery exports and other household demand', () => {
-  const series = planSeries([
-    // Battery supplies base load and pool while grid or solar supplies the EV: allowed.
-    slot(0, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 5000 }),
-    // One tenth of a watt beyond non-EV demand counts; no arbitrary minimum EV load.
-    slot(1, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 5000.1 }),
-    slot(2, { load_w: 9000, pool_w: 3000, ev_w: 4000, battery_discharge_w: 9000 }),
-    // Hot water is already included in total household consumption, not added a second time.
-    slot(3, { load_w: 9000, boiler_expected_w: 2000, ev_w: 4000, battery_discharge_w: 6000 }),
-    // Battery export alongside EV charging does not mean the battery supplies the EV.
-    slot(4, { load_w: 9000, ev_w: 4000, battery_discharge_w: 5000, battery_export_w: 3000, grid_export_w: 3000 }),
-    // Simultaneous charging is netted out before attributing battery supply.
-    slot(5, { load_w: 9000, ev_w: 4000, battery_discharge_w: 6000, battery_charge_w: 1000 }),
-    slot(6, { load_w: 5000, ev_w: 0, battery_discharge_w: 6000 }),
-    slot(7, { load_w: 9000, ev_w: 4000, pv_w: 9000, battery_discharge_w: 1000, grid_export_w: 1000 }),
-    // Fractional stored powers at the exact allowance must not fire from floating-point subtraction noise.
-    slot(8, { load_w: 9000.3, ev_w: 4000.2, battery_discharge_w: 5000.1 }),
-  ], null);
-  assertEquals(series.start.map((_, i) => evBatterySupplyW(series, i)), [0, 0.1, 4000, 1000, 0, 0, 0, 0, 0]);
-  const score = measuredQuarters(series);
-  assertEquals(score.counts.ev_from_home_battery, 3);
-  assertEquals(score.quarters.flatMap((q, i) => q.fired.includes('ev_from_home_battery') ? [i] : []), [1, 2, 3]);
-  assertEquals(measuredQuarters(series, { ev_from_home_battery: { enabled: false } }).sum, score.sum + 3);
-  assertEquals(measuredQuarters(series, { ev_from_home_battery: { threshold: 1000 } }).counts.ev_from_home_battery, 1);
-  assertEquals(measuredQuarters(series, { ev_from_home_battery: { points: -2 } }).sum, score.sum - 3);
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
 const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
   version: OPPORTUNITY_AUDIT_VERSION, lane: 'told/nominal', status: 'complete', reason: null, guard: DEFAULT_SERVICE_GUARD,
-  overlap: { thresholdW: 2000, overlappingQuarters: [], moves: [] },
-  shortGaps: { priceTolerance: { pool: SHORT_GAP_PRICE_TOLERANCE }, candidates: [], gaps: [] },
-  earlyCharge: { priceTolerance: EARLY_CHARGE_PRICE_TOLERANCE, candidates: [], moves: [] },
   scaleSek: 40, originalCostSek: 50, improvedCostSek: 50, avoidableSek: 0, knownSek: 0, hindsightSek: 0, wearSek: 0,
   trials: 1, limitReached: false, findings: [], violations: [],
   rules: Object.fromEntries(OPPORTUNITY_RULES.map(r => [r.key, { findings: 0, kwh: 0, knownSek: 0, hindsightSek: 0, knownQuarters: [] }])) as OpportunityAudit['rules'],
@@ -339,9 +234,9 @@ Deno.test('case points are the deductions less the net bill, a point a krona; ev
   const audited = scoreQuarters({ ...cold, audit, bill });
   // 288 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
   assertEquals([audited.points, audited.sum, audited.complete], [-360, -288, true]);
-  // Evidence rules are noted and change no points: a cheap load everywhere gives nothing back.
+  // Loading a device does not change the service deductions or award a price-rank reward.
   const busy = { ...cold, audit, bill, carW: cold.carW.map(() => 3000) };
-  assertEquals([scoreQuarters(busy).points, (scoreQuarters(busy).noted.cheapest_buy ?? 0) > 0], [-360, true]);
+  assertEquals(scoreQuarters(busy).points, -360);
   // An audit of another version is not read.
   const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }), bill });
   assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -288]);

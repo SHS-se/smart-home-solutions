@@ -15,12 +15,13 @@ struct Context<'a> {
     axes: &'a [Vec<f64>],
 }
 impl Context<'_> {
-    fn demand(&self, i: usize) -> (f64, f64) {
+    fn demand(&self, i: usize) -> physics::BatteryLoad {
         let s = &self.p.slots[i];
-        (
-            s.base_w + self.planned[i].pool_w + self.planned[i].ev_w - s.solar_w,
-            s.solar_w,
-        )
+        physics::BatteryLoad {
+            gross_w: s.base_w + self.planned[i].pool_w + self.planned[i].ev_w,
+            solar_w: s.solar_w,
+            ev_w: self.planned[i].ev_w + s.base_ev_w,
+        }
     }
     /// A linear continuation segment is maximised at an inventory knot or a
     /// physical/tariff boundary. Include both, deriving partial native powers
@@ -33,14 +34,8 @@ impl Context<'_> {
         let b = p.battery.as_ref().unwrap();
         let s = &p.slots[i];
         let hours = physics::projected_hours(s);
-        let demand = self.demand(i).0;
-        let house = if self.planned[i].ev_w > 0.0 {
-            (demand - self.planned[i].ev_w)
-                .max(0.0)
-                .min(b.discharge_max_w)
-        } else {
-            b.discharge_max_w
-        };
+        let demand = self.demand(i).net_w();
+        let house = self.demand(i).house_supply_bound(p).min(b.discharge_max_w);
         let charge = b
             .available_charge_w(kwh, hours)
             .min((p.limits.import_w - demand).max(0.0));
@@ -56,7 +51,7 @@ impl Context<'_> {
                     (kwh - p.limits.battery_export_reserve_kwh).max(0.0) * 1000.0 / hours
                         * b.discharge_efficiency,
                 )
-                .min((p.limits.export_w + demand).max(0.0))
+                .min(self.demand(i).discharge_bound(p, true))
         } else {
             0.0
         };
@@ -70,8 +65,15 @@ impl Context<'_> {
                 out.push(c);
             }
         };
-        add(Operation::SelfConsumption, b.charge_max_w, house);
-        add(Operation::SelfConsumption, 0.0, house);
+        // Keep automatic supply responsive to changed eligible demand; the
+        // physical transition owns scope, while sized inventory moves below
+        // retain their deliberate partial power limits.
+        add(
+            Operation::SelfConsumption,
+            b.charge_max_w,
+            b.discharge_max_w,
+        );
+        add(Operation::SelfConsumption, 0.0, b.discharge_max_w);
         add(Operation::Hold, b.charge_max_w, 0.0);
         add(Operation::Idle, 0.0, 0.0);
         add(
@@ -94,10 +96,6 @@ impl Context<'_> {
             }
         };
         purchase(charge);
-        // Direct rule rewards change at their declared flexible-load floors.
-        for floor in [500.0, policy::VERY_CHEAP_LOAD_W] {
-            purchase((floor - self.planned[i].pool_w - self.planned[i].ev_w).max(0.0));
-        }
         purchase((-demand).max(0.0).min(charge));
         for &target in &self.axes[i + 1] {
             if target > kwh {
@@ -140,19 +138,12 @@ impl Context<'_> {
         v.net_w = q.net;
         v.curtailed_w = q.curtailed;
         v.battery_kwh = Some(q.battery_kwh);
-        v.spare_battery_cover_w = physics::spare_cover(
-            self.p,
-            q.charge,
-            q.discharge,
-            q.battery_kwh,
-            physics::projected_hours(&self.p.slots[i]),
-        );
         let before = if i == 0 {
             self.p.initial.pool_c
         } else {
             self.planned[i - 1].pool_c
         };
-        // History/episode and witness rules remain the full scorer's authority.
+        // Battery refinements retain the same service accounting.
         f64::from(policy::guidance_quarter(
             self.p,
             self.index,
@@ -172,7 +163,7 @@ impl Context<'_> {
         let mut cost = n.checked_mul(size * 32 + 64)?;
         for (i, s) in p.slots.iter().enumerate() {
             let hours = physics::projected_hours(s);
-            let demand = self.demand(i).0;
+            let demand = self.demand(i).net_w();
             let reach = |energy: f64| ((energy / step).ceil() as u64).saturating_add(4).min(size);
             let charging = reach(b.charge_max_w * hours / 1000.0 * b.charge_efficiency);
             let supplying = reach(
@@ -490,28 +481,18 @@ mod tests {
         assert!((q.iter().map(|q| q.cost).sum::<f64>() - 0.35).abs() < 1e-9);
     }
     #[test]
-    fn declared_charge_reward_floor_is_an_exact_native_choice() {
-        let mut p = problem(3);
-        p.battery.as_mut().unwrap().capacity_kwh = 1.13;
-        p.initial.battery_kwh = Some(0.0);
-        p.slots[0].import_price = 0.9;
-        p.slots[1].import_price = 1.1;
-        p.slots[2].import_price = 1.1;
-        p.rules = vec![Rule {
-            key: RuleKey::CheapBuy,
-            threshold: 0.25,
-            points: 2,
-            required: false,
-            unless: None,
-        }];
-        let commands = proposal(&p, &vec![idle(); 3]);
-        let q = physics::projection(&p, &commands).unwrap();
-        assert!((q[0].charge_w - 500.0).abs() < 1e-7);
-        let mut w = work(&p);
-        let index = policy::index(&p, &mut w).unwrap();
-        let account = policy::account(&p, &q, &index);
-        assert_eq!(account.points, 2);
-        assert!((account.score_sek - 1.8875).abs() < 1e-9);
+    fn allocated_automatic_supply_keeps_native_headroom_for_replay() {
+        let mut p = problem(1);
+        p.slots[0].base_w = 1000.0;
+        let mut commands = proposal(&p, &[idle()]);
+        assert_eq!(commands[0].battery, Operation::SelfConsumption);
+        assert_eq!(commands[0].discharge_limit_w, 4000.0);
+        commands[0].pool_on = true;
+        commands[0].ev_amps = 6;
+        p.slots[0].solar_w = 2690.0;
+        let q = physics::project_external(&p, &commands).unwrap();
+        assert_eq!(q[0].discharge_w, 2000.0);
+        assert_eq!(q[0].ev_w, 1380.0);
     }
     #[test]
     fn partial_earlier_sale_leaves_full_power_for_the_higher_price() {
@@ -636,20 +617,13 @@ mod tests {
         }
     }
     #[test]
-    fn appliance_move_losing_alone_wins_with_the_cached_battery_response() {
+    fn appliance_move_keeps_supply_permission_with_the_cached_battery_response() {
         let mut p = problem(2);
         p.battery.as_mut().unwrap().capacity_kwh = 2.0;
         p.initial.battery_kwh = Some(1.0);
         p.slots[0].base_w = 1000.0;
         p.slots[0].import_price = 0.1;
         p.slots[1].import_price = 0.9;
-        p.rules = vec![Rule {
-            key: RuleKey::EvFromHomeBattery,
-            threshold: 0.0,
-            points: -1,
-            required: false,
-            unless: None,
-        }];
         let mut base = vec![idle(); 2];
         base[0].battery = Operation::SelfConsumption;
         base[0].discharge_limit_w = 4000.0;
@@ -663,7 +637,7 @@ mod tests {
         changed[0].ev_amps = 6;
         changed[1].ev_amps = 0;
         let alone = physics::projection(&p, &changed).unwrap();
-        assert!(policy::account(&p, &alone, &index).score_sek < before);
+        assert!(alone[0].discharge_w <= p.slots[0].base_w);
         let commands = allocation
             .respond(&p, &index, &changed, &planned, &mut w)
             .unwrap();
@@ -678,6 +652,7 @@ mod tests {
     fn response_repairs_stale_grid_infeasibility_and_restores_reserve_on_exhaustion() {
         let mut p = problem(3);
         p.limits.import_w = 1000.0;
+        p.ev_battery_supply_allowed = true;
         p.limits.battery_export_enabled = false;
         let mut base = vec![idle(); 3];
         base[2].ev_amps = 6;

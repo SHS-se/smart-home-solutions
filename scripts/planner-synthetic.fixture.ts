@@ -13,8 +13,8 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 7,
-    pool_cycle_seconds: 43200,
+    abi: 8,
+    ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
     slots: prices.map((price, i) => ({
@@ -22,6 +22,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       start_seconds: i * 900,
       hours: .25,
       base_w: 700,
+      base_ev_w: 0,
       solar_w: Math.max(0, 3000 * Math.sin((i % 96 - 24) / 48 * Math.PI)),
       outdoor_c: 16,
       import_price: price,
@@ -74,13 +75,12 @@ export function syntheticReadyProblem(): ReadyProblem {
       pool_start_cost_sek: POOL_START_COST_SEK,
     },
     rules: resolveRules({}).flatMap((r) =>
-      r.enabled && r.role === "deduction"
+      r.enabled
         ? RULE_KEYS.filter((k) => k === r.key).map((key) => ({
           key,
           threshold: r.threshold,
           points: r.points,
           required: r.required ?? false,
-          unless: RULE_KEYS.find((key) => key === r.unless) ?? null,
         }))
         : []
     ),

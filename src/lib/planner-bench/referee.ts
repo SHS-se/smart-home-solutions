@@ -1,5 +1,5 @@
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
-import { localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar';
+import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
 // A planner hands back decisions: how much power the pool, the car and the
@@ -40,12 +40,11 @@ import {
   carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
-import { baseLoadGridSupplyW } from './supply';
 import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 16;
+export const REFEREE_VERSION = 17;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -76,7 +75,7 @@ export interface BatteryFollow {
   planned: [charge_w: number, discharge_w: number];
 }
 
-export type ViolationKind = 'battery_empty' | 'battery_full' | 'battery_power' | 'ev_full' | 'ev_power' | 'ev_step' | 'pool_power' | 'pool_step' | 'grid_limit' | 'negative_request';
+export type ViolationKind = 'battery_supply' | 'battery_empty' | 'battery_full' | 'battery_power' | 'ev_full' | 'ev_power' | 'ev_step' | 'pool_power' | 'pool_step' | 'grid_limit' | 'negative_request';
 export interface Violation { quarter: number; kind: ViolationKind; clipped_w: number }
 
 export interface Outcome {
@@ -198,12 +197,24 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
       if (follow) {
         const houseW = baseW[i] + poolW + evW - solarW[i];
         chargeW = Math.min(follow.charge_limit_w, h.battery.charge_max_w, Math.max(0, -houseW));
-        dischargeW = Math.min(follow.discharge_limit_w, h.battery.discharge_max_w, Math.max(0, houseW));
+        const grossW = baseW[i] + poolW + evW;
+        const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
+        dischargeW = Math.min(follow.discharge_limit_w, h.battery.discharge_max_w,
+          proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW);
       }
     }
     // A pack that ran dry or filled because the day differed from its forecast is not an impossible request.
     chargeW = clip(i, 'battery_full', chargeW, Math.max(0, (Math.max(batteryMaxKwh, batteryKwh) - batteryKwh) / (h.battery.charge_efficiency * HOURS) * 1_000 + dischargeW / (h.battery.charge_efficiency * h.battery.discharge_efficiency)), !measured);
     dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency), !measured);
+
+    // All fixed and demand-following modes share the permission, including export.
+    // If excluded demand remains on the bus, battery export cannot bypass it.
+    const grossW = baseW[i] + poolW + evW;
+    const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
+    const supplyW = proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW;
+    if (Math.max(0, grossW - solarW[i]) > supplyW + 1e-6) {
+      dischargeW = clip(i, 'battery_supply', dischargeW, supplyW, !measured);
+    }
 
     batteryKwh += (chargeW * h.battery.charge_efficiency - dischargeW / h.battery.discharge_efficiency) * HOURS / 1_000;
     poolC = stepThermalStore(h.pool.store, poolC, projected.heat_w, air[i], HOURS);
@@ -330,12 +341,8 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     },
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     poolStart: sim.poolStart,
-    poolThermal: {
-      store: h.pool.store, outdoorC: [...c.recorded.outdoor_temperature_c],
-      localMonth: localMonths(starts, c.timezone),
-    },
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
-    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
+    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
     carSoc: [], carKm: [], carConnected: [], poolC: [], costSek: [], wearSek: [],
     comfort: {
@@ -363,13 +370,6 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.gridExportW.push(r1(Math.max(0, -sim.netW[i])));
     series.batteryChargeW.push(r1(sim.chargeW[i]));
     series.batteryDischargeW.push(r1(sim.dischargeW[i]));
-    // Extra house supply uses energy left after this quarter's existing actions.
-    const storedW = Math.max(0, sim.batteryKwh[i] - h.battery.min_soc * h.battery.capacity_kwh)
-      * h.battery.discharge_efficiency / HOURS * 1_000;
-    const spareW = Math.min(Math.max(0, h.battery.discharge_max_w - sim.dischargeW[i]), storedW);
-    const availableW = sim.chargeW[i] > 0 ? 0 : spareW;
-    // Floor available power to stored precision so rounding cannot invent capacity.
-    series.baseLoadBatteryCoverW.push(Math.min(baseLoadGridSupplyW(series, i), Math.floor(availableW * 10) / 10));
     series.homeSoc.push(r1(sim.batteryKwh[i] / h.battery.capacity_kwh * 100));
     series.carSoc.push(r1(sim.evKwh[i] / h.car.battery.capacity_kwh * 100));
     series.carKm!.push(r1(sim.evKwh[i] / h.car.battery.kwh_per_km));

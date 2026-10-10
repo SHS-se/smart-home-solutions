@@ -17,6 +17,9 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     // Use the current harness in an isolated repository with real commits.
     await command('cp', ['-R', ...['bench', 'src', 'scripts', 'supabase'].map(path => `${root}/${path}`), repo]);
     await Deno.copyFile(`${root}/deno.json`, `${repo}/deno.json`);
+    // The referee shares npm-backed supply accounting with production. Keep the
+    // real dependency manifest beside the symlinked installation in this harness.
+    await Deno.copyFile(`${root}/package.json`, `${repo}/package.json`);
     await Deno.symlink(`${root}/node_modules`, `${repo}/node_modules`);
     const planner = 'supabase/functions/_shared/planner';
     await Deno.writeTextFile(`${repo}/${planner}/energy-optimisation.ts`, 'export const PLANNER_INPUTS = [];\n');

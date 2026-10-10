@@ -79,7 +79,7 @@ Deno.test('base refresh verifies only the requested candidate and never evaluate
 Deno.test('scoped completion rejects decisions produced under different rules even after their score is refreshed', async () => {
   const store = new MemoryStore();
   store.rows = store.rows.map(r => ({ ...r, planner_generation: 'ready-wasm-v4',
-    planner_rules: plannerRulesFingerprint({ pool_restart: { points: -1 } }), planner_criteria: '{"pool_restart":{"points":-1}}' }));
+    planner_rules: plannerRulesFingerprint({ pool_hot: { points: -1 } }), planner_criteria: '{"pool_hot":{"points":-1}}' }));
   const error = await assertRejects(() => rescoreExisting(store, undefined,
     { shas: ['new-not-in-git'], lanes: [BASE_LANE] }), RescoreIncompleteError);
   assertEquals(error.report.verificationErrors, 1);
@@ -90,7 +90,7 @@ Deno.test('scoped completion rejects decisions produced under different rules ev
 Deno.test('scoped completion accepts historical effective defaults with the same supplied inputs', async () => {
   const store = new MemoryStore();
   store.rows = store.rows.map(r => ({ ...r, planner_generation: 'ready-wasm-v4',
-    planner_rules: plannerRulesFingerprint({ pool_restart: { enabled: false } }), planner_criteria: '{}' }));
+    planner_rules: plannerRulesFingerprint({ pool_hot: { enabled: false } }), planner_criteria: '{}' }));
   assertEquals((await rescoreExisting(store, undefined, { shas: ['new-not-in-git'], lanes: [BASE_LANE] })).verifiedCurrent, 1);
 });
 

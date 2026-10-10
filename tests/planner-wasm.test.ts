@@ -1,3 +1,4 @@
+import { problemEndCredit } from "../supabase/functions/_shared/planner-wasm/end-credit.ts";
 import policy from "../planner-core/policy.json" with { type: "json" };
 import { OPPORTUNITY_RULES } from "../src/lib/planner-bench/opportunities.ts";
 import {
@@ -8,14 +9,13 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
-import { bufferProblem, causalCase, command, forecastProblem, problem } from "./planner-wasm.fixture.ts";
+import { causalCase, command, forecastProblem, problem } from "./planner-wasm.fixture.ts";
 import {
   projectHeatPumpResponse,
   stepThermalStore,
 } from "../supabase/functions/_shared/planner/device-models.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
-// The kernel still measures every rule at its points until it is given the kronor score; the scorer's lens reads them the same way.
-import { measuredQuarters as scoreQuarters, resolveRules } from "../src/lib/planner-bench/score.ts";
+import { scoreQuarters, resolveRules } from "../src/lib/planner-bench/score.ts";
 import { referee } from "../src/lib/planner-bench/referee.ts";
 import { caseTargets, QUARTERS } from "../src/lib/planner-bench/case.ts";
 import { createPlannerProbe } from "../supabase/functions/_shared/planner-wasm/probe.ts";
@@ -69,8 +69,7 @@ Deno.test("a cheap opening is still used at once for charging", () => {
   }
   const result = solve(p);
   assert(result.kind === "selected");
-  // Until the very cheap reward needed 1 kW, the car took this quarter beside a
-  // thin battery charge. Either store charging at a kilowatt or more uses it.
+  // A cheaper opening gives either store an immediate economic charging opportunity.
   const opening = result.selection.quarters[0];
   assert(opening.ev_w >= 1000 || opening.charge_w >= 1000);
 });
@@ -85,17 +84,15 @@ function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
   } else {
     p.initial.ev_kwh = 10;
   }
-  p.initial.pool_c = 29.8;
+  p.initial.pool_c = 28;
   p.limits.import_w = 1000;
   // Isolate shared solar/grid capacity from the separate startup-cost preference.
   p.limits.pool_start_cost_sek = 0;
   p.slots = p.slots.map((s, i) => ({ ...s, base_w: 1000,
     solar_w: i === 0 ? solarW : 0, import_price: 2, export_price: 1,
     ev_available: i === 0 }));
-  p.rules = [
-    { key: "cheap_buy", threshold: .25, points: 1, required: false, unless: null },
-    { key: "dear_load", threshold: .25, points: -2, required: false, unless: null },
-  ];
+  p.rules = [{ key: "pool_low", threshold: 1, points: -1, required: false }];
+  p.end_credit = problemEndCredit(p);
   return p;
 }
 
@@ -107,20 +104,19 @@ Deno.test("solar opportunities use surplus after base consumption", () => {
   }
 });
 
-Deno.test("joint loads compete for one solar surplus and one quarter reward", () => {
+Deno.test("joint loads compete for one solar surplus and grid connection", () => {
   const p = solarCompetitionProblem(6000, true);
   const result = solve(p);
   assert(result.kind === "selected");
   const s = result.selection;
   assert(s.commands[0].pool_on || s.commands[0].ev_amps > 0);
   assert(!(s.commands[0].pool_on && s.commands[0].ev_amps > 0));
-  assertEquals(s.account.contributions[0][0], 1);
   for (const q of s.quarters) assert(q.net_w <= p.limits.import_w + 1e-7);
 });
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v7:"));
+  assert(planner.version.startsWith("wasm-v8:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -334,72 +330,6 @@ Deno.test("invalid equipment fails without rejecting realistic above-target stat
   assertEquals(solve(valid).kind, "selected");
 });
 
-Deno.test("opposite rules are retained even when a quarter scores zero", () => {
-  const p = problem();
-  p.slots = p.slots.slice(0, 4);
-  p.initial.pool_c = 50;
-  p.targets.pool_c = 50;
-  p.pool_store = {
-    capacity_kwh_per_c: 1,
-    loss: { kind: "linear", kw_per_c: 1, surroundings_c: 10 },
-  };
-  p.rules = [{
-    key: "pool_low",
-    threshold: 0,
-    points: -1,
-    required: false,
-    unless: null,
-  }, {
-    key: "cheapest_buy",
-    threshold: 1,
-    points: 1,
-    required: false,
-    unless: null,
-  }];
-  p.accepted = p.slots.map(() => command(true));
-  p.locked_through_seconds = 3600;
-  const result = solve(p);
-  assertEquals(result.kind, "selected");
-  if (result.kind !== "selected") throw new Error(result.issue);
-  assertEquals(result.selection.account.contributions[0], [-1, 1]);
-});
-
-Deno.test("measurement rounding keeps equality outside a strictly-above buffer rule", () => {
-  const p = problem();
-  p.slots = Array.from(
-    { length: 192 },
-    (_, i) => ({
-      ...p.slots[0],
-      start_seconds: i * 900,
-      import_price: i < 96 ? 1 : 2,
-    }),
-  );
-  p.work_grant = 900_000_000;
-  p.pool_store = {
-    capacity_kwh_per_c: 1,
-    loss: { kind: "linear", kw_per_c: 0, surroundings_c: null },
-  };
-  p.initial.pool_c = 32.0004;
-  p.rules = [{
-    key: "pool_buffer",
-    threshold: 2,
-    points: 1,
-    required: false,
-    unless: null,
-  }];
-  p.accepted = p.slots.filter((s) => s.start_seconds < 3600).map(() =>
-    command()
-  );
-  p.locked_through_seconds = 3600;
-  const result = solve(p);
-  assertEquals(result.kind, "selected");
-  if (result.kind !== "selected") throw new Error(result.issue);
-  assertEquals(result.selection.account.contributions.slice(0, 4), [[0], [0], [
-    0,
-  ], [0]]);
-  assertEquals(result.selection.quarters[0].pool_c, 32.0004);
-});
-
 Deno.test("a grant too small for a complete certified result fails without partial output", () => {
   const p = problem();
   p.work_grant = 1;
@@ -468,50 +398,22 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
     [...RULE_KEYS].sort(),
     resolveRules({}).map((r) => r.key).sort(),
   );
-  // Every rule is either sent to the planner, as a deduction, or kept by the bench as evidence.
-  assertEquals(
-    [...policy.direct_rules, ...policy.witness_rules, ...policy.evidence_rules].sort(),
-    [...RULE_KEYS].sort(),
-  );
-  assertEquals(
-    [...policy.direct_rules, ...policy.witness_rules].sort(),
-    resolveRules({}).filter((r) => r.role === "deduction").map((r) => r.key).sort(),
-  );
-  assertEquals(
-    policy.economic_rules.toSorted(),
-    OPPORTUNITY_RULES.map((r) => r.key).sort(),
-  );
-  const criteria = {
-    pool_low: { enabled: false },
-    pool_restart: { threshold: 6, points: -1 },
-    // An evidence rule's settings never reach the planner.
-    pool_buffer: { threshold: 1.2, points: -2 },
-  };
+  assertEquals(policy.direct_rules.toSorted(), [...RULE_KEYS].sort());
+  assertEquals(policy.witness_rules, []);
+  assertEquals(policy.evidence_rules, []);
+  assertEquals(policy.economic_rules.toSorted(), OPPORTUNITY_RULES.map(r => r.key).sort());
+  const criteria = { pool_low: { enabled: false }, pool_hot: { threshold: 3, points: -2 } };
   const p = readyProblem(causalCase(), HOUSEHOLD, criteria);
-  assertEquals(p.rules.map((r) => r.key).includes("pool_buffer"), false);
-  assertEquals(
-    p.rules,
-    resolveRules(criteria).filter((r) => r.enabled && r.role === "deduction").map((r) => ({
-      key: r.key,
-      threshold: r.threshold,
-      points: r.points,
-      required: r.required ?? false,
-      unless: r.unless ?? null,
-    })),
-  );
+  assertEquals(p.rules, resolveRules(criteria).filter(r => r.enabled).map(r => ({
+    key: r.key, threshold: r.threshold, points: r.points, required: r.required ?? false,
+  })));
   assertEquals(p.service_guard.pool, [1, 2]);
 });
 
-Deno.test("native restart events and signed scores match the referee at the twelve-hour boundary", () => {
+Deno.test("native heater restart events and startup wear match the referee", () => {
   const c = causalCase();
   c.start_state.pool_heater = { kind: "off", seconds: 3600 };
-  const criteria = Object.fromEntries(
-    resolveRules().map(
-      (r) => [r.key, {
-        enabled: r.key === "pool_restart",
-      }],
-    ),
-  );
+  const criteria = {};
   const p = readyProblem(c, HOUSEHOLD, criteria);
   // The exact accepted first hour starts, stops, restarts, then continues.
   p.accepted = p.slots.filter((s) => s.start_seconds < 3600).map((_, i) =>
@@ -530,12 +432,7 @@ Deno.test("native restart events and signed scores match the referee at the twel
   const series = referee(c, HOUSEHOLD, caseTargets(c), d).series;
   const scored = scoreQuarters(series, criteria);
   assertEquals(selected.quarters.map((q) => q.pool_start), series.poolStart);
-  assertEquals(
-    scored.quarters.slice(0, 4).flatMap((q, i) =>
-      q.fired.includes("pool_restart") ? [i] : []
-    ),
-    [0, 2],
-  );
+  assertEquals(series.poolStart!.slice(0, 4), [{ off_seconds: 3600 }, null, { off_seconds: 900 }, null]);
   assertEquals(
     selected.account.contributions,
     scored.quarters.map((q) =>
@@ -548,12 +445,8 @@ Deno.test("native restart events and signed scores match the referee at the twel
     assert(poolC !== null);
     assertAlmostEquals(poolC, series.poolC[i]!, 0.00051);
   }
-  assertEquals(selected.account.contributions[0], [-2]);
-  assertEquals(selected.account.contributions[3], [0]);
-  p.initial.heater_state = { kind: "off", seconds: 43200 };
-  const boundary = solve(p);
-  if (boundary.kind !== "selected") throw new Error(boundary.issue);
-  assertEquals(boundary.selection.account.contributions[0], [0]);
+  assertAlmostEquals(selected.account.wear_sek, series.bill!.wear_sek, 0.01);
+
 });
 
 Deno.test("ready ABI rejects obsolete heater inputs rather than assuming an off heater", () => {
@@ -573,10 +466,9 @@ Deno.test("every selected result reports bounded witnesses and exact work accoun
   assertEquals(s.work.limit, p.work_grant);
   assertEquals(s.work.reserved, 0);
   assertEquals(s.work.evaluations, s.evaluations);
-  // The overlap and early-charge certificates stay in the catalogue; their rules are evidence and are not sent.
   assertEquals(
     s.witness_coverage.map((c) => c.family).sort(),
-    [...policy.witness_rules, ...policy.economic_rules, "large_load_overlap", "early_grid_charge"].sort(),
+    policy.economic_rules.toSorted(),
   );
   // What an economic certificate proves is on the bill; it takes no points.
   assertEquals(
@@ -640,39 +532,6 @@ Deno.test("deployed runtime configuration is generated from the measured recipe 
   const runtime = JSON.parse(await Deno.readTextFile(`${root}/supabase/functions/_shared/planner-wasm/runtime-config.json`));
   assertEquals(runtime.recipe, recipe);
   assertEquals(runtime.policy_manifest, JSON.parse(await Deno.readTextFile(`${root}/planner-core/policy.json`)));
-});
-
-Deno.test("native frozen-event credit matches independent replay across restarts, seasons and point overrides", () => {
-  for (const month of [7, 1]) for (const points of [2, -1]) for (const heatingPrefix of [true, false]) {
-    const p = bufferProblem();
-    if (!heatingPrefix) p.accepted = p.accepted!.map(() => command(false));
-    p.rules[0].points = points;
-    p.slots.forEach(slot => { slot.local_month = month; });
-    const result = solve(p);
-    assertEquals(result.kind, 'selected');
-    if (result.kind !== 'selected') throw new Error(result.issue);
-    const q = result.selection.quarters;
-    const c = causalCase();
-    const series = referee(c, HOUSEHOLD, { pool_c: 30, ev_km: 300 }, {
-      pool_w: new Array(288).fill(0), ev_w: new Array(288).fill(0),
-      battery_charge_w: new Array(288).fill(0), battery_discharge_w: new Array(288).fill(0),
-    }).series;
-    // Save the physical facts from the synthetic problem, not native earned flags.
-    series.comfort!.pool_start_c = p.initial.pool_c;
-    series.poolW = q.map(v => Math.round(v.pool_w * 10) / 10);
-    series.poolC = q.map(v => Math.round(v.pool_c! * 1000) / 1000);
-    series.poolStart = q.map(v => v.pool_start);
-    series.importPrice = p.slots.map(v => v.import_price);
-    series.solarW = p.slots.map(v => v.solar_w);
-    series.poolThermal = { store: p.pool_store, outdoorC: p.slots.map(v => v.outdoor_c), localMonth: p.slots.map(v => v.local_month) };
-    const independent = scoreQuarters(series, { pool_buffer: { points } });
-    assertEquals(result.selection.account.contributions.map(row => row[0]), independent.thermalBuffer!.map(v => v.earns ? points : 0));
-    if (month === 7) {
-      assertEquals(independent.thermalBuffer![0].earns, !heatingPrefix);
-      if (heatingPrefix) assertEquals(independent.thermalBuffer![2].earns, false);
-      assertEquals(independent.thermalBuffer![282].earns, false);
-    } else assertEquals(independent.counts.pool_buffer, undefined);
-  }
 });
 
 Deno.test("bench ready input levels demand from prior days and excludes future outcomes", () => {

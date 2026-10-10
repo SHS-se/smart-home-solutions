@@ -80,12 +80,11 @@ impl Table {
             return (0, 0, 0.0);
         }
         let (same, seconds): (fn(&HeaterState) -> bool, f64) = match heater {
-            HeaterState::OffUnobserved => return (0, 0, 0.0),
+            HeaterState::OffUnobserved | HeaterState::Off { .. } => return (0, 0, 0.0),
             HeaterState::Steady => {
                 let i = self.phases.len() - 1;
                 return (i, i, 0.0);
             }
-            HeaterState::Off { seconds } => (|s| matches!(s, HeaterState::Off { .. }), seconds),
             HeaterState::Running { seconds } => {
                 (|s| matches!(s, HeaterState::Running { .. }), seconds)
             }
@@ -158,8 +157,6 @@ impl Table {
             m.initial.battery_kwh = None;
             m.end_credit.battery = None;
         }
-        m.rules
-            .retain(|r| !matches!(r.key, RuleKey::PoolBuffer | RuleKey::ArbitrageNotFull));
         m.accepted = p
             .accepted
             .as_ref()
@@ -209,7 +206,7 @@ fn tables(p: &Problem) -> Vec<Table> {
         for r in &p.rules {
             let threshold = match r.key {
                 RuleKey::PoolLow | RuleKey::PoolCold => Some(target - r.threshold),
-                RuleKey::PoolHot | RuleKey::PoolBuffer => Some(target + r.threshold),
+                RuleKey::PoolHot => Some(target + r.threshold),
                 _ => None,
             };
             if let Some(t) = threshold {
@@ -219,17 +216,6 @@ fn tables(p: &Problem) -> Vec<Table> {
         let top = nodes.iter().copied().max_by(f64::total_cmp).unwrap();
         nodes.push(top + heater.heat_w / 4000.0 / store.capacity_kwh_per_c);
         let mut phases = vec![HeaterState::OffUnobserved];
-        let rest = policy::rule(p, RuleKey::PoolRestart).map_or(0.0, |r| r.threshold * 3600.0);
-        let steps = ((rest / 3600.0).ceil() as usize).min(12);
-        for i in 0..=steps {
-            phases.push(HeaterState::Off {
-                seconds: if rest <= 43200.0 {
-                    (i as f64 * 3600.0).min(rest)
-                } else {
-                    rest * i as f64 / steps as f64
-                },
-            });
-        }
         let startup = match &heater.response {
             shs_planner_models::Response::Steady => 0.0,
             shs_planner_models::Response::Bergvarme { startup } => {
@@ -237,7 +223,7 @@ fn tables(p: &Problem) -> Vec<Table> {
             }
         };
         // Running ages use quarter resolution plus the final measured startup
-        // point; known stop ages interpolate by hour. Actual labels stay exact.
+        // point. Actual labels stay exact.
         let steps = ((startup / 900.0).ceil() as usize).min(8);
         for i in 0..=steps {
             phases.push(HeaterState::Running {

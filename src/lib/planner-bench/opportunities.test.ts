@@ -204,10 +204,8 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   // Warmer than the 30 °C target at the end of the sun, where the plan had let it cool.
   assert(Math.max(...preheat.after.poolC) > 30 && preheat.before.poolC[63] < 29.6);
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
-  // A warm pool is marked and loses nothing; the price rules are set aside to show it.
-  const warm = scoreQuarters({ ...referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 31 ? 3764 : 0 })).series },
-    { cheap_buy: { enabled: false }, cheapest_buy: { enabled: false }, dear_load: { enabled: false }, dearest_load: { enabled: false },
-      base_load_dear_import: { enabled: false }, base_load_dearest_import: { enabled: false } });
+  // Storing heat ahead of the dull day incurs no overheating deduction.
+  const warm = scoreQuarters(referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 31 ? 3764 : 0 })).series);
   assertEquals(warm.sum, 0);
 });
 
@@ -352,9 +350,8 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
 });
 
 Deno.test('a case scores its net bill; what the audit proves is evidence beside it, hindsight apart', () => {
-  // Isolate the economic audit from comfort and the independent base-load preferences.
-  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false },
-    base_load_dear_import: { enabled: false }, base_load_dearest_import: { enabled: false } };
+  // Isolate the economic audit from pool comfort deductions.
+  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false } };
   const lost = evaluate(spilled(), record(plan()), unheated, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));

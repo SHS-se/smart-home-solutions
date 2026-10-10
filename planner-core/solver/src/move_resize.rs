@@ -1,5 +1,5 @@
 //! Local command-span proposals. Eligibility is physical projection, never a cash certificate.
-use crate::{physics, policy, *};
+use crate::{physics, *};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,7 +77,6 @@ struct Estimate {
     /// Running sum of what the device's own draw in a quarter costs there.
     remove: Vec<f64>,
     /// Running sum of the points the direct tariff rules give that draw.
-    points: Vec<f64>,
     /// Running sum of the grid energy `watts` books, kWh.
     booked: Vec<f64>,
     /// Running sum of the grid energy the device draws now, kWh.
@@ -88,12 +87,11 @@ struct Estimate {
     room: f64,
 }
 impl Estimate {
-    fn new(p: &Problem, index: &policy::Index, device: Device, watts: f64, q: &[Quarter]) -> Self {
+    fn new(p: &Problem, device: Device, watts: f64, q: &[Quarter]) -> Self {
         let n = q.len();
         let mut out = Self {
             add: vec![0.0; n + 1],
             remove: vec![0.0; n + 1],
-            points: vec![0.0; n + 1],
             booked: vec![0.0; n + 1],
             drawn: vec![0.0; n + 1],
             stored: 0.0,
@@ -118,7 +116,6 @@ impl Estimate {
                 own.min(imported) * s.import_price + (own - imported).max(0.0) * s.export_price;
             out.add[i + 1] = out.add[i] + add * kwh;
             out.remove[i + 1] = out.remove[i] + remove * kwh;
-            out.points[i + 1] = out.points[i] + f64::from(tariff_points(p, index, i, watts));
             out.booked[i + 1] = out.booked[i] + watts * kwh;
             out.drawn[i + 1] = out.drawn[i] + own * kwh;
         }
@@ -150,28 +147,8 @@ impl Estimate {
         let cost = outside(&self.add, e.start, e.end);
         let energy = outside(&self.booked, e.start, e.end) - outside(&self.drawn, e.from, e.to);
         let credit = (energy.min(self.room) - 0.0_f64.min(self.room)) * self.stored;
-        saved - cost + credit + sum(&self.points, e.start, e.end) - sum(&self.points, e.from, e.to)
+        saved - cost + credit
     }
-}
-
-// Points the direct tariff rules give a draw, where a problem has them.
-fn tariff_points(p: &Problem, index: &policy::Index, i: usize, watts: f64) -> i32 {
-    let fires = |r: &Rule| match r.key {
-        RuleKey::CheapBuy | RuleKey::CheapestBuy => index.cheap_price(r, i),
-        RuleKey::DearLoad | RuleKey::DearestLoad => {
-            index.dear[i] < r.threshold && p.slots[i].solar_w < p.slots[i].base_w + watts
-        }
-        _ => false,
-    };
-    p.rules
-        .iter()
-        .filter(|r| {
-            fires(r)
-                && r.unless
-                    .is_none_or(|key| !p.rules.iter().any(|other| other.key == key && fires(other)))
-        })
-        .map(|r| r.points)
-        .sum()
 }
 
 pub(crate) struct Proposals {
@@ -181,7 +158,6 @@ pub(crate) struct Proposals {
 
 pub(crate) fn proposals(
     p: &Problem,
-    index: &policy::Index,
     commands: &[Command],
     quarters: &[Quarter],
     work: &mut Work,
@@ -229,8 +205,7 @@ pub(crate) fn proposals(
                 c.ev_amps as f64 * h.voltage_v * h.phase_count as f64
             }),
         };
-        let points: Vec<i32> = (0..n).map(|i| tariff_points(p, index, i, watts)).collect();
-        let estimate = Estimate::new(p, index, device, watts, quarters);
+        let estimate = Estimate::new(p, device, watts, quarters);
         let free = |i: usize| {
             !physics::locked(p, i) && (from <= i && i < to || !device.active(&commands[i]))
         };
@@ -275,7 +250,7 @@ pub(crate) fn proposals(
                 continue;
             }
             let mut end = start + 1;
-            while end < n && free(end) && points[end] == points[start] {
+            while end < n && free(end) {
                 end += 1;
             }
             for len in 1..=end - start {
@@ -445,9 +420,8 @@ mod tests {
             move_resize_passes: 0,
             move_resize_improvements: 0,
         };
-        let index = policy::index(&p, &mut work).unwrap();
         let q = physics::projection(&p, &commands).unwrap();
-        let estimate = Estimate::new(&p, &index, Device::Pool, 3000.0, &q);
+        let estimate = Estimate::new(&p, Device::Pool, 3000.0, &q);
         let gain = |start, end| {
             estimate.gain(&Edit {
                 device: Device::Pool,
@@ -466,9 +440,7 @@ mod tests {
         assert!((gain(9, 11) + 1.5).abs() < 1e-9);
         // The steps come first, a shift of eight quarters onto cheap power
         // ahead of the others; then the rest by what they should gain.
-        let edits = proposals(&p, &index, &commands, &q, &mut work)
-            .unwrap()
-            .singles;
+        let edits = proposals(&p, &commands, &q, &mut work).unwrap().singles;
         let at = |start, end| {
             edits
                 .iter()
@@ -536,21 +508,7 @@ mod tests {
         ];
         commands[9].ev_amps = 6;
         let q = physics::projection(&p, &commands).unwrap();
-        let mut work = Work {
-            used: 0,
-            limit: p.work_grant,
-            reserved: 0,
-            unit_cost: 100,
-            expansions: 0,
-            evaluations: 0,
-            witness_trials: 0,
-            repairs: 0,
-            move_resize_trials: 0,
-            move_resize_passes: 0,
-            move_resize_improvements: 0,
-        };
-        let index = policy::index(&p, &mut work).unwrap();
-        let estimate = Estimate::new(&p, &index, Device::Ev, 1380.0, &q);
+        let estimate = Estimate::new(&p, Device::Ev, 1380.0, &q);
         let edit = Edit {
             device: Device::Ev,
             from: 9,
@@ -561,7 +519,7 @@ mod tests {
         // The extra 0.69 kWh costs 0.69 kr but only 0.155 kWh fits below the cap.
         assert!((estimate.gain(&edit) - (-0.69 + 0.155 * 2.0)).abs() < 1e-9);
         p.end_credit.ev.as_mut().unwrap().cap = 10.2;
-        let estimate = Estimate::new(&p, &index, Device::Ev, 1380.0, &q);
+        let estimate = Estimate::new(&p, Device::Ev, 1380.0, &q);
         assert!((estimate.gain(&edit) + 0.69).abs() < 1e-9);
     }
     #[test]
@@ -596,8 +554,7 @@ mod tests {
             move_resize_passes: 0,
             move_resize_improvements: 0,
         };
-        let index = policy::index(&p, &mut work).unwrap();
-        let edit = proposals(&p, &index, &commands, &q, &mut work)
+        let edit = proposals(&p, &commands, &q, &mut work)
             .unwrap()
             .singles
             .into_iter()

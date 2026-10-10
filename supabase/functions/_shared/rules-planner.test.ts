@@ -22,6 +22,7 @@ Deno.test("rules preparation preserves absent equipment and disconnected EV stat
   const s = snapshot();
   s.ev_battery!.connected = false;
   const p = prepare(s).problem;
+  assertEquals(p.ev_battery_supply_allowed, false);
   assertEquals(p.battery, null);
   assertEquals(p.pool_store, null);
   assert(p.car);
@@ -107,10 +108,13 @@ Deno.test("the execution plan is the displayed schedule whatever each device's m
   s.operating_scope.external_demands.ev = { forecast_w_by_slot: s.slots.map(() => 200), recent_observation: null };
   s.battery_execution_feedback = { generation: 1, source_receipt: 0, previous_contract_id: null, scope_revision: "scope1", objectives: [] };
   s.ev_battery!.soc = .1;
-  const previous = generateRulesPlan(prepare(s)).plan;
+  const prepared = prepare(s);
+  assertEquals(prepared.problem.ev_battery_supply_allowed, false);
+  const previous = generateRulesPlan(prepared).plan;
   const commitment = previous.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 16, ev_min_current_a: 0, ev_max_current_a: 16,
     device_commands: { ...slot.device_commands, ev: {type: "variable_power" as const, value: 16, unit: "A" as const} } }));
   const plan = generateRulesPlan(prepare(s, {plan_id: previous.plan_id, slots: commitment})).plan;
+  assertEquals(plan.battery_supply_scope, { kind: "selected", include_base: true, planned_device_keys: [] });
   assert(plan.battery_execution);
   assert(plan.execution_plan);
   // The car is only being verified, and its planned charging is still the plan.
@@ -239,4 +243,31 @@ Deno.test("rules preparation levels only base load from matured evidence at loca
   s.demand_outlook.days.push({ day: "2026-08-10", forecast_kwh: 20, actual_kwh: 1000 },
     { day: "2026-08-11", forecast_kwh: 20, actual_kwh: 1000 });
   assertEquals(prepare(s).base_w, p.base_w);
+});
+
+Deno.test("passive external EV forecast remains an excluded part of native base consumption", () => {
+  const s = snapshot();
+  s.schema_version = 9;
+  s.capabilities.ev = false;
+  s.ev_battery = null;
+  s.services = [];
+  s.comfort = null;
+  s.operating_scope = { modes: { $battery: "monitoring", $pool: "monitoring", $ev: "monitoring", fridge: "monitoring" },
+    device_owners: { external_ev: "$ev", fridge: "fridge" }, external_demands: {
+      external_ev: { forecast_w_by_slot: s.slots.map(() => 3450), recent_observation: null },
+      fridge: { forecast_w_by_slot: s.slots.map(() => 120), recent_observation: null },
+    } };
+  s.device_models = [{ key: "external_ev", name: "External EV", statistic_id: "external_ev", category: "ev_charging",
+    suggested_load_type: "variable_full_load", load_type: "variable_full_load", planning_role: "controllable", control_type: "variable_power",
+    active_power_w: 11040, profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => 3450) },
+    { key: "fridge", name: "Fridge", statistic_id: "fridge", category: "other", suggested_load_type: "duty_cycle",
+      load_type: "duty_cycle", planning_role: "controllable", control_type: "permit_inhibit", active_power_w: 300,
+      profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => 120) }];
+  const prepared = prepare(s);
+  assertEquals(prepared.problem.ev_battery_supply_allowed, false);
+  assertEquals(prepared.problem.car, null);
+  assertEquals(prepared.problem.slots.map(slot => slot.base_ev_w), s.slots.map(() => 3450));
+  assertEquals(prepared.problem.slots.map(slot => slot.base_w), s.slots.map(slot => slot.base_load_forecast_w + 3570));
+  const plan = generateRulesPlan(prepared).plan;
+  assertEquals(plan.battery_supply_scope, { kind: "selected", include_base: true, planned_device_keys: ["fridge"] });
 });

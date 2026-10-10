@@ -1,5 +1,5 @@
 {
-  "version": "rule-forecast-opportunity-v8",
+  "version": "rule-forecast-opportunity-v9",
   "work_grant": 1520000000,
   "beam_width": 16,
   "max_actions": 32,

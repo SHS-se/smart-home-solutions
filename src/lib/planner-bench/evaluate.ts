@@ -8,7 +8,7 @@ import { HOUSEHOLD } from './household';
 import { BASE_LANE, type LaneId } from './lanes';
 import { auditOpportunities } from './opportunities';
 import { referee, REFEREE_VERSION, type Outcome } from './referee';
-import { resolveRules, serviceGuard, storedScore, type StoredScore } from './score';
+import { serviceGuard, storedScore, type StoredScore } from './score';
 import { planStats } from './stats';
 import type { BenchSeries, BenchStats, CriteriaOverrides, PlanRecord } from './types';
 
@@ -30,8 +30,6 @@ export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOve
   // Checked first, so a case with unusable criteria is not replayed at all.
   const guard = serviceGuard(criteria);
   const { series, ...outcome } = referee(c, HOUSEHOLD, targets, record.decisions, believed);
-  const thresholds = Object.fromEntries(resolveRules(criteria).map(r => [r.key, r.threshold]));
-  series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard, thresholds.large_load_overlap,
-    { pool: thresholds.pool_short_gap }, thresholds.early_grid_charge);
+  series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard);
   return { series, stats: planStats(series), outcome, score: storedScore(series, criteria), referee_version: REFEREE_VERSION };
 }
