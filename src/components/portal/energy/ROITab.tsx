@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useAuth } from '@/contexts/AuthContext';
+import SchedulerComparison from '../planner-bench/SchedulerComparison';
 import { fetchEnergySupplierDailyCosts } from '@/lib/energy-tariff-storage';
 import { fetchRoiInvoices, fetchRoiMonthlyPrices } from '@/lib/contract-roi-storage';
 import { compareContract, invoiceRoiHistory, numericInput, supplierRoiHistory } from '@/lib/contract-roi';
@@ -36,6 +38,7 @@ interface ROITabProps { customerId: string; homeId: string | null; homeCount?: n
 
 function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
   const { t } = useLanguage();
+  const { isStaff } = useAuth();
   const timeZone = useHomeTimeZone();
   const storageKey = `shs-contract-roi-v2:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
@@ -86,7 +89,7 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
     monthlyRates: market.data ?? {},
   };
   const investment = {
-    equipmentSek: number(settings.equipment), installationSek: number(settings.installation), subscriptionSek: number(settings.subscription),
+    equipmentSek: 0, installationSek: 0, subscriptionSek: 0,
     currentMonthlyFeeSek: settings.source === 'ha' ? number(settings.currentFee) : 0,
   };
   let invalid = false;
@@ -97,7 +100,7 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
   catch { invalid = true; }
   const sek = (value: number | null | undefined, digits = 0) => value == null ? '—' : `${Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })} SEK`;
   const ready = history.isSuccess && !invalid && result !== null;
-  const loss = ready && result.net < 0;
+  const loss = ready && result.saving < 0;
   const outcome = (value: number) => value < 0 ? t('Extra kostnad', 'Extra cost') : t('Sparat', 'Saved');
   const tone = !ready ? 'bg-muted border-border' : loss ? 'bg-warning/20 border-warning/50' : 'bg-energy/30 border-energy-dark/40';
   const changeSource = (value: string) => setSettings(s => ({ ...s, source: value as Settings['source'], from: '', to: '', contract: { ...s.contract, method: s.contract.method === 'profile' ? 'quote' : s.contract.method } }));
@@ -108,14 +111,14 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
         <div>
           <div className="mb-3 flex items-center gap-2 text-sm font-medium">
             {loss ? <ArrowUpRight aria-hidden="true" className="h-5 w-5" /> : <ArrowDownRight aria-hidden="true" className="h-5 w-5" />}
-            <span data-testid="roi-outcome">{ready ? loss ? t('Extra kostnad per månad', 'Extra cost per month') : t('Sparat per månad', 'Saved per month') : t('Din besparing', 'Your savings')}</span>
+            <span data-testid="roi-outcome">{t('Avtalsbesparing per månad', 'Contract saving per month')}{ready && loss ? ` · ${t('extra kostnad', 'extra cost')}` : ''}</span>
           </div>
-          <p className="text-4xl font-semibold tracking-tight tabular-nums sm:text-6xl" data-testid="roi-monthly-net">{ready ? sek(result.annualNet / 12) : '—'}</p>
-          <p className="mt-3 text-sm text-muted-foreground">{t('Efter abonnemang', 'After subscription')}{from && ` · ${from} – ${to}`}</p>
+          <p className="text-4xl font-semibold tracking-tight tabular-nums sm:text-6xl" data-testid="roi-monthly-net">{ready ? sek(result.annualSaving / 12) : '—'}</p>
+          <p className="mt-3 text-sm text-muted-foreground">{t('Samma förbrukning · före SHS-abonnemang', 'Same consumption · before SHS subscription')}{from && ` · ${from} – ${to}`}</p>
         </div>
         <div className="grid grid-cols-2 gap-5 border-t border-foreground/10 pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
           <div><p className="text-sm text-muted-foreground">{ready && loss ? t('Total extra kostnad', 'Total extra cost') : t('Totalt sparat', 'Total saved')}</p><p className="mt-2 text-2xl font-semibold tabular-nums" data-testid="roi-period-saving">{ready ? sek(result.net) : '—'}</p></div>
-          <div><p className="text-sm text-muted-foreground">{t('Återbetalning', 'Payback')}</p><p className="mt-2 text-2xl font-semibold" data-testid="roi-payback">{!ready ? '—' : result.paybackYears === null ? t('Ingen', 'None') : `${result.paybackYears.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${t('år', 'yr')}`}</p></div>
+          <div><p className="text-sm text-muted-foreground">{t('Jämförelse', 'Comparison')}</p><p className="mt-2 text-sm">{t('Elavtal vid samma uppmätta kWh', 'Electricity contracts at the same recorded kWh')}</p></div>
         </div>
       </div>
     </section>
@@ -152,13 +155,9 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
         </div>}
       </CardContent></Card>
       <div className="space-y-5">
-        <Card><CardHeader className="pb-4"><CardTitle className="text-base">{t('Investering', 'Investment')}</CardTitle></CardHeader><CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2"><RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} /><RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} /></div>
-          <RoiNumberField id="roi-subscription" label={t('Abonnemang (kr/månad)', 'Subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
-        </CardContent></Card>
         {ready && <Card><CardHeader className="pb-4"><CardTitle className="text-base">{t('Periodens kostnader', 'Period costs')}</CardTitle></CardHeader><CardContent>
           <dl className="space-y-3 text-sm">
-            {[[t('Mitt elavtal', 'My electricity'), result.actual], [t('Abonnemang', 'Subscription'), result.subscription], [t('Jämförelseavtal', 'Comparison contract'), result.alternative]].map(([label, value]) => <div key={label} className="flex justify-between gap-4"><dt>{label}{Number(value) < 0 ? ` · ${t('tillgodo', 'credit')}` : ''}</dt><dd className="font-medium tabular-nums">{sek(Number(value), 2)}</dd></div>)}
+            {[[t('Mitt elavtal', 'My electricity'), result.actual], [t('Jämförelseavtal', 'Comparison contract'), result.alternative]].map(([label, value]) => <div key={label} className="flex justify-between gap-4"><dt>{label}{Number(value) < 0 ? ` · ${t('tillgodo', 'credit')}` : ''}</dt><dd className="font-medium tabular-nums">{sek(Number(value), 2)}</dd></div>)}
             <div className="flex justify-between gap-4 border-t pt-3 font-semibold"><dt>{outcome(result.net)}</dt><dd>{sek(result.net, 2)}</dd></div>
           </dl>
         </CardContent></Card>}
@@ -173,6 +172,20 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
         {needsMarket && <a className="text-xs underline" href="https://www.elprisetjustnu.se/elpris-api" target="_blank" rel="noreferrer">{t('Priskälla · månadsmedel, pågående månad t.o.m. igår', 'Price source · monthly average, current month through yesterday')}</a>}
       </div>
     </details>}
+    <Card data-testid="roi-scheduler"><CardHeader><CardTitle>{t('Besparing med schemaläggaren', 'Scheduler savings')}</CardTitle></CardHeader><CardContent className="space-y-5">
+      <p className="text-sm text-muted-foreground">{t('SHS jämfört med standardstyrning på samma elavtal. Abonnemanget räknas här, separat från avtalsbesparingen ovan.', 'SHS compared with default controls on the same electricity contract. Subscription is counted here, separately from the contract saving above.')}</p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
+        <RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />
+        <RoiNumberField id="roi-subscription" label={t('Abonnemang (kr/månad)', 'Subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
+      </div>
+      <p data-testid="roi-payback" className="text-sm">{t('Återbetalning: behöver en representativ jämförelse för hemmet över året.', 'Payback: requires a representative comparison for the home across the year.')}</p>
+      <p className="text-sm text-muted-foreground">{t('Schemaläggarbesparing för ditt hem är ännu inte beräknad.', 'Scheduler savings for your home have not yet been calculated.')}</p>
+      {isStaff && import.meta.env.MODE === 'test' && <details className="rounded-lg border p-4">
+        <summary className="cursor-pointer text-sm font-medium">{t('Förhandsgranska med planner bench-testfall', 'Preview using planner bench test cases')}</summary>
+        <div className="mt-4"><SchedulerComparison monthlySubscriptionSek={number(settings.subscription)} /></div>
+      </details>}
+    </CardContent></Card>
   </div>;
 }
 

@@ -220,6 +220,18 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
+  test('customer ROI shows separate unavailable scheduler savings without presenting bench cases as home results', async ({ context, page }) => {
+    await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
+    await page.goto('/portal/energy-modeling?tab=roi');
+    const contract = page.getByTestId('roi-period-saving');
+    await expect(contract).toContainText('SEK');
+    const saving = await contract.textContent();
+    await page.locator('#roi-subscription').fill('999');
+    await expect(contract).toHaveText(saving!);
+    await expect(page.getByTestId('roi-scheduler')).toContainText(/have not yet been calculated|ännu inte beräknad/);
+    await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
+  });
+
   test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{

@@ -18,6 +18,7 @@ import type { BenchSeries, PlanRecord } from '../src/lib/planner-bench/types';
 import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
 import { priceEstimates, summariseEstimates, type EstimateSeries } from '../src/lib/planner-bench/price-estimates';
+import { realisticWorld } from '../src/lib/planner-bench/world.fixture';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
@@ -183,7 +184,7 @@ interface Captured {
   job: { status: string; conclusion: string | null; created_at: string } | null;
 }
 
-async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, savedHistory = false, noCurrentPlanner = false, auditMoves = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false } = {}): Promise<Captured> {
+async function mockBackend(context: BrowserContext, { missingAudit = false, repeats = false, history = false, savedHistory = false, noCurrentPlanner = false, auditMoves = false, manyResults = false, missingResult = false, waitingCase = false, changedCase = false, noMeasurements = false } = {}): Promise<Captured> {
   const plans = auditMoves ? structuredClone(PLANS) : PLANS;
   if (auditMoves) {
     for (const [key, plan] of Object.entries(plans)) {
@@ -224,6 +225,12 @@ async function mockBackend(context: BrowserContext, { missingAudit = false, repe
     const request = route.request();
     const url = new URL(request.url());
     const table = url.pathname.split('/').pop() || '';
+    if (table === 'bench_scenarios' && url.searchParams.get('select') === 'dataset,recorded') {
+      const { recorded, ...data } = realisticWorld();
+      if (!noMeasurements) recorded.actual = { base_load_w: [...data.base_load_forecast_w], solar_w: data.solar_forecast_w.map(w => w * .7) };
+      await route.fulfill({ json: { dataset: data, recorded } });
+      return;
+    }
     if (table === 'get_price_estimate_series') {
       await route.fulfill({ json: PRICE_SERIES });
       return;
@@ -310,6 +317,77 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('runs the isolated default comparison with the real Wasm engine, charts and an auditable export', async ({ context, page }) => {
+    const captured = await mockBackend(context);
+    await login(page);
+    await page.goto('/portal/planner-bench?tab=scheduler');
+    await expect(page.locator('#bench-tab-scheduler')).toHaveAttribute('data-state', 'active');
+    await expect(page.locator('#scheduler-pool-start')).toHaveValue('30');
+    await expect(page.locator('#scheduler-pool-stop')).toHaveValue('30.5');
+    await expect(page.getByTestId('scheduler-comparison')).toContainText('60 W');
+    await page.locator('#scheduler-run').click();
+    await expect(page.getByTestId('scheduler-cash-saving')).toContainText('SEK', { timeout: 30_000 });
+    await expect(page.locator('#plan-audit')).toHaveCount(0);
+    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await chart.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('scheduler-quarter')).toContainText(/forecast.*recorded|prognos.*uppmätt/i);
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: /Export calculation|Exportera beräkning/ }).click();
+    const manifest = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
+    expect(manifest.engineHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.result.inputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.result.baseline.quarters).toHaveLength(288);
+    expect(manifest.result.shs.quarters).toHaveLength(288);
+    expect(manifest.result.cashSavingSek).toBeCloseTo(manifest.result.baseline.ledger.costSek - manifest.result.shs.ledger.costSek, 10);
+    expect(manifest.result.shs.series.solarW).toEqual(manifest.input.scenario.recorded.actual.solar_w);
+    expect(manifest.result.forecastSolarW).toEqual(manifest.input.scenario.solar_forecast_w);
+    expect(manifest.result.forecastSolarW).not.toEqual(manifest.result.shs.series.solarW);
+    await page.locator('#scheduler-pool-stop').fill('29');
+    await expect(page.getByTestId('scheduler-cash-saving')).toHaveCount(0);
+    await expect(page.locator('#scheduler-run')).toBeDisabled();
+    expect(captured.dispatched).toHaveLength(0);
+    expect(captured.updated).toHaveLength(0);
+  });
+
+  test('requires recorded load and solar rather than pricing the forecasts as measured savings', async ({ context, page }) => {
+    await mockBackend(context, { noMeasurements: true });
+    await login(page);
+    await page.goto('/portal/planner-bench?tab=scheduler');
+    await page.locator('#scheduler-run').click();
+    await expect(page.getByTestId('scheduler-comparison').getByRole('alert')).toContainText('Recorded household load and solar are required');
+    await expect(page.getByTestId('scheduler-cash-saving')).toHaveCount(0);
+  });
+
+  test('ROI separates contract savings from the shared scheduler preview and counts subscription once', async ({ context, page }) => {
+    await mockBackend(context);
+    const customerId = '55555555-5555-4555-8555-555555555555';
+    await context.route('**/rest/v1/customers_with_identity*', route => route.fulfill({ json: { id: customerId, name: 'Comparison home' } }));
+    await context.route('**/rest/v1/customers?*', route => route.fulfill({ json: { id: customerId, primary_home_id: null } }));
+    await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
+    await login(page);
+    await page.goto(`/portal/customers/${customerId}/energy-modeling?tab=roi`);
+    const contract = page.getByTestId('roi-period-saving');
+    await expect(contract).toContainText('SEK');
+    const saving = await contract.textContent();
+    await expect(page.getByTestId('roi-hero')).toContainText(/Contract|Avtals/);
+    await page.getByText(/Preview using planner bench|Förhandsgranska med planner bench/).click();
+    await page.locator('#roi-subscription').fill('300');
+    await page.locator('#scheduler-run').click();
+    await expect(page.getByTestId('scheduler-subscription')).toContainText(/30[.,]00 SEK/, { timeout: 30_000 });
+    const gross = await page.getByTestId('scheduler-cash-saving').textContent();
+    await page.locator('#roi-subscription').fill('0');
+    await expect(contract).toHaveText(saving!);
+    await expect(page.getByTestId('scheduler-subscription')).toContainText(/0[.,]00 SEK/);
+    await expect(page.getByTestId('scheduler-net-saving')).toHaveText(gross!);
+    await expect(page.getByTestId('roi-payback')).toContainText(/requires.*year|behöver.*året/);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const section = page.getByTestId('roi-scheduler');
+    expect(await section.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await section.screenshot({ path: test.info().outputPath('scheduler-roi-mobile.png') });
+  });
+
   test('shows economic finding markers and supports keyboard quarter selection without repeating savings', async ({ context, page }) => {
     await mockBackend(context);
     await login(page);

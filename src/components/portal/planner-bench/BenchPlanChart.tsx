@@ -46,9 +46,12 @@ interface Props {
   onPeriod: (period: BenchPeriod) => void;
   /** Findings involving the selected quarter and its service deductions. */
   scoreDetail: React.ReactNode;
+  /** Comparison views can replace the diagnostic audit with their own financial detail. */
+  showAudit?: boolean;
+  idPrefix?: string;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail, showAudit = true, idPrefix = 'bench' }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
@@ -108,11 +111,11 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('Dag', 'Day')}>
         {days.map((day, index) => (
-          <button key={day.label} id={`bench-day-${index}`} className={tab(period === index)} aria-pressed={period === index} onClick={() => onPeriod(index)}>
+          <button key={day.label} id={`${idPrefix}-day-${index}`} className={tab(period === index)} aria-pressed={period === index} onClick={() => onPeriod(index)}>
             {day.label}
           </button>
         ))}
-        <button id="bench-day-all" className={tab(period === 'all')} aria-pressed={period === 'all'} onClick={() => onPeriod('all')}>
+        <button id={`${idPrefix}-day-all`} className={tab(period === 'all')} aria-pressed={period === 'all'} onClick={() => onPeriod('all')}>
           {t('Hela 72 h', 'Full 72 h')}
         </button>
       </div>
@@ -124,7 +127,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
         dividerIndex={0}
         hasBattery={series.homeSoc.some(v => v !== null)}
         hasEvBattery={series.carSoc.some(v => v !== null)}
-        quarterAudit={quarterAudit}
+        quarterAudit={showAudit ? quarterAudit : undefined}
         scoreDetail={scoreDetail}
         realPrices={chart.realPrices}
         poolTargetC={series.comfort?.pool_target_c ?? null}

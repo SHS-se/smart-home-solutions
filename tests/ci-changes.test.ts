@@ -6,7 +6,7 @@ const root = new URL("..", import.meta.url).pathname;
 Deno.test("a live planner adapter change deploys the energy functions and runs the bench", () => {
   const c = classify(root, ["supabase/functions/_shared/rules-planner.ts"]);
   assert(c.planner);
-  // The portal renders the published contract; it never executes the solver.
+  // The live portal renders this published contract; the isolated comparison uses its own Wasm boundary.
   assert(!c.frontend);
   assert(c.functions.includes("energy-optimisation-plan-step"));
   assert(c.functions.includes("energy-optimisation-ingest"));
@@ -57,11 +57,18 @@ Deno.test("rule planner artifacts and explicit engine selection trigger benchmar
   ]) {
     const c = classify(root, [path]);
     assert(c.planner, path);
-    assert(!c.frontend, path);
+    assertEquals(c.frontend, path === "planner-core/recipe.json" || path.endsWith("artifact.json"), path);
     if (path === "planner-core/recipe.json" || path.endsWith("artifact.json")) {
       assert(c.functions.includes("energy-optimisation-plan-step"), path);
       assert(c.functions.includes("energy-optimisation-ingest"), path);
     } else assert(!c.functions.includes("energy-optimisation-plan-step"), path);
   }
   assert(classify(root, ["bench/planner-engine.json"]).bench);
+});
+
+Deno.test("comparison worker dependencies rebuild the preview without deploying a new planner", () => {
+  const c = classify(root, ["src/lib/scheduler-comparison/worker.ts"]);
+  assert(c.frontend);
+  assertEquals([c.planner, c.bench, c.functions.length], [false, false, 0]);
+  assert(classify(root, ["supabase/functions/_shared/planner-wasm/solver.wasm"]).frontend);
 });

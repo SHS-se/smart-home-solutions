@@ -56,7 +56,8 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
   const touches = (files: Set<string>) => any(f => files.has(f));
 
   const tree = diskTree(root);
-  const frontendGraph = reach(tree, ["src/main.tsx", "vite.config.ts"]);
+  // Vite also bundles this worker through new URL(), outside ordinary imports.
+  const frontendGraph = reach(tree, ["src/main.tsx", "vite.config.ts", "src/lib/scheduler-comparison/worker.ts"]);
   const frontend = touches(frontendGraph)
     || any(f => FRONTEND_FILES.includes(f) || f.startsWith("public/") || f.startsWith("e2e/")
       || (f.startsWith("src/") && !isTest(f) && !isDoc(f)));

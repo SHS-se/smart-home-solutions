@@ -15,9 +15,9 @@ points you control.
 Page: **Planner bench** in the staff menu, on the test site
 (`https://test.smarthomesolutions.se/portal/planner-bench`).
 
-## The page's two tabs
+## The page's tabs
 
-`/portal/planner-bench` has two tabs, kept in the URL (`?tab=prices`):
+`/portal/planner-bench` has three tabs, kept in the URL (`?tab=prices` or `?tab=scheduler`):
 
 - **Planner bench**: the cases, scores and plans described below. Every planner
   is given the real prices of a case's 72 hours (the oracle lane), so the bench
@@ -30,6 +30,11 @@ Page: **Planner bench** in the staff menu, on the test site
   worked out in `src/lib/planner-bench/price-estimates.ts` from the quarters
   the chart draws: level error is the gap between a day's estimated and real
   mean, quarter error the mean gap per quarter-hour.
+- **Defaults vs SHS**: an isolated financial comparison against maximum self
+  consumption, midnight EV charging and a pool thermostat with 60 W circulation.
+  SHS plans with forecasts; both execute against recorded conditions. The same
+  view is available as a staff preview in ROI, separate from contract savings.
+  See [scheduler comparison](scheduler-comparison.md) for assumptions and accounting.
 
 ## Pieces
 
