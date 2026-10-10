@@ -1,3 +1,8 @@
+# Default branch
+
+Make all changes on `dev` unless the user explicitly requests another branch.
+Check the current branch before editing files and switch to `dev` if needed.
+
 # Lint validation
 
 Before committing code changes, run `npm run lint` from the repository root and
