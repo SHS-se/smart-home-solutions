@@ -68,19 +68,73 @@ Deno.test('home reconstruction joins UUID meters and counts the circulation floo
   assertEquals(input.problem.initial.heater_state, { kind: 'off_unobserved' });
 });
 
-for (const source of ['load', 'solar', 'price', 'meter', 'battery', 'ev', 'pool'] as const) {
+for (const source of ['price', 'battery', 'ev', 'pool'] as const) {
   Deno.test(`missing historical ${source} fails instead of substituting a current reading or zero`, () => {
     const rows = baselineFixture();
-    if (source === 'load') rows.actual[1].total_load_kwh = null;
-    if (source === 'solar') rows.actual[1].solar_production_kwh = null;
     if (source === 'price') rows.prices.pop();
-    if (source === 'meter') delete rows.deviceSlots[0].device_energy_kwh['pump-id'];
     if (source === 'battery') rows.actual[0].battery_soc = null;
     if (source === 'ev') rows.evInitial = null;
     if (source === 'pool') rows.pool = [];
     assertThrows(() => prepareHomeBaseline(rows));
   });
 }
+
+Deno.test('replacement heater and offline meter readings contribute zero without blocking modelled heating', () => {
+  const rows = baselineFixture();
+  delete rows.deviceSlots[0].device_energy_kwh['heater-id'];
+  rows.deviceSlots[1].device_energy_kwh['pump-id'] = null;
+  rows.deviceSlots.splice(2, 1);
+  rows.pool[0].water_temperature_c = 30;
+  const input = prepareHomeBaseline(rows), result = projectBaseline(input, engine);
+  assertAlmostEquals(input.problem.slots[0].base_w, 1060);
+  assertAlmostEquals(input.problem.slots[1].base_w, 1120);
+  assertAlmostEquals(input.problem.slots[2].base_w, 1120);
+  assertEquals(input.energyGaps.deviceReadings, 5);
+  assertEquals(result.commands[0].pool_on, true);
+  assert(result.series.deviceW.$default_pool_heat[0] > 0);
+  assertAlmostEquals(result.ledger.costSek, result.series.costSek.reduce((a, b) => a + b, 0));
+});
+
+Deno.test('missing total consumption uses other device meters, excluding the loads being modelled', () => {
+  const rows = baselineFixture();
+  rows.actual[1].total_load_kwh = null;
+  rows.deviceSlots[0].device_energy_kwh = { 'heater-id': .5, 'pump-id': .015, 'car-id': 1,
+    'household-id': .25, 'hot-water-id': .1, 'offline-id': null };
+  const input = prepareHomeBaseline(rows);
+  assertAlmostEquals(input.problem.slots[0].base_w, 1460);
+  assertEquals(input.energyGaps.householdQuarters, 1);
+  assertEquals(input.energyGaps.deviceReadings, 1);
+  // A valid total still retains the unmetered household demand.
+  assertAlmostEquals(input.problem.slots[1].base_w, 1060);
+});
+
+Deno.test('absent energy quarters produce zero observed demand and solar while default controls still run', () => {
+  const rows = baselineFixture();
+  rows.actual.splice(1, 1); rows.deviceSlots.splice(0, 1);
+  rows.actual[1].solar_production_kwh = null;
+  const input = prepareHomeBaseline(rows);
+  assertEquals(input.problem.slots[0].base_w, 60);
+  assertEquals(input.problem.slots[0].solar_w, 0);
+  assertEquals(input.problem.slots[1].solar_w, 0);
+  assertEquals(input.energyGaps, { householdQuarters: 1, solarQuarters: 2, deviceReadings: 3 });
+  assertEquals(projectBaseline(input, engine).series.start.length, 288);
+});
+
+Deno.test('invalid observed energy is rejected rather than treated as a sensor gap', () => {
+  for (const value of [NaN, Infinity, -1]) {
+    const rows = baselineFixture();
+    rows.deviceSlots[0].device_energy_kwh['heater-id'] = value;
+    assertThrows(() => prepareHomeBaseline(rows), Error, 'device meter');
+  }
+});
+
+Deno.test('other device meters supply missing household totals when no stores are modelled', () => {
+  const rows = baselineFixture();
+  rows.snapshot.capabilities = { battery: false, pool: false, ev: false };
+  rows.actual[1].total_load_kwh = null;
+  rows.deviceSlots[0].device_energy_kwh = { 'household-id': .25, 'hot-water-id': .1 };
+  assertAlmostEquals(prepareHomeBaseline(rows).problem.slots[0].base_w, 1400);
+});
 
 Deno.test('unknown device IDs, inconsistent total load and unsupported pump model fail', () => {
   let rows = baselineFixture();

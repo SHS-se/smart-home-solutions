@@ -18,7 +18,8 @@ export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end
   devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
 export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string;
   problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
-  evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number }
+  evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
+  energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number } }
 
 function time(value: string) {
   const ms = Date.parse(value);
@@ -43,7 +44,7 @@ function soc(value: unknown, label: string, at: string) {
   return result;
 }
 
-/** Only recorded data becomes a dense input. Nullable unknowns never become zero. */
+/** Missing energy contributes zero; missing household totals use the other device meters. */
 export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const facts = homePhysics(rows.snapshot), startMs = time(rows.start), start = new Date(startMs).toISOString();
   const count = (time(rows.end) - startMs) / QUARTER_MS;
@@ -52,6 +53,12 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const ids = new Map(rows.devices.map(d => [d.device_key, d.id]));
   const memberIds = facts.memberKeys.map(key => { const id = ids.get(key); if (!id) throw new Error(`Historical device identity is missing: ${key}`); return { id, key }; });
   if (new Set(memberIds.map(m => m.id)).size !== memberIds.length) throw new Error('Duplicate modeled device identity');
+  const replaced = new Set(memberIds.map(m => m.id));
+  const energyGaps = { householdQuarters: 0, solarQuarters: 0, deviceReadings: 0 };
+  const energy = (value: unknown, label: string, at: string, gap: keyof typeof energyGaps) => {
+    if (value === null || value === undefined) { energyGaps[gap]++; return 0; }
+    return number(value, label, at, true);
+  };
   const initialObservedAt = new Date(startMs - QUARTER_MS).toISOString(), prior = actual.get(startMs - QUARTER_MS);
   const batterySoc = facts.battery ? soc(prior?.battery_soc, 'initial battery SOC', initialObservedAt) : null;
   const evSoc = facts.car ? soc(rows.evInitial?.ev_soc, 'initial EV SOC', rows.evInitial?.start_ts ?? initialObservedAt) : null;
@@ -86,14 +93,20 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
       heater_state: facts.poolStore ? { kind: 'off_unobserved' } : null },
     slots: starts.map((at, i) => {
       const ms = Date.parse(at), observed = actual.get(ms), price = prices.get(ms), meter = meters.get(ms);
-      const load = number(observed?.total_load_kwh, 'household load', at, true);
-      const removed = memberIds.reduce((sum, m) => sum + number(meter?.device_energy_kwh?.[m.id], `device meter ${m.key}`, at, true), 0);
-      const base = load - removed;
+      const removed = memberIds.reduce((sum, m) => sum + energy(meter?.device_energy_kwh?.[m.id], `device meter ${m.key}`, at, 'deviceReadings'), 0);
+      let base: number;
+      if (observed?.total_load_kwh === null || observed?.total_load_kwh === undefined) {
+        energyGaps.householdQuarters++;
+        base = Object.entries(meter?.device_energy_kwh ?? {}).reduce((sum, [id, value]) => replaced.has(id) ? sum
+          : sum + energy(value, `device meter ${id}`, at, 'deviceReadings'), 0);
+      } else {
+        base = number(observed.total_load_kwh, 'household load', at, true) - removed;
+      }
       // Floating point cancellation only; no metering tolerance or invented load.
       if (base < -1e-9) throw new Error(`Modeled device energy exceeds household load at ${at}`);
       return { local_month: months[i], start_seconds: i * 900, hours: .25,
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
-        solar_w: number(observed?.solar_production_kwh, 'solar generation', at, true) * 4000,
+        solar_w: energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters') * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
         import_price: number(price?.import_price_sek_per_kwh, 'import price', at),
         export_price: number(price?.export_price_sek_per_kwh, 'export price', at), published: true, ev_available: !!facts.car };
@@ -110,7 +123,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
     modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car ? rows.evInitial!.start_ts : null, evDemandKwh,
-    evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters };
+    evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps };
 }
 
 export function projectBaseline(input: BaselineInput, engine: ProjectionEngine) {

@@ -42,9 +42,9 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     const [actual, prices, deviceSlots, outdoor] = await Promise.all([
       read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
       read<PriceRow[]>(window('energy_optimisation_price_slots', 'start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh', w.start, w.end, w.count)),
-      facts.memberKeys.length ? read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
+      read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
         p_customer_id: ref.customerId, p_home_id: ref.homeId, p_from: w.start, p_to: w.end,
-      }).order('start_ts').limit(w.count).abortSignal(signal)) : Promise.resolve([]),
+      }).order('start_ts').limit(w.count).abortSignal(signal)),
       facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null
         ? read<OutdoorRow[]>(window('energy_optimisation_outdoor_slots', 'start_ts,temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
     ]);

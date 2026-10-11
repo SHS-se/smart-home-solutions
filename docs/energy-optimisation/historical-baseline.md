@@ -13,8 +13,8 @@ latest month stops at the pinned recorded end. Navigation cannot move beyond
 that end. A month projects continuously from its initial state rather than
 combining independently initialised 72-hour frames.
 
-Missing required history is reported, including source and timestamp. A failed
-period leaves navigation available. Each historical read covers at most seven
+Missing required prices or initial states are reported, including source and timestamp.
+A failed period leaves navigation available. Each historical read covers at most seven
 elapsed days (672 quarters), matching the existing device-history RPC limit
 and staying below REST's row cap. Two windows load in parallel. Initial pool
 and EV readings are fetched once before the entire selected period.
@@ -25,8 +25,14 @@ The viewer reads bounded windows of existing actual, price and device quarters.
 It uses recorded solar production and all-in import/export prices, including
 negative prices. Fixed load is total household consumption minus the exact
 pool/EV meter identities being replaced, joined by device UUID. Other measured
-loads remain unchanged. Missing meters or load inconsistent with their sum fail;
-unknown readings are never interpreted as zero. Outdoor observations are needed
+loads remain unchanged. Missing energy readings (absent quarters, absent meter
+keys or null values) contribute zero. If the household total is missing, fixed
+load is the sum of the available other device meters, excluding the pool/EV
+identities being modelled. This also works without any modelled stores. Missing
+solar production contributes zero. Gap counts are exported and shown in collapsed
+model details; absent device keys outside the modelled group cannot be counted
+without a historical device inventory. Invalid numeric values and measured device
+totals exceeding a valid household total still fail. Outdoor observations are needed
 only for a pool loss model that explicitly depends on outdoor temperature.
 
 The session's pinned home capture supplies battery/charger/heater/thermal models. There
@@ -81,7 +87,7 @@ benchmark preview have been removed.
 ## Verification
 
 Unit tests cover calendar boundaries, bounded reads, continuous monthly state,
-auto-navigation, cache eviction and stale-result cancellation. They compare
+auto-navigation, cache eviction, sensor gaps and stale-result cancellation. They compare
 captured model conversion with unchanged live preparation,
 then cover UUID meters,60W accounting, optional stores, missing input, signed
 prices, midnight/taper, thermostat stops, inferred driving demand, DST frame

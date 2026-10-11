@@ -377,6 +377,10 @@ test.describe('requesting a replan', () => {
       if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: [{ start_ts: from, water_temperature_c: 31 }] }); return; }
       const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
       const rows = baselineFixture(range);
+      if (table === 'energy_optimisation_actual_slots') {
+        const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
+        if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; }
+      }
       await route.fulfill({ json: (table === 'energy_optimisation_actual_slots' ? rows.actual : rows.prices).slice(0, Math.min(limit, 1000)) });
     });
     await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
@@ -385,7 +389,12 @@ test.describe('requesting a replan', () => {
       const period = { start: request.p_from, end: request.p_to };
       expect(Date.parse(period.end) - Date.parse(period.start)).toBeLessThanOrEqual(7 * 24 * 3_600_000);
       rpcWindows.push(period);
-      await route.fulfill({ json: baselineFixture(period).deviceSlots });
+      const rows = baselineFixture(period).deviceSlots;
+      rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => {
+        delete row.device_energy_kwh['heater-id'];
+        row.device_energy_kwh['household-id'] = .25;
+      });
+      await route.fulfill({ json: rows });
     });
     await page.goto('/portal/energy-modeling?tab=roi');
     const viewer = page.getByTestId('roi-baseline');
@@ -417,6 +426,12 @@ test.describe('requesting a replan', () => {
     expect(previous.input.start).toBe('2026-08-31T22:00:00.000Z');
     expect(previous.input.end).toBe(current.input.start);
     expect(previous.result.series.start).toHaveLength(2880);
+    expect(previous.input.energyGaps).toEqual({ householdQuarters: 1, solarQuarters: 1, deviceReadings: 2880 });
+    expect(previous.input.problem.slots[0].base_w).toBe(1060);
+    await expect(viewer.getByRole('alert')).toHaveCount(0);
+    await viewer.locator('summary').click();
+    await expect(page.getByTestId('baseline-energy-gaps')).toContainText('2880');
+    await viewer.locator('summary').click();
     const historicalReads = reads;
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
