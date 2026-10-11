@@ -6,8 +6,28 @@ import { baselineFixture } from './fixture.ts';
 import { homePhysics } from './home-physics.ts';
 import { prepareHomeBaseline, projectBaseline, frameStart, shiftFrame } from './model.ts';
 import { projectDefaultProblem, DEFAULT_SETTINGS } from './controller.ts';
+import { latestPeriod, stepPeriod } from './period.ts';
 
 const engine = createWasmPlanner(new Uint8Array(readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
+
+Deno.test('calendar month carries physical state through every former 72-hour boundary and reconciles native cost', () => {
+  const anchor = { snapshot: baselineFixture().snapshot, latestEnd: '2026-11-01T00:00:00.000Z' };
+  const period = stepPeriod(anchor, latestPeriod(anchor, 'month'), -1)!;
+  const rows = baselineFixture(period), input = prepareHomeBaseline(rows);
+  assertEquals(input.problem.slots.length, 2980);
+  assertEquals(input.evDemandKwh.length, 2980);
+  const result = projectBaseline(input, engine);
+  const continuous = engine.project(input.problem, result.commands).outcome;
+  if (continuous.kind === 'failed') throw new Error(continuous.issue);
+  assertEquals(result.series.start.at(-1), '2026-10-31T22:45:00.000Z');
+  assertAlmostEquals(result.ledger.costSek, result.series.costSek.reduce((a, b) => a + b, 0));
+  for (const i of [287, 288, 575, 576, 2016, 2979]) {
+    assertAlmostEquals(result.series.costSek[i], continuous.quarters[i].cost, 1e-8);
+    assertAlmostEquals(result.series.homeSoc[i]!, continuous.quarters[i].battery_kwh! / input.problem.battery!.capacity_kwh * 100);
+    assertAlmostEquals(result.series.poolC[i]!, continuous.quarters[i].pool_c!);
+  }
+  assert(result.series.homeSoc[288]! < result.series.homeStartSoc!);
+});
 
 Deno.test('home physical models match unchanged live preparation', () => {
   const { snapshot } = baselineFixture();

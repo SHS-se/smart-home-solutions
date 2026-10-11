@@ -154,6 +154,20 @@ export const homeDayBounds = (
   };
 };
 
+/** Calendar month bounds at the home, including DST and variable month lengths. */
+export const homeMonthBounds = (value: TimeValue, offset: number, timeZone: string): { startMs: number; endMs: number } => {
+  const today = zonedParts(toMs(value), timeZone);
+  const target = new Date(Date.UTC(today.year, today.month - 1 + offset, 1));
+  const next = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 1));
+  return {
+    startMs: startOfZonedDate(target.getUTCFullYear(), target.getUTCMonth() + 1, 1, timeZone),
+    endMs: startOfZonedDate(next.getUTCFullYear(), next.getUTCMonth() + 1, 1, timeZone),
+  };
+};
+
+export const formatHomeMonth = (value: TimeValue, timeZone: string): string =>
+  formatter(timeZone, { month: 'long', year: 'numeric' }).format(toMs(value));
+
 /**
  * The hour and minute an instant falls on at the house.
  *

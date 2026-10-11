@@ -282,7 +282,7 @@ test.describe('requesting a replan', () => {
       await route.fulfill({ json: response });
       if (holdHistory && releaseHistory) historyReleased = true;
     });
-    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots', async route => {
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
       historicalReads++;
       const request = route.request().postDataJSON();
       expect(request.p_customer_id).toBe(CUSTOMER_ID); expect(request.p_home_id).toBe(HOME_ID);
@@ -321,10 +321,8 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-next')).toBeDisabled();
     const reads = historicalReads;
     await page.getByTestId('baseline-previous').click();
-    expect(historicalReads).toBe(reads);
-    await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
-    await page.getByTestId('baseline-generate').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    expect(historicalReads).toBeGreaterThan(reads);
     const olderReads = historicalReads;
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -332,9 +330,8 @@ test.describe('requesting a replan', () => {
     // Moving away aborts an in-flight older-frame read and restores the cached frame.
     await page.getByTestId('baseline-previous').click();
     const cachedFrame = await page.getByTestId('baseline-frame').textContent();
-    await page.getByTestId('baseline-previous').click();
     holdHistory = true;
-    await page.getByTestId('baseline-generate').click();
+    await page.getByTestId('baseline-previous').click();
     await expect.poll(() => releaseHistory !== null).toBe(true);
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-frame')).toHaveText(cachedFrame!);
@@ -351,6 +348,94 @@ test.describe('requesting a replan', () => {
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-desktop.png') });
   });
 
+  test('ROI month view auto-loads complete calendar ranges in bounded reads and reuses shared charts', async ({ context, page }, testInfo) => {
+    const fixture = baselineFixture(), rpcWindows: { start: string; end: string }[] = [];
+    let reads = 0;
+    const writes: string[] = [];
+    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
+    page.on('request', req => {
+      if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url());
+    });
+    await context.route('**/rest/v1/energy_optimisation_*', async route => {
+      const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';
+      if (table === 'energy_optimisation_current') {
+        if (select.includes('captured_at:snapshot')) { reads++; await route.fulfill({ json: fixture.snapshot }); }
+        else await route.fallback();
+        return;
+      }
+      if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: fixture.devices }); return; }
+      if (!['energy_optimisation_actual_slots', 'energy_optimisation_price_slots', 'energy_optimisation_pool_slots'].includes(table!)) { await route.fallback(); return; }
+      reads++;
+      const filters = url.searchParams.getAll('start_ts');
+      const from = filters.find(v => v.startsWith('gte.'))?.slice(4);
+      const end = filters.find(v => v.startsWith('lt.'))?.slice(3);
+      const before = filters.find(v => v.startsWith('lte.'))?.slice(4);
+      const limit = Number(url.searchParams.get('limit'));
+      expect(limit).toBeLessThanOrEqual(1000);
+      if (select === 'start_ts') { await route.fulfill({ json: { start_ts: fixture.actual.at(-1)!.start_ts } }); return; }
+      if (select === 'start_ts,ev_soc') { await route.fulfill({ json: { start_ts: before, ev_soc: .79 } }); return; }
+      if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: [{ start_ts: from, water_temperature_c: 31 }] }); return; }
+      const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
+      const rows = baselineFixture(range);
+      await route.fulfill({ json: (table === 'energy_optimisation_actual_slots' ? rows.actual : rows.prices).slice(0, Math.min(limit, 1000)) });
+    });
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
+      reads++;
+      const request = route.request().postDataJSON();
+      const period = { start: request.p_from, end: request.p_to };
+      expect(Date.parse(period.end) - Date.parse(period.start)).toBeLessThanOrEqual(7 * 24 * 3_600_000);
+      rpcWindows.push(period);
+      await route.fulfill({ json: baselineFixture(period).deviceSlots });
+    });
+    await page.goto('/portal/energy-modeling?tab=roi');
+    const viewer = page.getByTestId('roi-baseline');
+    await page.getByTestId('baseline-view-month').click();
+    expect(reads).toBe(0);
+    await page.getByTestId('baseline-view-frame').click();
+    await page.getByTestId('baseline-generate').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    const count = rpcWindows.length;
+    await page.getByTestId('baseline-view-month').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    await expect(page.getByTestId('baseline-next')).toBeDisabled();
+    const download = page.waitForEvent('download');
+    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const current = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
+    expect(current.input.start).toBe('2026-09-30T22:00:00.000Z');
+    expect(current.input.end).toBe(fixture.end);
+    expect(current.result.series.start.length).toBe((Date.parse(fixture.end) - Date.parse(current.input.start)) / 900_000);
+    const windows = rpcWindows.slice(count).sort((a, b) => a.start.localeCompare(b.start));
+    expect(windows[0].start).toBe(current.input.start);
+    expect(windows.at(-1)!.end).toBe(current.input.end);
+    windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
+    await page.getByTestId('baseline-previous').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
+    const previousDownload = page.waitForEvent('download');
+    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const previous = JSON.parse(readFileSync((await (await previousDownload).path())!, 'utf8'));
+    expect(previous.input.start).toBe('2026-08-31T22:00:00.000Z');
+    expect(previous.input.end).toBe(current.input.start);
+    expect(previous.result.series.start).toHaveLength(2880);
+    const historicalReads = reads;
+    await page.getByTestId('baseline-next').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    expect(reads).toBe(historicalReads);
+    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await chart.focus(); await chart.press('End'); await chart.press('Enter');
+    await expect(page.getByTestId('baseline-quarter')).toContainText(/Electricity cost|Elkostnad/);
+    await page.getByTestId('baseline-view-frame').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    await expect(page.getByTestId('baseline-quarter')).toHaveCount(0);
+    expect(reads).toBe(historicalReads);
+    await page.getByTestId('baseline-view-month').click();
+    await expect(chart).toBeVisible();
+    await viewer.screenshot({ path: testInfo.outputPath('home-baseline-month.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
   test('ROI historical baseline reports missing recorded inputs without generating a plan', async ({ context, page }) => {
     const fixture = baselineFixture();
     await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
@@ -364,7 +449,7 @@ test.describe('requesting a replan', () => {
     });
     await context.route('**/rest/v1/energy_optimisation_devices*', route => route.fulfill({ json: fixture.devices }));
     await context.route('**/rest/v1/energy_optimisation_pool_slots*', route => route.fulfill({ json: fixture.pool }));
-    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots', route => route.fulfill({ json: fixture.deviceSlots }));
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', route => route.fulfill({ json: fixture.deviceSlots }));
     await context.route('**/rest/v1/energy_optimisation_price_slots*', route => route.fulfill({ json: fixture.prices.slice(1) }));
     await page.goto('/portal/energy-modeling?tab=roi');
     await page.getByTestId('baseline-generate').click();

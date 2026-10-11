@@ -1,15 +1,23 @@
 # Historical default model in ROI
 
-At the bottom of ROI, **Generate model** projects the selected
-home under fixed default controls. Previous period / Next period selects adjacent
-72 elapsed-hour frames. Only Generate fetches inputs; visited frames are kept in an eight-frame
-browser-memory cache. Refreshing the page or changing home discards it. Nothing
-writes a baseline plan, score or result to the database.
+At the bottom of ROI, **Generate model** activates the selected home's default
+model. Previous/Next and the **72 h / Month** buttons then generate uncached
+periods automatically. Visited periods display immediately from an eight-entry
+browser-memory cache. Refreshing the page or changing home discards the session.
+Nothing writes a baseline plan, score or result to the database.
 
-Each frame has288contiguous quarter-hour intervals. The initial frame ends after
-the latest completed recorded energy quarter; navigation stays anchored there.
-Missing required history is reported, including the source and timestamp.
-Older frames remain accessible when a selected frame has incomplete inputs.
+The first generation pins the equipment models, home timezone and latest
+completed recorded quarter for the session. Frames cover 72 elapsed hours.
+Months follow the home's local calendar, including DST and leap years; the
+latest month stops at the pinned recorded end. Navigation cannot move beyond
+that end. A month projects continuously from its initial state rather than
+combining independently initialised 72-hour frames.
+
+Missing required history is reported, including source and timestamp. A failed
+period leaves navigation available. Each historical read covers at most seven
+elapsed days (672 quarters), matching the existing device-history RPC limit
+and staying below REST's row cap. Two windows load in parallel. Initial pool
+and EV readings are fetched once before the entire selected period.
 
 ## Inputs and models
 
@@ -21,7 +29,7 @@ loads remain unchanged. Missing meters or load inconsistent with their sum fail;
 unknown readings are never interpreted as zero. Outdoor observations are needed
 only for a pool loss model that explicitly depends on outdoor temperature.
 
-The current captured home supplies battery/charger/heater/thermal models. There
+The session's pinned home capture supplies battery/charger/heater/thermal models. There
 is no archive of historical fitted models, so model capture time is shown.
 Initial battery SOC and pool temperature use the preceding quarter's means;
 initial EV SOC uses the latest non-null recorded reading before the frame, with
@@ -48,7 +56,7 @@ its timestamp shown. These are approximate initial states.
   full-power auxiliary model below60W fails.
 
 The isolated worker exposes only native `project`, never `solve`. It performs
-288reactive projections with carried battery/car/pool/heater state. The existing
+one reactive projection per quarter with carried battery/car/pool/heater state. The existing
 Wasm artifact is verified by SHA256. No optimisation, forecasting, fitting,
 backfill, polling or planner dispatch happens. The working planner and its
 artifact remain unchanged.
@@ -61,8 +69,7 @@ in a collapsed Model details section below it.
 The shared renderer accepts any contiguous horizon, an explicit home timezone,
 and a configurable axis label limit. Longer horizons use spaced local dates
 instead of hourly labels, retaining every quarter for costs and interaction.
-This prepares the charts for a calendar-month view; baseline generation still
-uses 72-hour frames. JSON export includes native engine hash, captured inputs,
+The same chart renders both 72-hour frames and calendar months. JSON export includes native engine hash, captured inputs,
 commands, series and the signed grid ledger.
 
 Electricity cost is imports less export revenue. It excludes fixed fees, SHS subscription,
@@ -73,7 +80,9 @@ benchmark preview have been removed.
 
 ## Verification
 
-Unit tests compare captured model conversion with unchanged live preparation,
+Unit tests cover calendar boundaries, bounded reads, continuous monthly state,
+auto-navigation, cache eviction and stale-result cancellation. They compare
+captured model conversion with unchanged live preparation,
 then cover UUID meters,60W accounting, optional stores, missing input, signed
 prices, midnight/taper, thermostat stops, inferred driving demand, DST frame
 adjacency and native projection parity. Mocked-browser tests exercise real Wasm

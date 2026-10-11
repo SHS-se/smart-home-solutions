@@ -4,10 +4,10 @@ import { HOUSEHOLD } from '../planner-bench/household.ts';
 import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 import type { HistoricalRows } from './model.ts';
 
-export function baselineFixture(): HistoricalRows & { snapshot: OptimisationSnapshot } {
+export function baselineFixture(range?: { start: string; end: string }): HistoricalRows & { snapshot: OptimisationSnapshot } {
   const captured = snapshot();
   const meter = { statistic_id: 'test', suggested_load_type: 'fixed_full_load' as const, load_type: 'fixed_full_load' as const, planning_role: 'controllable' as const, control_type: 'setpoint' as const, profile_sample_count: 1000, forecast_w_by_slot: Array(288).fill(0) };
-  const end = '2026-10-26T00:00:00.000Z', start = Date.parse(end) - 72 * 3_600_000;
+  const end = range?.end ?? '2026-10-26T00:00:00.000Z', start = range ? Date.parse(range.start) : Date.parse(end) - 72 * 3_600_000;
   captured.capabilities.ev = true;
   captured.ev_battery = { name: 'Home car', connected: true, capacity_kwh: 75.6, soc: .79, departure_target_soc: .8,
     charge_efficiency: .92, kwh_per_km: .16, available_from: null, departure: null, priority: 1, source_entity_ids: { connected: 'test', soc: 'test', target_soc: 'test', energy_remaining: null, charge_current: null } };
@@ -22,8 +22,8 @@ export function baselineFixture(): HistoricalRows & { snapshot: OptimisationSnap
     { ...meter, key: 'pool_pump', name: 'Home pool pump', category: 'property_energy', planning_service: 'pool', pool_role: 'circulation', active_power_w: 764 },
     { ...meter, key: 'car', name: 'Home car', category: 'ev_charging', active_power_w: 11040 },
   ];
-  const times = Array.from({ length: 289 }, (_, i) => new Date(start + (i - 1) * 900_000).toISOString());
-  return { snapshot: captured, end, evInitial: { start_ts: times[0], ev_soc: .79 },
+  const times = Array.from({ length: (Date.parse(end) - start) / 900_000 + 1 }, (_, i) => new Date(start + (i - 1) * 900_000).toISOString());
+  return { snapshot: captured, start: new Date(start).toISOString(), end, evInitial: { start_ts: times[0], ev_soc: .79 },
     actual: times.map(start_ts => ({ start_ts, total_load_kwh: .265, solar_production_kwh: 0, battery_soc: .5, ev_soc: .79 })),
     prices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2 })),
     devices: [{ id: 'heater-id', device_key: 'pool_heater' }, { id: 'pump-id', device_key: 'pool_pump' }, { id: 'car-id', device_key: 'car' }],

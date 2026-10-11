@@ -6,9 +6,6 @@ import type { BenchSeries } from '../planner-bench/types.ts';
 import { homePhysics, type HomeModelCapture } from './home-physics.ts';
 import { DEFAULT_SETTINGS, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
 
-export class BaselineGenerationError extends Error {
-  constructor(message: string, readonly end: string) { super(message); this.name = 'BaselineGenerationError'; }
-}
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export interface ActualRow { start_ts: string; total_load_kwh: number | null; solar_production_kwh: number | null; battery_soc: number | null; ev_soc: number | null }
 export interface PriceRow { start_ts: string; import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }
@@ -17,7 +14,7 @@ export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string
 export interface PoolRow { start_ts: string; water_temperature_c: number }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
-export interface HistoricalRows { snapshot: HomeModelCapture; end: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
+export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
   devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
 export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string;
   problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
@@ -48,7 +45,9 @@ function soc(value: unknown, label: string, at: string) {
 
 /** Only recorded data becomes a dense input. Nullable unknowns never become zero. */
 export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
-  const facts = homePhysics(rows.snapshot), start = frameStart(rows.end), startMs = Date.parse(start);
+  const facts = homePhysics(rows.snapshot), startMs = time(rows.start), start = new Date(startMs).toISOString();
+  const count = (time(rows.end) - startMs) / QUARTER_MS;
+  if (count <= 0) throw new Error('Historical period must contain completed quarters');
   const actual = index(rows.actual), prices = index(rows.prices), meters = index(rows.deviceSlots), pool = index(rows.pool), outdoor = index(rows.outdoor);
   const ids = new Map(rows.devices.map(d => [d.device_key, d.id]));
   const memberIds = facts.memberKeys.map(key => { const id = ids.get(key); if (!id) throw new Error(`Historical device identity is missing: ${key}`); return { id, key }; });
@@ -59,7 +58,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   if (facts.car && (!rows.evInitial || time(rows.evInitial.start_ts) >= startMs)) throw new Error('Initial EV SOC must be a historical reading before the frame');
   let lastEvSoc = evSoc, evMissingSocQuarters = 0;
   const daily = new Map<string, number>();
-  const evDemandKwh = Array.from({ length: 288 }, (_, i) => {
+  const evDemandKwh = Array.from({ length: count }, (_, i) => {
     if (!facts.car) return 0;
     const at = new Date(startMs + i * QUARTER_MS).toISOString();
     const observed = actual.get(Date.parse(at))?.ev_soc;
@@ -74,7 +73,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const poolC = facts.poolStore ? number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
   const idlePumpW = facts.poolStore ? DEFAULT_SETTINGS.idlePumpW : 0;
   if (facts.heater && facts.heater.auxiliary_w < idlePumpW) throw new Error('Full-power pool auxiliary model is below the stated 60 W circulation draw');
-  const starts = Array.from({ length: 288 }, (_, i) => new Date(startMs + i * QUARTER_MS).toISOString());
+  const starts = Array.from({ length: count }, (_, i) => new Date(startMs + i * QUARTER_MS).toISOString());
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
