@@ -1,6 +1,6 @@
-import type { generateHomeBaseline, BaselineCapture } from './browser';
-import type { resolveBaselineAnchor, HomeRef } from './history';
-import { latestPeriod, periodKey, stepPeriod, switchPeriodView, type BaselineAnchor, type BaselinePeriod, type BaselineView } from './period';
+import type { BaselineCapture } from './browser';
+import type { CaptureSource } from './source';
+import { latestPeriod, monthPeriod, stepPeriod, switchPeriodView, type BaselineAnchor, type BaselinePeriod, type BaselineView } from './period';
 
 export interface BaselineSessionState {
   view: BaselineView;
@@ -13,12 +13,11 @@ export interface BaselineSessionState {
   canNext: boolean;
 }
 
-/** One owner for lazy activation, pinned models, bounded caching and request cancellation. */
-export function createBaselineSession(ref: HomeRef | null, dependencies: { resolveAnchor: typeof resolveBaselineAnchor; generate: typeof generateHomeBaseline }) {
+/** Viewer owns lazy activation, selection and its interest in shared model generation. */
+export function createBaselineSession(source: CaptureSource) {
   let anchor: BaselineAnchor | null = null, request: AbortController | null = null, disposed = false;
   let state: BaselineSessionState = { view: 'frame', period: null, capture: null, busy: false, error: null,
     timeZone: null, canPrevious: false, canNext: false };
-  const cache = new Map<string, BaselineCapture>();
   const listeners = new Set<() => void>();
   const publish = (change: Partial<BaselineSessionState>) => {
     state = { ...state, ...change };
@@ -26,30 +25,27 @@ export function createBaselineSession(ref: HomeRef | null, dependencies: { resol
     state.canNext = !!anchor && !!state.period && Date.parse(state.period.end) < Date.parse(anchor.latestEnd);
     listeners.forEach(listener => listener());
   };
-  const show = async (period: BaselinePeriod | null, force = false) => {
-    if (!ref || disposed) return;
+  const show = async (period: BaselinePeriod | null, force = false, monthKey?: string) => {
+    if (disposed) return;
     request?.abort(); request = null;
-    const cached = period && !force ? cache.get(periodKey(period)) : null;
+    const cached = period && !force ? source.cached(period) : null;
     if (cached && period) {
-      cache.delete(periodKey(period)); cache.set(periodKey(period), cached);
       publish({ period, capture: cached, error: null, busy: false });
       return;
     }
     const controller = new AbortController(); request = controller;
-    if (period && force) cache.delete(periodKey(period));
     publish({ period, capture: null, error: null, busy: true });
     try {
       if (!anchor) {
-        const resolved = await dependencies.resolveAnchor(ref, controller.signal);
+        const resolved = await source.anchor();
         if (request !== controller || disposed) return;
         anchor = resolved;
       }
-      const target = period ?? latestPeriod(anchor, state.view);
+      const target = period ?? (monthKey ? monthPeriod(anchor, monthKey) : latestPeriod(anchor, state.view));
+      if (!target) throw new Error('No recorded quarters for this month');
       publish({ period: target, timeZone: anchor.snapshot.timezone });
-      const capture = await dependencies.generate(ref, anchor, target, controller.signal);
+      const capture = await source.capture(target, controller.signal, force);
       if (request !== controller || disposed || controller.signal.aborted) return;
-      cache.set(periodKey(target), capture);
-      if (cache.size > 8) cache.delete(cache.keys().next().value!);
       publish({ capture, busy: false });
     } catch (error) {
       if (request === controller && !disposed && !controller.signal.aborted) {
@@ -75,6 +71,13 @@ export function createBaselineSession(ref: HomeRef | null, dependencies: { resol
       publish({ view });
       return anchor || state.busy ? show(target) : Promise.resolve();
     },
-    dispose: () => { disposed = true; request?.abort(); request = null; cache.clear(); listeners.clear(); },
+    showMonth: (key: string) => {
+      if (disposed) return Promise.resolve();
+      publish({ view: 'month' });
+      return show(anchor ? monthPeriod(anchor, key) : null, false, key);
+    },
+    dispose: () => { disposed = true; request?.abort(); request = null; listeners.clear(); },
   };
 }
+
+export type BaselineSession = ReturnType<typeof createBaselineSession>;

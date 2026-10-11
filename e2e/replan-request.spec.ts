@@ -353,6 +353,7 @@ test.describe('requesting a replan', () => {
     let reads = 0;
     const writes: string[] = [];
     await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
+    await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
     page.on('request', req => {
       if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url());
     });
@@ -378,9 +379,11 @@ test.describe('requesting a replan', () => {
       const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
       const rows = baselineFixture(range);
       if (table === 'energy_optimisation_actual_slots') {
+        rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; });
         const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
-        if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; }
+        if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
       }
+      if (table === 'energy_optimisation_price_slots' && from === '2026-07-31T22:00:00.000Z') rows.prices.shift();
       await route.fulfill({ json: (table === 'energy_optimisation_actual_slots' ? rows.actual : rows.prices).slice(0, Math.min(limit, 1000)) });
     });
     await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
@@ -448,6 +451,44 @@ test.describe('requesting a replan', () => {
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-month.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    // Monthly scheduler costs use the same home's quarter prices, independently of the contract calculator.
+    await page.locator('#roi-from').fill('2026-08');
+    await page.locator('#roi-to').fill('2026-10');
+    await expect(page.getByTestId('roi-period-saving')).toContainText('SEK');
+    const contractBefore = await page.getByTestId('roi-period-saving').textContent();
+    await page.getByTestId('scheduler-calculate').click();
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(2/3)');
+    await expect(page.getByTestId('scheduler-month-2026-08')).toContainText('import price');
+    const september = page.getByTestId('scheduler-month-2026-09');
+    const cells = september.locator('td');
+    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    await expect(cells.nth(0)).toHaveText(display(previous.result.ledger.costSek));
+    await expect(cells.nth(1)).toHaveText(display(2879));
+    await expect(cells.nth(2)).toHaveText(display(previous.result.ledger.costSek - 2879));
+    await expect(cells.nth(3)).toHaveText(display(299));
+    await expect(cells.nth(4)).toHaveText(display(previous.result.ledger.costSek - 2879 - 299));
+    const october = page.getByTestId('scheduler-month-2026-10');
+    const coverage = (Date.parse(current.input.end) - Date.parse(current.input.start)) / (Date.parse('2026-10-31T23:00:00.000Z') - Date.parse(current.input.start));
+    await expect(october.locator('td').nth(3)).toHaveText(display(299 * coverage));
+    await expect(page.getByTestId('roi-period-saving')).toHaveText(contractBefore!);
+    const readsBeforeSubscription = reads;
+    await page.locator('#roi-subscription').fill('0');
+    await expect(cells.nth(4)).toHaveText(display(previous.result.ledger.costSek - 2879));
+    expect(reads).toBe(readsBeforeSubscription);
+    await expect(page.getByTestId('roi-period-saving')).toHaveText(contractBefore!);
+    const gross = await cells.nth(2).textContent();
+    await page.locator('#roi-rate').fill('500');
+    await expect(cells.nth(2)).toHaveText(gross!);
+    expect(reads).toBe(readsBeforeSubscription);
+    await september.getByRole('button', { name: /View model|Visa modell/ }).click();
+    await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    expect(reads).toBe(readsBeforeSubscription);
+    const scheduler = page.getByTestId('roi-scheduler');
+    expect(await scheduler.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await scheduler.screenshot({ path: testInfo.outputPath('monthly-scheduler-mobile.png') });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await scheduler.screenshot({ path: testInfo.outputPath('monthly-scheduler-desktop.png') });
     expect(writes).toEqual([]);
   });
 

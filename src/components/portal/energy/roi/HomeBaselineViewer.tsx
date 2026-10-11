@@ -8,19 +8,15 @@ import EnergyChart from '../charts/EnergyChart';
 import { modelChartData } from '@/lib/energy-shift/model-chart-data';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import BaselineModelDetails from './BaselineModelDetails';
-import { generateHomeBaseline } from '@/lib/home-baseline/browser';
-import { resolveBaselineAnchor } from '@/lib/home-baseline/history';
-import { createBaselineSession } from '@/lib/home-baseline/session';
+import type { BaselineSession } from '@/lib/home-baseline/session';
 import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/energy-shift/home-time';
 import { downloadJson } from '@/lib/download-json';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 
-export default function HomeBaselineViewer({ customerId, homeId }: { customerId: string; homeId: string | null }) {
+export default function HomeBaselineViewer({ session, homeId }: { session: BaselineSession; homeId: string | null }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
-  const session = useMemo(() => createBaselineSession(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline }), [customerId, homeId]);
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
   const [selected, setSelected] = useState<number | null>(null);
-  useEffect(() => () => session.dispose(), [session]);
   useEffect(() => { setSelected(null); }, [period]);
   const timeZone = sessionTimeZone ?? homeTimeZone;
   const stamp = (at: string) => formatHomeDateTime(at, timeZone);

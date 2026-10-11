@@ -39,6 +39,8 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
         <p>{t('Indata', 'Inputs')}: {t('uppmätt förbrukning, solproduktion och elpriser', 'recorded consumption, solar and electricity prices')}. {input.timeZone}.</p>
+        <p>{t('Uppmätt elkostnad', 'Recorded electricity cost')}: {number(input.recorded.ledger.costSek)} SEK.
+          {' '}{t('Saknade nätimport- / exportkvartar', 'Missing grid import / export quarters')}: {input.recorded.missingImportQuarters} / {input.recorded.missingExportQuarters}.</p>
         {(input.energyGaps.householdQuarters > 0 || input.energyGaps.solarQuarters > 0 || input.energyGaps.deviceReadings > 0) && <p data-testid="baseline-energy-gaps">
           {t('Saknad energi räknas som 0', 'Missing energy counts as 0')}: {input.energyGaps.deviceReadings} {t('enhetsvärden', 'device readings')}, {input.energyGaps.solarQuarters} {t('solkvartar', 'solar quarters')}.
           {' '}{input.energyGaps.householdQuarters} {t('kvartar med förbrukning summerad från övriga enheter.', 'quarters with consumption summed from other devices.')}

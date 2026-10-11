@@ -28,6 +28,13 @@ export function stepPeriod(anchor: BaselineAnchor, period: BaselinePeriod, direc
     : frame(direction === -1 ? shiftFrame(period.end, -1) : iso(Math.min(Date.parse(shiftFrame(period.end, 1)), Date.parse(anchor.latestEnd))));
 }
 
+export function monthPeriod(anchor: BaselineAnchor, key: string): BaselinePeriod | null {
+  const at = `${key}-15T12:00:00.000Z`;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(key) || !Number.isFinite(Date.parse(at))) throw new Error('Choose a valid month');
+  const period = month(anchor, at);
+  return Date.parse(period.start) < Date.parse(period.end) ? period : null;
+}
+
 /** The existing RPC allows seven days; 672 quarters also stay below REST's row cap. */
 export function historyWindows(period: Pick<BaselinePeriod, 'start' | 'end'>) {
   const windows: { start: string; end: string; count: number }[] = [];

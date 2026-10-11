@@ -13,6 +13,12 @@ import { fetchRoiInvoices, fetchRoiMonthlyPrices } from '@/lib/contract-roi-stor
 import { compareContract, invoiceRoiHistory, numericInput, supplierRoiHistory } from '@/lib/contract-roi';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
 import HomeBaselineViewer from './roi/HomeBaselineViewer';
+import SchedulerMonthlySavings from './roi/SchedulerMonthlySavings';
+import { createCaptureSource } from '@/lib/home-baseline/source';
+import { createBaselineSession } from '@/lib/home-baseline/session';
+import { createSavingsRun } from '@/lib/home-baseline/savings-run';
+import { generateHomeBaseline } from '@/lib/home-baseline/browser';
+import { resolveBaselineAnchor } from '@/lib/home-baseline/history';
 import ContractFields, { type ContractDraft } from './roi/ContractFields';
 import { RoiNumberField, RoiSelect } from './roi/RoiFields';
 
@@ -38,6 +44,11 @@ interface ROITabProps { customerId: string; homeId: string | null; homeCount?: n
 function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
   const { t } = useLanguage();
   const timeZone = useHomeTimeZone();
+  const baseline = useMemo(() => {
+    const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline });
+    return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
+  }, [customerId, homeId]);
+  useEffect(() => () => { baseline.viewer.dispose(); baseline.savings.dispose(); baseline.source.dispose(); }, [baseline]);
   const storageKey = `shs-contract-roi-v2:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
     try {
@@ -171,16 +182,17 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
       </div>
     </details>}
     <Card data-testid="roi-scheduler"><CardHeader><CardTitle>{t('Besparing med schemaläggaren', 'Scheduler savings')}</CardTitle></CardHeader><CardContent className="space-y-5">
-      <p className="text-sm text-muted-foreground">{t('SHS jämfört med standardstyrning på samma elavtal. Abonnemanget räknas här, separat från avtalsbesparingen ovan.', 'SHS compared with default controls on the same electricity contract. Subscription is counted here, separately from the contract saving above.')}</p>
+      <p className="text-sm text-muted-foreground">{t('Standardmodell minus uppmätt elkostnad · samma elavtal.', 'Default model minus recorded electricity cost · same contract.')}</p>
       <div className="grid gap-4 sm:grid-cols-3">
         <RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
         <RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />
         <RoiNumberField id="roi-subscription" label={t('Abonnemang (kr/månad)', 'Subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
       </div>
       <p data-testid="roi-payback" className="text-sm">{t('Återbetalning: behöver en representativ jämförelse för hemmet över året.', 'Payback: requires a representative comparison for the home across the year.')}</p>
-      <p className="text-sm text-muted-foreground">{t('Schemaläggarbesparing för ditt hem är ännu inte beräknad.', 'Scheduler savings for your home have not yet been calculated.')}</p>
+      <SchedulerMonthlySavings run={baseline.savings} from={from} to={to} homeId={homeId}
+        subscriptionSek={numericInput(settings.subscription)} onOpenMonth={month => baseline.viewer.showMonth(month)} />
     </CardContent></Card>
-    <HomeBaselineViewer key={homeId ?? 'none'} customerId={customerId} homeId={homeId} />
+    <HomeBaselineViewer key={homeId ?? 'none'} session={baseline.viewer} homeId={homeId} />
   </div>;
 }
 

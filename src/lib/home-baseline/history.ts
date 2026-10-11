@@ -40,7 +40,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
   const windows = historyWindows(period);
   const loadWindow = async (w: typeof windows[number], first: boolean) => {
     const [actual, prices, deviceSlots, outdoor] = await Promise.all([
-      read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
+      read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc,grid_import_kwh,grid_export_kwh', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
       read<PriceRow[]>(window('energy_optimisation_price_slots', 'start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh', w.start, w.end, w.count)),
       read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
         p_customer_id: ref.customerId, p_home_id: ref.homeId, p_from: w.start, p_to: w.end,

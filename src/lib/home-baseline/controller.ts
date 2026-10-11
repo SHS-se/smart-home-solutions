@@ -1,5 +1,7 @@
 import type { createWasmPlanner, NativeQuarter } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
+import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
+export type { ElectricityLedger } from './ledger.ts';
 
 export interface DefaultSettings { poolStartC: number; poolStopC: number; idlePumpW: number; batterySuppliesEv: boolean }
 export const DEFAULT_SETTINGS: DefaultSettings = { poolStartC: 30, poolStopC: 30.5, idlePumpW: 60, batterySuppliesEv: true };
@@ -41,16 +43,12 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
   return { problem, commands, quarters };
 }
 
-export interface ElectricityLedger { importKwh: number; exportKwh: number; importCostSek: number; exportRevenueSek: number; costSek: number }
-
 export function electricityLedger(quarters: readonly NativeQuarter[], p: ReadyProblem): ElectricityLedger {
-  const ledger: ElectricityLedger = { importKwh: 0, exportKwh: 0, importCostSek: 0, exportRevenueSek: 0, costSek: 0 };
+  const ledger = emptyElectricityLedger();
   quarters.forEach((q, i) => {
     const bought = Math.max(0, q.net_w) * p.slots[i].hours / 1000, sold = Math.max(0, -q.net_w) * p.slots[i].hours / 1000;
-    ledger.importKwh += bought; ledger.exportKwh += sold;
-    ledger.importCostSek += bought * p.slots[i].import_price; ledger.exportRevenueSek += sold * p.slots[i].export_price;
+    addElectricity(ledger, bought, sold, p.slots[i].import_price, p.slots[i].export_price);
   });
-  ledger.costSek = ledger.importCostSek - ledger.exportRevenueSek;
   return ledger;
 }
 

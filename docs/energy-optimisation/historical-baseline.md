@@ -4,7 +4,10 @@ At the bottom of ROI, **Generate model** activates the selected home's default
 model. Previous/Next and the **72 h / Month** buttons then generate uncached
 periods automatically. Visited periods display immediately from an eight-entry
 browser-memory cache. Refreshing the page or changing home discards the session.
-Nothing writes a baseline plan, score or result to the database.
+Nothing writes a baseline plan, score or result to the database. The scheduler
+section has an on-demand **Calculate months** button for the selected From/To
+range. Each month shows default-model cost, recorded cost, electricity savings,
+SHS subscription and net savings. A month link opens the same model in the chart.
 
 The first generation pins the equipment models, home timezone and latest
 completed recorded quarter for the session. Frames cover 72 elapsed hours.
@@ -79,10 +82,29 @@ The same chart renders both 72-hour frames and calendar months. JSON export incl
 commands, series and the signed grid ledger.
 
 Electricity cost is imports less export revenue. It excludes fixed fees, SHS subscription,
-wear and terminal stored-energy credit. A baseline inspection frame alone does
-not establish scheduler savings or annual payback. Contract savings remain a
-separate ROI calculation. The discarded Defaults-vs-SHS benchmark tab and ROI
-benchmark preview have been removed.
+wear and terminal stored-energy credit. Recorded cost uses the selected home's
+recorded grid import/export quarters and the **identical historical quarter prices**
+as the baseline. The extra quarter used for initial states contributes no cost.
+Missing grid energy contributes zero and is counted in month details. Negative
+prices, export revenues and negative savings retain their signs.
+
+Electricity savings = baseline cost − recorded cost. Identical fixed contract
+fees cancel. SHS subscription is separate; a partial month pays elapsed period
+duration / full home-calendar month duration of the monthly subscription. Full
+DST months pay one subscription. Net savings subtract that amount, without
+annual extrapolation or a new payback estimate. Contract savings remain a separate
+calculation using the comparison contract and account-level supplier/bill history.
+
+One home capture source owns pinned models, an eight-capture LRU, compact monthly
+ledgers and shared in-flight generation. Viewer and monthly report have independent
+cancellation interests: leaving a graph does not cancel a report that still needs
+the same month. Last-consumer cancellation aborts history/worker work and prevents
+late results caching. Fresh generation invalidates the corresponding compact ledger.
+Reports process months sequentially, retain successful rows if another month fails,
+show future months as unavailable and total only calculated rows. Range/home changes
+cancel obsolete report work. Subscription and comparison-contract edits do not fetch
+or project models. The discarded Defaults-vs-SHS benchmark tab and ROI benchmark
+preview have been removed.
 
 ## Verification
 
