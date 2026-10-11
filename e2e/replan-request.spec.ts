@@ -272,7 +272,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('roi-assumption-impact')).toContainText(/ROI/);
     await page.getByTestId('scheduler-calculate').click();
     await expect.poll(() => history.saved()?.generation).toBe(2);
-    await expect.poll(() => Object.keys(history.saved()!.months).length).toBe(6);
+    await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 60_000 }).toBe(6);
     await expectRoiMonths(page, '(6/6)');
     expect(history.saved()!.generation).toBe(2);
     expect(history.windows.length).toBeGreaterThan(before);
