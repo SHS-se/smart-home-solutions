@@ -66,8 +66,8 @@ Deno.test("rule planner artifacts and explicit engine selection trigger benchmar
   assert(classify(root, ["bench/planner-engine.json"]).bench);
 });
 
-Deno.test("comparison worker dependencies rebuild the preview without deploying a new planner", () => {
-  const c = classify(root, ["src/lib/scheduler-comparison/worker.ts"]);
+Deno.test("home baseline worker dependencies rebuild the preview without deploying a new planner", () => {
+  const c = classify(root, ["src/lib/home-baseline/worker.ts"]);
   assert(c.frontend);
   assertEquals([c.planner, c.bench, c.functions.length], [false, false, 0]);
   assert(classify(root, ["supabase/functions/_shared/planner-wasm/solver.wasm"]).frontend);

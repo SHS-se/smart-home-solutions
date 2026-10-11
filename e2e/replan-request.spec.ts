@@ -19,6 +19,7 @@ import { generateOptimisationPlan } from '../supabase/functions/_shared/planner/
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
+import { baselineFixture } from '../src/lib/home-baseline/fixture';
 import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
@@ -230,6 +231,135 @@ test.describe('requesting a replan', () => {
     await expect(contract).toHaveText(saving!);
     await expect(page.getByTestId('roi-scheduler')).toContainText(/have not yet been calculated|ännu inte beräknad/);
     await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
+  });
+
+  test('ROI generates home historical defaults lazily, navigates72h frames and reuses cached charts', async ({ context, page }, testInfo) => {
+    const fixture = baselineFixture();
+    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
+    let historicalReads = 0;
+    let holdHistory = false, historyReleased = false;
+    let releaseHistory: (() => void) | null = null;
+    const writes: string[] = [];
+    page.on('request', req => {
+      if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url());
+    });
+    const atEnd = (end: string) => {
+      const rows = baselineFixture(), offset = Date.parse(end) - Date.parse(rows.end);
+      const shift = (at: string) => new Date(Date.parse(at) + offset).toISOString();
+      rows.end = end;
+      rows.evInitial!.start_ts = shift(rows.evInitial!.start_ts);
+      for (const series of [rows.actual, rows.prices, rows.pool, rows.outdoor, rows.deviceSlots]) series.forEach(row => { row.start_ts = shift(row.start_ts); });
+      rows.actual.slice(1).forEach((row, i) => { row.ev_soc = i < 20 ? .79 : i < 40 ? .69 : i < 100 ? .89 : .79; });
+      return rows;
+    };
+    await context.route('**/rest/v1/energy_optimisation_*', async route => {
+      const url = new URL(route.request().url()), table = url.pathname.split('/').pop();
+      const select = url.searchParams.get('select') ?? '';
+      if (table === 'energy_optimisation_current') {
+        if (select.includes('captured_at:snapshot')) { await route.fulfill({ json: fixture.snapshot }); return; }
+        await route.fallback(); return;
+      }
+      if (table === 'energy_optimisation_devices') {
+        historicalReads++; await route.fulfill({ json: fixture.devices }); return;
+      }
+      if (!['energy_optimisation_actual_slots', 'energy_optimisation_price_slots', 'energy_optimisation_pool_slots'].includes(table!)) {
+        await route.fallback(); return;
+      }
+      historicalReads++;
+      const filters = url.searchParams.getAll('start_ts');
+      const until = filters.find(v => v.startsWith('lt.'))?.slice(3);
+      const before = filters.find(v => v.startsWith('lte.'))?.slice(4);
+      let response: unknown;
+      if (table === 'energy_optimisation_actual_slots' && select === 'start_ts') response = { start_ts: fixture.actual.at(-1)!.start_ts };
+      else if (select === 'start_ts,ev_soc') response = atEnd(new Date(Date.parse(before!) + 900_000 + 72 * 3_600_000).toISOString()).evInitial;
+      else if (table === 'energy_optimisation_pool_slots') response = atEnd(new Date(Date.parse(until!) + 72 * 3_600_000).toISOString()).pool;
+      else response = table === 'energy_optimisation_actual_slots' ? atEnd(until!).actual : atEnd(until!).prices;
+      expect(url.searchParams.get('customer_id')).toBe(`eq.${CUSTOMER_ID}`);
+      expect(url.searchParams.get('home_id')).toBe(`eq.${HOME_ID}`);
+      if (holdHistory && table === 'energy_optimisation_actual_slots' && select.includes('total_load_kwh')) {
+        await new Promise<void>(resolve => { releaseHistory = resolve; });
+      }
+      await route.fulfill({ json: response });
+      if (holdHistory && releaseHistory) historyReleased = true;
+    });
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots', async route => {
+      historicalReads++;
+      const request = route.request().postDataJSON();
+      expect(request.p_customer_id).toBe(CUSTOMER_ID); expect(request.p_home_id).toBe(HOME_ID);
+      expect(Date.parse(request.p_to) - Date.parse(request.p_from)).toBe(72 * 3_600_000);
+      await route.fulfill({ json: atEnd(request.p_to).deviceSlots });
+    });
+    await page.goto('/portal/energy-modeling?tab=roi');
+    const viewer = page.getByTestId('roi-baseline');
+    await expect(viewer).toBeVisible();
+    await expect(page.getByTestId('baseline-generate')).toBeEnabled();
+    expect(historicalReads).toBe(0);
+    await page.getByTestId('baseline-generate').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    await expect(page.getByTestId('baseline-assumptions')).toContainText(/recorded SOC declines|SOC-minskningar/i);
+    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await expect(chart).toBeVisible();
+    await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
+    await expect(page.getByTestId('baseline-quarter')).toContainText(/Driving demand|Körbehov/);
+    const download = page.waitForEvent('download');
+    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
+    expect(capture.result.series.start).toHaveLength(288);
+    expect(capture.engineHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(capture.input.evDemandKwh.reduce((a: number, b: number) => a + b, 0)).toBeCloseTo(.2 * 75.6);
+    expect(capture.result.projectionMs).toBeLessThan(1000);
+    await expect(page.getByTestId('baseline-next')).toBeDisabled();
+    const reads = historicalReads;
+    await page.getByTestId('baseline-previous').click();
+    expect(historicalReads).toBe(reads);
+    await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
+    await page.getByTestId('baseline-generate').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    const olderReads = historicalReads;
+    await page.getByTestId('baseline-next').click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    expect(historicalReads).toBe(olderReads);
+    // Moving away aborts an in-flight older-frame read and restores the cached frame.
+    await page.getByTestId('baseline-previous').click();
+    const cachedFrame = await page.getByTestId('baseline-frame').textContent();
+    await page.getByTestId('baseline-previous').click();
+    holdHistory = true;
+    await page.getByTestId('baseline-generate').click();
+    await expect.poll(() => releaseHistory !== null).toBe(true);
+    await page.getByTestId('baseline-next').click();
+    await expect(page.getByTestId('baseline-frame')).toHaveText(cachedFrame!);
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    releaseHistory!();
+    await expect.poll(() => historyReleased).toBe(true);
+    await expect(page.getByTestId('baseline-frame')).toHaveText(cachedFrame!);
+    await expect(page.getByTestId('baseline-generate')).toBeEnabled();
+    expect(writes).toEqual([]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await viewer.screenshot({ path: testInfo.outputPath('home-baseline-mobile.png') });
+  });
+
+  test('ROI historical baseline reports missing recorded inputs without generating a plan', async ({ context, page }) => {
+    const fixture = baselineFixture();
+    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
+    await context.route('**/rest/v1/energy_optimisation_current*', async route => {
+      if (new URL(route.request().url()).searchParams.get('select')?.includes('captured_at:snapshot')) await route.fulfill({ json: fixture.snapshot });
+      else await route.fallback();
+    });
+    await context.route('**/rest/v1/energy_optimisation_actual_slots*', async route => {
+      const select = new URL(route.request().url()).searchParams.get('select');
+      await route.fulfill({ json: select === 'start_ts' ? { start_ts: fixture.actual.at(-1)!.start_ts } : select === 'start_ts,ev_soc' ? fixture.evInitial : fixture.actual });
+    });
+    await context.route('**/rest/v1/energy_optimisation_devices*', route => route.fulfill({ json: fixture.devices }));
+    await context.route('**/rest/v1/energy_optimisation_pool_slots*', route => route.fulfill({ json: fixture.pool }));
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots', route => route.fulfill({ json: fixture.deviceSlots }));
+    await context.route('**/rest/v1/energy_optimisation_price_slots*', route => route.fulfill({ json: fixture.prices.slice(1) }));
+    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.getByTestId('baseline-generate').click();
+    await expect(page.getByTestId('roi-baseline').getByRole('alert')).toContainText('import price');
+    await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
+    await expect(page.getByTestId('baseline-generate')).toBeEnabled();
+    await expect(page.getByTestId('baseline-previous')).toBeEnabled();
   });
 
   test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {

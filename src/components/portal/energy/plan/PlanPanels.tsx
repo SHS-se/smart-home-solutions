@@ -174,6 +174,8 @@ const PlanPanels: React.FC<{
   consumptionIssues: (ConsumptionIssue | null)[];
   /** First quarter on the plan side, including quarters with missing data. */
   dividerIndex: number;
+  /** Historical model views label their projection boundary without calling it now. */
+  dividerLabel?: string;
   hasBattery: boolean;
   hasEvBattery: boolean;
   selectedIndex?: number;
@@ -206,7 +208,7 @@ const PlanPanels: React.FC<{
    */
   storeLines?: PlanStoreLines;
 }> = ({
-  rows, series, baseValues, consumptionIssues, dividerIndex, hasBattery, hasEvBattery,
+  rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
   costLines, storeLines,
 }) => {
@@ -758,7 +760,7 @@ const PlanPanels: React.FC<{
                 x={x(dividerIndex) + 9} y={price.top - 16}
                 className="fill-card text-[9.5px] font-mono font-semibold tracking-wider"
               >
-                {t('NU · PLAN →', 'NOW · PLAN →')}
+                {dividerLabel ?? t('NU · PLAN →', 'NOW · PLAN →')}
               </text>
             </g>
           )}

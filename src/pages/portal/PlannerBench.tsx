@@ -6,8 +6,7 @@ import BenchAuditDetail from '@/components/portal/planner-bench/BenchAuditDetail
 //
 // Tabs are kept in the URL. The bench gives every planner the real prices of
 // a case, so it judges planning alone; how well unpublished prices are
-// estimated has its own tab (PriceEstimateAccuracy). The isolated defaults
-// comparison plans with forecasts and reports measured financial differences.
+// estimated has its own tab (PriceEstimateAccuracy).
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -47,7 +46,6 @@ import { signedPoints as signed } from '@/components/portal/energy/plan/quarter-
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
-import SchedulerComparison from '@/components/portal/planner-bench/SchedulerComparison';
 import { useBenchJob, type BenchJobRun, type BenchTask } from '@/components/portal/planner-bench/useBenchJob';
 
 // The generated Database types describe the migrated schema; the bench tables
@@ -87,7 +85,7 @@ const Bench: React.FC = () => {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [params, setParams] = useSearchParams();
-  const tab = ['prices', 'scheduler'].includes(params.get('tab') ?? '') ? params.get('tab')! : 'bench';
+  const tab = params.get('tab') === 'prices' ? 'prices' : 'bench';
   const setTab = (value: string) => {
     const next = new URLSearchParams(params);
     if (value === 'bench') next.delete('tab'); else next.set('tab', value);
@@ -363,7 +361,6 @@ const Bench: React.FC = () => {
       <TabsList className="h-auto max-w-full flex-wrap justify-start">
         <TabsTrigger id="bench-tab-bench" value="bench" className="min-h-9">{t('Planerarbänk', 'Planner bench')}</TabsTrigger>
         <TabsTrigger id="bench-tab-prices" value="prices" className="min-h-9">{t('Prisuppskattningens träffsäkerhet', 'Price estimate accuracy')}</TabsTrigger>
-        <TabsTrigger id="bench-tab-scheduler" value="scheduler" className="min-h-9">{t('Standard jämfört med SHS', 'Defaults vs SHS')}</TabsTrigger>
       </TabsList>
       <TabsContent value="bench" className="mt-0 space-y-5">
       {loadError && (isMissingTable(loadError)
@@ -495,9 +492,6 @@ const Bench: React.FC = () => {
       </TabsContent>
       <TabsContent value="prices" className="mt-0">
         <PriceEstimateAccuracy />
-      </TabsContent>
-      <TabsContent value="scheduler" className="mt-0">
-        <SchedulerComparison />
       </TabsContent>
       </Tabs>
 

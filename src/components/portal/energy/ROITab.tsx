@@ -8,12 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { useAuth } from '@/contexts/AuthContext';
-import SchedulerComparison from '../planner-bench/SchedulerComparison';
 import { fetchEnergySupplierDailyCosts } from '@/lib/energy-tariff-storage';
 import { fetchRoiInvoices, fetchRoiMonthlyPrices } from '@/lib/contract-roi-storage';
 import { compareContract, invoiceRoiHistory, numericInput, supplierRoiHistory } from '@/lib/contract-roi';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
+import HomeBaselineViewer from './roi/HomeBaselineViewer';
 import ContractFields, { type ContractDraft } from './roi/ContractFields';
 import { RoiNumberField, RoiSelect } from './roi/RoiFields';
 
@@ -36,9 +35,8 @@ const initialSettings: Settings = {
 
 interface ROITabProps { customerId: string; homeId: string | null; homeCount?: number }
 
-function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
+function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
   const { t } = useLanguage();
-  const { isStaff } = useAuth();
   const timeZone = useHomeTimeZone();
   const storageKey = `shs-contract-roi-v2:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
@@ -181,11 +179,8 @@ function RoiCalculator({ customerId, homeCount = 1 }: ROITabProps) {
       </div>
       <p data-testid="roi-payback" className="text-sm">{t('Återbetalning: behöver en representativ jämförelse för hemmet över året.', 'Payback: requires a representative comparison for the home across the year.')}</p>
       <p className="text-sm text-muted-foreground">{t('Schemaläggarbesparing för ditt hem är ännu inte beräknad.', 'Scheduler savings for your home have not yet been calculated.')}</p>
-      {isStaff && import.meta.env.MODE === 'test' && <details className="rounded-lg border p-4">
-        <summary className="cursor-pointer text-sm font-medium">{t('Förhandsgranska med planner bench-testfall', 'Preview using planner bench test cases')}</summary>
-        <div className="mt-4"><SchedulerComparison monthlySubscriptionSek={number(settings.subscription)} /></div>
-      </details>}
     </CardContent></Card>
+    <HomeBaselineViewer key={homeId ?? 'none'} customerId={customerId} homeId={homeId} />
   </div>;
 }
 

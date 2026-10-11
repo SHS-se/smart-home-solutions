@@ -49,9 +49,11 @@ interface Props {
   /** Comparison views can replace the diagnostic audit with their own financial detail. */
   showAudit?: boolean;
   idPrefix?: string;
+  dividerLabel?: string;
+  poolTargetC?: number | null;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail, showAudit = true, idPrefix = 'bench' }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail, showAudit = true, idPrefix = 'bench', dividerLabel, poolTargetC }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
@@ -125,12 +127,13 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
         baseValues={consumption.baseValues}
         consumptionIssues={consumption.issues}
         dividerIndex={0}
+        dividerLabel={dividerLabel}
         hasBattery={series.homeSoc.some(v => v !== null)}
         hasEvBattery={series.carSoc.some(v => v !== null)}
         quarterAudit={showAudit ? quarterAudit : undefined}
         scoreDetail={scoreDetail}
         realPrices={chart.realPrices}
-        poolTargetC={series.comfort?.pool_target_c ?? null}
+        poolTargetC={poolTargetC === undefined ? series.comfort?.pool_target_c ?? null : poolTargetC}
         costLines={costLines}
         storeLines={storeLines}
         selectedIndex={selectedInView}
