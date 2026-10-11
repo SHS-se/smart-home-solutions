@@ -290,6 +290,19 @@ Deno.test('thermostat carries its latch and native physical stops across quarter
   assertEquals(r.commands[stop + 1].pool_on, false);
 });
 
+Deno.test('default overnight EV charging load balances within the home grid limit and resumes at full current', () => {
+  const rows = baselineFixture({ start: '2026-05-01T22:00:00.000Z', end: '2026-05-02T04:00:00.000Z' });
+  const input = prepareHomeBaseline(rows);
+  input.problem.initial.ev_kwh = .4 * input.problem.car!.capacity_kwh;
+  input.problem.initial.battery_kwh = input.problem.battery!.min_soc * input.problem.battery!.capacity_kwh;
+  input.problem.slots[0].base_w = 10_000;
+  const result = projectBaseline(input, engine);
+  assert(result.commands[0].ev_amps > 0 && result.commands[0].ev_amps < input.problem.charger!.max_current_a);
+  assertEquals(result.commands[1].ev_amps, input.problem.charger!.max_current_a);
+  assert(result.series.gridImportW.every(w => w <= rows.snapshot.grid.import_limit_w + 1e-6));
+  assertAlmostEquals(result.series.carSoc.at(-1)!, 80);
+});
+
 Deno.test('linear outdoor loss requires historical outdoor observations', () => {
   const rows = baselineFixture();
   rows.snapshot.device_physics!.pool!.store.loss = { kind: 'linear', kw_per_c: .1, surroundings_c: null };

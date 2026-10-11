@@ -95,3 +95,17 @@ Deno.test('missing household demand uses electricity balance before an incomplet
   const noGrid = prepareHourlyRecovery(capture().filter(s => !['load', 'grid'].includes(s.statistic_id)), spec).at(-1)!;
   assertAlmostEquals(noGrid.baseline_load_kwh!, .4);
 });
+
+Deno.test('PostgREST offset timestamps match recovered UTC quarters without duplicate or overwritten measurements', () => {
+  const rows = baselineFixture({ start, end: new Date(at + hour).toISOString() });
+  rows.actual.forEach(r => { r.start_ts = r.start_ts.replace('.000Z', '+00:00'); });
+  rows.pool.forEach(r => { r.start_ts = r.start_ts.replace('.000Z', '+00:00'); });
+  rows.deviceSlots.forEach(r => { r.start_ts = r.start_ts.replace('.000Z', '+00:00'); });
+  rows.actual[1].grid_import_kwh = 0;
+  const merged = mergeHourlyHistory(rows, prepareHourlyRecovery(capture(), spec));
+  const input = prepareHomeBaseline(merged);
+  assertEquals(merged.actual.length, 5);
+  assertEquals(merged.actual.find(r => r.start_ts === start)!.grid_import_kwh, 0);
+  assertAlmostEquals(input.recorded.ledger.importKwh, .265 * 3);
+  assertEquals(input.problem.initial.pool_c, 31);
+});

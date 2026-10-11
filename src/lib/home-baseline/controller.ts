@@ -1,6 +1,7 @@
 import type { createWasmPlanner, NativeQuarter } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
+import { chargerLevels } from '../../../supabase/functions/_shared/planner/device-models.ts';
 export type { ElectricityLedger } from './ledger.ts';
 
 export interface DefaultSettings { poolStartC: number; poolStopC: number; idlePumpW: number; batterySuppliesEv: boolean }
@@ -17,6 +18,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
   let initial = problem.initial;
   let heating = ['running', 'steady'].includes(initial.heater_state?.kind ?? ''), charging = false;
   const commands: NativeCommand[] = [], quarters: NativeQuarter[] = [];
+  const chargingLevels = problem.charger ? [...chargerLevels(problem.charger)].reverse().map(level => level.setting) : [0];
   for (let i = 0; i < problem.slots.length; i++) {
     if (problem.car) {
       const remaining = initial.ev_kwh! - evDemandKwh[i];
@@ -29,10 +31,19 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
     }
     if (clock.format(new Date(Date.parse(start) + problem.slots[i].start_seconds * 1000)) === '00:00') charging = true;
     if (!problem.car || initial.ev_kwh! >= problem.targets.ev_limit_kwh! - 1e-9) charging = false;
-    const command: NativeCommand = { pool_on: heating, ev_amps: charging ? problem.charger!.max_current_a : 0,
+    const command: NativeCommand = { pool_on: heating, ev_amps: 0,
       battery: problem.battery ? 'self_consumption' : 'idle',
       charge_limit_w: problem.battery?.charge_max_w ?? 0, discharge_limit_w: problem.battery?.discharge_max_w ?? 0 };
-    const out = engine.project({ ...problem, initial, slots: [{ ...problem.slots[i], start_seconds: 0 }] }, [command]).outcome;
+    const quarter = { ...problem, initial, slots: [{ ...problem.slots[i], start_seconds: 0 }] };
+    // Reactive charger load balancing: highest supported current that fits the
+    // home's supply. Prices and forecasts never select this default command.
+    const levels = charging ? chargingLevels : [0];
+    let out = engine.project(quarter, [{ ...command, ev_amps: levels[0] }]).outcome;
+    command.ev_amps = levels[0];
+    for (let level = 1; out.kind === 'failed' && out.issue === 'shared_grid_limit' && level < levels.length; level++) {
+      command.ev_amps = levels[level];
+      out = engine.project(quarter, [command]).outcome;
+    }
     if (out.kind === 'failed') throw new Error(`Default operation at quarter ${i}: ${out.issue}`);
     const q = out.quarters[0];
     commands.push(command); quarters.push(q);

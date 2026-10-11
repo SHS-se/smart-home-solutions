@@ -88,9 +88,10 @@ export function prepareHourlyRecovery(series: StatisticSeries[], spec: RecoveryS
 /** Field-level precedence preserves every non-null measured value, including zero. */
 export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly RecoveredHour[]): HistoricalRows & { baselineLoads: { start_ts: string; kwh: number }[]; recovery: RecoverySummary } {
   const start = Date.parse(rows.start), end = Date.parse(rows.end), prior = start - QUARTER;
-  const actual = new Map(rows.actual.map(r => [r.start_ts, { ...r }]));
-  const meters = new Map(rows.deviceSlots.map(r => [r.start_ts, { ...r, device_energy_kwh: { ...r.device_energy_kwh } }]));
-  const pool = new Map(rows.pool.map(r => [r.start_ts, { ...r }])), outdoor = new Map(rows.outdoor.map(r => [r.start_ts, { ...r }]));
+  const stamp = (value: string) => new Date(value).toISOString();
+  const actual = new Map(rows.actual.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }]));
+  const meters = new Map(rows.deviceSlots.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts), device_energy_kwh: { ...r.device_energy_kwh } }]));
+  const pool = new Map(rows.pool.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }])), outdoor = new Map(rows.outdoor.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }]));
   const baselineLoads: { start_ts: string; kwh: number }[] = [], recovery = emptyRecovery();
   const sources = new Set<string>();
   let evInitial = rows.evInitial?.ev_soc == null ? null : rows.evInitial;

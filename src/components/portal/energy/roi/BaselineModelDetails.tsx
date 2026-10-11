@@ -20,7 +20,7 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
           <br />{number(p.battery.charge_max_w / 1000)} / {number(p.battery.discharge_max_w / 1000)} kW · {t('verkningsgrad', 'efficiency')} {number(p.battery.charge_efficiency * 100)} / {number(p.battery.discharge_efficiency * 100)}%
         </dd></>}
         {p.car && p.charger && <><dt className="font-medium">{input.carName}</dt><dd>
-          {t('80% från midnatt', '80% from midnight')} · {number(p.car.capacity_kwh)} kWh · {number(p.charger.max_current_a)} A · {p.charger.phase_count} × {number(p.charger.voltage_v)} V
+          {t('80% från midnatt', '80% from midnight')} · {t('lastbalanserad', 'load balanced')} · {number(p.car.capacity_kwh)} kWh · {number(p.charger.max_current_a)} A · {p.charger.phase_count} × {number(p.charger.voltage_v)} V
           <br />{t('Laddningsverkningsgrad', 'Charge efficiency')} {number(p.car.charge_efficiency * 100)}% · {t('körbehov', 'driving demand')} {number(demand)} kWh
         </dd></>}
         {p.pool_store && p.heater && <><dt className="font-medium">Pool</dt><dd>
