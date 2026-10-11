@@ -4,6 +4,7 @@ import { homePhysics, type HomeModelCapture } from './home-physics';
 import { prepareHomeBaseline, QUARTER_MS, type ActualRow, type DeviceRow, type DeviceSlot, type EvInitialRow, type OutdoorRow, type PoolRow, type PriceRow } from './model';
 import { historyWindows, type BaselineAnchor, type BaselinePeriod } from './period';
 import { mergeHourlyHistory, type RecoveredHour } from './recovered-history';
+import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supplier-terms';
 
 export interface HomeRef { customerId: string; homeId: string }
 const db = supabase as unknown as SupabaseClient;
@@ -74,13 +75,14 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')
       .lte('start_ts', prior).not('ev_soc', 'is', null).order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()) : Promise.resolve(null),
     (async () => {
-      const { data, error } = await supabase.functions.invoke('backfill-energy-prices', { body: { home_id: ref.homeId, mode: 'read', start, end }, signal });
+      const { data, error } = await supabase.functions.invoke('backfill-energy-prices', { body: { home_id: ref.homeId, mode: 'read', pricing_basis: 'current_supplier', start, end }, signal });
       if (error) {
         const response = 'context' in error && error.context instanceof Response ? error.context : null;
         const body = response ? await response.json().catch(() => null) : null;
         throw new Error(body?.message ?? error.message);
       }
       if (!Array.isArray(data?.prices) || !data?.area) throw new Error('Historical electricity prices unavailable');
+      if (data.prices.some((row: PriceRow) => row.supplier_revision !== ROI_SUPPLIER_TERMS.revision)) throw new Error('ROI supplier terms changed; reload the page');
       return data as { prices: PriceRow[]; area: string };
     })(),
   ]);

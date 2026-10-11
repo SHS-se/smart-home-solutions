@@ -237,6 +237,11 @@ test.describe('requesting a replan', () => {
     const contract = page.getByTestId('roi-period-saving'), saving = await contract.textContent();
     const reads = history.reads();
     await page.getByTestId('comparison-settings').locator('summary').click();
+    await expect(page.getByTestId('roi-supplier-basis')).toContainText(/current Tibber terms|nuvarande Tibber-villkor/);
+    await expect(page.getByTestId('roi-supplier-terms')).toContainText(/7[.,]50 öre\/kWh/);
+    await expect(page.getByTestId('roi-supplier-terms')).toContainText(/4[.,]40 öre\/kWh/);
+    await expect(page.getByTestId('roi-supplier-terms')).toContainText('2026-09');
+    expect(Object.values(history.saved()!.months).every(m => m.ledger.assumedPriceQuarters === 0)).toBe(true);
     await page.locator('#roi-subscription').fill('0');
     await expect(contract).toHaveText(saving!);
     const gross = await cells.nth(2).textContent();

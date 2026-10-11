@@ -1,6 +1,7 @@
 import { expect, type BrowserContext, type Page } from '../../playwright-fixture';
 import { CALCULATION_VERSION, type SavedReport } from '../../src/lib/home-baseline/saved-months';
 import { baselineFixture } from '../../src/lib/home-baseline/fixture';
+import { ROI_SUPPLIER_TERMS } from '../../supabase/functions/_shared/roi-supplier-terms';
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
 export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string) {
@@ -35,12 +36,13 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   await context.route('**/functions/v1/backfill-energy-prices*', async route => {
     const body = route.request().postDataJSON(); reads++;
     expect(body.mode).toBe('read'); expect(body.home_id).toBe(homeId);
+    expect(body.pricing_basis).toBe('current_supplier');
     expect(Date.parse(body.end) - Date.parse(body.start)).toBeLessThanOrEqual(32 * 86_400_000);
     if (priceError || body.start === '2026-03-31T22:00:00.000Z') {
       await route.fulfill({ status: 502, json: { message: `Missing historical market price at ${body.start}` } }); return;
     }
     const prices = baselineFixture({ start: body.start, end: body.end }).prices;
-    prices.filter(p => p.start_ts < '2026-08-01T00:00:00Z').forEach(p => { p.source = 'reconstructed'; p.supplier_revision = 'test_assumed'; });
+    prices.forEach(p => { p.source = 'reconstructed'; p.supplier_revision = ROI_SUPPLIER_TERMS.revision; });
     await route.fulfill({ json: { prices, area: 'SE3' } });
   });
   await context.route('**/rest/v1/energy_optimisation_*', async route => {

@@ -24,6 +24,7 @@ import { ReportSensitivity } from './roi/ComparisonEvidence';
 import { formatHomeDateTime } from '@/lib/energy-shift/home-time';
 import ContractFields, { type ContractDraft } from './roi/ContractFields';
 import { RoiNumberField, RoiSelect } from './roi/RoiFields';
+import { ROI_SUPPLIER_TERMS } from '../../../../supabase/functions/_shared/roi-supplier-terms';
 
 const settingsSchema = z.object({
   from: z.string(), to: z.string(), area: z.string(),
@@ -123,11 +124,16 @@ function RoiCalculator({ customerId, homeId }: ROITabProps) {
         : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
       <SchedulerMonthlySavings state={displayState} report={report} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
+      <p className="text-xs text-muted-foreground" data-testid="roi-supplier-basis">{t('Båda alternativen prissätts med nuvarande Tibber-villkor för alla månader.', 'Both alternatives use current Tibber terms for every month.')}</p>
       <ReportSensitivity months={months} investmentSek={n(settings.equipment) + n(settings.installation)} />
       {baseline.source.modelCapturedAt() && months[0] && <p className="text-xs text-muted-foreground">{t('Sparad utrustningsmodell', 'Saved equipment model')}: {formatHomeDateTime(baseline.source.modelCapturedAt()!, months[0].timeZone)}.</p>}
       <p className="text-xs text-muted-foreground">{t('Samma hem och uppmätta period. Avtalsbesparing redovisas separat och ingår inte i SHS netto.', 'Same home and recorded period. Contract savings are separate and excluded from SHS net.')}</p>
     </CardContent></Card>
     <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Kostnader och jämförelseavtal', 'Costs and comparison contract')}</summary>
+      <div className="space-y-1 pb-4 text-xs text-muted-foreground" data-testid="roi-supplier-terms">
+        <p>Tibber · {t('Fast påslag', 'Fixed markup')}: {amount(ROI_SUPPLIER_TERMS.definition.import.fixed_markup_sek_per_kwh_ex_vat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100, t('öre/kWh', 'öre/kWh'))} · {t('Rörlig inköpskostnad', 'Variable purchasing cost')}: {amount(ROI_SUPPLIER_TERMS.definition.import.variable_cost_sek_per_kwh_ex_vat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100, t('öre/kWh', 'öre/kWh'))} · {t('inkl. moms', 'incl. VAT')}.</p>
+        <p>{t('Senast publicerade inköpskostnad', 'Latest published purchasing cost')}: {ROI_SUPPLIER_TERMS.variableCostMonth} · <a className="underline" href={ROI_SUPPLIER_TERMS.sourceUrl} target="_blank" rel="noreferrer">{t('Tibbers villkor', 'Tibber terms')}</a> · {t('kontrollerade', 'checked')} {ROI_SUPPLIER_TERMS.verifiedOn}.</p>
+      </div>
       <div className="grid gap-6 pb-5 lg:grid-cols-2"><div className="grid content-start gap-4 sm:grid-cols-2">
         <RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
         <RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />

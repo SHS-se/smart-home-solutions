@@ -6,7 +6,8 @@ import type { MonthLedger } from './savings.ts';
 import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 
-export const CALCULATION_VERSION = `roi-month-v1:${artifact.wasm_sha256}`;
+// v2 pins roi_tibber_2026-10-11. Bump the recipe version when replay terms change.
+export const CALCULATION_VERSION = `roi-month-v2:${artifact.wasm_sha256}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const ledger = z.object({ importKwh: finite.nonnegative(), exportKwh: finite.nonnegative(), importCostSek: finite, exportRevenueSek: finite, costSek: finite }).strict();

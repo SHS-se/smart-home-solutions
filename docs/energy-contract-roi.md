@@ -1,5 +1,24 @@
 # Electricity contract ROI
 
+## Current-contract monthly replay
+
+The monthly home comparison prices both default controls and recorded energy use
+at the same current Tibber contract across the selected twelve months. The ROI-only
+terms snapshot in `roi-supplier-terms.ts` records the verified source and revision:
+7.5 öre/kWh fixed markup including VAT, plus the latest published variable
+purchasing cost of 4.4 öre/kWh including VAT (September, checked 2026-10-11).
+This is a current-contract replay, not a reconstruction of historical invoices.
+
+`backfill-energy-prices` accepts `pricing_basis: current_supplier` only in read
+mode. It ignores archived all-in prices and uses actual historical spot prices
+with each period's grid tariff and the ROI contract snapshot. It never writes
+price history or changes the supplier catalogue used by the working planner.
+The saved report recipe version pins this contract snapshot, so older ledgers cannot
+be combined with the new pricing basis. Updated monthly ledgers are saved under
+the customer/home as before; graphs remain on demand. Supplier monthly fees are
+still controlled separately in the existing ROI settings and cancel out of
+scheduler savings.
+
 The Energy Optimisation ROI tab compares stored consumption and supplier cost with an editable alternative contract. It does not run the planner or use the planner's synthetic baseline as measured savings.
 
 ## Sources and scope

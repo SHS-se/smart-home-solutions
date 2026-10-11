@@ -28,6 +28,7 @@ import {
 } from "../_shared/energy-supplier-pricing.ts";
 
 import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice } from "../_shared/historical-electricity-prices.ts";
+import { roiSupplierVersion } from "../_shared/roi-supplier-terms.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,10 +101,15 @@ serve(async (req) => {
     let homeId = "";
     let days = 0;
     let period: { start: string; end: string } | null = null;
+    let currentSupplier = false;
     try {
       const body = await req.json();
       homeId = String(body?.home_id ?? "");
       days = Number(body?.days);
+      if (body?.pricing_basis !== undefined && (body.mode !== 'read' || body.pricing_basis !== 'current_supplier')) {
+        return json({ error: 'invalid_pricing_basis' }, 400);
+      }
+      currentSupplier = body?.pricing_basis === 'current_supplier';
       if (body?.mode === "read") {
         historicalPriceRange(body.start, body.end);
         period = { start: body.start, end: body.end };
@@ -254,7 +260,7 @@ serve(async (req) => {
     if (period) {
       const starts = historicalPriceRange(period.start, period.end);
       const archive: ArchivedPrice[] = [];
-      for (let i = 0; i < starts.length; i += 672) {
+      for (let i = 0; !currentSupplier && i < starts.length; i += 672) {
         const end = starts[i + 672] ?? period.end;
         const { data, error } = await supabase.from("energy_optimisation_price_slots")
           .select("start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh")
@@ -263,7 +269,10 @@ serve(async (req) => {
         if (error) throw error;
         archive.push(...(data ?? []));
       }
-      const prices = await historicalElectricityPrices(starts, archive, catalogue, supplierVersions, async day => {
+      // Current-contract replay ignores archived all-in prices: they embed older
+      // supplier charges. Historical spot/grid prices remain dated, and no rows are written.
+      const versions = currentSupplier ? [roiSupplierVersion(supplierKey)] : supplierVersions;
+      const prices = await historicalElectricityPrices(starts, archive, catalogue, versions, async day => {
         const response = await fetch(spotUrl(day, area), { signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error(`Historical market prices unavailable for ${day}: ${response.status}`);
         return response.json();
