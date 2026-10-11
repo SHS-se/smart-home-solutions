@@ -1,5 +1,5 @@
 // Why a quarter scored what it did: the rules that fired in it, and the points
-// each gave or took. Shown under the score strip of the plan chart (PlanPanels),
+// each gave or took. Shown under the score strip of the plan chart (EnergyChart),
 // so the strip and its explanation read as one section on the live plan.
 // The section ends with the replay bundle download.
 

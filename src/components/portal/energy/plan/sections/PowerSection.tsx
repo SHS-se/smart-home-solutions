@@ -4,7 +4,7 @@
 // existed in neither. They are the same quantities on the same grid; the only
 // difference is which side of now they fall on.
 //
-// The chart itself is five panels sharing one time axis (PlanPanels). It
+// The chart itself is five panels sharing one time axis (EnergyChart). It
 // replaced a single plot that carried kilowatts, per cent and SEK/kWh against
 // three y-axes, with nineteen device meters stacked underneath in a palette of
 // eight cycled colours. Both problems were structural rather than cosmetic:
@@ -37,10 +37,10 @@ import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import PlanReplayDownload from '../PlanReplayDownload';
 import { replayDescription } from '@/lib/energy-shift/plan-replay';
-import PlanPanels from '../PlanPanels';
+import EnergyChart from '../../charts/EnergyChart';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
-import { loadColour, PLAN_COLOURS } from '../types';
+import { loadColour, PLAN_COLOURS } from '../../charts/palette';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
 const QUARTER_W_TO_KWH = 4_000;
@@ -161,7 +161,7 @@ const PowerSection: React.FC<{
         <h3 className="text-sm font-medium">{title}</h3>
         <DayWindowToggle value={dayWindow} options={dayWindowOptions} onChange={onDayWindowChange} />
       </div>
-      <PlanPanels
+      <EnergyChart
         rows={panelRows}
         series={consumption.series}
         baseValues={consumption.baseValues}

@@ -2,7 +2,7 @@
 // with economic audit findings aligned below its time axis.
 //
 // The bench stores plans as compact series (src/lib/planner-bench/referee.ts);
-// this adapts them to PlanPanels' rows so a bench plan reads exactly like the
+// this adapts them to EnergyChart's rows so a bench plan reads exactly like the
 // plan a customer sees. Every quarter is on the plan side of "now". The price
 // drawn is the real one. The audit distinguishes opportunities based on
 // published prices from ones only visible in hindsight.
@@ -17,9 +17,9 @@
 // its own the production plan has nothing to be dashed against.
 
 import React, { useMemo } from 'react';
-import PlanPanels, { type PlanCostLine, type PlanStoreLines, type PlanQuarterAudit } from '@/components/portal/energy/plan/PlanPanels';
+import EnergyChart, { type EnergyCostLine, type EnergyStoreLines, type EnergyQuarterAudit } from '@/components/portal/energy/charts/EnergyChart';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
-import { benchChartData } from '@/lib/planner-bench/chart-data';
+import { modelChartData } from '@/lib/energy-shift/model-chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
 import type { OpportunityAudit } from '@/lib/planner-bench/opportunities';
@@ -46,20 +46,15 @@ interface Props {
   onPeriod: (period: BenchPeriod) => void;
   /** Findings involving the selected quarter and its service deductions. */
   scoreDetail: React.ReactNode;
-  /** Comparison views can replace the diagnostic audit with their own financial detail. */
-  showAudit?: boolean;
-  idPrefix?: string;
-  dividerLabel?: string;
-  poolTargetC?: number | null;
 }
 
-const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail, showAudit = true, idPrefix = 'bench', dividerLabel, poolTargetC }) => {
+const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, audit, selected, onSelect, days, period, onPeriod, scoreDetail }) => {
   const { t } = useLanguage();
 
   const range = periodRange(days, period, series.start.length);
 
   const chart = useMemo(() => {
-    const data = benchChartData(series);
+    const data = modelChartData(series);
     return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices });
   }, [series, timeZone, range.from, range.to]);
   const { rows, consumption } = chart;
@@ -67,7 +62,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
   const { current, test } = compared;
   const { current: currentName, test: testName } = names;
   const costLines = useMemo(() => {
-    const line = (key: string, name: string, colour: string, dashed: boolean, plan: BenchSeries | null): PlanCostLine[] => {
+    const line = (key: string, name: string, colour: string, dashed: boolean, plan: BenchSeries | null): EnergyCostLine[] => {
       if (!plan) return [];
       let running = 0;
       return [{ key, name, colour, dashed, values: plan.costSek.slice(range.from, range.to).map(cost => (running += cost)) }];
@@ -78,13 +73,13 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     ];
   }, [current, test, range.from, range.to, currentName, testName]);
 
-  const storeLines = useMemo((): PlanStoreLines | undefined => {
+  const storeLines = useMemo((): EnergyStoreLines | undefined => {
     if (!current || series === current) return undefined;
     const view = (values: readonly (number | null)[]) => values.slice(range.from, range.to);
     return { name: currentName, homeSoc: view(current.homeSoc), evSoc: view(current.carSoc), poolC: view(current.poolC) };
   }, [current, series, range.from, range.to, currentName]);
 
-  const quarterAudit: PlanQuarterAudit = {
+  const quarterAudit: EnergyQuarterAudit = {
     title: t('Ekonomiska fynd', 'Economic findings'),
     description: t('övre: källa · nedre: destination · kontur: efterklokhet', 'upper: source · lower: destination · outline: hindsight'),
     lanes: (['pool', 'ev', 'battery'] as const).map(device => ({
@@ -113,27 +108,27 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('Dag', 'Day')}>
         {days.map((day, index) => (
-          <button key={day.label} id={`${idPrefix}-day-${index}`} className={tab(period === index)} aria-pressed={period === index} onClick={() => onPeriod(index)}>
+          <button key={day.label} id={`bench-day-${index}`} className={tab(period === index)} aria-pressed={period === index} onClick={() => onPeriod(index)}>
             {day.label}
           </button>
         ))}
-        <button id={`${idPrefix}-day-all`} className={tab(period === 'all')} aria-pressed={period === 'all'} onClick={() => onPeriod('all')}>
+        <button id="bench-day-all" className={tab(period === 'all')} aria-pressed={period === 'all'} onClick={() => onPeriod('all')}>
           {t('Hela 72 h', 'Full 72 h')}
         </button>
       </div>
-      <PlanPanels
+      <EnergyChart
+        timeZone={timeZone}
         rows={rows}
         series={consumption.series}
         baseValues={consumption.baseValues}
         consumptionIssues={consumption.issues}
         dividerIndex={0}
-        dividerLabel={dividerLabel}
         hasBattery={series.homeSoc.some(v => v !== null)}
         hasEvBattery={series.carSoc.some(v => v !== null)}
-        quarterAudit={showAudit ? quarterAudit : undefined}
+        quarterAudit={quarterAudit}
         scoreDetail={scoreDetail}
         realPrices={chart.realPrices}
-        poolTargetC={poolTargetC === undefined ? series.comfort?.pool_target_c ?? null : poolTargetC}
+        poolTargetC={series.comfort?.pool_target_c ?? null}
         costLines={costLines}
         storeLines={storeLines}
         selectedIndex={selectedInView}

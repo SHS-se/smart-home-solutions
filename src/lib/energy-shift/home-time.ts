@@ -216,6 +216,13 @@ export const formatHomeStamp = (value: TimeValue, timeZone: string): string =>
     second: '2-digit',
   }).format(toMs(value));
 
+/** Full date with minute precision, for historical period navigation. */
+export const formatHomeDateTime = (value: TimeValue, timeZone: string): string =>
+  formatter(timeZone, {
+    hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }).format(toMs(value));
+
 /**
  * A zone this browser can actually resolve, or the fallback.
  *

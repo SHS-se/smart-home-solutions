@@ -20,7 +20,7 @@
 // *fewer* meters rather than coarser ones — see consumption-series.ts for
 // which ones earn a band.
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useId, useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   linearScale, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
@@ -32,10 +32,12 @@ import {
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
-import { loadColour, PLAN_COLOURS } from './types';
-import { scoreColour } from './quarter-score';
+import { loadColour, PLAN_COLOURS } from './palette';
+import { scoreColour } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
-import { formatHomeDayMonth, formatHomeTime, homeHourMinute } from '@/lib/energy-shift/home-time';
+import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
+
+import { energyChartTicks } from '@/lib/energy-shift/energy-chart-axis';
 
 import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
@@ -56,8 +58,8 @@ const POOL_COLOUR = loadColour(2);
 
 interface Panel { top: number; height: number }
 
-/** One planner's running cost, for the bench's cost panel. */
-export interface PlanCostLine {
+/** A running cost series for any model or comparison. */
+export interface EnergyCostLine {
   key: string;
   name: string;
   colour: string;
@@ -67,7 +69,7 @@ export interface PlanCostLine {
 }
 
 /** Another planner's stores over the same quarters, for the bench's storage and temperature panels. */
-export interface PlanStoreLines {
+export interface EnergyStoreLines {
   name: string;
   /** Per cent, aligned with `rows`. */
   homeSoc: readonly (number | null)[];
@@ -76,7 +78,7 @@ export interface PlanStoreLines {
 }
 
 /** Findings aligned with chart quarters; amounts belong to findings, never to these markers. */
-export interface PlanQuarterAudit {
+export interface EnergyQuarterAudit {
   title: string;
   description: string;
   lanes: readonly {
@@ -165,7 +167,8 @@ const INLINE_NAME_MAX = 20;
 const shorten = (name: string): string =>
   name.length <= INLINE_NAME_MAX ? name : `${name.slice(0, INLINE_NAME_MAX - 1)}…`;
 
-const PlanPanels: React.FC<{
+export interface EnergyChartProps {
+  /** Any contiguous time horizon, including calendar months. */
   rows: PlanPanelRow[];
   /** Meters that earned a band of their own, largest first. */
   series: ConsumptionSeries[];
@@ -174,6 +177,9 @@ const PlanPanels: React.FC<{
   consumptionIssues: (ConsumptionIssue | null)[];
   /** First quarter on the plan side, including quarters with missing data. */
   dividerIndex: number;
+  timeZone?: string;
+  /** Limits axis labels on longer horizons without discarding data. */
+  maxTimeLabels?: number;
   /** Historical model views label their projection boundary without calling it now. */
   dividerLabel?: string;
   hasBattery: boolean;
@@ -187,7 +193,7 @@ const PlanPanels: React.FC<{
    */
   quarterScores?: readonly (number | null)[];
   /** Bench economic findings, sharing the chart selection and time axis. */
-  quarterAudit?: PlanQuarterAudit;
+  quarterAudit?: EnergyQuarterAudit;
   /** Why the picked quarter scored what it did, shown under the score strip (QuarterScoreDetail). */
   scoreDetail?: React.ReactNode;
   /**
@@ -198,22 +204,24 @@ const PlanPanels: React.FC<{
   /** The pool temperature the owner asked for, drawn as a reference line. */
   poolTargetC?: number | null;
   /**
-   * Planner bench: what each compared planner has spent, drawn as the last
-   * panel. The portal never passes it.
+   * Optional running cost lines, drawn in a final panel.
    */
-  costLines?: readonly PlanCostLine[];
+  costLines?: readonly EnergyCostLine[];
   /**
-   * Planner bench: the stores of the planner this plan is compared with, drawn
-   * dashed under the plan's own lines. The portal never passes it.
+   * Optional comparison stores, drawn as dashed lines.
    */
-  storeLines?: PlanStoreLines;
-}> = ({
+  storeLines?: EnergyStoreLines;
+}
+
+const EnergyChart: React.FC<EnergyChartProps> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines,
+  costLines, storeLines, timeZone, maxTimeLabels = 16,
 }) => {
   const { t } = useLanguage();
-  const homeTimeZone = useHomeTimeZone();
+  const contextTimeZone = useHomeTimeZone();
+  const homeTimeZone = timeZone ?? contextTimeZone;
+  const chartId = useId();
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -335,28 +343,13 @@ const PlanPanels: React.FC<{
     cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
-  const gradientId = 'plan-price-ramp';
+  const gradientId = `energy-price-ramp-${chartId}`;
   const priceStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
 
-  const hourTicks = useMemo(() => {
-    const every = n > 200 ? 6 : n > 100 ? 3 : 2;
-    return rows
-      .map((row, index) => ({ index, date: new Date(row.startMs) }))
-      .filter(({ date }) => {
-        const { hour, minute } = homeHourMinute(date, homeTimeZone);
-        return minute === 0 && hour % every === 0;
-      });
-  }, [homeTimeZone, n, rows]);
-
-  // The divider marks the home's midnight. Read off the browser's clock it
-  // landed an hour or a continent away from the day it was dividing.
-  const dayTicks = useMemo(() => rows
-    .map((row, index) => ({ index, date: new Date(row.startMs) }))
-    .filter(({ index, date }) => {
-      const { hour, minute } = homeHourMinute(date, homeTimeZone);
-      return index > 0 && hour === 0 && minute === 0;
-    }),
-  [homeTimeZone, rows]);
+  const { hourTicks, dayTicks } = useMemo(
+    () => energyChartTicks(rows, homeTimeZone, maxTimeLabels),
+    [rows, homeTimeZone, maxTimeLabels],
+  );
 
   /**
    * Which quarter a pointer is over, straight from its position.
@@ -927,8 +920,8 @@ const PlanTooltip: React.FC<{
   hasBattery: boolean;
   hasEvBattery: boolean;
   realPrices: boolean;
-  costLines?: readonly PlanCostLine[];
-  storeLines?: PlanStoreLines;
+  costLines?: readonly EnergyCostLine[];
+  storeLines?: EnergyStoreLines;
   auditDescriptions?: readonly string[];
   left: number;
   top: number;
@@ -1104,4 +1097,4 @@ const Reading: React.FC<{ name: string; value: string; colour?: string }> = ({
   </div>
 );
 
-export default PlanPanels;
+export default EnergyChart;

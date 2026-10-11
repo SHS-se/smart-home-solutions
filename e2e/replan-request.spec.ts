@@ -297,6 +297,16 @@ test.describe('requesting a replan', () => {
     await page.getByTestId('baseline-generate').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
     await expect(page.getByTestId('baseline-assumptions')).toContainText(/recorded SOC declines|SOC-minskningar/i);
+    await expect(page.getByTestId('baseline-details')).not.toHaveAttribute('open', '');
+    await expect(page.getByTestId('baseline-assumptions')).not.toBeVisible();
+    await expect(viewer.getByRole('group', { name: /Day|Dag/ })).toHaveCount(0);
+    await expect(viewer.getByRole('button', { name: /Full 72 h|Hela 72 h/ })).toHaveCount(0);
+    await expect(page.getByTestId('baseline-previous')).toHaveText(/Previous period|Föregående period/);
+    await expect(page.getByTestId('baseline-next')).toHaveText(/Next period|Nästa period/);
+    await viewer.locator('summary').click();
+    await expect(page.getByTestId('baseline-assumptions')).toBeVisible();
+    await expect(page.getByTestId('baseline-models')).toContainText(/80% from midnight|80% från midnatt/);
+    await viewer.locator('summary').click();
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
     await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
@@ -337,6 +347,8 @@ test.describe('requesting a replan', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-mobile.png') });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await viewer.screenshot({ path: testInfo.outputPath('home-baseline-desktop.png') });
   });
 
   test('ROI historical baseline reports missing recorded inputs without generating a plan', async ({ context, page }) => {

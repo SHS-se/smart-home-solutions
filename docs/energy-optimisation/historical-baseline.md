@@ -1,8 +1,8 @@
 # Historical default model in ROI
 
-At the bottom of ROI, **Generate default model ·72h** projects the selected
-home under fixed default controls. Previous/next selects adjacent72elapsed-hour
-frames. Only Generate fetches inputs; visited frames are kept in an eight-frame
+At the bottom of ROI, **Generate model** projects the selected
+home under fixed default controls. Previous period / Next period selects adjacent
+72 elapsed-hour frames. Only Generate fetches inputs; visited frames are kept in an eight-frame
 browser-memory cache. Refreshing the page or changing home discards it. Nothing
 writes a baseline plan, score or result to the database.
 
@@ -53,9 +53,16 @@ Wasm artifact is verified by SHA256. No optimisation, forecasting, fitting,
 backfill, polling or planner dispatch happens. The working planner and its
 artifact remain unchanged.
 
-The shared planner charts show power, consumption, SOC, pool temperature and
-running grid cost. Model details show physical parameters, daily EV demand and
-projection duration. JSON export includes native engine hash, captured inputs,
+The Plan page, planner bench and ROI use `energy/charts/EnergyChart.tsx`.
+ROI displays the entire selected frame without day buttons. Controls and costs
+sit above the graph; rounded parameters, daily EV demand and provenance sit
+in a collapsed Model details section below it.
+
+The shared renderer accepts any contiguous horizon, an explicit home timezone,
+and a configurable axis label limit. Longer horizons use spaced local dates
+instead of hourly labels, retaining every quarter for costs and interaction.
+This prepares the charts for a calendar-month view; baseline generation still
+uses 72-hour frames. JSON export includes native engine hash, captured inputs,
 commands, series and the signed grid ledger.
 
 Electricity cost is imports less export revenue. It excludes fixed fees, SHS subscription,
