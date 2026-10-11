@@ -38,6 +38,10 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
         <tbody>{input.evDailyDemand.map(day => <tr key={day.day}><td>{day.day}</td><td>{number(day.kwh)}</td></tr>)}</tbody>
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
+        {input.recovery.hours > 0 && <p data-testid="baseline-hourly-recovery">{input.recovery.hours} {t('timmar från HA:s historik; energi fördelas jämnt och SOC använder timmedelvärden.', 'hours from HA history; energy is spread evenly and SOC uses hourly means.')}
+          {input.recovery.deviceSumHours > 0 && ` ${input.recovery.deviceSumHours} ${t('timmar med baslast summerad från övriga enheter.', 'hours with baseline demand summed from other devices.')}`}
+          {input.recovery.invalidReadings > 0 && ` ${input.recovery.invalidReadings} ${t('ogiltiga energivärden utelämnade.', 'invalid energy readings omitted.')}`}
+        </p>}
         <p>{t('Indata', 'Inputs')}: {t('uppmätt förbrukning, solproduktion och elpriser', 'recorded consumption, solar and electricity prices')}. {input.timeZone}.</p>
         <p>{input.priceArea} · {input.reconstructedPriceQuarters} {t('kvartar med återskapade elpriser', 'quarters with reconstructed electricity prices')}. {t('Nätavgifter enligt hemmets valda historiska tariff.', 'Grid costs use the home’s configured historical tariff.')}</p>
         {input.assumedPriceQuarters > 0 && <p>{input.assumedPriceQuarters} {t('kvartar med antaget historiskt leverantörspåslag.', 'quarters with an assumed historical supplier markup.')}</p>}

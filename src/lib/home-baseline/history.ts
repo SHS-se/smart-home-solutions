@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { homePhysics, type HomeModelCapture } from './home-physics';
 import { prepareHomeBaseline, QUARTER_MS, type ActualRow, type DeviceRow, type DeviceSlot, type EvInitialRow, type OutdoorRow, type PoolRow, type PriceRow } from './model';
 import { historyWindows, type BaselineAnchor, type BaselinePeriod } from './period';
+import { mergeHourlyHistory, type RecoveredHour } from './recovered-history';
 
 export interface HomeRef { customerId: string; homeId: string }
 const db = supabase as unknown as SupabaseClient;
@@ -16,19 +17,23 @@ async function read<T>(request: PromiseLike<{ data: unknown; error: { message: s
 
 /** Pin equipment models and the last recorded quarter once for this viewer session. */
 export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): Promise<BaselineAnchor> {
-  const [snapshot, latest, first] = await Promise.all([
+  const [snapshot, latest, first, recoveredFirst, recoveredLast] = await Promise.all([
     read<HomeModelCapture | null>(scoped(ref, 'energy_optimisation_current').select('captured_at:snapshot->>captured_at,timezone:snapshot->>timezone,capabilities:snapshot->capabilities,battery:snapshot->battery,ev_battery:snapshot->ev_battery,pool:snapshot->pool,device_physics:snapshot->device_physics,pool_model:snapshot->pool_model,grid:snapshot->grid,value_settings:snapshot->value_settings,device_models:snapshot->device_models,services:snapshot->services')
       .abortSignal(signal).maybeSingle()),
     read<{ start_ts: string } | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts')
       .lt('start_ts', new Date(Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS).toISOString())
       .order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()),
     read<{ start_ts: string } | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts').order('start_ts').limit(1).abortSignal(signal).maybeSingle()),
+    read<{ start_ts: string } | null>(scoped(ref, 'energy_roi_history_hours').select('start_ts').order('start_ts').limit(1).abortSignal(signal).maybeSingle()),
+    read<{ start_ts: string } | null>(scoped(ref, 'energy_roi_history_hours').select('start_ts').lt('start_ts', new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString())
+      .order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()),
   ]);
   signal.throwIfAborted();
   if (!snapshot) throw new Error('Current home physical model is unavailable');
-  if (!latest || !first) throw new Error('No completed historical energy quarters are available for this home');
+  if ((!latest || !first) && (!recoveredFirst || !recoveredLast)) throw new Error('No completed historical energy readings are available for this home');
   homePhysics(snapshot);
-  return { snapshot, earliestStart: first.start_ts, latestEnd: new Date(Date.parse(latest.start_ts) + QUARTER_MS).toISOString() };
+  return { snapshot, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
+    latestEnd: new Date(Math.max(...[latest ? Date.parse(latest.start_ts) + QUARTER_MS : null, recoveredLast ? Date.parse(recoveredLast.start_ts) + 3_600_000 : null].filter((t): t is number => t !== null))).toISOString() };
 }
 
 /** Read a complete explicit period without exceeding the existing RPC or REST limits. */
@@ -40,7 +45,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     .select(fields).gte('start_ts', from).lt('start_ts', to).order('start_ts').limit(count).abortSignal(signal);
   const windows = historyWindows(period);
   const loadWindow = async (w: typeof windows[number], first: boolean) => {
-    const [actual, deviceSlots, outdoor, pool] = await Promise.all([
+    const [actual, deviceSlots, outdoor, pool, recovered] = await Promise.all([
       read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc,grid_import_kwh,grid_export_kwh,battery_charge_kwh,battery_discharge_kwh', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
       read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
         p_customer_id: ref.customerId, p_home_id: ref.homeId, p_from: w.start, p_to: w.end,
@@ -48,8 +53,10 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
       facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null
         ? read<OutdoorRow[]>(window('energy_optimisation_outdoor_slots', 'start_ts,temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
       facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
+      read<RecoveredHour[]>(window('energy_roi_history_hours', 'start_ts,actual,device_energy_kwh,pool_c,outdoor_c,baseline_load_kwh,sources,invalid_readings',
+        new Date(Math.floor(Date.parse(first ? prior : w.start) / 3_600_000) * 3_600_000).toISOString(), w.end, 170)),
     ]);
-    return { actual, deviceSlots, outdoor, pool };
+    return { actual, deviceSlots, outdoor, pool, recovered };
   };
   const loadWindows = async () => {
     const batches: Awaited<ReturnType<typeof loadWindow>>[] = [];
@@ -78,7 +85,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     })(),
   ]);
   signal.throwIfAborted();
-  return prepareHomeBaseline({ snapshot, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
+  return prepareHomeBaseline(mergeHourlyHistory({ snapshot, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
     actual: batches.flatMap(b => b.actual), prices: pricing.prices, priceArea: pricing.area,
-    deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) });
+    deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) }, batches.flatMap(b => b.recovered)));
 }

@@ -26,6 +26,7 @@ export function monthLedger(capture: BaselineCapture) {
   return { month: localDay(input.start, input.timeZone).slice(0, 7), start: input.start, end: input.end, timeZone: input.timeZone,
     coverage: (end - start) / (bounds.endMs - bounds.startMs), baseline: result.ledger, recorded: input.recorded.ledger, comparison, gridImportCostSek: input.recorded.gridImportCostSek,
     priceArea: input.priceArea, reconstructedPriceQuarters: input.reconstructedPriceQuarters, assumedPriceQuarters: input.assumedPriceQuarters,
+    recovery: input.recovery,
     assumptions: { battery: input.batteryInitialAssumed, ev: input.evInitialAssumed, pool: input.poolInitialAssumed },
     quarters: input.problem.slots.length,
     gaps: { ...input.energyGaps, gridImportQuarters: input.recorded.missingImportQuarters, gridExportQuarters: input.recorded.missingExportQuarters } };

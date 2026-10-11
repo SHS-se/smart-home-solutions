@@ -5,6 +5,12 @@ import { baselineFixture } from '../../src/lib/home-baseline/fixture';
 export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string) {
   const fixture = baselineFixture(), windows: { start: string; end: string }[] = [];
   let reads = 0, priceError = false;
+  await context.route('**/rest/v1/energy_roi_history_hours*', async route => {
+    const url = new URL(route.request().url()); reads++;
+    expect(url.searchParams.get('home_id')).toBe(`eq.${homeId}`);
+    expect(url.searchParams.get('customer_id')).toBe(`eq.${customerId}`);
+    await route.fulfill({ json: url.searchParams.get('select') === 'start_ts' ? null : [] });
+  });
   await context.route('**/functions/v1/backfill-energy-prices*', async route => {
     const body = route.request().postDataJSON(); reads++;
     expect(body.mode).toBe('read'); expect(body.home_id).toBe(homeId);

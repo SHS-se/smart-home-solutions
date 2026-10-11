@@ -9,6 +9,7 @@ import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from '
 import { buildEnergyTimeline, type TimelineRow } from '../energy-shift/energy-timeline.ts';
 import type { ActualEnergySlot } from '../energy-shift/contracts.ts';
 import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
+import { emptyRecovery, type RecoverySummary } from './recovered-history.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
@@ -19,8 +20,9 @@ export interface PoolRow { start_ts: string; water_temperature_c: number | null 
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
-  devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
+  devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary }
 export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
+  recovery: RecoverySummary;
   priceArea: string; reconstructedPriceQuarters: number; assumedPriceQuarters: number; problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
   energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number };
@@ -54,7 +56,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const facts = homePhysics(rows.snapshot), startMs = time(rows.start), start = new Date(startMs).toISOString();
   const count = (time(rows.end) - startMs) / QUARTER_MS;
   if (count <= 0) throw new Error('Historical period must contain completed quarters');
-  const actual = index(rows.actual), prices = index(rows.prices), meters = index(rows.deviceSlots), pool = index(rows.pool), outdoor = index(rows.outdoor);
+  const actual = index(rows.actual), prices = index(rows.prices), meters = index(rows.deviceSlots), pool = index(rows.pool), outdoor = index(rows.outdoor), baselineLoads = index(rows.baselineLoads ?? []);
   const ids = new Map(rows.devices.map(d => [d.device_key, d.id]));
   const memberIds = facts.memberKeys.map(key => { const id = ids.get(key); if (!id) throw new Error(`Historical device identity is missing: ${key}`); return { id, key }; });
   if (new Set(memberIds.map(m => m.id)).size !== memberIds.length) throw new Error('Duplicate modeled device identity');
@@ -105,7 +107,9 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
       const ms = Date.parse(at), observed = actual.get(ms), price = prices.get(ms), meter = meters.get(ms);
       const removed = memberIds.reduce((sum, m) => sum + energy(meter?.device_energy_kwh?.[m.id], `device meter ${m.key}`, at, 'deviceReadings'), 0);
       let base: number;
-      if (observed?.total_load_kwh === null || observed?.total_load_kwh === undefined) {
+      if (baselineLoads.has(ms)) {
+        base = number(baselineLoads.get(ms)!.kwh, 'device-summed baseline load', at, true);
+      } else if (observed?.total_load_kwh === null || observed?.total_load_kwh === undefined) {
         energyGaps.householdQuarters++;
         base = Object.entries(meter?.device_energy_kwh ?? {}).reduce((sum, [id, value]) => replaced.has(id) ? sum
           : sum + energy(value, `device meter ${id}`, at, 'deviceReadings'), 0);
@@ -138,7 +142,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
-  return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
+  return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, recovery: rows.recovery ?? emptyRecovery(),
     priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
     assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,

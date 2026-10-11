@@ -91,7 +91,7 @@ function RoiCalculator({ customerId, homeId }: ROITabProps) {
   const amount = (v: number | null | undefined, unit = 'SEK', digits = 2) => v == null ? '—' : `${v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => { setGraphOpen(false); }, [homeId]);
-  const estimates = months.filter(m => Object.values(m.gaps).some(Boolean) || Object.values(m.assumptions).some(Boolean) || m.reconstructedPriceQuarters > 0).length;
+  const estimates = months.filter(m => Object.values(m.gaps).some(Boolean) || Object.values(m.assumptions).some(Boolean) || m.reconstructedPriceQuarters > 0 || m.recovery.hours > 0).length;
 
   return <div className="space-y-5" data-testid="contract-roi">
     <div className="flex flex-wrap items-end gap-4">

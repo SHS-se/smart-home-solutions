@@ -349,6 +349,59 @@ test.describe('requesting a replan', () => {
     await page.getByTestId('contract-roi').screenshot({ path: testInfo.outputPath('monthly-roi-desktop.png') });
   });
 
+  test('ROI recovers an empty month from hourly history and uses the same costs in its graph', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    const start = '2026-04-30T22:00:00.000Z', end = '2026-05-31T22:00:00.000Z';
+    const hours = Array.from({ length: 745 }, (_, i) => ({
+      start_ts: new Date(Date.parse(start) + (i - 1) * 3_600_000).toISOString(),
+      actual: { total_load_kwh: 1.06, grid_import_kwh: 1, grid_export_kwh: 0, solar_production_kwh: 0,
+        battery_charge_kwh: 0, battery_discharge_kwh: 0, battery_soc: .5, ev_soc: .75 },
+      device_energy_kwh: { 'heater-id': 0, 'pump-id': .06, 'car-id': 0 },
+      pool_c: 31, outdoor_c: null, baseline_load_kwh: null,
+      sources: { grid_import_kwh: 'test.hourly' }, invalid_readings: 0,
+    }));
+    await context.route('**/rest/v1/energy_roi_history_hours*', async route => {
+      const url = new URL(route.request().url());
+      expect(url.searchParams.get('home_id')).toBe(`eq.${HOME_ID}`);
+      expect(url.searchParams.get('customer_id')).toBe(`eq.${CUSTOMER_ID}`);
+      if (url.searchParams.get('select') === 'start_ts') { await route.fallback(); return; }
+      const filters = url.searchParams.getAll('start_ts');
+      const from = filters.find(v => v.startsWith('gte.'))!.slice(4), to = filters.find(v => v.startsWith('lt.'))!.slice(3);
+      await route.fulfill({ json: hours.filter(h => h.start_ts >= from && h.start_ts < to) });
+    });
+    await context.route('**/rest/v1/energy_optimisation_actual_slots*', async route => {
+      const url = new URL(route.request().url());
+      const from = url.searchParams.getAll('start_ts').find(v => v.startsWith('gte.'))?.slice(4);
+      if (from && from >= hours[0].start_ts && from < end) await route.fulfill({ json: [] });
+      else await route.fallback();
+    });
+    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
+      const body = route.request().postDataJSON();
+      if (body.p_from >= start && body.p_from < end) await route.fulfill({ json: [] });
+      else await route.fallback();
+    });
+    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.locator('#roi-to').fill('2026-05');
+    await expectRoiMonths(page, '(1/1)');
+    const row = page.getByTestId('scheduler-month-2026-05');
+    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    await expect(row.locator('td').nth(1)).toHaveText(display(744));
+    await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
+    await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
+    const viewer = page.getByTestId('roi-baseline');
+    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(744));
+    const download = page.waitForEvent('download');
+    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
+    expect(capture.input.recorded.ledger.importKwh).toBe(744);
+    expect(capture.input.recorded.ledger.costSek).toBe(744);
+    expect(capture.input.recovery.hours).toBe(744);
+    expect(capture.input.problem.initial.ev_kwh).toBe(.75 * 75.6);
+    await expect(row.locator('td').nth(2)).toHaveText(display(capture.result.ledger.costSek - 744));
+    await expect(page.getByTestId('roi-period-net')).toHaveText((await row.locator('td').nth(5).textContent())!);
+  });
+
   test('ROI isolates unavailable prices to the affected month and keeps graph navigation usable', async ({ context, page }) => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
