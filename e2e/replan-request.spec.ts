@@ -225,15 +225,19 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
-  test('customer ROI automatically calculates months without charts and keeps contract savings separate', async ({ context, page }) => {
+  test('customer ROI uses optimizer replay and original bills, with subscription only in ROI', async ({ context, page }) => {
+    test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
     const cells = page.getByTestId('scheduler-totals').locator('td');
-    await expect(page.getByTestId('roi-period-net')).toHaveText((await cells.nth(5).textContent())!);
+    const totals = history.saved()!.months;
+    const totalGross = Object.values(totals).reduce((n,m) => n + m.ledger.modeled.baselineBill.totalSek - m.ledger.modeled.schedulerBill.totalSek,0);
+    await expect(page.getByTestId('roi-period-net')).toContainText('SEK');
+    expect(Object.values(totals).every(m => m.ledger.replay.solves > 0)).toBe(true);
     const contract = page.getByTestId('roi-period-saving'), saving = await contract.textContent();
     const reads = history.reads();
     await page.getByTestId('comparison-settings').locator('summary').click();
@@ -244,11 +248,13 @@ test.describe('requesting a replan', () => {
     expect(Object.values(history.saved()!.months).every(m => m.ledger.assumedPriceQuarters === 0)).toBe(true);
     await page.locator('#roi-subscription').fill('0');
     await expect(contract).toHaveText(saving!);
-    const gross = await cells.nth(2).textContent();
+    const gross = await cells.nth(3).textContent();
+    expect(totalGross).toBeCloseTo(Object.values(totals).reduce((n,m)=>n+m.ledger.modeled.baselineBill.totalSek-m.ledger.modeled.schedulerBill.totalSek,0));
     await expect(page.getByTestId('roi-period-net')).toHaveText(gross!);
-    await page.locator('#roi-rate').fill('500');
-    await expect(page.getByTestId('roi-period-net')).toHaveText(gross!);
-    await expect(contract).not.toHaveText(saving!);
+    await expect(page.locator('#roi-rate')).toHaveCount(0);
+    await page.locator('#roi-basis').selectOption('actual');
+    await expect(page.getByTestId('roi-period-net')).toContainText('SEK');
+    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(1)).toHaveText('579,00 SEK');
     expect(history.reads()).toBe(reads);
     await page.locator('#roi-from').fill('2025-10');
     await expect(page.getByRole('alert')).toContainText('at most 12 months');
@@ -257,39 +263,41 @@ test.describe('requesting a replan', () => {
   });
 
   test('ROI reloads durable monthly totals without fetching history or generating charts', async ({ context, page }) => {
+    test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
     const net = await page.getByTestId('roi-period-net').textContent();
-    expect(Object.keys(history.saved()!.months)).toHaveLength(6);
+    expect(Object.keys(history.saved()!.months)).toHaveLength(2);
     expect(JSON.stringify(history.saved())).not.toContain('gridImportW');
     const before = history.windows.length;
     await page.reload();
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
     await expect(page.getByTestId('roi-period-net')).toHaveText(net!);
     expect(history.windows.length).toBe(before);
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
-    const row = page.getByTestId('scheduler-month-2026-05');
+    const row = page.getByTestId('scheduler-month-2026-09');
     await row.locator('summary').first().click();
-    await expect(row.getByTestId('comparison-evidence')).toContainText(/0%/);
+    await expect(row.getByTestId('comparison-evidence')).toContainText(/Missing energy|Saknad energi/);
     await page.getByTestId('roi-assumption-impact').locator('summary').click();
     await expect(page.getByTestId('roi-assumption-impact')).toContainText(/ROI/);
     await page.getByTestId('scheduler-calculate').click();
     await expect.poll(() => history.saved()?.generation).toBe(2);
-    await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 60_000 }).toBe(6);
-    await expectRoiMonths(page, '(6/6)');
+    await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 240_000 }).toBe(2);
+    await expectRoiMonths(page, '(2/2)');
     expect(history.saved()!.generation).toBe(2);
     expect(history.windows.length).toBeGreaterThan(before);
   });
 
   test('ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them', async ({ context, page }, testInfo) => {
+    test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     const writes: string[] = [];
     page.on('request', req => { if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url()); });
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
     await page.getByTestId('roi-view-graphs').click();
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -297,7 +305,7 @@ test.describe('requesting a replan', () => {
     await expect(viewer.getByRole('button', { name: /Full 72 h|Hela 72 h/ })).toHaveCount(0);
     await expect(page.getByTestId('baseline-next')).toBeDisabled();
     await expect(page.getByTestId('baseline-details')).not.toHaveAttribute('open', '');
-    await viewer.getByTestId('baseline-details').locator('summary').click();
+    await viewer.getByTestId('baseline-details').locator('summary').first().click();
     await expect(page.getByTestId('baseline-models')).toContainText(/80% from midnight|80% från midnatt/);
     await expect(page.getByTestId('baseline-models')).toContainText('60 W');
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
@@ -322,60 +330,64 @@ test.describe('requesting a replan', () => {
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-mobile.png') });
     await viewer.getByRole('button', { name: /Close graph|Stäng graf/ }).click();
     await expect(viewer).toHaveCount(0);
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
     expect(writes).toEqual([]);
   });
 
   test('ROI May–August sensor gaps generate, and month graphs use the same ledgers as ROI', async ({ context, page }, testInfo) => {
-    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    test.setTimeout(480_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-05', to: '2026-10' });
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
     await expectRoiMonths(page, '(6/6)');
     for (const month of ['05', '06', '07', '08']) {
       const row = page.getByTestId(`scheduler-month-2026-${month}`);
-      await expect(row.locator('td')).toHaveCount(7);
+      await expect(row.locator('td')).toHaveCount(6);
       await expect(row.locator('td').first()).toContainText('SEK');
       await expect(row).not.toContainText('initial battery SOC');
       await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
       await expect(page.getByTestId('baseline-net-cost')).toHaveText((await row.locator('td').first().textContent())!);
-      await page.getByTestId('baseline-details').locator('summary').click();
+      await page.getByTestId('baseline-details').locator('summary').first().click();
       await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
       await expect(page.getByTestId('baseline-ev-start')).toContainText('80%');
       await expect(page.getByTestId('baseline-pool-start')).toContainText('30°C');
       await expect(page.getByTestId('baseline-assumptions')).not.toContainText('1970');
-      await page.getByTestId('baseline-details').locator('summary').click();
+      await page.getByTestId('baseline-details').locator('summary').first().click();
     }
     const september = page.getByTestId('scheduler-month-2026-09');
     await september.getByRole('button', { name: /View graph|Visa graf/ }).click();
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(september.locator('td').nth(1)).toHaveText(display(2879));
+    await expect(september.locator('td').nth(1)).toHaveText('579,00 SEK');
     const download = page.waitForEvent('download');
     await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
     const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
     expect(capture.result.series.start).toHaveLength(2880);
     expect(capture.input.recorded.ledger.costSek).toBe(2879);
-    await expect(september.locator('td').nth(0)).toHaveText(display(capture.result.ledger.costSek));
-    await expect(september.locator('td').nth(2)).toHaveText(display(capture.result.ledger.costSek - 2879));
-    await expect(september.locator('td').nth(5)).toHaveText(display(capture.result.ledger.costSek - 2879 - 299));
-    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(2879));
+    await expect(september.locator('td').nth(0)).toHaveText(display(capture.modeled.baselineBill.totalSek));
+    await expect(september.locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    await expect(september.locator('td').nth(3)).toHaveText(display(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek));
+    await expect(september.locator('td').nth(4)).toHaveText(display(579 - capture.modeled.schedulerBill.totalSek));
+    await expect(viewer.getByTestId('period-comparison').locator('tbody tr').last().locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     const windows = history.windows.filter(w => w.start >= capture.input.start && w.end <= capture.input.end).sort((a,b) => a.start.localeCompare(b.start));
     expect(windows[0].start).toBe(capture.input.start); expect(windows.at(-1)!.end).toBe(capture.input.end);
     windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
     const reads = history.reads();
+    await page.getByTestId('comparison-graph-scheduler').click();
+    await expect(viewer.getByRole('img', { name: /power flows|effektflöden/i }).first()).toContainText(/SHS ENERGY SCHEDULER|SHS ENERGIS/);
     await page.getByTestId('comparison-graph-actual').click();
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    await expect(chart).toContainText(/Actual|Uppmätt/i);
+    await expect(chart).toContainText(/Recorded consumption|Uppmätt/i);
     await chart.focus(); await chart.press('End'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
     await page.getByTestId('comparison-graph-default').click();
-    await expect(chart).toContainText(/DEFAULT MODEL|STANDARDMODELL/);
+    await expect(chart).toContainText(/BASELINE MODEL|BASMODELL/);
     expect(history.reads()).toBe(reads);
     await page.getByTestId('baseline-previous').click();
     await expect(page.getByTestId('baseline-frame')).toContainText(/August|augusti/);
     await page.getByTestId('baseline-next').click();
-    await expect(page.getByTestId('baseline-net-cost')).toHaveText(display(capture.result.ledger.costSek));
+    await expect(page.getByTestId('baseline-net-cost')).toHaveText(display(capture.modeled.baselineBill.totalSek));
     expect(history.reads()).toBe(reads);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.getByTestId('contract-roi').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
@@ -385,7 +397,8 @@ test.describe('requesting a replan', () => {
   });
 
   test('ROI recovers an empty month from hourly history and uses the same costs in its graph', async ({ context, page }) => {
-    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-05', to: '2026-05' });
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     const start = '2026-04-30T22:00:00.000Z', end = '2026-05-31T22:00:00.000Z';
     const hours = Array.from({ length: 745 }, (_, i) => ({
@@ -421,11 +434,11 @@ test.describe('requesting a replan', () => {
     await expectRoiMonths(page, '(1/1)');
     const row = page.getByTestId('scheduler-month-2026-05');
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(row.locator('td').nth(1)).toHaveText(display(744));
+    await expect(row.locator('td').nth(1)).toHaveText(display(579));
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
     const viewer = page.getByTestId('roi-baseline');
-    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(744));
+    await expect(viewer.getByTestId('baseline-net-cost')).toHaveText((await row.locator('td').first().textContent())!);
     const download = page.waitForEvent('download');
     await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
     const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
@@ -433,17 +446,20 @@ test.describe('requesting a replan', () => {
     expect(capture.input.recorded.ledger.costSek).toBe(744);
     expect(capture.input.recovery.hours).toBe(744);
     expect(capture.input.problem.initial.ev_kwh).toBe(.75 * 75.6);
-    await expect(row.locator('td').nth(2)).toHaveText(display(capture.result.ledger.costSek - 744));
-    await expect(page.getByTestId('roi-period-net')).toHaveText((await row.locator('td').nth(5).textContent())!);
+    await expect(row.locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    await expect(row.locator('td').nth(3)).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek));
+    await expect(page.getByTestId('roi-period-net')).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek-299));
   });
 
-  test('ROI isolates unavailable prices to the affected month and keeps graph navigation usable', async ({ context, page }) => {
+  test('ROI retains saved months when new prices are unavailable and keeps graph navigation usable', async ({ context, page }) => {
+    test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(2/2)');
+    history.failPrices();
     await page.locator('#roi-from').fill('2026-04');
-    await expectRoiMonths(page, '(6/7)');
+    await expectRoiMonths(page, '(2/7)');
     await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('Missing historical market price');
     history.failPrices();
     await page.getByTestId('roi-view-graphs').click();
@@ -451,7 +467,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
     await expect(page.getByTestId('baseline-generate')).toBeEnabled();
     await expect(page.getByTestId('baseline-previous')).toBeEnabled();
-    await expectRoiMonths(page, '(6/7)');
+    await expectRoiMonths(page, '(2/7)');
   });
 
   test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {

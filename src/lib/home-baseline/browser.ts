@@ -1,19 +1,22 @@
 import { loadHomeBaseline, type HomeRef } from './history';
 import type { BaselineAnchor, BaselinePeriod } from './period';
+import type { SchedulerReplay } from './scheduler-replay';
+import type { ModelComparison } from './model-comparison';
 import type { BaselineInput, BaselineResult } from './model';
 
 export interface BaselineResponse { result: BaselineResult; engineHash: string }
 export interface BaselineCapture extends BaselineResponse { input: BaselineInput }
 
-export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal): Promise<BaselineCapture> {
+export interface ComparisonCapture extends BaselineCapture { scheduler: SchedulerReplay; modeled: ModelComparison }
+export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal): Promise<ComparisonCapture> {
   const input = await loadHomeBaseline(ref, anchor, period, signal);
-  const projected = await new Promise<BaselineResponse>((resolve, reject) => {
+  const projected = await new Promise<Omit<ComparisonCapture, 'input'>>((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     const cleanup = () => { worker.terminate(); signal.removeEventListener('abort', cancel); };
     const cancel = () => { cleanup(); reject(new DOMException('Cancelled', 'AbortError')); };
     signal.addEventListener('abort', cancel, { once: true });
-    worker.onmessage = (event: MessageEvent<BaselineResponse & { error?: string }>) => {
+    worker.onmessage = (event: MessageEvent<Omit<ComparisonCapture, 'input'> & { error?: string }>) => {
       cleanup();
       if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data);
     };

@@ -2,7 +2,7 @@ import type { BaselineInput } from './model.ts';
 import { DEFAULT_SETTINGS, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
 
 export interface InputEvidence {
-  hourlyImport: boolean[]; hourlyExport: boolean[]; assumedMarkup: boolean[];
+  hourlyModel: boolean[]; hourlyImport: boolean[]; hourlyExport: boolean[]; assumedMarkup: boolean[];
   hourlyFields: { field: string; quarters: number }[];
   missingDevices: { key: string; name: string; quarters: number }[];
 }

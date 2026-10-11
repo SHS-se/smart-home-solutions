@@ -1,11 +1,16 @@
 // Test data only; production loads the selected home's captured physical models.
+import gridFixture from '../../../supabase/functions/_shared/grid-price-parity.fixture.json' with { type: 'json' };
+import type { GridTariffCatalogue } from '../../../supabase/functions/_shared/energy-grid-pricing.ts';
+import type { ComparisonCapture, BaselineCapture } from './browser';
+import { REPLAY_ENGINE, REPLAY_PROTOCOL } from './scheduler-replay';
+import { seriesService } from './model-comparison';
 import { snapshot } from '../energy-shift/optimisation-snapshot.fixture.ts';
 import { HOUSEHOLD } from '../planner-bench/household.ts';
 import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
 import type { HistoricalRows } from './model.ts';
 
 export function baselineFixture(range?: { start: string; end: string }): HistoricalRows & { snapshot: OptimisationSnapshot } {
-  const captured = snapshot();
+  const captured = { ...snapshot(), criteria: {} };
   const meter = { statistic_id: 'test', suggested_load_type: 'fixed_full_load' as const, load_type: 'fixed_full_load' as const, planning_role: 'controllable' as const, control_type: 'setpoint' as const, profile_sample_count: 1000, forecast_w_by_slot: Array(288).fill(0) };
   const end = range?.end ?? '2026-10-26T00:00:00.000Z', start = range ? Date.parse(range.start) : Date.parse(end) - 72 * 3_600_000;
   captured.capabilities.ev = true;
@@ -23,7 +28,7 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
     { ...meter, key: 'car', name: 'Home car', category: 'ev_charging', active_power_w: 11040 },
   ];
   const times = Array.from({ length: (Date.parse(end) - start) / 900_000 + 1 }, (_, i) => new Date(start + (i - 1) * 900_000).toISOString());
-  return { snapshot: captured, priceArea: 'SE3', start: new Date(start).toISOString(), end, evInitial: { start_ts: times[0], ev_soc: .79 },
+  return { tariff: testTariff(), snapshot: captured, priceArea: 'SE3', start: new Date(start).toISOString(), end, evInitial: { start_ts: times[0], ev_soc: .79 },
     actual: times.map(start_ts => ({ start_ts, total_load_kwh: .265, solar_production_kwh: 0, battery_soc: .5, ev_soc: .79, grid_import_kwh: .265, grid_export_kwh: 0, battery_charge_kwh: 0, battery_discharge_kwh: 0 })),
     prices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2, grid_import_price_sek_per_kwh: .5, source: 'archive', supplier_revision: '' })),
     devices: [{ id: 'heater-id', device_key: 'pool_heater', category: 'pool_heating' }, { id: 'pump-id', device_key: 'pool_pump', category: 'property_energy' }, { id: 'car-id', device_key: 'car', category: 'ev_charging' }],
@@ -31,4 +36,12 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
     pool: [{ start_ts: times[0], water_temperature_c: 31 }],
     outdoor: [],
   };
+}
+
+export function testTariff(): GridTariffCatalogue { return structuredClone({ timezone: gridFixture.timezone, configuration: gridFixture.base_configuration, profiles: [{ ...gridFixture.profile, versions: [{ ...gridFixture.profile.versions[0], valid_from: '2025-01-01' }] }] }) as GridTariffCatalogue; }
+/** Source/session tests substitute computation; financial/replay tests use the actual native engine. */
+export function captureStub(capture: BaselineCapture): ComparisonCapture {
+ const bill = { supplierFixedSek: 0, gridFixedSek: 0, gridPeakSek: 0, peakKw: 0, totalSek: capture.result.ledger.costSek };
+ const service = seriesService(capture.input, capture.result.series);
+ return { ...capture, scheduler: { ...capture.result, engine: REPLAY_ENGINE, protocol: REPLAY_PROTOCOL, solves: 1 }, modeled: { baselineBill: bill, schedulerBill: bill, baselineService: service, schedulerService: service, effects: [], timing: { vsBaselineMinSek: 0, vsBaselineMaxSek: 0, vsActualMinSek: 0, vsActualMaxSek: 0 } } };
 }

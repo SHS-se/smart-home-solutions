@@ -1,4 +1,8 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import runtime from '../../../supabase/functions/_shared/planner-wasm/runtime-config.json' with { type: 'json' };
+import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supplier-terms.ts';
 import { z } from 'zod';
+import { REPLAY_ENGINE, REPLAY_PROTOCOL } from './scheduler-replay.ts';
 import artifact from '../../../supabase/functions/_shared/planner-wasm/artifact.json' with { type: 'json' };
 import { homePhysics, type HomeModelCapture } from './home-physics.ts';
 import type { HomeRef } from './history.ts';
@@ -6,14 +10,13 @@ import type { MonthLedger } from './savings.ts';
 import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 
-// v2 pins roi_tibber_2026-10-11. Bump the recipe version when replay terms change.
-export const CALCULATION_VERSION = `roi-month-v2:${artifact.wasm_sha256}`;
+// v3 introduces current optimizer hindsight replay and complete grid/supplier bills.
+// The engine version is checked inside every saved ledger.
+export const CALCULATION_VERSION = `roi-month-v3:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const ledger = z.object({ importKwh: finite.nonnegative(), exportKwh: finite.nonnegative(), importCostSek: finite, exportRevenueSek: finite, costSek: finite }).strict();
 const comparison = z.object({ gridKwh: finite.nonnegative(), solarKwh: finite.nonnegative(), exportKwh: finite.nonnegative(), costSek: finite }).strict();
-const sensitivity = z.object({ initial: z.array(z.object({ assumption: z.enum(['battery', 'ev', 'pool']), value: finite, savingDeltaSek: finite.nullable() }).strict()).max(4),
-  markup10OreDeltaSek: finite, timingSavingMinSek: finite, timingSavingMaxSek: finite }).strict();
 export const monthLedgerSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), start: z.string().datetime(), end: z.string().datetime(), timeZone: z.string(),
   coverage: finite.positive().max(1), baseline: ledger, recorded: ledger,
   comparison: z.object({ baseline: comparison, actual: comparison, savingSek: finite }).strict(), gridImportCostSek: finite,
@@ -22,9 +25,14 @@ export const monthLedgerSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1
   assumptions: z.object({ battery: z.boolean(), ev: z.boolean(), pool: z.boolean() }).strict(), quarters: count.positive(),
   gaps: z.object({ householdQuarters: count, solarQuarters: count, deviceReadings: count, gridImportQuarters: count, gridExportQuarters: count }).strict(),
   quality: z.object({ missingDevices: z.array(z.object({ key: z.string(), name: z.string(), quarters: count }).strict()).max(100), evSocQuarters: count,
-    hourlyFields: z.array(z.object({ field: z.string(), quarters: count }).strict()).max(200), sensitivity }).strict(),
+    hourlyFields: z.array(z.object({ field: z.string(), quarters: count }).strict()).max(200) }).strict(),
 }).strict();
-const savedMonthSchema = z.object({ ledger: monthLedgerSchema, inputHash: z.string().regex(/^[a-f0-9]{64}$/), computedAt: z.string().datetime() }).strict();
+const bill = z.object({ supplierFixedSek: finite, gridFixedSek: finite, gridPeakSek: finite, peakKw: finite.nonnegative(), totalSek: finite }).strict();
+const service = z.object({ minimumPoolC: finite.nullable(), belowPoolStartHours: finite.nonnegative(), endBatteryKwh: finite.nullable(), endEvKwh: finite.nullable(), endPoolC: finite.nullable(), endCreditSek: finite }).strict();
+const effect = z.object({ key: z.enum(['battery','ev','pool']), value: finite, baselineDeltaSek: finite.nullable(), schedulerDeltaSek: finite.nullable(), vsBaselineDeltaSek: finite.nullable(), vsActualDeltaSek: finite.nullable(), error: z.string().nullable() }).strict();
+const modeled = z.object({ baselineBill: bill, schedulerBill: bill, baselineService: service, schedulerService: service, effects: z.array(effect).max(4), timing: z.object({ vsBaselineMinSek: finite, vsBaselineMaxSek: finite, vsActualMinSek: finite, vsActualMaxSek: finite }).strict() }).strict();
+export const comparisonLedgerSchema = monthLedgerSchema.omit({ comparison: true, gridImportCostSek: true }).extend({ scheduler: ledger, modeled, replay: z.object({ engine: z.literal(REPLAY_ENGINE), protocol: z.literal(REPLAY_PROTOCOL), solves: count.positive() }).strict() }).strict();
+const savedMonthSchema = z.object({ ledger: comparisonLedgerSchema, inputHash: z.string().regex(/^[a-f0-9]{64}$/), computedAt: z.string().datetime() }).strict();
 const reportSchema = z.object({ generation: count.positive(), version: z.literal(CALCULATION_VERSION), model: z.record(z.unknown()),
   months: z.record(savedMonthSchema) }).strict();
 export interface SavedMonth { ledger: MonthLedger; inputHash: string; computedAt: string }
@@ -38,8 +46,8 @@ export interface MonthStore {
 /** Persist physical equipment only, never forecasts, plans or chart series. */
 export function compactModel(snapshot: HomeModelCapture): HomeModelCapture {
   const members = new Set(homePhysics(snapshot).memberKeys);
-  const { captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings } = snapshot;
-  return { captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings,
+  const { captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria } = snapshot;
+  return { captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria,
     device_models: snapshot.device_models.filter(m => members.has(m.key)).map(m => ({ ...m, forecast_w_by_slot: [] })),
     services: snapshot.services.filter(s => s.device === 'ev' && s.control.type === 'discrete_current').map(s => ({ device: s.device, control: s.control })) };
 }
@@ -54,9 +62,10 @@ export function parseSavedReport(value: unknown): SavedReport {
     if (month !== m.month || month !== localDay(m.start, model.timezone).slice(0, 7) || m.timeZone !== model.timezone || start !== bounds.startMs || end <= start || end > bounds.endMs
       || m.quarters !== (end - start) / 900_000 || !equal(m.coverage, (end - start) / (bounds.endMs - start))
       || !equal(m.baseline.costSek, m.baseline.importCostSek - m.baseline.exportRevenueSek)
-      || !equal(m.recorded.costSek, m.recorded.importCostSek - m.recorded.exportRevenueSek)
-      || !equal(m.comparison.baseline.costSek, m.baseline.costSek) || !equal(m.comparison.actual.costSek, m.recorded.costSek)
-      || !equal(m.comparison.savingSek, m.baseline.costSek - m.recorded.costSek)) throw new Error('Invalid saved ROI month');
+      || !equal(m.modeled.baselineBill.totalSek, m.baseline.costSek + m.modeled.baselineBill.supplierFixedSek + m.modeled.baselineBill.gridFixedSek + m.modeled.baselineBill.gridPeakSek)
+      || !equal(m.modeled.schedulerBill.totalSek, m.scheduler.costSek + m.modeled.schedulerBill.supplierFixedSek + m.modeled.schedulerBill.gridFixedSek + m.modeled.schedulerBill.gridPeakSek)
+      || !equal(m.scheduler.costSek, m.scheduler.importCostSek - m.scheduler.exportRevenueSek)
+      || !equal(m.recorded.costSek, m.recorded.importCostSek - m.recorded.exportRevenueSek)) throw new Error('Invalid saved ROI month');
   }
   return { ...parsed, model } as SavedReport;
 }

@@ -338,5 +338,5 @@ Deno.test('SOC gaps retain observed declines across the gap and disclose missing
 Deno.test('unreachable recorded driving demand fails rather than clipping trips', () => {
   const input = prepareHomeBaseline(baselineFixture());
   input.evDemandKwh[0] = input.problem.car!.capacity_kwh;
-  assertThrows(() => projectBaseline(input, engine), Error, 'Recorded EV demand exceeds');
+  assertThrows(() => projectBaseline(input, engine), Error, 'unserved recorded EV trip');
 });

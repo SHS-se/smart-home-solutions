@@ -1,14 +1,14 @@
-import type { generateHomeBaseline, BaselineCapture } from './browser';
+import type { generateHomeBaseline, ComparisonCapture } from './browser';
 import type { resolveBaselineAnchor, HomeRef } from './history';
 import { periodKey, type BaselineAnchor, type BaselinePeriod } from './period';
-import { monthLedger, type MonthLedger } from './savings';
+import { comparisonMonthLedger, type MonthLedger } from './savings';
 import { CALCULATION_VERSION, type MonthStore, type SavedReport } from './saved-months.ts';
 
-interface Job { controller: AbortController; promise: Promise<BaselineCapture>; waiters: Set<symbol> }
+interface Job { controller: AbortController; promise: Promise<ComparisonCapture>; waiters: Set<symbol> }
 
 /** One home owns its pinned models, eight full captures and shared in-flight generation. */
 export function createCaptureSource(ref: HomeRef | null, dependencies: { resolveAnchor: typeof resolveBaselineAnchor; generate: typeof generateHomeBaseline; store?: MonthStore; now?: () => number }) {
-  const lifetime = new AbortController(), cache = new Map<string, BaselineCapture>(), jobs = new Map<string, Job>();
+  const lifetime = new AbortController(), cache = new Map<string, ComparisonCapture>(), jobs = new Map<string, Job>();
   const summaries = new Map<string, MonthLedger>();
   const summaryListeners = new Set<(ledger: MonthLedger) => void>();
   let anchorPromise: Promise<BaselineAnchor> | null = null;
@@ -51,7 +51,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
       jobs.forEach(job => job.controller.abort()); jobs.clear(); cache.clear(); summaries.clear();
       anchorPromise = Promise.resolve({ ...current, snapshot: report?.model ?? current.snapshot });
     },
-    capture: async (period: BaselinePeriod, signal: AbortSignal, fresh = false): Promise<BaselineCapture> => {
+    capture: async (period: BaselinePeriod, signal: AbortSignal, fresh = false): Promise<ComparisonCapture> => {
       if (!ref) throw new Error('Select a home');
       signal.throwIfAborted(); lifetime.signal.throwIfAborted();
       if (!fresh) { const found = cached(period); if (found) return found; }
@@ -66,7 +66,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
             controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
             if (jobs.get(key) === own && !controller.signal.aborted && !lifetime.signal.aborted && own.waiters.size) {
               if (period.view === 'month') {
-                let ledger = monthLedger(capture);
+                let ledger = comparisonMonthLedger(capture);
                 if (dependencies.store) {
                   const bytes = new TextEncoder().encode(JSON.stringify({ version: CALCULATION_VERSION, problem: capture.input.problem,
                     ev: capture.input.evDemandKwh, evidence: capture.input.evidence, recorded: capture.input.recorded, ledger }));

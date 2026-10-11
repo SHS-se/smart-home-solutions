@@ -2,21 +2,21 @@ import { assert, assertEquals, assertRejects } from '@std/assert';
 import { createCaptureSource } from './source';
 import { createSavingsRun } from './savings-run';
 import { createBaselineSession } from './session';
-import { baselineFixture } from './fixture';
+import { baselineFixture, captureStub } from './fixture';
 import { prepareHomeBaseline, projectBaseline } from './model';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
 import { monthPeriod, type BaselinePeriod } from './period';
-import type { BaselineCapture } from './browser';
+import type { ComparisonCapture } from './browser';
 
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 const fixture = baselineFixture(), input = prepareHomeBaseline(fixture);
-const initial = { input, result: projectBaseline(input, engine), engineHash: 'test' };
+const initial = captureStub({ input, result: projectBaseline(input, engine), engineHash: 'test' });
 const anchor = { snapshot: fixture.snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: fixture.end };
-const at = (period: BaselinePeriod, cost = 100): BaselineCapture => ({ ...initial, input: { ...input, start: period.start, end: period.end }, result: { ...initial.result, ledger: { ...initial.result.ledger, costSek: cost } } });
+const at = (period: BaselinePeriod, cost = 100): ComparisonCapture => ({ ...initial, input: { ...input, start: period.start, end: period.end }, result: { ...initial.result, ledger: { ...initial.result.ledger, costSek: cost } } });
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 function harness() {
   let anchors = 0;
-  const calls: { period: BaselinePeriod; signal: AbortSignal; resolve: (c: BaselineCapture) => void; reject: (e: Error) => void }[] = [];
+  const calls: { period: BaselinePeriod; signal: AbortSignal; resolve: (c: ComparisonCapture) => void; reject: (e: Error) => void }[] = [];
   const source = createCaptureSource({ homeId: 'home', customerId: 'customer' }, {
     resolveAnchor: () => { anchors++; return Promise.resolve(anchor); },
     generate: (_, __, period, signal) => new Promise((resolve, reject) => { calls.push({ period, signal, resolve, reject }); }),

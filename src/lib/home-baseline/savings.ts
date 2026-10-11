@@ -1,6 +1,6 @@
 import { homeMonthBounds } from '../energy-shift/home-time';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
-import type { BaselineCapture } from './browser';
+import type { BaselineCapture, ComparisonCapture } from './browser';
 import { periodComparison } from './comparison';
 
 export function monthsBetween(from: string, to: string): string[] {
@@ -27,14 +27,18 @@ export function monthLedger(capture: BaselineCapture) {
     coverage: (end - start) / (bounds.endMs - bounds.startMs), baseline: result.ledger, recorded: input.recorded.ledger, comparison, gridImportCostSek: input.recorded.gridImportCostSek,
     priceArea: input.priceArea, ...captureEvidence(capture) };
 }
-export type MonthLedger = ReturnType<typeof monthLedger>;
+export function comparisonMonthLedger(capture: ComparisonCapture) {
+  const month = monthLedger(capture);
+  return { month: month.month, start: month.start, end: month.end, timeZone: month.timeZone, coverage: month.coverage, baseline: month.baseline, recorded: month.recorded, priceArea: month.priceArea, ...captureEvidence(capture), scheduler: capture.scheduler.ledger, modeled: capture.modeled, replay: { engine: capture.scheduler.engine, protocol: capture.scheduler.protocol, solves: capture.scheduler.solves } };
+}
+export type MonthLedger = ReturnType<typeof comparisonMonthLedger>;
 
 /** The saved table and optional graphs expose exactly the same evidence. */
-export function captureEvidence({ input, result }: BaselineCapture) {
+export function captureEvidence({ input }: BaselineCapture) {
   return { reconstructedPriceQuarters: input.reconstructedPriceQuarters, assumedPriceQuarters: input.assumedPriceQuarters,
     recovery: input.recovery, assumptions: { battery: input.batteryInitialAssumed, ev: input.evInitialAssumed, pool: input.poolInitialAssumed },
     quality: { missingDevices: input.evidence.missingDevices, evSocQuarters: input.evMissingSocQuarters,
-      hourlyFields: input.evidence.hourlyFields, sensitivity: result.sensitivity }, quarters: input.problem.slots.length,
+      hourlyFields: input.evidence.hourlyFields }, quarters: input.problem.slots.length,
     gaps: { ...input.energyGaps, gridImportQuarters: input.recorded.missingImportQuarters, gridExportQuarters: input.recorded.missingExportQuarters } };
 }
 

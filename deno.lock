@@ -193,6 +193,7 @@
         "npm:@electric-sql/pglite@~0.3.14",
         "npm:@eslint/js@^9.32.0",
         "npm:@hookform/resolvers@^3.10.0",
+        "npm:@noble/hashes@2.4.0",
         "npm:@playwright/test@^1.57.0",
         "npm:@radix-ui/react-accordion@^1.2.11",
         "npm:@radix-ui/react-alert-dialog@^1.1.14",

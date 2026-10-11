@@ -14,10 +14,10 @@ import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/ener
 import { downloadJson } from '@/lib/download-json';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 
-export default function HomeBaselineViewer({ session, homeId, subscriptionSek, currentFeeSek, onClose }: { session: BaselineSession; homeId: string | null; subscriptionSek: number | null; currentFeeSek: number; onClose: () => void }) {
+export default function HomeBaselineViewer({ session, homeId, onClose }: { session: BaselineSession; homeId: string | null; onClose: () => void }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
-  const [graphMode, setGraphMode] = useState<'default' | 'actual'>('default');
+  const [graphMode, setGraphMode] = useState<'default' | 'scheduler' | 'actual'>('default');
   const [selected, setSelected] = useState<number | null>(null);
   useEffect(() => { setSelected(null); }, [period, graphMode]);
   const timeZone = sessionTimeZone ?? homeTimeZone;
@@ -30,7 +30,7 @@ export default function HomeBaselineViewer({ session, homeId, subscriptionSek, c
     if (!capture) return null;
     if (graphMode === 'actual') return projectPlanChart({ rows: capture.input.recorded.rows, devices: capture.input.recorded.devices,
       range: { from: 0, to: capture.input.recorded.rows.length }, timeZone: capture.input.timeZone, prices: { kind: 'bench' } });
-    const { series } = capture.result;
+    const { series } = graphMode === 'scheduler' ? capture.scheduler : capture.result;
     return projectPlanChart({ ...modelChartData(series), devices: series.devices,
       range: { from: 0, to: series.start.length }, timeZone: capture.input.timeZone });
   }, [capture, graphMode]);
@@ -58,20 +58,25 @@ export default function HomeBaselineViewer({ session, homeId, subscriptionSek, c
       {!capture && !busy && homeId && <p className="text-sm text-muted-foreground">{t('Generera modellen för vald period.', 'Generate the model for this period.')}</p>}
       {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t('Genererar…', 'Generating…')}</p>}
       {capture && input && result && p && chart && <>
-        <PeriodComparison capture={capture} subscriptionSek={view === 'month' ? subscriptionSek : null} currentFeeSek={currentFeeSek} />
-        <div className="flex gap-2" role="group" aria-label={t('Graf', 'Graph')}>
-          <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Standardmodell', 'Default model')}</Button>
-          <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Uppmätt', 'Actual')}</Button>
+        <PeriodComparison capture={capture} />
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('Graf', 'Graph')}>
+          <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Basmodell', 'Baseline model')}</Button>
+          <Button variant={graphMode === 'scheduler' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'scheduler'} onClick={() => setGraphMode('scheduler')} data-testid="comparison-graph-scheduler">SHS Energy Scheduler</Button>
+          <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Uppmätt förbrukning', 'Recorded consumption')}</Button>
         </div>
         <EnergyChart key={`${graphMode}:${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
           baseValues={chart.consumption.baseValues} consumptionIssues={chart.consumption.issues}
-          timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('UPPMÄTT', 'ACTUAL') : t('STANDARDMODELL', 'DEFAULT MODEL')}
+          timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('UPPMÄTT', 'RECORDED') : graphMode === 'scheduler' ? 'SHS ENERGY SCHEDULER' : t('BASMODELL', 'BASELINE MODEL')}
           hasBattery={p.battery !== null} hasEvBattery={p.car !== null} realPrices={chart.realPrices}
           poolTargetC={p.pool_stop_c} selectedIndex={quarter ?? -1} onQuarterClick={setSelected}
-          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Uppmätt', 'Actual') : t('Standardmodell', 'Default model'), colour: 'var(--plan-load-2)',
-            values: chart.rows.map(row => row.cumulativeCostSek) }]}
+          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Uppmätt förbrukning', 'Recorded consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: 'var(--plan-load-2)',
+            values: chart.rows.map((row, i) => {
+              if (graphMode === 'actual') return row.cumulativeCostSek;
+              const bill = graphMode === 'scheduler' ? capture.modeled.schedulerBill : capture.modeled.baselineBill;
+              return row.cumulativeCostSek + (bill.supplierFixedSek + bill.gridFixedSek) * (i + 1) / chart.rows.length + (i === chart.rows.length - 1 ? bill.gridPeakSek : 0);
+            }) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">
-            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek ?? 0 : result.series.costSek[quarter])} SEK
+            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek ?? 0 : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK
             {graphMode === 'default' && p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
           </div>} />
         <BaselineModelDetails capture={capture} />

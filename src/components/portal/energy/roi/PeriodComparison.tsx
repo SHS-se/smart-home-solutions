@@ -1,31 +1,17 @@
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { BaselineCapture } from '@/lib/home-baseline/browser';
-import { periodComparison } from '@/lib/home-baseline/comparison';
-import { monthLedger, schedulerSavings } from '@/lib/home-baseline/savings';
+import type { ComparisonCapture } from '@/lib/home-baseline/browser';
 
-export default function PeriodComparison({ capture, subscriptionSek, currentFeeSek }: { capture: BaselineCapture; subscriptionSek: number | null; currentFeeSek: number }) {
+export default function PeriodComparison({ capture }: { capture: ComparisonCapture }) {
   const { t } = useLanguage();
-  const comparison = periodComparison(capture);
-  const fee = subscriptionSek === null ? 0 : monthLedger(capture).coverage * currentFeeSek;
-  const subscription = subscriptionSek !== null && Number.isFinite(subscriptionSek) && subscriptionSek >= 0
-    ? schedulerSavings([monthLedger(capture)], subscriptionSek).subscriptionSek : null;
-  const amount = (value: number, unit: string) => `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
-  const measures = [
-    { key: 'gridKwh' as const, label: t('El från nätet', 'Grid energy consumption'), unit: 'kWh' },
-    { key: 'solarKwh' as const, label: t('Använd solel', 'Solar energy consumption'), unit: 'kWh' },
-    { key: 'exportKwh' as const, label: t('Exporterad solel', 'Solar energy exported'), unit: 'kWh' },
-    { key: 'costSek' as const, label: t('Elkostnad', 'Grid energy cost'), unit: 'SEK' },
+  const actors = [
+    { label: t('Basmodell', 'Baseline model'), series: capture.result.series, ledger: capture.result.ledger, bill: capture.modeled.baselineBill },
+    { label: 'SHS Energy Scheduler', series: capture.scheduler.series, ledger: capture.scheduler.ledger, bill: capture.modeled.schedulerBill },
   ];
-  return <div className="rounded-lg border p-3 sm:p-4" data-testid="baseline-costs">
-    <table className="w-full text-right text-sm tabular-nums" data-testid="period-comparison">
-      <caption className="sr-only">{t('Samma period och elavtal', 'Same period and electricity contract')}</caption>
-      <thead><tr className="border-b"><th scope="col" className="pb-2 text-left font-medium">{t('Jämförelse', 'Comparison')}</th><th scope="col" className="pb-2 pl-2 font-medium">{t('Standard', 'Default')}</th><th scope="col" className="pb-2 pl-2 font-medium">{t('Uppmätt', 'Actual')}</th></tr></thead>
-      <tbody>{measures.map(({ key, label, unit }) => <tr key={key} data-testid={`comparison-${key}`}><th scope="row" className="py-2 text-left font-normal">{label}</th>
-        <td className="py-2 pl-2" data-testid={key === 'costSek' ? 'baseline-net-cost' : undefined}>{amount(comparison.baseline[key] + (key === 'costSek' ? fee : 0), unit)}</td><td className="py-2 pl-2">{amount(comparison.actual[key] + (key === 'costSek' ? fee : 0), unit)}</td></tr>)}</tbody>
-    </table>
-    <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 border-t pt-3 text-sm">
-      <p>{t('Besparing', 'Saving')}: <strong data-testid="period-saving">{amount(comparison.savingSek, 'SEK')}</strong></p>
-      {subscription !== null && <><p>{t('Abonnemang', 'Subscription')}: {amount(subscription, 'SEK')}</p><p>{t('Netto', 'Net')}: <strong>{amount(comparison.savingSek - subscription, 'SEK')}</strong></p></>}
-    </div>
-  </div>;
+  const values = actors.map(a => [a.ledger.importKwh, Math.max(0, a.series.solarW.reduce((n, w) => n + w / 4000, 0) - a.ledger.exportKwh), a.ledger.exportKwh, a.bill.totalSek]);
+  const labels = [t('El från nätet', 'Grid energy consumption'), t('Använd solel', 'Solar energy consumption'), t('Exporterad energi', 'Exported energy'), t('El + nätkostnad', 'Electricity + grid cost')];
+  const amount = (v: number, unit: string) => `${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
+  return <div className="rounded-lg border p-4 overflow-x-auto" data-testid="baseline-costs"><table className="w-full text-right text-sm tabular-nums" data-testid="period-comparison">
+    <thead><tr className="border-b"><th scope="col" className="text-left py-2">{t('Jämförelse', 'Comparison')}</th>{actors.map(a => <th scope="col" className="pl-3" key={a.label}>{a.label}</th>)}</tr></thead>
+    <tbody>{labels.map((label, i) => <tr key={label}><th scope="row" className="text-left py-2 font-normal">{label}</th>{values.map((v, n) => <td className="pl-3 whitespace-nowrap" key={n} data-testid={i === 3 && n === 0 ? 'baseline-net-cost' : undefined}>{amount(v[i], i === 3 ? 'SEK' : 'kWh')}</td>)}</tr>)}</tbody>
+  </table><p className="mt-3 border-t pt-3 text-sm">{t('Besparing mot basmodell', 'Savings vs Baseline')}: <strong data-testid="period-saving">{amount(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek, 'SEK')}</strong></p></div>;
 }

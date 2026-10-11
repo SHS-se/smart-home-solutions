@@ -18,9 +18,10 @@ async function read<T>(request: PromiseLike<{ data: unknown; error: { message: s
 
 /** Pin equipment models and the last recorded quarter once for this viewer session. */
 export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): Promise<BaselineAnchor> {
-  const [snapshot, latest, first, recoveredFirst, recoveredLast] = await Promise.all([
-    read<HomeModelCapture | null>(scoped(ref, 'energy_optimisation_current').select('captured_at:snapshot->>captured_at,timezone:snapshot->>timezone,capabilities:snapshot->capabilities,battery:snapshot->battery,ev_battery:snapshot->ev_battery,pool:snapshot->pool,device_physics:snapshot->device_physics,pool_model:snapshot->pool_model,grid:snapshot->grid,value_settings:snapshot->value_settings,device_models:snapshot->device_models,services:snapshot->services')
+  const [snapshot, criteria, latest, first, recoveredFirst, recoveredLast] = await Promise.all([
+    read<HomeModelCapture | null>(scoped(ref, 'energy_optimisation_current').select('comfort:snapshot->comfort,policy:snapshot->policy,captured_at:snapshot->>captured_at,timezone:snapshot->>timezone,capabilities:snapshot->capabilities,battery:snapshot->battery,ev_battery:snapshot->ev_battery,pool:snapshot->pool,device_physics:snapshot->device_physics,pool_model:snapshot->pool_model,grid:snapshot->grid,value_settings:snapshot->value_settings,device_models:snapshot->device_models,services:snapshot->services')
       .abortSignal(signal).maybeSingle()),
+    read<import('../../../supabase/functions/_shared/planner-wasm/rule-policy').CriteriaOverrides>(db.rpc('get_energy_roi_criteria', { p_customer_id: ref.customerId, p_home_id: ref.homeId }).abortSignal(signal)),
     read<{ start_ts: string } | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts')
       .lt('start_ts', new Date(Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS).toISOString())
       .order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()),
@@ -33,7 +34,7 @@ export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): 
   if (!snapshot) throw new Error('Current home physical model is unavailable');
   if ((!latest || !first) && (!recoveredFirst || !recoveredLast)) throw new Error('No completed historical energy readings are available for this home');
   homePhysics(snapshot);
-  return { snapshot, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
+  return { snapshot: { ...snapshot, criteria }, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
     latestEnd: new Date(Math.max(...[latest ? Date.parse(latest.start_ts) + QUARTER_MS : null, recoveredLast ? Date.parse(recoveredLast.start_ts) + 3_600_000 : null].filter((t): t is number => t !== null))).toISOString() };
 }
 
@@ -83,11 +84,12 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
       }
       if (!Array.isArray(data?.prices) || !data?.area) throw new Error('Historical electricity prices unavailable');
       if (data.prices.some((row: PriceRow) => row.supplier_revision !== ROI_SUPPLIER_TERMS.revision)) throw new Error('ROI supplier terms changed; reload the page');
-      return data as { prices: PriceRow[]; area: string };
+      if (!data.catalogue) throw new Error('Monthly grid tariff definitions unavailable');
+      return data as { prices: PriceRow[]; area: string; catalogue: import('../../../supabase/functions/_shared/energy-grid-pricing').GridTariffCatalogue };
     })(),
   ]);
   signal.throwIfAborted();
   return prepareHomeBaseline(mergeHourlyHistory({ snapshot, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
-    actual: batches.flatMap(b => b.actual), prices: pricing.prices, priceArea: pricing.area,
+    tariff: pricing.catalogue, actual: batches.flatMap(b => b.actual), prices: pricing.prices, priceArea: pricing.area,
     deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) }, batches.flatMap(b => b.recovered)));
 }

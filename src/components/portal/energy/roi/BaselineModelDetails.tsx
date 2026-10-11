@@ -1,19 +1,19 @@
 import { useLanguage } from '@/contexts/LanguageContext';
 import { DEFAULT_SETTINGS } from '@/lib/home-baseline/controller';
-import type { BaselineCapture } from '@/lib/home-baseline/browser';
+import type { ComparisonCapture } from '@/lib/home-baseline/browser';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
 import { captureEvidence } from '@/lib/home-baseline/savings';
 import { ComparisonEvidence } from './ComparisonEvidence';
 
 /** Inspection data stays available without pushing the chart down the page. */
-export default function BaselineModelDetails({ capture }: { capture: BaselineCapture }) {
+export default function BaselineModelDetails({ capture }: { capture: ComparisonCapture }) {
   const { t } = useLanguage();
   const { input, result } = capture;
   const p = input.problem;
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   const stamp = (at: string) => formatHomeStamp(at, input.timeZone);
   const demand = input.evDemandKwh.reduce((sum, value) => sum + value, 0);
-  return <details className="rounded-lg border p-4" data-testid="baseline-details">
+  return <details className="rounded-lg border p-4 break-words" data-testid="baseline-details">
     <summary className="cursor-pointer text-sm font-medium">{t('Modelldetaljer', 'Model details')}</summary>
     <div className="mt-4 space-y-4 text-sm" data-testid="baseline-models">
       <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
@@ -40,13 +40,16 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
         <tbody>{input.evDailyDemand.map(day => <tr key={day.day}><td>{day.day}</td><td>{number(day.kwh)}</td></tr>)}</tbody>
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
-        <ComparisonEvidence evidence={captureEvidence(capture)} testIdPrefix="baseline" />
+        <p>SHS Energy Scheduler · {capture.scheduler.protocol} · {capture.scheduler.solves} {t('planeringar', 'planning runs')} · 72 h.</p>
+        <p>{t('Slutenergi, basmodell / schemaläggare', 'Ending energy, baseline / scheduler')}: {number(capture.modeled.baselineService.endCreditSek)} / {number(capture.modeled.schedulerService.endCreditSek)} SEK. {t('Visas separat från besparing.', 'Shown separately from cash savings.')}</p>
+        <p>{t('Lägsta pooltemperatur, basmodell / schemaläggare', 'Minimum pool temperature, baseline / scheduler')}: {capture.modeled.baselineService.minimumPoolC?.toFixed(2) ?? '—'} / {capture.modeled.schedulerService.minimumPoolC?.toFixed(2) ?? '—'}°C.</p>
+        <ComparisonEvidence evidence={captureEvidence(capture)} modeled={capture.modeled} testIdPrefix="baseline" />
         <p>{t('Modeller fångade', 'Models captured')}: {stamp(input.modelCapturedAt)}. {t('Startkvart', 'Initial quarter')}: {stamp(input.initialObservedAt)}.</p>
         {input.evInitialObservedAt && <p>{t('Bilens start-SOC', 'Initial car SOC')}: {stamp(input.evInitialObservedAt)}.</p>}
         {p.car && <p>{t('SOC-minskningar ger körbehov; tidigare laddning ignoreras. Nattladdning antas vara tillgänglig.', 'Recorded SOC declines give driving demand; previous charging is ignored. Overnight charging is assumed available.')}</p>}
         {p.pool_store && <p>{t('Värmepumpens starttillstånd: av, historisk startfas okänd.', 'Heat pump initial state: off, historical startup phase unknown.')}</p>}
         <p>{t('Använd solel = produktion minus export, inklusive batteriladdning. Export räknas som solel; mätaren anger inte energins ursprung.', 'Solar consumption = generation minus exports, including battery charging. Exports are counted as solar; the meter does not identify energy origin.')}</p>
-        <p>{t('Grafkostnader exkluderar fasta avgifter och SHS-abonnemang.', 'Graph costs exclude fixed fees and SHS subscription')}</p>
+        <p>{t('Modellgrafer inkluderar fasta avgifter och periodens toppeffektkostnad vid slutet. Uppmätt förbrukningsgraf visar rörliga kostnader.', 'Model cost lines include fixed fees and period peak charges at the end. Recorded consumption shows variable costs.')}</p>
         <p>{t('Beräkning', 'Calculation')}: {Math.round(result.projectionMs)} ms. {t('Fullständiga indata finns i modellexporten.', 'Full inputs are available in the model export.')}</p>
       </div>
     </div>

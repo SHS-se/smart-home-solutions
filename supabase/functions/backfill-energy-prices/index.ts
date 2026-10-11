@@ -277,7 +277,7 @@ serve(async (req) => {
         if (!response.ok) throw new Error(`Historical market prices unavailable for ${day}: ${response.status}`);
         return response.json();
       });
-      return json({ prices, area });
+      return json({ prices, area, catalogue });
     }
 
     // ── Walk the window ──────────────────────────────────────────────────────

@@ -1,11 +1,11 @@
-import type { BaselineCapture } from './browser';
+import type { ComparisonCapture } from './browser';
 import type { CaptureSource } from './source';
 import { latestPeriod, monthPeriod, stepPeriod, switchPeriodView, type BaselineAnchor, type BaselinePeriod, type BaselineView } from './period';
 
 export interface BaselineSessionState {
   view: BaselineView;
   period: BaselinePeriod | null;
-  capture: BaselineCapture | null;
+  capture: ComparisonCapture | null;
   busy: boolean;
   error: string | null;
   timeZone: string | null;

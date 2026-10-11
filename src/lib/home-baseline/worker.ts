@@ -1,7 +1,8 @@
 import wasmUrl from '../../../supabase/functions/_shared/planner-wasm/solver.wasm?url';
 import artifact from '../../../supabase/functions/_shared/planner-wasm/artifact.json';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
-import { projectBaseline, type BaselineInput } from './model';
+import type { BaselineInput } from './model';
+import { compareModels } from './model-comparison';
 
 self.onmessage = async (event: MessageEvent<BaselineInput>) => {
   try {
@@ -10,9 +11,8 @@ self.onmessage = async (event: MessageEvent<BaselineInput>) => {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
     if (artifact.abi !== 8 || hash !== artifact.wasm_sha256) throw new Error('Unsupported or corrupt default model engine');
-    // Only the project capability crosses the baseline boundary.
-    const result = projectBaseline(event.data, { project: createWasmPlanner(bytes).project });
-    self.postMessage({ result, engineHash: hash });
+    const compared = compareModels(event.data, createWasmPlanner(bytes));
+    self.postMessage({ ...compared, engineHash: hash });
   } catch (error) {
     self.postMessage({ error: error instanceof Error ? error.message : String(error) });
   }

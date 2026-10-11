@@ -1,8 +1,8 @@
 import { assert, assertEquals } from '@std/assert';
 import { createBaselineSession } from './session';
 import { createCaptureSource } from './source';
-import type { BaselineCapture } from './browser';
-import { baselineFixture } from './fixture';
+import type { ComparisonCapture } from './browser';
+import { baselineFixture, captureStub } from './fixture';
 import { prepareHomeBaseline, projectBaseline } from './model';
 import type { BaselinePeriod } from './period';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
@@ -10,17 +10,17 @@ import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-w
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 const fixture = baselineFixture();
 const initialInput = prepareHomeBaseline(fixture);
-const initial: BaselineCapture = { input: initialInput, result: projectBaseline(initialInput, engine), engineHash: 'test' };
+const initial: ComparisonCapture = captureStub({ input: initialInput, result: projectBaseline(initialInput, engine), engineHash: 'test' });
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 const ref = { homeId: 'home', customerId: 'customer' };
 const capture = (p: BaselinePeriod) => ({ ...initial, input: { ...initial.input, start: p.start, end: p.end } });
 
 function harness() {
   let anchorReads = 0;
-  const calls: { period: BaselinePeriod; signal: AbortSignal; resolve: (value: BaselineCapture) => void; reject: (error: Error) => void }[] = [];
+  const calls: { period: BaselinePeriod; signal: AbortSignal; resolve: (value: ComparisonCapture) => void; reject: (error: Error) => void }[] = [];
   const source = createCaptureSource(ref, {
     resolveAnchor: () => { anchorReads++; return Promise.resolve({ snapshot: fixture.snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: fixture.end }); },
-    generate: (_, __, period, signal) => new Promise<BaselineCapture>((resolve, reject) => { calls.push({ period, signal, resolve, reject }); }),
+    generate: (_, __, period, signal) => new Promise<ComparisonCapture>((resolve, reject) => { calls.push({ period, signal, resolve, reject }); }),
   });
   const session = createBaselineSession(source);
   return { session, calls, anchorReads: () => anchorReads };

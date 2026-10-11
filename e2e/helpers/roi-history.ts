@@ -1,13 +1,22 @@
 import { expect, type BrowserContext, type Page } from '../../playwright-fixture';
 import { CALCULATION_VERSION, type SavedReport } from '../../src/lib/home-baseline/saved-months';
-import { baselineFixture } from '../../src/lib/home-baseline/fixture';
+import { baselineFixture, testTariff } from '../../src/lib/home-baseline/fixture';
 import { ROI_SUPPLIER_TERMS } from '../../supabase/functions/_shared/roi-supplier-terms';
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
-export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string) {
+export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string, range = { from: '2026-09', to: '2026-10' }) {
+  await context.addInitScript(({ key, range }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ ...range, equipment: '50000', installation: '15000', subscription: '299' })); }, { key: `shs-contract-roi-v2:${customerId}`, range });
   const fixture = baselineFixture(), windows: { start: string; end: string }[] = [];
+  // Small stores and an insulated pool keep UI month tests cheap. Native physics
+  // and optimizer behaviour use the full household in calculation tests.
+  fixture.snapshot.device_physics!.battery!.capacity_kwh = .1;
+  fixture.snapshot.device_physics!.pool!.store.capacity_kwh_per_c = 1;
+  fixture.snapshot.device_physics!.pool!.store.loss = { kind: 'linear', kw_per_c: 0, surroundings_c: 20 };
   let reads = 0, priceError = false;
   let report: SavedReport | null = null;
+  await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
+  await context.route('**/rest/v1/rpc/get_energy_roi_criteria*', route => route.fulfill({ json: {} }));
+  await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['05','06','07','08','09'].flatMap(month => ['electricity','grid'].map(kind => ({ id: `${month}:${kind}`, customer_id: customerId, document_kind: kind, period_start: `2026-${month}-01`, period_end: `2026-${month}-${['06','09'].includes(month) ? '30' : '31'}`, total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [] }))) }));
   await context.route('**/rest/v1/energy_roi_reports*', route => route.fulfill({ json: report }));
   await context.route('**/rest/v1/rpc/pin_energy_roi_report*', async route => {
     const body = route.request().postDataJSON();
@@ -43,7 +52,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     }
     const prices = baselineFixture({ start: body.start, end: body.end }).prices;
     prices.forEach(p => { p.source = 'reconstructed'; p.supplier_revision = ROI_SUPPLIER_TERMS.revision; });
-    await route.fulfill({ json: { prices, area: 'SE3' } });
+    await route.fulfill({ json: { prices, area: 'SE3', catalogue: testTariff() } });
   });
   await context.route('**/rest/v1/energy_optimisation_*', async route => {
     const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';
@@ -63,7 +72,13 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     if (select === 'start_ts,ev_soc') { await route.fulfill({ json: before! < '2026-08-31T21:45:00.000Z' ? null : { start_ts: before, ev_soc: .79 } }); return; }
     if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: from! < '2026-08-31T21:45:00.000Z' ? [] : [{ start_ts: from, water_temperature_c: 31 }] }); return; }
     const rows = baselineFixture({ start: new Date(Date.parse(from!) + 900_000).toISOString(), end: end! }).actual;
-    rows.filter(row => row.start_ts < '2026-08-31T21:45:00.000Z').forEach(row => { row.battery_soc = null; row.ev_soc = null; });
+    // A daily SOC decline exercises withdrawals; midnight charging gains are discarded.
+    // Starts remain missing, with one genuine in-period SOC gap per day.
+    rows.forEach(row => {
+      const hour = new Date(row.start_ts).getUTCHours();
+      row.ev_soc = hour < 17 ? .8 : .795;
+      if (row.start_ts < '2026-08-31T21:45:00.000Z') { row.battery_soc = null; if (hour === 12) row.ev_soc = null; }
+    });
     rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; row.battery_discharge_kwh = .1; row.solar_production_kwh = .05; });
     const offline = rows.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
     if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
@@ -83,7 +98,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
 
 /** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */
 export async function expectRoiMonths(page: Page, expected: string) {
-  try { await expect(page.getByTestId('scheduler-totals')).toContainText(expected, { timeout: 60_000 }); }
+  try { await expect(page.getByTestId('scheduler-totals')).toContainText(expected, { timeout: 360_000 }); }
   catch (error) {
     console.error('Monthly comparison at failure:', await page.getByTestId('scheduler-months').innerText());
     throw error;

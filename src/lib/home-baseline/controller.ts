@@ -1,6 +1,7 @@
 import type { createWasmPlanner, NativeQuarter } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
+import { withdrawTrip } from './trip-ledger.ts';
 import { chargerLevels } from '../../../supabase/functions/_shared/planner/device-models.ts';
 export type { ElectricityLedger } from './ledger.ts';
 
@@ -21,9 +22,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
   const chargingLevels = problem.charger ? [...chargerLevels(problem.charger)].reverse().map(level => level.setting) : [0];
   for (let i = 0; i < problem.slots.length; i++) {
     if (problem.car) {
-      const remaining = initial.ev_kwh! - evDemandKwh[i];
-      if (remaining < -1e-9) throw new Error(`Recorded EV demand exceeds default battery energy at quarter ${i}`);
-      initial = { ...initial, ev_kwh: Math.max(0, remaining) };
+      initial = { ...initial, ev_kwh: withdrawTrip(initial.ev_kwh!, evDemandKwh[i], 'Baseline model', new Date(Date.parse(start) + i * 900_000).toISOString()) };
     }
     if (problem.pool_store) {
       if (initial.pool_c! <= settings.poolStartC) heating = true;
@@ -37,7 +36,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
     const quarter = { ...problem, initial, slots: [{ ...problem.slots[i], start_seconds: 0 }] };
     // Reactive charger load balancing: highest supported current that fits the
     // home's supply. Prices and forecasts never select this default command.
-    const levels = charging ? chargingLevels : [0];
+    const levels = charging && problem.slots[i].ev_available ? chargingLevels : [0];
     let out = engine.project(quarter, [{ ...command, ev_amps: levels[0] }]).outcome;
     command.ev_amps = levels[0];
     for (let level = 1; out.kind === 'failed' && out.issue === 'shared_grid_limit' && level < levels.length; level++) {

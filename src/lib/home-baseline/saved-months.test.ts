@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from '@std/assert';
-import { baselineFixture } from './fixture';
+import { baselineFixture, captureStub } from './fixture';
 import { prepareHomeBaseline, projectBaseline } from './model';
-import { monthLedger } from './savings';
+import { comparisonMonthLedger } from './savings';
 import { CALCULATION_VERSION, PARTIAL_REFRESH_MS, compactModel, parseSavedReport, type SavedReport, type MonthStore } from './saved-months';
 import { createCaptureSource } from './source';
 import { createSavingsRun } from './savings-run';
@@ -9,8 +9,8 @@ import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-w
 
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 const fixture = baselineFixture({ start: '2026-08-31T22:00:00.000Z', end: '2026-09-30T22:00:00.000Z' });
-const input = prepareHomeBaseline(fixture), capture = { input, result: projectBaseline(input, engine), engineHash: 'test' };
-const ledger = monthLedger(capture), model = compactModel(fixture.snapshot), hash = 'a'.repeat(64);
+const input = prepareHomeBaseline(fixture), capture = captureStub({ input, result: projectBaseline(input, engine), engineHash: 'test' });
+const ledger = comparisonMonthLedger(capture), model = compactModel(fixture.snapshot), hash = 'a'.repeat(64);
 const anchor = { snapshot: fixture.snapshot, earliestStart: fixture.start, latestEnd: fixture.end };
 const ref = { homeId: 'home', customerId: 'customer' };
 const now = Date.parse('2026-10-11T18:00:00.000Z');
