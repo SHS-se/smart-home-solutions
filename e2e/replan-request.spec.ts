@@ -20,7 +20,7 @@ import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { baselineFixture } from '../src/lib/home-baseline/fixture';
-import { mockRoiHistory } from './helpers/roi-history';
+import { mockRoiHistory, expectRoiMonths } from './helpers/roi-history';
 import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
@@ -226,7 +226,7 @@ test.describe('requesting a replan', () => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expectRoiMonths(page, '(6/6)');
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
     const cells = page.getByTestId('scheduler-totals').locator('td');
@@ -254,7 +254,7 @@ test.describe('requesting a replan', () => {
     const writes: string[] = [];
     page.on('request', req => { if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url()); });
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expectRoiMonths(page, '(6/6)');
     await page.getByTestId('roi-view-graphs').click();
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -287,7 +287,7 @@ test.describe('requesting a replan', () => {
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-mobile.png') });
     await viewer.getByRole('button', { name: /Close graph|Stäng graf/ }).click();
     await expect(viewer).toHaveCount(0);
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expectRoiMonths(page, '(6/6)');
     expect(writes).toEqual([]);
   });
 
@@ -295,7 +295,7 @@ test.describe('requesting a replan', () => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expectRoiMonths(page, '(6/6)');
     for (const month of ['05', '06', '07', '08']) {
       const row = page.getByTestId(`scheduler-month-2026-${month}`);
       await expect(row.locator('td')).toHaveCount(7);
@@ -353,9 +353,9 @@ test.describe('requesting a replan', () => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expectRoiMonths(page, '(6/6)');
     await page.locator('#roi-from').fill('2026-04');
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
+    await expectRoiMonths(page, '(6/7)');
     await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('Missing historical market price');
     history.failPrices();
     await page.getByTestId('roi-view-graphs').click();
@@ -363,7 +363,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
     await expect(page.getByTestId('baseline-generate')).toBeEnabled();
     await expect(page.getByTestId('baseline-previous')).toBeEnabled();
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
+    await expectRoiMonths(page, '(6/7)');
   });
 
   test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {

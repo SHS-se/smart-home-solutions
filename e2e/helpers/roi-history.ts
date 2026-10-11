@@ -1,4 +1,4 @@
-import { expect, type BrowserContext } from '../../playwright-fixture';
+import { expect, type BrowserContext, type Page } from '../../playwright-fixture';
 import { baselineFixture } from '../../src/lib/home-baseline/fixture';
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
@@ -50,4 +50,13 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     await route.fulfill({ json: rows });
   });
   return { fixture, windows, reads: () => reads, failPrices: () => { priceError = true; } };
+}
+
+/** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */
+export async function expectRoiMonths(page: Page, expected: string) {
+  try { await expect(page.getByTestId('scheduler-totals')).toContainText(expected, { timeout: 60_000 }); }
+  catch (error) {
+    console.error('Monthly comparison at failure:', await page.getByTestId('scheduler-months').innerText());
+    throw error;
+  }
 }
