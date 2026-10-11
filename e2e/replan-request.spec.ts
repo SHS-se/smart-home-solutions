@@ -221,15 +221,17 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
-  test('customer ROI shows separate unavailable scheduler savings without presenting bench cases as home results', async ({ context, page }) => {
+  test('customer ROI integrates comparisons and keeps contract savings independent of cost settings', async ({ context, page }) => {
     await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
     await page.goto('/portal/energy-modeling?tab=roi');
     const contract = page.getByTestId('roi-period-saving');
     await expect(contract).toContainText('SEK');
     const saving = await contract.textContent();
+    await page.getByTestId('comparison-settings').locator('summary').click();
     await page.locator('#roi-subscription').fill('999');
     await expect(contract).toHaveText(saving!);
-    await expect(page.getByTestId('roi-scheduler')).toContainText(/have not yet been calculated|ännu inte beräknad/);
+    await expect(page.getByTestId('roi-scheduler')).toHaveCount(0);
+    await expect(page.getByTestId('roi-baseline')).toContainText(/Comparison and savings|Jämförelse och besparing/);
     await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
   });
 
@@ -272,7 +274,7 @@ test.describe('requesting a replan', () => {
       let response: unknown;
       if (table === 'energy_optimisation_actual_slots' && select === 'start_ts') response = { start_ts: fixture.actual.at(-1)!.start_ts };
       else if (select === 'start_ts,ev_soc') response = atEnd(new Date(Date.parse(before!) + 900_000 + 72 * 3_600_000).toISOString()).evInitial;
-      else if (table === 'energy_optimisation_pool_slots') response = atEnd(new Date(Date.parse(until!) + 72 * 3_600_000).toISOString()).pool;
+      else if (table === 'energy_optimisation_pool_slots') response = [{ start_ts: filters.find(v => v.startsWith('gte.'))?.slice(4), water_temperature_c: 31 }];
       else response = table === 'energy_optimisation_actual_slots' ? atEnd(until!).actual : atEnd(until!).prices;
       expect(url.searchParams.get('customer_id')).toBe(`eq.${CUSTOMER_ID}`);
       expect(url.searchParams.get('home_id')).toBe(`eq.${HOME_ID}`);
@@ -303,10 +305,10 @@ test.describe('requesting a replan', () => {
     await expect(viewer.getByRole('button', { name: /Full 72 h|Hela 72 h/ })).toHaveCount(0);
     await expect(page.getByTestId('baseline-previous')).toHaveText(/Previous period|Föregående period/);
     await expect(page.getByTestId('baseline-next')).toHaveText(/Next period|Nästa period/);
-    await viewer.locator('summary').click();
+    await viewer.getByTestId('baseline-details').locator('summary').click();
     await expect(page.getByTestId('baseline-assumptions')).toBeVisible();
     await expect(page.getByTestId('baseline-models')).toContainText(/80% from midnight|80% från midnatt/);
-    await viewer.locator('summary').click();
+    await viewer.getByTestId('baseline-details').locator('summary').click();
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
     await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
@@ -364,7 +366,7 @@ test.describe('requesting a replan', () => {
         else await route.fallback();
         return;
       }
-      if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: fixture.devices }); return; }
+      if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: [...fixture.devices, { id: 'household-id', device_key: 'household', name: 'Other appliances' }] }); return; }
       if (!['energy_optimisation_actual_slots', 'energy_optimisation_price_slots', 'energy_optimisation_pool_slots'].includes(table!)) { await route.fallback(); return; }
       reads++;
       const filters = url.searchParams.getAll('start_ts');
@@ -379,7 +381,7 @@ test.describe('requesting a replan', () => {
       const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
       const rows = baselineFixture(range);
       if (table === 'energy_optimisation_actual_slots') {
-        rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; });
+        rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; row.battery_discharge_kwh = .1; row.solar_production_kwh = .05; });
         const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
         if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
       }
@@ -432,9 +434,9 @@ test.describe('requesting a replan', () => {
     expect(previous.input.energyGaps).toEqual({ householdQuarters: 1, solarQuarters: 1, deviceReadings: 2880 });
     expect(previous.input.problem.slots[0].base_w).toBe(1060);
     await expect(viewer.getByRole('alert')).toHaveCount(0);
-    await viewer.locator('summary').click();
+    await viewer.getByTestId('baseline-details').locator('summary').click();
     await expect(page.getByTestId('baseline-energy-gaps')).toContainText('2880');
-    await viewer.locator('summary').click();
+    await viewer.getByTestId('baseline-details').locator('summary').click();
     const historicalReads = reads;
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -456,6 +458,7 @@ test.describe('requesting a replan', () => {
     await page.locator('#roi-to').fill('2026-10');
     await expect(page.getByTestId('roi-period-saving')).toContainText('SEK');
     const contractBefore = await page.getByTestId('roi-period-saving').textContent();
+    await page.getByTestId('comparison-monthly').locator('summary').click();
     await page.getByTestId('scheduler-calculate').click();
     await expect(page.getByTestId('scheduler-totals')).toContainText('(2/3)');
     await expect(page.getByTestId('scheduler-month-2026-08')).toContainText('import price');
@@ -472,6 +475,7 @@ test.describe('requesting a replan', () => {
     await expect(october.locator('td').nth(3)).toHaveText(display(299 * coverage));
     await expect(page.getByTestId('roi-period-saving')).toHaveText(contractBefore!);
     const readsBeforeSubscription = reads;
+    await page.getByTestId('comparison-settings').locator('summary').click();
     await page.locator('#roi-subscription').fill('0');
     await expect(cells.nth(4)).toHaveText(display(previous.result.ledger.costSek - 2879));
     expect(reads).toBe(readsBeforeSubscription);
@@ -484,7 +488,19 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
     expect(reads).toBe(readsBeforeSubscription);
-    const scheduler = page.getByTestId('roi-scheduler');
+    await expect(viewer.getByTestId('comparison-gridKwh').locator('td').nth(1)).toContainText('2');
+    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(2879));
+    await page.getByTestId('comparison-graph-actual').click();
+    await expect(page.getByTestId('comparison-graph-actual')).toHaveAttribute('aria-pressed', 'true');
+    await expect(chart).toContainText(/Actual|Uppmätt/i);
+    await chart.focus(); await chart.press('End'); await chart.press('Enter');
+    await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
+    expect(reads).toBe(readsBeforeSubscription);
+    await viewer.screenshot({ path: testInfo.outputPath('comparison-actual-mobile.png') });
+    await page.getByTestId('comparison-graph-default').click();
+    await expect(chart).toContainText(/DEFAULT MODEL|STANDARDMODELL/);
+    expect(reads).toBe(readsBeforeSubscription);
+    const scheduler = page.getByTestId('roi-baseline');
     expect(await scheduler.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await scheduler.screenshot({ path: testInfo.outputPath('monthly-scheduler-mobile.png') });
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -504,7 +520,11 @@ test.describe('requesting a replan', () => {
       await route.fulfill({ json: select === 'start_ts' ? { start_ts: fixture.actual.at(-1)!.start_ts } : select === 'start_ts,ev_soc' ? fixture.evInitial : fixture.actual });
     });
     await context.route('**/rest/v1/energy_optimisation_devices*', route => route.fulfill({ json: fixture.devices }));
-    await context.route('**/rest/v1/energy_optimisation_pool_slots*', route => route.fulfill({ json: fixture.pool }));
+    await context.route('**/rest/v1/energy_optimisation_pool_slots*', route => {
+      const filters = new URL(route.request().url()).searchParams.getAll('start_ts');
+      const from = filters.find(v => v.startsWith('gte.'))?.slice(4), end = filters.find(v => v.startsWith('lt.'))?.slice(3);
+      return route.fulfill({ json: fixture.pool.filter(row => (!from || row.start_ts >= from) && (!end || row.start_ts < end)) });
+    });
     await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', route => route.fulfill({ json: fixture.deviceSlots }));
     await context.route('**/rest/v1/energy_optimisation_price_slots*', route => route.fulfill({ json: fixture.prices.slice(1) }));
     await page.goto('/portal/energy-modeling?tab=roi');

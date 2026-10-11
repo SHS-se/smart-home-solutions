@@ -1,13 +1,16 @@
-# Historical default model in ROI
+# Comparison and savings in ROI
 
 At the bottom of ROI, **Generate model** activates the selected home's default
 model. Previous/Next and the **72 h / Month** buttons then generate uncached
 periods automatically. Visited periods display immediately from an eight-entry
 browser-memory cache. Refreshing the page or changing home discards the session.
-Nothing writes a baseline plan, score or result to the database. The scheduler
-section has an on-demand **Calculate months** button for the selected From/To
+Nothing writes a baseline plan, score or result to the database. The combined **Comparison and savings** card has a collapsed monthly overview
+with an on-demand **Calculate months** button for the selected From/To
 range. Each month shows default-model cost, recorded cost, electricity savings,
 SHS subscription and net savings. A month link opens the same model in the chart.
+The selected period has a four-row default/actual summary: grid imports, retained
+solar energy, exports and net grid cost, plus savings. Cost settings are collapsed
+in the same card; contract savings retain their separate section.
 
 The first generation pins the equipment models, home timezone and latest
 completed recorded quarter for the session. Frames cover 72 elapsed hours.
@@ -78,7 +81,18 @@ in a collapsed Model details section below it.
 The shared renderer accepts any contiguous horizon, an explicit home timezone,
 and a configurable axis label limit. Longer horizons use spaced local dates
 instead of hourly labels, retaining every quarter for costs and interaction.
-The same chart renders both 72-hour frames and calendar months. JSON export includes native engine hash, captured inputs,
+The same chart renders both 72-hour frames and calendar months. **Default model /
+Actual** switches the entire graph without another history fetch or projection.
+Actual quarters use the shared `buildEnergyTimeline` history adapter, followed by
+`projectPlanChart`, exactly as the Plan view. The capture includes measured battery
+flows, SOC, all catalogued device meters and pool temperatures for the whole period.
+Missing energy is zero; missing SOC and temperature remain gaps. Recorded charging
+is plotted only in Actual and is never used to charge the baseline EV.
+
+Solar consumption is generation minus exports, including energy retained in the
+battery. The baseline excludes curtailed generation. Export meters lack source
+attribution, so actual exports are treated as solar; battery exports can affect
+that estimate. This definition is available in collapsed model details. JSON export includes native engine hash, captured inputs,
 commands, series and the signed grid ledger.
 
 Electricity cost is imports less export revenue. It excludes fixed fees, SHS subscription,

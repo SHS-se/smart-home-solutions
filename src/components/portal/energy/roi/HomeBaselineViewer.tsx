@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -8,16 +8,18 @@ import EnergyChart from '../charts/EnergyChart';
 import { modelChartData } from '@/lib/energy-shift/model-chart-data';
 import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
 import BaselineModelDetails from './BaselineModelDetails';
+import PeriodComparison from './PeriodComparison';
 import type { BaselineSession } from '@/lib/home-baseline/session';
 import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/energy-shift/home-time';
 import { downloadJson } from '@/lib/download-json';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 
-export default function HomeBaselineViewer({ session, homeId }: { session: BaselineSession; homeId: string | null }) {
+export default function HomeBaselineViewer({ session, homeId, subscriptionSek, monthlySavings, costs }: { session: BaselineSession; homeId: string | null; subscriptionSek: number | null; monthlySavings: ReactNode; costs: ReactNode }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
+  const [graphMode, setGraphMode] = useState<'default' | 'actual'>('default');
   const [selected, setSelected] = useState<number | null>(null);
-  useEffect(() => { setSelected(null); }, [period]);
+  useEffect(() => { setSelected(null); }, [period, graphMode]);
   const timeZone = sessionTimeZone ?? homeTimeZone;
   const stamp = (at: string) => formatHomeDateTime(at, timeZone);
   const amount = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -26,12 +28,14 @@ export default function HomeBaselineViewer({ session, homeId }: { session: Basel
   const quarter = selected === null || !result || selected >= result.series.start.length ? null : selected;
   const chart = useMemo(() => {
     if (!capture) return null;
+    if (graphMode === 'actual') return projectPlanChart({ rows: capture.input.recorded.rows, devices: capture.input.recorded.devices,
+      range: { from: 0, to: capture.input.recorded.rows.length }, timeZone: capture.input.timeZone, prices: { kind: 'bench' } });
     const { series } = capture.result;
     return projectPlanChart({ ...modelChartData(series), devices: series.devices,
       range: { from: 0, to: series.start.length }, timeZone: capture.input.timeZone });
-  }, [capture]);
+  }, [capture, graphMode]);
 
-  return <Card data-testid="roi-baseline"><CardHeader><CardTitle>{t('Standardmodell', 'Default model')}</CardTitle></CardHeader>
+  return <Card data-testid="roi-baseline"><CardHeader><CardTitle>{t('Jämförelse och besparing', 'Comparison and savings')}</CardTitle></CardHeader>
     <CardContent className="space-y-5" aria-busy={busy}>
       <div className="flex gap-2" role="group" aria-label={t('Tidsperiod', 'Time horizon')}>
         <Button variant={view === 'frame' ? 'default' : 'outline'} className="min-h-11" aria-pressed={view === 'frame'} onClick={() => session.setView('frame')} data-testid="baseline-view-frame">72 h</Button>
@@ -54,24 +58,26 @@ export default function HomeBaselineViewer({ session, homeId }: { session: Basel
       {!capture && !busy && homeId && <p className="text-sm text-muted-foreground">{t('Generera modellen för vald period.', 'Generate the model for this period.')}</p>}
       {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t('Genererar…', 'Generating…')}</p>}
       {capture && input && result && p && chart && <>
-        <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-3" data-testid="baseline-costs">
-          <div><p className="text-sm text-muted-foreground">{t('Köp av el', 'Electricity imports')}</p><p className="text-xl font-semibold">{amount(result.ledger.importCostSek)} SEK</p><p className="text-xs text-muted-foreground">{amount(result.ledger.importKwh)} kWh</p></div>
-          <div><p className="text-sm text-muted-foreground">{t('Såld el', 'Export revenue')}</p><p className="text-xl font-semibold">{amount(result.ledger.exportRevenueSek)} SEK</p><p className="text-xs text-muted-foreground">{amount(result.ledger.exportKwh)} kWh</p></div>
-          <div><p className="text-sm text-muted-foreground">{t('Modellerad elkostnad', 'Modelled electricity cost')}</p><p className="text-xl font-semibold" data-testid="baseline-net-cost">{amount(result.ledger.costSek)} SEK</p></div>
+        <PeriodComparison capture={capture} subscriptionSek={view === 'month' ? subscriptionSek : null} />
+        <div className="flex gap-2" role="group" aria-label={t('Graf', 'Graph')}>
+          <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Standardmodell', 'Default model')}</Button>
+          <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Uppmätt', 'Actual')}</Button>
         </div>
-        <EnergyChart key={`${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
+        <EnergyChart key={`${graphMode}:${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
           baseValues={chart.consumption.baseValues} consumptionIssues={chart.consumption.issues}
-          timeZone={input.timeZone} dividerIndex={0} dividerLabel={t('STANDARDMODELL', 'DEFAULT MODEL')}
+          timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('UPPMÄTT', 'ACTUAL') : t('STANDARDMODELL', 'DEFAULT MODEL')}
           hasBattery={p.battery !== null} hasEvBattery={p.car !== null} realPrices={chart.realPrices}
           poolTargetC={p.pool_stop_c} selectedIndex={quarter ?? -1} onQuarterClick={setSelected}
-          costLines={[{ key: 'default', name: t('Standardmodell', 'Default model'), colour: 'var(--plan-load-2)',
+          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Uppmätt', 'Actual') : t('Standardmodell', 'Default model'), colour: 'var(--plan-load-2)',
             values: chart.rows.map(row => row.cumulativeCostSek) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">
-            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {amount(result.series.costSek[quarter])} SEK
-            {p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
+            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek ?? 0 : result.series.costSek[quarter])} SEK
+            {graphMode === 'default' && p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
           </div>} />
         <BaselineModelDetails capture={capture} />
       </>}
+      <details className="rounded-lg border px-4" data-testid="comparison-monthly"><summary className="cursor-pointer py-3 text-sm font-medium">{t('Månadsbesparingar', 'Monthly savings')}</summary><div className="pb-4">{monthlySavings}</div></details>
+      <details className="rounded-lg border px-4" data-testid="comparison-settings"><summary className="cursor-pointer py-3 text-sm font-medium">{t('Kostnader', 'Costs')}</summary><div className="pb-4">{costs}</div></details>
       <div className="flex flex-wrap gap-3">
         <Button className="min-h-11" onClick={() => session.generate()} disabled={busy || !homeId} data-testid="baseline-generate">
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('Generera modell', 'Generate model')}

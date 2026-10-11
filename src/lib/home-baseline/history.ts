@@ -39,16 +39,17 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     .select(fields).gte('start_ts', from).lt('start_ts', to).order('start_ts').limit(count).abortSignal(signal);
   const windows = historyWindows(period);
   const loadWindow = async (w: typeof windows[number], first: boolean) => {
-    const [actual, prices, deviceSlots, outdoor] = await Promise.all([
-      read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc,grid_import_kwh,grid_export_kwh', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
+    const [actual, prices, deviceSlots, outdoor, pool] = await Promise.all([
+      read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc,grid_import_kwh,grid_export_kwh,battery_charge_kwh,battery_discharge_kwh', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
       read<PriceRow[]>(window('energy_optimisation_price_slots', 'start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh', w.start, w.end, w.count)),
       read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
         p_customer_id: ref.customerId, p_home_id: ref.homeId, p_from: w.start, p_to: w.end,
       }).order('start_ts').limit(w.count).abortSignal(signal)),
       facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null
         ? read<OutdoorRow[]>(window('energy_optimisation_outdoor_slots', 'start_ts,temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
+      facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
     ]);
-    return { actual, prices, deviceSlots, outdoor };
+    return { actual, prices, deviceSlots, outdoor, pool };
   };
   const loadWindows = async () => {
     const batches: Awaited<ReturnType<typeof loadWindow>>[] = [];
@@ -60,14 +61,14 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
   };
   const [batches, devices, pool, evInitial] = await Promise.all([
     loadWindows(),
-    facts.memberKeys.length ? read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key')
-      .in('device_key', facts.memberKeys).abortSignal(signal)) : Promise.resolve([]),
+    read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name')
+      .abortSignal(signal)),
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')
       .lte('start_ts', prior).not('ev_soc', 'is', null).order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()) : Promise.resolve(null),
   ]);
   signal.throwIfAborted();
-  return prepareHomeBaseline({ snapshot, start, end, devices, pool, evInitial,
+  return prepareHomeBaseline({ snapshot, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
     actual: batches.flatMap(b => b.actual), prices: batches.flatMap(b => b.prices),
     deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) });
 }

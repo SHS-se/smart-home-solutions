@@ -49,6 +49,7 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
         {p.car && <p>{t('Bilens start-SOC', 'Initial car SOC')}: {stamp(input.evInitialObservedAt!)}. {t('SOC-minskningar ger körbehov; tidigare laddning ignoreras. Nattladdning antas vara tillgänglig.', 'Recorded SOC declines give driving demand; previous charging is ignored. Overnight charging is assumed available.')}</p>}
         {p.car && input.evMissingSocQuarters > 0 && <p>{input.evMissingSocQuarters} {t('kvartar utan SOC; minskningar räknas vid nästa avläsning.', 'quarters without SOC; declines count at the next reading.')}</p>}
         {p.pool_store && <p>{t('Värmepumpens starttillstånd: av, historisk startfas okänd.', 'Heat pump initial state: off, historical startup phase unknown.')}</p>}
+        <p>{t('Använd solel = produktion minus export, inklusive batteriladdning. Export räknas som solel; mätaren anger inte energins ursprung.', 'Solar consumption = generation minus exports, including battery charging. Exports are counted as solar; the meter does not identify energy origin.')}</p>
         <p>{t('Kostnad efter export, före fasta avgifter och SHS-abonnemang.', 'Cost after exports, before fixed fees and SHS subscription')}</p>
         <p>{t('Beräkning', 'Calculation')}: {Math.round(result.projectionMs)} ms. {t('Fullständiga indata finns i modellexporten.', 'Full inputs are available in the model export.')}</p>
       </div>

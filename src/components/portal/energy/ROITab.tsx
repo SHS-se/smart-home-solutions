@@ -181,18 +181,14 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
         {needsMarket && <a className="text-xs underline" href="https://www.elprisetjustnu.se/elpris-api" target="_blank" rel="noreferrer">{t('Priskälla · månadsmedel, pågående månad t.o.m. igår', 'Price source · monthly average, current month through yesterday')}</a>}
       </div>
     </details>}
-    <Card data-testid="roi-scheduler"><CardHeader><CardTitle>{t('Besparing med schemaläggaren', 'Scheduler savings')}</CardTitle></CardHeader><CardContent className="space-y-5">
-      <p className="text-sm text-muted-foreground">{t('Standardmodell minus uppmätt elkostnad · samma elavtal.', 'Default model minus recorded electricity cost · same contract.')}</p>
-      <div className="grid gap-4 sm:grid-cols-3">
+    <HomeBaselineViewer key={homeId ?? 'none'} session={baseline.viewer} homeId={homeId} subscriptionSek={numericInput(settings.subscription)}
+      monthlySavings={<SchedulerMonthlySavings run={baseline.savings} from={from} to={to} homeId={homeId}
+        subscriptionSek={numericInput(settings.subscription)} onOpenMonth={month => baseline.viewer.showMonth(month)} />}
+      costs={<div className="grid gap-4 sm:grid-cols-3">
         <RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
         <RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />
         <RoiNumberField id="roi-subscription" label={t('Abonnemang (kr/månad)', 'Subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
-      </div>
-      <p data-testid="roi-payback" className="text-sm">{t('Återbetalning: behöver en representativ jämförelse för hemmet över året.', 'Payback: requires a representative comparison for the home across the year.')}</p>
-      <SchedulerMonthlySavings run={baseline.savings} from={from} to={to} homeId={homeId}
-        subscriptionSek={numericInput(settings.subscription)} onOpenMonth={month => baseline.viewer.showMonth(month)} />
-    </CardContent></Card>
-    <HomeBaselineViewer key={homeId ?? 'none'} session={baseline.viewer} homeId={homeId} />
+      </div>} />
   </div>;
 }
 

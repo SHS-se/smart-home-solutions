@@ -339,13 +339,15 @@ test.describe('planner bench', () => {
     const saving = await contract.textContent();
     await expect(page.getByTestId('roi-hero')).toContainText(/Contract|Avtals/);
     await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
+    await page.getByTestId('comparison-settings').locator('summary').click();
     await page.locator('#roi-subscription').fill('300');
     await expect(contract).toHaveText(saving!);
     await page.locator('#roi-subscription').fill('0');
     await expect(contract).toHaveText(saving!);
-    await expect(page.getByTestId('roi-payback')).toContainText(/requires.*year|behöver.*året/);
+    await expect(page.getByTestId('roi-scheduler')).toHaveCount(0);
+    await expect(page.getByTestId('roi-baseline')).toContainText(/Comparison and savings|Jämförelse och besparing/);
     await page.setViewportSize({ width: 390, height: 844 });
-    const section = page.getByTestId('roi-scheduler');
+    const section = page.getByTestId('roi-baseline');
     expect(await section.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await section.screenshot({ path: test.info().outputPath('scheduler-roi-mobile.png') });
   });

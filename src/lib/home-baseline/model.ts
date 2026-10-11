@@ -6,12 +6,14 @@ import type { BenchSeries } from '../planner-bench/types.ts';
 import { homePhysics, type HomeModelCapture } from './home-physics.ts';
 import { DEFAULT_SETTINGS, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
 import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
+import { buildEnergyTimeline, type TimelineRow } from '../energy-shift/energy-timeline.ts';
+import type { ActualEnergySlot } from '../energy-shift/contracts.ts';
+import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
-export interface ActualRow { start_ts: string; total_load_kwh: number | null; solar_production_kwh: number | null; battery_soc: number | null; ev_soc: number | null;
-  grid_import_kwh: number | null; grid_export_kwh: number | null }
+export type ActualRow = ActualEnergySlot;
 export interface PriceRow { start_ts: string; import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }
-export interface DeviceRow { id: string; device_key: string }
+export interface DeviceRow { id: string; device_key: string; name?: string }
 export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string, number | null> }
 export interface PoolRow { start_ts: string; water_temperature_c: number }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
@@ -22,7 +24,7 @@ export interface BaselineInput { start: string; end: string; timeZone: string; m
   problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
   energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number };
-  recorded: { ledger: ElectricityLedger; missingImportQuarters: number; missingExportQuarters: number } }
+  recorded: { rows: TimelineRow[]; devices: ChartDevice[]; ledger: ElectricityLedger; missingImportQuarters: number; missingExportQuarters: number } }
 
 function time(value: string) {
   const ms = Date.parse(value);
@@ -133,7 +135,24 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
     modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car ? rows.evInitial!.start_ts : null, evDemandKwh,
-    evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps, recorded };
+    evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps,
+    recorded: { ...recorded,
+      devices: rows.devices.map(d => ({ key: d.device_key, name: d.name ?? rows.snapshot.device_models.find(m => m.key === d.device_key)?.name ?? d.device_key,
+        schedulable: facts.memberKeys.includes(d.device_key) })),
+      rows: buildEnergyTimeline({ nowMs: time(rows.end), planSlots: [],
+        actuals: starts.map(start_ts => {
+          const observed = actual.get(Date.parse(start_ts));
+          const measuredEnergy = (value: number | null | undefined, label: string) => value == null ? 0 : number(value, label, start_ts, true);
+          return { start_ts, total_load_kwh: measuredEnergy(observed?.total_load_kwh, 'household load'),
+            solar_production_kwh: measuredEnergy(observed?.solar_production_kwh, 'solar generation'),
+            grid_import_kwh: measuredEnergy(observed?.grid_import_kwh, 'grid import'), grid_export_kwh: measuredEnergy(observed?.grid_export_kwh, 'grid export'),
+            battery_charge_kwh: measuredEnergy(observed?.battery_charge_kwh, 'battery charge'), battery_discharge_kwh: measuredEnergy(observed?.battery_discharge_kwh, 'battery discharge'),
+            battery_soc: observed?.battery_soc == null ? null : soc(observed.battery_soc, 'battery SOC', start_ts),
+            ev_soc: observed?.ev_soc == null ? null : soc(observed.ev_soc, 'EV SOC', start_ts) };
+        }), prices: rows.prices,
+        deviceActuals: rows.deviceSlots.map(row => ({ ...row, device_energy_kwh: Object.fromEntries(Object.entries(row.device_energy_kwh).map(([id, value]) => [id, value == null ? 0 : number(value, `device meter ${id}`, row.start_ts, true)])) })),
+        deviceKeyById: new Map(rows.devices.map(d => [d.id, d.device_key])), poolActuals: rows.pool }),
+    } };
 }
 
 export function projectBaseline(input: BaselineInput, engine: ProjectionEngine) {
@@ -149,7 +168,7 @@ export function projectBaseline(input: BaselineInput, engine: ProjectionEngine) 
       : d.key === '$default_pool_pump' ? field(q => q.pool_auxiliary_w + input.idlePumpW) : field(q => q.ev_w)])),
     start: problem.slots.map(s => new Date(Date.parse(input.start) + s.start_seconds * 1000).toISOString()), hours: problem.slots.map(s => s.hours),
     published: problem.slots.map(() => 1), importPrice: problem.slots.map(s => s.import_price), exportPrice: problem.slots.map(s => s.export_price),
-    solarW: problem.slots.map(s => s.solar_w), loadW: field((q, i) => problem.slots[i].base_w + q.pool_w + q.ev_w),
+    solarW: field((q, i) => Math.max(0, problem.slots[i].solar_w - q.curtailed_w)), loadW: field((q, i) => problem.slots[i].base_w + q.pool_w + q.ev_w),
     poolW: field(q => q.pool_w + input.idlePumpW), hotWaterW: field(() => 0), carW: field(q => q.ev_w),
     gridImportW: field(q => Math.max(0, q.net_w)), gridExportW: field(q => Math.max(0, -q.net_w)),
     batteryChargeW: field(q => q.charge_w), batteryDischargeW: field(q => q.discharge_w),
