@@ -11,7 +11,7 @@ import type { BaselineCapture } from './browser';
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 const fixture = baselineFixture(), input = prepareHomeBaseline(fixture);
 const initial = { input, result: projectBaseline(input, engine), engineHash: 'test' };
-const anchor = { snapshot: fixture.snapshot, latestEnd: fixture.end };
+const anchor = { snapshot: fixture.snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: fixture.end };
 const at = (period: BaselinePeriod, cost = 100): BaselineCapture => ({ ...initial, input: { ...input, start: period.start, end: period.end }, result: { ...initial.result, ledger: { ...initial.result.ledger, costSek: cost } } });
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 function harness() {
@@ -88,4 +88,15 @@ Deno.test('range change cancels old batch interest and suppresses stale rows; fu
   calls[1].resolve(at(calls[1].period)); await work;
   assertEquals(run.snapshot().rows.map(row => row.status), ['done', 'unavailable']);
   const unchanged = run.snapshot(); run.dispose(); source.dispose(); await run.calculate(); assertEquals(run.snapshot(), unchanged);
+});
+
+Deno.test('refreshing a graph replaces the monthly report with the same canonical summary', async () => {
+  const { source, calls } = harness(), run = createSavingsRun(source);
+  run.setRange('2026-09', '2026-09');
+  const work = run.calculate(); await settle(); calls[0].resolve(at(calls[0].period, 100)); await work;
+  const fresh = source.capture(calls[0].period, new AbortController().signal, true); await settle();
+  calls[1].resolve(at(calls[1].period, 200)); await fresh;
+  const row = run.snapshot().rows[0];
+  assert(row.status === 'done'); assertEquals(row.ledger, source.summary(calls[0].period));
+  assertEquals(row.ledger.baseline.costSek, 200); run.dispose(); source.dispose();
 });

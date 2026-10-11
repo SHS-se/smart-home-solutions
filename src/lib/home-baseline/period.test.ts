@@ -2,7 +2,7 @@ import { assert, assertEquals } from '@std/assert';
 import { baselineFixture } from './fixture';
 import { historyWindows, latestPeriod, stepPeriod, switchPeriodView, type BaselineAnchor } from './period';
 
-const anchor = (end: string): BaselineAnchor => ({ snapshot: baselineFixture().snapshot, latestEnd: end });
+const anchor = (end: string): BaselineAnchor => ({ snapshot: baselineFixture().snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: end });
 
 for (const [end, start, quarters] of [
   ['2026-04-01T00:00:00Z', '2026-02-28T23:00:00.000Z', 2972],

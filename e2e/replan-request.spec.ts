@@ -20,6 +20,7 @@ import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { baselineFixture } from '../src/lib/home-baseline/fixture';
+import { mockRoiHistory } from './helpers/roi-history';
 import { portalDelta } from './helpers/portal-delta';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
@@ -221,96 +222,50 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
-  test('customer ROI integrates comparisons and keeps contract savings independent of cost settings', async ({ context, page }) => {
-    await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
+  test('customer ROI automatically calculates months without charts and keeps contract savings separate', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    const contract = page.getByTestId('roi-period-saving');
-    await expect(contract).toContainText('SEK');
-    const saving = await contract.textContent();
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
+    await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
+    const cells = page.getByTestId('scheduler-totals').locator('td');
+    await expect(page.getByTestId('roi-period-net')).toHaveText((await cells.nth(5).textContent())!);
+    const contract = page.getByTestId('roi-period-saving'), saving = await contract.textContent();
+    const reads = history.reads();
     await page.getByTestId('comparison-settings').locator('summary').click();
-    await page.locator('#roi-subscription').fill('999');
+    await page.locator('#roi-subscription').fill('0');
     await expect(contract).toHaveText(saving!);
-    await expect(page.getByTestId('roi-scheduler')).toHaveCount(0);
-    await expect(page.getByTestId('roi-baseline')).toContainText(/Comparison and savings|Jämförelse och besparing/);
-    await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
+    const gross = await cells.nth(2).textContent();
+    await expect(page.getByTestId('roi-period-net')).toHaveText(gross!);
+    await page.locator('#roi-rate').fill('500');
+    await expect(page.getByTestId('roi-period-net')).toHaveText(gross!);
+    await expect(contract).not.toHaveText(saving!);
+    expect(history.reads()).toBe(reads);
+    await page.locator('#roi-from').fill('2025-10');
+    await expect(page.getByRole('alert')).toContainText('at most 12 months');
+    await expect(page.getByTestId('roi-period-net')).toHaveText('—');
+    expect(history.reads()).toBe(reads);
   });
 
-  test('ROI generates home historical defaults lazily, navigates72h frames and reuses cached charts', async ({ context, page }, testInfo) => {
-    const fixture = baselineFixture();
-    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
-    let historicalReads = 0;
-    let holdHistory = false, historyReleased = false;
-    let releaseHistory: (() => void) | null = null;
+  test('ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them', async ({ context, page }, testInfo) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     const writes: string[] = [];
-    page.on('request', req => {
-      if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url());
-    });
-    const atEnd = (end: string) => {
-      const rows = baselineFixture(), offset = Date.parse(end) - Date.parse(rows.end);
-      const shift = (at: string) => new Date(Date.parse(at) + offset).toISOString();
-      rows.end = end;
-      rows.evInitial!.start_ts = shift(rows.evInitial!.start_ts);
-      for (const series of [rows.actual, rows.prices, rows.pool, rows.outdoor, rows.deviceSlots]) series.forEach(row => { row.start_ts = shift(row.start_ts); });
-      rows.actual.slice(1).forEach((row, i) => { row.ev_soc = i < 20 ? .79 : i < 40 ? .69 : i < 100 ? .89 : .79; });
-      return rows;
-    };
-    await context.route('**/rest/v1/energy_optimisation_*', async route => {
-      const url = new URL(route.request().url()), table = url.pathname.split('/').pop();
-      const select = url.searchParams.get('select') ?? '';
-      if (table === 'energy_optimisation_current') {
-        if (select.includes('captured_at:snapshot')) { await route.fulfill({ json: fixture.snapshot }); return; }
-        await route.fallback(); return;
-      }
-      if (table === 'energy_optimisation_devices') {
-        historicalReads++; await route.fulfill({ json: fixture.devices }); return;
-      }
-      if (!['energy_optimisation_actual_slots', 'energy_optimisation_price_slots', 'energy_optimisation_pool_slots'].includes(table!)) {
-        await route.fallback(); return;
-      }
-      historicalReads++;
-      const filters = url.searchParams.getAll('start_ts');
-      const until = filters.find(v => v.startsWith('lt.'))?.slice(3);
-      const before = filters.find(v => v.startsWith('lte.'))?.slice(4);
-      let response: unknown;
-      if (table === 'energy_optimisation_actual_slots' && select === 'start_ts') response = { start_ts: fixture.actual.at(-1)!.start_ts };
-      else if (select === 'start_ts,ev_soc') response = atEnd(new Date(Date.parse(before!) + 900_000 + 72 * 3_600_000).toISOString()).evInitial;
-      else if (table === 'energy_optimisation_pool_slots') response = [{ start_ts: filters.find(v => v.startsWith('gte.'))?.slice(4), water_temperature_c: 31 }];
-      else response = table === 'energy_optimisation_actual_slots' ? atEnd(until!).actual : atEnd(until!).prices;
-      expect(url.searchParams.get('customer_id')).toBe(`eq.${CUSTOMER_ID}`);
-      expect(url.searchParams.get('home_id')).toBe(`eq.${HOME_ID}`);
-      if (holdHistory && table === 'energy_optimisation_actual_slots' && select.includes('total_load_kwh')) {
-        await new Promise<void>(resolve => { releaseHistory = resolve; });
-      }
-      await route.fulfill({ json: response });
-      if (holdHistory && releaseHistory) historyReleased = true;
-    });
-    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
-      historicalReads++;
-      const request = route.request().postDataJSON();
-      expect(request.p_customer_id).toBe(CUSTOMER_ID); expect(request.p_home_id).toBe(HOME_ID);
-      expect(Date.parse(request.p_to) - Date.parse(request.p_from)).toBe(72 * 3_600_000);
-      await route.fulfill({ json: atEnd(request.p_to).deviceSlots });
-    });
+    page.on('request', req => { if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url()); });
     await page.goto('/portal/energy-modeling?tab=roi');
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await page.getByTestId('roi-view-graphs').click();
     const viewer = page.getByTestId('roi-baseline');
-    await expect(viewer).toBeVisible();
-    await expect(page.getByTestId('baseline-generate')).toBeEnabled();
-    expect(historicalReads).toBe(0);
-    await page.getByTestId('baseline-generate').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    await expect(page.getByTestId('baseline-assumptions')).toContainText(/recorded SOC declines|SOC-minskningar/i);
-    await expect(page.getByTestId('baseline-details')).not.toHaveAttribute('open', '');
-    await expect(page.getByTestId('baseline-assumptions')).not.toBeVisible();
     await expect(viewer.getByRole('group', { name: /Day|Dag/ })).toHaveCount(0);
     await expect(viewer.getByRole('button', { name: /Full 72 h|Hela 72 h/ })).toHaveCount(0);
-    await expect(page.getByTestId('baseline-previous')).toHaveText(/Previous period|Föregående period/);
-    await expect(page.getByTestId('baseline-next')).toHaveText(/Next period|Nästa period/);
+    await expect(page.getByTestId('baseline-next')).toBeDisabled();
+    await expect(page.getByTestId('baseline-details')).not.toHaveAttribute('open', '');
     await viewer.getByTestId('baseline-details').locator('summary').click();
-    await expect(page.getByTestId('baseline-assumptions')).toBeVisible();
     await expect(page.getByTestId('baseline-models')).toContainText(/80% from midnight|80% från midnatt/);
-    await viewer.getByTestId('baseline-details').locator('summary').click();
+    await expect(page.getByTestId('baseline-models')).toContainText('60 W');
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    await expect(chart).toBeVisible();
     await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).toContainText(/Driving demand|Körbehov/);
     const download = page.waitForEvent('download');
@@ -318,236 +273,97 @@ test.describe('requesting a replan', () => {
     const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
     expect(capture.result.series.start).toHaveLength(288);
     expect(capture.engineHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(capture.input.evDemandKwh.reduce((a: number, b: number) => a + b, 0)).toBeCloseTo(.2 * 75.6);
     expect(capture.result.projectionMs).toBeLessThan(1000);
-    await expect(page.getByTestId('baseline-next')).toBeDisabled();
-    const reads = historicalReads;
+    const initialReads = history.reads();
     await page.getByTestId('baseline-previous').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    expect(historicalReads).toBeGreaterThan(reads);
-    const olderReads = historicalReads;
+    expect(history.reads()).toBeGreaterThan(initialReads);
+    const olderReads = history.reads();
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    expect(historicalReads).toBe(olderReads);
-    // Moving away aborts an in-flight older-frame read and restores the cached frame.
-    await page.getByTestId('baseline-previous').click();
-    const cachedFrame = await page.getByTestId('baseline-frame').textContent();
-    holdHistory = true;
-    await page.getByTestId('baseline-previous').click();
-    await expect.poll(() => releaseHistory !== null).toBe(true);
-    await page.getByTestId('baseline-next').click();
-    await expect(page.getByTestId('baseline-frame')).toHaveText(cachedFrame!);
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    releaseHistory!();
-    await expect.poll(() => historyReleased).toBe(true);
-    await expect(page.getByTestId('baseline-frame')).toHaveText(cachedFrame!);
-    await expect(page.getByTestId('baseline-generate')).toBeEnabled();
-    expect(writes).toEqual([]);
+    expect(history.reads()).toBe(olderReads);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await viewer.screenshot({ path: testInfo.outputPath('home-baseline-mobile.png') });
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await viewer.screenshot({ path: testInfo.outputPath('home-baseline-desktop.png') });
-  });
-
-  test('ROI month view auto-loads complete calendar ranges in bounded reads and reuses shared charts', async ({ context, page }, testInfo) => {
-    const fixture = baselineFixture(), rpcWindows: { start: string; end: string }[] = [];
-    let reads = 0;
-    const writes: string[] = [];
-    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
-    await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
-    page.on('request', req => {
-      if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url());
-    });
-    await context.route('**/rest/v1/energy_optimisation_*', async route => {
-      const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';
-      if (table === 'energy_optimisation_current') {
-        if (select.includes('captured_at:snapshot')) { reads++; await route.fulfill({ json: fixture.snapshot }); }
-        else await route.fallback();
-        return;
-      }
-      if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: [...fixture.devices, { id: 'household-id', device_key: 'household', name: 'Other appliances' }] }); return; }
-      if (!['energy_optimisation_actual_slots', 'energy_optimisation_price_slots', 'energy_optimisation_pool_slots'].includes(table!)) { await route.fallback(); return; }
-      reads++;
-      const filters = url.searchParams.getAll('start_ts');
-      const from = filters.find(v => v.startsWith('gte.'))?.slice(4);
-      const end = filters.find(v => v.startsWith('lt.'))?.slice(3);
-      const before = filters.find(v => v.startsWith('lte.'))?.slice(4);
-      const limit = Number(url.searchParams.get('limit'));
-      expect(limit).toBeLessThanOrEqual(1000);
-      if (select === 'start_ts') { await route.fulfill({ json: { start_ts: fixture.actual.at(-1)!.start_ts } }); return; }
-      if (select === 'start_ts,ev_soc') { await route.fulfill({ json: before! < '2026-08-31T21:45:00.000Z' ? null : { start_ts: before, ev_soc: .79 } }); return; }
-      if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: from! < '2026-08-31T21:45:00.000Z' ? [] : [{ start_ts: from, water_temperature_c: 31 }] }); return; }
-      const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
-      const rows = baselineFixture(range);
-      if (table === 'energy_optimisation_actual_slots') {
-        rows.actual.filter(row => row.start_ts < '2026-08-31T21:45:00.000Z').forEach(row => { row.battery_soc = null; row.ev_soc = null; });
-        rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; row.battery_discharge_kwh = .1; row.solar_production_kwh = .05; });
-        const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
-        if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
-      }
-      if (table === 'energy_optimisation_price_slots' && from === '2026-03-31T22:00:00.000Z') rows.prices.shift();
-      await route.fulfill({ json: (table === 'energy_optimisation_actual_slots' ? rows.actual : rows.prices).slice(0, Math.min(limit, 1000)) });
-    });
-    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
-      reads++;
-      const request = route.request().postDataJSON();
-      const period = { start: request.p_from, end: request.p_to };
-      expect(Date.parse(period.end) - Date.parse(period.start)).toBeLessThanOrEqual(7 * 24 * 3_600_000);
-      rpcWindows.push(period);
-      const rows = baselineFixture(period).deviceSlots;
-      rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => {
-        delete row.device_energy_kwh['heater-id'];
-        row.device_energy_kwh['household-id'] = .25;
-      });
-      await route.fulfill({ json: rows });
-    });
-    await page.goto('/portal/energy-modeling?tab=roi');
-    const viewer = page.getByTestId('roi-baseline');
-    await page.getByTestId('baseline-view-month').click();
-    expect(reads).toBe(0);
-    await page.getByTestId('baseline-view-frame').click();
-    await page.getByTestId('baseline-generate').click();
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    const count = rpcWindows.length;
-    await page.getByTestId('baseline-view-month').click();
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    await expect(page.getByTestId('baseline-next')).toBeDisabled();
-    const download = page.waitForEvent('download');
-    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
-    const current = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
-    expect(current.input.start).toBe('2026-09-30T22:00:00.000Z');
-    expect(current.input.end).toBe(fixture.end);
-    expect(current.result.series.start.length).toBe((Date.parse(fixture.end) - Date.parse(current.input.start)) / 900_000);
-    const windows = rpcWindows.slice(count).sort((a, b) => a.start.localeCompare(b.start));
-    expect(windows[0].start).toBe(current.input.start);
-    expect(windows.at(-1)!.end).toBe(current.input.end);
-    windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
-    await page.getByTestId('baseline-previous').click();
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
-    const previousDownload = page.waitForEvent('download');
-    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
-    const previous = JSON.parse(readFileSync((await (await previousDownload).path())!, 'utf8'));
-    expect(previous.input.start).toBe('2026-08-31T22:00:00.000Z');
-    expect(previous.input.end).toBe(current.input.start);
-    expect(previous.result.series.start).toHaveLength(2880);
-    expect(previous.input.energyGaps).toEqual({ householdQuarters: 1, solarQuarters: 1, deviceReadings: 2880 });
-    expect(previous.input.problem.slots[0].base_w).toBe(1060);
-    await expect(viewer.getByRole('alert')).toHaveCount(0);
-    await viewer.getByTestId('baseline-details').locator('summary').click();
-    await expect(page.getByTestId('baseline-energy-gaps')).toContainText('2880');
-    await viewer.getByTestId('baseline-details').locator('summary').click();
-    const historicalReads = reads;
-    await page.getByTestId('baseline-next').click();
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    expect(reads).toBe(historicalReads);
-    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    await chart.focus(); await chart.press('End'); await chart.press('Enter');
-    await expect(page.getByTestId('baseline-quarter')).toContainText(/Electricity cost|Elkostnad/);
-    await page.getByTestId('baseline-view-frame').click();
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    await expect(page.getByTestId('baseline-quarter')).toHaveCount(0);
-    expect(reads).toBe(historicalReads);
-    await page.getByTestId('baseline-view-month').click();
-    await expect(chart).toBeVisible();
-    await viewer.screenshot({ path: testInfo.outputPath('home-baseline-month.png') });
-    await page.setViewportSize({ width: 390, height: 844 });
-    expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    // Monthly scheduler costs use the same home's quarter prices, independently of the contract calculator.
-    await page.locator('#roi-from').fill('2026-04');
-    await page.locator('#roi-to').fill('2026-10');
-    await expect(page.getByTestId('roi-period-saving')).toContainText('SEK');
-    const contractBefore = await page.getByTestId('roi-period-saving').textContent();
-    await page.getByTestId('comparison-monthly').locator('summary').click();
-    await page.getByTestId('scheduler-calculate').click();
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
-    await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('import price');
-    for (const month of ['05', '06', '07', '08']) {
-      const row = page.getByTestId(`scheduler-month-2026-${month}`);
-      await expect(row.locator('td')).toHaveCount(5);
-      await expect(row.locator('td').first()).toContainText('SEK');
-      await expect(row).not.toContainText('initial battery SOC');
-    }
-    await page.getByTestId('scheduler-month-2026-05').getByRole('button', { name: /View model|Visa modell/ }).click();
-    await expect(page.getByTestId('baseline-frame')).toContainText(/May|maj/);
-    await viewer.getByTestId('baseline-details').locator('summary').click();
-    await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
-    await expect(page.getByTestId('baseline-ev-start')).toContainText('80%');
-    await expect(page.getByTestId('baseline-pool-start')).toContainText('30°C');
-    await expect(page.getByTestId('baseline-assumptions')).not.toContainText('1970');
-    await viewer.getByTestId('baseline-details').locator('summary').click();
-    const september = page.getByTestId('scheduler-month-2026-09');
-    const cells = september.locator('td');
-    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(cells.nth(0)).toHaveText(display(previous.result.ledger.costSek));
-    await expect(cells.nth(1)).toHaveText(display(2879));
-    await expect(cells.nth(2)).toHaveText(display(previous.result.ledger.costSek - 2879));
-    await expect(cells.nth(3)).toHaveText(display(299));
-    await expect(cells.nth(4)).toHaveText(display(previous.result.ledger.costSek - 2879 - 299));
-    const october = page.getByTestId('scheduler-month-2026-10');
-    const coverage = (Date.parse(current.input.end) - Date.parse(current.input.start)) / (Date.parse('2026-10-31T23:00:00.000Z') - Date.parse(current.input.start));
-    await expect(october.locator('td').nth(3)).toHaveText(display(299 * coverage));
-    await expect(page.getByTestId('roi-period-saving')).toHaveText(contractBefore!);
-    const readsBeforeSubscription = reads;
-    await page.getByTestId('comparison-settings').locator('summary').click();
-    await page.locator('#roi-subscription').fill('0');
-    await expect(cells.nth(4)).toHaveText(display(previous.result.ledger.costSek - 2879));
-    expect(reads).toBe(readsBeforeSubscription);
-    await expect(page.getByTestId('roi-period-saving')).toHaveText(contractBefore!);
-    const gross = await cells.nth(2).textContent();
-    await page.locator('#roi-rate').fill('500');
-    await expect(cells.nth(2)).toHaveText(gross!);
-    expect(reads).toBe(readsBeforeSubscription);
-    await september.getByRole('button', { name: /View model|Visa modell/ }).click();
-    await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
-    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    expect(reads).toBe(readsBeforeSubscription);
-    await expect(viewer.getByTestId('comparison-gridKwh').locator('td').nth(1)).toContainText('2');
-    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(2879));
-    await page.getByTestId('comparison-graph-actual').click();
-    await expect(page.getByTestId('comparison-graph-actual')).toHaveAttribute('aria-pressed', 'true');
-    await expect(chart).toContainText(/Actual|Uppmätt/i);
-    await chart.focus(); await chart.press('End'); await chart.press('Enter');
-    await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
-    expect(reads).toBe(readsBeforeSubscription);
-    await viewer.screenshot({ path: testInfo.outputPath('comparison-actual-mobile.png') });
-    await page.getByTestId('comparison-graph-default').click();
-    await expect(chart).toContainText(/DEFAULT MODEL|STANDARDMODELL/);
-    expect(reads).toBe(readsBeforeSubscription);
-    const scheduler = page.getByTestId('roi-baseline');
-    expect(await scheduler.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await scheduler.screenshot({ path: testInfo.outputPath('monthly-scheduler-mobile.png') });
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await scheduler.screenshot({ path: testInfo.outputPath('monthly-scheduler-desktop.png') });
+    await viewer.getByRole('button', { name: /Close graph|Stäng graf/ }).click();
+    await expect(viewer).toHaveCount(0);
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
     expect(writes).toEqual([]);
   });
 
-  test('ROI historical baseline reports missing recorded inputs without generating a plan', async ({ context, page }) => {
-    const fixture = baselineFixture();
-    await page.clock.setFixedTime(new Date(Date.parse(fixture.end) + 900_000));
-    await context.route('**/rest/v1/energy_optimisation_current*', async route => {
-      if (new URL(route.request().url()).searchParams.get('select')?.includes('captured_at:snapshot')) await route.fulfill({ json: fixture.snapshot });
-      else await route.fallback();
-    });
-    await context.route('**/rest/v1/energy_optimisation_actual_slots*', async route => {
-      const select = new URL(route.request().url()).searchParams.get('select');
-      await route.fulfill({ json: select === 'start_ts' ? { start_ts: fixture.actual.at(-1)!.start_ts } : select === 'start_ts,ev_soc' ? fixture.evInitial : fixture.actual });
-    });
-    await context.route('**/rest/v1/energy_optimisation_devices*', route => route.fulfill({ json: fixture.devices }));
-    await context.route('**/rest/v1/energy_optimisation_pool_slots*', route => {
-      const filters = new URL(route.request().url()).searchParams.getAll('start_ts');
-      const from = filters.find(v => v.startsWith('gte.'))?.slice(4), end = filters.find(v => v.startsWith('lt.'))?.slice(3);
-      return route.fulfill({ json: fixture.pool.filter(row => (!from || row.start_ts >= from) && (!end || row.start_ts < end)) });
-    });
-    await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', route => route.fulfill({ json: fixture.deviceSlots }));
-    await context.route('**/rest/v1/energy_optimisation_price_slots*', route => route.fulfill({ json: fixture.prices.slice(1) }));
+  test('ROI May–August sensor gaps generate, and month graphs use the same ledgers as ROI', async ({ context, page }, testInfo) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await page.getByTestId('baseline-generate').click();
-    await expect(page.getByTestId('roi-baseline').getByRole('alert')).toContainText('import price');
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    for (const month of ['05', '06', '07', '08']) {
+      const row = page.getByTestId(`scheduler-month-2026-${month}`);
+      await expect(row.locator('td')).toHaveCount(7);
+      await expect(row.locator('td').first()).toContainText('SEK');
+      await expect(row).not.toContainText('initial battery SOC');
+      await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
+      await expect(page.getByTestId('baseline-net-cost')).toHaveText((await row.locator('td').first().textContent())!);
+      await page.getByTestId('baseline-details').locator('summary').click();
+      await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
+      await expect(page.getByTestId('baseline-ev-start')).toContainText('80%');
+      await expect(page.getByTestId('baseline-pool-start')).toContainText('30°C');
+      await expect(page.getByTestId('baseline-assumptions')).not.toContainText('1970');
+      await page.getByTestId('baseline-details').locator('summary').click();
+    }
+    const september = page.getByTestId('scheduler-month-2026-09');
+    await september.getByRole('button', { name: /View graph|Visa graf/ }).click();
+    const viewer = page.getByTestId('roi-baseline');
+    await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
+    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    await expect(september.locator('td').nth(1)).toHaveText(display(2879));
+    const download = page.waitForEvent('download');
+    await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
+    expect(capture.result.series.start).toHaveLength(2880);
+    expect(capture.input.recorded.ledger.costSek).toBe(2879);
+    await expect(september.locator('td').nth(0)).toHaveText(display(capture.result.ledger.costSek));
+    await expect(september.locator('td').nth(2)).toHaveText(display(capture.result.ledger.costSek - 2879));
+    await expect(september.locator('td').nth(5)).toHaveText(display(capture.result.ledger.costSek - 2879 - 299));
+    await expect(viewer.getByTestId('comparison-costSek').locator('td').nth(1)).toHaveText(display(2879));
+    const windows = history.windows.filter(w => w.start >= capture.input.start && w.end <= capture.input.end).sort((a,b) => a.start.localeCompare(b.start));
+    expect(windows[0].start).toBe(capture.input.start); expect(windows.at(-1)!.end).toBe(capture.input.end);
+    windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
+    const reads = history.reads();
+    await page.getByTestId('comparison-graph-actual').click();
+    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await expect(chart).toContainText(/Actual|Uppmätt/i);
+    await chart.focus(); await chart.press('End'); await chart.press('Enter');
+    await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
+    await page.getByTestId('comparison-graph-default').click();
+    await expect(chart).toContainText(/DEFAULT MODEL|STANDARDMODELL/);
+    expect(history.reads()).toBe(reads);
+    await page.getByTestId('baseline-previous').click();
+    await expect(page.getByTestId('baseline-frame')).toContainText(/August|augusti/);
+    await page.getByTestId('baseline-next').click();
+    await expect(page.getByTestId('baseline-net-cost')).toHaveText(display(capture.result.ledger.costSek));
+    expect(history.reads()).toBe(reads);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.getByTestId('contract-roi').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.getByTestId('contract-roi').screenshot({ path: testInfo.outputPath('monthly-roi-mobile.png') });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByTestId('contract-roi').screenshot({ path: testInfo.outputPath('monthly-roi-desktop.png') });
+  });
+
+  test('ROI isolates unavailable prices to the affected month and keeps graph navigation usable', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=roi');
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/6)');
+    await page.locator('#roi-from').fill('2026-04');
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
+    await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('Missing historical market price');
+    history.failPrices();
+    await page.getByTestId('roi-view-graphs').click();
+    await expect(page.getByTestId('roi-baseline').getByRole('alert')).toContainText('historical market price');
     await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
     await expect(page.getByTestId('baseline-generate')).toBeEnabled();
     await expect(page.getByTestId('baseline-previous')).toBeEnabled();
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
   });
 
   test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {

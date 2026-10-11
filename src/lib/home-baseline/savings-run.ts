@@ -1,5 +1,5 @@
 import { monthPeriod } from './period';
-import { monthLedger, monthsBetween, type MonthLedger } from './savings';
+import { monthsBetween, type MonthLedger } from './savings';
 import type { CaptureSource } from './source';
 
 export type MonthRow = { month: string } & (
@@ -44,9 +44,9 @@ export function createSavingsRun(source: CaptureSource) {
         if (saved) { update(month, { month, status: 'done', ledger: saved }); continue; }
         update(month, { month, status: 'running' });
         try {
-          const capture = await source.capture(period, controller.signal);
+          await source.capture(period, controller.signal);
           if (!current()) return;
-          const ledger = monthLedger(capture);
+          const ledger = source.summary(period)!;
           update(month, { month, status: 'done', ledger });
         } catch (error) {
           if (!current()) return;
@@ -56,8 +56,11 @@ export function createSavingsRun(source: CaptureSource) {
     } catch (error) { if (current()) publish({ error: error instanceof Error ? error.message : String(error) }); }
     finally { if (current()) { active = null; publish({ running: false }); } }
   };
+  const unsubscribe = source.subscribeSummary(ledger => {
+    if (!disposed && state.rows.some(row => row.month === ledger.month)) publish({ rows: state.rows.map(row => row.month === ledger.month ? { month: row.month, status: 'done', ledger } : row) });
+  });
   return { snapshot: () => state, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setRange, calculate, cancel,
-    dispose: () => { disposed = true; active?.abort(); active = null; listeners.clear(); } };
+    dispose: () => { disposed = true; unsubscribe(); active?.abort(); active = null; listeners.clear(); } };
 }
 export type SavingsRun = ReturnType<typeof createSavingsRun>;

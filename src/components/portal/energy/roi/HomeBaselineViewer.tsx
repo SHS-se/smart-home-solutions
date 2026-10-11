@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,7 @@ import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/ener
 import { downloadJson } from '@/lib/download-json';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 
-export default function HomeBaselineViewer({ session, homeId, subscriptionSek, monthlySavings, costs }: { session: BaselineSession; homeId: string | null; subscriptionSek: number | null; monthlySavings: ReactNode; costs: ReactNode }) {
+export default function HomeBaselineViewer({ session, homeId, subscriptionSek, currentFeeSek, onClose }: { session: BaselineSession; homeId: string | null; subscriptionSek: number | null; currentFeeSek: number; onClose: () => void }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
   const [graphMode, setGraphMode] = useState<'default' | 'actual'>('default');
@@ -35,7 +35,7 @@ export default function HomeBaselineViewer({ session, homeId, subscriptionSek, m
       range: { from: 0, to: series.start.length }, timeZone: capture.input.timeZone });
   }, [capture, graphMode]);
 
-  return <Card data-testid="roi-baseline"><CardHeader><CardTitle>{t('Jämförelse och besparing', 'Comparison and savings')}</CardTitle></CardHeader>
+  return <Card data-testid="roi-baseline"><CardHeader className="flex-row items-center justify-between"><CardTitle>{t('Grafer', 'Graphs')}</CardTitle><Button variant="ghost" className="min-h-11" onClick={onClose}>{t('Stäng graf', 'Close graph')}</Button></CardHeader>
     <CardContent className="space-y-5" aria-busy={busy}>
       <div className="flex gap-2" role="group" aria-label={t('Tidsperiod', 'Time horizon')}>
         <Button variant={view === 'frame' ? 'default' : 'outline'} className="min-h-11" aria-pressed={view === 'frame'} onClick={() => session.setView('frame')} data-testid="baseline-view-frame">72 h</Button>
@@ -58,7 +58,7 @@ export default function HomeBaselineViewer({ session, homeId, subscriptionSek, m
       {!capture && !busy && homeId && <p className="text-sm text-muted-foreground">{t('Generera modellen för vald period.', 'Generate the model for this period.')}</p>}
       {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t('Genererar…', 'Generating…')}</p>}
       {capture && input && result && p && chart && <>
-        <PeriodComparison capture={capture} subscriptionSek={view === 'month' ? subscriptionSek : null} />
+        <PeriodComparison capture={capture} subscriptionSek={view === 'month' ? subscriptionSek : null} currentFeeSek={currentFeeSek} />
         <div className="flex gap-2" role="group" aria-label={t('Graf', 'Graph')}>
           <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Standardmodell', 'Default model')}</Button>
           <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Uppmätt', 'Actual')}</Button>
@@ -76,8 +76,6 @@ export default function HomeBaselineViewer({ session, homeId, subscriptionSek, m
           </div>} />
         <BaselineModelDetails capture={capture} />
       </>}
-      <details className="rounded-lg border px-4" data-testid="comparison-monthly"><summary className="cursor-pointer py-3 text-sm font-medium">{t('Månadsbesparingar', 'Monthly savings')}</summary><div className="pb-4">{monthlySavings}</div></details>
-      <details className="rounded-lg border px-4" data-testid="comparison-settings"><summary className="cursor-pointer py-3 text-sm font-medium">{t('Kostnader', 'Costs')}</summary><div className="pb-4">{costs}</div></details>
       <div className="flex flex-wrap gap-3">
         <Button className="min-h-11" onClick={() => session.generate()} disabled={busy || !homeId} data-testid="baseline-generate">
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('Generera modell', 'Generate model')}

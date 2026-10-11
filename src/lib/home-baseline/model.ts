@@ -12,19 +12,19 @@ import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
-export interface PriceRow { start_ts: string; import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }
+export type PriceRow = import('../../../supabase/functions/_shared/historical-electricity-prices.ts').HistoricalPrice;
 export interface DeviceRow { id: string; device_key: string; name?: string }
 export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string, number | null> }
 export interface PoolRow { start_ts: string; water_temperature_c: number | null }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
-export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
+export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
   devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
 export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
-  problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
+  priceArea: string; reconstructedPriceQuarters: number; assumedPriceQuarters: number; problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
   energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number };
-  recorded: { rows: TimelineRow[]; devices: ChartDevice[]; ledger: ElectricityLedger; missingImportQuarters: number; missingExportQuarters: number } }
+  recorded: { rows: TimelineRow[]; devices: ChartDevice[]; ledger: ElectricityLedger; missingImportQuarters: number; missingExportQuarters: number; gridImportCostSek: number } }
 
 function time(value: string) {
   const ms = Date.parse(value);
@@ -60,7 +60,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   if (new Set(memberIds.map(m => m.id)).size !== memberIds.length) throw new Error('Duplicate modeled device identity');
   const replaced = new Set(memberIds.map(m => m.id));
   const energyGaps = { householdQuarters: 0, solarQuarters: 0, deviceReadings: 0 };
-  const recorded = { ledger: emptyElectricityLedger(), missingImportQuarters: 0, missingExportQuarters: 0 };
+  const recorded = { ledger: emptyElectricityLedger(), missingImportQuarters: 0, missingExportQuarters: 0, gridImportCostSek: 0 };
   const energy = (value: unknown, label: string, at: string, gap: keyof typeof energyGaps) => {
     if (value === null || value === undefined) { energyGaps[gap]++; return 0; }
     return number(value, label, at, true);
@@ -120,7 +120,9 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         if (value === null || value === undefined) { recorded[`missing${label}Quarters`]++; return 0; }
         return number(value, `grid ${label.toLowerCase()}`, at, true);
       };
-      addElectricity(recorded.ledger, gridEnergy(observed?.grid_import_kwh, 'Import'), gridEnergy(observed?.grid_export_kwh, 'Export'), importPrice, exportPrice);
+      const bought = gridEnergy(observed?.grid_import_kwh, 'Import');
+      addElectricity(recorded.ledger, bought, gridEnergy(observed?.grid_export_kwh, 'Export'), importPrice, exportPrice);
+      recorded.gridImportCostSek += bought * number(price?.grid_import_price_sek_per_kwh, 'grid tariff', at);
       return { local_month: months[i], start_seconds: i * 900, hours: .25,
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
         solar_w: energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters') * 4000,
@@ -137,7 +139,8 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
   return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
-    modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
+    priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
+    assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,
     evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps,
     recorded: { ...recorded,

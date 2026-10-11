@@ -19,7 +19,7 @@ function harness() {
   let anchorReads = 0;
   const calls: { period: BaselinePeriod; signal: AbortSignal; resolve: (value: BaselineCapture) => void; reject: (error: Error) => void }[] = [];
   const source = createCaptureSource(ref, {
-    resolveAnchor: () => { anchorReads++; return Promise.resolve({ snapshot: fixture.snapshot, latestEnd: fixture.end }); },
+    resolveAnchor: () => { anchorReads++; return Promise.resolve({ snapshot: fixture.snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: fixture.end }); },
     generate: (_, __, period, signal) => new Promise<BaselineCapture>((resolve, reject) => { calls.push({ period, signal, resolve, reject }); }),
   });
   const session = createBaselineSession(source);

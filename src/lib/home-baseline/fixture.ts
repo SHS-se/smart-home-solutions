@@ -23,9 +23,9 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
     { ...meter, key: 'car', name: 'Home car', category: 'ev_charging', active_power_w: 11040 },
   ];
   const times = Array.from({ length: (Date.parse(end) - start) / 900_000 + 1 }, (_, i) => new Date(start + (i - 1) * 900_000).toISOString());
-  return { snapshot: captured, start: new Date(start).toISOString(), end, evInitial: { start_ts: times[0], ev_soc: .79 },
+  return { snapshot: captured, priceArea: 'SE3', start: new Date(start).toISOString(), end, evInitial: { start_ts: times[0], ev_soc: .79 },
     actual: times.map(start_ts => ({ start_ts, total_load_kwh: .265, solar_production_kwh: 0, battery_soc: .5, ev_soc: .79, grid_import_kwh: .265, grid_export_kwh: 0, battery_charge_kwh: 0, battery_discharge_kwh: 0 })),
-    prices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2 })),
+    prices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2, grid_import_price_sek_per_kwh: .5, source: 'archive', supplier_revision: '' })),
     devices: [{ id: 'heater-id', device_key: 'pool_heater' }, { id: 'pump-id', device_key: 'pool_pump' }, { id: 'car-id', device_key: 'car' }],
     deviceSlots: times.slice(1).map(start_ts => ({ start_ts, device_energy_kwh: { 'heater-id': 0, 'pump-id': .015, 'car-id': 0 } })),
     pool: [{ start_ts: times[0], water_temperature_c: 31 }],

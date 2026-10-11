@@ -9,6 +9,7 @@ interface Job { controller: AbortController; promise: Promise<BaselineCapture>; 
 export function createCaptureSource(ref: HomeRef | null, dependencies: { resolveAnchor: typeof resolveBaselineAnchor; generate: typeof generateHomeBaseline }) {
   const lifetime = new AbortController(), cache = new Map<string, BaselineCapture>(), jobs = new Map<string, Job>();
   const summaries = new Map<string, MonthLedger>();
+  const summaryListeners = new Set<(ledger: MonthLedger) => void>();
   let anchorPromise: Promise<BaselineAnchor> | null = null;
   const anchor = () => {
     if (!ref) return Promise.reject(new Error('Select a home'));
@@ -22,6 +23,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
     return capture;
   };
   return {
+    subscribeSummary: (listener: (ledger: MonthLedger) => void) => { summaryListeners.add(listener); return () => { summaryListeners.delete(listener); }; },
     anchor, cached, summary: (period: BaselinePeriod) => summaries.get(periodKey(period)),
     capture: async (period: BaselinePeriod, signal: AbortSignal, fresh = false): Promise<BaselineCapture> => {
       if (!ref) throw new Error('Select a home');
@@ -38,7 +40,10 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
             controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
             if (jobs.get(key) === own && !controller.signal.aborted && !lifetime.signal.aborted && own.waiters.size) {
               cache.set(key, capture);
-              if (period.view === 'month') summaries.set(key, monthLedger(capture));
+              if (period.view === 'month') {
+                const ledger = monthLedger(capture); summaries.set(key, ledger);
+                summaryListeners.forEach(listener => listener(ledger));
+              }
               if (cache.size > 8) cache.delete(cache.keys().next().value!);
             }
             return capture;
@@ -56,7 +61,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
         own.promise.then(value => { release(); if (!signal.aborted) resolve(value); }, error => { release(); reject(error); });
       });
     },
-    dispose: () => { lifetime.abort(); jobs.forEach(job => job.controller.abort()); jobs.clear(); cache.clear(); summaries.clear(); },
+    dispose: () => { lifetime.abort(); jobs.forEach(job => job.controller.abort()); jobs.clear(); cache.clear(); summaries.clear(); summaryListeners.clear(); },
   };
 }
 export type CaptureSource = ReturnType<typeof createCaptureSource>;

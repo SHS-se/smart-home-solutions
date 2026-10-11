@@ -1,16 +1,18 @@
 # Comparison and savings in ROI
 
-At the bottom of ROI, **Generate model** activates the selected home's default
-model. Previous/Next and the **72 h / Month** buttons then generate uncached
-periods automatically. Visited periods display immediately from an eight-entry
-browser-memory cache. Refreshing the page or changing home discards the session.
-Nothing writes a baseline plan, score or result to the database. The combined **Comparison and savings** card has a collapsed monthly overview
-with an on-demand **Calculate months** button for the selected From/To
-range. Each month shows default-model cost, recorded cost, electricity savings,
-SHS subscription and net savings. A month link opens the same model in the chart.
-The selected period has a four-row default/actual summary: grid imports, retained
-solar energy, exports and net grid cost, plus savings. Cost settings are collapsed
-in the same card; contract savings retain their separate section.
+The monthly comparison calculates automatically for the selected home, up to 12
+calendar months. Default cost, recorded cost, scheduler savings, separate contract
+savings, subscription and SHS net appear without rendering any graph. The hero,
+monthly average, period ROI and payback use the same successful monthly rows.
+Failed months are excluded explicitly; estimates disclose sensor gaps, starting
+state assumptions and reconstructed price quarters. Costs and comparison-contract
+settings are collapsed. Contract savings are excluded from SHS ROI.
+
+**View graphs** or a month's **Graph** button opens the shared graph only on
+request. Previous/Next and **72 h / Month** then load uncached periods automatically.
+An eight-entry browser-memory cache makes visited graphs immediate. Compact
+monthly summaries survive graph eviction. Refreshing or changing home discards
+the session. No baseline plan, score or calculation result is stored in the database.
 
 The first generation pins the equipment models, home timezone and latest
 completed recorded quarter for the session. Frames cover 72 elapsed hours.
@@ -31,7 +33,16 @@ and EV readings are fetched once before the entire selected period.
 
 ## Inputs and models
 
-The viewer reads bounded windows of existing actual, price and device quarters.
+The source reads bounded windows of actual and device quarters. Prices come from
+our authenticated `backfill-energy-prices` function's explicit `{mode: "read",
+start, end, home_id}` mode, limited to 32 days. It first reads archived all-in
+quarters, then fills holes using real market intervals and the configured grid
+and supplier versions effective on each local date. This mode performs no writes;
+the existing relative-day backfill writer remains separate. Reconstructed quarters
+and assumed historical supplier revisions are disclosed. The configured supplier
+is assumed to apply throughout the period; historical customer contract changes
+are not archived. Archived all-in totals remain authoritative. The grid/supplier
+split for contract comparisons uses the configured historical grid tariff.
 It uses recorded solar production and all-in import/export prices, including
 negative prices. Fixed load is total household consumption minus the exact
 pool/EV meter identities being replaced, joined by device UUID. Other measured
@@ -81,7 +92,7 @@ These are approximate initial states.
 The isolated worker exposes only native `project`, never `solve`. It performs
 one reactive projection per quarter with carried battery/car/pool/heater state. The existing
 Wasm artifact is verified by SHA256. No optimisation, forecasting, fitting,
-backfill, polling or planner dispatch happens. The working planner and its
+database backfill, polling or planner dispatch happens. The working planner and its
 artifact remain unchanged.
 
 The Plan page, planner bench and ROI use `energy/charts/EnergyChart.tsx`.
@@ -106,25 +117,29 @@ attribution, so actual exports are treated as solar; battery exports can affect
 that estimate. This definition is available in collapsed model details. JSON export includes native engine hash, captured inputs,
 commands, series and the signed grid ledger.
 
-Electricity cost is imports less export revenue. It excludes fixed fees, SHS subscription,
-wear and terminal stored-energy credit. Recorded cost uses the selected home's
-recorded grid import/export quarters and the **identical historical quarter prices**
-as the baseline. The extra quarter used for initial states contributes no cost.
-Missing grid energy contributes zero and is counted in month details. Negative
-prices, export revenues and negative savings retain their signs.
+Electricity cost is imports less export revenue. Monthly summary costs add the
+entered supplier fee once, prorated by elapsed/full local-calendar month duration.
+Graph cost lines show variable quarter costs, excluding fixed fees and subscription.
+Recorded and baseline costs use identical historical quarter prices. The initial
+state quarter contributes no cost. Missing grid energy is zero and counted;
+negative prices, export revenues and negative savings retain their signs.
 
-Electricity savings = baseline cost − recorded cost. Identical fixed contract
-fees cancel. SHS subscription is separate; a partial month pays elapsed period
-duration / full home-calendar month duration of the monthly subscription. Full
-DST months pay one subscription. Net savings subtract that amount, without
-annual extrapolation or a new payback estimate. Contract savings remain a separate
-calculation using the comparison contract and account-level supplier/bill history.
+Scheduler saving = baseline cost − recorded cost. Identical contract fees cancel.
+SHS net subtracts the prorated subscription; full DST months pay one subscription.
+The monthly average is total net / sum of month coverage. Period ROI is total net /
+(equipment + installation); payback is investment / monthly average when positive.
+These are based on the selected period, with no claim of representative annual savings.
+
+Contract savings compare the recorded imports' supplier cost with the selected
+alternative. Grid costs and export revenue are held constant. They use the same
+successful home months as scheduler ROI, rather than account-level daily supplier
+costs or invoices. Editing fees, subscription or contract terms reuses these ledgers.
 
 One home capture source owns pinned models, an eight-capture LRU, compact monthly
 ledgers and shared in-flight generation. Viewer and monthly report have independent
 cancellation interests: leaving a graph does not cancel a report that still needs
 the same month. Last-consumer cancellation aborts history/worker work and prevents
-late results caching. Fresh generation invalidates the corresponding compact ledger.
+late results caching. Fresh graph generation replaces the corresponding compact ledger and updates the monthly report.
 Reports process months sequentially, retain successful rows if another month fails,
 show future months as unavailable and total only calculated rows. Range/home changes
 cancel obsolete report work. Subscription and comparison-contract edits do not fetch

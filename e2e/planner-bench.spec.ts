@@ -326,7 +326,7 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-tab-bench')).toHaveAttribute('data-state', 'active');
   });
 
-  test('ROI keeps contract savings separate from scheduler investment', async ({ context, page }) => {
+  test('ROI requires a selected home and does not substitute account supplier history', async ({ context, page }) => {
     await mockBackend(context);
     const customerId = '55555555-5555-4555-8555-555555555555';
     await context.route('**/rest/v1/customers_with_identity*', route => route.fulfill({ json: { id: customerId, name: 'Comparison home' } }));
@@ -334,22 +334,13 @@ test.describe('planner bench', () => {
     await context.route('**/rest/v1/energy_supplier_daily_costs*', route => route.fulfill({ json: [{ cost_date: '2026-09-24', priced_hours: 24, import_kwh: 20, import_cost_sek: 10 }] }));
     await login(page);
     await page.goto(`/portal/customers/${customerId}/energy-modeling?tab=roi`);
-    const contract = page.getByTestId('roi-period-saving');
-    await expect(contract).toContainText('SEK');
-    const saving = await contract.textContent();
-    await expect(page.getByTestId('roi-hero')).toContainText(/Contract|Avtals/);
-    await expect(page.getByTestId('scheduler-comparison')).toHaveCount(0);
+    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
+    await expect(page.getByTestId('roi-period-net')).toHaveText('—');
+    await expect(page.getByTestId('roi-view-graphs')).toBeDisabled();
+    await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await page.getByTestId('comparison-settings').locator('summary').click();
-    await page.locator('#roi-subscription').fill('300');
-    await expect(contract).toHaveText(saving!);
     await page.locator('#roi-subscription').fill('0');
-    await expect(contract).toHaveText(saving!);
-    await expect(page.getByTestId('roi-scheduler')).toHaveCount(0);
-    await expect(page.getByTestId('roi-baseline')).toContainText(/Comparison and savings|Jämförelse och besparing/);
-    await page.setViewportSize({ width: 390, height: 844 });
-    const section = page.getByTestId('roi-baseline');
-    expect(await section.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await section.screenshot({ path: test.info().outputPath('scheduler-roi-mobile.png') });
+    await expect(page.getByTestId('roi-period-saving')).toHaveCount(0);
   });
 
   test('shows economic finding markers and supports keyboard quarter selection without repeating savings', async ({ context, page }) => {

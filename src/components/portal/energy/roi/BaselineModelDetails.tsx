@@ -39,8 +39,9 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
         <p>{t('Indata', 'Inputs')}: {t('uppmätt förbrukning, solproduktion och elpriser', 'recorded consumption, solar and electricity prices')}. {input.timeZone}.</p>
-        <p>{t('Uppmätt elkostnad', 'Recorded electricity cost')}: {number(input.recorded.ledger.costSek)} SEK.
-          {' '}{t('Saknade nätimport- / exportkvartar', 'Missing grid import / export quarters')}: {input.recorded.missingImportQuarters} / {input.recorded.missingExportQuarters}.</p>
+        <p>{input.priceArea} · {input.reconstructedPriceQuarters} {t('kvartar med återskapade elpriser', 'quarters with reconstructed electricity prices')}. {t('Nätavgifter enligt hemmets valda historiska tariff.', 'Grid costs use the home’s configured historical tariff.')}</p>
+        {input.assumedPriceQuarters > 0 && <p>{input.assumedPriceQuarters} {t('kvartar med antaget historiskt leverantörspåslag.', 'quarters with an assumed historical supplier markup.')}</p>}
+        <p>{t('Saknade nätimport- / exportkvartar', 'Missing grid import / export quarters')}: {input.recorded.missingImportQuarters} / {input.recorded.missingExportQuarters}.</p>
         {(input.energyGaps.householdQuarters > 0 || input.energyGaps.solarQuarters > 0 || input.energyGaps.deviceReadings > 0) && <p data-testid="baseline-energy-gaps">
           {t('Saknad energi räknas som 0', 'Missing energy counts as 0')}: {input.energyGaps.deviceReadings} {t('enhetsvärden', 'device readings')}, {input.energyGaps.solarQuarters} {t('solkvartar', 'solar quarters')}.
           {' '}{input.energyGaps.householdQuarters} {t('kvartar med förbrukning summerad från övriga enheter.', 'quarters with consumption summed from other devices.')}
@@ -54,7 +55,7 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
         {p.car && input.evMissingSocQuarters > 0 && <p>{input.evMissingSocQuarters} {t('kvartar utan SOC; minskningar räknas vid nästa avläsning.', 'quarters without SOC; declines count at the next reading.')}</p>}
         {p.pool_store && <p>{t('Värmepumpens starttillstånd: av, historisk startfas okänd.', 'Heat pump initial state: off, historical startup phase unknown.')}</p>}
         <p>{t('Använd solel = produktion minus export, inklusive batteriladdning. Export räknas som solel; mätaren anger inte energins ursprung.', 'Solar consumption = generation minus exports, including battery charging. Exports are counted as solar; the meter does not identify energy origin.')}</p>
-        <p>{t('Kostnad efter export, före fasta avgifter och SHS-abonnemang.', 'Cost after exports, before fixed fees and SHS subscription')}</p>
+        <p>{t('Grafkostnader exkluderar fasta avgifter och SHS-abonnemang.', 'Graph costs exclude fixed fees and SHS subscription')}</p>
         <p>{t('Beräkning', 'Calculation')}: {Math.round(result.projectionMs)} ms. {t('Fullständiga indata finns i modellexporten.', 'Full inputs are available in the model export.')}</p>
       </div>
     </div>

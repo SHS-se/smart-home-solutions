@@ -3,7 +3,7 @@ import type { HomeModelCapture } from './home-physics';
 import { frameStart, shiftFrame, QUARTER_MS } from './model';
 
 export type BaselineView = 'frame' | 'month';
-export interface BaselineAnchor { snapshot: HomeModelCapture; latestEnd: string }
+export interface BaselineAnchor { snapshot: HomeModelCapture; earliestStart: string; latestEnd: string }
 export interface BaselinePeriod { view: BaselineView; start: string; end: string }
 
 export const periodKey = (period: BaselinePeriod) => `${period.view}|${period.start}|${period.end}`;

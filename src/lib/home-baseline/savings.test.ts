@@ -55,9 +55,11 @@ Deno.test('partial month and totals prorate subscription by home calendar durati
 Deno.test('month ranges include gaps and year boundaries, clipping only the last recorded month', () => {
   assertEquals(monthsBetween('2025-12', '2026-02'), ['2025-12', '2026-01', '2026-02']);
   assertEquals(monthsBetween('9999-12', '9999-12'), ['9999-12']);
+  assertEquals(monthsBetween('2025-11', '2026-10').length, 12);
+  assertThrows(() => monthsBetween('2025-10', '2026-10'), Error, 'at most 12 months');
   assertThrows(() => monthsBetween('2026-09', '2026-08'));
   assertThrows(() => monthsBetween('2026-00', '2026-08'));
-  const anchor = { snapshot: rows.snapshot, latestEnd: '2026-10-11T00:00:00.000Z' };
+  const anchor = { snapshot: rows.snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: '2026-10-11T00:00:00.000Z' };
   assertEquals(monthPeriod(anchor, '2026-10')?.end, anchor.latestEnd);
   assertEquals(monthPeriod(anchor, '2026-11'), null);
 });

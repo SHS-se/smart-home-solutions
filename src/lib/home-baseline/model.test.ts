@@ -11,7 +11,7 @@ import { latestPeriod, stepPeriod } from './period.ts';
 const engine = createWasmPlanner(new Uint8Array(readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 
 Deno.test('calendar month carries physical state through every former 72-hour boundary and reconciles native cost', () => {
-  const anchor = { snapshot: baselineFixture().snapshot, latestEnd: '2026-11-01T00:00:00.000Z' };
+  const anchor = { snapshot: baselineFixture().snapshot, earliestStart: '2026-01-01T00:00:00.000Z', latestEnd: '2026-11-01T00:00:00.000Z' };
   const period = stepPeriod(anchor, latestPeriod(anchor, 'month'), -1)!;
   const rows = baselineFixture(period), input = prepareHomeBaseline(rows);
   assertEquals(input.problem.slots.length, 2980);

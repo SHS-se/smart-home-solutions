@@ -27,6 +27,8 @@ import {
   parseSpotPriceIntervals,
 } from "../_shared/energy-supplier-pricing.ts";
 
+import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice } from "../_shared/historical-electricity-prices.ts";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -97,14 +99,19 @@ serve(async (req) => {
 
     let homeId = "";
     let days = 0;
+    let period: { start: string; end: string } | null = null;
     try {
       const body = await req.json();
       homeId = String(body?.home_id ?? "");
       days = Number(body?.days);
+      if (body?.mode === "read") {
+        historicalPriceRange(body.start, body.end);
+        period = { start: body.start, end: body.end };
+      } else if (body?.mode !== undefined) return json({ error: "invalid_mode" }, 400);
     } catch {
       return json({ error: "invalid_body" }, 400);
     }
-    if (!homeId || !Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
+    if (!homeId || (!period && (!Number.isInteger(days) || days < 1 || days > MAX_DAYS))) {
       return json({ error: "invalid_request" }, 400);
     }
 
@@ -244,6 +251,26 @@ serve(async (req) => {
       }],
     };
 
+    if (period) {
+      const starts = historicalPriceRange(period.start, period.end);
+      const archive: ArchivedPrice[] = [];
+      for (let i = 0; i < starts.length; i += 672) {
+        const end = starts[i + 672] ?? period.end;
+        const { data, error } = await supabase.from("energy_optimisation_price_slots")
+          .select("start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh")
+          .eq("home_id", homeId).eq("customer_id", home.customer_id)
+          .gte("start_ts", starts[i]).lt("start_ts", end).order("start_ts").limit(672);
+        if (error) throw error;
+        archive.push(...(data ?? []));
+      }
+      const prices = await historicalElectricityPrices(starts, archive, catalogue, supplierVersions, async day => {
+        const response = await fetch(spotUrl(day, area), { signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error(`Historical market prices unavailable for ${day}: ${response.status}`);
+        return response.json();
+      });
+      return json({ prices, area });
+    }
+
     // ── Walk the window ──────────────────────────────────────────────────────
     const now = new Date();
     const latestStart = Math.floor(now.getTime() / SLOT_MS) * SLOT_MS - SLOT_MS;
@@ -368,6 +395,6 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("[BACKFILL-PRICES] unexpected", error);
-    return json({ error: "backfill_failed" }, 500);
+    return json({ error: "backfill_failed", message: error instanceof Error ? error.message : String(error) }, 500);
   }
 });

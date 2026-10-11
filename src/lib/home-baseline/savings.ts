@@ -1,6 +1,7 @@
 import { homeMonthBounds } from '../energy-shift/home-time';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 import type { BaselineCapture } from './browser';
+import { periodComparison } from './comparison';
 
 export function monthsBetween(from: string, to: string): string[] {
   const valid = (month: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
@@ -8,6 +9,7 @@ export function monthsBetween(from: string, to: string): string[] {
   const months: string[] = [];
   for (let key = from; key <= to;) {
     months.push(key);
+    if (months.length > 12) throw new Error('Select at most 12 months');
     if (key === to) break;
     const [year, month] = key.split('-').map(Number);
     key = `${String(month === 12 ? year + 1 : year).padStart(4, '0')}-${String(month === 12 ? 1 : month + 1).padStart(2, '0')}`;
@@ -20,8 +22,12 @@ export function monthLedger(capture: BaselineCapture) {
   const bounds = homeMonthBounds(input.start, 0, input.timeZone);
   const start = Date.parse(input.start), end = Date.parse(input.end);
   if (start !== bounds.startMs || end <= start || end > bounds.endMs) throw new Error('Savings require a calendar month period');
+  const comparison = periodComparison(capture);
   return { month: localDay(input.start, input.timeZone).slice(0, 7), start: input.start, end: input.end, timeZone: input.timeZone,
-    coverage: (end - start) / (bounds.endMs - bounds.startMs), baseline: result.ledger, recorded: input.recorded.ledger,
+    coverage: (end - start) / (bounds.endMs - bounds.startMs), baseline: result.ledger, recorded: input.recorded.ledger, comparison, gridImportCostSek: input.recorded.gridImportCostSek,
+    priceArea: input.priceArea, reconstructedPriceQuarters: input.reconstructedPriceQuarters, assumedPriceQuarters: input.assumedPriceQuarters,
+    assumptions: { battery: input.batteryInitialAssumed, ev: input.evInitialAssumed, pool: input.poolInitialAssumed },
+    quarters: input.problem.slots.length,
     gaps: { ...input.energyGaps, gridImportQuarters: input.recorded.missingImportQuarters, gridExportQuarters: input.recorded.missingExportQuarters } };
 }
 export type MonthLedger = ReturnType<typeof monthLedger>;

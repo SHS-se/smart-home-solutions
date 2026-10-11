@@ -15,8 +15,8 @@ export interface ContractDraft {
   markupUnit: 'percent' | 'monthly';
 }
 
-export default function ContractFields({ draft, onChange, source }: {
-  draft: ContractDraft; onChange: (draft: ContractDraft) => void; source: 'ha' | 'invoices';
+export default function ContractFields({ draft, onChange }: {
+  draft: ContractDraft; onChange: (draft: ContractDraft) => void;
 }) {
   const { t } = useLanguage();
   const set = <K extends keyof ContractDraft>(key: K, value: ContractDraft[K]) => onChange({ ...draft, [key]: value });
@@ -44,7 +44,7 @@ export default function ContractFields({ draft, onChange, source }: {
     {draft.kind !== 'monthly' && <RoiSelect id="roi-pricing-method" label={t('Prismodell', 'Price model')} value={draft.method} onChange={value => set('method', value as PricingMethod)}>
       <option value="quote">{t('Inklusive avgifter', 'Fees included')}</option>
       {draft.kind !== 'quarterly' && <option value="components">{t('Pris + månadsavgift', 'Rate + monthly fee')}</option>}
-      {draft.kind === 'quarterly' && source === 'ha' && <option value="profile">{t('Spotpris + påslagsskillnad', 'Spot + markup difference')}</option>}
+      {draft.kind === 'quarterly' && <option value="profile">{t('Spotpris + påslagsskillnad', 'Spot + markup difference')}</option>}
     </RoiSelect>}
     {draft.kind === 'monthly' ? <div className="grid gap-4 sm:grid-cols-2">
       <RoiSelect id="roi-markup-unit" label={t('Leverantörspåslag', 'Supplier markup')} value={draft.markupUnit} onChange={v => set('markupUnit', v as ContractDraft['markupUnit'])}>

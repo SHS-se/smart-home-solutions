@@ -16,18 +16,19 @@ async function read<T>(request: PromiseLike<{ data: unknown; error: { message: s
 
 /** Pin equipment models and the last recorded quarter once for this viewer session. */
 export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): Promise<BaselineAnchor> {
-  const [snapshot, latest] = await Promise.all([
+  const [snapshot, latest, first] = await Promise.all([
     read<HomeModelCapture | null>(scoped(ref, 'energy_optimisation_current').select('captured_at:snapshot->>captured_at,timezone:snapshot->>timezone,capabilities:snapshot->capabilities,battery:snapshot->battery,ev_battery:snapshot->ev_battery,pool:snapshot->pool,device_physics:snapshot->device_physics,pool_model:snapshot->pool_model,grid:snapshot->grid,value_settings:snapshot->value_settings,device_models:snapshot->device_models,services:snapshot->services')
       .abortSignal(signal).maybeSingle()),
     read<{ start_ts: string } | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts')
       .lt('start_ts', new Date(Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS).toISOString())
       .order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()),
+    read<{ start_ts: string } | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts').order('start_ts').limit(1).abortSignal(signal).maybeSingle()),
   ]);
   signal.throwIfAborted();
   if (!snapshot) throw new Error('Current home physical model is unavailable');
-  if (!latest) throw new Error('No completed historical energy quarters are available for this home');
+  if (!latest || !first) throw new Error('No completed historical energy quarters are available for this home');
   homePhysics(snapshot);
-  return { snapshot, latestEnd: new Date(Date.parse(latest.start_ts) + QUARTER_MS).toISOString() };
+  return { snapshot, earliestStart: first.start_ts, latestEnd: new Date(Date.parse(latest.start_ts) + QUARTER_MS).toISOString() };
 }
 
 /** Read a complete explicit period without exceeding the existing RPC or REST limits. */
@@ -39,9 +40,8 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     .select(fields).gte('start_ts', from).lt('start_ts', to).order('start_ts').limit(count).abortSignal(signal);
   const windows = historyWindows(period);
   const loadWindow = async (w: typeof windows[number], first: boolean) => {
-    const [actual, prices, deviceSlots, outdoor, pool] = await Promise.all([
+    const [actual, deviceSlots, outdoor, pool] = await Promise.all([
       read<ActualRow[]>(window('energy_optimisation_actual_slots', 'start_ts,total_load_kwh,solar_production_kwh,battery_soc,ev_soc,grid_import_kwh,grid_export_kwh,battery_charge_kwh,battery_discharge_kwh', first ? prior : w.start, w.end, w.count + (first ? 1 : 0))),
-      read<PriceRow[]>(window('energy_optimisation_price_slots', 'start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh', w.start, w.end, w.count)),
       read<DeviceSlot[]>(db.rpc('get_energy_optimisation_device_slots', {
         p_customer_id: ref.customerId, p_home_id: ref.homeId, p_from: w.start, p_to: w.end,
       }).order('start_ts').limit(w.count).abortSignal(signal)),
@@ -49,7 +49,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
         ? read<OutdoorRow[]>(window('energy_optimisation_outdoor_slots', 'start_ts,temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
       facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
     ]);
-    return { actual, prices, deviceSlots, outdoor, pool };
+    return { actual, deviceSlots, outdoor, pool };
   };
   const loadWindows = async () => {
     const batches: Awaited<ReturnType<typeof loadWindow>>[] = [];
@@ -59,16 +59,26 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     }
     return batches;
   };
-  const [batches, devices, pool, evInitial] = await Promise.all([
+  const [batches, devices, pool, evInitial, pricing] = await Promise.all([
     loadWindows(),
     read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name')
       .abortSignal(signal)),
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')
       .lte('start_ts', prior).not('ev_soc', 'is', null).order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()) : Promise.resolve(null),
+    (async () => {
+      const { data, error } = await supabase.functions.invoke('backfill-energy-prices', { body: { home_id: ref.homeId, mode: 'read', start, end }, signal });
+      if (error) {
+        const response = 'context' in error && error.context instanceof Response ? error.context : null;
+        const body = response ? await response.json().catch(() => null) : null;
+        throw new Error(body?.message ?? error.message);
+      }
+      if (!Array.isArray(data?.prices) || !data?.area) throw new Error('Historical electricity prices unavailable');
+      return data as { prices: PriceRow[]; area: string };
+    })(),
   ]);
   signal.throwIfAborted();
   return prepareHomeBaseline({ snapshot, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
-    actual: batches.flatMap(b => b.actual), prices: batches.flatMap(b => b.prices),
+    actual: batches.flatMap(b => b.actual), prices: pricing.prices, priceArea: pricing.area,
     deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) });
 }
