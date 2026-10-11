@@ -376,12 +376,12 @@ test.describe('requesting a replan', () => {
       const limit = Number(url.searchParams.get('limit'));
       expect(limit).toBeLessThanOrEqual(1000);
       if (select === 'start_ts') { await route.fulfill({ json: { start_ts: fixture.actual.at(-1)!.start_ts } }); return; }
-      if (select === 'start_ts,ev_soc') { await route.fulfill({ json: { start_ts: before, ev_soc: .79 } }); return; }
-      if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: [{ start_ts: from, water_temperature_c: 31 }] }); return; }
+      if (select === 'start_ts,ev_soc') { await route.fulfill({ json: before! < '2026-08-31T21:45:00.000Z' ? null : { start_ts: before, ev_soc: .79 } }); return; }
+      if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: from! < '2026-08-31T21:45:00.000Z' ? [] : [{ start_ts: from, water_temperature_c: 31 }] }); return; }
       const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
       const rows = baselineFixture(range);
       if (table === 'energy_optimisation_actual_slots') {
-        rows.actual.filter(row => row.start_ts < '2026-08-31T21:45:00.000Z').forEach(row => { row.battery_soc = null; });
+        rows.actual.filter(row => row.start_ts < '2026-08-31T21:45:00.000Z').forEach(row => { row.battery_soc = null; row.ev_soc = null; });
         rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; row.battery_discharge_kwh = .1; row.solar_production_kwh = .05; });
         const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
         if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
@@ -473,6 +473,9 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-frame')).toContainText(/May|maj/);
     await viewer.getByTestId('baseline-details').locator('summary').click();
     await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
+    await expect(page.getByTestId('baseline-ev-start')).toContainText('80%');
+    await expect(page.getByTestId('baseline-pool-start')).toContainText('30°C');
+    await expect(page.getByTestId('baseline-assumptions')).not.toContainText('1970');
     await viewer.getByTestId('baseline-details').locator('summary').click();
     const september = page.getByTestId('scheduler-month-2026-09');
     const cells = september.locator('td');

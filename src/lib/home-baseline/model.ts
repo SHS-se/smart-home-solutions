@@ -15,12 +15,12 @@ export type ActualRow = ActualEnergySlot;
 export interface PriceRow { start_ts: string; import_price_sek_per_kwh: number | null; export_price_sek_per_kwh: number | null }
 export interface DeviceRow { id: string; device_key: string; name?: string }
 export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string, number | null> }
-export interface PoolRow { start_ts: string; water_temperature_c: number }
+export interface PoolRow { start_ts: string; water_temperature_c: number | null }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
   devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
-export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean;
+export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
   problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
   energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number };
@@ -68,9 +68,11 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const initialObservedAt = new Date(startMs - QUARTER_MS).toISOString(), prior = actual.get(startMs - QUARTER_MS);
   const batteryInitialAssumed = facts.battery !== null && prior?.battery_soc == null;
   const batterySoc = facts.battery ? batteryInitialAssumed ? 0 : soc(prior?.battery_soc, 'initial battery SOC', initialObservedAt) : null;
-  const evSoc = facts.car ? soc(rows.evInitial?.ev_soc, 'initial EV SOC', rows.evInitial?.start_ts ?? initialObservedAt) : null;
-  if (facts.car && (!rows.evInitial || time(rows.evInitial.start_ts) >= startMs)) throw new Error('Initial EV SOC must be a historical reading before the frame');
-  let lastEvSoc = evSoc, evMissingSocQuarters = 0;
+  const evInitialAssumed = facts.car !== null && rows.evInitial?.ev_soc == null;
+  const evSoc = facts.car ? evInitialAssumed ? .8 : soc(rows.evInitial?.ev_soc, 'initial EV SOC', rows.evInitial!.start_ts) : null;
+  if (facts.car && !evInitialAssumed && time(rows.evInitial!.start_ts) >= startMs) throw new Error('Initial EV SOC must be a historical reading before the frame');
+  // Assumed starting energy is not an observed driving-demand reference.
+  let lastEvSoc = evInitialAssumed ? null : evSoc, evMissingSocQuarters = 0;
   const daily = new Map<string, number>();
   const evDemandKwh = Array.from({ length: count }, (_, i) => {
     if (!facts.car) return 0;
@@ -78,13 +80,14 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     const observed = actual.get(Date.parse(at))?.ev_soc;
     if (observed === null || observed === undefined) { evMissingSocQuarters++; return 0; }
     const current = soc(observed, 'EV SOC', at);
-    const demand = Math.max(0, lastEvSoc! - current) * facts.car.capacity_kwh;
+    const demand = lastEvSoc === null ? 0 : Math.max(0, lastEvSoc - current) * facts.car.capacity_kwh;
     lastEvSoc = current;
     const day = localDay(at, rows.snapshot.timezone);
     daily.set(day, (daily.get(day) ?? 0) + demand);
     return demand;
   });
-  const poolC = facts.poolStore ? number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
+  const poolInitialAssumed = facts.poolStore !== null && pool.get(startMs - QUARTER_MS)?.water_temperature_c == null;
+  const poolC = facts.poolStore ? poolInitialAssumed ? DEFAULT_SETTINGS.poolStartC : number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
   const idlePumpW = facts.poolStore ? DEFAULT_SETTINGS.idlePumpW : 0;
   if (facts.heater && facts.heater.auxiliary_w < idlePumpW) throw new Error('Full-power pool auxiliary model is below the stated 60 W circulation draw');
   const starts = Array.from({ length: count }, (_, i) => new Date(startMs + i * QUARTER_MS).toISOString());
@@ -134,8 +137,8 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
   return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
-    modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, problem, idlePumpW, carName: facts.carName,
-    evInitialObservedAt: facts.car ? rows.evInitial!.start_ts : null, evDemandKwh,
+    modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
+    evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,
     evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps,
     recorded: { ...recorded,
       devices: rows.devices.map(d => ({ key: d.device_key, name: d.name ?? rows.snapshot.device_models.find(m => m.key === d.device_key)?.name ?? d.device_key,
@@ -152,7 +155,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
             ev_soc: observed?.ev_soc == null ? null : soc(observed.ev_soc, 'EV SOC', start_ts) };
         }), prices: rows.prices,
         deviceActuals: rows.deviceSlots.map(row => ({ ...row, device_energy_kwh: Object.fromEntries(Object.entries(row.device_energy_kwh).map(([id, value]) => [id, value == null ? 0 : number(value, `device meter ${id}`, row.start_ts, true)])) })),
-        deviceKeyById: new Map(rows.devices.map(d => [d.id, d.device_key])), poolActuals: rows.pool }),
+        deviceKeyById: new Map(rows.devices.map(d => [d.id, d.device_key])), poolActuals: rows.pool.flatMap(row => row.water_temperature_c == null ? [] : [{ ...row, water_temperature_c: row.water_temperature_c }]) }),
     } };
 }
 
