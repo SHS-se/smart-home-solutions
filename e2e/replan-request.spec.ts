@@ -32,12 +32,12 @@ const REQUEST_ID = '2f1c0c74-9d31-4f0e-9a45-9c6f2f5f0a11';
 // is pinned to below: a plan the page considers current, as in service.
 const PLAN = generateOptimisationPlan(snapshot(), new Date(CAPTURED_AT));
 
-function fakeJwt(sub: string, email: string): string {
+function fakeJwt(sub: string, email: string, expiresAt: number): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
   return [
     enc({ alg: 'HS256', typ: 'JWT' }),
-    enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: now + 3600, iat: now }),
+    enc({ sub, email, aud: 'authenticated', role: 'authenticated', exp: expiresAt, iat: now }),
     'x'.repeat(43),
   ].join('.');
 }
@@ -79,6 +79,9 @@ interface MockPlanState {
 
 async function mockBackend(context: BrowserContext, replan: MockPlanState, plan = PLAN, planSnapshot = snapshot()) {
   const nowIso = new Date().toISOString();
+  // Reloading ROI uses the historical fixture's fixed clock, which can be ahead
+  // of the test runner. Keep mocked sessions valid on both clocks.
+  const expiresAt = Math.floor(Math.max(Date.now(), Date.parse(baselineFixture().end)) / 1000) + 3600;
   const email = 'ana@example.com';
   const user = {
     id: CUSTOMER_USER_ID,
@@ -97,10 +100,10 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
     if (url.pathname.endsWith('/token')) {
       await route.fulfill({
         json: {
-          access_token: fakeJwt(CUSTOMER_USER_ID, email),
+          access_token: fakeJwt(CUSTOMER_USER_ID, email, expiresAt),
           token_type: 'bearer',
           expires_in: 3600,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          expires_at: expiresAt,
           refresh_token: 'fake-refresh-token',
           user,
         },
@@ -246,6 +249,33 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('alert')).toContainText('at most 12 months');
     await expect(page.getByTestId('roi-period-net')).toHaveText('—');
     expect(history.reads()).toBe(reads);
+  });
+
+  test('ROI reloads durable monthly totals without fetching history or generating charts', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=roi');
+    await expectRoiMonths(page, '(6/6)');
+    const net = await page.getByTestId('roi-period-net').textContent();
+    expect(Object.keys(history.saved()!.months)).toHaveLength(6);
+    expect(JSON.stringify(history.saved())).not.toContain('gridImportW');
+    const before = history.windows.length;
+    await page.reload();
+    await expectRoiMonths(page, '(6/6)');
+    await expect(page.getByTestId('roi-period-net')).toHaveText(net!);
+    expect(history.windows.length).toBe(before);
+    await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
+    const row = page.getByTestId('scheduler-month-2026-05');
+    await row.locator('summary').first().click();
+    await expect(row.getByTestId('comparison-evidence')).toContainText(/0%/);
+    await page.getByTestId('roi-assumption-impact').locator('summary').click();
+    await expect(page.getByTestId('roi-assumption-impact')).toContainText(/ROI/);
+    await page.getByTestId('scheduler-calculate').click();
+    await expect.poll(() => history.saved()?.generation).toBe(2);
+    await expect.poll(() => Object.keys(history.saved()!.months).length).toBe(6);
+    await expectRoiMonths(page, '(6/6)');
+    expect(history.saved()!.generation).toBe(2);
+    expect(history.windows.length).toBeGreaterThan(before);
   });
 
   test('ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them', async ({ context, page }, testInfo) => {

@@ -2,6 +2,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { DEFAULT_SETTINGS } from '@/lib/home-baseline/controller';
 import type { BaselineCapture } from '@/lib/home-baseline/browser';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
+import { captureEvidence } from '@/lib/home-baseline/savings';
+import { ComparisonEvidence } from './ComparisonEvidence';
 
 /** Inspection data stays available without pushing the chart down the page. */
 export default function BaselineModelDetails({ capture }: { capture: BaselineCapture }) {
@@ -38,26 +40,10 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
         <tbody>{input.evDailyDemand.map(day => <tr key={day.day}><td>{day.day}</td><td>{number(day.kwh)}</td></tr>)}</tbody>
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
-        {input.recovery.hours > 0 && <p data-testid="baseline-hourly-recovery">{input.recovery.hours} {t('timmar från HA:s historik; energi fördelas jämnt och SOC använder timmedelvärden.', 'hours from HA history; energy is spread evenly and SOC uses hourly means.')}
-          {input.recovery.balanceHours > 0 && ` ${input.recovery.balanceHours} ${t('timmar med husförbrukning beräknad från elflöden.', 'hours with household demand reconstructed from electricity flows.')}`}
-          {input.recovery.deviceSumHours > 0 && ` ${input.recovery.deviceSumHours} ${t('timmar med baslast summerad från övriga enheter.', 'hours with baseline demand summed from other devices.')}`}
-          {input.recovery.invalidReadings > 0 && ` ${input.recovery.invalidReadings} ${t('ogiltiga energivärden utelämnade.', 'invalid energy readings omitted.')}`}
-        </p>}
-        <p>{t('Indata', 'Inputs')}: {t('uppmätt förbrukning, solproduktion och elpriser', 'recorded consumption, solar and electricity prices')}. {input.timeZone}.</p>
-        <p>{input.priceArea} · {input.reconstructedPriceQuarters} {t('kvartar med återskapade elpriser', 'quarters with reconstructed electricity prices')}. {t('Nätavgifter enligt hemmets valda historiska tariff.', 'Grid costs use the home’s configured historical tariff.')}</p>
-        {input.assumedPriceQuarters > 0 && <p>{input.assumedPriceQuarters} {t('kvartar med antaget historiskt leverantörspåslag.', 'quarters with an assumed historical supplier markup.')}</p>}
-        <p>{t('Saknade nätimport- / exportkvartar', 'Missing grid import / export quarters')}: {input.recorded.missingImportQuarters} / {input.recorded.missingExportQuarters}.</p>
-        {(input.energyGaps.householdQuarters > 0 || input.energyGaps.solarQuarters > 0 || input.energyGaps.deviceReadings > 0) && <p data-testid="baseline-energy-gaps">
-          {t('Saknad energi räknas som 0', 'Missing energy counts as 0')}: {input.energyGaps.deviceReadings} {t('enhetsvärden', 'device readings')}, {input.energyGaps.solarQuarters} {t('solkvartar', 'solar quarters')}.
-          {' '}{input.energyGaps.householdQuarters} {t('kvartar med förbrukning summerad från övriga enheter.', 'quarters with consumption summed from other devices.')}
-        </p>}
-        {input.batteryInitialAssumed && <p data-testid="baseline-battery-start">{t('Batteriets start-SOC saknas; modellen börjar med ett tomt batteri (0%).', 'Initial battery SOC is missing; the model starts with an empty battery (0%).')}</p>}
+        <ComparisonEvidence evidence={captureEvidence(capture)} testIdPrefix="baseline" />
         <p>{t('Modeller fångade', 'Models captured')}: {stamp(input.modelCapturedAt)}. {t('Startkvart', 'Initial quarter')}: {stamp(input.initialObservedAt)}.</p>
-        {input.evInitialAssumed && <p data-testid="baseline-ev-start">{t('Bilens start-SOC saknas; modellen börjar på 80%. Första avläsningen blir referens för körbehov.', 'Initial car SOC is missing; the model starts at 80%. The first reading establishes the driving-demand reference.')}</p>}
-        {input.poolInitialAssumed && <p data-testid="baseline-pool-start">{t('Poolens starttemperatur saknas; modellen börjar på 30°C.', 'Initial pool temperature is missing; the model starts at 30°C.')}</p>}
         {input.evInitialObservedAt && <p>{t('Bilens start-SOC', 'Initial car SOC')}: {stamp(input.evInitialObservedAt)}.</p>}
         {p.car && <p>{t('SOC-minskningar ger körbehov; tidigare laddning ignoreras. Nattladdning antas vara tillgänglig.', 'Recorded SOC declines give driving demand; previous charging is ignored. Overnight charging is assumed available.')}</p>}
-        {p.car && input.evMissingSocQuarters > 0 && <p>{input.evMissingSocQuarters} {t('kvartar utan SOC; minskningar räknas vid nästa avläsning.', 'quarters without SOC; declines count at the next reading.')}</p>}
         {p.pool_store && <p>{t('Värmepumpens starttillstånd: av, historisk startfas okänd.', 'Heat pump initial state: off, historical startup phase unknown.')}</p>}
         <p>{t('Använd solel = produktion minus export, inklusive batteriladdning. Export räknas som solel; mätaren anger inte energins ursprung.', 'Solar consumption = generation minus exports, including battery charging. Exports are counted as solar; the meter does not identify energy origin.')}</p>
         <p>{t('Grafkostnader exkluderar fasta avgifter och SHS-abonnemang.', 'Graph costs exclude fixed fees and SHS subscription')}</p>

@@ -1,10 +1,31 @@
 import { expect, type BrowserContext, type Page } from '../../playwright-fixture';
+import { CALCULATION_VERSION, type SavedReport } from '../../src/lib/home-baseline/saved-months';
 import { baselineFixture } from '../../src/lib/home-baseline/fixture';
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
 export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string) {
   const fixture = baselineFixture(), windows: { start: string; end: string }[] = [];
   let reads = 0, priceError = false;
+  let report: SavedReport | null = null;
+  await context.route('**/rest/v1/energy_roi_reports*', route => route.fulfill({ json: report }));
+  await context.route('**/rest/v1/rpc/pin_energy_roi_report*', async route => {
+    const body = route.request().postDataJSON();
+    expect(body.p_home_id).toBe(homeId); expect(body.p_customer_id).toBe(customerId);
+    expect(body.p_version).toBe(CALCULATION_VERSION);
+    if (!report || body.p_expected_generation === report.generation) report = { generation: (report?.generation ?? 0) + 1, version: CALCULATION_VERSION, model: body.p_model, months: {} };
+    await route.fulfill({ json: report });
+  });
+  await context.route('**/rest/v1/rpc/save_energy_roi_month*', async route => {
+    const body = route.request().postDataJSON();
+    expect(body.p_home_id).toBe(homeId); expect(body.p_customer_id).toBe(customerId);
+    expect(body.p_generation).toBe(report!.generation);
+    expect(body.p_input_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(body.p_ledger).not.toHaveProperty('series'); expect(body.p_ledger).not.toHaveProperty('commands');
+    const month = body.p_ledger.month, old = report!.months[month];
+    expect(body.p_expected_hash).toBe(old?.inputHash ?? null);
+    report!.months[month] = { ledger: body.p_ledger, inputHash: body.p_input_hash, computedAt: new Date(Date.parse(fixture.end) + 900_000).toISOString() };
+    await route.fulfill({ json: report });
+  });
   await context.route('**/rest/v1/energy_roi_history_hours*', async route => {
     const url = new URL(route.request().url()); reads++;
     expect(url.searchParams.get('home_id')).toBe(`eq.${homeId}`);
@@ -55,7 +76,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { delete row.device_energy_kwh['heater-id']; row.device_energy_kwh['household-id'] = .25; });
     await route.fulfill({ json: rows });
   });
-  return { fixture, windows, reads: () => reads, failPrices: () => { priceError = true; } };
+  return { fixture, windows, reads: () => reads, saved: () => report, failPrices: () => { priceError = true; } };
 }
 
 /** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */

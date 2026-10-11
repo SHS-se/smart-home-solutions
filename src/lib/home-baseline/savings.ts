@@ -25,13 +25,18 @@ export function monthLedger(capture: BaselineCapture) {
   const comparison = periodComparison(capture);
   return { month: localDay(input.start, input.timeZone).slice(0, 7), start: input.start, end: input.end, timeZone: input.timeZone,
     coverage: (end - start) / (bounds.endMs - bounds.startMs), baseline: result.ledger, recorded: input.recorded.ledger, comparison, gridImportCostSek: input.recorded.gridImportCostSek,
-    priceArea: input.priceArea, reconstructedPriceQuarters: input.reconstructedPriceQuarters, assumedPriceQuarters: input.assumedPriceQuarters,
-    recovery: input.recovery,
-    assumptions: { battery: input.batteryInitialAssumed, ev: input.evInitialAssumed, pool: input.poolInitialAssumed },
-    quarters: input.problem.slots.length,
-    gaps: { ...input.energyGaps, gridImportQuarters: input.recorded.missingImportQuarters, gridExportQuarters: input.recorded.missingExportQuarters } };
+    priceArea: input.priceArea, ...captureEvidence(capture) };
 }
 export type MonthLedger = ReturnType<typeof monthLedger>;
+
+/** The saved table and optional graphs expose exactly the same evidence. */
+export function captureEvidence({ input, result }: BaselineCapture) {
+  return { reconstructedPriceQuarters: input.reconstructedPriceQuarters, assumedPriceQuarters: input.assumedPriceQuarters,
+    recovery: input.recovery, assumptions: { battery: input.batteryInitialAssumed, ev: input.evInitialAssumed, pool: input.poolInitialAssumed },
+    quality: { missingDevices: input.evidence.missingDevices, evSocQuarters: input.evMissingSocQuarters,
+      hourlyFields: input.evidence.hourlyFields, sensitivity: result.sensitivity }, quarters: input.problem.slots.length,
+    gaps: { ...input.energyGaps, gridImportQuarters: input.recorded.missingImportQuarters, gridExportQuarters: input.recorded.missingExportQuarters } };
+}
 
 /** Positive saving means the recorded operation cost less, on the same contract. */
 export function schedulerSavings(months: readonly MonthLedger[], subscriptionSekPerMonth: number | null) {

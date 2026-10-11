@@ -18,6 +18,10 @@ import { createBaselineSession } from '@/lib/home-baseline/session';
 import { createSavingsRun } from '@/lib/home-baseline/savings-run';
 import { generateHomeBaseline } from '@/lib/home-baseline/browser';
 import { resolveBaselineAnchor } from '@/lib/home-baseline/history';
+import { monthStore } from '@/lib/home-baseline/month-store';
+import { hasAssumptions } from '@/lib/home-baseline/evidence';
+import { ReportSensitivity } from './roi/ComparisonEvidence';
+import { formatHomeDateTime } from '@/lib/energy-shift/home-time';
 import ContractFields, { type ContractDraft } from './roi/ContractFields';
 import { RoiNumberField, RoiSelect } from './roi/RoiFields';
 
@@ -44,7 +48,7 @@ interface ROITabProps { customerId: string; homeId: string | null; homeCount?: n
 function RoiCalculator({ customerId, homeId }: ROITabProps) {
   const { t } = useLanguage();
   const baseline = useMemo(() => {
-    const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline });
+    const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline, store: monthStore });
     return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
   }, [customerId, homeId]);
   useEffect(() => () => { baseline.viewer.dispose(); baseline.savings.dispose(); baseline.source.dispose(); }, [baseline]);
@@ -91,7 +95,7 @@ function RoiCalculator({ customerId, homeId }: ROITabProps) {
   const amount = (v: number | null | undefined, unit = 'SEK', digits = 2) => v == null ? '—' : `${v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => { setGraphOpen(false); }, [homeId]);
-  const estimates = months.filter(m => Object.values(m.gaps).some(Boolean) || Object.values(m.assumptions).some(Boolean) || m.reconstructedPriceQuarters > 0 || m.recovery.hours > 0).length;
+  const estimates = months.filter(hasAssumptions).length;
 
   return <div className="space-y-5" data-testid="contract-roi">
     <div className="flex flex-wrap items-end gap-4">
@@ -112,13 +116,15 @@ function RoiCalculator({ customerId, homeId }: ROITabProps) {
         <div><dt className="text-muted-foreground">{t('Avkastning under perioden', 'Return over period')}</dt><dd className="mt-1 font-medium" data-testid="roi-return">{ready ? amount(report.roiPercent, '%', 1) : '—'}</dd></div>
         <div><dt className="text-muted-foreground">{t('Återbetalning vid denna månadsbesparing', 'Payback at this monthly saving')}</dt><dd className="mt-1 font-medium" data-testid="roi-payback">{ready && report.paybackMonths !== null ? amount(report.paybackMonths, t('månader', 'months'), 1) : '—'}</dd></div>
       </dl>
-      {ready && <p className="mt-4 text-xs text-muted-foreground">{report.rows.length}/{state.rows.length} {t('månader beräknade', 'months calculated')}{estimates > 0 && ` · ${estimates} ${t('med uppskattningar', 'with estimates')}`}</p>}
+      {ready && <p className="mt-4 text-xs text-muted-foreground">{report.rows.length}/{state.rows.length} {t('månader beräknade', 'months calculated')}{estimates > 0 && ` · ${estimates} ${t('med antaganden', 'with assumptions')}`}</p>}
     </section>
     <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Jämförelse och besparing', 'Comparison and savings')}</CardTitle>
       {state.running ? <Button variant="outline" onClick={baseline.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
-        : (state.error || state.rows.some(row => row.status === 'failed')) && <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => void baseline.savings.calculate()} data-testid="scheduler-calculate">{t('Försök igen', 'Retry')}</Button>}
+        : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
       <SchedulerMonthlySavings state={displayState} report={report} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
+      <ReportSensitivity months={months} investmentSek={n(settings.equipment) + n(settings.installation)} />
+      {baseline.source.modelCapturedAt() && months[0] && <p className="text-xs text-muted-foreground">{t('Sparad utrustningsmodell', 'Saved equipment model')}: {formatHomeDateTime(baseline.source.modelCapturedAt()!, months[0].timeZone)}.</p>}
       <p className="text-xs text-muted-foreground">{t('Samma hem och uppmätta period. Avtalsbesparing redovisas separat och ingår inte i SHS netto.', 'Same home and recorded period. Contract savings are separate and excluded from SHS net.')}</p>
     </CardContent></Card>
     <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Kostnader och jämförelseavtal', 'Costs and comparison contract')}</summary>

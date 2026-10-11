@@ -10,6 +10,7 @@ import { buildEnergyTimeline, type TimelineRow } from '../energy-shift/energy-ti
 import type { ActualEnergySlot } from '../energy-shift/contracts.ts';
 import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
 import { emptyRecovery, type RecoverySummary } from './recovered-history.ts';
+import { assessAssumptions, type InputEvidence } from './evidence.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
@@ -20,8 +21,9 @@ export interface PoolRow { start_ts: string; water_temperature_c: number | null 
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
-  devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary }
+    devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[] }
 export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
+  evidence: InputEvidence;
   recovery: RecoverySummary;
   priceArea: string; reconstructedPriceQuarters: number; assumedPriceQuarters: number; problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
@@ -61,6 +63,13 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const memberIds = facts.memberKeys.map(key => { const id = ids.get(key); if (!id) throw new Error(`Historical device identity is missing: ${key}`); return { id, key }; });
   if (new Set(memberIds.map(m => m.id)).size !== memberIds.length) throw new Error('Duplicate modeled device identity');
   const replaced = new Set(memberIds.map(m => m.id));
+  const missingDevices = memberIds.map(m => ({ key: m.key, name: rows.devices.find(d => d.id === m.id)?.name ?? m.key, quarters: 0 }));
+  const hourlyByTime = new Map((rows.hourlyFields ?? []).map(r => [Date.parse(r.start_ts), new Set(r.fields)]));
+  const fieldCounts = new Map<string, number>();
+  for (const [at, fields] of hourlyByTime) if (at >= startMs && at < time(rows.end)) fields.forEach(field => fieldCounts.set(field, (fieldCounts.get(field) ?? 0) + 1));
+  const evidence: InputEvidence = { hourlyImport: [], hourlyExport: [], assumedMarkup: [], missingDevices,
+    hourlyFields: [...fieldCounts].map(([field, quarters]) => ({ field: field.startsWith('device:')
+      ? `device:${rows.devices.find(d => d.id === field.slice(7))?.name ?? rows.devices.find(d => d.id === field.slice(7))?.device_key ?? field.slice(7)}` : field, quarters })) };
   const energyGaps = { householdQuarters: 0, solarQuarters: 0, deviceReadings: 0 };
   const recorded = { ledger: emptyElectricityLedger(), missingImportQuarters: 0, missingExportQuarters: 0, gridImportCostSek: 0 };
   const energy = (value: unknown, label: string, at: string, gap: keyof typeof energyGaps) => {
@@ -105,7 +114,13 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
       heater_state: facts.poolStore ? { kind: 'off_unobserved' } : null },
     slots: starts.map((at, i) => {
       const ms = Date.parse(at), observed = actual.get(ms), price = prices.get(ms), meter = meters.get(ms);
-      const removed = memberIds.reduce((sum, m) => sum + energy(meter?.device_energy_kwh?.[m.id], `device meter ${m.key}`, at, 'deviceReadings'), 0);
+      const removed = memberIds.reduce((sum, m, member) => {
+        const value = meter?.device_energy_kwh?.[m.id]; if (value == null) missingDevices[member].quarters++;
+        return sum + energy(value, `device meter ${m.key}`, at, 'deviceReadings');
+      }, 0);
+      evidence.hourlyImport.push(hourlyByTime.get(ms)?.has('grid_import_kwh') ?? false);
+      evidence.hourlyExport.push(hourlyByTime.get(ms)?.has('grid_export_kwh') ?? false);
+      evidence.assumedMarkup.push(price?.supplier_revision.includes('assumed') ?? false);
       let base: number;
       if (baselineLoads.has(ms)) {
         base = number(baselineLoads.get(ms)!.kwh, 'device-summed baseline load', at, true);
@@ -142,7 +157,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
-  return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, recovery: rows.recovery ?? emptyRecovery(),
+  return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
     priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
     assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,
@@ -190,6 +205,7 @@ export function projectBaseline(input: BaselineInput, engine: ProjectionEngine) 
     poolC: quarters.map(q => q.pool_c), poolStart: quarters.map(q => q.pool_start) as BenchSeries['poolStart'],
     costSek: field(q => q.cost), wearSek: field(q => q.wear),
   };
-  return { series, commands, ledger: electricityLedger(quarters, problem), projectionMs: performance.now() - began };
+  const ledger = electricityLedger(quarters, problem);
+  return { series, commands, ledger, sensitivity: assessAssumptions(input, ledger.costSek, series.gridImportW, engine), projectionMs: performance.now() - began };
 }
 export type BaselineResult = ReturnType<typeof projectBaseline>;

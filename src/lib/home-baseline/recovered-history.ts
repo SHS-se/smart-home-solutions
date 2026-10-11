@@ -98,6 +98,11 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
   const memberIds = new Set(rows.devices.filter(d => memberKeys.has(d.device_key)).map(d => d.id));
   const excluded = new Set(rows.devices.filter(d => memberKeys.has(d.device_key) || d.category === 'ev_charging').map(d => d.id));
   const sources = new Set<string>();
+  const hourlyFields = new Map<string, Set<string>>();
+  const recovered = (at: string, field: string) => {
+    if (!hourlyFields.has(at)) hourlyFields.set(at, new Set());
+    hourlyFields.get(at)!.add(field);
+  };
   let evInitial = rows.evInitial?.ev_soc == null ? null : rows.evInitial;
   for (const hour of hours) {
     const from = Date.parse(hour.start_ts);
@@ -113,6 +118,7 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
         const field = key as Exclude<keyof ActualRow, 'start_ts'>;
         if (target[field] == null && value != null) {
           target[field] = field.endsWith('soc') ? value : value / 4; used = true;
+          recovered(stamp, field);
           if (field === 'total_load_kwh' && hour.sources.household_estimate === 'grid_balance') balanced = true;
         }
       }
@@ -126,6 +132,7 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
         let recoveredMember = false;
         for (const [id, energy] of Object.entries(hour.device_energy_kwh)) if (meter.device_energy_kwh[id] == null) {
           meter.device_energy_kwh[id] = energy / 4; used = true;
+          recovered(stamp, `device:${id}`);
           if (memberIds.has(id)) recoveredMember = true;
         }
         const removed = [...memberIds].reduce((n, id) => n + (meter.device_energy_kwh[id] ?? 0), 0);
@@ -137,9 +144,9 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
           summed = true;
         }
         meters.set(stamp, meter);
-        if (!outdoor.has(stamp) && hour.outdoor_c !== null) { outdoor.set(stamp, { start_ts: stamp, temperature_c: hour.outdoor_c }); used = true; }
+        if (!outdoor.has(stamp) && hour.outdoor_c !== null) { outdoor.set(stamp, { start_ts: stamp, temperature_c: hour.outdoor_c }); used = true; recovered(stamp, 'outdoor_c'); }
       }
-      if (pool.get(stamp)?.water_temperature_c == null && hour.pool_c !== null) { pool.set(stamp, { start_ts: stamp, water_temperature_c: hour.pool_c }); used = true; }
+      if (pool.get(stamp)?.water_temperature_c == null && hour.pool_c !== null) { pool.set(stamp, { start_ts: stamp, water_temperature_c: hour.pool_c }); used = true; recovered(stamp, 'pool_c'); }
     }
     if ((used || summed) && from + HOUR > start && from < end) {
       recovery.hours++; if (summed) recovery.deviceSumHours++;
@@ -150,5 +157,5 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
   }
   recovery.sources = [...sources].sort();
   return { ...rows, actual: [...actual.values()], deviceSlots: [...meters.values()], pool: [...pool.values()], outdoor: [...outdoor.values()], evInitial,
-    baselineLoads, recovery };
+    baselineLoads, recovery, hourlyFields: [...hourlyFields].map(([start_ts, fields]) => ({ start_ts, fields: [...fields] })) };
 }

@@ -57,7 +57,7 @@ Deno.test('compact summaries survive eight chart eviction and fresh generation r
   const first = monthPeriod(anchor, '2026-01')!;
   assertEquals(source.cached(first), undefined); assertEquals(source.summary(first)?.baseline.costSek, 100);
   const fresh = source.capture(first, new AbortController().signal, true); await settle();
-  assertEquals(source.summary(first), undefined);
+  assertEquals(source.summary(first)?.baseline.costSek, 100);
   calls[9].resolve(at(first, 200)); await fresh;
   assertEquals(source.summary(first)?.baseline.costSek, 200); source.dispose();
 });
