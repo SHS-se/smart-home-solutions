@@ -19,7 +19,10 @@ latest month stops at the pinned recorded end. Navigation cannot move beyond
 that end. A month projects continuously from its initial state rather than
 combining independently initialised 72-hour frames.
 
-Missing required prices or initial states are reported, including source and timestamp.
+Missing required prices, initial EV SOC or initial pool temperature are reported, including source and timestamp.
+Missing initial home battery SOC starts the baseline empty (0%), without blocking the period.
+This assumption is exported as `batteryInitialAssumed` and shown in collapsed model details;
+recorded SOC remains missing in the Actual graph.
 A failed period leaves navigation available. Each historical read covers at most seven
 elapsed days (672 quarters), matching the existing device-history RPC limit
 and staying below REST's row cap. Two windows load in parallel. Initial pool
@@ -43,8 +46,11 @@ only for a pool loss model that explicitly depends on outdoor temperature.
 
 The session's pinned home capture supplies battery/charger/heater/thermal models. There
 is no archive of historical fitted models, so model capture time is shown.
-Initial battery SOC and pool temperature use the preceding quarter's means;
-initial EV SOC uses the latest non-null recorded reading before the frame, with
+Initial battery SOC and pool temperature use the preceding quarter's means.
+When that battery reading is absent or null, the baseline starts at 0% rather than
+using a current reading or assigning reserve energy. Zero is a depleted state,
+including below the configured discharge cutoff; later solar can charge it normally.
+Initial EV SOC uses the latest non-null recorded reading before the frame, with
 its timestamp shown. These are approximate initial states.
 
 ## Default controls

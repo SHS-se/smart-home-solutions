@@ -20,7 +20,7 @@ export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
   devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[] }
-export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string;
+export interface BaselineInput { start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean;
   problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
   energyGaps: { householdQuarters: number; solarQuarters: number; deviceReadings: number };
@@ -66,7 +66,8 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     return number(value, label, at, true);
   };
   const initialObservedAt = new Date(startMs - QUARTER_MS).toISOString(), prior = actual.get(startMs - QUARTER_MS);
-  const batterySoc = facts.battery ? soc(prior?.battery_soc, 'initial battery SOC', initialObservedAt) : null;
+  const batteryInitialAssumed = facts.battery !== null && prior?.battery_soc == null;
+  const batterySoc = facts.battery ? batteryInitialAssumed ? 0 : soc(prior?.battery_soc, 'initial battery SOC', initialObservedAt) : null;
   const evSoc = facts.car ? soc(rows.evInitial?.ev_soc, 'initial EV SOC', rows.evInitial?.start_ts ?? initialObservedAt) : null;
   if (facts.car && (!rows.evInitial || time(rows.evInitial.start_ts) >= startMs)) throw new Error('Initial EV SOC must be a historical reading before the frame');
   let lastEvSoc = evSoc, evMissingSocQuarters = 0;
@@ -133,7 +134,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
   return { start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone,
-    modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, problem, idlePumpW, carName: facts.carName,
+    modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car ? rows.evInitial!.start_ts : null, evDemandKwh,
     evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps,
     recorded: { ...recorded,

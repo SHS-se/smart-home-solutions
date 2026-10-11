@@ -381,11 +381,12 @@ test.describe('requesting a replan', () => {
       const range = { start: table === 'energy_optimisation_actual_slots' ? new Date(Date.parse(from!) + 900_000).toISOString() : from!, end: end! };
       const rows = baselineFixture(range);
       if (table === 'energy_optimisation_actual_slots') {
+        rows.actual.filter(row => row.start_ts < '2026-08-31T21:45:00.000Z').forEach(row => { row.battery_soc = null; });
         rows.actual.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { row.grid_import_kwh = 1; row.battery_discharge_kwh = .1; row.solar_production_kwh = .05; });
         const offline = rows.actual.find(row => row.start_ts === '2026-08-31T22:00:00.000Z');
         if (offline) { offline.total_load_kwh = null; offline.solar_production_kwh = null; offline.grid_import_kwh = null; }
       }
-      if (table === 'energy_optimisation_price_slots' && from === '2026-07-31T22:00:00.000Z') rows.prices.shift();
+      if (table === 'energy_optimisation_price_slots' && from === '2026-03-31T22:00:00.000Z') rows.prices.shift();
       await route.fulfill({ json: (table === 'energy_optimisation_actual_slots' ? rows.actual : rows.prices).slice(0, Math.min(limit, 1000)) });
     });
     await context.route('**/rest/v1/rpc/get_energy_optimisation_device_slots*', async route => {
@@ -454,14 +455,25 @@ test.describe('requesting a replan', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     // Monthly scheduler costs use the same home's quarter prices, independently of the contract calculator.
-    await page.locator('#roi-from').fill('2026-08');
+    await page.locator('#roi-from').fill('2026-04');
     await page.locator('#roi-to').fill('2026-10');
     await expect(page.getByTestId('roi-period-saving')).toContainText('SEK');
     const contractBefore = await page.getByTestId('roi-period-saving').textContent();
     await page.getByTestId('comparison-monthly').locator('summary').click();
     await page.getByTestId('scheduler-calculate').click();
-    await expect(page.getByTestId('scheduler-totals')).toContainText('(2/3)');
-    await expect(page.getByTestId('scheduler-month-2026-08')).toContainText('import price');
+    await expect(page.getByTestId('scheduler-totals')).toContainText('(6/7)');
+    await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('import price');
+    for (const month of ['05', '06', '07', '08']) {
+      const row = page.getByTestId(`scheduler-month-2026-${month}`);
+      await expect(row.locator('td')).toHaveCount(5);
+      await expect(row.locator('td').first()).toContainText('SEK');
+      await expect(row).not.toContainText('initial battery SOC');
+    }
+    await page.getByTestId('scheduler-month-2026-05').getByRole('button', { name: /View model|Visa modell/ }).click();
+    await expect(page.getByTestId('baseline-frame')).toContainText(/May|maj/);
+    await viewer.getByTestId('baseline-details').locator('summary').click();
+    await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
+    await viewer.getByTestId('baseline-details').locator('summary').click();
     const september = page.getByTestId('scheduler-month-2026-09');
     const cells = september.locator('td');
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;

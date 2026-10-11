@@ -45,7 +45,8 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
           {t('Saknad energi räknas som 0', 'Missing energy counts as 0')}: {input.energyGaps.deviceReadings} {t('enhetsvärden', 'device readings')}, {input.energyGaps.solarQuarters} {t('solkvartar', 'solar quarters')}.
           {' '}{input.energyGaps.householdQuarters} {t('kvartar med förbrukning summerad från övriga enheter.', 'quarters with consumption summed from other devices.')}
         </p>}
-        <p>{t('Modeller fångade', 'Models captured')}: {stamp(input.modelCapturedAt)}. {t('Startvärden', 'Initial readings')}: {stamp(input.initialObservedAt)}.</p>
+        {input.batteryInitialAssumed && <p data-testid="baseline-battery-start">{t('Batteriets start-SOC saknas; modellen börjar med ett tomt batteri (0%).', 'Initial battery SOC is missing; the model starts with an empty battery (0%).')}</p>}
+        <p>{t('Modeller fångade', 'Models captured')}: {stamp(input.modelCapturedAt)}. {t('Startkvart', 'Initial quarter')}: {stamp(input.initialObservedAt)}.</p>
         {p.car && <p>{t('Bilens start-SOC', 'Initial car SOC')}: {stamp(input.evInitialObservedAt!)}. {t('SOC-minskningar ger körbehov; tidigare laddning ignoreras. Nattladdning antas vara tillgänglig.', 'Recorded SOC declines give driving demand; previous charging is ignored. Overnight charging is assumed available.')}</p>}
         {p.car && input.evMissingSocQuarters > 0 && <p>{input.evMissingSocQuarters} {t('kvartar utan SOC; minskningar räknas vid nästa avläsning.', 'quarters without SOC; declines count at the next reading.')}</p>}
         {p.pool_store && <p>{t('Värmepumpens starttillstånd: av, historisk startfas okänd.', 'Heat pump initial state: off, historical startup phase unknown.')}</p>}

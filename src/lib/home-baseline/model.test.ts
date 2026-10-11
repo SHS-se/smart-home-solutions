@@ -68,16 +68,50 @@ Deno.test('home reconstruction joins UUID meters and counts the circulation floo
   assertEquals(input.problem.initial.heater_state, { kind: 'off_unobserved' });
 });
 
-for (const source of ['price', 'battery', 'ev', 'pool'] as const) {
+for (const source of ['price', 'ev', 'pool'] as const) {
   Deno.test(`missing historical ${source} fails instead of substituting a current reading or zero`, () => {
     const rows = baselineFixture();
     if (source === 'price') rows.prices.pop();
-    if (source === 'battery') rows.actual[0].battery_soc = null;
     if (source === 'ev') rows.evInitial = null;
     if (source === 'pool') rows.pool = [];
     assertThrows(() => prepareHomeBaseline(rows));
   });
 }
+
+for (const gap of ['null', 'absent'] as const) {
+  Deno.test(`missing initial battery SOC (${gap}) starts an empty battery and projects a whole month`, () => {
+    const rows = baselineFixture({ start: '2026-04-30T22:00:00.000Z', end: '2026-05-31T22:00:00.000Z' });
+    rows.actual.forEach(row => { row.battery_soc = null; });
+    if (gap === 'absent') rows.actual.shift();
+    const input = prepareHomeBaseline(rows), result = projectBaseline(input, engine);
+    assertEquals(input.batteryInitialAssumed, true);
+    assertEquals(input.problem.initial.battery_kwh, 0);
+    assertEquals(result.series.homeStartSoc, 0);
+    assertEquals(result.series.start.length, 31 * 96);
+    assertEquals(input.recorded.rows.every(row => row.batterySoc === null), true);
+    assertEquals(result.series.batteryDischargeW.every(w => w === 0), true);
+    assertAlmostEquals(result.ledger.costSek, result.series.costSek.reduce((sum, v) => sum + v, 0));
+    // Empty storage may refill from later solar; the configured minimum is not invented starting energy.
+    rows.actual[1].solar_production_kwh = 2;
+    const refilled = projectBaseline(prepareHomeBaseline(rows), engine);
+    assert(refilled.series.batteryChargeW.some(w => w > 0));
+    assert(refilled.series.homeSoc.some(value => value !== null && value > 0));
+  });
+}
+
+Deno.test('available initial SOC, including a measured empty battery, remains authoritative', () => {
+  for (const value of [0, .5]) {
+    const rows = baselineFixture(); rows.actual[0].battery_soc = value;
+    const input = prepareHomeBaseline(rows);
+    assertEquals(input.batteryInitialAssumed, false);
+    assertEquals(input.problem.initial.battery_kwh, value * input.problem.battery!.capacity_kwh);
+  }
+  const rows = baselineFixture(); rows.actual[0].battery_soc = 1.1;
+  assertThrows(() => prepareHomeBaseline(rows), Error, 'initial battery SOC');
+  rows.snapshot.capabilities.battery = false;
+  const input = prepareHomeBaseline(rows);
+  assertEquals(input.batteryInitialAssumed, false); assertEquals(input.problem.initial.battery_kwh, null);
+});
 
 Deno.test('replacement heater and offline meter readings contribute zero without blocking modelled heating', () => {
   const rows = baselineFixture();
