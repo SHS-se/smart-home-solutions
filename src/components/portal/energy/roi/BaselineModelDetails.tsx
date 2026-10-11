@@ -39,6 +39,7 @@ export default function BaselineModelDetails({ capture }: { capture: BaselineCap
       </table>}
       <div className="space-y-1 text-muted-foreground" data-testid="baseline-assumptions">
         {input.recovery.hours > 0 && <p data-testid="baseline-hourly-recovery">{input.recovery.hours} {t('timmar från HA:s historik; energi fördelas jämnt och SOC använder timmedelvärden.', 'hours from HA history; energy is spread evenly and SOC uses hourly means.')}
+          {input.recovery.balanceHours > 0 && ` ${input.recovery.balanceHours} ${t('timmar med husförbrukning beräknad från elflöden.', 'hours with household demand reconstructed from electricity flows.')}`}
           {input.recovery.deviceSumHours > 0 && ` ${input.recovery.deviceSumHours} ${t('timmar med baslast summerad från övriga enheter.', 'hours with baseline demand summed from other devices.')}`}
           {input.recovery.invalidReadings > 0 && ` ${input.recovery.invalidReadings} ${t('ogiltiga energivärden utelämnade.', 'invalid energy readings omitted.')}`}
         </p>}

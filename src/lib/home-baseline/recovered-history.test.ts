@@ -80,3 +80,18 @@ Deno.test('partial frame reads conserve the selected fraction and keep hour-end 
   assertEquals(input.recorded.ledger.importKwh, 1);
   assertAlmostEquals(input.problem.initial.ev_kwh!, .7 * input.problem.car!.capacity_kwh);
 });
+
+Deno.test('missing household demand uses electricity balance before an incomplete device sum', () => {
+  const selected = { ...spec, actual: { ...spec.actual, solar_production_kwh: ['pv'], grid_export_kwh: ['export'],
+    battery_charge_kwh: ['charge'], battery_discharge_kwh: ['discharge'] } };
+  const data = capture().filter(s => s.statistic_id !== 'load');
+  data.push(series('pv', 'kWh', [0, 0, 2]), series('export', 'kWh', [0, 0, 1]),
+    series('charge', 'kWh', [0, 0, .3]), series('discharge', 'kWh', [0, 0, .1]));
+  const recovered = prepareHourlyRecovery(data, selected).at(-1)!;
+  assertAlmostEquals(recovered.actual.total_load_kwh!, 4.8);
+  assertEquals(recovered.baseline_load_kwh, null);
+  const noOtherChannels = prepareHourlyRecovery(capture().filter(s => s.statistic_id !== 'load'), spec).at(-1)!;
+  assertEquals(noOtherChannels.actual.total_load_kwh, 4);
+  const noGrid = prepareHourlyRecovery(capture().filter(s => !['load', 'grid'].includes(s.statistic_id)), spec).at(-1)!;
+  assertAlmostEquals(noGrid.baseline_load_kwh!, .4);
+});

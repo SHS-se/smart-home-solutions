@@ -8,8 +8,8 @@ export interface RecoverySpec { start: string; end: string; actual: Partial<Reco
   devices: { id: string; sources: string[] }[]; members: string[]; states: Partial<Record<StateField, string>> }
 export interface RecoveredHour { start_ts: string; actual: Partial<Omit<ActualRow, 'start_ts'>>; device_energy_kwh: Record<string, number>;
   pool_c: number | null; outdoor_c: number | null; baseline_load_kwh: number | null; sources: Record<string, string>; invalid_readings: number }
-export interface RecoverySummary { hours: number; deviceSumHours: number; invalidReadings: number; sources: string[] }
-export const emptyRecovery = (): RecoverySummary => ({ hours: 0, deviceSumHours: 0, invalidReadings: 0, sources: [] });
+export interface RecoverySummary { hours: number; balanceHours: number; deviceSumHours: number; invalidReadings: number; sources: string[] }
+export const emptyRecovery = (): RecoverySummary => ({ hours: 0, balanceHours: 0, deviceSumHours: 0, invalidReadings: 0, sources: [] });
 
 /** HA sum is reset-adjusted. A missing predecessor or negative correction is an individual gap. */
 export function energyDeltas(series: StatisticSeries) {
@@ -70,6 +70,13 @@ export function prepareHourlyRecovery(series: StatisticSeries[], spec: RecoveryS
     row.invalid_readings = [...changes.values()].filter(change => change.invalid.has(t)).length;
     const removed = Object.entries(row.device_energy_kwh).reduce((n, [id, value]) => n + (members.has(id) ? value : 0), 0);
     const other = Object.entries(row.device_energy_kwh).reduce((n, [id, value]) => n + (members.has(id) ? 0 : value), 0);
+    if (row.actual.total_load_kwh == null && row.actual.grid_import_kwh != null) {
+      // Recover household demand from the same hour's electricity balance.
+      // Missing channels follow the explicitly selected missing-energy = 0 policy.
+      const a = row.actual, load = a.grid_import_kwh! + (a.solar_production_kwh ?? 0) + (a.battery_discharge_kwh ?? 0)
+        - (a.grid_export_kwh ?? 0) - (a.battery_charge_kwh ?? 0);
+      if (load >= 0) { row.actual.total_load_kwh = load; row.sources.household_estimate = 'grid_balance'; }
+    }
     if (row.actual.total_load_kwh == null) {
       if (Object.keys(row.device_energy_kwh).length) { row.actual.total_load_kwh = removed + other; row.baseline_load_kwh = other; }
     } else if (row.actual.total_load_kwh - removed < -1e-9) row.baseline_load_kwh = other;
@@ -90,7 +97,7 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
   for (const hour of hours) {
     const from = Date.parse(hour.start_ts);
     if (!Number.isFinite(from) || from % HOUR) throw new Error('Recovered history must contain hourly timestamps');
-    let used = false, summed = false;
+    let used = false, summed = false, balanced = false;
     for (let i = 0; i < 4; i++) {
       const t = from + i * QUARTER;
       if (t < prior || t >= end) continue;
@@ -99,7 +106,10 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
         grid_import_kwh: null, grid_export_kwh: null, battery_charge_kwh: null, battery_discharge_kwh: null, battery_soc: null, ev_soc: null };
       for (const [key, value] of Object.entries(hour.actual)) {
         const field = key as Exclude<keyof ActualRow, 'start_ts'>;
-        if (target[field] == null && value != null) { target[field] = field.endsWith('soc') ? value : value / 4; used = true; }
+        if (target[field] == null && value != null) {
+          target[field] = field.endsWith('soc') ? value : value / 4; used = true;
+          if (field === 'total_load_kwh' && hour.sources.household_estimate === 'grid_balance') balanced = true;
+        }
       }
       if (hour.baseline_load_kwh !== null && !hasMeasuredTotal && t >= start) {
         baselineLoads.push({ start_ts: stamp, kwh: hour.baseline_load_kwh / 4 }); summed = true;
@@ -116,6 +126,7 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
     }
     if ((used || summed) && from + HOUR > start && from < end) {
       recovery.hours++; if (summed) recovery.deviceSumHours++;
+      if (balanced) recovery.balanceHours++;
       recovery.invalidReadings += hour.invalid_readings;
       Object.values(hour.sources).forEach(id => sources.add(id));
     }
