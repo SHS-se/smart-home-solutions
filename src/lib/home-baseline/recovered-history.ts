@@ -1,4 +1,5 @@
 import type { ActualRow, HistoricalRows } from './model.ts';
+import { homePhysics } from './home-physics.ts';
 
 const HOUR = 3_600_000, QUARTER = HOUR / 4;
 type EnergyField = Exclude<keyof ActualRow, 'start_ts' | 'battery_soc' | 'ev_soc'>;
@@ -93,6 +94,9 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
   const meters = new Map(rows.deviceSlots.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts), device_energy_kwh: { ...r.device_energy_kwh } }]));
   const pool = new Map(rows.pool.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }])), outdoor = new Map(rows.outdoor.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }]));
   const baselineLoads: { start_ts: string; kwh: number }[] = [], recovery = emptyRecovery();
+  const memberKeys = new Set(homePhysics(rows.snapshot).memberKeys);
+  const memberIds = new Set(rows.devices.filter(d => memberKeys.has(d.device_key)).map(d => d.id));
+  const excluded = new Set(rows.devices.filter(d => memberKeys.has(d.device_key) || d.category === 'ev_charging').map(d => d.id));
   const sources = new Set<string>();
   let evInitial = rows.evInitial?.ev_soc == null ? null : rows.evInitial;
   for (const hour of hours) {
@@ -119,7 +123,19 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
       if (t < start && target.ev_soc != null && (!evInitial || Date.parse(evInitial.start_ts) < t)) evInitial = { start_ts: stamp, ev_soc: target.ev_soc };
       if (t >= start) {
         const meter = meters.get(stamp) ?? { start_ts: stamp, device_energy_kwh: {} };
-        for (const [id, energy] of Object.entries(hour.device_energy_kwh)) if (meter.device_energy_kwh[id] == null) { meter.device_energy_kwh[id] = energy / 4; used = true; }
+        let recoveredMember = false;
+        for (const [id, energy] of Object.entries(hour.device_energy_kwh)) if (meter.device_energy_kwh[id] == null) {
+          meter.device_energy_kwh[id] = energy / 4; used = true;
+          if (memberIds.has(id)) recoveredMember = true;
+        }
+        const removed = [...memberIds].reduce((n, id) => n + (meter.device_energy_kwh[id] ?? 0), 0);
+        if (hasMeasuredTotal && recoveredMember && target.total_load_kwh! - removed < -1e-9) {
+          // Hourly allocation can disagree with a measured quarter total. Use
+          // independent other meters; preserve the actual total and all meters.
+          baselineLoads.push({ start_ts: stamp, kwh: Object.entries(meter.device_energy_kwh)
+            .reduce((n, [id, energy]) => n + (excluded.has(id) ? 0 : energy ?? 0), 0) });
+          summed = true;
+        }
         meters.set(stamp, meter);
         if (!outdoor.has(stamp) && hour.outdoor_c !== null) { outdoor.set(stamp, { start_ts: stamp, temperature_c: hour.outdoor_c }); used = true; }
       }

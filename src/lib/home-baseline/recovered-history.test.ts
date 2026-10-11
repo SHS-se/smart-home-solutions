@@ -109,3 +109,18 @@ Deno.test('PostgREST offset timestamps match recovered UTC quarters without dupl
   assertAlmostEquals(input.recorded.ledger.importKwh, .265 * 3);
   assertEquals(input.problem.initial.pool_c, 31);
 });
+
+Deno.test('mixed hourly device recovery uses other meters when it conflicts with a measured quarter total', () => {
+  const rows = baselineFixture({ start, end: new Date(at + hour).toISOString() });
+  rows.devices.push({ id: 'other-id', device_key: 'appliances', category: 'household' },
+    { id: 'legacy-car-id', device_key: 'old_charger', category: 'ev_charging' });
+  rows.actual.forEach(r => { r.total_load_kwh = .1; });
+  rows.deviceSlots.forEach(r => { r.device_energy_kwh = { 'legacy-car-id': 2 }; });
+  const merged = mergeHourlyHistory(rows, prepareHourlyRecovery(capture(), spec));
+  const input = prepareHomeBaseline(merged);
+  assertEquals(merged.baselineLoads.length, 4);
+  assertAlmostEquals(input.problem.slots[0].base_w, 460);
+  assertAlmostEquals(input.recorded.rows[0].loadW!, 400);
+  assertEquals(merged.deviceSlots.find(r => r.start_ts === start)!.device_energy_kwh['legacy-car-id'], 2);
+  assertEquals(input.recovery.deviceSumHours, 1);
+});

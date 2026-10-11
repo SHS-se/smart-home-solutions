@@ -68,7 +68,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
   };
   const [batches, devices, pool, evInitial, pricing] = await Promise.all([
     loadWindows(),
-    read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name')
+    read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name,category')
       .abortSignal(signal)),
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')

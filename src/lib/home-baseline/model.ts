@@ -14,7 +14,7 @@ import { emptyRecovery, type RecoverySummary } from './recovered-history.ts';
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
 export type PriceRow = import('../../../supabase/functions/_shared/historical-electricity-prices.ts').HistoricalPrice;
-export interface DeviceRow { id: string; device_key: string; name?: string }
+export interface DeviceRow { id: string; device_key: string; name?: string; category: string }
 export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string, number | null> }
 export interface PoolRow { start_ts: string; water_temperature_c: number | null }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
