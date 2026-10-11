@@ -6,10 +6,10 @@ BEGIN
     OR (auth.role() IS DISTINCT FROM 'service_role' AND NOT coalesce(public.can_access_energy_billing_customer(p_customer_id),false)) THEN
     RAISE EXCEPTION 'ROI report access denied';
   END IF;
-  IF p_version IS NULL OR p_model IS NULL OR p_version !~ '^roi-month-v[0-9]+:[a-f0-9]{64}$' OR jsonb_typeof(p_model) <> 'object'
+  IF p_version IS NULL OR p_model IS NULL OR p_version !~ '^roi-month-v3:[a-f0-9]{64}$' OR jsonb_typeof(p_model) <> 'object'
     OR octet_length(p_model::text) > 65536
     OR p_model - ARRAY['captured_at','timezone','capabilities','battery','ev_battery','pool','device_physics','pool_model','grid','value_settings','device_models','services','comfort','policy','criteria'] <> '{}'::jsonb
-    OR NOT p_model ?& ARRAY['captured_at','timezone','capabilities','device_models','services','grid'] THEN
+    OR NOT p_model ?& ARRAY['captured_at','timezone','capabilities','device_models','services','grid','comfort','policy','criteria'] THEN
     RAISE EXCEPTION 'Invalid compact ROI model';
   END IF;
   INSERT INTO public.energy_roi_reports(home_id,customer_id,version,model)
