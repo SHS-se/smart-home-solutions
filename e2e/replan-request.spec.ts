@@ -352,11 +352,12 @@ test.describe('requesting a replan', () => {
   });
 
   test('ROI May–August sensor gaps generate, and month graphs use the same ledgers as ROI', async ({ context, page }, testInfo) => {
-    test.setTimeout(480_000);
+    // Six full native replays plus uncached month graphs run more slowly on CI.
+    test.setTimeout(20 * 60_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-05', to: '2026-10' });
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
-    await expectRoiMonths(page, '(6/6)');
+    await expectRoiMonths(page, '(6/6)', 12 * 60_000);
     for (const month of ['05', '06', '07', '08']) {
       const row = page.getByTestId(`scheduler-month-2026-${month}`);
       await expect(row.locator('td')).toHaveCount(6);

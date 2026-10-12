@@ -97,8 +97,8 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
 }
 
 /** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */
-export async function expectRoiMonths(page: Page, expected: string) {
-  try { await expect(page.getByTestId('scheduler-totals')).toContainText(expected, { timeout: 360_000 }); }
+export async function expectRoiMonths(page: Page, expected: string, timeout = 360_000) {
+  try { await expect(page.getByTestId('scheduler-totals')).toContainText(expected, { timeout }); }
   catch (error) {
     console.error('Monthly comparison at failure:', await page.getByTestId('scheduler-months').innerText());
     throw error;
