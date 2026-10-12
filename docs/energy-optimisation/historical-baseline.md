@@ -108,6 +108,10 @@ Actual** switches the entire graph without another history fetch or projection.
 Actual quarters use the shared `buildEnergyTimeline` history adapter, followed by
 `projectPlanChart`, exactly as the Plan view. The capture includes measured battery
 flows, SOC, all catalogued device meters and pool temperatures for the whole period.
+The period comparison table includes an Actual consumption column with measured
+grid imports, solar consumption and exports. Its cost uses the same complete
+electricity/grid invoice pair as the monthly ROI table; incomplete months and
+72-hour frames show no invoice total.
 Missing energy is zero; missing SOC and temperature remain gaps. Recorded charging
 is plotted only in Actual and is never used to charge the baseline EV.
 

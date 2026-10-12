@@ -322,6 +322,7 @@ test.describe('requesting a replan', () => {
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
     await expect(viewer.getByRole('group', { name: /Day|Dag/ })).toHaveCount(0);
+    await expect(viewer.getByTestId('period-comparison').locator('tbody tr').last().locator('td').nth(1)).toHaveText('—');
     await expect(viewer.getByRole('button', { name: /Full 72 h|Hela 72 h/ })).toHaveCount(0);
     await expect(page.getByTestId('baseline-next')).toBeDisabled();
     await expect(page.getByTestId('baseline-details')).not.toHaveAttribute('open', '');
@@ -394,7 +395,15 @@ test.describe('requesting a replan', () => {
     await expect(september.locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     await expect(september.locator('td').nth(3)).toHaveText(display(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek));
     await expect(september.locator('td').nth(4)).toHaveText(display(579 - capture.modeled.schedulerBill.totalSek));
-    await expect(viewer.getByTestId('period-comparison').locator('tbody tr').last().locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    const comparison = viewer.getByTestId('period-comparison');
+    await expect(comparison.locator('thead th').nth(2)).toHaveText(/Actual consumption|Faktisk förbrukning/);
+    const actualCells = comparison.locator('tbody tr');
+    const kwh = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh`;
+    await expect(actualCells.nth(0).locator('td').nth(1)).toHaveText(kwh(capture.input.recorded.ledger.importKwh));
+    await expect(actualCells.nth(1).locator('td').nth(1)).toHaveText(kwh(Math.max(0, capture.input.recorded.rows.reduce((sum: number, row: { solarW: number | null }) => sum + (row.solarW ?? 0) / 4000, 0) - capture.input.recorded.ledger.exportKwh)));
+    await expect(actualCells.nth(2).locator('td').nth(1)).toHaveText(kwh(capture.input.recorded.ledger.exportKwh));
+    await expect(actualCells.last().locator('td').nth(1)).toHaveText('579,00 SEK');
+    await expect(actualCells.last().locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     const windows = history.windows.filter(w => w.start >= capture.input.start && w.end <= capture.input.end).sort((a,b) => a.start.localeCompare(b.start));
     expect(windows[0].start).toBe(capture.input.start); expect(windows.at(-1)!.end).toBe(capture.input.end);
     windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
@@ -402,8 +411,9 @@ test.describe('requesting a replan', () => {
     await page.getByTestId('comparison-graph-scheduler').click();
     await expect(viewer.getByRole('img', { name: /power flows|effektflöden/i }).first()).toContainText(/SHS ENERGY SCHEDULER|SHS ENERGIS/);
     await page.getByTestId('comparison-graph-actual').click();
+    await expect(page.getByTestId('comparison-graph-actual')).toHaveText(/Actual consumption|Faktisk förbrukning/);
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    await expect(chart).toContainText(/Recorded consumption|Uppmätt/i);
+    await expect(chart).toContainText(/Actual consumption|Faktisk förbrukning/i);
     await chart.focus(); await chart.press('End'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
     await page.getByTestId('comparison-graph-default').click();

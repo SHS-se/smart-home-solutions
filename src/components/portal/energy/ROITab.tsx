@@ -122,7 +122,7 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
       </div>
     </details>
     {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId} onClick={() => { setGraphOpen(true); void baseline.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
-    {graphOpen && <HomeBaselineViewer session={baseline.viewer} homeId={homeId} onClose={() => setGraphOpen(false)} />}
+    {graphOpen && <HomeBaselineViewer session={baseline.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
   </div>;
 }
 export default function ROITab(props: ROITabProps) { return <RoiCalculator key={props.customerId} {...props} />; }

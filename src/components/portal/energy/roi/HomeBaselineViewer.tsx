@@ -13,8 +13,10 @@ import type { BaselineSession } from '@/lib/home-baseline/session';
 import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/energy-shift/home-time';
 import { downloadJson } from '@/lib/download-json';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
+import type { BilledMonth } from '@/lib/home-baseline/billed-months';
+import { localDay } from '../../../../../supabase/functions/_shared/planner-wasm/calendar';
 
-export default function HomeBaselineViewer({ session, homeId, onClose }: { session: BaselineSession; homeId: string | null; onClose: () => void }) {
+export default function HomeBaselineViewer({ session, homeId, bills, onClose }: { session: BaselineSession; homeId: string | null; bills: ReadonlyMap<string, BilledMonth>; onClose: () => void }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
   const [graphMode, setGraphMode] = useState<'default' | 'scheduler' | 'actual'>('default');
@@ -25,6 +27,9 @@ export default function HomeBaselineViewer({ session, homeId, onClose }: { sessi
   const amount = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const partialMonth = period?.view === 'month' && Date.parse(period.end) < homeMonthBounds(period.start, 0, timeZone).endMs;
   const input = capture?.input, result = capture?.result, p = input?.problem;
+  const monthBounds = input ? homeMonthBounds(input.start, 0, input.timeZone) : null;
+  const actualSek = input && monthBounds && Date.parse(input.start) === monthBounds.startMs && Date.parse(input.end) === monthBounds.endMs
+    ? bills.get(localDay(input.start, input.timeZone).slice(0, 7))?.totalSek ?? null : null;
   const quarter = selected === null || !result || selected >= result.series.start.length ? null : selected;
   const chart = useMemo(() => {
     if (!capture) return null;
@@ -58,18 +63,18 @@ export default function HomeBaselineViewer({ session, homeId, onClose }: { sessi
       {!capture && !busy && homeId && <p className="text-sm text-muted-foreground">{t('Generera modellen för vald period.', 'Generate the model for this period.')}</p>}
       {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t('Genererar…', 'Generating…')}</p>}
       {capture && input && result && p && chart && <>
-        <PeriodComparison capture={capture} />
+        <PeriodComparison capture={capture} actualSek={actualSek} />
         <div className="flex flex-wrap gap-2" role="group" aria-label={t('Graf', 'Graph')}>
           <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Basmodell', 'Baseline model')}</Button>
           <Button variant={graphMode === 'scheduler' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'scheduler'} onClick={() => setGraphMode('scheduler')} data-testid="comparison-graph-scheduler">SHS Energy Scheduler</Button>
-          <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Uppmätt förbrukning', 'Recorded consumption')}</Button>
+          <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Faktisk förbrukning', 'Actual consumption')}</Button>
         </div>
         <EnergyChart key={`${graphMode}:${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
           baseValues={chart.consumption.baseValues} consumptionIssues={chart.consumption.issues}
-          timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('UPPMÄTT', 'RECORDED') : graphMode === 'scheduler' ? 'SHS ENERGY SCHEDULER' : t('BASMODELL', 'BASELINE MODEL')}
+          timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('FAKTISK', 'ACTUAL') : graphMode === 'scheduler' ? 'SHS ENERGY SCHEDULER' : t('BASMODELL', 'BASELINE MODEL')}
           hasBattery={p.battery !== null} hasEvBattery={p.car !== null} realPrices={chart.realPrices}
           poolTargetC={p.pool_stop_c} selectedIndex={quarter ?? -1} onQuarterClick={setSelected}
-          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Uppmätt förbrukning', 'Recorded consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: 'var(--plan-load-2)',
+          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Faktisk förbrukning', 'Actual consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: 'var(--plan-load-2)',
             values: chart.rows.map((row, i) => {
               if (graphMode === 'actual') return row.cumulativeCostSek;
               const bill = graphMode === 'scheduler' ? capture.modeled.schedulerBill : capture.modeled.baselineBill;
