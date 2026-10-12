@@ -12,6 +12,7 @@ import PeriodComparison from './PeriodComparison';
 import type { BaselineSession } from '@/lib/home-baseline/session';
 import { formatHomeDateTime, formatHomeMonth, homeMonthBounds } from '@/lib/energy-shift/home-time';
 import { downloadJson } from '@/lib/download-json';
+import { modeledCosts, cumulativeModeledCost, roiComparisonExport } from '@/lib/home-baseline/roi-pricing';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import type { BilledMonth } from '@/lib/home-baseline/billed-months';
 import { localDay } from '../../../../../supabase/functions/_shared/planner-wasm/calendar';
@@ -27,6 +28,7 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
   const amount = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const partialMonth = period?.view === 'month' && Date.parse(period.end) < homeMonthBounds(period.start, 0, timeZone).endMs;
   const input = capture?.input, result = capture?.result, p = input?.problem;
+  const costs = useMemo(() => capture ? modeledCosts(capture.modeled) : null, [capture]);
   const monthBounds = input ? homeMonthBounds(input.start, 0, input.timeZone) : null;
   const actualSek = input && monthBounds && Date.parse(input.start) === monthBounds.startMs && Date.parse(input.end) === monthBounds.endMs
     ? bills.get(localDay(input.start, input.timeZone).slice(0, 7))?.totalSek ?? null : null;
@@ -62,8 +64,8 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
       {error && <Alert variant="destructive"><AlertTitle>{t('Modellen kunde inte genereras', 'Could not generate the model')}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
       {!capture && !busy && homeId && <p className="text-sm text-muted-foreground">{t('Generera modellen för vald period.', 'Generate the model for this period.')}</p>}
       {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t('Genererar…', 'Generating…')}</p>}
-      {capture && input && result && p && chart && <>
-        <PeriodComparison capture={capture} actualSek={actualSek} />
+      {capture && input && result && p && chart && costs && <>
+        <PeriodComparison capture={capture} costs={costs} actualSek={actualSek} />
         <div className="flex flex-wrap gap-2" role="group" aria-label={t('Graf', 'Graph')}>
           <Button variant={graphMode === 'default' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'default'} onClick={() => setGraphMode('default')} data-testid="comparison-graph-default">{t('Basmodell', 'Baseline model')}</Button>
           <Button variant={graphMode === 'scheduler' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'scheduler'} onClick={() => setGraphMode('scheduler')} data-testid="comparison-graph-scheduler">SHS Energy Scheduler</Button>
@@ -75,11 +77,8 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
           hasBattery={p.battery !== null} hasEvBattery={p.car !== null} realPrices={chart.realPrices}
           poolTargetC={p.pool_stop_c} selectedIndex={quarter ?? -1} onQuarterClick={setSelected}
           costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Faktisk förbrukning', 'Actual consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: 'var(--plan-load-2)',
-            values: chart.rows.map((row, i) => {
-              if (graphMode === 'actual') return row.cumulativeCostSek;
-              const bill = graphMode === 'scheduler' ? capture.modeled.schedulerBill : capture.modeled.baselineBill;
-              return row.cumulativeCostSek === null ? null : row.cumulativeCostSek + (bill.supplierFixedSek + bill.gridFixedSek) * (i + 1) / chart.rows.length + (i === chart.rows.length - 1 ? bill.gridPeakSek : 0);
-            }) }]}
+            values: graphMode === 'actual' ? chart.rows.map(row => row.cumulativeCostSek)
+              : cumulativeModeledCost(costs[graphMode === 'scheduler' ? 'scheduler' : 'baseline'], chart.rows.map(row => row.cumulativeCostSek)) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">
             {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {graphMode === 'actual' && input.recorded.rows[quarter].costSek === null ? '—' : `${amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek! : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK`}
             {graphMode === 'default' && p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
@@ -90,7 +89,7 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
         <Button className="min-h-11" onClick={() => session.generate()} disabled={busy || !homeId} data-testid="baseline-generate">
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('Generera modell', 'Generate model')}
         </Button>
-        {capture && <Button variant="outline" className="min-h-11" onClick={() => downloadJson(`default-model-${capture.input.start.slice(0, 10)}.json`, capture)}>{t('Exportera modell', 'Export model')}</Button>}
+        {capture && <Button variant="outline" className="min-h-11" onClick={() => downloadJson(`default-model-${capture.input.start.slice(0, 10)}.json`, roiComparisonExport(capture))}>{t('Exportera modell', 'Export model')}</Button>}
       </div>
     </CardContent>
   </Card>;

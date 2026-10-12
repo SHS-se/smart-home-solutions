@@ -12,6 +12,9 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   fixture.snapshot.device_physics!.battery!.capacity_kwh = .1;
   fixture.snapshot.device_physics!.pool!.store.capacity_kwh_per_c = 1;
   fixture.snapshot.device_physics!.pool!.store.loss = { kind: 'linear', kw_per_c: 0, surroundings_c: 20 };
+  const catalogue = testTariff();
+  const plans = catalogue.profiles[0].versions[0].definition.plans as Record<string, Record<string, unknown>>;
+  plans.three_phase.demand = { top_n: 3, distinct_local_days: true, night_start_hour: 22, night_end_hour: 6, night_factor: .5, rate_sek_per_kw_ex_vat: 65 };
   let reads = 0, priceError = false;
   let report: SavedReport | null = null;
   await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
@@ -59,7 +62,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     }
     const prices = baselineFixture({ start: body.start, end: body.end }).prices;
     prices.forEach(p => { p.source = 'reconstructed'; p.supplier_revision = ROI_SUPPLIER_TERMS.revision; });
-    await route.fulfill({ json: { prices, actualPrices: prices.map(p => ({ start_ts: p.start_ts, import_price_sek_per_kwh: 2, export_price_sek_per_kwh: .3, source: 'invoice' })), area: 'SE3', catalogue: testTariff() } });
+    await route.fulfill({ json: { prices, actualPrices: prices.map(p => ({ start_ts: p.start_ts, import_price_sek_per_kwh: 2, export_price_sek_per_kwh: .3, source: 'invoice' })), area: 'SE3', catalogue } });
   });
   await context.route('**/rest/v1/energy_optimisation_*', async route => {
     const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';

@@ -1,15 +1,17 @@
 import type { MonthLedger } from './savings';
 import type { BilledMonth } from './billed-months';
+import { modeledCosts } from './roi-pricing';
 
 export type RoiBasis = 'baseline' | 'actual';
 export interface ReplayInvestment { equipmentSek: number; installationSek: number; subscriptionSek: number }
-/** Full modeled bills and original invoices share a period; only matched bills enter Actual ROI. */
+/** Demand-free modeled costs and original invoices share a period; only matched bills enter Actual ROI. */
 export function roiReport(months: readonly MonthLedger[], bills: ReadonlyMap<string, BilledMonth>, investment: ReplayInvestment, basis: RoiBasis = 'baseline') {
   if (Object.values(investment).some(v => !Number.isFinite(v) || v < 0)) throw new Error('Invalid ROI costs');
   const rows = months.map(ledger => {
     const bill = bills.get(ledger.month) ?? null;
     const actualSek = ledger.coverage === 1 ? bill?.totalSek ?? null : null;
-    const baselineSek = ledger.modeled.baselineBill.totalSek, schedulerSek = ledger.modeled.schedulerBill.totalSek;
+    const costs = modeledCosts(ledger.modeled);
+    const baselineSek = costs.baseline.totalSek, schedulerSek = costs.scheduler.totalSek;
     return { ledger, bill, baselineSek, actualSek, schedulerSek, vsBaselineSek: baselineSek - schedulerSek,
       vsActualSek: actualSek === null ? null : actualSek - schedulerSek };
   });

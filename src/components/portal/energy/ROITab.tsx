@@ -106,7 +106,7 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
         : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
       <SchedulerMonthlySavings state={displayState} report={report} installations={installations.data ?? []} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
-      <p className="text-xs text-muted-foreground">{t('Faktiska belopp kommer enbart från el- och nätfakturor. Saknade fakturor visas som —.', 'Actual amounts come only from electricity and grid bills. Missing bills show —.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Basmodell och Scheduler exkluderar effektavgift. Faktiska belopp inkluderar alla avgifter på el- och nätfakturorna. Saknade fakturor visas som —.', 'Baseline and Scheduler exclude demand charges. Actual amounts include all electricity and grid invoice charges. Missing bills show —.')}</p>
     </CardContent></Card>
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}

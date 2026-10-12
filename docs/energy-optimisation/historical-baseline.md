@@ -129,14 +129,21 @@ attribution, so actual exports are treated as solar; battery exports can affect
 that estimate. This definition is available in collapsed model details. JSON export includes native engine hash, captured inputs,
 commands, series and the signed grid ledger.
 
-Electricity cost is imports less export revenue. Monthly summary costs add the
-entered supplier fee once, prorated by elapsed/full local-calendar month duration.
-Graph cost lines show variable quarter costs, excluding fixed fees and subscription.
-Recorded and baseline costs use identical historical quarter prices. The initial
-state quarter contributes no cost. Missing grid energy is zero and counted;
+Electricity cost is imports less export revenue. Baseline and Scheduler ROI costs
+add prorated supplier and grid fixed fees and exclude demand charges (effektavgift).
+Actual uses complete invoice totals, including demand charges. Modeled cumulative
+graph costs add only the fixed fees to variable quarter costs; subscription is
+included only in the ROI result. The initial state quarter contributes no cost.
+Missing grid energy is zero and counted;
 negative prices, export revenues and negative savings retain their signs.
 
-Scheduler saving = baseline cost − recorded cost. Identical contract fees cancel.
+`roi-pricing.ts` owns this financial projection for monthly summaries, period
+tables, graph cost lines and exports. Saved physical ledgers retain their full
+dated tariff evidence and pool identities; applying this pricing policy never
+repins or regenerates completed simulations. Exports identify the pricing policy
+and present demand-free modeled bills, with original bills named `tariffEvidence`.
+
+Scheduler saving = Baseline cost − Scheduler cost. Identical contract fees cancel.
 SHS net subtracts the prorated subscription; full DST months pay one subscription.
 The monthly average is total net / sum of month coverage. Period ROI is total net /
 (equipment + installation); payback is investment / monthly average when positive.
