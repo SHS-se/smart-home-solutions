@@ -17,12 +17,11 @@ Deno.test('current native scheduler executes its own commands, carries state and
   assertAlmostEquals(r.series.carSoc[i]!/100*input.problem.car!.capacity_kwh,initial-input.evDemandKwh[i]+r.series.carW[i]/4000*input.problem.car!.charge_efficiency,1e-7);
  }
 });
-Deno.test('cash totals exclude native wear/end-credit, and assumed initial energy reruns both models',()=>{
+Deno.test('cash totals exclude native wear/end-credit, and physical starting energy is preserved',()=>{
  const rows=baselineFixture({start:'2026-09-01T00:00:00Z',end:'2026-09-02T00:00:00Z'}); rows.actual[0].battery_soc=null;
- const input=prepareHomeBaseline(rows), r=compareModels(input,engine), effect=r.modeled.effects[0];
- assertEquals(effect.key,'battery');assertEquals(effect.error,null);
- assertAlmostEquals(effect.vsBaselineDeltaSek!,effect.baselineDeltaSek!-effect.schedulerDeltaSek!);
- assertAlmostEquals(effect.vsActualDeltaSek!,-effect.schedulerDeltaSek!);
+ const input=prepareHomeBaseline(rows), r=compareModels(input,engine);
+ assertEquals(input.problem.initial.battery_kwh,0);
+ assertEquals(Object.hasOwn(r.modeled,'effects'),false);
  assertAlmostEquals(r.modeled.schedulerBill.totalSek,r.scheduler.ledger.costSek+r.modeled.schedulerBill.supplierFixedSek+r.modeled.schedulerBill.gridFixedSek+r.modeled.schedulerBill.gridPeakSek);
  const invalid={...input,settings:{...input.settings,criteria:undefined}};
  assertThrows(()=>replayScheduler(invalid,engine),Error,'settings unavailable');
@@ -52,7 +51,7 @@ Deno.test('EV departure masks only car availability, including midnight trips; p
  const impossible={...input,evDemandKwh:[input.problem.car!.capacity_kwh*2,...input.evDemandKwh.slice(1)]};
  assertThrows(()=>replayScheduler(impossible,engine),Error,'unserved recorded EV trip');
 });
-Deno.test('identical paired scenarios reuse native solves only within one comparison',()=>{
+Deno.test('comparisons run only the selected physical model and retain no cross-calculation solves',()=>{
  const input=prepareHomeBaseline(baselineFixture({start:'2026-09-01T00:00:00Z',end:'2026-09-02T00:00:00Z'}));
  input.batteryInitialAssumed=true;
  input.problem.initial.battery_kwh=input.problem.battery!.capacity_kwh*input.problem.battery!.max_soc;
@@ -60,8 +59,6 @@ Deno.test('identical paired scenarios reuse native solves only within one compar
  const counted={project:engine.project,solve:(p: import('../../../supabase/functions/_shared/planner-wasm/ready-problem').ReadyProblem)=>{calls++;return engine.solve(p);}};
  const a=compareModels(input,counted);
  assertEquals(calls,a.scheduler.solves);
- assertEquals(a.modeled.effects[0].vsBaselineDeltaSek,0);
- assertEquals(a.modeled.effects[0].vsActualDeltaSek,0);
  const b=compareModels(input,counted);
  assertEquals(calls,a.scheduler.solves+b.scheduler.solves);
  assertAlmostEquals(a.modeled.schedulerBill.totalSek,b.modeled.schedulerBill.totalSek);

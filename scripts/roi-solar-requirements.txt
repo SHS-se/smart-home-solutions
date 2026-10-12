@@ -1,0 +1,2 @@
+# Pin the provider model, including its exact interval-energy implementation.
+open-meteo-solar-forecast @ git+https://github.com/rany2/open-meteo-solar-forecast.git@5a8f3da2620c163e6f360f3c063823e273a7e140

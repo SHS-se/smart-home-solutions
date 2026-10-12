@@ -20,10 +20,8 @@ import { createSavingsRun } from '@/lib/home-baseline/savings-run';
 import { generateHomeBaseline } from '@/lib/home-baseline/browser';
 import { resolveBaselineAnchor } from '@/lib/home-baseline/history';
 import { monthStore } from '@/lib/home-baseline/month-store';
-import { hasAssumptions } from '@/lib/home-baseline/evidence';
-import { ReportSensitivity } from './roi/ComparisonEvidence';
-import { formatHomeDateTime } from '@/lib/energy-shift/home-time';
 import { RoiNumberField, RoiSelect } from './roi/RoiFields';
+import { fetchRoiInstallations } from '@/lib/home-baseline/installations';
 import { ROI_SUPPLIER_TERMS } from '../../../../supabase/functions/_shared/roi-supplier-terms';
 
 const settingsSchema = z.object({ from: z.string(), to: z.string(), equipment: z.string(), installation: z.string(), subscription: z.string() });
@@ -78,7 +76,8 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
   const amount = (v: number | null | undefined, unit = 'SEK', digits = 2) => v == null ? '—' : `${v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => { setGraphOpen(false); }, [homeId]);
-  const estimates = months.filter(hasAssumptions).length;
+  const installations = useQuery({ queryKey: ['roi-installations', customerId, homeId],
+    queryFn: () => fetchRoiInstallations({ customerId, homeId: homeId! }), enabled: !!homeId, retry: false });
 
   return <div className="space-y-5" data-testid="contract-roi">
     <div className="flex flex-wrap items-end gap-4">
@@ -100,18 +99,16 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
         <div><dt className="text-muted-foreground">{t('Avkastning under perioden', 'Return over period')}</dt><dd className="mt-1 font-medium" data-testid="roi-return">{ready ? amount(report.roiPercent, '%', 1) : '—'}</dd></div>
         <div><dt className="text-muted-foreground">{t('Återbetalning vid denna månadsbesparing', 'Payback at this monthly saving')}</dt><dd className="mt-1 font-medium" data-testid="roi-payback">{ready && report.paybackMonths !== null ? amount(report.paybackMonths, t('månader', 'months'), 1) : '—'}</dd></div>
       </dl>
-      {ready && <p className="mt-4 text-xs text-muted-foreground">{report.eligibleMonths}/{state.rows.length} {t('månader beräknade', 'months calculated')}{estimates > 0 && ` · ${estimates} ${t('med antaganden', 'with assumptions')}`}</p>}
+      {ready && <p className="mt-4 text-xs text-muted-foreground">{report.eligibleMonths}/{state.rows.length} {t('månader beräknade', 'months calculated')}</p>}
     </section>
     <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Jämförelse och besparing', 'Comparison and savings')}</CardTitle>
       {state.running ? <Button variant="outline" onClick={baseline.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
         : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
-      <SchedulerMonthlySavings state={displayState} report={report} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
-      <p className="text-xs text-muted-foreground" data-testid="roi-supplier-basis">{t('Basmodell och schemaläggare använder nuvarande Tibber-villkor och dåvarande nättariff. Uppmäta data används som perfekta prognoser (efterhandsanalys).', 'Baseline and scheduler use current Tibber terms plus dated grid tariffs. Scheduler replay uses recorded inputs as perfect forecasts (hindsight).')}</p>
-      <ReportSensitivity months={months} investmentSek={n(settings.equipment) + n(settings.installation)} basis={basis} billedMonths={new Set(report?.rows.filter(r => r.actualSek !== null).map(r => r.ledger.month))} />
-      {baseline.source.modelCapturedAt() && months[0] && <p className="text-xs text-muted-foreground">{t('Sparad utrustningsmodell', 'Saved equipment model')}: {formatHomeDateTime(baseline.source.modelCapturedAt()!, months[0].timeZone)}.</p>}
+      <SchedulerMonthlySavings state={displayState} report={report} installations={installations.data ?? []} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
       <p className="text-xs text-muted-foreground">{t('Faktiska belopp kommer enbart från el- och nätfakturor. Saknade fakturor visas som —.', 'Actual amounts come only from electricity and grid bills. Missing bills show —.')}</p>
     </CardContent></Card>
+    {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
     <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('ROI-kostnader', 'ROI costs')}</summary>
       <div className="space-y-1 pb-4 text-xs text-muted-foreground" data-testid="roi-supplier-terms">

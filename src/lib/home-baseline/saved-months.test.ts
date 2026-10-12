@@ -75,3 +75,21 @@ Deno.test('durability failures do not publish a new graph or ledger and explicit
   await source.repin(new AbortController().signal); assertEquals(stored!.generation, 2); assertEquals(stored!.months, {});
   assertEquals(source.cached(period), undefined); assertEquals(source.summary(period), undefined); source.dispose();
 });
+
+Deno.test('a calculation finishing after repin cannot save against the newer model generation', async () => {
+  let stored = report(), finish: ((value: typeof capture) => void) | undefined, writes = 0;
+  const store: MonthStore = { read: () => Promise.resolve(stored), pin: (_, model) => {
+    stored = { generation: stored.generation + 1, version: CALCULATION_VERSION, model: compactModel(model), months: {} };
+    return Promise.resolve(stored);
+  }, save: () => { writes++; return Promise.resolve(saved()); } };
+  const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),
+    generate: () => new Promise(resolve => { finish = resolve; }) });
+  const work = source.capture({ view: 'month', start: ledger.start, end: ledger.end }, new AbortController().signal);
+  while (!finish) await new Promise(resolve => setTimeout(resolve,0));
+  const rejected = assertRejects(() => work, Error, 'model changed');
+  await source.repin(new AbortController().signal);
+  finish(capture);
+  await rejected;
+  assertEquals(writes,0);assertEquals(source.summary({ view:'month',start:ledger.start,end:ledger.end }),undefined);
+  source.dispose();
+});

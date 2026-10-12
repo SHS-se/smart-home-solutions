@@ -3,11 +3,11 @@ import type { SavingsState } from '@/lib/home-baseline/savings-run';
 import type { RoiReport } from '@/lib/home-baseline/roi-report';
 import { formatHomeDateTime } from '@/lib/energy-shift/home-time';
 import { Button } from '@/components/ui/button';
-import { hasAssumptions } from '@/lib/home-baseline/evidence';
-import { ComparisonEvidence } from './ComparisonEvidence';
+import type { RoiInstallation } from '@/lib/home-baseline/installations';
+import ActualInstallations from './ActualInstallations';
 
-export default function SchedulerMonthlySavings({ state, report, onOpenMonth }: {
-  state: SavingsState; report: RoiReport | null; onOpenMonth: (month: string) => void;
+export default function SchedulerMonthlySavings({ state, report, installations, onOpenMonth }: {
+  state: SavingsState; report: RoiReport | null; installations: RoiInstallation[]; onOpenMonth: (month: string) => void;
 }) {
   const { t } = useLanguage();
   const sek = (amount: number | null | undefined) => amount == null ? '—' : `${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
@@ -22,13 +22,10 @@ export default function SchedulerMonthlySavings({ state, report, onOpenMonth }: 
         <th scope="row" className="p-2 font-normal text-left whitespace-nowrap">{row.month}
           {row.status === 'done' && <>
             {row.ledger.coverage < 1 && <p className="text-xs text-muted-foreground">{t('till', 'through')} {formatHomeDateTime(row.ledger.end, row.ledger.timeZone)}</p>}
-            <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{hasAssumptions(row.ledger) ? t('Antaganden', 'Assumptions') : t('Indata', 'Data basis')}</summary>
-              <div className="mt-2 min-w-56 max-w-80"><ComparisonEvidence evidence={row.ledger} modeled={row.ledger.modeled} />
-                <p className="mt-2">{value?.bill?.totalSek != null ? `${t('El + nät', 'Electricity + grid')}: ${sek(value.bill.electricitySek)} + ${sek(value.bill.gridSek)}` : t('Fullständiga fakturor saknas för denna period.', 'Complete bills unavailable for this period.')}</p>{value?.bill?.allocated && <p>{t('Faktura över flera månader: belopp fördelat på dagar.', 'Bill spans months: amount allocated by days.')}</p>}</div>
-            </details>
+
           </>}
         </th>
-        {row.status === 'done' && value ? <>{numbers(value).map((amount, i) => <td className="whitespace-nowrap p-2" key={i}>{sek(amount)}</td>)}
+        {row.status === 'done' && value ? <>{numbers(value).map((amount, i) => <td className="whitespace-nowrap p-2" key={i}><span data-testid="roi-amount">{sek(amount)}</span>{i === 1 && <ActualInstallations events={installations.filter(event => event.installed_month === row.month)} />}</td>)}
           <td className="p-1"><Button variant="ghost" className="min-h-11" onClick={() => onOpenMonth(row.month)} aria-label={`${t('Visa graf', 'View graph')} ${row.month}`}>{t('Graf', 'Graph')}</Button></td></>
           : <td colSpan={6} className={`p-2 text-left ${row.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{row.status === 'failed' ? row.error
             : row.status === 'running' ? t('Beräknar…', 'Calculating…') : row.status === 'queued' ? t('Väntar…', 'Waiting…')

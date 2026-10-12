@@ -17,6 +17,11 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
   await context.route('**/rest/v1/rpc/get_energy_roi_criteria*', route => route.fulfill({ json: {} }));
   await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['05','06','07','08','09'].flatMap(month => ['electricity','grid'].map(kind => ({ id: `${month}:${kind}`, customer_id: customerId, document_kind: kind, period_start: `2026-${month}-01`, period_end: `2026-${month}-${['06','09'].includes(month) ? '30' : '31'}`, total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [] }))) }));
+  await context.route('**/rest/v1/energy_roi_solar_profiles*', route => route.fulfill({ json: null }));
+  await context.route('**/rest/v1/energy_roi_installations*', route => route.fulfill({ json: [
+    { equipment: 'solar', installed_month: '2026-05' }, { equipment: 'battery', installed_month: '2026-05' },
+    { equipment: 'bergvarme', installed_month: '2026-09' },
+  ] }));
   await context.route('**/rest/v1/energy_roi_reports*', route => route.fulfill({ json: report }));
   await context.route('**/rest/v1/rpc/pin_energy_roi_report*', async route => {
     const body = route.request().postDataJSON();

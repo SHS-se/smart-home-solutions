@@ -11,6 +11,7 @@ import type { ActualEnergySlot } from '../energy-shift/contracts.ts';
 import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
 import { emptyRecovery, type RecoverySummary } from './recovered-history.ts';
 import { assessAssumptions, type InputEvidence } from './evidence.ts';
+import { modeledSolar, type SolarHour, type SolarProfile } from './solar.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
@@ -20,10 +21,11 @@ export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string
 export interface PoolRow { start_ts: string; water_temperature_c: number | null }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
-export interface HistoricalRows { snapshot: HomeModelCapture; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
+export interface HistoricalRows { snapshot: HomeModelCapture; solar?: { profile: SolarProfile; hours: SolarHour[] }; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[];
     devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[]; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue }
 export interface BaselineInput { tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue; settings: Pick<HomeModelCapture, 'comfort' | 'policy' | 'criteria' | 'ev_battery' | 'pool_model'>; start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
   evidence: InputEvidence;
+  solar: { profileHash: string | null; reconstructedKwh: number; reconstructedQuarters: number };
   recovery: RecoverySummary;
   priceArea: string; reconstructedPriceQuarters: number; assumedPriceQuarters: number; problem: ReadyProblem; idlePumpW: number; carName: string; evInitialObservedAt: string | null;
   evDemandKwh: number[]; evDailyDemand: { day: string; kwh: number }[]; evMissingSocQuarters: number;
@@ -59,6 +61,9 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const count = (time(rows.end) - startMs) / QUARTER_MS;
   if (count <= 0) throw new Error('Historical period must contain completed quarters');
   const actual = index(rows.actual), prices = index(rows.prices), meters = index(rows.deviceSlots), pool = index(rows.pool), outdoor = index(rows.outdoor), baselineLoads = index(rows.baselineLoads ?? []);
+  if ((rows.solar?.profile.profile_hash ?? null) !== rows.snapshot.roi_solar_profile) throw new Error('ROI solar profile changed; reload the report');
+  const reconstructedSolar = modeledSolar(rows.solar?.profile ?? null, rows.solar?.hours ?? []);
+  const solar = { profileHash: rows.snapshot.roi_solar_profile, reconstructedKwh: 0, reconstructedQuarters: 0 };
   const ids = new Map(rows.devices.map(d => [d.device_key, d.id]));
   const memberIds = facts.memberKeys.map(key => { const id = ids.get(key); if (!id) throw new Error(`Historical device identity is missing: ${key}`); return { id, key }; });
   if (new Set(memberIds.map(m => m.id)).size !== memberIds.length) throw new Error('Duplicate modeled device identity');
@@ -143,9 +148,11 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
       const bought = gridEnergy(observed?.grid_import_kwh, 'Import');
       addElectricity(recorded.ledger, bought, gridEnergy(observed?.grid_export_kwh, 'Export'), importPrice, exportPrice);
       recorded.gridImportCostSek += bought * number(price?.grid_import_price_sek_per_kwh, 'grid tariff', at);
+      const modeledKwh = reconstructedSolar(ms);
+      if (modeledKwh !== null) { solar.reconstructedKwh += modeledKwh; solar.reconstructedQuarters++; }
       return { local_month: months[i], start_seconds: i * 900, hours: .25,
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
-        solar_w: energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters') * 4000,
+        solar_w: (modeledKwh ?? energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters')) * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
         import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evDemandKwh[i] === 0 };
     }),
@@ -158,7 +165,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
-  return { tariff: rows.tariff, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
+  return { tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
     priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
     assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,

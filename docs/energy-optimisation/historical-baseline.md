@@ -172,3 +172,52 @@ complete electricity/grid pairs fill Actual and Savings vs Actual, including tot
 using the saved monthly baseline and scheduler ledgers. Adding invoices does not
 repin the equipment model or regenerate those ledgers. Recalculate remains an
 explicit request to regenerate model results; it is unnecessary for new invoices.
+
+## Solar before installation
+
+ROI models can run the current solar array over months before its installation.
+Reconstructed generation is stored separately in `energy_roi_solar_hours`; it is
+never written into measured energy history or the issued-forecast archive.
+Both the baseline and scheduler use the same reconstructed supply. Actual
+invoices and measured graphs remain unchanged. Within and after the installation
+month, models continue to use recorded production, including genuine zeros.
+Owner-stated months are stored in `energy_roi_installations` and shown under
+Actual. They do not disable hypothetical equipment before installation.
+
+Preparation is explicit and service-owned:
+
+1. Install the pinned provider model with Python 3.11 or later:
+   `python -m pip install -r scripts/roi-solar-requirements.txt`.
+2. Provide a private JSON configuration with `pv` containing `latitude`,
+   `longitude`, `peak_kw`, `inverter_kw`, `tilt_degrees`,
+   `compass_azimuth_degrees`, `efficiency`, `morning_damping`, and
+   `evening_damping`; plus `time_zone`, `solar_installed_month`,
+   `reconstruction_months` (inclusive first/last month), `training_months`, and
+   independent `validation_months`. Supply recovered actual hourly readings in
+   the same `{start_ts, actual: {solar_production_kwh}}` shape as ROI history.
+3. Run `scripts/reconstruct-roi-solar.py --config CONFIG --actual-hours ACTUAL
+   --cache-dir CACHE --output PREPARED`. This sends location and array geometry to
+   Open-Meteo's Historical Forecast API. Obtain authorization for that data use.
+   Missing provider hours or incomplete measured calibration months fail clearly.
+4. Review the independent validation months. The output retains raw energy,
+   calibrated energy, configuration, provider/library identities and source
+   hashes. The energy-weighted correction uses complete measured training months;
+   corrected generation respects inverter capacity. Solar weather reconstruction
+   is distinct from comparing archived HA forecasts issued before their targets.
+5. Publish using `scripts/publish-roi-solar.ts PREPARED HOME_UUID CUSTOMER_UUID`
+   with the intended `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Use Deno
+   permissions for the input file, those environment variables and target host.
+
+Publication atomically replaces the profile and its complete hourly coverage.
+It invalidates saved months overlapping the changed solar coverage and updates
+the pinned solar identity, preserving other months' financial ledgers;
+identical publication is a no-op. Pin/save/publication serialize per home, and
+stale generations or solar identities cannot save results. ROI v4 rejects older
+writers. The known equivalent v3 release is rolled forward by removing obsolete
+display outputs, preserving its financial results without recalculation. Reopening ROI automatically calculates the revised models; Recalculate
+also starts a new generation. Each modeled hour is distributed evenly across its
+four quarters, preserving energy and UTC daylight-saving boundaries. A missing
+hour inside the published reconstruction period fails instead of supplying zero.
+
+The installation notes replace assumption disclosures. Physical starting values
+remain calculation inputs; the removed sensitivity scenarios are no longer run.

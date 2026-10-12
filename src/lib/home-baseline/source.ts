@@ -61,18 +61,24 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
       if (!job) {
         const controller = new AbortController();
         const own: Job = { controller, waiters: new Set(),
-          promise: anchor().then(pinned => { controller.signal.throwIfAborted(); return dependencies.generate(ref, pinned, period, controller.signal); })
-          .then(async capture => {
+          promise: anchor().then(async pinned => {
+            controller.signal.throwIfAborted();
+            const capturedReport = report;
+            const capture = await dependencies.generate(ref, pinned, period, controller.signal);
+            if (report !== capturedReport) throw new Error('ROI model changed; reload the report');
+            return { capture, capturedReport };
+          })
+          .then(async ({ capture, capturedReport }) => {
             controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
             if (jobs.get(key) === own && !controller.signal.aborted && !lifetime.signal.aborted && own.waiters.size) {
               if (period.view === 'month') {
                 let ledger = comparisonMonthLedger(capture);
                 if (dependencies.store) {
                   const bytes = new TextEncoder().encode(JSON.stringify({ version: CALCULATION_VERSION, problem: capture.input.problem,
-                    ev: capture.input.evDemandKwh, evidence: capture.input.evidence, recorded: capture.input.recorded, ledger }));
+                    ev: capture.input.evDemandKwh, evidence: capture.input.evidence, solar: capture.input.solar, recorded: capture.input.recorded, ledger }));
                   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
                   controller.signal.throwIfAborted();
-                  const saved = await dependencies.store.save(ref, report!.generation, ledger, hash, report!.months[ledger.month]?.inputHash ?? null, controller.signal);
+                  const saved = await dependencies.store.save(ref, capturedReport!.generation, ledger, hash, capturedReport!.months[ledger.month]?.inputHash ?? null, controller.signal);
                   controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
                   report!.months[ledger.month] = saved; ledger = saved.ledger;
                 }

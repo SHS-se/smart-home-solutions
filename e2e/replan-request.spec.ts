@@ -241,7 +241,7 @@ test.describe('requesting a replan', () => {
     const contract = page.getByTestId('roi-period-saving'), saving = await contract.textContent();
     const reads = history.reads();
     await page.getByTestId('comparison-settings').locator('summary').click();
-    await expect(page.getByTestId('roi-supplier-basis')).toContainText(/current Tibber terms|nuvarande Tibber-villkor/);
+    await expect(page.getByTestId('roi-supplier-basis')).toHaveCount(0);
     await expect(page.getByTestId('roi-supplier-terms')).toContainText(/7[.,]50 öre\/kWh/);
     await expect(page.getByTestId('roi-supplier-terms')).toContainText(/4[.,]40 öre\/kWh/);
     await expect(page.getByTestId('roi-supplier-terms')).toContainText('2026-09');
@@ -254,7 +254,7 @@ test.describe('requesting a replan', () => {
     await expect(page.locator('#roi-rate')).toHaveCount(0);
     await page.locator('#roi-basis').selectOption('actual');
     await expect(page.getByTestId('roi-period-net')).toContainText('SEK');
-    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(1)).toHaveText('579,00 SEK');
+    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK');
     expect(history.reads()).toBe(reads);
     await page.locator('#roi-from').fill('2025-10');
     await expect(page.getByRole('alert')).toContainText('at most 12 months');
@@ -284,18 +284,19 @@ test.describe('requesting a replan', () => {
     expect(history.windows.length).toBe(before);
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     const row = page.getByTestId('scheduler-month-2026-09');
-    await row.locator('summary').first().click();
-    await expect(row.getByTestId('comparison-evidence')).toContainText(/Missing energy|Saknad energi/);
-    await page.getByTestId('roi-assumption-impact').locator('summary').click();
-    await expect(page.getByTestId('roi-assumption-impact')).toContainText(/ROI/);
+    await expect(row.locator('td').nth(1).getByTestId('actual-installations')).toContainText('Bergvärme');
+    await row.getByTestId('actual-installations').locator('summary').click();
+    await expect(row.getByTestId('actual-installations')).toContainText(/ground-source heat pump|Bergvärmen/);
+    await expect(page.getByTestId('comparison-evidence')).toHaveCount(0);
+    await expect(page.getByTestId('roi-assumption-impact')).toHaveCount(0);
     // A deployment adds missing invoices; polling updates Actual without repinning
     // the equipment or rerunning any completed baseline/scheduler projections.
-    await expect(row.locator('td').nth(1)).toHaveText('—');
+    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('—');
     const savedBeforeBills = JSON.stringify(history.saved());
     const modelCells = await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()));
     const readsBeforeBills = history.reads();
     billsAvailable = true;
-    await expect(row.locator('td').nth(1)).toHaveText('579,00 SEK', { timeout: 45_000 });
+    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK', { timeout: 45_000 });
     expect(await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()))).toEqual(modelCells);
     expect(JSON.stringify(history.saved())).toBe(savedBeforeBills);
     expect(history.reads()).toBe(readsBeforeBills);
@@ -366,10 +367,14 @@ test.describe('requesting a replan', () => {
       await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
       await expect(page.getByTestId('baseline-net-cost')).toHaveText((await row.locator('td').first().textContent())!);
       await page.getByTestId('baseline-details').locator('summary').first().click();
-      await expect(page.getByTestId('baseline-battery-start')).toContainText('0%');
-      await expect(page.getByTestId('baseline-ev-start')).toContainText('80%');
-      await expect(page.getByTestId('baseline-pool-start')).toContainText('30°C');
-      await expect(page.getByTestId('baseline-assumptions')).not.toContainText('1970');
+      await expect(page.getByTestId('baseline-models')).toContainText(/Battery|Batteri/);
+      await expect(page.getByTestId('baseline-assumptions')).toHaveCount(0);
+      if (month === '05') {
+        const actual = row.locator('td').nth(1);
+        await expect(actual.getByTestId('actual-installations')).toContainText(/Solar|Solceller/);
+        await actual.getByTestId('actual-installations').locator('summary').click();
+        await expect(actual.getByTestId('actual-installations')).toContainText(/battery was installed|Hembatteriet installerades/);
+      } else await expect(row.getByTestId('actual-installations')).toHaveCount(0);
       await page.getByTestId('baseline-details').locator('summary').first().click();
     }
     const september = page.getByTestId('scheduler-month-2026-09');
@@ -377,7 +382,7 @@ test.describe('requesting a replan', () => {
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(september.locator('td').nth(1)).toHaveText('579,00 SEK');
+    await expect(september.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK');
     const download = page.waitForEvent('download');
     await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
     const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
@@ -452,7 +457,7 @@ test.describe('requesting a replan', () => {
     await expectRoiMonths(page, '(1/1)');
     const row = page.getByTestId('scheduler-month-2026-05');
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(row.locator('td').nth(1)).toHaveText(display(579));
+    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText(display(579));
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
     const viewer = page.getByTestId('roi-baseline');

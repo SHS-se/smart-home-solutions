@@ -29,7 +29,7 @@ export function monthLedger(capture: BaselineCapture) {
 }
 export function comparisonMonthLedger(capture: ComparisonCapture) {
   const month = monthLedger(capture);
-  return { month: month.month, start: month.start, end: month.end, timeZone: month.timeZone, coverage: month.coverage, baseline: month.baseline, recorded: month.recorded, priceArea: month.priceArea, ...captureEvidence(capture), scheduler: capture.scheduler.ledger, modeled: capture.modeled, replay: { engine: capture.scheduler.engine, protocol: capture.scheduler.protocol, solves: capture.scheduler.solves } };
+  return { month: month.month, start: month.start, end: month.end, timeZone: month.timeZone, coverage: month.coverage, baseline: month.baseline, recorded: month.recorded, priceArea: month.priceArea, ...captureEvidence(capture), solar: capture.input.solar, scheduler: capture.scheduler.ledger, modeled: capture.modeled, replay: { engine: capture.scheduler.engine, protocol: capture.scheduler.protocol, solves: capture.scheduler.solves } };
 }
 export type MonthLedger = ReturnType<typeof comparisonMonthLedger>;
 
