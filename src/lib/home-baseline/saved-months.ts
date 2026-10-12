@@ -11,9 +11,9 @@ import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import type { PoolCheckpoint } from './pool-carry.ts';
 
-// v5 pins independent pool continuations across calendar months.
+// v5 pins the pool-continuation schema; the hash also pins energy interval accounting.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v5:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v5:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),

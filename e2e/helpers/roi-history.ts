@@ -16,6 +16,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   const plans = catalogue.profiles[0].versions[0].definition.plans as Record<string, Record<string, unknown>>;
   plans.three_phase.demand = { top_n: 3, distinct_local_days: true, night_start_hour: 22, night_end_hour: 6, night_factor: .5, rate_sek_per_kw_ex_vat: 65 };
   let reads = 0, priceError = false;
+  let reportedIntervals: import('../../src/lib/home-baseline/reported-energy-intervals').ReportedEnergyInterval[] = [];
   let report: SavedReport | null = null;
   await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
   await context.route('**/rest/v1/rpc/get_energy_roi_criteria*', route => route.fulfill({ json: {} }));
@@ -50,7 +51,16 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     const url = new URL(route.request().url()); reads++;
     expect(url.searchParams.get('home_id')).toBe(`eq.${homeId}`);
     expect(url.searchParams.get('customer_id')).toBe(`eq.${customerId}`);
-    await route.fulfill({ json: url.searchParams.get('select') === 'start_ts' ? null : [] });
+    const filters = url.searchParams.getAll('start_ts'), from = filters.find(v => v.startsWith('gte.'))?.slice(4), to = filters.find(v => v.startsWith('lt.'))?.slice(3);
+    const hours = new Map<string, typeof reportedIntervals>();
+    for (const interval of reportedIntervals) for (let at = Math.floor(Date.parse(interval.start) / 3_600_000) * 3_600_000; at < Date.parse(interval.end); at += 3_600_000) {
+      const stamp = new Date(at).toISOString();
+      if (from && to && stamp >= from && stamp < to) hours.set(stamp, reportedIntervals);
+    }
+    await route.fulfill({ json: url.searchParams.get('select') === 'start_ts' ? null : [...hours].map(([start_ts, intervals]) => ({
+      start_ts, actual: { reported_intervals: intervals }, device_energy_kwh: {}, pool_c: null, outdoor_c: null,
+      baseline_load_kwh: null, sources: {}, invalid_readings: 0,
+    })) });
   });
   await context.route('**/functions/v1/backfill-energy-prices*', async route => {
     const body = route.request().postDataJSON(); reads++;
@@ -103,7 +113,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { delete row.device_energy_kwh['heater-id']; row.device_energy_kwh['household-id'] = .25; });
     await route.fulfill({ json: rows });
   });
-  return { fixture, windows, reads: () => reads, saved: () => report, failPrices: () => { priceError = true; } };
+  return { fixture, windows, reads: () => reads, saved: () => report, failPrices: () => { priceError = true; }, correctIntervals: (intervals: typeof reportedIntervals) => { reportedIntervals = intervals; } };
 }
 
 /** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */

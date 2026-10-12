@@ -524,7 +524,28 @@ test.describe('requesting a replan', () => {
     await expectRoiMonths(page, '(2/7)');
   });
 
-  test('missing device readings show an explanation instead of NaN in the tooltip', async ({ page }, testInfo) => {
+  test('delayed meter energy is disclosed as an estimated interval average in the actual chart', async ({ context, page }, testInfo) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-10', to: '2026-10' });
+    const end = history.fixture.end, start = new Date(Date.parse(end) - 3_600_000).toISOString();
+    history.correctIntervals([{ field: 'solar_production_kwh', start, end, kwh: 2, source: 'pv' }]);
+    await page.clock.setFixedTime(new Date(Date.parse(end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=roi');
+    await expectRoiMonths(page, '(1/1)');
+    await page.getByTestId('roi-view-graphs').click();
+    await page.getByTestId('comparison-graph-actual').click();
+    const chart = page.getByTestId('roi-baseline').getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await chart.focus(); await chart.press('ArrowRight');
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toContainText(/estimated|uppskattat/);
+    await expect(tooltip).toContainText(/reporting interval|rapporteringsintervallet/);
+    await expect(tooltip).toContainText('2.00 kW');
+    const box = (await tooltip.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await expect(tooltip).not.toContainText(/NaN|Unavailable|Ej tillgänglig/);
+    await page.screenshot({ path: testInfo.outputPath('estimated-counter-interval.png') });
+  });
+
+  test('missing device readings contribute zero and preserve base load in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{
       start_ts: new Date(Date.parse(CAPTURED_AT) - 900_000).toISOString(),
@@ -538,9 +559,9 @@ test.describe('requesting a replan', () => {
     await chart.focus();
     await chart.press('ArrowLeft');
     const tooltip = page.getByRole('tooltip');
-    await expect(tooltip).toContainText(/Ej tillgänglig|Unavailable/);
-    await expect(tooltip).toContainText(/Mätvärden saknas för|Missing readings for/);
-    await expect(tooltip).toContainText('pool_pump');
+    await expect(tooltip).not.toContainText(/Ej tillgänglig|Unavailable|Mätvärden saknas för|Missing readings for/);
+    await expect(tooltip).toContainText(/Baslast|Base load/);
+    await expect(tooltip).toContainText('0.80 kW');
     await expect(tooltip).toContainText('Pool heater');
     await expect(tooltip).toContainText('1.80 kW');
     await expect(tooltip).toContainText('2.60 kW');

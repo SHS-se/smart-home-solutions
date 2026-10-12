@@ -391,7 +391,10 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const from = hover ?? (selectedIndex >= 0 ? selectedIndex : Math.min(dividerIndex, n - 1));
     const next = Math.max(0, Math.min(n - 1, from + (event.key === 'ArrowLeft' ? -1 : 1)));
     setHover(next);
-    setPointer({ left: ((next + 0.5) / n) * PLOT_W + MARGIN_LEFT, top: flow.top });
+    const svgBox = event.currentTarget.getBoundingClientRect();
+    const wrapBox = wrapRef.current!.getBoundingClientRect();
+    setPointer({ left: svgBox.left - wrapBox.left + x(next + 0.5) * svgBox.width / VIEW_W,
+      top: svgBox.top - wrapBox.top + flow.top * svgBox.height / height });
   };
 
   const hovered = hover === null ? null : rows[hover];
@@ -962,7 +965,7 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 190 + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
+  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -971,14 +974,15 @@ const PlanTooltip: React.FC<{
     <div
       role="tooltip"
       className="pointer-events-none absolute z-10 rounded-lg border bg-popover px-2.5 py-2 text-xs shadow-md"
-      style={{ left: Math.max(4, left + offset), top: clampedTop, width }}
+      style={{ left: bounds ? Math.min(Math.max(4, left + offset), Math.max(4, bounds.width - width - 4)) : Math.max(4, left + offset), top: clampedTop, width }}
     >
       <div className="mb-1 flex items-baseline justify-between gap-2 font-medium">
         <span>{row.label}</span>
         <span className="rounded border px-1 text-[9px] uppercase tracking-wide text-muted-foreground">
-          {gap ? gap.label : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
+          {gap ? gap.label : row.estimatedEnergy ? t('uppskattat', 'estimated') : measured ? t('uppmätt', 'measured') : t('plan', 'plan')}
         </span>
       </div>
+      {row.estimatedEnergy && <p className="mb-1 text-muted-foreground">{t('Fördröjda mätvärden: energin är jämnt fördelad över rapporteringsintervallet.', 'Delayed meter readings: energy is spread evenly over the reporting interval.')}</p>}
       {auditDescriptions && <div className="mb-1 border-b pb-1 space-y-1">
         {auditDescriptions.length ? auditDescriptions.map(description => <p key={description}>{description}</p>) : <p>{t('Inga ekonomiska fynd här', 'No economic findings here')}</p>}
       </div>}

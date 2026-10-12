@@ -27,7 +27,7 @@ export interface ConsumptionSeries {
   name: string;
   values: number[];
   kwh: number;
-  /** A grouped value contains only the available device readings. */
+  /** Missing device readings contribute zero to consumption statistics. */
   partial: boolean[];
   /**
    * Palette slot, assigned over every schedulable meter the home has rather
@@ -87,14 +87,17 @@ const totalKwh = (values: readonly number[]): number =>
  * Split the window's meters into bands and background.
  *
  * `houseDemandW` is gross household consumption. Subtract all Planned meters,
- * including those grouped for display. Inconsistent or missing measurements
- * leave the base unknown; each available device keeps its own reading.
+ * including those grouped for display. Missing device readings contribute zero;
+ * inconsistent household/device totals still leave the base unknown.
  */
 export const splitConsumption = (
   candidates: readonly ConsumptionCandidate[],
   houseDemandW: readonly (number | null)[],
 ): ConsumptionSplit => {
   const length = houseDemandW.length;
+  candidates = candidates.map(candidate => ({ ...candidate,
+    values: Array.from({ length }, (_, i) => Number.isFinite(candidate.values[i]) ? candidate.values[i] : 0),
+  }));
 
   // Slots follow the meter, not its rank, so filtering never repaints the
   // survivors. Sorted by key rather than by energy for the same reason.

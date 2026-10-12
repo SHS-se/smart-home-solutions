@@ -21,6 +21,28 @@ scheduler savings.
 
 The Energy Optimisation ROI tab compares stored consumption and supplier cost with an editable alternative contract. It does not run the planner or use the planner's synthetic baseline as measured savings.
 
+## Delayed meter reports and unavailable devices
+
+Unavailable device energy contributes zero to the consumption split. Available
+household and device readings remain usable, including the residual base load.
+A negative reading or a device sum exceeding household demand still indicates
+inconsistent measurements.
+
+A cumulative counter that catches up after an outage records energy over its
+reporting interval, not instantaneous quarter power. For a verified interval,
+`scripts/correct-roi-counter-intervals.ts private-capture.json output-directory`
+prepares guarded SQL and an audit. The capture contains explicit home/customer
+UUIDs, the original quarter observations, and source-verified intervals with
+`field`, `start`, `end` (exclusive), and `source`. No intervals are inferred from
+zeros alone. The SQL checks source totals and stores interval metadata under
+`actual.reported_intervals` in each affected ROI recovery hour. It preserves HA
+and planner-facing measured tables, unrelated channels, and existing corrections.
+
+ROI allocates the measured total evenly over that interval and labels its chart
+quarters **estimated**. Models and recorded charts use the same allocation; the
+saved calculation fingerprint invalidates older totals. Precise within-interval
+timing remains unknown. Partial views use the full interval duration.
+
 ## Sources and scope
 
 The page explicitly selects one source at a time; it does not blend bills and estimates:

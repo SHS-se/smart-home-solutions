@@ -24,7 +24,7 @@ export interface PoolRow { start_ts: string; water_temperature_c: number | null 
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; solar?: { profile: SolarProfile; hours: SolarHour[] }; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[]; actualPrices: ActualPrice[];
-    devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[]; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue }
+    devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[]; intervalFields?: { start_ts: string; fields: string[] }[]; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue }
 export interface BaselineInput { tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue; settings: Pick<HomeModelCapture, 'comfort' | 'policy' | 'criteria' | 'ev_battery' | 'pool_model'>; start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
   pool: PoolStart | null;
   evidence: InputEvidence;
@@ -78,6 +78,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const evidence: InputEvidence = { hourlyModel: [], hourlyImport: [], hourlyExport: [], assumedMarkup: [], missingDevices,
     hourlyFields: [...fieldCounts].map(([field, quarters]) => ({ field: field.startsWith('device:')
       ? `device:${rows.devices.find(d => d.id === field.slice(7))?.name ?? rows.devices.find(d => d.id === field.slice(7))?.device_key ?? field.slice(7)}` : field, quarters })) };
+  const intervalQuarters = new Set((rows.intervalFields ?? []).map(r => Date.parse(r.start_ts)));
   const energyGaps = { householdQuarters: 0, solarQuarters: 0, deviceReadings: 0 };
   const recorded = { ledger: emptyElectricityLedger(), missingImportQuarters: 0, missingExportQuarters: 0, gridImportCostSek: 0 };
   const energy = (value: unknown, label: string, at: string, gap: keyof typeof energyGaps) => {
@@ -188,7 +189,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
             ev_soc: observed?.ev_soc == null ? null : soc(observed.ev_soc, 'EV SOC', start_ts) };
         }), prices: rows.actualPrices,
         deviceActuals: rows.deviceSlots.map(row => ({ ...row, device_energy_kwh: Object.fromEntries(Object.entries(row.device_energy_kwh).map(([id, value]) => [id, value == null ? 0 : number(value, `device meter ${id}`, row.start_ts, true)])) })),
-        deviceKeyById: new Map(rows.devices.map(d => [d.id, d.device_key])), poolActuals: rows.pool.flatMap(row => row.water_temperature_c == null ? [] : [{ ...row, water_temperature_c: row.water_temperature_c }]) }),
+        estimatedEnergyStarts: intervalQuarters, deviceKeyById: new Map(rows.devices.map(d => [d.id, d.device_key])), poolActuals: rows.pool.flatMap(row => row.water_temperature_c == null ? [] : [{ ...row, water_temperature_c: row.water_temperature_c }]) }),
     } };
 }
 

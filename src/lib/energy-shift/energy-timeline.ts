@@ -38,6 +38,8 @@ export interface TimelineRow {
   start: string;
   /** True on the history side, false on the plan side. Check missing for gaps. */
   measured: boolean;
+  /** Energy is allocated over a verified delayed counter reporting interval. */
+  estimatedEnergy?: boolean;
   /** No measurement or current plan exists for this quarter. */
   missing?: boolean;
   solarW: number | null;
@@ -107,6 +109,7 @@ export interface TimelineInput {
   /** The plan's pool temperature at the end of each of `planSlots` (pool-temperature.ts). */
   plannedPoolC?: readonly (number | null)[];
   nowMs: number;
+  estimatedEnergyStarts?: ReadonlySet<number>;
 }
 
 const quarterFloor = (ms: number) => Math.floor(ms / SLOT_MS) * SLOT_MS;
@@ -134,6 +137,7 @@ export const buildEnergyTimeline = ({
   poolActuals = [],
   plannedPoolC = [],
   nowMs,
+  estimatedEnergyStarts = new Set(),
 }: TimelineInput): TimelineRow[] => {
   const boundary = quarterFloor(nowMs);
   const priceByStart = new Map(prices.map(price => [quarterFloor(Date.parse(price.start_ts)), price]));
@@ -166,6 +170,7 @@ export const buildEnergyTimeline = ({
       startMs,
       start: new Date(startMs).toISOString(),
       measured: true,
+      estimatedEnergy: estimatedEnergyStarts.has(startMs),
       solarW: watts(slot.solar_production_kwh),
       loadW,
       baseW: loadW === null ? null : Math.max(0, loadW - chartedW),

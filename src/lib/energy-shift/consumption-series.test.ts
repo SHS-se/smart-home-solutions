@@ -168,18 +168,15 @@ Deno.test("duplicate meter identities cannot manufacture base consumption", () =
   assert(Number.isNaN(split.baseValues[0]));
 });
 
-Deno.test('missing planned meter identifies the source and clears when its reading returns', () => {
+Deno.test('missing planned meter contributes zero without losing household consumption', () => {
   const split = splitConsumption([
     candidate({ key: 'sensor.pool_pump_energy', name: 'Pool pump', values: [NaN, 0] }),
     candidate({ key: 'heater', values: [0, 0] }),
   ], [2600, 2600]);
-  assertEquals(split.invalidIndices, [0]);
-  assertEquals(split.issues, [{ missingDevices: ['Pool pump'] }, null]);
-  assert(Number.isNaN(split.baseValues[0]));
-  assertEquals(split.baseValues[1], 2600);
-  assertEquals(consumptionGapDescription(split.issues[0]!, (_sv, en) => en),
-    'Missing readings for: Pool pump. Base load cannot be calculated.');
-  assert(consumptionGapDescription(split.issues[0]!, sv => sv).includes('Pool pump'));
+  assertEquals(split.invalidIndices, []);
+  assertEquals(split.issues, [null, null]);
+  assertEquals(split.baseValues, [2600, 2600]);
+  assertEquals(split.baseKwh, 1.3);
 });
 
 Deno.test('inconsistent consumption is not described as a missing device', () => {
@@ -197,9 +194,19 @@ Deno.test('one missing device leaves other device readings intact, including gro
     candidate({ key: 'small-known', values: [50, 50, 50, 50, 50] }),
   ], flat(3000, 5));
   assertEquals(split.series.find(s => s.key === 'heater')!.values, flat(1800, 5));
-  assert(Number.isNaN(split.baseValues[1]));
+  assertEquals(split.baseValues[1], 1150);
   const grouped = split.series.find(s => s.key === '$other_planned')!;
   assertEquals(grouped.values[1], 50);
-  assertEquals(grouped.partial, [false, true, false, false, false]);
-  assertEquals(split.issues[1]!.missingDevices, ['pump', 'small-missing']);
+  assertEquals(grouped.partial, [false, false, false, false, false]);
+  assertEquals(split.invalidIndices, []);
+  assertEquals(split.issues, flat(0, 5).map(() => null));
+  split.baseValues.forEach((base, i) => assertEquals(base + split.series.reduce((sum, s) => sum + s.values[i], 0), 3000));
+});
+
+Deno.test('absent and non-finite device readings are zero while negative readings remain invalid', () => {
+  const split = splitConsumption([candidate({ key: 'heater', values: [1800, NaN, Infinity, -10] })], flat(3000, 5));
+  assertEquals(split.series[0].values, [1800, 0, 0, -10, 0]);
+  assertEquals(split.baseValues.slice(0, 3), [1200, 3000, 3000]);
+  assertEquals(split.baseValues[4], 3000);
+  assertEquals(split.invalidIndices, [3]);
 });

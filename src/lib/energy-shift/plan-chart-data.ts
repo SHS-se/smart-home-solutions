@@ -9,6 +9,7 @@ export interface PlanPanelRow {
   /** Axis label for this quarter, already localised. */
   label: string;
   measured: boolean;
+  estimatedEnergy?: boolean;
   missing?: boolean;
   /**
    * Power, in watts. Signs are ignored: import and export are separate fields,
@@ -56,7 +57,7 @@ export function projectPlanChart(input: {
     running = prices.kind === 'actual' && (row.costSek === null || running === null) ? null : (running ?? 0) + (row.costSek ?? 0);
     return {
       startMs: row.startMs, label: formatHomeDayMonthTime(row.start, timeZone),
-      measured: row.measured, missing: row.missing,
+      measured: row.measured, missing: row.missing, estimatedEnergy: row.estimatedEnergy,
       solarW: row.solarW, loadW: row.loadW, gridImportW: row.gridImportW, gridExportW: row.gridExportW,
       batteryChargeW: row.batteryChargeW, batteryDischargeW: row.batteryDischargeW,
       homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,

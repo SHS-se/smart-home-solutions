@@ -1,5 +1,6 @@
 import type { ActualRow, HistoricalRows } from './model.ts';
 import { homePhysics } from './home-physics.ts';
+import { allocateReportedEnergy, type ReportedEnergyInterval } from './reported-energy-intervals.ts';
 
 const HOUR = 3_600_000, QUARTER = HOUR / 4;
 type EnergyField = Exclude<keyof ActualRow, 'start_ts' | 'battery_soc' | 'ev_soc'>;
@@ -7,7 +8,7 @@ type StateField = 'battery_soc' | 'ev_soc' | 'pool_c' | 'outdoor_c';
 export interface StatisticSeries { statistic_id: string; unit: string; statistics: { start: number; sum?: number | null; mean?: number | null }[] }
 export interface RecoverySpec { start: string; end: string; actual: Partial<Record<EnergyField, string[]>>;
   devices: { id: string; sources: string[] }[]; members: string[]; states: Partial<Record<StateField, string>> }
-export interface RecoveredHour { start_ts: string; actual: Partial<Omit<ActualRow, 'start_ts'>>; device_energy_kwh: Record<string, number>;
+export interface RecoveredHour { start_ts: string; actual: Partial<Omit<ActualRow, 'start_ts'>> & { reported_intervals?: ReportedEnergyInterval[] }; device_energy_kwh: Record<string, number>;
   pool_c: number | null; outdoor_c: number | null; baseline_load_kwh: number | null; sources: Record<string, string>; invalid_readings: number }
 export interface RecoverySummary { hours: number; balanceHours: number; deviceSumHours: number; invalidReadings: number; sources: string[] }
 export const emptyRecovery = (): RecoverySummary => ({ hours: 0, balanceHours: 0, deviceSumHours: 0, invalidReadings: 0, sources: [] });
@@ -115,6 +116,11 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
       const target: ActualRow = measured ?? { start_ts: stamp, total_load_kwh: null, solar_production_kwh: null,
         grid_import_kwh: null, grid_export_kwh: null, battery_charge_kwh: null, battery_discharge_kwh: null, battery_soc: null, ev_soc: null };
       for (const [key, value] of Object.entries(hour.actual)) {
+        if (key === 'reported_intervals') continue;
+        if (typeof value !== 'number') {
+          if (value == null) continue;
+          throw new Error('Invalid recovered energy value');
+        }
         const field = key as Exclude<keyof ActualRow, 'start_ts'>;
         if (target[field] == null && value != null) {
           target[field] = field.endsWith('soc') ? value : value / 4; used = true;
@@ -155,7 +161,20 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
       Object.values(hour.sources).forEach(id => sources.add(id));
     }
   }
+  const intervalFields = allocateReportedEnergy(actual, hours.flatMap(h => h.actual.reported_intervals ?? []), prior, end);
+  // An interval average can conflict with a fine-grained device reading. Use
+  // the existing independent other-meter baseline only for that estimated total.
+  for (const [at, fields] of intervalFields) {
+    fields.forEach(field => recovered(at, field));
+    if (!fields.has('total_load_kwh') || Date.parse(at) < start) continue;
+    const previous = baselineLoads.findIndex(row => row.start_ts === at);
+    if (previous >= 0) baselineLoads.splice(previous, 1);
+    const deviceEnergy = meters.get(at)?.device_energy_kwh ?? {};
+    const removed = [...memberIds].reduce((n, id) => n + (deviceEnergy[id] ?? 0), 0);
+    if (actual.get(at)!.total_load_kwh! - removed < -1e-9) baselineLoads.push({ start_ts: at,
+      kwh: Object.entries(deviceEnergy).reduce((n, [id, energy]) => n + (excluded.has(id) ? 0 : energy ?? 0), 0) });
+  }
   recovery.sources = [...sources].sort();
   return { ...rows, actual: [...actual.values()], deviceSlots: [...meters.values()], pool: [...pool.values()], outdoor: [...outdoor.values()], evInitial,
-    baselineLoads, recovery, hourlyFields: [...hourlyFields].map(([start_ts, fields]) => ({ start_ts, fields: [...fields] })) };
+    baselineLoads, recovery, intervalFields: [...intervalFields].map(([start_ts, fields]) => ({ start_ts, fields: [...fields] })), hourlyFields: [...hourlyFields].map(([start_ts, fields]) => ({ start_ts, fields: [...fields] })) };
 }
