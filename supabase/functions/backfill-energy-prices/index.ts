@@ -29,6 +29,7 @@ import {
 } from "../_shared/energy-supplier-pricing.ts";
 
 import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice } from "../_shared/historical-electricity-prices.ts";
+import { mapConcurrent } from "../_shared/map-concurrent.ts";
 import { roiSupplierVersion } from "../_shared/roi-supplier-terms.ts";
 import { actualContractPrices, type PriceInvoice } from '../_shared/actual-contract-prices.ts';
 
@@ -265,16 +266,16 @@ serve(async (req) => {
 
     if (period) {
       const starts = historicalPriceRange(period.start, period.end);
-      const archive: (ArchivedPrice & { source: string })[] = [];
-      for (let i = 0; i < starts.length; i += 672) {
-        const end = starts[i + 672] ?? period.end;
+      const windows = starts.filter((_, i) => i % 672 === 0);
+      const archive = (await mapConcurrent(windows, 3, async (start, i) => {
+        const end = windows[i + 1] ?? period.end;
         const { data, error } = await supabase.from("energy_optimisation_price_slots")
           .select("start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh,source")
           .eq("home_id", homeId).eq("customer_id", home.customer_id)
-          .gte("start_ts", starts[i]).lt("start_ts", end).order("start_ts").limit(672);
+          .gte("start_ts", start).lt("start_ts", end).order("start_ts").limit(672);
         if (error) throw error;
-        archive.push(...(data ?? []));
-      }
+        return (data ?? []) as (ArchivedPrice & { source: string })[];
+      })).flat();
       // Current-contract replay ignores archived all-in prices: they embed older
       // supplier charges. Historical spot/grid prices remain dated, and no rows are written.
       const versions = currentSupplier ? [roiSupplierVersion(supplierKey)] : supplierVersions;

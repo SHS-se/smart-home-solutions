@@ -28,7 +28,9 @@ sensor readings use explicit model assumptions: house battery 0%, EV 80% and poo
 temperature remain missing in the Actual graph.
 A failed period leaves navigation available. Each historical read covers at most seven
 elapsed days (672 quarters), matching the existing device-history RPC limit
-and staying below REST's row cap. Two windows load in parallel. Initial pool
+and staying below REST's row cap. Three readers load windows in parallel and start
+the next window as soon as a reader finishes. Archived price windows use the same
+bounded queue instead of serial queries. Initial pool
 and EV readings are fetched once before the entire selected period.
 
 ## Inputs and models
@@ -89,11 +91,12 @@ These are approximate initial states.
   fixed load and deducted from the native full-heating auxiliary draw. A
   full-power auxiliary model below60W fails.
 
-The isolated worker exposes only native `project`, never `solve`. It performs
-one reactive projection per quarter with carried battery/car/pool/heater state. The existing
-Wasm artifact is verified by SHA256. No optimisation, forecasting, fitting,
-database backfill, polling or planner dispatch happens. The working planner and its
-artifact remain unchanged.
+The isolated worker performs one reactive native `project` per baseline quarter,
+carrying battery/car/pool/heater state. Scheduler comparison also runs native
+`solve` over a rolling 72-hour forecast at each local day boundary and EV
+homecoming, then projects its chosen commands quarter by quarter. The Wasm
+artifact is verified by SHA256. These historical simulations do not dispatch
+commands or modify live planning.
 
 The Plan page, planner bench and ROI use `energy/charts/EnergyChart.tsx`.
 ROI displays the entire selected frame without day buttons. Controls and costs
@@ -166,6 +169,19 @@ or project models. The discarded Defaults-vs-SHS benchmark tab and ROI benchmark
 preview have been removed.
 
 ## Verification
+
+`deno task bench:roi` times a synthetic 31-day comparison with the real Wasm
+engine, separating scheduler solves from quarter projections. Pass a previous
+Wasm path to compare both speed and the checksum of all physical/financial
+outputs. Scheduler refinement reuses only an unchanged command prefix projected
+from the same problem. Battery allocation computes unchanged pool/EV service
+points once per quarter. Work accounting and search budgets remain unchanged;
+the final selected plan is still independently projected and certified in full.
+Steady heater heat is reused within thermostat searches, and calendar formatters
+are reused per timezone when preparing history and prices. In three local runs,
+the August fixture decreased from a mean 16.12 seconds to 14.68 seconds (9%),
+with identical output checksums. This measures calculation time, excluding network
+reads; real homes' solve time depends on their equipment and inputs.
 
 Unit tests cover calendar boundaries, bounded reads, continuous monthly state,
 auto-navigation, cache eviction, sensor gaps and stale-result cancellation. They compare

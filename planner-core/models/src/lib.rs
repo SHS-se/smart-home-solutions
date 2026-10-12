@@ -328,10 +328,19 @@ impl Heater {
         let end = store.step(water_c, full.heat_w, outdoor_c, seconds / 3600.0);
         let active_seconds = if permitted && stop_c.is_some_and(|stop| end > stop) {
             let stop = stop_c.unwrap();
+            // A steady response delivers the same heat at every trial duration.
+            // Keep the exact thermostat search, but do not re-run the heater
+            // transition 48 times when its heat cannot change.
+            let steady =
+                matches!(self.response, Response::Steady) || matches!(state, HeaterState::Steady);
             let (mut low, mut high) = (0.0, seconds);
             for _ in 0..48 {
                 let mid = (low + high) / 2.0;
-                let heat = self.transition(state, true, mid).heat_w;
+                let heat = if steady {
+                    full.heat_w
+                } else {
+                    self.transition(state, true, mid).heat_w
+                };
                 if store.step(water_c, heat, outdoor_c, mid / 3600.0) < stop {
                     low = mid;
                 } else {
@@ -416,6 +425,79 @@ mod tests {
             assert!((t.heat_w - v.heat_w).abs() < 1e-9);
             assert_eq!(t.next, v.next);
             assert_eq!(t.start, v.start);
+        }
+    }
+    #[test]
+    fn steady_thermostat_preserves_clipped_energy_cooling_and_start_identity() {
+        let store = ThermalStore {
+            capacity_kwh_per_c: 5.0,
+            loss: StandingLoss::Linear {
+                kw_per_c: 0.2,
+                surroundings_c: Some(20.0),
+            },
+        };
+        let startup = Response::Bergvarme {
+            startup: vec![
+                StartupPoint {
+                    elapsed_seconds: 0.0,
+                    electric_fraction: 0.5,
+                    heat_fraction: 0.0,
+                },
+                StartupPoint {
+                    elapsed_seconds: 900.0,
+                    electric_fraction: 1.0,
+                    heat_fraction: 1.0,
+                },
+            ],
+        };
+        for response in [Response::Steady, startup] {
+            let heater = Heater {
+                compressor_w: 3000.0,
+                auxiliary_w: 1000.0,
+                heat_w: 20000.0,
+                response,
+            };
+            for state in [
+                HeaterState::OffUnobserved,
+                HeaterState::Off { seconds: 123.0 },
+                HeaterState::Running { seconds: 300.0 },
+                HeaterState::Steady,
+            ] {
+                if !matches!(heater.response, Response::Steady) && state != HeaterState::Steady {
+                    continue;
+                }
+                let q = heater.pool_transition(
+                    &store,
+                    state,
+                    true,
+                    PoolConditions {
+                        water_c: 30.0,
+                        outdoor_c: 20.0,
+                        seconds: 900.0,
+                        stop_c: Some(30.1),
+                    },
+                );
+                // Heating rises 3.6 C/hour: it reaches the stop in 100 seconds,
+                // then cools for 800 seconds with all heater members off.
+                assert!((q.electric_w - 4000.0 / 9.0).abs() < 1e-9);
+                assert!((q.compressor_w - 3000.0 / 9.0).abs() < 1e-9);
+                assert!((q.auxiliary_w - 1000.0 / 9.0).abs() < 1e-9);
+                assert!((q.heat_w - 20000.0 / 9.0).abs() < 1e-9);
+                assert!((q.water_c - store.step(30.1, 0.0, 20.0, 800.0 / 3600.0)).abs() < 1e-10);
+                assert!(
+                    matches!(q.next, HeaterState::Off { seconds } if (seconds - 800.0).abs() < 1e-9)
+                );
+                assert_eq!(
+                    q.start,
+                    match state {
+                        HeaterState::OffUnobserved => Some(HeaterStart { off_seconds: None }),
+                        HeaterState::Off { seconds } => Some(HeaterStart {
+                            off_seconds: Some(seconds)
+                        }),
+                        _ => None,
+                    }
+                );
+            }
         }
     }
     #[test]

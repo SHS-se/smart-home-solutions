@@ -389,13 +389,39 @@ fn score(
     commands: Vec<Command>,
     work: &mut Work,
 ) -> Result<Candidate, EvaluationIssue> {
+    score_prefix(p, index, commands, work, None)
+}
+/// Reuse only the physically identical command prefix of this same problem.
+fn score_prefix(
+    p: &Problem,
+    index: &Index,
+    commands: Vec<Command>,
+    work: &mut Work,
+    reuse: Option<&Candidate>,
+) -> Result<Candidate, EvaluationIssue> {
     let n = p.slots.len() as u64;
     // Decline before projecting what could not also be accounted.
     if work.free() < n * work.unit_cost * 4 {
         return Err(EvaluationIssue::GrantUnavailable);
     }
-    let quarters =
-        physics::project_metered(p, &commands, work).ok_or(EvaluationIssue::Infeasible)?;
+    let quarters = physics::project_metered_prefix(
+        p,
+        &commands,
+        work,
+        reuse.map_or(&[], |base| {
+            let count = commands
+                .iter()
+                .zip(&base.commands)
+                .take_while(|(a, b)| {
+                    a == b
+                        && a.charge_limit_w.to_bits() == b.charge_limit_w.to_bits()
+                        && a.discharge_limit_w.to_bits() == b.discharge_limit_w.to_bits()
+                })
+                .count();
+            &base.quarters[..count]
+        }),
+    )
+    .ok_or(EvaluationIssue::Infeasible)?;
     if !work.spend(n * work.unit_cost) {
         return Err(EvaluationIssue::GrantUnavailable);
     }
@@ -458,7 +484,7 @@ fn adopt(
             continue;
         }
         scored += 1;
-        match score(p, index, commands, work) {
+        match score_prefix(p, index, commands, work, Some(best)) {
             Ok(c) if c.better(best) => {
                 improving.push((c.account.score_sek, k));
                 if leader
@@ -489,7 +515,7 @@ fn adopt(
             continue;
         };
         scored += 1;
-        match score(p, index, commands, work) {
+        match score_prefix(p, index, commands, work, Some(best)) {
             Ok(c) if c.better(best) => {
                 *best = c;
                 adopted += 1;
@@ -831,6 +857,56 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
 #[cfg(test)]
 mod move_resize_tests {
     use super::*;
+    #[test]
+    fn reused_prefix_preserves_complete_physics_account_and_work() {
+        let p = crate::witnesses::tests::problem(96);
+        let mut initial_work = work(&p);
+        let index = policy::index(&p, &mut initial_work).unwrap();
+        let commands = vec![
+            Command {
+                pool_on: false,
+                ev_amps: 0,
+                battery: Operation::SelfConsumption,
+                charge_limit_w: 4000.0,
+                discharge_limit_w: 4000.0,
+            };
+            p.slots.len()
+        ];
+        let base = score(&p, &index, commands.clone(), &mut work(&p))
+            .ok()
+            .unwrap();
+        for at in [0, 20, 95, 96] {
+            let mut edited = commands.clone();
+            if at < edited.len() {
+                edited[at].pool_on = true;
+            }
+            let mut full_work = work(&p);
+            let mut reused_work = work(&p);
+            let full = score(&p, &index, edited.clone(), &mut full_work)
+                .ok()
+                .unwrap();
+            let reused = score_prefix(&p, &index, edited, &mut reused_work, Some(&base))
+                .ok()
+                .unwrap();
+            assert_eq!(reused.quarters, full.quarters);
+            assert_eq!(
+                serde_json::to_value(&reused.account).unwrap(),
+                serde_json::to_value(&full.account).unwrap()
+            );
+            assert_eq!(reused_work.used, full_work.used);
+            assert_eq!(reused_work.evaluations, full_work.evaluations);
+        }
+        let mut failed = commands;
+        failed[95].ev_amps = 1;
+        assert!(matches!(
+            score_prefix(&p, &index, failed.clone(), &mut work(&p), Some(&base)),
+            Err(EvaluationIssue::Infeasible)
+        ));
+        assert!(matches!(
+            score(&p, &index, failed, &mut work(&p)),
+            Err(EvaluationIssue::Infeasible)
+        ));
+    }
     fn work(p: &Problem) -> Work {
         Work {
             used: 0,

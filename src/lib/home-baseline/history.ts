@@ -5,6 +5,7 @@ import { prepareHomeBaseline, QUARTER_MS, type ActualRow, type DeviceRow, type D
 import { historyWindows, type BaselineAnchor, type BaselinePeriod } from './period';
 import { mergeHourlyHistory, type RecoveredHour } from './recovered-history';
 import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supplier-terms';
+import { mapConcurrent } from '../../../supabase/functions/_shared/map-concurrent';
 
 import type { SolarHour, SolarProfile } from './solar';
 import type { PoolSeed } from './pool-carry';
@@ -70,16 +71,11 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
     ]);
     return { actual, deviceSlots, outdoor, pool, recovered, solarHours };
   };
-  const loadWindows = async () => {
-    const batches: Awaited<ReturnType<typeof loadWindow>>[] = [];
-    for (let i = 0; i < windows.length; i += 2) {
-      signal.throwIfAborted();
-      batches.push(...await Promise.all(windows.slice(i, i + 2).map((w, offset) => loadWindow(w, i + offset === 0))));
-    }
-    return batches;
-  };
   const [batches, devices, pool, evInitial, pricing] = await Promise.all([
-    loadWindows(),
+    mapConcurrent(windows, 3, (w, i) => {
+      signal.throwIfAborted();
+      return loadWindow(w, i === 0);
+    }),
     read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name,category')
       .abortSignal(signal)),
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),

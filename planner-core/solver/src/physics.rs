@@ -240,6 +240,8 @@ pub(crate) struct CarriedQuarter {
     pub charge: f64,
     pub discharge: f64,
     pub net: f64,
+    // Retain the separate flow for native parity diagnostics.
+    #[cfg(test)]
     pub curtailed: f64,
     /// Grid cost and battery wear.
     pub cost: f64,
@@ -255,28 +257,46 @@ pub(crate) fn carry(
 ) -> CarriedQuarter {
     let hours = projected_hours(s);
     let (charge, discharge) = battery_flows(p, command, load, battery_kwh, hours);
-    let (net, curtailed) = grid_flow(p, load.net_w(), load.solar_w, charge, discharge);
+    let (net, _curtailed) = grid_flow(p, load.net_w(), load.solar_w, charge, discharge);
     CarriedQuarter {
         charge,
         discharge,
         net,
-        curtailed,
+        #[cfg(test)]
+        curtailed: _curtailed,
         cost: grid_cost(s, net, hours) + discharge * hours / 1000.0 * p.limits.wear_per_kwh,
         battery_kwh: p.battery.as_ref().map_or(battery_kwh, |battery| {
             battery.step(battery_kwh, charge, discharge, hours)
         }),
     }
 }
+#[cfg(test)]
 pub(crate) fn projection(p: &Problem, commands: &[Command]) -> Result<Vec<Quarter>, String> {
+    projection_prefix(p, commands, &[])
+}
+fn projection_prefix(
+    p: &Problem,
+    commands: &[Command],
+    prefix: &[Quarter],
+) -> Result<Vec<Quarter>, String> {
     if commands.len() != p.slots.len() {
         return Err("projection_coverage".into());
     }
-    let mut state = initial(p);
-    commands
-        .iter()
-        .enumerate()
-        .map(|(i, c)| step(p, i, c, &mut state))
-        .collect()
+    let mut state = prefix.last().map_or_else(
+        || initial(p),
+        |q| State {
+            battery: q.battery_kwh.unwrap_or(0.0),
+            ev: q.ev_kwh.unwrap_or(0.0),
+            pool: q.pool_c.unwrap_or(0.0),
+            heater: q.heater_state.unwrap_or(HeaterState::OffUnobserved),
+        },
+    );
+    let mut quarters = Vec::with_capacity(commands.len());
+    quarters.extend_from_slice(prefix);
+    for (i, c) in commands.iter().enumerate().skip(prefix.len()) {
+        quarters.push(step(p, i, c, &mut state)?);
+    }
+    Ok(quarters)
 }
 
 /// Count whole-vector reconstruction, physical/model transitions and buffer allocation.
@@ -285,11 +305,21 @@ pub(crate) fn project_metered(
     commands: &[Command],
     work: &mut Work,
 ) -> Option<Vec<Quarter>> {
+    project_metered_prefix(p, commands, work, &[])
+}
+/// The prefix was already projected from this problem with identical commands.
+/// Charge the same complete evaluation to keep search budgets and ordering unchanged.
+pub(crate) fn project_metered_prefix(
+    p: &Problem,
+    commands: &[Command],
+    work: &mut Work,
+    prefix: &[Quarter],
+) -> Option<Vec<Quarter>> {
     if !work.spend(p.slots.len() as u64 * work.unit_cost * 2) {
         return None;
     }
     work.evaluations += 1;
-    projection(p, commands).ok()
+    projection_prefix(p, commands, prefix).ok()
 }
 
 pub(crate) fn step(

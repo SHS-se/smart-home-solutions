@@ -131,26 +131,21 @@ impl Context<'_> {
         let q = physics::carry(self.p, &self.p.slots[i], c, self.demand(i), kwh);
         physics::within_grid(self.p, q.net).then_some(q)
     }
-    fn value(&self, i: usize, q: &physics::CarriedQuarter) -> f64 {
-        let mut v = self.planned[i].clone();
-        v.charge_w = q.charge;
-        v.discharge_w = q.discharge;
-        v.net_w = q.net;
-        v.curtailed_w = q.curtailed;
-        v.battery_kwh = Some(q.battery_kwh);
+    // Battery-only alternatives retain the same pool/EV service predicates.
+    // Compute those once per quarter instead of cloning/scoring every inventory move.
+    fn service_points(&self, i: usize) -> i32 {
         let before = if i == 0 {
             self.p.initial.pool_c
         } else {
             self.planned[i - 1].pool_c
         };
-        // Battery refinements retain the same service accounting.
-        f64::from(policy::guidance_quarter(
+        policy::guidance_quarter(
             self.p,
             self.index,
             i,
-            &v,
+            &self.planned[i],
             before.unwrap_or(0.0),
-        )) - q.cost
+        )
     }
     fn bound(&self, unit: u64) -> Option<u64> {
         let p = self.p;
@@ -214,13 +209,19 @@ impl Values {
         let share = (kwh - axis[lower]) / (axis[upper] - axis[lower]);
         row[lower] + share * (row[upper] - row[lower])
     }
-    fn best(&self, ctx: &Context, i: usize, kwh: f64) -> Option<(Command, f64, f64)> {
+    fn best(
+        &self,
+        ctx: &Context,
+        i: usize,
+        kwh: f64,
+        service_points: i32,
+    ) -> Option<(Command, f64, f64)> {
         let mut best: Option<(Command, f64, f64)> = None;
         for mut c in ctx.options(i, kwh) {
             let Some(q) = ctx.carry(i, kwh, &c) else {
                 continue;
             };
-            let value = ctx.value(i, &q) + self.at(ctx, i + 1, q.battery_kwh);
+            let value = (f64::from(service_points) - q.cost) + self.at(ctx, i + 1, q.battery_kwh);
             if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
                 if !physics::locked(ctx.p, i)
                     && matches!(c.battery, Operation::GridCharge | Operation::Export)
@@ -396,8 +397,9 @@ pub(crate) fn allocate(
         values.rows[n][g] = policy::battery_credit(p, e);
     }
     for i in (0..n).rev() {
+        let points = ctx.service_points(i);
         for (g, &e) in ctx.axes[i].iter().enumerate() {
-            if let Some((_, _, value)) = values.best(&ctx, i, e) {
+            if let Some((_, _, value)) = values.best(&ctx, i, e, points) {
                 values.rows[i][g] = value;
             }
         }
@@ -405,7 +407,7 @@ pub(crate) fn allocate(
     let mut kwh = p.initial.battery_kwh.unwrap();
     let mut proposal = Vec::with_capacity(n);
     for i in 0..n {
-        let (c, end, _) = values.best(&ctx, i, kwh)?;
+        let (c, end, _) = values.best(&ctx, i, kwh, ctx.service_points(i))?;
         proposal.push(c);
         kwh = end;
     }

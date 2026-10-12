@@ -1,7 +1,7 @@
 {
   "abi": 8,
-  "wasm_sha256": "fc5fba81c5d09455b1b6548a82e1d49623c9139fa9e15a609a61db3954954632",
-  "source_sha256": "ad153c7948e75875dc6de44b77c335081d0befc79bcd0f6a690b8c49a76272d5",
+  "wasm_sha256": "e08a08fda22331a4b6dc8ae2c3e8372d7ff5a55376e06f53bec0a215d2fbc2ef",
+  "source_sha256": "7642bdafa456206d753e6eef74bb875011db0a20fb32e1de679e82cf5762862d",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -55,6 +55,7 @@
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/pool-devices.ts",
-    "supabase/functions/_shared/rules-planner.ts"
+    "supabase/functions/_shared/rules-planner.ts",
+    "supabase/functions/_shared/time-zone-formatter.ts"
   ]
 }

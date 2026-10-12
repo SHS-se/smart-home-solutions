@@ -19,6 +19,7 @@ export const EXPORT_SCHEDULE = "swedish_winter_weekday_06_22_v1";
 export class GridTariffError extends Error {}
 
 import type { FusePeriod } from "./home-fuse-timeline.ts";
+import { timeZoneFormatter } from './time-zone-formatter.ts';
 
 export interface GridPriceConfiguration {
   profile_id: string;
@@ -152,16 +153,17 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sun: 6,
 };
 
-export const localMoment = (when: Date, timeZone: string): LocalMoment => {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
+const momentFormatter = timeZoneFormatter("en-GB", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     weekday: "short",
     hour12: false,
-  }).formatToParts(when);
+});
+
+export const localMoment = (when: Date, timeZone: string): LocalMoment => {
+  const parts = momentFormatter(timeZone).formatToParts(when);
   const value = (type: string) =>
     parts.find((part) => part.type === type)?.value ?? "";
   const weekday = WEEKDAY_INDEX[value("weekday")];
