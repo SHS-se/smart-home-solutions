@@ -41,7 +41,7 @@ const catalogue = (
   overrides: Partial<GridPriceConfiguration>,
 ): GridTariffCatalogue => ({
   timezone: fixture.timezone,
-  configuration: { ...fixture.base_configuration, ...overrides },
+  configuration: { ...fixture.base_configuration, ...overrides, fuse_periods: overrides.fuse_periods ?? [{ valid_from: null, fuse_a: overrides.fuse_a ?? fixture.base_configuration.fuse_a! }] },
   missing_inputs: [],
   profiles: [fixture.profile],
 });

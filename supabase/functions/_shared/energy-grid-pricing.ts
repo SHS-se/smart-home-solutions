@@ -18,16 +18,30 @@ export const EXPORT_SCHEDULE = "swedish_winter_weekday_06_22_v1";
 
 export class GridTariffError extends Error {}
 
+import type { FusePeriod } from "./home-fuse-timeline.ts";
+
 export interface GridPriceConfiguration {
   profile_id: string;
   connection_type: "three_phase" | "single_phase" | "apartment";
   fuse_a?: number | null;
+  fuse_periods: FusePeriod[];
   apartment_band?: string | null;
   grid_area?: string | null;
   production_enabled?: boolean | null;
   energy_tax_reduced?: boolean | null;
   include_vat?: boolean | null;
   export_vat_registered?: boolean | null;
+}
+
+export function gridConfigurationOn(configuration: GridPriceConfiguration, date: string): GridPriceConfiguration {
+  if (configuration.connection_type === "apartment") return configuration;
+  const periods = configuration.fuse_periods;
+  if (!Array.isArray(periods) || !periods.length || periods[0].valid_from !== null) {
+    throw new GridTariffError("Fuse history baseline is missing");
+  }
+  const period = [...periods].reverse().find((value) => value.valid_from === null || value.valid_from <= date);
+  if (!period) throw new GridTariffError("Fuse history does not cover the date");
+  return { ...configuration, fuse_a: period.fuse_a };
 }
 
 export interface GridTariffCatalogue {
@@ -312,7 +326,7 @@ export function currentGridPrices(
   }`;
   const resolved = resolveTariff(catalogue, localDate);
   if (resolved === null) return null;
-  const configuration = catalogue.configuration as GridPriceConfiguration;
+  const configuration = gridConfigurationOn(catalogue.configuration as GridPriceConfiguration, localDate);
 
   const { plan, selectorValue } = planFor(resolved.definition, configuration);
   const transfer = transferRate(plan, selectorValue);

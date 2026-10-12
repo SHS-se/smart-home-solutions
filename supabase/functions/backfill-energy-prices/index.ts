@@ -1,3 +1,4 @@
+import { homeFusePeriods } from "../_shared/home-fuse-timeline.ts";
 // Price a home's already-recorded history, from the portal.
 //
 // ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7.6. The integration also sends
@@ -232,10 +233,14 @@ serve(async (req) => {
       return json({ error: "missing_inputs", missing_inputs: ["main_fuse_a"] }, 422);
     }
 
+    const { data: fuseChanges, error: fuseError } = await supabase.from("home_fuse_changes")
+      .select("changed_on, previous_fuse_a").eq("home_id", homeId).order("changed_on");
+    if (fuseError) throw fuseError;
     const configuration: GridPriceConfiguration = {
       profile_id: settings.profile_id,
       connection_type: "three_phase",
       fuse_a: fuse,
+      fuse_periods: homeFusePeriods(fuse, fuseChanges ?? []),
       grid_area: settings.grid_area,
       production_enabled: productionEnabled,
       energy_tax_reduced: settings.energy_tax_reduced,

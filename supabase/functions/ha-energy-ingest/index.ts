@@ -381,7 +381,7 @@ serve(withTrafficMetrics("ha-energy-ingest", async (req, traffic) => {
       if (
         calculation?.currency !== "SEK" ||
         calculation?.calculation_model !== "se_grid_v1" ||
-        calculation?.calculation_version !== 2
+        calculation?.calculation_version !== 3
       ) {
         return json(
           { error: "unsupported_calculation", detail: billingMonth },
@@ -479,8 +479,7 @@ serve(withTrafficMetrics("ha-energy-ingest", async (req, traffic) => {
           !isValidDate(periodEnd) ||
           periodStart < billingMonth ||
           periodEnd < periodStart ||
-          periodStart < coverageStart ||
-          periodEnd > coverageEnd ||
+          (category !== "fixed_fee" && (periodStart < coverageStart || periodEnd > coverageEnd)) ||
           !periodStart.startsWith(`${monthPrefix}-`) ||
           !periodEnd.startsWith(`${monthPrefix}-`) ||
           !REVISION_RE.test(tariffRevision) ||
@@ -526,7 +525,7 @@ serve(withTrafficMetrics("ha-energy-ingest", async (req, traffic) => {
         missing_days: [...missingDays].sort(),
         currency: "SEK",
         calculation_model: "se_grid_v1",
-        calculation_version: 2,
+        calculation_version: 3,
         tariff_revisions: calculation.tariff_revisions,
         input_hash: calculation.input_hash,
         grid_import_kwh: round(gridImportKwh, 3),

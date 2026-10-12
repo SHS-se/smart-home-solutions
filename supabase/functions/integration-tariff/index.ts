@@ -11,6 +11,8 @@ import {
   haRequestId,
 } from "../_shared/ha-api-contract.ts";
 
+import { homeFusePeriods } from "../_shared/home-fuse-timeline.ts";
+
 const VALID_FUSES = new Set([16, 20, 25, 35, 50, 63]);
 
 const answerValue = (
@@ -56,8 +58,8 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
 
     if (!settings) {
       return json({
-        schema_version: 2,
-        calculation_version: 2,
+        schema_version: 3,
+        calculation_version: 3,
         timezone: "Europe/Stockholm",
         configuration: null,
         missing_inputs: ["central_tariff_settings"],
@@ -148,6 +150,13 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
       }
     }
 
+    const { data: fuseChanges, error: fuseError } = await supabase
+      .from("home_fuse_changes")
+      .select("changed_on, previous_fuse_a")
+      .eq("home_id", auth.homeId)
+      .order("changed_on");
+    if (fuseError) return json({ error: "tariff_lookup_failed" }, 500);
+
     const missingInputs: string[] = [];
     if (mainFuseA === null) missingInputs.push("main_fuse_a");
     if (productionEnabled === null) missingInputs.push("has_solar");
@@ -161,14 +170,15 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
     }));
 
     return json({
-      schema_version: 2,
-      calculation_version: 2,
+      schema_version: 3,
+      calculation_version: 3,
       timezone: "Europe/Stockholm",
       configuration: missingInputs.length === 0
         ? {
           profile_id: settings.profile_id,
           connection_type: "three_phase",
           fuse_a: mainFuseA,
+          fuse_periods: homeFusePeriods(mainFuseA!, fuseChanges ?? []),
           grid_area: settings.grid_area,
           production_enabled: productionEnabled,
           energy_tax_reduced: settings.energy_tax_reduced,

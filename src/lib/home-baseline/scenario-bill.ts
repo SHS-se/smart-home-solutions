@@ -1,4 +1,4 @@
-import { localMoment, resolveTariff, type GridTariffCatalogue } from '../../../supabase/functions/_shared/energy-grid-pricing.ts';
+import { gridConfigurationOn, localMoment, resolveTariff, type GridTariffCatalogue } from '../../../supabase/functions/_shared/energy-grid-pricing.ts';
 import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supplier-terms.ts';
 import type { ElectricityLedger } from './ledger.ts';
@@ -15,22 +15,27 @@ export function scenarioBill(ledger: ElectricityLedger, start: string, end: stri
   let coverage = 0;
   const hours = new Map<number, number>();
   importW.forEach((w, i) => { const at = Date.parse(start) + i * 900_000, hour = Math.floor(at / 3_600_000) * 3_600_000; hours.set(hour, (hours.get(hour) ?? 0) + w / 4000); });
-  const groups = new Map<string, { definition: Record<string, unknown>; hours: { at: number; kwh: number }[]; count: number; monthMs: number }>();
+  const groups = new Map<string, { definition: Record<string, unknown>; hours: { at: number; kwh: number }[]; count: number; monthMs: number; fixedSek: number }>();
   for (let i = 0; i < importW.length; i++) {
     const at = Date.parse(start) + i * 900_000, local = localMoment(new Date(at), catalogue.timezone ?? timeZone);
     const date = `${local.year}-${String(local.month).padStart(2, '0')}-${String(local.day).padStart(2, '0')}`;
     const tariff = resolveTariff(catalogue, date); if (!tariff) throw new Error(`Missing monthly grid tariff at ${date}`);
     const key = `${local.year}-${local.month}:${tariff.revision}`;
-    if (!groups.has(key)) { const bounds = homeMonthBounds(new Date(at).toISOString(), 0, timeZone); groups.set(key, { definition: tariff.definition, hours: [], count: 0, monthMs: bounds.endMs - bounds.startMs }); }
-    const group = groups.get(key)!; coverage += 900_000 / group.monthMs; group.count++;
+    if (!groups.has(key)) { const bounds = homeMonthBounds(new Date(at).toISOString(), 0, timeZone); groups.set(key, { definition: tariff.definition, hours: [], count: 0, monthMs: bounds.endMs - bounds.startMs, fixedSek: 0 }); }
+    const group = groups.get(key)!;
+    const datedConfiguration = gridConfigurationOn(configuration, date);
+    const plan = object(object(tariff.definition.plans)[datedConfiguration.connection_type]);
+    const selector = String(datedConfiguration[plan.selector as 'fuse_a' | 'apartment_band']);
+    const vat = datedConfiguration.include_vat ? 1 + number(tariff.definition.vat_rate) : 1;
+    group.fixedSek += number(object(plan.fixed_monthly_sek_ex_vat)[selector]) * vat * 900_000 / group.monthMs;
+    coverage += 900_000 / group.monthMs; group.count++;
     if (i === 0 || at % 3_600_000 === 0) group.hours.push({ at: Math.floor(at / 3_600_000) * 3_600_000, kwh: hours.get(Math.floor(at / 3_600_000) * 3_600_000)! });
   }
   let gridFixedSek = 0, gridPeakSek = 0, peakKw = 0;
   for (const group of groups.values()) {
     const plan = object(object(group.definition.plans)[configuration.connection_type]);
-    const selector = String(configuration[plan.selector as 'fuse_a' | 'apartment_band']);
     const vat = configuration.include_vat ? 1 + number(group.definition.vat_rate) : 1;
-    gridFixedSek += number(object(plan.fixed_monthly_sek_ex_vat)[selector]) * vat * group.count * 900_000 / group.monthMs;
+    gridFixedSek += group.fixedSek;
     if (plan.demand == null) continue;
     const demand = object(plan.demand), topN = number(demand.top_n), nightStart = number(demand.night_start_hour), nightEnd = number(demand.night_end_hour), factor = number(demand.night_factor);
     if (!Number.isInteger(topN) || topN < 1 || typeof demand.distinct_local_days !== 'boolean' || !Number.isInteger(nightStart) || nightStart < 0 || nightStart > 23 || !Number.isInteger(nightEnd) || nightEnd < 0 || nightEnd > 23 || factor < 0 || factor > 1) throw new Error('Invalid grid peak tariff rule');

@@ -795,8 +795,8 @@ const EnergyHistoryOverview: React.FC<EnergyHistoryOverviewProps> = ({
                 <AlertDescription className="space-y-2">
                   <p>
                     {t(
-                      'Avvikelsen överstiger 5 % och 100 kr under följande månader. Den vanligaste orsaken är att mätdata kommer från växelriktaren i stället för elmätaren.',
-                      'The difference exceeds both 5% and 100 kr in the months below. The most common cause is meter data coming from the inverter rather than the electricity meter.',
+                      'Avvikelsen överstiger 5 % och 100 kr under följande månader. Kontrollera historisk säkringsstorlek, mätdata och fakturans avgifter.',
+                      'The difference exceeds both 5% and 100 kr in the months below. Check historical fuse sizes, meter coverage, and invoice charges.',
                     )}
                   </p>
                   <ul className="list-inside list-disc">
