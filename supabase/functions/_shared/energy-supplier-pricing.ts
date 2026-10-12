@@ -62,17 +62,22 @@ export function parseSpotPriceIntervals(value: unknown): SpotPriceInterval[] {
   const intervals = value.map((row, index) => {
     const interval = row as SpotPriceInterval;
     const start = Date.parse(interval?.time_start);
-    const end = Date.parse(interval?.time_end);
+    // The feed publishes one quote per quarter. Adjacent quote starts own the
+    // boundary: local-clock end labels can be wrong over the repeated DST hour
+    // (2025-10-26 SE3 labels 02:45 +02:00 -> 03:00 +01:00).
+    const next = value[index + 1] as SpotPriceInterval | undefined;
+    const boundary = next?.time_start ?? interval?.time_end;
+    const end = Date.parse(boundary);
     if (
       !finite(interval?.SEK_per_kWh) || !Number.isFinite(start) ||
       !Number.isFinite(end) || end <= start || end - start !== 15 * 60_000
     ) {
       throw new Error(`invalid spot interval at index ${index}`);
     }
-    return interval;
+    return { ...interval, time_end: boundary };
   });
   for (let index = 1; index < intervals.length; index += 1) {
-    if (intervals[index - 1].time_end !== intervals[index].time_start) {
+    if (Date.parse(intervals[index - 1].time_end) !== Date.parse(intervals[index].time_start)) {
       throw new Error(`spot intervals are not contiguous at index ${index}`);
     }
   }
