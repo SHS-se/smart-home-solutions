@@ -181,8 +181,8 @@ never written into measured energy history or the issued-forecast archive.
 Both the baseline and scheduler use the same reconstructed supply. Actual
 invoices and measured graphs remain unchanged. Within and after the installation
 month, models continue to use recorded production, including genuine zeros.
-Owner-stated months are stored in `energy_roi_installations` and shown under
-Actual. They do not disable hypothetical equipment before installation.
+Owner-stated months are stored in `energy_roi_installations` and shown beneath
+the month period in the comparison table. They do not disable hypothetical equipment before installation.
 
 Preparation is explicit and service-owned:
 

@@ -284,7 +284,9 @@ test.describe('requesting a replan', () => {
     expect(history.windows.length).toBe(before);
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     const row = page.getByTestId('scheduler-month-2026-09');
-    await expect(row.locator('td').nth(1).getByTestId('actual-installations')).toContainText('Bergvärme');
+    await expect(row.locator('th').getByTestId('actual-installations')).toContainText('Bergvärme');
+    await expect(row.locator('td').getByTestId('actual-installations')).toHaveCount(0);
+    await expect(page.getByTestId('scheduler-months').locator('thead th').first()).toHaveCSS('text-align','left');
     await row.getByTestId('actual-installations').locator('summary').click();
     await expect(row.getByTestId('actual-installations')).toContainText(/ground-source heat pump|Bergvärmen/);
     await expect(page.getByTestId('comparison-evidence')).toHaveCount(0);
@@ -370,10 +372,10 @@ test.describe('requesting a replan', () => {
       await expect(page.getByTestId('baseline-models')).toContainText(/Battery|Batteri/);
       await expect(page.getByTestId('baseline-assumptions')).toHaveCount(0);
       if (month === '05') {
-        const actual = row.locator('td').nth(1);
-        await expect(actual.getByTestId('actual-installations')).toContainText(/Solar|Solceller/);
-        await actual.getByTestId('actual-installations').locator('summary').click();
-        await expect(actual.getByTestId('actual-installations')).toContainText(/battery was installed|Hembatteriet installerades/);
+        const period = row.locator('th');
+        await expect(period.getByTestId('actual-installations')).toContainText(/Solar|Solceller/);
+        await period.getByTestId('actual-installations').locator('summary').click();
+        await expect(period.getByTestId('actual-installations')).toContainText(/battery was installed|Hembatteriet installerades/);
       } else await expect(row.getByTestId('actual-installations')).toHaveCount(0);
       await page.getByTestId('baseline-details').locator('summary').first().click();
     }

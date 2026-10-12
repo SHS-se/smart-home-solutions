@@ -15,17 +15,15 @@ export default function SchedulerMonthlySavings({ state, report, installations, 
     [value.baselineSek, value.actualSek, value.schedulerSek, value.vsBaselineSek, value.vsActualSek];
   return <div className="overflow-x-auto" data-testid="scheduler-monthly"><table className="w-full text-right text-sm tabular-nums" data-testid="scheduler-months">
     <caption className="sr-only">{t('Månatlig jämförelse och besparing', 'Monthly comparison and savings')}</caption>
-    <thead><tr className="border-b">{[t('Månad', 'Month'), t('Basmodell', 'Baseline model'), t('Faktiskt fakturerat', 'Actual'), 'SHS Energy Scheduler', t('Besparing mot basmodell', 'Savings vs Baseline'), t('Besparing mot faktiskt', 'Savings vs Actual'), ''].map((label, i) => <th scope="col" className="whitespace-nowrap p-2 font-medium" key={i}>{label}</th>)}</tr></thead>
+    <thead><tr className="border-b">{[t('Månad', 'Month'), t('Basmodell', 'Baseline model'), t('Faktiskt fakturerat', 'Actual'), 'SHS Energy Scheduler', t('Besparing mot basmodell', 'Savings vs Baseline'), t('Besparing mot faktiskt', 'Savings vs Actual'), ''].map((label, i) => <th scope="col" className={`whitespace-nowrap p-2 font-medium ${i === 0 ? 'text-left' : 'text-right'}`} key={i}>{label}</th>)}</tr></thead>
     <tbody>{state.rows.map(row => {
       const value = report?.rows.find(value => value.ledger.month === row.month);
       return <tr key={row.month} data-testid={`scheduler-month-${row.month}`} className="border-b align-top">
         <th scope="row" className="p-2 font-normal text-left whitespace-nowrap">{row.month}
-          {row.status === 'done' && <>
-            {row.ledger.coverage < 1 && <p className="text-xs text-muted-foreground">{t('till', 'through')} {formatHomeDateTime(row.ledger.end, row.ledger.timeZone)}</p>}
-
-          </>}
+          {row.status === 'done' && row.ledger.coverage < 1 && <p className="text-xs text-muted-foreground">{t('till', 'through')} {formatHomeDateTime(row.ledger.end, row.ledger.timeZone)}</p>}
+          <ActualInstallations events={installations.filter(event => event.installed_month === row.month)} />
         </th>
-        {row.status === 'done' && value ? <>{numbers(value).map((amount, i) => <td className="whitespace-nowrap p-2" key={i}><span data-testid="roi-amount">{sek(amount)}</span>{i === 1 && <ActualInstallations events={installations.filter(event => event.installed_month === row.month)} />}</td>)}
+        {row.status === 'done' && value ? <>{numbers(value).map((amount, i) => <td className="whitespace-nowrap p-2" key={i}><span data-testid="roi-amount">{sek(amount)}</span></td>)}
           <td className="p-1"><Button variant="ghost" className="min-h-11" onClick={() => onOpenMonth(row.month)} aria-label={`${t('Visa graf', 'View graph')} ${row.month}`}>{t('Graf', 'Graph')}</Button></td></>
           : <td colSpan={6} className={`p-2 text-left ${row.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{row.status === 'failed' ? row.error
             : row.status === 'running' ? t('Beräknar…', 'Calculating…') : row.status === 'queued' ? t('Väntar…', 'Waiting…')
