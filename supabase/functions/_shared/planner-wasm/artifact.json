@@ -1,7 +1,7 @@
 {
   "abi": 8,
-  "wasm_sha256": "e08a08fda22331a4b6dc8ae2c3e8372d7ff5a55376e06f53bec0a215d2fbc2ef",
-  "source_sha256": "7642bdafa456206d753e6eef74bb875011db0a20fb32e1de679e82cf5762862d",
+  "wasm_sha256": "49e08113585a51adbd9534c6853d122960979b997a5d045e2b0553716014d083",
+  "source_sha256": "3c3a69782a72a29501b3f7eece8936529368cf91d9ae85245fbfb741557501af",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -25,6 +25,7 @@
     "planner-core/solver/src/move_resize.rs",
     "planner-core/solver/src/opportunity.rs",
     "planner-core/solver/src/physics.rs",
+    "planner-core/solver/src/physics/pool_memo.rs",
     "planner-core/solver/src/policy.rs",
     "planner-core/solver/src/witnesses.rs",
     "rust-toolchain.toml",

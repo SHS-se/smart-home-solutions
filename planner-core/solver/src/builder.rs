@@ -383,6 +383,39 @@ enum EvaluationIssue {
 /// part of a score: the audit of every family is a source of proposals
 /// (`improve`) and the selected plan's report, not a cost of each candidate.
 /// Economic witnesses propose improvements; they never change this account.
+struct CandidateScorer<'p> {
+    problem: &'p Problem,
+    index: &'p Index,
+    projector: physics::RefinementProjector<'p>,
+}
+impl<'p> CandidateScorer<'p> {
+    fn new(problem: &'p Problem, index: &'p Index) -> Self {
+        Self {
+            problem,
+            index,
+            projector: physics::RefinementProjector::new(problem),
+        }
+    }
+    fn score(
+        &mut self,
+        commands: Vec<Command>,
+        work: &mut Work,
+        reuse: Option<&Candidate>,
+    ) -> Result<Candidate, EvaluationIssue> {
+        score_projection(
+            self.problem,
+            self.index,
+            commands,
+            work,
+            reuse,
+            |commands, work, prefix| {
+                self.projector
+                    .project_metered_prefix(commands, work, prefix)
+            },
+        )
+    }
+}
+#[cfg(test)]
 fn score(
     p: &Problem,
     index: &Index,
@@ -391,7 +424,7 @@ fn score(
 ) -> Result<Candidate, EvaluationIssue> {
     score_prefix(p, index, commands, work, None)
 }
-/// Reuse only the physically identical command prefix of this same problem.
+#[cfg(test)]
 fn score_prefix(
     p: &Problem,
     index: &Index,
@@ -399,13 +432,25 @@ fn score_prefix(
     work: &mut Work,
     reuse: Option<&Candidate>,
 ) -> Result<Candidate, EvaluationIssue> {
+    score_projection(p, index, commands, work, reuse, |commands, work, prefix| {
+        physics::project_metered_prefix(p, commands, work, prefix)
+    })
+}
+/// Reuse only the physically identical command prefix of this same problem.
+fn score_projection(
+    p: &Problem,
+    index: &Index,
+    commands: Vec<Command>,
+    work: &mut Work,
+    reuse: Option<&Candidate>,
+    project: impl FnOnce(&[Command], &mut Work, &[Quarter]) -> Option<Vec<Quarter>>,
+) -> Result<Candidate, EvaluationIssue> {
     let n = p.slots.len() as u64;
     // Decline before projecting what could not also be accounted.
     if work.free() < n * work.unit_cost * 4 {
         return Err(EvaluationIssue::GrantUnavailable);
     }
-    let quarters = physics::project_metered_prefix(
-        p,
+    let quarters = project(
         &commands,
         work,
         reuse.map_or(&[], |base| {
@@ -466,8 +511,7 @@ fn carry(base: &[Command], proposal: &[Command], onto: &[Command]) -> Option<Vec
 /// takes every independent improvement it found. Returns how many proposals
 /// were scored and how many adopted.
 fn adopt(
-    p: &Problem,
-    index: &Index,
+    scorer: &mut CandidateScorer,
     best: &mut Candidate,
     count: usize,
     propose: impl Fn(&[Command], usize) -> Vec<Command>,
@@ -484,7 +528,7 @@ fn adopt(
             continue;
         }
         scored += 1;
-        match score_prefix(p, index, commands, work, Some(best)) {
+        match scorer.score(commands, work, Some(best)) {
             Ok(c) if c.better(best) => {
                 improving.push((c.account.score_sek, k));
                 if leader
@@ -515,7 +559,7 @@ fn adopt(
             continue;
         };
         scored += 1;
-        match score_prefix(p, index, commands, work, Some(best)) {
+        match scorer.score(commands, work, Some(best)) {
             Ok(c) if c.better(best) => {
                 *best = c;
                 adopted += 1;
@@ -533,12 +577,13 @@ fn adopt(
 /// is scored exactly, so whatever is adopted is an improvement. Returns the
 /// incumbent's audit of every family when the climb ended on one.
 fn improve(
-    p: &Problem,
-    index: &Index,
+    scorer: &mut CandidateScorer,
     mut best: Candidate,
     work: &mut Work,
     declined: &mut bool,
 ) -> (Candidate, Option<WitnessAudit>) {
+    let p = scorer.problem;
+    let index = scorer.index;
     if p.recipe.repair_trials == 0 {
         return (best, None);
     }
@@ -552,7 +597,7 @@ fn improve(
                 if let Some(next) =
                     battery_schedule::allocate(p, index, &best.commands, &best.quarters, work)
                 {
-                    match score(p, index, next.commands.clone(), work) {
+                    match scorer.score(next.commands.clone(), work, None) {
                         Ok(c) if c.better(&best) => best = c,
                         Ok(_) | Err(EvaluationIssue::Infeasible) => {}
                         Err(EvaluationIssue::GrantUnavailable) => {
@@ -593,7 +638,7 @@ fn improve(
                         Err(battery_schedule::ResponseIssue::GrantUnavailable) => break,
                     };
                     work.move_resize_trials += 1;
-                    match score(p, index, commands, work) {
+                    match scorer.score(commands, work, None) {
                         Ok(c) if c.better(&best) => {
                             best = c;
                             joint_adopted += 1;
@@ -606,8 +651,7 @@ fn improve(
             let edits = edits.singles;
             let count = edits.len().min(p.recipe.repair_trials.saturating_mul(32));
             let (scored, adopted) = adopt(
-                p,
-                index,
+                scorer,
                 &mut best,
                 count,
                 |base, k| match carry(&epoch, &edits[k].apply(&epoch), base) {
@@ -629,7 +673,7 @@ fn improve(
                     if let Ok(commands) =
                         response.respond(p, index, &best.commands, &best.quarters, work)
                     {
-                        if let Ok(c) = score(p, index, commands, work) {
+                        if let Ok(c) = scorer.score(commands, work, None) {
                             if c.better(&best) {
                                 best = c;
                             }
@@ -657,8 +701,7 @@ fn improve(
             p.recipe.witness_trials,
         );
         let (scored, adopted) = adopt(
-            p,
-            index,
+            scorer,
             &mut best,
             audit.repairs.len(),
             |_, k| audit.repairs[k].clone(),
@@ -773,9 +816,10 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     };
     work.reserved += held;
     let mut budget_declined = false;
+    let mut scorer = CandidateScorer::new(p, &index);
     let mut candidates = Vec::new();
     for commands in proposals {
-        match score(p, &index, commands, &mut work) {
+        match scorer.score(commands, &mut work, None) {
             Ok(c) => candidates.push(c),
             Err(EvaluationIssue::GrantUnavailable) => budget_declined = true,
             Err(EvaluationIssue::Infeasible) => {}
@@ -795,14 +839,14 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     for candidate in candidates {
         work.limit = work.used + work.reserved + trial_grant;
         let mut trial_declined = false;
-        let (candidate, _) = improve(p, &index, candidate, &mut work, &mut trial_declined);
+        let (candidate, _) = improve(&mut scorer, candidate, &mut work, &mut trial_declined);
         work.limit = ceiling;
         if best.as_ref().is_none_or(|b| candidate.better(b)) {
             best = Some(candidate);
         }
     }
     let best = best.unwrap();
-    let (best, report) = improve(p, &index, best, &mut work, &mut budget_declined);
+    let (best, report) = improve(&mut scorer, best, &mut work, &mut budget_declined);
     work.reserved -= held;
     let report = report.unwrap_or_else(|| {
         witnesses::audit(
@@ -957,8 +1001,7 @@ mod move_resize_tests {
         let proposals = [sideways, car, pool.clone()];
         let mut declined = false;
         let (scored, adopted) = adopt(
-            &p,
-            &index,
+            &mut CandidateScorer::new(&p, &index),
             &mut best,
             proposals.len(),
             |_, k| proposals[k].clone(),
@@ -984,7 +1027,12 @@ mod move_resize_tests {
         let expected = before.commands.clone();
         work.limit = work.used + work.reserved + 1;
         let mut declined = false;
-        let (after, _) = improve(&p, &index, before, &mut work, &mut declined);
+        let (after, _) = improve(
+            &mut CandidateScorer::new(&p, &index),
+            before,
+            &mut work,
+            &mut declined,
+        );
         assert_eq!(after.commands, expected);
         assert!(declined);
         assert_eq!(work.reserved, 10000);

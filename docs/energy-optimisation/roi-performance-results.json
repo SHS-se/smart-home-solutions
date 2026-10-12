@@ -1,0 +1,716 @@
+{
+  "date": "2026-10-12",
+  "input": "Synthetic August 2026, Europe/Stockholm, 2976 quarters",
+  "timingScope": "Scheduler replay; excludes history I/O, default controls and rendering",
+  "beforeWasmSha256": "e08a08fda22331a4b6dc8ae2c3e8372d7ff5a55376e06f53bec0a215d2fbc2ef",
+  "afterWasmSha256": "49e08113585a51adbd9534c6853d122960979b997a5d045e2b0553716014d083",
+  "monthly72h": [
+    {
+      "scenario": "flat",
+      "milliseconds": {
+        "before": [
+          15630.170208,
+          16050.659792,
+          16023.234250000001
+        ],
+        "after": [
+          8248.489625,
+          8365.206417,
+          8360.719541
+        ]
+      },
+      "medianMs": {
+        "before": 16023.234250000001,
+        "after": 8360.719541
+      },
+      "memoryBytes": {
+        "before": 5111808,
+        "after": 6750208
+      },
+      "checksum": "6f14aea0762cd4b6ca252d8a6953823d95477a54d626da93bf269702b5a52ff4",
+      "solves": 31,
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 2037.261428218147
+      },
+      "ledger": {
+        "importKwh": 1248.2614282181405,
+        "exportKwh": 0,
+        "importCostSek": 1248.2614282181405,
+        "exportRevenueSek": 0,
+        "costSek": 1248.2614282181405
+      },
+      "service": {
+        "minimumPoolC": 29.502648692532777,
+        "belowPoolStartHours": 373.5,
+        "endBatteryKwh": 18.08,
+        "endEvKwh": 59.724,
+        "endPoolC": 29.532263687938563,
+        "endCreditSek": -8.90045485214232
+      }
+    },
+    {
+      "scenario": "solar-prices",
+      "milliseconds": {
+        "before": [
+          11941.1875,
+          12165.459125000001,
+          12106.989666
+        ],
+        "after": [
+          9116.660583,
+          9195.422625,
+          9233.140166000001
+        ]
+      },
+      "medianMs": {
+        "before": 12106.989666,
+        "after": 9195.422625
+      },
+      "memoryBytes": {
+        "before": 5111808,
+        "after": 6750208
+      },
+      "checksum": "783cc29a01943da5142a0c2ca91d7e6d22f2f13f14210994c2a88165f88115f7",
+      "solves": 31,
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 886.3779344730456
+      },
+      "ledger": {
+        "importKwh": 220.4865152113638,
+        "exportKwh": 104.68442540994828,
+        "importCostSek": 159.3253581984068,
+        "exportRevenueSek": 61.94742372536774,
+        "costSek": 97.37793447303906
+      },
+      "service": {
+        "minimumPoolC": 29.52347086824562,
+        "belowPoolStartHours": 268.75,
+        "endBatteryKwh": 14.399999013943411,
+        "endEvKwh": 59.724,
+        "endPoolC": 30.155558880030778,
+        "endCreditSek": -1.19904571558971
+      }
+    },
+    {
+      "scenario": "solar-prices-trips",
+      "milliseconds": {
+        "before": [
+          20601.846916000002,
+          20655.406792,
+          20586.267084000003
+        ],
+        "after": [
+          17325.710291,
+          17325.326875,
+          17357.992875
+        ]
+      },
+      "medianMs": {
+        "before": 20601.846916000002,
+        "after": 17325.710291
+      },
+      "memoryBytes": {
+        "before": 7536640,
+        "after": 9175040
+      },
+      "checksum": "915f7531875118c565b5243d2babb74f82553d81c520ec7ed634ac3589276b5d",
+      "solves": 62,
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 1023.9863205940262
+      },
+      "ledger": {
+        "importKwh": 376.6394735861177,
+        "exportKwh": 72.23521027655961,
+        "importCostSek": 279.0866759960236,
+        "exportRevenueSek": 44.10035540200395,
+        "costSek": 234.98632059401965
+      },
+      "service": {
+        "minimumPoolC": 29.504645303375113,
+        "belowPoolStartHours": 277.5,
+        "endBatteryKwh": 14.178830776620966,
+        "endEvKwh": 47.59950000000012,
+        "endPoolC": 30.126531802340278,
+        "endCreditSek": -19.544257251771256
+      }
+    }
+  ],
+  "nativeFlat": {
+    "before": {
+      "scenario": "flat",
+      "revision": "ea33f3e",
+      "scopes": {
+        "accounting": [
+          4530,
+          17260597
+        ],
+        "adopt": [
+          7,
+          273140960
+        ],
+        "apply_edits": [
+          4524,
+          804883
+        ],
+        "audit": [
+          1,
+          290584
+        ],
+        "battery_allocate": [
+          6,
+          22486918
+        ],
+        "battery_response": [
+          17,
+          4504000
+        ],
+        "carry_edits": [
+          4525,
+          2380129
+        ],
+        "construction": [
+          1,
+          14222708
+        ],
+        "generate_edits": [
+          6,
+          8709375
+        ],
+        "index": [
+          1,
+          1416417
+        ],
+        "opportunity": [
+          1,
+          32769792
+        ],
+        "pool_projection": [
+          1066354,
+          227435154
+        ],
+        "prefix_quarters": [
+          454655,
+          0
+        ],
+        "projected_quarters": [
+          850273,
+          0
+        ],
+        "projection": [
+          4531,
+          250774688
+        ],
+        "refinement": [
+          5,
+          309745333
+        ],
+        "score": [
+          4534,
+          268960849
+        ]
+      },
+      "total_ms": 358.925167,
+      "outcomeChecksum": "2b680b47cbc81ce7e8d1b60da9cee4d51525d6c58ff711a18cfc47fdfa7f31e6",
+      "work": {
+        "evaluations": 4531,
+        "expansions": 47236,
+        "limit": 1520000000,
+        "move_resize_improvements": 5,
+        "move_resize_passes": 6,
+        "move_resize_trials": 4523,
+        "repairs": 0,
+        "reserved": 0,
+        "unit_cost": 182,
+        "used": 1176876776,
+        "witness_trials": 0
+      },
+      "termination": "bounded_complete"
+    },
+    "after": {
+      "scenario": "flat",
+      "revision": "workspace",
+      "scopes": {
+        "accounting": [
+          4530,
+          17259030
+        ],
+        "adopt": [
+          7,
+          86999791
+        ],
+        "apply_edits": [
+          4524,
+          816447
+        ],
+        "audit": [
+          1,
+          300416
+        ],
+        "battery_allocate": [
+          6,
+          21966957
+        ],
+        "battery_response": [
+          17,
+          4641291
+        ],
+        "carry_edits": [
+          4525,
+          2130143
+        ],
+        "construction": [
+          1,
+          14462709
+        ],
+        "generate_edits": [
+          6,
+          8582458
+        ],
+        "index": [
+          1,
+          1425125
+        ],
+        "opportunity": [
+          1,
+          29396750
+        ],
+        "pool_projection": [
+          1066354,
+          44317250
+        ],
+        "prefix_quarters": [
+          454655,
+          0
+        ],
+        "projected_quarters": [
+          850273,
+          0
+        ],
+        "projection": [
+          4531,
+          65196389
+        ],
+        "refinement": [
+          5,
+          122997167
+        ],
+        "score": [
+          4534,
+          83327436
+        ],
+        "thermal_hits": [
+          138393,
+          0
+        ],
+        "thermal_queries": [
+          145721,
+          0
+        ]
+      },
+      "total_ms": 169.331875,
+      "outcomeChecksum": "2b680b47cbc81ce7e8d1b60da9cee4d51525d6c58ff711a18cfc47fdfa7f31e6",
+      "work": {
+        "evaluations": 4531,
+        "expansions": 47236,
+        "limit": 1520000000,
+        "move_resize_improvements": 5,
+        "move_resize_passes": 6,
+        "move_resize_trials": 4523,
+        "repairs": 0,
+        "reserved": 0,
+        "unit_cost": 182,
+        "used": 1176876776,
+        "witness_trials": 0
+      },
+      "termination": "bounded_complete"
+    }
+  },
+  "horizons": [
+    {
+      "scenario": "flat",
+      "mode": "month",
+      "durationMs": 1164.728958,
+      "solveMs": 943.6261660000001,
+      "projectMs": 203.51650399999812,
+      "wasmMemoryBytes": 56360960,
+      "solves": 1,
+      "ledger": {
+        "importKwh": 1260.6730224665464,
+        "exportKwh": 0,
+        "importCostSek": 1260.6730224665464,
+        "exportRevenueSek": 0,
+        "costSek": 1260.6730224665464
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 2049.673022466553
+      },
+      "service": {
+        "minimumPoolC": 29.502648692532777,
+        "belowPoolStartHours": 360.5,
+        "endBatteryKwh": 18.08,
+        "endEvKwh": 59.724,
+        "endPoolC": 30.169785948911628,
+        "endCreditSek": 3.2317402250719915
+      },
+      "checksum": "0bd23dfcad823591e0e8c037fac963c07c5750cd7b4f76256f1c84d256c2f5a7",
+      "workSummary": {
+        "totalUsed": 1517105076,
+        "totalLimit": 1520000000,
+        "totalEvaluations": 5,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 1517105076,
+          "limit": 1520000000,
+          "evaluations": 5,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 1
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": 12.41159424840589,
+        "commandsChanged": 28,
+        "maximumPoolDeltaC": 0.6499539641336582,
+        "maximumEvSocDeltaPercentagePoints": 0
+      }
+    },
+    {
+      "scenario": "flat",
+      "mode": "month-scaled",
+      "durationMs": 4617.100042,
+      "solveMs": 4392.333167000001,
+      "projectMs": 206.5574809999498,
+      "wasmMemoryBytes": 101449728,
+      "solves": 1,
+      "ledger": {
+        "importKwh": 1248.2614282181378,
+        "exportKwh": 0,
+        "importCostSek": 1248.2614282181378,
+        "exportRevenueSek": 0,
+        "costSek": 1248.2614282181378
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 2037.2614282181444
+      },
+      "service": {
+        "minimumPoolC": 29.502648692532777,
+        "belowPoolStartHours": 373.5,
+        "endBatteryKwh": 18.08,
+        "endEvKwh": 59.724,
+        "endPoolC": 29.532263687938563,
+        "endCreditSek": -8.90045485214232
+      },
+      "checksum": "eff9b5faa3b64191b71cb4c32fae949a8c29c27c323cd1382d829ea830e807f8",
+      "workSummary": {
+        "totalUsed": 15334919502,
+        "totalLimit": 15706666667,
+        "totalEvaluations": 5165,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 15334919502,
+          "limit": 15706666667,
+          "evaluations": 5165,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 1
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": -2.7284841053187847e-12,
+        "commandsChanged": 17,
+        "maximumPoolDeltaC": 0.0,
+        "maximumEvSocDeltaPercentagePoints": 0
+      }
+    },
+    {
+      "scenario": "flat",
+      "mode": "month-daily",
+      "durationMs": 22979.909625,
+      "solveMs": 22723.073291000004,
+      "projectMs": 225.82786399993392,
+      "wasmMemoryBytes": 88670208,
+      "solves": 31,
+      "ledger": {
+        "importKwh": 1248.2614282181385,
+        "exportKwh": 0,
+        "importCostSek": 1248.2614282181385,
+        "exportRevenueSek": 0,
+        "costSek": 1248.2614282181385
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 2037.2614282181448
+      },
+      "service": {
+        "minimumPoolC": 29.502648692532777,
+        "belowPoolStartHours": 373.5,
+        "endBatteryKwh": 18.08,
+        "endEvKwh": 59.724,
+        "endPoolC": 29.532263687938563,
+        "endCreditSek": -8.90045485214232
+      },
+      "checksum": "1e57107a1222ff10f973328ca87b5e0fa94091bd0388046453fd0a93a9d85326",
+      "workSummary": {
+        "totalUsed": 45098758926,
+        "totalLimit": 47120000000,
+        "totalEvaluations": 39125,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 1517105076,
+          "limit": 1520000000,
+          "evaluations": 5,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 27,
+          "bounded_complete": 4
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": -2.0463630789890885e-12,
+        "commandsChanged": 17,
+        "maximumPoolDeltaC": 0.0,
+        "maximumEvSocDeltaPercentagePoints": 0
+      }
+    },
+    {
+      "scenario": "solar-prices",
+      "mode": "month",
+      "durationMs": 1229.783625,
+      "solveMs": 1019.152667,
+      "projectMs": 192.24134600000525,
+      "wasmMemoryBytes": 89325568,
+      "solves": 1,
+      "ledger": {
+        "importKwh": 238.40995288507094,
+        "exportKwh": 117.13373899549167,
+        "importCostSek": 180.78554513366126,
+        "exportRevenueSek": 68.79454619741662,
+        "costSek": 111.99099893624464
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 900.9909989362511
+      },
+      "service": {
+        "minimumPoolC": 29.511652752353587,
+        "belowPoolStartHours": 221,
+        "endBatteryKwh": 18.08,
+        "endEvKwh": 59.724,
+        "endPoolC": 30.158714169232923,
+        "endCreditSek": 3.96889355227915
+      },
+      "checksum": "17c4b1a1da4ac0622f48c6d5a00fd25916685ffbc38e3e01ccef30252c215156",
+      "workSummary": {
+        "totalUsed": 1517836324,
+        "totalLimit": 1520000000,
+        "totalEvaluations": 5,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 1517836324,
+          "limit": 1520000000,
+          "evaluations": 5,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 1
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": 14.613064463205575,
+        "commandsChanged": 586,
+        "maximumPoolDeltaC": 0.41213414789110914,
+        "maximumEvSocDeltaPercentagePoints": 0
+      }
+    },
+    {
+      "scenario": "solar-prices",
+      "mode": "month-scaled",
+      "durationMs": 5213.537625,
+      "solveMs": 4981.506208,
+      "projectMs": 213.58845600000586,
+      "wasmMemoryBytes": 138412032,
+      "solves": 1,
+      "ledger": {
+        "importKwh": 231.47986278200486,
+        "exportKwh": 116.33359054581258,
+        "importCostSek": 170.1649771417134,
+        "exportRevenueSek": 68.35446455009308,
+        "costSek": 101.81051259162031
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 890.8105125916268
+      },
+      "service": {
+        "minimumPoolC": 29.511652752353587,
+        "belowPoolStartHours": 222.75,
+        "endBatteryKwh": 14.399999013943411,
+        "endEvKwh": 59.724,
+        "endPoolC": 30.158625689374354,
+        "endCreditSek": -1.1223725246970044
+      },
+      "checksum": "696655f8dee30681475f2c24b25cb07152ba9f0b1c7b1dac4c036190b00892c9",
+      "workSummary": {
+        "totalUsed": 15458585392,
+        "totalLimit": 15706666667,
+        "totalEvaluations": 4138,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 15458585392,
+          "limit": 15706666667,
+          "evaluations": 4138,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 1
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": 4.432578118581247,
+        "commandsChanged": 389,
+        "maximumPoolDeltaC": 0.41213414789110914,
+        "maximumEvSocDeltaPercentagePoints": 0
+      }
+    },
+    {
+      "scenario": "solar-prices-trips",
+      "mode": "month",
+      "durationMs": 32477.189167,
+      "solveMs": 32217.366792999997,
+      "projectMs": 219.65689400003725,
+      "wasmMemoryBytes": 93716480,
+      "solves": 32,
+      "ledger": {
+        "importKwh": 385.03956097270105,
+        "exportKwh": 83.37536547909228,
+        "importCostSek": 295.9045062493928,
+        "exportRevenueSek": 50.227440763396935,
+        "costSek": 245.67706548599585
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 1034.6770654860024
+      },
+      "service": {
+        "minimumPoolC": 29.508661934108428,
+        "belowPoolStartHours": 250,
+        "endBatteryKwh": 14.08123943289557,
+        "endEvKwh": 46.80600000000013,
+        "endPoolC": 30.04212521768865,
+        "endCreditSek": -22.92257119135445
+      },
+      "checksum": "a152b73cfc4b7eff9bb1027b1a44df8efdbc34f4cc17802832abae554b5cdbc5",
+      "workSummary": {
+        "totalUsed": 46108220524,
+        "totalLimit": 48640000000,
+        "totalEvaluations": 39655,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 1517836324,
+          "limit": 1520000000,
+          "evaluations": 5,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 28,
+          "bounded_complete": 4
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": 10.690744891976209,
+        "commandsChanged": 675,
+        "maximumPoolDeltaC": 0.49158714598962305,
+        "maximumEvSocDeltaPercentagePoints": 7.767063492063521
+      }
+    },
+    {
+      "scenario": "solar-prices-trips",
+      "mode": "month-scaled",
+      "durationMs": 79647.507,
+      "solveMs": 79392.28725099999,
+      "projectMs": 221.85616300014954,
+      "wasmMemoryBytes": 155844608,
+      "solves": 32,
+      "ledger": {
+        "importKwh": 381.6000479954748,
+        "exportKwh": 81.49027880313243,
+        "importCostSek": 283.002639707268,
+        "exportRevenueSek": 49.190643091618995,
+        "costSek": 233.81199661564898
+      },
+      "bill": {
+        "supplierFixedSek": 49.00000000000299,
+        "gridFixedSek": 740.0000000000035,
+        "gridPeakSek": 0,
+        "peakKw": 0,
+        "totalSek": 1022.8119966156555
+      },
+      "service": {
+        "minimumPoolC": 29.52459303213647,
+        "belowPoolStartHours": 246.75,
+        "endBatteryKwh": 14.382986825460947,
+        "endEvKwh": 47.59950000000014,
+        "endPoolC": 30.027841175964035,
+        "endCreditSek": -21.729291752439234
+      },
+      "checksum": "5fe96b60b364bd43fa34d9047f7092ac21598f6342107583a8c777caa278d433",
+      "workSummary": {
+        "totalUsed": 248836494560,
+        "totalLimit": 263508888902,
+        "totalEvaluations": 148793,
+        "firstSolve": {
+          "slots": 2976,
+          "used": 15458585392,
+          "limit": 15706666667,
+          "evaluations": 4138,
+          "termination": "grant_exhausted"
+        },
+        "terminations": {
+          "grant_exhausted": 21,
+          "bounded_complete": 11
+        }
+      },
+      "comparison72h": {
+        "costDeltaSek": -1.1743239783706656,
+        "commandsChanged": 509,
+        "maximumPoolDeltaC": 0.48951957420409187,
+        "maximumEvSocDeltaPercentagePoints": 7.767063492063521
+      }
+    }
+  ]
+}

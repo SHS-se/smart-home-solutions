@@ -98,6 +98,12 @@ homecoming, then projects its chosen commands quarter by quarter. The Wasm
 artifact is verified by SHA256. These historical simulations do not dispatch
 commands or modify live planning.
 
+Candidate scoring reuses exact pool-heating transitions within one immutable
+solve, with bounded memory and unchanged search work, accounting and output.
+Daily and homecoming replans retain their 72-hour horizons. See the
+[profiling and month-horizon experiments](roi-performance.md) for measurements
+and the reasons for retaining this replay protocol.
+
 The Plan page, planner bench and ROI use `energy/charts/EnergyChart.tsx`.
 ROI displays the entire selected frame without day buttons. Controls and costs
 sit above the graph; rounded parameters, daily EV demand and provenance sit

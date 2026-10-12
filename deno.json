@@ -1,6 +1,8 @@
 {
   "tasks": {
     "bench:roi": "deno run --no-check --sloppy-imports --allow-read scripts/bench-home-baseline.ts",
+    "bench:roi-horizons": "deno run --no-check --sloppy-imports --node-modules-dir=manual --allow-read --allow-write scripts/bench-roi-horizons.ts",
+    "profile:roi": "deno run --no-check --sloppy-imports --allow-read --allow-write --allow-run scripts/profile-roi-refinement.ts",
     "deploy:planner-probe": "deno run --allow-read --allow-write --allow-run scripts/deploy-planner-probe.ts",
     "build:planner-wasm": "deno run --allow-read --allow-write --allow-run --allow-env=HOME,CARGO_HOME scripts/build-planner-wasm.ts",
     "test:planner-build-reproducibility": "deno run --allow-read --allow-write --allow-run scripts/check-planner-build-reproducibility.ts",

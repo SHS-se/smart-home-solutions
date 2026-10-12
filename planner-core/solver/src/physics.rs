@@ -1,4 +1,7 @@
 use crate::*;
+use shs_planner_models::{PoolConditions, PoolTransition};
+mod pool_memo;
+use pool_memo::PoolMemo;
 #[derive(Clone)]
 pub(crate) struct State {
     pub battery: f64,
@@ -29,6 +32,7 @@ fn transition(
     command: &Command,
     state: &mut State,
     external: bool,
+    pool_step: impl FnOnce(&Heater, &ThermalStore, HeaterState, bool, PoolConditions) -> PoolTransition,
 ) -> Result<Quarter, String> {
     if !external && locked(p, i) && command != &p.accepted.as_ref().unwrap()[i] {
         return Err("commitment_changed".into());
@@ -53,7 +57,8 @@ fn transition(
         .as_ref()
         .zip(p.pool_store.as_ref())
         .map(|(heater, store)| {
-            heater.pool_transition(
+            pool_step(
+                heater,
                 store,
                 state.heater,
                 command.pool_on,
@@ -272,12 +277,22 @@ pub(crate) fn carry(
 }
 #[cfg(test)]
 pub(crate) fn projection(p: &Problem, commands: &[Command]) -> Result<Vec<Quarter>, String> {
-    projection_prefix(p, commands, &[])
+    projection_prefix(p, commands, &[], |_, h, s, state, on, conditions| {
+        h.pool_transition(s, state, on, conditions)
+    })
 }
 fn projection_prefix(
     p: &Problem,
     commands: &[Command],
     prefix: &[Quarter],
+    mut pool_step: impl FnMut(
+        usize,
+        &Heater,
+        &ThermalStore,
+        HeaterState,
+        bool,
+        PoolConditions,
+    ) -> PoolTransition,
 ) -> Result<Vec<Quarter>, String> {
     if commands.len() != p.slots.len() {
         return Err("projection_coverage".into());
@@ -294,7 +309,14 @@ fn projection_prefix(
     let mut quarters = Vec::with_capacity(commands.len());
     quarters.extend_from_slice(prefix);
     for (i, c) in commands.iter().enumerate().skip(prefix.len()) {
-        quarters.push(step(p, i, c, &mut state)?);
+        quarters.push(transition(
+            p,
+            i,
+            c,
+            &mut state,
+            false,
+            |h, s, state, on, conditions| pool_step(i, h, s, state, on, conditions),
+        )?);
     }
     Ok(quarters)
 }
@@ -315,11 +337,58 @@ pub(crate) fn project_metered_prefix(
     work: &mut Work,
     prefix: &[Quarter],
 ) -> Option<Vec<Quarter>> {
-    if !work.spend(p.slots.len() as u64 * work.unit_cost * 2) {
+    if !meter_projection(p, work) {
         return None;
     }
+    projection_prefix(p, commands, prefix, |_, h, s, state, on, conditions| {
+        h.pool_transition(s, state, on, conditions)
+    })
+    .ok()
+}
+
+fn meter_projection(p: &Problem, work: &mut Work) -> bool {
+    if !work.spend(p.slots.len() as u64 * work.unit_cost * 2) {
+        return false;
+    }
     work.evaluations += 1;
-    projection_prefix(p, commands, prefix).ok()
+    true
+}
+
+/// One search owns one exact thermal memo. It cannot be replayed on another
+/// problem; direct execution and final independent certification bypass it.
+pub(crate) struct RefinementProjector<'p> {
+    problem: &'p Problem,
+    pool: PoolMemo,
+}
+impl<'p> RefinementProjector<'p> {
+    pub(crate) fn new(problem: &'p Problem) -> Self {
+        Self {
+            problem,
+            pool: PoolMemo::default(),
+        }
+    }
+    pub(crate) fn project_metered_prefix(
+        &mut self,
+        commands: &[Command],
+        work: &mut Work,
+        prefix: &[Quarter],
+    ) -> Option<Vec<Quarter>> {
+        if !meter_projection(self.problem, work) {
+            return None;
+        }
+        let pool = &mut self.pool;
+        projection_prefix(
+            self.problem,
+            commands,
+            prefix,
+            |i, h, s, state, on, conditions| {
+                pool.transition(i, state, on, conditions, |conditions| {
+                    h.pool_transition(s, state, on, conditions)
+                })
+            },
+        )
+        .ok()
+    }
 }
 
 pub(crate) fn step(
@@ -328,7 +397,7 @@ pub(crate) fn step(
     command: &Command,
     state: &mut State,
 ) -> Result<Quarter, String> {
-    transition(p, i, command, state, false)
+    transition(p, i, command, state, false, Heater::pool_transition)
 }
 pub(crate) fn project_external(p: &Problem, commands: &[Command]) -> Result<Vec<Quarter>, String> {
     if commands.len() != p.slots.len() {
@@ -338,8 +407,129 @@ pub(crate) fn project_external(p: &Problem, commands: &[Command]) -> Result<Vec<
     commands
         .iter()
         .enumerate()
-        .map(|(i, c)| transition(p, i, c, &mut state, true))
+        .map(|(i, c)| transition(p, i, c, &mut state, true, Heater::pool_transition))
         .collect()
+}
+
+#[cfg(test)]
+mod refinement_tests {
+    use super::*;
+    use shs_planner_models::{LossPoint, Response, StandingLoss, StartupPoint};
+
+    fn work() -> Work {
+        Work {
+            used: 0,
+            limit: 1_520_000_000,
+            reserved: 0,
+            unit_cost: 128,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        }
+    }
+
+    #[test]
+    fn memo_matches_direct_projection_bits_work_and_failures_across_models() {
+        for startup in [false, true] {
+            for measured in [false, true] {
+                for state in [
+                    HeaterState::OffUnobserved,
+                    HeaterState::Off { seconds: -0.0 },
+                    HeaterState::Running { seconds: 450.0 },
+                    HeaterState::Steady,
+                ] {
+                    let mut p = crate::witnesses::tests::problem(16);
+                    p.initial.pool_c = Some(29.99);
+                    p.initial.heater_state = Some(state);
+                    p.pool_stop_c = Some(30.1);
+                    p.slots[0].start_seconds = -123.45;
+                    p.pool_store.as_mut().unwrap().capacity_kwh_per_c = 5.0;
+                    if measured {
+                        p.pool_store.as_mut().unwrap().loss = StandingLoss::Measured {
+                            points: vec![
+                                LossPoint {
+                                    at_c: 25.0,
+                                    c_per_h: -0.1,
+                                },
+                                LossPoint {
+                                    at_c: 35.0,
+                                    c_per_h: -0.3,
+                                },
+                            ],
+                        };
+                    }
+                    if startup {
+                        p.heater.as_mut().unwrap().response = Response::Bergvarme {
+                            startup: vec![
+                                StartupPoint {
+                                    elapsed_seconds: 0.0,
+                                    electric_fraction: 0.5,
+                                    heat_fraction: 0.0,
+                                },
+                                StartupPoint {
+                                    elapsed_seconds: 900.0,
+                                    electric_fraction: 1.0,
+                                    heat_fraction: 1.0,
+                                },
+                            ],
+                        };
+                    }
+                    let commands: Vec<_> = (0..16)
+                        .map(|i| Command {
+                            pool_on: i % 5 != 3,
+                            ev_amps: 0,
+                            battery: Operation::Hold,
+                            charge_limit_w: 1000.0,
+                            discharge_limit_w: 0.0,
+                        })
+                        .collect();
+                    p.accepted = Some(commands[..4].to_vec());
+                    p.locked_through_seconds = 3600.0;
+                    let mut projector = RefinementProjector::new(&p);
+                    let mut direct_work = work();
+                    let mut memo_work = work();
+                    for attempt in 0..3 {
+                        let mut changed = commands.clone();
+                        if attempt == 2 {
+                            changed[7].ev_amps = 6;
+                            changed[8].battery = Operation::SelfConsumption;
+                            changed[8].discharge_limit_w = 1000.0;
+                        }
+                        let direct =
+                            project_metered_prefix(&p, &changed, &mut direct_work, &[]).unwrap();
+                        let memo = projector
+                            .project_metered_prefix(&changed, &mut memo_work, &[])
+                            .unwrap();
+                        assert_eq!(
+                            serde_json::to_vec(&memo).unwrap(),
+                            serde_json::to_vec(&direct).unwrap()
+                        );
+                        assert_eq!(direct_work.used, memo_work.used);
+                        assert_eq!(direct_work.evaluations, memo_work.evaluations);
+                    }
+                    assert!(projector.pool.hits() > 0);
+                    let mut invalid = commands;
+                    invalid[0].pool_on = !invalid[0].pool_on;
+                    assert!(project_metered_prefix(&p, &invalid, &mut direct_work, &[]).is_none());
+                    assert!(projector
+                        .project_metered_prefix(&invalid, &mut memo_work, &[])
+                        .is_none());
+                    direct_work.limit = direct_work.used;
+                    memo_work.limit = memo_work.used;
+                    assert!(project_metered_prefix(&p, &invalid, &mut direct_work, &[]).is_none());
+                    assert!(projector
+                        .project_metered_prefix(&invalid, &mut memo_work, &[])
+                        .is_none());
+                    assert_eq!(direct_work.used, memo_work.used);
+                    assert_eq!(direct_work.evaluations, memo_work.evaluations);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -300,6 +300,7 @@ pub struct PoolConditions {
     pub seconds: f64,
     pub stop_c: Option<f64>,
 }
+#[derive(Clone, Copy)]
 pub struct PoolTransition {
     pub electric_w: f64,
     pub compressor_w: f64,
