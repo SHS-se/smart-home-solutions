@@ -308,3 +308,54 @@ Deno.test('unknown energy invoice layouts fail closed', () => {
   assertEqual(parsed.importable, false, 'unknown layout importability');
   assertEqual(parsed.errors[0], 'unknown_format', 'unknown layout error');
 });
+
+Deno.test('Ellevio flat tariff is recognized without the June announcement and preserves dated price changes', () => {
+  const text = `Faktura elnät 5 oktober 2026 Faktura/OCR-nummer: 6600000000001
+    Ellevio AB (publ) Belopp att betala: 1 483,00 kr Moms 25%: 296,90 kr
+    Kostnad för perioden 1 september 2026 t o m 30 september 2026 1 484,49 kr
+    Kostnad 1 sep 2026 t o m 30 sep 2026 Pris from Antal Pris inkl. moms Summa inkl. moms
+    Fast avgift 1 sep-26 10 dagar 1 130,00 kr/mån 376,66 kr
+    Fast avgift 11 sep-26 20 dagar 740,00 kr/mån 493,34 kr
+    Överföringsavgift 1 sep-26 865 kWh 26,00 öre/kWh 225,03 kr
+    Energiskatt 865 kWh 45,00 öre/kWh 389,46 kr
+    Produktionsersättning, Elnät Låglast 54 kWh -3,30 öre/kWh -1,80 kr`;
+  const parsed = parseEnergyBillingDocument(text);
+  assert(parsed.importable, parsed.errors.join(', '));
+  assertEqual(parsed.parserId, 'ellevio_flat_transfer', 'flat tariff');
+  assertEqual(parsed.consumptionKwh, 865, 'consumption');
+  assertEqual(parsed.totalAmountSek, 1483, 'payable amount');
+  const fees = parsed.lineItems.filter(item => item.category === 'fixed_fee');
+  assertEqual(fees.length, 2, 'both price intervals');
+  assertEqual(fees[0].periodStart, '2026-09-01', 'first start');
+  assertEqual(fees[0].periodEnd, '2026-09-10', 'first end');
+  assertEqual(fees[1].periodStart, '2026-09-11', 'second start');
+  assertEqual(fees[1].periodEnd, '2026-09-30', 'second end');
+  assertEqual(fees.reduce((sum, item) => sum + item.amountSek, 0), 870, 'all fixed charges');
+});
+
+Deno.test('Ellevio flat invoice remains importable after the announcement disappears', () => {
+  const text = ELLEVIO_FLAT_EXPORT_TEXT.replace(/Sedan den 1 juni 2026[\s\S]*?utan effektavgift\./, '');
+  assert(parseEnergyBillingDocument(text).importable, 'no announcement needed');
+  const incompletePeak = ELLEVIO_PEAK_TEXT.replace('Dina 3 högsta effekttoppar', '');
+  assert(!parseEnergyBillingDocument(incompletePeak).importable, 'peak invoice must not be misclassified as flat');
+});
+
+Deno.test('Tibber full-month labels preserve charges, credit balances and calendar month lengths', () => {
+  for (const [month, year, end] of [['juli', 2026, 31], ['augusti', 2026, 31], ['september', 2026, 30], ['februari', 2028, 29]] as const) {
+    const text = TIBBER_TEXT.replaceAll('16 juni 2026 - 30 juni 2026', `${month} ${year}`);
+    const parsed = parseEnergyBillingDocument(text);
+    assert(parsed.importable, parsed.errors.join(', '));
+    const monthNumber = { juli: '07', augusti: '08', september: '09', februari: '02' }[month];
+    assertEqual(parsed.periodStart, `${year}-${monthNumber}-01`, 'full month start');
+    assertEqual(parsed.periodEnd, `${year}-${monthNumber}-${end}`, 'full month end');
+    assertEqual(parsed.consumptionKwh, 13, 'consumption');
+    assertEqual(parsed.totalAmountSek, -85, 'carried credit');
+    assertEqual(parsed.lineItems.length, 7, 'all charges and VAT');
+    assertEqual(parsed.lineItems.find(i => i.category === 'discount')?.amountSek, -19.6, 'discount');
+    assertEqual(parsed.lineItems.find(i => i.category === 'export_credit')?.amountSek, -96, 'export credit');
+  }
+  const payable = TIBBER_TEXT.replaceAll('16 juni 2026 - 30 juni 2026', 'september 2026')
+    .replace('Överförs till nästkommande faktura −85 kr', 'Summa att betala 357 kr');
+  assertEqual(parseEnergyBillingDocument(payable).totalAmountSek, 357, 'amount due');
+  assert(!parseEnergyBillingDocument(TIBBER_TEXT.replaceAll('16 juni 2026 - 30 juni 2026', 'unknown 2026')).importable, 'unknown month rejected');
+});

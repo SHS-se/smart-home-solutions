@@ -1327,6 +1327,7 @@ export type Database = {
           id: string
           mime_type: string
           original_file_name: string
+          retry_imported_at: string | null
           parser_error: string
           uploaded_by: string
         }
@@ -1340,6 +1341,7 @@ export type Database = {
           id?: string
           mime_type: string
           original_file_name: string
+          retry_imported_at?: string | null
           parser_error: string
           uploaded_by: string
         }
@@ -1353,6 +1355,7 @@ export type Database = {
           id?: string
           mime_type?: string
           original_file_name?: string
+          retry_imported_at?: string | null
           parser_error?: string
           uploaded_by?: string
         }
@@ -5064,6 +5067,14 @@ export type Database = {
           p_request_id?: string
         }
         Returns: string
+      }
+      complete_energy_invoice_retry: {
+        Args: { p_failure_id: string; p_document?: Json | null; p_line_items?: Json | null }
+        Returns: boolean
+      }
+      finish_energy_invoice_retry: {
+        Args: { p_failure_id: string }
+        Returns: undefined
       }
       create_energy_billing_document: {
         Args: {

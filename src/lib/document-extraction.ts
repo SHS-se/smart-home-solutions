@@ -6,6 +6,7 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+import { extractEmbeddedPdfText } from './pdf-embedded-text';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
@@ -26,17 +27,7 @@ export interface ExtractionResult {
 
 async function extractPdfText(file: File): Promise<{ text: string; isScanned: boolean; pageCount: number }> {
   const buf = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
-  let text = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    for (const item of content.items) {
-      if ('str' in item) text += item.str + ' ';
-    }
-    text += '\n';
-  }
-  return { text: text.trim(), isScanned: text.trim().length < 50, pageCount: pdf.numPages };
+  return extractEmbeddedPdfText(pdfjsLib.getDocument, new Uint8Array(buf));
 }
 
 async function renderPdfPageToBlob(file: File): Promise<Blob> {

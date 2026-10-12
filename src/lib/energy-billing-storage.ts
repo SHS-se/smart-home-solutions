@@ -1,5 +1,6 @@
+import { createEnergyBillingPayload } from './energy-billing-payload';
 import { supabase } from '@/integrations/supabase/client';
-import type { Json, Tables } from '@/integrations/supabase/types';
+import type { Tables } from '@/integrations/supabase/types';
 import type {
   EnergyChargeCategory,
   ParsedEnergyDocument,
@@ -138,21 +139,16 @@ export async function storeEnergyBillingDocument(params: {
   documentSha256: string;
 }): Promise<string> {
   const { customerId, file, parsed, documentSha256 } = params;
-  if (
-    !parsed.importable
-    || !parsed.documentKind
-    || !parsed.providerKey
-    || !parsed.providerName
-    || !parsed.parserId
-    || !parsed.parserVersion
-    || !parsed.invoiceNumber
-    || !parsed.invoiceDate
-    || !parsed.periodStart
-    || !parsed.periodEnd
-    || parsed.consumptionKwh === null
-    || parsed.totalAmountSek === null
-  ) {
-    throw new EnergyBillingImportError('save_failed', 'Parser result is not importable');
+  let payload: ReturnType<typeof createEnergyBillingPayload>;
+  try {
+    payload = createEnergyBillingPayload(parsed, {
+      fileName: file.name,
+      mimeType: resolvedEnergyFileMimeType(file),
+      sizeBytes: file.size,
+      sha256: documentSha256,
+    });
+  } catch (error) {
+    throw new EnergyBillingImportError('save_failed', (error as Error).message);
   }
 
   const { data: duplicate, error: duplicateError } = await supabase
@@ -168,46 +164,12 @@ export async function storeEnergyBillingDocument(params: {
     throw new EnergyBillingImportError('duplicate', 'Document has already been imported');
   }
 
-  const documentPayload = {
-    document_kind: parsed.documentKind,
-    provider_key: parsed.providerKey,
-    provider_name: parsed.providerName,
-    parser_id: parsed.parserId,
-    parser_version: parsed.parserVersion,
-    invoice_number: parsed.invoiceNumber,
-    invoice_date: parsed.invoiceDate,
-    period_start: parsed.periodStart,
-    period_end: parsed.periodEnd,
-    consumption_kwh: parsed.consumptionKwh,
-    exported_kwh: parsed.exportedKwh,
-    peak_demand_kw: parsed.peakDemandKw,
-    vat_sek: parsed.vatSek,
-    total_amount_sek: parsed.totalAmountSek,
-    currency: parsed.currency,
-    original_file_name: file.name,
-    mime_type: resolvedEnergyFileMimeType(file),
-    file_size_bytes: file.size,
-    document_sha256: documentSha256,
-  } satisfies Json;
-
-  const lineItemPayload = parsed.lineItems.map((lineItem) => ({
-    category: lineItem.category,
-    label: lineItem.label,
-    amount_sek: lineItem.amountSek,
-    quantity: lineItem.quantity,
-    unit: lineItem.unit,
-    unit_price_sek: lineItem.unitPriceSek,
-    period_start: lineItem.periodStart,
-    period_end: lineItem.periodEnd,
-    amount_includes_vat: lineItem.amountIncludesVat,
-  })) satisfies Json[];
-
   const { data: documentId, error: saveError } = await supabase.rpc(
     'create_energy_billing_document',
     {
       p_customer_id: customerId,
-      p_document: documentPayload,
-      p_line_items: lineItemPayload,
+      p_document: payload.document,
+      p_line_items: payload.lineItems,
     },
   );
 

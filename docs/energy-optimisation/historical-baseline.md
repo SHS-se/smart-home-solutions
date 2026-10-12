@@ -156,3 +156,19 @@ prices, midnight/taper, thermostat stops, inferred driving demand, DST frame
 adjacency and native projection parity. Mocked-browser tests exercise real Wasm
 generation, keyboard-accessible charts, older frame loading, memory caching,
 missing history, responsive layout and absence of writes.
+
+## Invoice updates after deployment
+
+Retained embedded-text PDF invoices are retried automatically after each successful
+deployment by `scripts/retry-energy-invoices.ts`, using the deployed billing parser
+and the original uploader/customer metadata. Imports commit atomically before their
+private sources are removed. A receipt on the retained record allows interrupted
+cleanup to resume without recreating an invoice. Rejected files, scanned PDFs,
+images, declarations and CSVs remain available for review. Operational retry failures
+fail the retry job after unaffected files have been processed.
+
+The ROI comparison refreshes invoice evidence every 30 seconds while open. New
+complete electricity/grid pairs fill Actual and Savings vs Actual, including totals,
+using the saved monthly baseline and scheduler ledgers. Adding invoices does not
+repin the equipment model or regenerate those ledgers. Recalculate remains an
+explicit request to regenerate model results; it is unnecessary for new invoices.

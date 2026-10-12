@@ -380,7 +380,7 @@ function parseEllevioLegacy(text: string): ParsedFields {
   };
 }
 
-function parseEllevioLine(
+function parseEllevioLines(
   text: string,
   label: string,
   category: EnergyChargeCategory,
@@ -388,7 +388,7 @@ function parseEllevioLine(
   periodStart: string | null,
   periodEnd: string | null,
   amountIncludesVat: boolean,
-): ParsedEnergyLineItem | null {
+): ParsedEnergyLineItem[] {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const unitPattern = quantityUnit === 'days'
     ? String.raw`dag(?:ar)?`
@@ -399,24 +399,33 @@ function parseEllevioLine(
       ? String.raw`kr\/kW,\s*mån`
       : String.raw`öre\/kWh`;
   const expression = new RegExp(
-    `${escapedLabel}\\s+(${NUMBER_PATTERN})\\s+${unitPattern}\\s+(${NUMBER_PATTERN})\\s+${priceUnitPattern}\\s+(${NUMBER_PATTERN})\\s+kr`,
+    `${escapedLabel}\\s+(?:(${SWEDISH_SHORT_DATE_PATTERN})\\s+)?(${NUMBER_PATTERN})\\s+${unitPattern}\\s+(${NUMBER_PATTERN})\\s+${priceUnitPattern}\\s+(${NUMBER_PATTERN})\\s+kr`,
     'i',
   );
-  const match = text.match(expression);
-  if (!match) return null;
-
-  return makeLineItem({
-    category,
-    label,
-    amount: match[3],
-    quantity: match[1],
-    unit: quantityUnit,
-    unitPrice: match[2],
-    unitPriceIsOre: quantityUnit === 'kWh',
-    periodStart,
-    periodEnd,
-    amountIncludesVat,
-  });
+  const items: ParsedEnergyLineItem[] = [];
+  for (const match of text.matchAll(new RegExp(expression.source, 'gi'))) {
+    const rowStart = parseCapturedDate(match[1] ?? null) ?? periodStart;
+    const quantity = parseEnergyNumber(match[2]);
+    let rowEnd = periodEnd;
+    if (match[1] && rowStart && quantityUnit === 'days' && quantity !== null) {
+      const end = new Date(`${rowStart}T00:00:00Z`);
+      end.setUTCDate(end.getUTCDate() + quantity - 1);
+      rowEnd = end.toISOString().slice(0, 10);
+    }
+    pushIfPresent(items, makeLineItem({
+      category,
+      label,
+      amount: match[4],
+      quantity: match[2],
+      unit: quantityUnit,
+      unitPrice: match[3],
+      unitPriceIsOre: quantityUnit === 'kWh',
+      periodStart: rowStart,
+      periodEnd: rowEnd,
+      amountIncludesVat,
+    }));
+  }
+  return items;
 }
 
 function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
@@ -427,7 +436,7 @@ function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
   const periodEnd = parseCapturedDate(periodMatch?.[2] ?? null);
   const lineItems: ParsedEnergyLineItem[] = [];
 
-  pushIfPresent(lineItems, parseEllevioLine(
+  lineItems.push(...parseEllevioLines(
     text,
     'Fast avgift',
     'fixed_fee',
@@ -436,7 +445,7 @@ function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
     periodEnd,
     true,
   ));
-  pushIfPresent(lineItems, parseEllevioLine(
+  lineItems.push(...parseEllevioLines(
     text,
     'Överföringsavgift',
     'energy_transfer',
@@ -446,7 +455,7 @@ function parseEllevio(text: string, includePeakDemand: boolean): ParsedFields {
     true,
   ));
   if (includePeakDemand) {
-    pushIfPresent(lineItems, parseEllevioLine(
+    lineItems.push(...parseEllevioLines(
       text,
       'Effektavgift',
       'peak_demand',
@@ -789,63 +798,53 @@ const TIBBER_USAGE_LINE_DEFINITIONS: Array<{
   { label: 'Elproduktion', category: 'export_credit' },
 ];
 
-function parseTibberUsageLine(
+const TIBBER_PERIOD_PATTERN = String.raw`(?:${SWEDISH_DATE_PATTERN}\s+-\s+${SWEDISH_DATE_PATTERN}|[a-zåäö]+\s+\d{4})`;
+
+function parseTibberPeriod(value: string): [string | null, string | null] {
+  const dates = value.split(/\s+-\s+/);
+  if (dates.length === 2) return [parseEnergyDate(dates[0]), parseEnergyDate(dates[1])];
+  const match = value.match(/^([a-zåäö]+)\s+(\d{4})$/i);
+  const month = match ? SWEDISH_MONTHS[match[1].toLocaleLowerCase('sv-SE')] : null;
+  if (!match || !month) return [null, null];
+  const year = Number(match[2]);
+  return [toIsoDate(year, month, 1), toIsoDate(year, month, new Date(Date.UTC(year, month, 0)).getUTCDate())];
+}
+
+function parseTibberLine(
   text: string,
   label: string,
   category: EnergyChargeCategory,
+  unit: 'kWh' | 'days',
 ): ParsedEnergyLineItem | null {
+  const quantityUnit = unit === 'days' ? String.raw`dag(?:ar)?` : 'kWh';
+  const priceUnit = unit === 'days' ? String.raw`kr\/mån` : String.raw`öre\/kWh`;
   const expression = new RegExp(
-    `${label}\\s+för\\s+(${SWEDISH_DATE_PATTERN})\\s+-\\s+(${SWEDISH_DATE_PATTERN})\\s+(${NUMBER_PATTERN})\\s+kr\\s+(${NUMBER_PATTERN})\\s+kWh\\s+à\\s+(${NUMBER_PATTERN})\\s+öre\\/kWh`,
+    `${label}\\s+för\\s+(${TIBBER_PERIOD_PATTERN})\\s+(${NUMBER_PATTERN})\\s+kr\\s+(${NUMBER_PATTERN})\\s+${quantityUnit}\\s+à\\s+(${NUMBER_PATTERN})\\s+${priceUnit}`,
     'i',
   );
   const match = text.match(expression);
   if (!match) return null;
-
+  const [periodStart, periodEnd] = parseTibberPeriod(match[1]);
   return makeLineItem({
     category,
     label,
-    amount: match[3],
-    quantity: match[4],
-    unit: 'kWh',
-    unitPrice: match[5],
-    unitPriceIsOre: true,
-    periodStart: match[1],
-    periodEnd: match[2],
-    amountIncludesVat: false,
-  });
-}
-
-function parseTibberFixedLine(
-  text: string,
-  label: string,
-  category: 'fixed_fee' | 'discount',
-): ParsedEnergyLineItem | null {
-  const expression = new RegExp(
-    `${label}\\s+för\\s+(${SWEDISH_DATE_PATTERN})\\s+-\\s+(${SWEDISH_DATE_PATTERN})\\s+(${NUMBER_PATTERN})\\s+kr\\s+(${NUMBER_PATTERN})\\s+dag(?:ar)?\\s+à\\s+(${NUMBER_PATTERN})\\s+kr\\/mån`,
-    'i',
-  );
-  const match = text.match(expression);
-  if (!match) return null;
-
-  return makeLineItem({
-    category,
-    label,
-    amount: match[3],
-    quantity: match[4],
-    unit: 'days',
-    unitPrice: match[5],
-    periodStart: match[1],
-    periodEnd: match[2],
+    amount: match[2],
+    quantity: match[3],
+    unit,
+    unitPrice: match[4],
+    unitPriceIsOre: unit === 'kWh',
+    periodStart: periodStart ?? undefined,
+    periodEnd: periodEnd ?? undefined,
     amountIncludesVat: false,
   });
 }
 
 function parseTibber(text: string): ParsedFields {
   const lineItems = TIBBER_USAGE_LINE_DEFINITIONS
-    .map(({ label, category }) => parseTibberUsageLine(text, label, category))
+    .map(({ label, category }) => parseTibberLine(text, label, category, 'kWh'))
     .filter((item): item is ParsedEnergyLineItem => item !== null);
-  pushIfPresent(lineItems, parseTibberFixedLine(text, 'Månadsavgift', 'fixed_fee'));
-  pushIfPresent(lineItems, parseTibberFixedLine(text, 'Rabatt månadsavgift', 'discount'));
+  pushIfPresent(lineItems, parseTibberLine(text, 'Månadsavgift', 'fixed_fee', 'days'));
+  pushIfPresent(lineItems, parseTibberLine(text, 'Rabatt månadsavgift', 'discount', 'days'));
 
   const vatMatch = text.match(new RegExp(`Moms\\s+25%\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'));
   if (vatMatch) {
@@ -903,7 +902,7 @@ const PARSERS: ParserDefinition[] = [
   },
   {
     id: 'ellevio_flat_transfer',
-    version: 3,
+    version: 4,
     label: 'Ellevio flat transfer tariff (June 2026)',
     documentKind: 'grid',
     providerKey: 'ellevio',
@@ -912,13 +911,14 @@ const PARSERS: ParserDefinition[] = [
       /Faktura elnät/i.test(text)
       && /Ellevio AB/i.test(text)
       && /Överföringsavgift/i.test(text)
-      && /utan effektavgift/i.test(text)
+      && !new RegExp(`Effektavgift\\s+${NUMBER_PATTERN}\\s+kW`, 'i').test(text)
+      && !/Dina 3 högsta effekttoppar/i.test(text)
     ),
     parse: (text) => parseEllevio(text, false),
   },
   {
     id: 'ellevio_peak_demand',
-    version: 2,
+    version: 3,
     label: 'Ellevio peak-demand tariff',
     documentKind: 'grid',
     providerKey: 'ellevio',
@@ -979,7 +979,7 @@ const PARSERS: ParserDefinition[] = [
   },
   {
     id: 'tibber_quarterly',
-    version: 1,
+    version: 2,
     label: 'Tibber quarterly-price invoice',
     documentKind: 'electricity',
     providerKey: 'tibber',

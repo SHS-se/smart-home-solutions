@@ -265,6 +265,12 @@ test.describe('requesting a replan', () => {
   test('ROI reloads durable monthly totals without fetching history or generating charts', async ({ context, page }) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    let billsAvailable = false;
+    await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: billsAvailable ? ['electricity', 'grid'].map(kind => ({
+      id: `new:${kind}`, customer_id: CUSTOMER_ID, document_kind: kind,
+      period_start: '2026-09-01', period_end: '2026-09-30', total_amount_sek: kind === 'electricity' ? 123 : 456,
+      consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [],
+    })) : [] }));
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=roi');
     await expectRoiMonths(page, '(2/2)');
@@ -282,6 +288,17 @@ test.describe('requesting a replan', () => {
     await expect(row.getByTestId('comparison-evidence')).toContainText(/Missing energy|Saknad energi/);
     await page.getByTestId('roi-assumption-impact').locator('summary').click();
     await expect(page.getByTestId('roi-assumption-impact')).toContainText(/ROI/);
+    // A deployment adds missing invoices; polling updates Actual without repinning
+    // the equipment or rerunning any completed baseline/scheduler projections.
+    await expect(row.locator('td').nth(1)).toHaveText('—');
+    const savedBeforeBills = JSON.stringify(history.saved());
+    const modelCells = await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()));
+    const readsBeforeBills = history.reads();
+    billsAvailable = true;
+    await expect(row.locator('td').nth(1)).toHaveText('579,00 SEK', { timeout: 45_000 });
+    expect(await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()))).toEqual(modelCells);
+    expect(JSON.stringify(history.saved())).toBe(savedBeforeBills);
+    expect(history.reads()).toBe(readsBeforeBills);
     await page.getByTestId('scheduler-calculate').click();
     await expect.poll(() => history.saved()?.generation).toBe(2);
     await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 240_000 }).toBe(2);

@@ -137,7 +137,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22" # Matches the deployment PDF runtime smoke test.
           cache: npm
 
       - name: Install dependencies
@@ -433,3 +433,26 @@ jobs:
             curl -fsS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$API/$id" >/dev/null \
               || echo "  (skipped: $id is protected or already gone)"
           done
+
+  retry-energy-invoices:
+    name: Retry retained energy invoices
+    needs: [changes, migrate, functions, deploy]
+    if: ${{ !cancelled() && !failure() && needs.changes.outputs.deploy == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ github.ref_name == 'main' && 'production' || 'preview' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ github.ref_name == 'main' && 'oosxndduqzhvrorgogaw' || 'vxqpgbzseckgceopitpm' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Retry with the deployed parser
+        run: node --experimental-strip-types scripts/retry-energy-invoices.ts

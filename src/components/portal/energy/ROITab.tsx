@@ -64,7 +64,9 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
   }, [baseline, from, to, homeId]);
   const displayState = state.rangeKey === `${from}|${to}` ? state : { ...state, rows: [], error: null };
   const months = state.rangeKey === `${from}|${to}` ? state.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
-  const invoices = useQuery({ queryKey: ['energy-billing-documents', customerId], queryFn: () => fetchEnergyBillingDocuments(customerId), retry: false });
+  // Deployment retries can add bills while this tab is open. Refresh only invoice
+  // evidence: saved baseline/scheduler ledgers and their generation stay untouched.
+  const invoices = useQuery({ queryKey: ['energy-billing-documents', customerId], queryFn: () => fetchEnergyBillingDocuments(customerId), retry: false, refetchInterval: 30_000 });
   const bills = useMemo(() => billedMonths(toEnergyBillingSeriesDocuments(invoices.data ?? []), homeCount), [invoices.data, homeCount]);
   const [basis, setBasis] = useState<'baseline' | 'actual'>('baseline');
   const n = (value: string) => numericInput(value) ?? NaN;
