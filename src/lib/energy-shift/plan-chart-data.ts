@@ -33,14 +33,14 @@ export interface PlanPanelRow {
    */
   importPriceQuoted: boolean;
   /** Running net cost from the start of the window. */
-  cumulativeCostSek: number;
+  cumulativeCostSek: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolTemperatureC?: number | null;
 }
 
 export interface ChartDevice { key: string; name: string; schedulable: boolean }
 /** `bench`: every price is the real one, and the planner was given it. */
-export type ChartPrices = { kind: 'live' } | { kind: 'bench' };
+export type ChartPrices = { kind: 'live' } | { kind: 'bench' } | { kind: 'actual' };
 const quoted = (value: number | null) => value !== null && Number.isFinite(value);
 const priced = (value: number | null, shadow: number | null) => quoted(value) ? value
   : shadow !== null && Number.isFinite(shadow) ? shadow : null;
@@ -51,9 +51,9 @@ export function projectPlanChart(input: {
 }) {
   const { rows, range, timeZone, devices, prices } = input;
   const view = rows.slice(range.from, range.to);
-  let running = 0;
+  let running: number | null = 0;
   const panelRows: PlanPanelRow[] = view.map((row, i) => {
-    running += row.costSek ?? 0;
+    running = prices.kind === 'actual' && (row.costSek === null || running === null) ? null : (running ?? 0) + (row.costSek ?? 0);
     return {
       startMs: row.startMs, label: formatHomeDayMonthTime(row.start, timeZone),
       measured: row.measured, missing: row.missing,
@@ -61,8 +61,8 @@ export function projectPlanChart(input: {
       batteryChargeW: row.batteryChargeW, batteryDischargeW: row.batteryDischargeW,
       homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
       evSoc: row.evSoc === null ? null : row.evSoc * 100,
-      importPriceSekPerKwh: prices.kind === 'bench' ? row.importPriceSekPerKwh : priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
-      exportPriceSekPerKwh: prices.kind === 'bench' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
+      importPriceSekPerKwh: prices.kind !== 'live' ? row.importPriceSekPerKwh : priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),
+      exportPriceSekPerKwh: prices.kind !== 'live' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
       importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),
       cumulativeCostSek: running, poolTemperatureC: row.poolC ?? null,
     };
@@ -73,5 +73,5 @@ export function projectPlanChart(input: {
     key, name: catalogue.get(key)?.name ?? key,
     values: view.map(row => row.deviceW[key] ?? NaN), schedulable: catalogue.get(key)?.schedulable ?? false,
   })), view.map(row => row.loadW));
-  return { rows: panelRows, consumption, realPrices: prices.kind === 'bench' };
+  return { rows: panelRows, consumption, realPrices: prices.kind !== 'live' };
 }

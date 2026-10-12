@@ -2,6 +2,7 @@ import { homeMonthBounds } from '../energy-shift/home-time';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 import type { BaselineCapture, ComparisonCapture } from './browser';
 import { periodComparison } from './comparison';
+import { finalPool } from './pool-carry';
 
 export function monthsBetween(from: string, to: string): string[] {
   const valid = (month: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
@@ -29,7 +30,8 @@ export function monthLedger(capture: BaselineCapture) {
 }
 export function comparisonMonthLedger(capture: ComparisonCapture) {
   const month = monthLedger(capture);
-  return { month: month.month, start: month.start, end: month.end, timeZone: month.timeZone, coverage: month.coverage, baseline: month.baseline, recorded: month.recorded, priceArea: month.priceArea, ...captureEvidence(capture), solar: capture.input.solar, scheduler: capture.scheduler.ledger, modeled: capture.modeled, replay: { engine: capture.scheduler.engine, protocol: capture.scheduler.protocol, solves: capture.scheduler.solves } };
+  const pool = capture.input.pool ? { ...capture.input.pool, final: { baseline: finalPool(capture.result.poolStates), scheduler: finalPool(capture.scheduler.poolStates) } } : null;
+  return { month: month.month, start: month.start, end: month.end, timeZone: month.timeZone, coverage: month.coverage, baseline: month.baseline, recorded: month.recorded, priceArea: month.priceArea, ...captureEvidence(capture), pool, solar: capture.input.solar, scheduler: capture.scheduler.ledger, modeled: capture.modeled, replay: { engine: capture.scheduler.engine, protocol: capture.scheduler.protocol, solves: capture.scheduler.solves } };
 }
 export type MonthLedger = ReturnType<typeof comparisonMonthLedger>;
 

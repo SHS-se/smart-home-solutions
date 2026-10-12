@@ -1066,7 +1066,7 @@ const PlanTooltip: React.FC<{
           : (
             <Reading
               name={t('Kostnad hittills', 'Cost so far')}
-              value={`${row.cumulativeCostSek.toFixed(2)} kr`}
+              value={row.cumulativeCostSek === null ? '—' : `${row.cumulativeCostSek.toFixed(2)} kr`}
             />
           )}
       </div>

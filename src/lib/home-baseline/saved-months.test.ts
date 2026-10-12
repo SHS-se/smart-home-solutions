@@ -15,7 +15,7 @@ const anchor = { snapshot: fixture.snapshot, earliestStart: fixture.start, lates
 const ref = { homeId: 'home', customerId: 'customer' };
 const now = Date.parse('2026-10-11T18:00:00.000Z');
 const saved = () => ({ ledger, inputHash: hash, computedAt: new Date(now).toISOString() });
-const report = (): SavedReport => ({ generation: 1, version: CALCULATION_VERSION, model, months: { '2026-09': saved() } });
+const report = (): SavedReport => ({ generation: 1, version: CALCULATION_VERSION, model, months: { '2026-09': saved() }, checkpoints: {} });
 
 Deno.test('saved report validates compact financial/evidence data and rejects plans and forecast-bearing models', () => {
   assertEquals(parseSavedReport(report()), report());
@@ -61,7 +61,7 @@ Deno.test('durability failures do not publish a new graph or ledger and explicit
   let stored: SavedReport | null = null, fail = true;
   const store: MonthStore = { read: () => Promise.resolve(stored), pin: (_, snapshot, expected) => {
     assertEquals(expected, stored?.generation ?? null);
-    stored = { generation: (stored?.generation ?? 0) + 1, version: CALCULATION_VERSION, model: compactModel(snapshot), months: {} }; return Promise.resolve(stored);
+    stored = { generation: (stored?.generation ?? 0) + 1, version: CALCULATION_VERSION, model: compactModel(snapshot), months: {}, checkpoints: {} }; return Promise.resolve(stored);
   }, save: (_, generation, value) => {
     assertEquals(generation, stored!.generation);
     if (fail) return Promise.reject(new Error('Save unavailable'));
@@ -79,7 +79,7 @@ Deno.test('durability failures do not publish a new graph or ledger and explicit
 Deno.test('a calculation finishing after repin cannot save against the newer model generation', async () => {
   let stored = report(), finish: ((value: typeof capture) => void) | undefined, writes = 0;
   const store: MonthStore = { read: () => Promise.resolve(stored), pin: (_, model) => {
-    stored = { generation: stored.generation + 1, version: CALCULATION_VERSION, model: compactModel(model), months: {} };
+    stored = { generation: stored.generation + 1, version: CALCULATION_VERSION, model: compactModel(model), months: {}, checkpoints: {} };
     return Promise.resolve(stored);
   }, save: () => { writes++; return Promise.resolve(saved()); } };
   const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),

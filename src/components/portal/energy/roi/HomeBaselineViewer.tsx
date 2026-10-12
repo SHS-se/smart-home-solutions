@@ -34,7 +34,7 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
   const chart = useMemo(() => {
     if (!capture) return null;
     if (graphMode === 'actual') return projectPlanChart({ rows: capture.input.recorded.rows, devices: capture.input.recorded.devices,
-      range: { from: 0, to: capture.input.recorded.rows.length }, timeZone: capture.input.timeZone, prices: { kind: 'bench' } });
+      range: { from: 0, to: capture.input.recorded.rows.length }, timeZone: capture.input.timeZone, prices: { kind: 'actual' } });
     const { series } = graphMode === 'scheduler' ? capture.scheduler : capture.result;
     return projectPlanChart({ ...modelChartData(series), devices: series.devices,
       range: { from: 0, to: series.start.length }, timeZone: capture.input.timeZone });
@@ -78,10 +78,10 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
             values: chart.rows.map((row, i) => {
               if (graphMode === 'actual') return row.cumulativeCostSek;
               const bill = graphMode === 'scheduler' ? capture.modeled.schedulerBill : capture.modeled.baselineBill;
-              return row.cumulativeCostSek + (bill.supplierFixedSek + bill.gridFixedSek) * (i + 1) / chart.rows.length + (i === chart.rows.length - 1 ? bill.gridPeakSek : 0);
+              return row.cumulativeCostSek === null ? null : row.cumulativeCostSek + (bill.supplierFixedSek + bill.gridFixedSek) * (i + 1) / chart.rows.length + (i === chart.rows.length - 1 ? bill.gridPeakSek : 0);
             }) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">
-            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek ?? 0 : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK
+            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {graphMode === 'actual' && input.recorded.rows[quarter].costSek === null ? '—' : `${amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek! : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK`}
             {graphMode === 'default' && p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
           </div>} />
         <BaselineModelDetails capture={capture} />

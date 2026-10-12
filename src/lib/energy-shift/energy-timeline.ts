@@ -158,12 +158,10 @@ export const buildEnergyTimeline = ({
     }
     const loadW = watts(slot.total_load_kwh);
     const price = priceByStart.get(startMs);
-    const importCost = price?.import_price_sek_per_kwh == null || slot.grid_import_kwh == null
-      ? null
-      : slot.grid_import_kwh * price.import_price_sek_per_kwh;
-    const exportCredit = price?.export_price_sek_per_kwh == null || slot.grid_export_kwh == null
-      ? null
-      : slot.grid_export_kwh * price.export_price_sek_per_kwh;
+    const importCost = slot.grid_import_kwh === 0 ? 0 : price?.import_price_sek_per_kwh == null || slot.grid_import_kwh == null
+      ? null : slot.grid_import_kwh * price.import_price_sek_per_kwh;
+    const exportCredit = slot.grid_export_kwh === 0 ? 0 : price?.export_price_sek_per_kwh == null || slot.grid_export_kwh == null
+      ? null : slot.grid_export_kwh * price.export_price_sek_per_kwh;
     rows.set(startMs, {
       startMs,
       start: new Date(startMs).toISOString(),
@@ -182,9 +180,7 @@ export const buildEnergyTimeline = ({
       batterySoc: slot.battery_soc ?? null,
       evSoc: slot.ev_soc ?? null,
       deviceW,
-      costSek: importCost === null && exportCredit === null
-        ? null
-        : (importCost ?? 0) - (exportCredit ?? 0),
+      costSek: importCost === null || exportCredit === null ? null : importCost - exportCredit,
       // A measured quarter's price is the archived all-in figure, which is a
       // real price rather than a forecast — so it never feeds the modelled
       // series.

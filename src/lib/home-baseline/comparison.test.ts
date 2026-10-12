@@ -13,6 +13,7 @@ Deno.test('recorded graph uses measured device energy, storage and temperature w
   first.grid_import_kwh = 2; first.grid_export_kwh = .5; first.solar_production_kwh = 1;
   first.battery_charge_kwh = .1; first.battery_discharge_kwh = .2; first.battery_soc = .7; first.ev_soc = .8;
   rows.prices[0].import_price_sek_per_kwh = -1; rows.prices[0].export_price_sek_per_kwh = .5;
+  rows.actualPrices[0].import_price_sek_per_kwh = -1; rows.actualPrices[0].export_price_sek_per_kwh = .5;
   rows.pool.push({ start_ts: first.start_ts, water_temperature_c: 29.25 });
   rows.actual.splice(2, 1); // Offline energy is zero, storage and temperatures retain gaps.
   const input = prepareHomeBaseline(rows);
@@ -26,7 +27,7 @@ Deno.test('recorded graph uses measured device energy, storage and temperature w
   assertEquals(row.cumulativeCostSek, -2.25);
   assertEquals(chart.rows[1].loadW, 0); assertEquals(chart.rows[1].homeSoc, null); assertEquals(chart.rows[1].poolTemperatureC, null);
   assertEquals(recorded.rows[0].deviceW.pool_pump, 60);
-  assertAlmostEquals(chart.rows.at(-1)!.cumulativeCostSek, recorded.ledger.costSek);
+  assertAlmostEquals(chart.rows.at(-1)!.cumulativeCostSek!, recorded.ledger.costSek);
 });
 
 Deno.test('period energy comparison uses grid meters and retained solar, excluding the initial quarter', () => {

@@ -414,8 +414,11 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('comparison-graph-actual')).toHaveText(/Actual consumption|Faktisk förbrukning/);
     const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toContainText(/Actual consumption|Faktisk förbrukning/i);
-    await chart.focus(); await chart.press('End'); await chart.press('Enter');
+    await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
+    expect(capture.input.recorded.rows.at(-1).importPriceSekPerKwh).toBe(2);
+    expect(capture.input.problem.slots.at(-1).import_price).toBe(1);
+    await expect(page.getByTestId('baseline-quarter')).toContainText('2,00 SEK');
     await page.getByTestId('comparison-graph-default').click();
     await expect(chart).toContainText(/BASELINE MODEL|BASMODELL/);
     expect(history.reads()).toBe(reads);

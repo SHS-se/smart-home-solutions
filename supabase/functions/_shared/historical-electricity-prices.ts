@@ -5,6 +5,7 @@ import { localDay } from './planner-wasm/calendar.ts';
 export interface HistoricalPrice {
   start_ts: string; import_price_sek_per_kwh: number; export_price_sek_per_kwh: number;
   grid_import_price_sek_per_kwh: number; source: 'archive' | 'reconstructed'; supplier_revision: string;
+  spot_price_sek_per_kwh: number | null;
 }
 export interface SupplierVersion { revision: string; valid_from: string; valid_to: string | null; definition: unknown }
 export interface ArchivedPrice { start_ts: string; import_price_sek_per_kwh: number; export_price_sek_per_kwh: number }
@@ -38,7 +39,7 @@ export async function historicalElectricityPrices(starts: string[], archive: Arc
     const prior = archived.get(Date.parse(at));
     if (prior) {
       if (![prior.import_price_sek_per_kwh, prior.export_price_sek_per_kwh].every(Number.isFinite)) throw new Error(`Invalid archived electricity price at ${at}`);
-      return { ...prior, start_ts: at, grid_import_price_sek_per_kwh: grid.import_price_sek_per_kwh, source: 'archive', supplier_revision: '' };
+      return { ...prior, start_ts: at, grid_import_price_sek_per_kwh: grid.import_price_sek_per_kwh, source: 'archive', supplier_revision: '', spot_price_sek_per_kwh: null };
     }
     const day = localDay(at, zone), version = supplierVersions.find(v => v.valid_from <= day && (!v.valid_to || v.valid_to >= day));
     if (!version) throw new Error(`Missing supplier terms for ${day}`);
@@ -48,6 +49,6 @@ export async function historicalElectricityPrices(starts: string[], archive: Arc
     const round = (v: number) => Math.round(v * 100_000) / 100_000;
     return { start_ts: at, import_price_sek_per_kwh: round(supplier.supplier_import_price_sek_per_kwh + grid.import_price_sek_per_kwh),
       export_price_sek_per_kwh: round(supplier.supplier_export_price_sek_per_kwh + grid.export_price_sek_per_kwh),
-      grid_import_price_sek_per_kwh: grid.import_price_sek_per_kwh, source: 'reconstructed', supplier_revision: version.revision };
+      grid_import_price_sek_per_kwh: grid.import_price_sek_per_kwh, source: 'reconstructed', supplier_revision: version.revision, spot_price_sek_per_kwh: interval.SEK_per_kWh };
   });
 }

@@ -18,6 +18,8 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   await context.route('**/rest/v1/rpc/get_energy_roi_criteria*', route => route.fulfill({ json: {} }));
   await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['05','06','07','08','09'].flatMap(month => ['electricity','grid'].map(kind => ({ id: `${month}:${kind}`, customer_id: customerId, document_kind: kind, period_start: `2026-${month}-01`, period_end: `2026-${month}-${['06','09'].includes(month) ? '30' : '31'}`, total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [] }))) }));
   await context.route('**/rest/v1/energy_roi_solar_profiles*', route => route.fulfill({ json: null }));
+  await context.route('**/rest/v1/energy_roi_pool_seeds*', route => route.fulfill({ json: null }));
+  await context.route('**/rest/v1/energy_roi_pool_checkpoints*', route => route.fulfill({ json: [] }));
   await context.route('**/rest/v1/energy_roi_installations*', route => route.fulfill({ json: [
     { equipment: 'solar', installed_month: '2026-05' }, { equipment: 'battery', installed_month: '2026-05' },
     { equipment: 'bergvarme', installed_month: '2026-09' },
@@ -27,7 +29,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     const body = route.request().postDataJSON();
     expect(body.p_home_id).toBe(homeId); expect(body.p_customer_id).toBe(customerId);
     expect(body.p_version).toBe(CALCULATION_VERSION);
-    if (!report || body.p_expected_generation === report.generation) report = { generation: (report?.generation ?? 0) + 1, version: CALCULATION_VERSION, model: body.p_model, months: {} };
+    if (!report || body.p_expected_generation === report.generation) report = { generation: (report?.generation ?? 0) + 1, version: CALCULATION_VERSION, model: body.p_model, months: {}, checkpoints: {} };
     await route.fulfill({ json: report });
   });
   await context.route('**/rest/v1/rpc/save_energy_roi_month*', async route => {
@@ -50,14 +52,14 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   await context.route('**/functions/v1/backfill-energy-prices*', async route => {
     const body = route.request().postDataJSON(); reads++;
     expect(body.mode).toBe('read'); expect(body.home_id).toBe(homeId);
-    expect(body.pricing_basis).toBe('current_supplier');
+    expect(body.pricing_basis).toBe('roi');
     expect(Date.parse(body.end) - Date.parse(body.start)).toBeLessThanOrEqual(32 * 86_400_000);
     if (priceError || body.start === '2026-03-31T22:00:00.000Z') {
       await route.fulfill({ status: 502, json: { message: `Missing historical market price at ${body.start}` } }); return;
     }
     const prices = baselineFixture({ start: body.start, end: body.end }).prices;
     prices.forEach(p => { p.source = 'reconstructed'; p.supplier_revision = ROI_SUPPLIER_TERMS.revision; });
-    await route.fulfill({ json: { prices, area: 'SE3', catalogue: testTariff() } });
+    await route.fulfill({ json: { prices, actualPrices: prices.map(p => ({ start_ts: p.start_ts, import_price_sek_per_kwh: 2, export_price_sek_per_kwh: .3, source: 'invoice' })), area: 'SE3', catalogue: testTariff() } });
   });
   await context.route('**/rest/v1/energy_optimisation_*', async route => {
     const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';

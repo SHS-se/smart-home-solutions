@@ -112,6 +112,14 @@ The period comparison table includes an Actual consumption column with measured
 grid imports, solar consumption and exports. Its cost uses the same complete
 electricity/grid invoice pair as the monthly ROI table; incomplete months and
 72-hour frames show no invoice total.
+Actual graph prices use dated invoice contract terms, independently of the
+current Tibber scenario used by the two models. Karlstads `Medelspotpris` is a
+monthly rate; Tibber quarters use market spot plus that invoice's per-kWh
+adders. Invoice grid transfer, energy tax and VAT are included once. Fixed fees
+and demand charges stay in the full invoice totals and do not enter graph kWh
+prices. Unbilled live quarters use their archived price receipts; assumed
+portal backfills do not establish an actual contract. A missing nonzero flow
+price leaves a cost gap rather than making that energy free.
 Missing energy is zero; missing SOC and temperature remain gaps. Recorded charging
 is plotted only in Actual and is never used to charge the baseline EV.
 
@@ -225,3 +233,29 @@ hour inside the published reconstruction period fails instead of supplying zero.
 
 The installation notes replace assumption disclosures. Physical starting values
 remain calculation inputs; the removed sensitivity scenarios are no longer run.
+
+
+## Pool history
+
+An owner-stated seed belongs to one home in `energy_roi_pool_seeds`. The requested
+seed is 30°C at local midnight on 1 October 2025. Both models start there and carry
+their own native pool temperature and heater state across subsequent calendar
+months. Observed pool readings remain Actual evidence and do not reset a seeded
+model in June or any later month. Battery and EV initialization retain their
+existing policy.
+
+`createCaptureSource` resolves earlier dependency months even outside the selected
+report range. Complete month checkpoints persist separately from the twelve
+presentation summaries. Thus October's continuation survives while November–
+October occupies the table. Seeded 72-hour graphs slice the same monthly
+trajectories; they do not run another simulation from an observed temperature.
+Partial months cannot seed successors. Parent hashes and report generations are
+checked under the home's existing advisory transaction lock. Replacing an earlier
+checkpoint removes its descendants; repinning or publishing changed solar inputs
+clears the seeded chain. ROI-v5 rejects stale v4 writers.
+
+Publication is service-only through `publish_energy_roi_pool_seed(home, customer,
+month, temperature_c)`. Import required history and publish the reconstructed
+solar coverage before setting a seed. A missing prerequisite fails explicitly;
+the source cannot silently move the initialization to a later month. Solar and
+pool publications preserve actual telemetry and original invoice totals.

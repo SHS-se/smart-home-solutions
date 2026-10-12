@@ -9,12 +9,21 @@ import type { HomeRef } from './history.ts';
 import type { MonthLedger } from './savings.ts';
 import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
+import type { PoolCheckpoint } from './pool-carry.ts';
 
-// v4 pins historical solar reconstruction and removes assumption sensitivity output.
+// v5 pins independent pool continuations across calendar months.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v4:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v5:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
+const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),
+  z.object({ kind: z.literal('off'), seconds: finite.nonnegative() }).strict(), z.object({ kind: z.literal('running'), seconds: finite.nonnegative() }).strict()]);
+const thermal = z.object({ poolC: finite, heaterState }).strict();
+const actors = z.object({ baseline: thermal, scheduler: thermal }).strict();
+const hash = z.string().regex(/^[a-f0-9]{64}$/);
+const pool = z.object({ parentHash: hash, initial: actors, final: actors }).strict();
+export const poolCheckpointSchema = pool.extend({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), start: z.string().datetime(), end: z.string().datetime(), inputHash: hash }).strict();
+const poolSeedSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), temperatureC: finite, hash }).strict();
 const ledger = z.object({ importKwh: finite.nonnegative(), exportKwh: finite.nonnegative(), importCostSek: finite, exportRevenueSek: finite, costSek: finite }).strict();
 const comparison = z.object({ gridKwh: finite.nonnegative(), solarKwh: finite.nonnegative(), exportKwh: finite.nonnegative(), costSek: finite }).strict();
 export const monthLedgerSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), start: z.string().datetime(), end: z.string().datetime(), timeZone: z.string(),
@@ -30,12 +39,12 @@ export const monthLedgerSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1
 const bill = z.object({ supplierFixedSek: finite, gridFixedSek: finite, gridPeakSek: finite, peakKw: finite.nonnegative(), totalSek: finite }).strict();
 const service = z.object({ minimumPoolC: finite.nullable(), belowPoolStartHours: finite.nonnegative(), endBatteryKwh: finite.nullable(), endEvKwh: finite.nullable(), endPoolC: finite.nullable(), endCreditSek: finite }).strict();
 const modeled = z.object({ baselineBill: bill, schedulerBill: bill, baselineService: service, schedulerService: service }).strict();
-export const comparisonLedgerSchema = monthLedgerSchema.omit({ comparison: true, gridImportCostSek: true }).extend({ solar: z.object({ profileHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(), reconstructedKwh: finite.nonnegative(), reconstructedQuarters: count }).strict(), scheduler: ledger, modeled, replay: z.object({ engine: z.literal(REPLAY_ENGINE), protocol: z.literal(REPLAY_PROTOCOL), solves: count.positive() }).strict() }).strict();
+export const comparisonLedgerSchema = monthLedgerSchema.omit({ comparison: true, gridImportCostSek: true }).extend({ pool: pool.nullable(), solar: z.object({ profileHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(), reconstructedKwh: finite.nonnegative(), reconstructedQuarters: count }).strict(), scheduler: ledger, modeled, replay: z.object({ engine: z.literal(REPLAY_ENGINE), protocol: z.literal(REPLAY_PROTOCOL), solves: count.positive() }).strict() }).strict();
 const savedMonthSchema = z.object({ ledger: comparisonLedgerSchema, inputHash: z.string().regex(/^[a-f0-9]{64}$/), computedAt: z.string().datetime() }).strict();
 const reportSchema = z.object({ generation: count.positive(), version: z.literal(CALCULATION_VERSION), model: z.record(z.unknown()),
-  months: z.record(savedMonthSchema) }).strict();
+  months: z.record(savedMonthSchema), checkpoints: z.record(poolCheckpointSchema) }).strict();
 export interface SavedMonth { ledger: MonthLedger; inputHash: string; computedAt: string }
-export interface SavedReport { generation: number; version: string; model: HomeModelCapture; months: Record<string, SavedMonth> }
+export interface SavedReport { generation: number; version: string; model: HomeModelCapture; months: Record<string, SavedMonth>; checkpoints: Record<string, PoolCheckpoint> }
 export interface MonthStore {
   read(ref: HomeRef, signal: AbortSignal): Promise<SavedReport | null>;
   pin(ref: HomeRef, model: HomeModelCapture, expectedGeneration: number | null, signal: AbortSignal): Promise<SavedReport>;
@@ -45,14 +54,15 @@ export interface MonthStore {
 /** Persist physical equipment only, never forecasts, plans or chart series. */
 export function compactModel(snapshot: HomeModelCapture): HomeModelCapture {
   const members = new Set(homePhysics(snapshot).memberKeys);
-  const { roi_solar_profile, captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria } = snapshot;
-  return { roi_solar_profile, captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria,
+  const { roi_pool_seed, roi_solar_profile, captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria } = snapshot;
+  return { roi_pool_seed, roi_solar_profile, captured_at, timezone, capabilities, battery, ev_battery, pool, device_physics, pool_model, grid, value_settings, comfort, policy, criteria,
     device_models: snapshot.device_models.filter(m => members.has(m.key)).map(m => ({ ...m, forecast_w_by_slot: [] })),
     services: snapshot.services.filter(s => s.device === 'ev' && s.control.type === 'discrete_current').map(s => ({ device: s.device, control: s.control })) };
 }
 export function parseSavedReport(value: unknown): SavedReport {
   const parsed = reportSchema.parse(value), model = parsed.model as unknown as HomeModelCapture;
   homePhysics(model);
+  poolSeedSchema.nullable().parse(model.roi_pool_seed);
   if (model.roi_solar_profile !== null && !/^[a-f0-9]{64}$/.test(model.roi_solar_profile)) throw new Error('Invalid saved solar profile');
   if (Object.keys(model).some(key => !Object.keys(compactModel(model)).includes(key)) || model.device_models.some(m => m.forecast_w_by_slot.length)) throw new Error('Saved ROI model contains non-physical data');
   if (Object.keys(parsed.months).length > 12) throw new Error('Invalid saved ROI month count');

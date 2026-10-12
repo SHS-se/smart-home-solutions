@@ -29,6 +29,7 @@ import {
 
 import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice } from "../_shared/historical-electricity-prices.ts";
 import { roiSupplierVersion } from "../_shared/roi-supplier-terms.ts";
+import { actualContractPrices, type PriceInvoice } from '../_shared/actual-contract-prices.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -106,10 +107,10 @@ serve(async (req) => {
       const body = await req.json();
       homeId = String(body?.home_id ?? "");
       days = Number(body?.days);
-      if (body?.pricing_basis !== undefined && (body.mode !== 'read' || body.pricing_basis !== 'current_supplier')) {
+      if (body?.pricing_basis !== undefined && (body.mode !== 'read' || body.pricing_basis !== 'roi')) {
         return json({ error: 'invalid_pricing_basis' }, 400);
       }
-      currentSupplier = body?.pricing_basis === 'current_supplier';
+      currentSupplier = body?.pricing_basis === 'roi';
       if (body?.mode === "read") {
         historicalPriceRange(body.start, body.end);
         period = { start: body.start, end: body.end };
@@ -259,11 +260,11 @@ serve(async (req) => {
 
     if (period) {
       const starts = historicalPriceRange(period.start, period.end);
-      const archive: ArchivedPrice[] = [];
-      for (let i = 0; !currentSupplier && i < starts.length; i += 672) {
+      const archive: (ArchivedPrice & { source: string })[] = [];
+      for (let i = 0; i < starts.length; i += 672) {
         const end = starts[i + 672] ?? period.end;
         const { data, error } = await supabase.from("energy_optimisation_price_slots")
-          .select("start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh")
+          .select("start_ts,import_price_sek_per_kwh,export_price_sek_per_kwh,source")
           .eq("home_id", homeId).eq("customer_id", home.customer_id)
           .gte("start_ts", starts[i]).lt("start_ts", end).order("start_ts").limit(672);
         if (error) throw error;
@@ -272,12 +273,21 @@ serve(async (req) => {
       // Current-contract replay ignores archived all-in prices: they embed older
       // supplier charges. Historical spot/grid prices remain dated, and no rows are written.
       const versions = currentSupplier ? [roiSupplierVersion(supplierKey)] : supplierVersions;
-      const prices = await historicalElectricityPrices(starts, archive, catalogue, versions, async day => {
+      const prices = await historicalElectricityPrices(starts, currentSupplier ? [] : archive, catalogue, versions, async day => {
         const response = await fetch(spotUrl(day, area), { signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error(`Historical market prices unavailable for ${day}: ${response.status}`);
         return response.json();
       });
-      return json({ prices, area, catalogue });
+      if (!currentSupplier) return json({ prices, area, catalogue });
+      const [{ data: invoices, error: invoiceError }, { data: homes, error: homesError }] = await Promise.all([
+        supabase.from('energy_billing_documents').select('id,provider_key,parser_id,document_kind,period_start,period_end,energy_billing_line_items(category,label,unit,unit_price_sek,amount_includes_vat,period_start,period_end)')
+          .eq('customer_id', home.customer_id).lte('period_start', isoDate(new Date(Date.parse(period.end) - SLOT_MS))).gte('period_end', isoDate(new Date(period.start))),
+        supabase.from('homes').select('id').eq('customer_id', home.customer_id),
+      ]);
+      if (invoiceError) throw invoiceError;
+      if (homesError) throw homesError;
+      const actualPrices = actualContractPrices(prices, homes?.length === 1 ? invoices as PriceInvoice[] : [], homes?.length === 1 ? archive : [], catalogue.timezone!);
+      return json({ prices, actualPrices, area, catalogue });
     }
 
     // ── Walk the window ──────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ Deno.test('billing timing preserves recovered energy, includes export sign and l
   const rows = hour();
   rows.actual.slice(1).forEach(r => { r.grid_import_kwh = 1; r.grid_export_kwh = .5; });
   rows.prices.forEach((p, i) => { p.import_price_sek_per_kwh = i + 1; p.export_price_sek_per_kwh = i + 1; });
+  rows.actualPrices.forEach((p, i) => { p.import_price_sek_per_kwh = i + 1; p.export_price_sek_per_kwh = i + 1; });
   rows.hourlyFields = rows.prices.map(p => ({ start_ts: p.start_ts, fields: ['grid_import_kwh', 'grid_export_kwh'] }));
   const input = prepareHomeBaseline(rows);
   const full = assessAssumptions(input, 0, [0, 0, 0, 0], engine);

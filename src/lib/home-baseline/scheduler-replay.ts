@@ -8,6 +8,7 @@ import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calen
 import { recordedTrips, withdrawTrip } from './trip-ledger.ts';
 import { electricityLedger } from './controller.ts';
 import { projectionSeries, type BaselineInput } from './model.ts';
+import { quarterPool, withPoolState } from './pool-carry.ts';
 
 export type ReplayEngine = Pick<ReturnType<typeof createWasmPlanner>, 'solve' | 'project'>;
 export const REPLAY_PROTOCOL = 'perfect-forecast-72h-ev-departure-daily-homecoming-v2';
@@ -15,7 +16,7 @@ export const REPLAY_ENGINE = `${runtime.recipe.version}:${runtime.policy_manifes
 
 /** Current optimizer, isolated from live planning/dispatch. Trips are external physical withdrawals. */
 export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
-  const source = input.problem, { comfort, policy, criteria } = input.settings;
+  const source = withPoolState(input.problem, input.pool?.initial.scheduler), { comfort, policy, criteria } = input.settings;
   if (!policy || criteria === undefined || (source.pool_store && !comfort?.pool) || (source.car && !comfort?.ev)) throw new Error('Current scheduler settings unavailable');
   if (policy.battery_target_is_hard) throw new Error('Unsupported configured hard battery target in rules planner');
   const approved = resolveRulePolicy(criteria);
@@ -56,6 +57,6 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
     state = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c, heater_state: q.heater_state as ReadyProblem['initial']['heater_state'] };
   }
   const series = projectionSeries(input, problem, quarters), ledger = electricityLedger(quarters, problem);
-  return { series, commands, ledger, solves, engine: REPLAY_ENGINE, protocol: REPLAY_PROTOCOL };
+  return { series, commands, ledger, poolStates: quarters.map(quarterPool), solves, engine: REPLAY_ENGINE, protocol: REPLAY_PROTOCOL };
 }
 export type SchedulerReplay = ReturnType<typeof replayScheduler>;
