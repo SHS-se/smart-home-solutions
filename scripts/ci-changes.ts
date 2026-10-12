@@ -98,15 +98,23 @@ function git(args: string[]): { ok: boolean; out: string } {
   return { ok: result.success, out: new TextDecoder().decode(result.stdout).trim() };
 }
 
+/** Pipeline edits rerun validation without redeploying unchanged services. */
+export function classifyPipeline(root: string, changed: readonly string[] | "all", workflowFiles: readonly string[]): Changes {
+  const changes = classify(root, changed);
+  if (changed !== "all" && changed.some(file => workflowFiles.includes(file))) {
+    return { ...changes, code: true, frontend: true, planner: true, bench: true };
+  }
+  return changes;
+}
+
 /** Files changed from `base` to HEAD, or "all" when there is no usable base. */
-export function changedSince(base: string, workflowFiles: readonly string[]): readonly string[] | "all" {
+export function changedSince(base: string): readonly string[] | "all" {
   if (!base || /^0+$/.test(base)) return "all";
   if (!git(["merge-base", "--is-ancestor", base, "HEAD"]).ok) return "all";
   const diff = git(["diff", "--name-only", "--no-renames", base, "HEAD"]);
   if (!diff.ok) return "all";
   const files = diff.out ? diff.out.split("\n") : [];
-  // A changed pipeline may deploy differently, so it redeploys everything.
-  return files.some(f => workflowFiles.includes(f)) ? "all" : files;
+  return files;
 }
 
 if (import.meta.main) {
@@ -115,11 +123,11 @@ if (import.meta.main) {
     return i >= 0 ? Deno.args[i + 1] ?? "" : "";
   };
   const workflow = arg("workflow");
-  const changed = changedSince(arg("base"), [
+  const changed = changedSince(arg("base"));
+  const c = classifyPipeline(Deno.cwd(), changed, [
     "scripts/ci-changes.ts",
     ...(workflow ? [`.github/workflows/${workflow}`] : []),
   ]);
-  const c = classify(Deno.cwd(), changed);
   const lines = [
     `code=${c.code}`,
     `frontend=${c.frontend}`,

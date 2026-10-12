@@ -332,8 +332,8 @@ jobs:
 
       - name: Deploy edge functions
         # Deploys the functions whose code changed (per-function settings come from config.toml,
-        # and changing it deploys them all). --use-api bundles without Docker; auth is the access
-        # token above, so no DB password is needed. Runs after migrate so functions can rely on the
+        # and changing it deploys them all). Bundle in the runner's Docker runtime; auth is the
+        # access token above, so no DB password is needed. Runs after migrate so functions can rely on the
         # latest schema/RPCs. Planning executors deploy before their callers.
         env:
           FUNCTIONS: ${{ needs.changes.outputs.functions }}
@@ -356,7 +356,7 @@ jobs:
             fi
           done
           if [ ${#rest[@]} -gt 0 ]; then
-            supabase functions deploy "${rest[@]}" --project-ref "$SUPABASE_PROJECT_REF" --use-api --yes
+            supabase functions deploy "${rest[@]}" --project-ref "$SUPABASE_PROJECT_REF" --yes
           fi
 
   deploy:

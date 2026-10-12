@@ -1,7 +1,17 @@
 import { assert, assertEquals } from "@std/assert";
-import { classify, functionNames } from "../scripts/ci-changes.ts";
+import { classify, classifyPipeline, functionNames } from "../scripts/ci-changes.ts";
 
 const root = new URL("..", import.meta.url).pathname;
+
+Deno.test("pipeline edits rerun all checks but deploy only changed service source", () => {
+  const pipeline = ".github/workflows/ci-deploy.yml";
+  const c = classifyPipeline(root, [pipeline, "supabase/functions/integration-tariff/index.ts"], [pipeline]);
+  assert(c.code && c.frontend && c.planner && c.bench);
+  assertEquals(c.functions, ["integration-tariff"]);
+  assert(!c.migrations);
+  assertEquals(classifyPipeline(root, [pipeline], [pipeline]).functions, []);
+  assertEquals(classifyPipeline(root, "all", [pipeline]).functions, functionNames(root));
+});
 
 Deno.test("a live planner adapter change deploys the energy functions and runs the bench", () => {
   const c = classify(root, ["supabase/functions/_shared/rules-planner.ts"]);
