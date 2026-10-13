@@ -290,6 +290,27 @@ Deno.test('thermostat carries its latch and native physical stops across quarter
   assertEquals(r.commands[stop + 1].pool_on, false);
 });
 
+Deno.test('a household load that leaves no room makes the pool heater wait a quarter, not fail the month', () => {
+  const input = prepareHomeBaseline(baselineFixture());
+  input.problem.initial.pool_c = 30;
+  // No battery to lean on, and for two quarters the house alone is just within the limit: even a starting heater is too much.
+  input.problem.battery = null; input.problem.initial.battery_kwh = null;
+  input.problem.slots[2].base_w = input.problem.slots[3].base_w = input.problem.limits.import_w - 50;
+  const calm = prepareHomeBaseline(baselineFixture()); calm.problem.initial.pool_c = 30;
+  calm.problem.battery = null; calm.problem.initial.battery_kwh = null;
+  const r = projectDefaultProblem(input.problem, input.start, input.timeZone, DEFAULT_SETTINGS, engine, input.evDemandKwh);
+  const free = projectDefaultProblem(calm.problem, calm.start, calm.timeZone, DEFAULT_SETTINGS, engine, calm.evDemandKwh);
+  assertEquals(free.commands.slice(0, 6).map(c => c.pool_on), [true, true, true, true, true, true], 'the heater would have run through these quarters');
+  assertEquals(r.commands.slice(0, 6).map(c => c.pool_on), [true, true, false, false, true, true]);
+  assert(r.quarters.every((q, i) => q.net_w <= input.problem.limits.import_w + 1e-6 && (i > 3 || i < 2 || q.pool_compressor_w === 0)));
+  // The thermostat kept calling for heat: the run is only delayed, so the pool ends as warm as it would have.
+  assertEquals(r.commands.filter(c => c.pool_on).length >= free.commands.filter(c => c.pool_on).length, true);
+  assertAlmostEquals(r.quarters.at(-1)!.pool_c!, free.quarters.at(-1)!.pool_c!, .1);
+  // A house that exceeds its own limit with everything off is a data fault and still stops the month.
+  input.problem.slots[2].base_w = input.problem.limits.import_w + 500;
+  assertThrows(() => projectDefaultProblem(input.problem, input.start, input.timeZone, DEFAULT_SETTINGS, engine, input.evDemandKwh), Error, 'quarter 2: shared_grid_limit');
+});
+
 Deno.test('default overnight EV charging load balances within the home grid limit and resumes at full current', () => {
   const rows = baselineFixture({ start: '2026-05-01T22:00:00.000Z', end: '2026-05-02T04:00:00.000Z' });
   const input = prepareHomeBaseline(rows);
