@@ -40,11 +40,34 @@ Every device is counted once. Controlling devices follow selected commands; veri
 
 The current published ready plan supplies exact commands through capture time plus one hour, including a partial first quarter. A replan keeps those commands while simulating fresh measured states; EV disconnection can therefore change actual electrical demand without rewriting its fixed command. A plan-ID fence prevents publishing against a replaced reference. Automatic and manual submissions follow the same preparation/solve/publication path.
 
+User decision, 13 October 2026: release the next-hour command lock only when
+retaining it violates a configured grid limit, native device capability or
+permission. A changed price or a cheaper schedule does not release it. The
+native solver identifies the conflicting committed quarter and constraint;
+the planner then rebuilds once with that lock released, under the same current
+limits and permissions. Malformed commands and unrelated solve failures remain
+errors. The selected schedule records the violated constraint and source plan
+in its continuity diagnostics, and its published device commands are rebuilt
+from the replacement rather than copied from the released hour.
+Forced battery purchases and sales must also match their projected allocations,
+as required by HA's battery-command contract. A retained forced allocation that
+current grid or storage limits clip releases the lock; new forced commands carry
+the projected watts. Automatic battery operations retain their permission
+ceilings. A zero forced allocation is represented by the inert native operation.
+
+The 13 October incident was a retained plan built for 17.25 kW against a new
+14 kW import limit. Its retained opening car/pool load already exceeded 14 kW
+before battery charging, so an exact next-hour lock could not be fulfilled.
+
 Schema 9 native battery commands remain usable when optional battery execution feedback is absent, as with the current TEST integration. A modern delegated execution contract is generated only from supplied valid feedback. Missing feedback is never fabricated. The optional monetary battery projection truthfully reports that the rules objective has no conditional money projection; cost curves are not recreated. Reusing a selected schedule for a cost comparison is explicitly labelled rather than represented as another optimization.
 
 ## TEST completion and production acknowledgement
 
 The TEST HA mirror has no control authority and does not acknowledge returned TEST plans. TEST manual requests therefore complete on atomic publication of their matching ready plan. The server chooses this basis only for the exact TEST Supabase origin; payloads cannot choose it. Request, home, snapshot and plan identities must match. All HA acknowledgement fields remain pending, so cloud completion does not claim device acceptance or execution.
+
+Execution runtime reports also go only to the controlling backend. The observing
+TEST mirror can retain a historical HA status while production receives fresh
+reports; its stored plan identity is not a current cross-backend view of HA.
 
 Other environments retain exact Home Assistant acknowledgement as the completion milestone. Already outstanding legacy manual requests are released as failed after the planner upgrade, preserving their displayed plan and acknowledgement identity. The first rules publication made before the TEST completion change was released explicitly using its matching published-job evidence, without altering HA acknowledgement.
 

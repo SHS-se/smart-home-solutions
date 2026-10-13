@@ -271,3 +271,65 @@ Deno.test("passive external EV forecast remains an excluded part of native base 
   const plan = generateRulesPlan(prepared).plan;
   assertEquals(plan.battery_supply_scope, { kind: "selected", include_base: true, planned_device_keys: ["fridge"] });
 });
+
+Deno.test("a retained command that violates the changed grid limit releases the hour and publishes its repaired requests", () => {
+  const s = snapshot();
+  s.schema_version = 8;
+  s.device_models = [{ key: "ev", name: "EV", statistic_id: "ev", category: "ev_charging", suggested_load_type: "variable_full_load",
+    load_type: "variable_full_load", planning_role: "controllable", control_type: "variable_power", active_power_w: 11040,
+    profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => 0) }];
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const locked = prior.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 16, ev_min_current_a: 0, ev_max_current_a: 16,
+    device_commands: { ev: { type: "variable_power" as const, value: 16, unit: "A" as const } } }));
+  s.ev_battery!.soc = .4;
+  s.grid.import_limit_w = 8000;
+  s.captured_at = new Date(Date.parse(s.captured_at) + 17_000).toISOString();
+  const reference = { plan_id: prior.plan_id, slots: locked };
+  const prepared = prepare(s, reference);
+  const before = JSON.stringify(prepared);
+  const replacement = generateRulesPlan(prepared).plan;
+  assertEquals(JSON.stringify(prepared), before);
+  assertEquals(replacement.status, "ready");
+  assert(replacement.plans.priority.slots.every(slot => slot.grid_import_w <= 8000 + 1e-7));
+  assert(replacement.plans.priority.slots[0].ev_target_current_a < 16);
+  assertEquals(replacement.plans.priority.continuity, { source_plan_id: prior.plan_id, selected: "repaired",
+    reason: `shared_grid_limit at ${s.slots[0].start}`, proposed_sek: null, reference_sek: null, deadband_sek: 0 });
+  assertEquals(replacement.plans.priority.slots[0].device_commands!.ev, {
+    type: "variable_power", value: replacement.plans.priority.slots[0].ev_target_current_a, unit: "A",
+  });
+});
+Deno.test("a malformed retained command is refused without releasing the hour", () => {
+  const s = snapshot();
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const prepared = prepare(s, { plan_id: prior.plan_id, slots: prior.plans.priority.slots });
+  prepared.problem.accepted![0].charge_limit_w = -1;
+  assertThrows(() => generateRulesPlan(prepared), Error, "negative_native_power_limit");
+});
+
+Deno.test("a clipped retained grid purchase releases the hour and materializes executable battery allocations", () => {
+  const s = snapshot();
+  s.schema_version = 8;
+  s.capabilities.battery = true;
+  s.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
+  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000,
+    charge_efficiency: .95, discharge_efficiency: .95 };
+  s.ev_battery!.connected = false;
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const locked = prior.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 0,
+    battery_command: { schema_version: 3 as const, operation: "grid_charge" as const, charge_limit_w: 3000,
+      discharge_limit_w: 0, allow_grid_charge: true, allow_battery_export: false } }));
+  s.grid.import_limit_w = 2000;
+  const prepared = prepare(s, { plan_id: prior.plan_id, slots: locked });
+  const before = JSON.stringify(prepared);
+  const replacement = generateRulesPlan(prepared).plan;
+  assertEquals(JSON.stringify(prepared), before);
+  assertEquals(replacement.plans.priority.continuity?.reason, `native_battery_power_limit at ${s.slots[0].start}`);
+  for (const slot of replacement.plans.priority.slots) {
+    assert(slot.grid_import_w <= 2000 + 1e-7);
+    const command = slot.battery_command!;
+    if (command.operation === "grid_charge" || command.operation === "export") {
+      assertAlmostEquals(command.charge_limit_w, slot.battery_charge_w, .01);
+      assertAlmostEquals(command.discharge_limit_w, slot.battery_discharge_w, .01);
+    }
+  }
+});

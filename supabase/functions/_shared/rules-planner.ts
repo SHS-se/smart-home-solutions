@@ -290,10 +290,17 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
   }
   return result;
 }
-function batteryCommand(command: NativeCommand): BatteryCommand {
-  return { schema_version: 3, operation: command.battery, charge_limit_w: command.charge_limit_w,
-    discharge_limit_w: command.discharge_limit_w, allow_grid_charge: command.battery === "grid_charge",
-    allow_battery_export: command.battery === "export" };
+function batteryCommand(command: NativeCommand, quarter: NativeQuarter): BatteryCommand {
+  // HA treats grid purchases/sales as sized allocations. Publish the power
+  // that survived native grid/storage saturation, not an unattainable ceiling.
+  // Automatic operations retain their demand-following permission ceilings.
+  const forced = command.battery === "grid_charge" || command.battery === "export";
+  const charge = forced ? quarter.charge_w : command.charge_limit_w;
+  const discharge = forced ? quarter.discharge_w : command.discharge_limit_w;
+  const operation = forced && charge === 0 && discharge === 0 ? "idle" : command.battery;
+  return { schema_version: 3, operation, charge_limit_w: charge,
+    discharge_limit_w: discharge, allow_grid_charge: operation === "grid_charge",
+    allow_battery_export: operation === "export" };
 }
 
 interface Materialized { generated: GeneratedPlan; rows: BatteryProjectionRow[] }
@@ -333,7 +340,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: f.ev_available,
       load_w: load, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
-      battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command) : null,
+      battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command, q) : null,
       battery_soc: p.battery && q.battery_kwh !== null ? q.battery_kwh / p.battery.capacity_kwh : 0,
       grid_import_w: imports, grid_export_w: exports, curtailed_w: q.curtailed_w, unserved_w: 0,
       import_cost_sek: source.import_price_sek_per_kwh === null ? null : imports * hours / 1000 * source.import_price_sek_per_kwh,
@@ -370,11 +377,39 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
-  const core = planner(), p = input.problem;
-  const solved = core.solve(p).outcome;
-  if (solved.kind === "failed") return fail(solved.issue);
+  const core = planner();
+  let solved = core.solve(input.problem).outcome;
+  let released: GeneratedPlan["continuity"];
+  if (solved.kind === "failed") {
+    // The next hour remains exact unless its commands violate current
+    // equipment limits or permissions. A price change or a cheaper schedule
+    // is never authority to release it. Rebuild once under the same limits;
+    // malformed inputs and unrelated construction failures still fail fast.
+    const violation = /^committed_command_infeasible:(\d+):(shared_grid_limit|native_battery_power_limit|export_without_permission|non_native_ev_command|command_for_absent_device)$/.exec(solved.issue);
+    if (violation && input.reference_plan_id) {
+      released = { source_plan_id: input.reference_plan_id, selected: "repaired",
+        reason: `${violation[2]} at ${input.snapshot.slots[Number(violation[1])].start}`,
+        proposed_sek: null, reference_sek: null, deadband_sek: 0 };
+      // Clear the native lock and its materialization maps together, so the
+      // published device requests describe the replacement actually solved.
+      input = { ...input, locked_slots: [], problem: { ...input.problem, accepted: null, locked_through_seconds: 0 } };
+      solved = core.solve(input.problem).outcome;
+    }
+  }
+  const p = input.problem;
+  if (solved.kind === "failed") {
+    const committed = /^committed_command_infeasible:(\d+):(.+)$/.exec(solved.issue);
+    if (committed) {
+      const start = input.snapshot.slots[Number(committed[1])]?.start;
+      if (start) return fail(committed[2] === "shared_grid_limit"
+        ? `Previously accepted commands at ${start} exceed the configured grid limit when projected from current measurements (import ${p.limits.import_w / 1000} kW, export ${p.limits.export_w / 1000} kW).`
+        : `Previously accepted commands at ${start} cannot be projected from current measurements: ${committed[2]}.`);
+    }
+    return fail(solved.issue);
+  }
   const selected = solved.selection;
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
+  if (released) priority.generated.continuity = released;
   // Only the selected schedule has a rule account; the baseline was never scored.
   priority.generated.slots.forEach((slot, i) => {
     slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {

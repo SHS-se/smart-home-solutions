@@ -1,4 +1,5 @@
 import ReplanControls from './ReplanControls';
+import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
@@ -8,7 +9,7 @@ import { planRefreshError, readPlanRefresh } from '@/lib/energy-shift/plan-refre
 import { haRuntimeStatus, planDeliveryStatus, type HaRuntimeRow } from '@/lib/energy-shift/ha-runtime';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,6 +74,7 @@ interface PlanWorkspaceProps {
 
 /** The portal draws three days of history; there is nothing older to price. */
 const LOADED_HISTORY_DAYS = 3;
+const testEnvironment = isTestEnvironment();
 
 const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, homeId, accountPath }) => {
   const { t } = useLanguage();
@@ -224,7 +226,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   useEffect(() => { void load(false); }, [load]);
   const pendingReplan = replanState(current).status === 'waiting';
-  const runtimeRefreshing = Boolean(latestRuntime?.ha_runtime?.recovering)
+  const runtimeRefreshing = !testEnvironment && Boolean(latestRuntime?.ha_runtime?.recovering)
     && clock - Date.parse(latestRuntime?.ha_runtime_received_at ?? '') < REPLAN_OVERDUE_MS;
   const refreshing = requestingReplan || pendingReplan || runtimeRefreshing || retrying || (loading && current !== null);
   useEffect(() => {
@@ -315,7 +317,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         <AlertTitle>{t('Kunde inte läsa energiplanen', 'Could not load the energy plan')}</AlertTitle>
         <AlertDescription>
           {error}
-          {latestRuntime && haRuntimeStatus(latestRuntime, clock).ready && (
+          {!testEnvironment && latestRuntime && haRuntimeStatus(latestRuntime, clock).ready && (
             <p className="mt-1">{t('Home Assistant rapporterar att en giltig plan är tillgänglig. Felet gäller webbplatsens visning.',
               'Home Assistant reports that a validated plan is available. This error affects the website display.')}</p>
           )}
@@ -330,12 +332,12 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           <CardContent className="space-y-4 py-8">
             <div>
               <p className="font-medium">
-                {activeConnection
+                {testEnvironment ? t('Väntar på den första testplanen', 'Waiting for the first test plan') : activeConnection
                   ? t('Home Assistant är ansluten — väntar på den första godkända planen', 'Home Assistant has reported — waiting for the first accepted plan')
                   : t('Väntar på den första statusrapporten från Home Assistant', 'Waiting for the first status report from Home Assistant')}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {activeConnection
+                {testEnvironment ? t('Portalen kontrollerar efter en testplan var 30:e sekund.', 'The portal checks for a test plan every 30 seconds.') : activeConnection
                   ? t(
                     `Anslutningen ${activeConnection.device_name} sågs senast ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'aldrig'}. Portalen kontrollerar efter en plan var 30:e sekund.`,
                     `The ${activeConnection.device_name} connection was last seen ${activeConnection.last_seen_at ? formatHomeStamp(activeConnection.last_seen_at, homeTimeZone) : 'never'}. The portal checks for a plan every 30 seconds.`,
@@ -348,7 +350,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
               {lastCheckedAt && <p className="mt-2 text-xs text-muted-foreground">{t('Senast kontrollerad', 'Last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
-              {!activeConnection && (
+              {!testEnvironment && !activeConnection && (
                 <Button size="sm" variant="outline" asChild>
                   <Link to={accountPath}>{t('Öppna Home Assistant-anslutningar', 'Open Home Assistant connections')}</Link>
                 </Button>
@@ -390,6 +392,16 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
 
   return (
     <div className="space-y-4">
+      {testEnvironment && section !== 'devices' && (
+        <Alert role="status" data-testid="test-plan-status">
+          <Info className="h-4 w-4" />
+          <AlertTitle>{t('TEST styr inte Home Assistant', 'TEST does not control Home Assistant')}</AlertTitle>
+          <AlertDescription>{t(
+            'Planer som skapas här används bara för test. Home Assistant följer produktionsmiljöns plan. TEST tar inte emot aktuell körstatus från HA.',
+            'Plans generated here are for testing. Home Assistant follows the production plan. TEST does not receive live execution status from HA.',
+          )}</AlertDescription>
+        </Alert>
+      )}
       {refreshing && !pendingReplan && !requestingReplan && (
         <Alert role="status" aria-live="polite" data-testid="plan-refresh-progress">
           <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />
@@ -483,10 +495,14 @@ const PlanView: React.FC<{
     bindingExpired, ready, pct, costDelta, costTone, costMeaning,
     validationMessages,
   } = model;
-  const { runtimeStatus, rejection, retained } = planDeliveryStatus({
+  const delivery = planDeliveryStatus({
     displayedPlanId: plan.plan_id, acknowledgement: current, reported: latestRuntime ?? current, now,
   });
-  const runtimeReady = ready && runtimeStatus.ready;
+  const { runtimeStatus } = delivery;
+  const rejection = testEnvironment ? null : delivery.rejection;
+  const retained = testEnvironment ? null : delivery.retained;
+  const liveRuntimeUnavailable = !testEnvironment && !runtimeStatus.ready;
+  const runtimeReady = ready && !liveRuntimeUnavailable;
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
     : runtimeStatus.state === 'ready' ? t('Senast rapporterad redo i HA', 'Last reported ready in HA')
@@ -592,7 +608,10 @@ const PlanView: React.FC<{
               ? t(`för ${minutesSinceSeen} minuter sedan`, `${minutesSinceSeen} minutes ago`)
               : t(`kl. ${clockTime(lastSeenMs)}`, `at ${clockTime(lastSeenMs)}`);
 
-        const runningNormally = t(
+        const runningNormally = testEnvironment ? t(
+          'Testplanen behöver räknas om med aktuella uppgifter.',
+          'The test plan needs to be recalculated with current information.',
+        ) : t(
           'Enheterna behåller de senaste inställningarna som SHS skickade. Home Assistant visar deras aktuella inställningar.',
           'Devices retain the last settings SHS sent. Home Assistant shows their current settings.',
         );
@@ -601,19 +620,19 @@ const PlanView: React.FC<{
           'This is something for us to put right, not something you need to do.',
         );
 
-        const title = !runtimeStatus.ready && rejection
+        const title = liveRuntimeUnavailable && rejection
           ? t('HA avvisade den här planen', 'HA rejected this plan')
-          : !runtimeStatus.ready
+          : liveRuntimeUnavailable
           ? runtimeLabel
           : stale
-              ? connectionLive
+              ? testEnvironment ? t('Testplanen är inaktuell', 'The test plan is out of date') : connectionLive
                 ? t('Planen är inaktuell', 'Your plan is out of date')
                 : t('Hemmet har slutat skicka data', 'Your home has stopped sending data')
               : bindingExpired
                 ? t('Planen sträcker sig längre än elpriserna', 'The plan reaches further than the prices do')
                 : t('Planen går inte att genomföra', 'This plan cannot be carried out');
 
-        const body = !runtimeStatus.ready && rejection
+        const body = liveRuntimeUnavailable && rejection
           ? [
             t('Home Assistant avvisade planen som visas här.', 'Home Assistant rejected the plan shown here.'),
             ...rejection.messages,
@@ -623,10 +642,10 @@ const PlanView: React.FC<{
             ) : runtimeDetail,
             t('Begär en ny omplanering för att skapa en ersättare med aktuella uppgifter.', 'Request a new replan to create a replacement with current measurements.'),
           ]
-          : !runtimeStatus.ready
+          : liveRuntimeUnavailable
           ? [runtimeDetail]
           : stale
-              ? connectionLive
+              ? testEnvironment ? [runningNormally] : connectionLive
                 ? [
                   t(
                     `Den senaste planen skapades kl. ${clockTime(plan.issued_at)} och slutade gälla kl. ${clockTime(current.plan.valid_until)}. Ingen ny plan har ersatt den.`,
@@ -665,7 +684,7 @@ const PlanView: React.FC<{
             `Planen behövde ersättas senast ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
             `The plan needed replacing by ${formatHomeStamp(current.plan.valid_until, homeTimeZone)}.`,
           )] : []),
-          ...(runtimeStatus.ready && bindingExpired ? [t(
+          ...(!liveRuntimeUnavailable && bindingExpired ? [t(
             `Tillgängliga elpriser täcker bara tiden fram till ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
             `Available electricity prices only cover the period up to ${formatHomeStamp(plan.binding_until, homeTimeZone)}.`,
           )] : []),
@@ -677,7 +696,7 @@ const PlanView: React.FC<{
             `Senast rapporterad plan i HA: ${retained.runtime.plan_id}. Status: ${retained.runtime.state}.`,
             `Last reported plan in HA: ${retained.runtime.plan_id}. Status: ${retained.runtime.state}.`,
           )] : []),
-          ...(stale ? [t(
+          ...(stale && !testEnvironment ? [t(
             'Detta visar när planen slutade gälla, inte varför nästa plan saknas. Det senaste planeringsfelet finns i Home Assistants diagnostik.',
             'This explains when the plan expired, not why the next plan is missing. Home Assistant diagnostics contain the latest planning error.',
           )] : []),
@@ -711,8 +730,8 @@ const PlanView: React.FC<{
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <CardTitle className="text-lg">{t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
-                {(!refreshError && runtimeReady && validationMessages.length === 0) && (
+                <CardTitle className="text-lg">{testEnvironment ? t('Testplan för 15-minutersintervall', 'Test 15-minute energy plan') : t('Liveplan för 15-minutersstyrning', 'Live 15-minute energy plan')}</CardTitle>
+                {(!testEnvironment && !refreshError && runtimeReady && validationMessages.length === 0) && (
                   <Badge variant="secondary">{runtimeLabel}</Badge>
                 )}
               </div>
@@ -720,7 +739,7 @@ const PlanView: React.FC<{
                 {t('Plan', 'Plan')} <code title={plan.plan_id}>{plan.plan_id.slice(0, 8)}</code>
                 {' · '}{t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
               </p>
-              {(
+              {!testEnvironment && (
                 <p className="mt-1 text-sm text-muted-foreground" data-testid="ha-plan-identity">
                   {t('Senast rapporterad plan i HA', 'Last reported plan in HA')}: {runtimeStatus.runtime?.plan_id
                     ? <><code title={runtimeStatus.runtime.plan_id}>{runtimeStatus.runtime.plan_id.slice(0, 8)}</code>{' · '}{runtimeStatus.runtime.plan_id === plan.plan_id
@@ -734,28 +753,28 @@ const PlanView: React.FC<{
                   <summary className="cursor-pointer">{t('Statusdetaljer', 'Status details')}</summary>
                   <p className="mt-1">{plan.model_version} · {actuals.length} {t('faktiska kvartar', 'actual quarters')}</p>
                   <p className="mt-1 break-all">{t('Visat plan-ID', 'Displayed plan ID')}: <code>{plan.plan_id}</code></p>
-                  {runtimeStatus.runtime?.plan_id && (
+                  {!testEnvironment && runtimeStatus.runtime?.plan_id && (
                     <p className="mt-1 break-all">{t('Senast rapporterat plan-ID i HA', 'Last reported plan ID in HA')}: <code>{runtimeStatus.runtime.plan_id}</code></p>
                   )}
-                  <p className="mt-1">{t('Jämför plan-ID med schemat i SHS-integrationen. Varje ersättningsplan får ett nytt ID.', 'Compare the plan ID with the schedule in the SHS integration. Each replacement plan gets a new ID.')}</p>
+                  {!testEnvironment && <p className="mt-1">{t('Jämför plan-ID med schemat i SHS-integrationen. Varje ersättningsplan får ett nytt ID.', 'Compare the plan ID with the schedule in the SHS integration. Each replacement plan gets a new ID.')}</p>}
                   {lastCheckedAt && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       {t('Portalen kontrollerade senast', 'Portal last checked')} {formatHomeTimeWithSeconds(lastCheckedAt, homeTimeZone)}
                     </p>
                   )}
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  {!testEnvironment && <p className="mt-1 text-xs text-muted-foreground">
                     {t('Senaste status från HA', 'Last status from HA')}: {(latestRuntime ?? current).ha_runtime_received_at ? formatHomeStamp((latestRuntime ?? current).ha_runtime_received_at!, homeTimeZone) : t('Inte mottagen', 'Not received')}.
                     {runtimeStatus.runtime?.recovering ? t(' Begär automatiskt en ny plan.', ' Automatically requesting a fresh plan.')
                       : runtimeStatus.runtime?.retry_at && !runtimeStatus.ready ? ` ${t('Automatiskt nytt försök', 'Automatic retry')}: ${formatHomeTimeWithSeconds(runtimeStatus.runtime.retry_at, homeTimeZone)}.` : ''}
                     {runtimeStatus.runtime?.last_error ? ` ${runtimeStatus.runtime.last_error}` : ''}
                     {current.ha_ack_status === 'accepted' ? ` ${t('Tidigare accepterad', 'Previously accepted')}: ${current.ha_acknowledged_at ? formatHomeStamp(current.ha_acknowledged_at, homeTimeZone) : '—'}.` : ''}
-                  </p>
+                  </p>}
                   {current.generation_request_id && (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${t('Accepterad/avvisad av HA', 'Acknowledged by HA')} ${current.ha_integration_version}` : ''}
+                      {t('Begäran', 'Request')} {current.generation_request_id} {current.ha_integration_version ? `· ${!testEnvironment && (current.ha_ack_status === 'accepted' || current.ha_ack_status === 'rejected') ? t('Accepterad/avvisad av HA', 'Acknowledged by HA') : t('Skapad från HA', 'Generated from HA')} ${current.ha_integration_version}` : ''}
                     </p>
                   )}
-                  <p className="mt-1">{t('SHS söker normalt en ny plan var 15:e minut. En sparad plan kan fortsätta tills den löper ut om ingen ersättare kommer.', 'SHS normally checks for a new plan every 15 minutes. A cached plan can continue until it expires if no replacement arrives.')}</p>
+                  {!testEnvironment && <p className="mt-1">{t('SHS söker normalt en ny plan var 15:e minut. En sparad plan kan fortsätta tills den löper ut om ingen ersättare kommer.', 'SHS normally checks for a new plan every 15 minutes. A cached plan can continue until it expires if no replacement arrives.')}</p>}
                   <p className="mt-1">{t('Publicerade priser till', 'Published prices until')} {formatHomeStamp(plan.binding_until, homeTimeZone)}{' · '}{t('Planen gäller till', 'Plan valid until')} {formatHomeStamp(plan.valid_until, homeTimeZone)}</p>
                 </details>
               )}

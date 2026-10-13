@@ -13,7 +13,7 @@
  * Run with a local dev server:
  *   E2E_BASE_URL=http://localhost:8080 npx playwright test e2e/replan-request.spec.ts
  */
-import { test, expect, type BrowserContext } from '../playwright-fixture';
+import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
 import { generateOptimisationPlan } from '../supabase/functions/_shared/planner/energy-optimisation';
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
@@ -31,6 +31,17 @@ const REQUEST_ID = '2f1c0c74-9d31-4f0e-9a45-9c6f2f5f0a11';
 // Solved at the snapshot's own capture time, which is also the clock the browser
 // is pinned to below: a plan the page considers current, as in service.
 const PLAN = generateOptimisationPlan(snapshot(), new Date(CAPTURED_AT));
+
+async function isTestWebsite(page: Page): Promise<boolean> {
+  return page.getByText(/TESTMILJÖ -|TEST ENVIRONMENT -/).isVisible();
+}
+
+async function expectTestPlanStatus(page: Page) {
+  await expect(page.getByTestId('test-plan-status')).toContainText(/TEST styr inte Home Assistant|TEST does not control Home Assistant/);
+  await expect(page.getByTestId('test-plan-status')).toContainText(/produktionsmiljöns plan|production plan/);
+  await expect(page.getByTestId('ha-plan-identity')).toHaveCount(0);
+  await expect(page.getByText(/Annan plan i HA|Different plan in HA|Senast rapporterad redo i HA|Last reported ready in HA/)).toHaveCount(0);
+}
 
 function fakeJwt(sub: string, email: string, expiresAt: number): string {
   const enc = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -675,10 +686,35 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText('31.6 °C');
   });
 
+  test('TEST ignores stale HA recovery and identity without locking replanning', async ({ page }) => {
+    replan.reportedPlanId = REQUEST_ID;
+    replan.refreshing = true;
+    replan.row = { ...replan.row, ha_runtime_received_at: CAPTURED_AT, ha_runtime: {
+      plan_id: REQUEST_ID, observed_at: '2026-08-04T12:00:00Z', state: 'ready', recovering: true,
+      binding_until: PLAN.binding_until, valid_until: PLAN.valid_until,
+    } };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    test.skip(!await isTestWebsite(page), 'TEST has no HA control authority.');
+    await expectTestPlanStatus(page);
+    await expect(page.getByTestId('plan-refresh-progress')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+    await page.getByText(/Statusdetaljer|Status details/, { exact: true }).click();
+    await expect(page.getByText(/Senaste status från HA|Last status from HA/)).toHaveCount(0);
+  });
+
   for (const samePlan of [true, false]) {
     test(`shows the displayed and HA plan identities when they ${samePlan ? 'match' : 'differ'}`, async ({ page }) => {
       replan.reportedPlanId = samePlan ? PLAN.plan_id : REQUEST_ID;
       await page.goto('/portal/energy-modeling?tab=plan');
+      await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+      if (await isTestWebsite(page)) {
+        await expectTestPlanStatus(page);
+        await page.getByText(/Statusdetaljer|Status details/, { exact: true }).click();
+        await expect(page.getByText(/Visat plan-ID|Displayed plan ID/)).toContainText(PLAN.plan_id);
+        await expect(page.getByText(/Senast rapporterat plan-ID i HA|Last reported plan ID in HA/)).toHaveCount(0);
+        return;
+      }
       const identity = page.getByTestId('ha-plan-identity');
       await expect(identity).toContainText(replan.reportedPlanId.slice(0, 8));
       await expect(identity).toContainText(samePlan ? /Samma plan|Same plan/ : /Annan plan|Different plan/);
@@ -697,6 +733,16 @@ test.describe('requesting a replan', () => {
     // Frozen sources cover six hours; the actual plan covers seventy-two.
     await page.clock.setFixedTime(new Date(Date.parse(CAPTURED_AT) + 7 * 60 * 60_000));
     await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    if (await isTestWebsite(page)) {
+      await expectTestPlanStatus(page);
+      await expect(page.getByRole('alert').filter({ hasText: /HA avvisade|HA rejected/ })).toHaveCount(0);
+      await page.getByText(/Statusdetaljer|Status details/, { exact: true }).click();
+      await expect(page.getByText(/Skapad från HA|Generated from HA/)).toContainText('0.9.0-beta.86');
+      await expect(page.getByText(/Accepterad\/avvisad av HA|Acknowledged by HA/)).toHaveCount(0);
+      await expect(page.getByRole('button', { name: replanButton })).toBeEnabled();
+      return;
+    }
     const rejection = page.getByRole('alert').filter({ hasText: /HA avvisade|HA rejected/ });
     await expect(rejection).toContainText('optimisation plan was not issued recently');
     await expect(rejection).toContainText(/tidigare planen fortfarande används|retained plan is still in use/);
@@ -715,6 +761,12 @@ test.describe('requesting a replan', () => {
     replan.reportedPlanId = PLAN.plan_id;
     await page.clock.setFixedTime(new Date(Date.parse(CAPTURED_AT) + 7 * 60 * 60_000));
     await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    if (await isTestWebsite(page)) {
+      await expectTestPlanStatus(page);
+      await expect(page.getByRole('alert').filter({ hasText: /batteriets mätvärden|battery readings|avvisade|rejected/ })).toHaveCount(0);
+      return;
+    }
     await expect(page.getByText(/Senast rapporterad redo i HA|Last reported ready in HA/, { exact: true })).toBeVisible();
     await expect(page.getByRole('alert').filter({ hasText: /batteriets mätvärden|battery readings|avvisade|rejected/ })).toHaveCount(0);
   });
@@ -722,7 +774,10 @@ test.describe('requesting a replan', () => {
   test('a newer unreadable cloud plan cannot confirm the retained older chart', async ({ page }) => {
     replan.reportedPlanId = PLAN.plan_id;
     await page.goto('/portal/energy-modeling?tab=plan');
-    await expect(page.getByTestId('ha-plan-identity')).toContainText(/Samma plan|Same plan/);
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    const testWebsite = await isTestWebsite(page);
+    if (testWebsite) await expectTestPlanStatus(page);
+    else await expect(page.getByTestId('ha-plan-identity')).toContainText(/Samma plan|Same plan/);
     replan.publishedPlan = { ...PLAN, plan_id: REQUEST_ID };
     replan.reportedPlanId = REQUEST_ID;
     replan.unsupportedPlan = true;
@@ -730,7 +785,8 @@ test.describe('requesting a replan', () => {
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await expect(page.getByRole('alert')).toContainText(/Webbplatsen kan inte visa det mottagna planformatet|The website cannot display the received plan format/);
     await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
-    await expect(page.getByTestId('ha-plan-identity')).toContainText(/Annan plan|Different plan/);
+    if (testWebsite) await expectTestPlanStatus(page);
+    else await expect(page.getByTestId('ha-plan-identity')).toContainText(/Annan plan|Different plan/);
     await expect(page.getByText(/Senast rapporterad redo i HA|Last reported ready in HA/, { exact: true })).toHaveCount(0);
     await expect(page.getByRole('alert')).not.toContainText('Rejection belongs to the newer unreadable plan');
   });
@@ -740,6 +796,7 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=thermal');
     const identity = page.locator(`code[title="${PLAN.plan_id}"]`).first();
     await expect(identity).toBeVisible();
+    test.skip(await isTestWebsite(page), 'HA recovery status is only authoritative on the live website.');
     await expect(page.getByRole('button', { name: replanButton })).toHaveCount(0);
     replan.refreshing = true;
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));

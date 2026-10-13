@@ -251,9 +251,26 @@ fn construct(
                 }
                 work.expansions += 1;
                 let mut next = l.clone();
-                let Ok(q) = physics::step(p, i, &c, &mut next.state) else {
-                    continue;
+                let q = match physics::step(p, i, &c, &mut next.state) {
+                    Ok(q) => q,
+                    Err(issue) if physics::locked(p, i) => {
+                        return Err(format!("committed_command_infeasible:{i}:{issue}"));
+                    }
+                    Err(_) => continue,
                 };
+                // HA requires forced purchases/sales to equal their physical
+                // allocations. Check the actual retained trajectory here;
+                // opportunity tables explore hypothetical inventory states.
+                if physics::locked(p, i)
+                    && ((c.battery == Operation::GridCharge
+                        && (q.charge_w - c.charge_limit_w).abs() > 0.01)
+                        || (c.battery == Operation::Export
+                            && (q.discharge_w - c.discharge_limit_w).abs() > 0.01))
+                {
+                    return Err(format!(
+                        "committed_command_infeasible:{i}:native_battery_power_limit"
+                    ));
+                }
                 next.points += policy::guidance_quarter(p, index, i, &q, l.state.pool);
                 next.cash += q.cost;
                 next.wear += q.wear;
