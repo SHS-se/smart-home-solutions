@@ -1,5 +1,5 @@
 import type { BaselineInput } from './model.ts';
-import { DEFAULT_SETTINGS, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
+import { defaultSettings, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
 
 export interface InputEvidence {
   hourlyModel: boolean[]; hourlyImport: boolean[]; hourlyExport: boolean[]; assumedMarkup: boolean[];
@@ -22,7 +22,7 @@ export function assessAssumptions(input: BaselineInput, baselineCost: number, im
     if (assumption === 'pool') problem.initial.pool_c = value;
     let savingDeltaSek: number | null = null;
     try {
-      const projected = projectDefaultProblem(problem, input.start, input.timeZone, DEFAULT_SETTINGS, engine, input.evDemandKwh);
+      const projected = projectDefaultProblem(problem, input.start, input.timeZone, defaultSettings(input.settings.comfort?.pool?.target_c), engine, input.evDemandKwh);
       savingDeltaSek = electricityLedger(projected.quarters, projected.problem).costSek - baselineCost;
     } catch { /* The named scenario can be physically infeasible; never clip its demand. */ }
     initial.push({ assumption, value, savingDeltaSek });

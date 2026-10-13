@@ -1,5 +1,5 @@
 import { useLanguage } from '@/contexts/LanguageContext';
-import { DEFAULT_SETTINGS } from '@/lib/home-baseline/controller';
+import { POOL_THERMOSTAT_BAND_C } from '@/lib/home-baseline/controller';
 import type { ComparisonCapture } from '@/lib/home-baseline/browser';
 
 /** Inspection data stays available without pushing the chart down the page. */
@@ -22,7 +22,7 @@ export default function BaselineModelDetails({ capture }: { capture: ComparisonC
           <br />{t('Laddningsverkningsgrad', 'Charge efficiency')} {number(p.car.charge_efficiency * 100)}% · {t('körbehov', 'driving demand')} {number(demand)} kWh
         </dd></>}
         {p.pool_store && p.heater && <><dt className="font-medium">Pool</dt><dd>
-          {t('Start', 'Start')} {number(DEFAULT_SETTINGS.poolStartC)}°C · {t('stopp', 'stop')} {number(p.pool_stop_c)}°C · {t('cirkulation', 'circulation')} {input.idlePumpW} W
+          {t('Start', 'Start')} {number(p.pool_stop_c! - POOL_THERMOSTAT_BAND_C)}°C · {t('stopp', 'stop')} {number(p.pool_stop_c!)}°C · {t('cirkulation', 'circulation')} {input.idlePumpW} W
           <br />{t('Kompressor / värme / full pump', 'Compressor / heat / full pump')}: {number(p.heater.compressor_w / 1000)} / {number(p.heater.heat_w / 1000)} / {number((p.heater.auxiliary_w + input.idlePumpW) / 1000)} kW
           <br />{number(p.pool_store.capacity_kwh_per_c)} kWh/°C · {p.heater.response.kind} · {t('värmeförlust', 'heat loss')}: {p.pool_store.loss.kind === 'linear'
             ? `${number(p.pool_store.loss.kw_per_c)} kW/°C`

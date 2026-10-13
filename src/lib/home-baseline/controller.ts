@@ -7,6 +7,13 @@ export type { ElectricityLedger } from './ledger.ts';
 
 export interface DefaultSettings { poolStartC: number; poolStopC: number; idlePumpW: number; batterySuppliesEv: boolean }
 export const DEFAULT_SETTINGS: DefaultSettings = { poolStartC: 30, poolStopC: 30.5, idlePumpW: 60, batterySuppliesEv: true };
+/** How far the plain thermostat lets the pool fall below its target before it heats again. */
+export const POOL_THERMOSTAT_BAND_C = .5;
+/** Both models hold the same pool temperature: the thermostat stops where the scheduler aims.
+ * A home with no stated target keeps the stock thermostat. */
+export function defaultSettings(poolTargetC: number | null | undefined): DefaultSettings {
+  return poolTargetC == null ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, poolStartC: poolTargetC - POOL_THERMOSTAT_BAND_C, poolStopC: poolTargetC };
+}
 export type ProjectionEngine = Pick<ReturnType<typeof createWasmPlanner>, 'project'>;
 
 /** Fixed reactive decisions; native project owns every physical state transition. */

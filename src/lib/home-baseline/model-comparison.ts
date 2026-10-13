@@ -1,6 +1,7 @@
 import { projectBaseline, type BaselineInput, type BaselineResult } from './model.ts';
 import { replayScheduler, type ReplayEngine, type SchedulerReplay } from './scheduler-replay.ts';
 import { scenarioBill, type BillExtras } from './scenario-bill.ts';
+import { POOL_THERMOSTAT_BAND_C } from './controller.ts';
 import { endCredit, problemEndCredit } from '../../../supabase/functions/_shared/planner-wasm/end-credit.ts';
 import type { BenchSeries } from '../planner-bench/types.ts';
 
@@ -9,8 +10,10 @@ export function seriesService(input: BaselineInput, series: BenchSeries) {
   const endBatteryKwh = p.battery ? series.homeSoc[last]! / 100 * p.battery.capacity_kwh : null;
   const endEvKwh = p.car ? series.carSoc[last]! / 100 * p.car.capacity_kwh : null;
   const endPoolC = series.poolC[last];
+  // The temperature at which the plain thermostat would have started heating.
+  const poolStartC = p.pool_store ? p.targets.pool_c! - POOL_THERMOSTAT_BAND_C : null;
   return { minimumPoolC: p.pool_store ? Math.min(...series.poolC.filter((v): v is number => v !== null)) : null,
-    belowPoolStartHours: series.poolC.reduce<number>((n, v) => n + (v !== null && v < 30 ? .25 : 0), 0), endBatteryKwh, endEvKwh, endPoolC,
+    belowPoolStartHours: series.poolC.reduce<number>((n, v) => n + (v !== null && poolStartC !== null && v < poolStartC ? .25 : 0), 0), endBatteryKwh, endEvKwh, endPoolC,
     endCreditSek: endCredit(problemEndCredit(p), p.initial, { battery_kwh: endBatteryKwh, ev_kwh: endEvKwh, pool_c: endPoolC }).credit_sek };
 }
 export function modeledBill(input: BaselineInput, result: Pick<BaselineResult, 'ledger' | 'series'>): BillExtras {

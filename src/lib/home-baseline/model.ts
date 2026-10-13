@@ -4,7 +4,7 @@ import { localDay, localMonths } from '../../../supabase/functions/_shared/plann
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy.ts';
 import type { BenchSeries } from '../planner-bench/types.ts';
 import { homePhysics, type HomeModelCapture } from './home-physics.ts';
-import { DEFAULT_SETTINGS, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
+import { defaultSettings, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
 import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
 import { buildEnergyTimeline, type TimelineRow } from '../energy-shift/energy-timeline.ts';
 import type { ActualEnergySlot } from '../energy-shift/contracts.ts';
@@ -107,17 +107,18 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     return demand;
   });
   const poolInitialAssumed = facts.poolStore !== null && pool.get(startMs - QUARTER_MS)?.water_temperature_c == null;
-  const poolC = facts.poolStore ? poolInitialAssumed ? DEFAULT_SETTINGS.poolStartC : number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
-  const idlePumpW = facts.poolStore ? DEFAULT_SETTINGS.idlePumpW : 0;
+  const settings = defaultSettings(rows.snapshot.comfort?.pool?.target_c);
+  const poolC = facts.poolStore ? poolInitialAssumed ? settings.poolStartC : number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
+  const idlePumpW = facts.poolStore ? settings.idlePumpW : 0;
   if (facts.heater && facts.heater.auxiliary_w < idlePumpW) throw new Error('Full-power pool auxiliary model is below the stated 60 W circulation draw');
   const starts = Array.from({ length: count }, (_, i) => new Date(startMs + i * QUARTER_MS).toISOString());
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 8, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: DEFAULT_SETTINGS.batterySuppliesEv,
+    abi: 8, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
-    pool_stop_c: facts.poolStore ? DEFAULT_SETTINGS.poolStopC : null,
+    pool_stop_c: facts.poolStore ? settings.poolStopC : null,
     initial: { battery_kwh: batterySoc === null ? null : batterySoc * facts.battery!.capacity_kwh,
       ev_kwh: evSoc === null ? null : evSoc * facts.car!.capacity_kwh, pool_c: poolC,
       heater_state: facts.poolStore ? { kind: 'off_unobserved' } : null },
@@ -160,7 +161,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
         import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evDemandKwh[i] === 0 };
     }),
-    targets: { pool_c: facts.poolStore ? DEFAULT_SETTINGS.poolStopC : null,
+    targets: { pool_c: facts.poolStore ? settings.poolStopC : null,
       ev_km: facts.car ? .8 * facts.car.capacity_kwh / facts.car.kwh_per_km : null,
       ev_limit_kwh: facts.car ? .8 * facts.car.capacity_kwh : null },
     limits: { import_w: rows.snapshot.grid.import_limit_w, export_w: rows.snapshot.grid.export_limit_w,
@@ -195,7 +196,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
 
 export function projectBaseline(input: BaselineInput, engine: ProjectionEngine, assess = true) {
   const began = performance.now();
-  const { problem, commands, quarters } = projectDefaultProblem(withPoolState(input.problem, input.pool?.initial.baseline), input.start, input.timeZone, DEFAULT_SETTINGS, engine, input.evDemandKwh);
+  const { problem, commands, quarters } = projectDefaultProblem(withPoolState(input.problem, input.pool?.initial.baseline), input.start, input.timeZone, defaultSettings(input.settings.comfort?.pool?.target_c), engine, input.evDemandKwh);
   const series = projectionSeries(input, problem, quarters);
   const ledger = electricityLedger(quarters, problem);
   return { series, commands, ledger, poolStates: quarters.map(quarterPool), sensitivity: assess ? assessAssumptions(input, ledger.costSek, series.gridImportW, engine) : { initial: [], markup10OreDeltaSek: 0, timingSavingMinSek: 0, timingSavingMaxSek: 0 }, projectionMs: performance.now() - began };

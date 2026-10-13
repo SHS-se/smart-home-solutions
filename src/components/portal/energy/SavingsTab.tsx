@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
@@ -24,12 +24,12 @@ import { monthStore } from '@/lib/home-baseline/month-store';
 import { RoiNumberField } from './roi/RoiFields';
 import { sek } from './roi/format';
 import { fetchRoiInstallations } from '@/lib/home-baseline/installations';
-import { DEFAULT_SETTINGS } from '@/lib/home-baseline/controller';
+import { POOL_TARGET_RANGE_C, poolTarget, withPoolTarget } from '@/lib/home-baseline/pool-target';
 import { ROI_SUPPLIER_TERMS } from '../../../../supabase/functions/_shared/roi-supplier-terms';
 
 const settingsSchema = z.object({ from: z.string(), to: z.string(), subscription: z.string() });
 type Settings = z.infer<typeof settingsSchema>;
-const initialSettings: Settings = { from: '', to: '', subscription: '299' };
+const initialSettings: Settings = { from: '', to: '', subscription: '320' };
 
 const shiftMonth = (key: string, offset: number) => new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5)) - 1 + offset, 1)).toISOString().slice(0, 7);
 
@@ -37,12 +37,20 @@ interface SavingsTabProps { customerId: string; homeId: string | null; homeCount
 
 function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps) {
   const { t, language } = useLanguage();
+  // The pool temperature the next pin should hold. A request belongs to one home.
+  const poolPin = useRef<{ homeId: string; targetC: number } | null>(null);
+  const [comfortPoolC, setComfortPoolC] = useState<number | null>(null);
   const baseline = useMemo(() => {
-    const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline, store: monthStore });
+    const resolveAnchor: typeof resolveBaselineAnchor = async (ref, signal) => {
+      const live = await resolveBaselineAnchor(ref, signal);
+      setComfortPoolC(poolTarget(live.snapshot));
+      return withPoolTarget(live, poolPin.current?.homeId === ref.homeId ? poolPin.current.targetC : null);
+    };
+    const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor, generate: generateHomeBaseline, store: monthStore });
     return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
   }, [customerId, homeId]);
   useEffect(() => () => { baseline.viewer.dispose(); baseline.savings.dispose(); baseline.source.dispose(); }, [baseline]);
-  const storageKey = `shs-contract-roi-v2:${customerId}`;
+  const storageKey = `shs-savings-v1:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -52,7 +60,8 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   });
   useEffect(() => { try { localStorage.setItem(storageKey, JSON.stringify(settings)); } catch { /* Calculation works without storage. */ } }, [settings, storageKey]);
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings(s => ({ ...s, [key]: value }));
-  const anchor = useQuery({ queryKey: ['roi-home-anchor', customerId, homeId], queryFn: () => baseline.source.anchor(), enabled: !!homeId, retry: false });
+  // The anchor belongs to this mount's capture source: a copy cached by an earlier mount could show a superseded pin.
+  const anchor = useQuery({ queryKey: ['roi-home-anchor', customerId, homeId], queryFn: () => baseline.source.anchor(), enabled: !!homeId, retry: false, gcTime: 0 });
   const latest = anchor.data ? localDay(new Date(Date.parse(anchor.data.latestEnd) - 900_000).toISOString(), anchor.data.snapshot.timezone).slice(0, 7) : '';
   const earliest = anchor.data ? localDay(anchor.data.earliestStart, anchor.data.snapshot.timezone).slice(0, 7) : '';
   const twelveBack = latest ? shiftMonth(latest, -11) : '';
@@ -77,18 +86,27 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   const ready = forecast && forecast.rows.length > 0;
   const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
   const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
-  // Without SHS the pool runs on a plain thermostat; with SHS it follows the comfort target. Both are stated.
-  const pool = anchor.data?.snapshot.capabilities.pool ? anchor.data.snapshot.comfort?.pool ?? null : null;
+  const [graphOpen, setGraphOpen] = useState(false);
+  useEffect(() => { setGraphOpen(false); }, [homeId]);
+  // The saved report states the pool temperature it was calculated with; a request not yet pinned wins.
+  const [poolRequest, setPoolRequest] = useState<{ homeId: string; targetC: number } | null>(null);
+  const pinnedPoolC = anchor.data ? poolTarget(anchor.data.snapshot) : null;
+  const poolC = pinnedPoolC === null ? null : poolRequest && poolRequest.homeId === homeId ? poolRequest.targetC : pinnedPoolC;
+  // Recalculating repins the home's equipment but keeps the estimate's own pool temperature.
+  useEffect(() => { poolPin.current = homeId && poolC !== null ? { homeId, targetC: poolC } : null; }, [homeId, poolC]);
+  const [poolDraft, setPoolDraft] = useState('');
+  useEffect(() => { setPoolDraft(poolC === null ? '' : String(poolC)); }, [poolC]);
+  const poolInput = numericInput(poolDraft);
+  const applyPool = (targetC: number) => {
+    if (!homeId) return;
+    poolPin.current = { homeId, targetC }; setPoolRequest(poolPin.current);
+    setGraphOpen(false); void baseline.savings.calculate(true);
+  };
   const celsius = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
-  const poolAssumption = !pool ? null : pool.target_c >= DEFAULT_SETTINGS.poolStartC && pool.target_c <= DEFAULT_SETTINGS.poolStopC
-    ? t(`Poolen hålls vid ${celsius(pool.target_c)} °C alla månader`, `Pool kept at ${celsius(pool.target_c)} °C every month`)
-    : t(`Pool alla månader: ${celsius(DEFAULT_SETTINGS.poolStartC)}–${celsius(DEFAULT_SETTINGS.poolStopC)} °C utan SHS, ${celsius(pool.target_c)} °C med SHS`,
-      `Pool every month: ${celsius(DEFAULT_SETTINGS.poolStartC)}–${celsius(DEFAULT_SETTINGS.poolStopC)} °C without SHS, ${celsius(pool.target_c)} °C with SHS`);
+  const poolAssumption = poolC === null ? null : t(`Poolen hålls vid ${celsius(poolC)} °C alla månader`, `Pool kept at ${celsius(poolC)} °C every month`);
   const assumptions = [t('Din nuvarande utrustning', 'Your current equipment'),
     ...(from && to ? [t(`Väder, förbrukning och priser från ${monthName(from)} – ${monthName(to)}`, `Weather, consumption and prices from ${monthName(from)} – ${monthName(to)}`)] : []),
     ...(poolAssumption ? [poolAssumption] : [])];
-  const [graphOpen, setGraphOpen] = useState(false);
-  useEffect(() => { setGraphOpen(false); }, [homeId]);
   const installations = useQuery({ queryKey: ['roi-installations', customerId, homeId],
     queryFn: () => fetchRoiInstallations({ customerId, homeId: homeId! }), enabled: !!homeId, retry: false });
 
@@ -131,7 +149,17 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
         <p className="text-xs text-muted-foreground">{t('Fakturorna innehåller alla avgifter på el- och nätfakturorna, även effektavgiften, och speglar den utrustning du hade då. Saknade fakturor visas som —.', 'Bills include every charge on the electricity and grid invoices, including the demand charge, and reflect the equipment you had at the time. Missing bills show —.')}</p>
       </div>
     </details>
-    <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Priser i beräkningen', 'Prices used')}</summary>
+    <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Antaganden och priser', 'Assumptions and prices')}</summary>
+      {poolC !== null && <div className="space-y-2 pb-5" data-testid="roi-pool">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-full max-w-xs"><RoiNumberField id="roi-pool-target" label={t('Pooltemperatur (°C)', 'Pool temperature (°C)')} min={POOL_TARGET_RANGE_C[0]} max={POOL_TARGET_RANGE_C[1]} value={poolDraft} onChange={setPoolDraft} /></div>
+          <Button variant="outline" className="min-h-11" data-testid="roi-pool-apply" onClick={() => applyPool(poolInput!)}
+            disabled={state.running || poolInput === null || poolInput < POOL_TARGET_RANGE_C[0] || poolInput > POOL_TARGET_RANGE_C[1] || poolInput === poolC}>{t('Använd och beräkna om', 'Apply and recalculate')}</Button>
+          {comfortPoolC !== null && comfortPoolC !== poolC && <Button variant="ghost" className="min-h-11" data-testid="roi-pool-comfort" disabled={state.running} onClick={() => applyPool(comfortPoolC)}>
+            {t(`Använd komfortmålet ${celsius(comfortPoolC)} °C`, `Use the Comfort target, ${celsius(comfortPoolC)} °C`)}</Button>}
+        </div>
+        <p className="text-xs text-muted-foreground">{t('Båda kolumnerna håller poolen vid den här temperaturen, alla månader. En ändring räknar om månaderna, vilket tar några minuter för ett helt år.', 'Both columns hold the pool at this temperature, every month. A change recalculates the months, which takes a few minutes for a full year.')}</p>
+      </div>}
       <div className="space-y-1 pb-4 text-xs text-muted-foreground" data-testid="roi-supplier-terms">
         <p>Tibber · {t('Fast påslag', 'Fixed markup')}: {oreIncVat(ROI_SUPPLIER_TERMS.definition.import.fixed_markup_sek_per_kwh_ex_vat)} · {t('Rörlig inköpskostnad', 'Variable purchasing cost')}: {oreIncVat(ROI_SUPPLIER_TERMS.definition.import.variable_cost_sek_per_kwh_ex_vat)} · {t('inkl. moms', 'incl. VAT')}.</p>
         <p>{t('Senast publicerade inköpskostnad', 'Latest published purchasing cost')}: {ROI_SUPPLIER_TERMS.variableCostMonth} · <a className="underline" href={ROI_SUPPLIER_TERMS.sourceUrl} target="_blank" rel="noreferrer">{t('Tibbers villkor', 'Tibber terms')}</a> · {t('kontrollerade', 'checked')} {ROI_SUPPLIER_TERMS.verifiedOn}.</p>

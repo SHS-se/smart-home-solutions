@@ -329,6 +329,36 @@ test.describe('requesting a replan', () => {
     expect(history.windows.length).toBeGreaterThan(before);
   });
 
+  test('the estimate holds one pool temperature in both columns, and changing it recalculates', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(2/2)');
+    await expect(page.getByTestId('savings-assumptions')).toContainText(/30[.,]5 °C/);
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    // Nothing to apply until the temperature differs, is valid, and the home's comfort target is not already in use.
+    await expect(page.locator('#roi-pool-target')).toHaveValue('30.5');
+    await expect(page.getByTestId('roi-pool-apply')).toBeDisabled();
+    await expect(page.getByTestId('roi-pool-comfort')).toHaveCount(0);
+    await page.locator('#roi-pool-target').fill('45');
+    await expect(page.getByTestId('roi-pool-apply')).toBeDisabled();
+    await page.locator('#roi-pool-target').fill('27');
+    await page.getByTestId('roi-pool-apply').click();
+    await expect.poll(() => history.saved()?.generation).toBe(2);
+    expect(history.saved()!.model.comfort!.pool!.target_c).toBe(27);
+    await expect(page.getByTestId('savings-assumptions')).toContainText('27 °C');
+    await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 240_000 }).toBe(2);
+    await expectRoiMonths(page, '(2/2)');
+    await expect(page.getByTestId('roi-pool-comfort')).toContainText(/30[.,]5 °C/);
+    // A plain recalculation repins the equipment but keeps the estimate's own pool temperature.
+    await page.getByTestId('scheduler-calculate').click();
+    await expect.poll(() => history.saved()?.generation).toBe(3);
+    expect(history.saved()!.model.comfort!.pool!.target_c).toBe(27);
+    await page.reload();
+    await expect(page.getByTestId('savings-assumptions')).toContainText('27 °C');
+  });
+
   test('ROI only mounts shared charts on request, auto-navigates 72-hour frames and caches them', async ({ context, page }, testInfo) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
@@ -513,7 +543,7 @@ test.describe('requesting a replan', () => {
     expect(capture.input.problem.initial.ev_kwh).toBe(.75 * 75.6);
     await expect(row.locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     await expect(row.locator('td').nth(2)).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek));
-    await expect(page.getByTestId('roi-period-net')).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek-299));
+    await expect(page.getByTestId('roi-period-net')).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek-320));
   });
 
   test('ROI retains saved months when new prices are unavailable and keeps graph navigation usable', async ({ context, page }) => {

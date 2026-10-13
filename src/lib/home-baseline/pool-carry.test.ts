@@ -11,7 +11,7 @@ const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../..
 
 Deno.test('independent pool temperatures and native heater memory carry from October into November, and frames slice the same models', async () => {
   const fixture = baselineFixture({ start: '2025-09-30T22:00:00.000Z', end: '2025-11-30T23:00:00.000Z' });
-  fixture.snapshot.roi_pool_seed = { month: '2025-10', temperatureC: 30, hash: 'a'.repeat(64) };
+  fixture.snapshot.roi_pool_seed = { month: '2025-10', temperatureC: 28.9, hash: 'a'.repeat(64) };
   fixture.snapshot.device_physics!.pool!.store = { capacity_kwh_per_c: 1, loss: { kind: 'linear', kw_per_c: 0, surroundings_c: 20 } };
   fixture.snapshot.device_physics!.battery!.capacity_kwh = .1;
   fixture.snapshot.comfort!.pool!.target_c = 29.5;
@@ -31,8 +31,10 @@ Deno.test('independent pool temperatures and native heater memory carry from Oct
     assertEquals(october.input.pool, seedPool(fixture.snapshot.roi_pool_seed));
     assertEquals(november.input.pool!.initial.baseline, october.result.poolStates.at(-1));
     assertEquals(november.input.pool!.initial.scheduler, october.scheduler.poolStates.at(-1));
-    assertAlmostEquals(november.input.pool!.initial.baseline.poolC, 30.5);
-    assertAlmostEquals(november.input.pool!.initial.scheduler.poolC, 30);
+    // One 29.5 °C target, two operators: the thermostat heats back up to it, while the scheduler
+    // accepts a pool this close to it. Each month starts from its own model's end state.
+    assertAlmostEquals(november.input.pool!.initial.baseline.poolC, 29.5);
+    assertAlmostEquals(november.input.pool!.initial.scheduler.poolC, 28.9);
     assertEquals(november.input.pool!.initial.scheduler.heaterState.kind, 'off_unobserved');
     const frame = await source.capture({ view: 'frame', start: '2025-11-12T23:00:00.000Z', end: '2025-11-15T23:00:00.000Z' }, new AbortController().signal);
     const from = (Date.parse(frame.input.start) - Date.parse(november.input.start)) / 900_000;

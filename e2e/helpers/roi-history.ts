@@ -5,7 +5,7 @@ import { ROI_SUPPLIER_TERMS } from '../../supabase/functions/_shared/roi-supplie
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
 export async function mockRoiHistory(context: BrowserContext, customerId: string, homeId: string, range = { from: '2026-09', to: '2026-10' }) {
-  await context.addInitScript(({ key, range }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ ...range, equipment: '50000', installation: '15000', subscription: '299' })); }, { key: `shs-contract-roi-v2:${customerId}`, range });
+  await context.addInitScript(({ key, range }) => { if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify({ ...range, subscription: '320' })); }, { key: `shs-savings-v1:${customerId}`, range });
   const fixture = baselineFixture(), windows: { start: string; end: string }[] = [];
   // Small stores and an insulated pool keep UI month tests cheap. Native physics
   // and optimizer behaviour use the full household in calculation tests.
