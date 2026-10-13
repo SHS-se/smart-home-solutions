@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
+  ENERGY_EVENT_LABELS,
   ENERGY_EVENT_TYPES,
   treatmentOf,
   type EnergyEventType,
@@ -29,10 +30,11 @@ type Translate = (sv: string, en: string) => string;
  * holiday if it is clear why it helps.
  */
 function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect: string } {
+  const label = t(ENERGY_EVENT_LABELS[type].sv, ENERGY_EVENT_LABELS[type].en);
   switch (type) {
     case 'renovation':
       return {
-        label: t('Renovering', 'Renovation'),
+        label,
         effect: t(
           'Isolering, fönster, dörrar eller tak. Huset före detta datum är en annan byggnad, och energiklassen räknar om sig.',
           'Insulation, windows, doors or roof. The house before this date is a different building, and the energy class re-reckons.',
@@ -40,7 +42,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'heating_system_change':
       return {
-        label: t('Byte av värmesystem', 'Heating system change'),
+        label,
         effect: t(
           'Ny värmepump eller panna. Ändrar hur mycket köpt energi samma värme kostar.',
           'A new heat pump or boiler. Changes how much bought energy the same warmth costs.',
@@ -48,7 +50,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'solar_installed':
       return {
-        label: t('Solceller installerade', 'Solar installed'),
+        label,
         effect: t(
           'Efter detta datum är nätuttag inte längre samma sak som husets förbrukning.',
           'After this date grid import is no longer the same thing as the home’s consumption.',
@@ -56,7 +58,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'battery_installed':
       return {
-        label: t('Batteri installerat', 'Battery installed'),
+        label,
         effect: t(
           'Flyttar förbrukning i tiden. Dygnsmönstret före och efter går inte att jämföra rakt av.',
           'Shifts consumption in time. The daily pattern before and after is not directly comparable.',
@@ -64,7 +66,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'major_load_added':
       return {
-        label: t('Stor förbrukare tillkom', 'Major load added'),
+        label,
         effect: t(
           'Elbil, pool, bastu, badtunna eller serverskåp. En stadigvarande ökning som inte beror på huset.',
           'An EV, pool, sauna, hot tub or server cabinet. A lasting increase that is not about the building.',
@@ -72,7 +74,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'major_load_removed':
       return {
-        label: t('Stor förbrukare togs bort', 'Major load removed'),
+        label,
         effect: t(
           'Motsatsen. En minskning som inte är en förbättring av huset.',
           'The opposite. A decrease that is not an improvement to the building.',
@@ -80,7 +82,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'occupancy_increase':
       return {
-        label: t('Fler bor i huset', 'Someone moved in'),
+        label,
         effect: t(
           'Mer varmvatten, tvätt och hushållsel. Höjer basförbrukningen permanent.',
           'More hot water, laundry and household electricity. Raises the baseline permanently.',
@@ -88,7 +90,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'occupancy_decrease':
       return {
-        label: t('Färre bor i huset', 'Someone moved out'),
+        label,
         effect: t(
           'Sänker basförbrukningen permanent, utan att huset blivit bättre.',
           'Lowers the baseline permanently, without the building having improved.',
@@ -96,7 +98,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'absence':
       return {
-        label: t('Bortrest', 'Away from home'),
+        label,
         effect: t(
           'Semester eller tomt hus. Dagarna räknas bort ur underlaget i stället för att dra ner snittet.',
           'A holiday or an empty house. Those days are excluded from the evidence instead of dragging the average down.',
@@ -104,7 +106,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'guests':
       return {
-        label: t('Gäster', 'Guests'),
+        label,
         effect: t(
           'Fler i huset under en period. Dagarna räknas bort ur underlaget.',
           'More people for a while. Those days are excluded from the evidence.',
@@ -112,7 +114,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     case 'equipment_fault':
       return {
-        label: t('Utrustningsfel', 'Equipment fault'),
+        label,
         effect: t(
           'Trasig värmepump, låst ventil eller mätarfel. Dagarna räknas bort ur underlaget.',
           'A broken heat pump, a stuck valve or a meter fault. Those days are excluded from the evidence.',
@@ -120,7 +122,7 @@ function typeCopy(type: EnergyEventType, t: Translate): { label: string; effect:
       };
     default:
       return {
-        label: t('Övrigt', 'Other'),
+        label,
         effect: t(
           'Antecknas och ritas på diagrammen, men påverkar ingen beräkning.',
           'Recorded and drawn on the charts, but affects no calculation.',

@@ -850,6 +850,40 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/energy-performance-overview.png', fullPage: true });
   });
 
+  test('savings shows what followed each typed change to the home, and asks for a type when one is missing', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling`);
+    const changes = page.getByTestId('home-changes');
+    // The recorded window replacement has no type yet, so nothing is measured from it.
+    await expect(page.getByTestId('home-changes-empty')).toContainText('En registrerad händelse saknar typ');
+    await expect(changes.getByTestId('home-change')).toHaveCount(0);
+    await expect(changes.getByRole('link', { name: 'Hantera händelser' })).toHaveAttribute(
+      'href',
+      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=events`,
+    );
+
+    await page.route('**/rest/v1/energy_history_notes*', (route) => route.fulfill({
+      json: [{
+        id: '40000000-0000-4000-8000-000000000001',
+        customer_id: CUSTOMER_ID,
+        note_date: '2025-12-03',
+        end_date: null,
+        event_type: 'renovation',
+        event_text: 'Installerade 3-glasfönster och nya ytterdörrar',
+      }],
+    }));
+    await page.reload();
+    const change = changes.getByTestId('home-change');
+    await expect(change).toHaveCount(1);
+    await expect(change).toContainText('Renovering');
+    await expect(change).toContainText('3 december 2025');
+    await expect(change).toContainText('Installerade 3-glasfönster');
+    // A figure only with a year of evidence on both sides; otherwise the reason it is missing.
+    await expect(change).toContainText(/kWh per år|Kräver minst 90 dagar|uppvärmningssäsong|Ingen tydlig förändring/);
+    await expect(page.getByTestId('home-changes-empty')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/savings-home-changes.png', fullPage: true });
+  });
+
   test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);

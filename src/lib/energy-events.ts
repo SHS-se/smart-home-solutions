@@ -47,6 +47,22 @@ export const ENERGY_EVENT_TYPES = [
 
 export type EnergyEventType = (typeof ENERGY_EVENT_TYPES)[number];
 
+/** What each type is called, wherever an event is listed. */
+export const ENERGY_EVENT_LABELS: Record<EnergyEventType, { sv: string; en: string }> = {
+  renovation: { sv: 'Renovering', en: 'Renovation' },
+  heating_system_change: { sv: 'Byte av värmesystem', en: 'Heating system change' },
+  solar_installed: { sv: 'Solceller installerade', en: 'Solar installed' },
+  battery_installed: { sv: 'Batteri installerat', en: 'Battery installed' },
+  major_load_added: { sv: 'Stor förbrukare tillkom', en: 'Major load added' },
+  major_load_removed: { sv: 'Stor förbrukare togs bort', en: 'Major load removed' },
+  occupancy_increase: { sv: 'Fler bor i huset', en: 'Someone moved in' },
+  occupancy_decrease: { sv: 'Färre bor i huset', en: 'Someone moved out' },
+  absence: { sv: 'Bortrest', en: 'Away from home' },
+  guests: { sv: 'Gäster', en: 'Guests' },
+  equipment_fault: { sv: 'Utrustningsfel', en: 'Equipment fault' },
+  other: { sv: 'Övrigt', en: 'Other' },
+};
+
 export type EventTreatment = 'step' | 'period' | 'none';
 
 export interface EnergyEvent {

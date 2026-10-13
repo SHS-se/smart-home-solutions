@@ -15,6 +15,7 @@ import { localDay } from '../../../../supabase/functions/_shared/planner-wasm/ca
 import HomeBaselineViewer from './roi/HomeBaselineViewer';
 import ForecastTable from './roi/ForecastTable';
 import BilledMonthsTable from './roi/BilledMonthsTable';
+import HomeChangesCard from './roi/HomeChangesCard';
 import { createCaptureSource } from '@/lib/home-baseline/source';
 import { createBaselineSession } from '@/lib/home-baseline/session';
 import { createSavingsRun } from '@/lib/home-baseline/savings-run';
@@ -84,6 +85,9 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   try { forecast = savingsForecast(months, numericInput(settings.subscription) ?? NaN); }
   catch { invalid = true; }
   const ready = forecast && forecast.rows.length > 0;
+  // What an imported kWh costs in the months of the estimate, for putting a price on past changes.
+  const boughtKwh = months.reduce((n, m) => n + m.recorded.importKwh, 0);
+  const sekPerKwh = boughtKwh > 0 ? months.reduce((n, m) => n + m.recorded.importCostSek, 0) / boughtKwh : null;
   const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
   const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
   const [graphOpen, setGraphOpen] = useState(false);
@@ -141,6 +145,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
       <p className="text-xs text-muted-foreground">{t('Ingen av kolumnerna innehåller effektavgiften.', 'Neither column includes the demand charge.')}</p>
     </CardContent></Card>
+    <HomeChangesCard customerId={customerId} sekPerKwh={sekPerKwh} />
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
     <details className="rounded-xl border bg-card px-5" data-testid="what-happened"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Vad som hände: dina fakturor', 'What happened: your bills')}</summary>
