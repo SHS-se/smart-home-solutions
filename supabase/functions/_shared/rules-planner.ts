@@ -369,11 +369,39 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
-  const core = planner(), p = input.problem;
-  const solved = core.solve(p).outcome;
-  if (solved.kind === "failed") return fail(solved.issue);
+  const core = planner();
+  let solved = core.solve(input.problem).outcome;
+  let released: GeneratedPlan["continuity"];
+  if (solved.kind === "failed") {
+    // The next hour remains exact unless its commands violate current
+    // equipment limits or permissions. A price change or a cheaper schedule
+    // is never authority to release it. Rebuild once under the same limits;
+    // malformed inputs and unrelated construction failures still fail fast.
+    const violation = /^committed_command_infeasible:(\d+):(shared_grid_limit|export_without_permission|non_native_ev_command|command_for_absent_device)$/.exec(solved.issue);
+    if (violation && input.reference_plan_id) {
+      released = { source_plan_id: input.reference_plan_id, selected: "repaired",
+        reason: `${violation[2]} at ${input.snapshot.slots[Number(violation[1])].start}`,
+        proposed_sek: null, reference_sek: null, deadband_sek: 0 };
+      // Clear the native lock and its materialization maps together, so the
+      // published device requests describe the replacement actually solved.
+      input = { ...input, locked_slots: [], problem: { ...input.problem, accepted: null, locked_through_seconds: 0 } };
+      solved = core.solve(input.problem).outcome;
+    }
+  }
+  const p = input.problem;
+  if (solved.kind === "failed") {
+    const committed = /^committed_command_infeasible:(\d+):(.+)$/.exec(solved.issue);
+    if (committed) {
+      const start = input.snapshot.slots[Number(committed[1])]?.start;
+      if (start) return fail(committed[2] === "shared_grid_limit"
+        ? `Previously accepted commands at ${start} exceed the configured grid limit when projected from current measurements (import ${p.limits.import_w / 1000} kW, export ${p.limits.export_w / 1000} kW).`
+        : `Previously accepted commands at ${start} cannot be projected from current measurements: ${committed[2]}.`);
+    }
+    return fail(solved.issue);
+  }
   const selected = solved.selection;
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
+  if (released) priority.generated.continuity = released;
   // Only the selected schedule has a rule account; the baseline was never scored.
   priority.generated.slots.forEach((slot, i) => {
     slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {

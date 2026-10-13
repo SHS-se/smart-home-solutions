@@ -240,3 +240,37 @@ Deno.test("rules preparation levels only base load from matured evidence at loca
     { day: "2026-08-11", forecast_kwh: 20, actual_kwh: 1000 });
   assertEquals(prepare(s).base_w, p.base_w);
 });
+
+Deno.test("a retained command that violates the changed grid limit releases the hour and publishes its repaired requests", () => {
+  const s = snapshot();
+  s.schema_version = 8;
+  s.device_models = [{ key: "ev", name: "EV", statistic_id: "ev", category: "ev_charging", suggested_load_type: "variable_full_load",
+    load_type: "variable_full_load", planning_role: "controllable", control_type: "variable_power", active_power_w: 11040,
+    profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => 0) }];
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const locked = prior.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 16, ev_min_current_a: 0, ev_max_current_a: 16,
+    device_commands: { ev: { type: "variable_power" as const, value: 16, unit: "A" as const } } }));
+  s.ev_battery!.soc = .4;
+  s.grid.import_limit_w = 8000;
+  s.captured_at = new Date(Date.parse(s.captured_at) + 17_000).toISOString();
+  const reference = { plan_id: prior.plan_id, slots: locked };
+  const prepared = prepare(s, reference);
+  const before = JSON.stringify(prepared);
+  const replacement = generateRulesPlan(prepared).plan;
+  assertEquals(JSON.stringify(prepared), before);
+  assertEquals(replacement.status, "ready");
+  assert(replacement.plans.priority.slots.every(slot => slot.grid_import_w <= 8000 + 1e-7));
+  assert(replacement.plans.priority.slots[0].ev_target_current_a < 16);
+  assertEquals(replacement.plans.priority.continuity, { source_plan_id: prior.plan_id, selected: "repaired",
+    reason: `shared_grid_limit at ${s.slots[0].start}`, proposed_sek: null, reference_sek: null, deadband_sek: 0 });
+  assertEquals(replacement.plans.priority.slots[0].device_commands!.ev, {
+    type: "variable_power", value: replacement.plans.priority.slots[0].ev_target_current_a, unit: "A",
+  });
+});
+Deno.test("a malformed retained command is refused without releasing the hour", () => {
+  const s = snapshot();
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const prepared = prepare(s, { plan_id: prior.plan_id, slots: prior.plans.priority.slots });
+  prepared.problem.accepted![0].charge_limit_w = -1;
+  assertThrows(() => generateRulesPlan(prepared), Error, "negative_native_power_limit");
+});

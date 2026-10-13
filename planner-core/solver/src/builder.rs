@@ -358,8 +358,12 @@ fn construct(
                 }
                 work.expansions += 1;
                 let mut next = l.clone();
-                let Ok(q) = physics::step(p, i, &c, &mut next.state) else {
-                    continue;
+                let q = match physics::step(p, i, &c, &mut next.state) {
+                    Ok(q) => q,
+                    Err(issue) if physics::locked(p, i) => {
+                        return Err(format!("committed_command_infeasible:{i}:{issue}"));
+                    }
+                    Err(_) => continue,
                 };
                 if index.first_sale == Some(i) {
                     next.prepared = policy::measured(

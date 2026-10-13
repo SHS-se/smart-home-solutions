@@ -40,6 +40,20 @@ Every device is counted once. Controlling devices follow selected commands; veri
 
 The current published ready plan supplies exact commands through capture time plus one hour, including a partial first quarter. A replan keeps those commands while simulating fresh measured states; EV disconnection can therefore change actual electrical demand without rewriting its fixed command. A plan-ID fence prevents publishing against a replaced reference. Automatic and manual submissions follow the same preparation/solve/publication path.
 
+User decision, 13 October 2026: release the next-hour command lock only when
+retaining it violates a configured grid limit, native device capability or
+permission. A changed price or a cheaper schedule does not release it. The
+native solver identifies the conflicting committed quarter and constraint;
+the planner then rebuilds once with that lock released, under the same current
+limits and permissions. Malformed commands and unrelated solve failures remain
+errors. The selected schedule records the violated constraint and source plan
+in its continuity diagnostics, and its published device commands are rebuilt
+from the replacement rather than copied from the released hour.
+
+The 13 October incident was a retained plan built for 17.25 kW against a new
+14 kW import limit. Its retained opening car/pool load already exceeded 14 kW
+before battery charging, so an exact next-hour lock could not be fulfilled.
+
 Schema 9 native battery commands remain usable when optional battery execution feedback is absent, as with the current TEST integration. A modern delegated execution contract is generated only from supplied valid feedback. Missing feedback is never fabricated. The optional monetary battery projection truthfully reports that the rules objective has no conditional money projection; cost curves are not recreated. Reusing a selected schedule for a cost comparison is explicitly labelled rather than represented as another optimization.
 
 ## TEST completion and production acknowledgement
