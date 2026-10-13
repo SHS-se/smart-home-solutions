@@ -411,26 +411,30 @@ async function login(page: Page) {
   await page.waitForURL('**/portal');
 }
 
-const ENERGY_HISTORY_SECTION_TABS = {
-  Data: 'data',
-  Temperatur: 'temperature',
+// Energy history is a staff page with two chart sections; uploads live under
+// Energy optimisation → Setup, reached from the same row of links.
+const ENERGY_HISTORY_SECTIONS = {
+  Data: { link: 'Fakturor och data', url: /\/energy-modeling\?tab=setup&section=data$/ },
+  Temperatur: { link: 'Temperatur', url: /\/energy-history\?tab=temperature$/ },
 } as const;
 
-type EnergyHistorySection = keyof typeof ENERGY_HISTORY_SECTION_TABS;
+type EnergyHistorySection = keyof typeof ENERGY_HISTORY_SECTIONS;
 
 function energyHistorySectionLink(page: Page, section: EnergyHistorySection) {
   return page
-    .locator('[data-sidebar="sidebar"]')
-    .getByRole('link', { name: section, exact: true });
+    .getByTestId('energy-history-sections')
+    .getByRole('link', { name: ENERGY_HISTORY_SECTIONS[section].link, exact: true });
 }
 
 async function openEnergyHistorySection(page: Page, section: EnergyHistorySection) {
-  const link = energyHistorySectionLink(page, section);
-  await link.click();
-  await expect(page).toHaveURL(
-    new RegExp(`[?&]tab=${ENERGY_HISTORY_SECTION_TABS[section]}(?:&|$)`),
-  );
-  await expect(link).toHaveAttribute('data-active', 'true');
+  await energyHistorySectionLink(page, section).click();
+  await expect(page).toHaveURL(ENERGY_HISTORY_SECTIONS[section].url);
+  if (section === 'Data') {
+    await expect(page.getByTestId('energy-setup-sections').getByRole('button', { name: 'Fakturor och data' }))
+      .toHaveAttribute('aria-current', 'page');
+  } else {
+    await expect(energyHistorySectionLink(page, section)).toHaveAttribute('aria-current', 'page');
+  }
 }
 
 test.describe('staff navigation shell', () => {
@@ -859,7 +863,7 @@ test.describe('staff navigation shell', () => {
     await expect(changes.getByTestId('home-change')).toHaveCount(0);
     await expect(changes.getByRole('link', { name: 'Hantera händelser' })).toHaveAttribute(
       'href',
-      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=events`,
+      `/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=changes`,
     );
 
     await page.route('**/rest/v1/energy_history_notes*', (route) => route.fulfill({
@@ -884,6 +888,44 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/savings-home-changes.png', fullPage: true });
   });
 
+  test('setup gathers devices, thermal, bills and home changes; old links land in the right section', async ({ page }) => {
+    await login(page);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=data`);
+    const sections = page.getByTestId('energy-setup-sections');
+    for (const name of ['Enheter', 'Termik', 'Fakturor och data', 'Förändringar i huset']) {
+      await expect(sections.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    for (const name of ['Besparing', 'Plan', 'Komfort', 'Inställningar']) {
+      await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('tab', { name: 'Enheter' })).toHaveCount(0);
+    await expect(page.getByTestId('energy-data-upload')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
+    // The page header and period control belong to the staff chart history, not to Setup.
+    await expect(page.getByRole('heading', { name: 'Energihistorik', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('energy-history-period')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/energy-setup-data.png', fullPage: true });
+
+    await sections.getByRole('button', { name: 'Förändringar i huset' }).click();
+    await expect(page).toHaveURL(/tab=setup&section=changes$/);
+    await expect(page.getByTestId('energy-events-section')).toBeVisible();
+
+    // Energy history left the menu; staff still reach the full chart history from Setup.
+    await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Energihistorik' })).toHaveCount(0);
+    await sections.getByRole('link', { name: 'Hela energihistoriken (personal)' }).click();
+    await expect(page).toHaveURL(new RegExp(`/portal/customers/${CUSTOMER_ID}/energy-history$`));
+    await expect(page.getByRole('heading', { name: 'Energihistorik', exact: true })).toBeVisible();
+
+    // Bookmarks to the sections that moved, and to the tabs that became sections.
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=data`);
+    await expect(page).toHaveURL(/\/energy-modeling\?tab=setup&section=data$/);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=events`);
+    await expect(page).toHaveURL(/\/energy-modeling\?tab=setup&section=changes$/);
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=thermal`);
+    await expect(sections.getByRole('button', { name: 'Termik' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('tab', { name: 'Inställningar' })).toHaveAttribute('data-state', 'active');
+  });
+
   test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
@@ -892,10 +934,11 @@ test.describe('staff navigation shell', () => {
     const reviewOldest = staffAlert.getByRole('link', { name: 'Granska äldsta filen' });
     await expect(reviewOldest).toHaveAttribute(
       'href',
-      `/portal/customers/${CUSTOMER_ID}/energy-history?tab=data`,
+      `/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=data`,
     );
     await reviewOldest.click();
-    await expect(energyHistorySectionLink(page, 'Data')).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('energy-setup-sections').getByRole('button', { name: 'Fakturor och data' }))
+      .toHaveAttribute('aria-current', 'page');
 
     const management = page.getByTestId('energy-data-management');
     await expect(management.getByText('Källfiler minimeras')).toBeVisible();
@@ -1067,6 +1110,23 @@ test.describe('customer navigation shell', () => {
     await expect(page.getByRole('link', { name: 'SKU-katalog' })).toBeHidden();
 
     await page.screenshot({ path: 'test-results/nav-customer-portal.png', fullPage: false });
+  });
+
+  test('customers have no energy history page: its links lead to Energy optimisation', async ({ page }) => {
+    await login(page);
+    await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Energihistorik' })).toHaveCount(0);
+    await page.goto('/portal/energy-history');
+    await expect(page).toHaveURL(/\/portal\/energy-modeling$/);
+    await page.goto('/portal/energy-history?tab=temperature');
+    await expect(page).toHaveURL(/\/portal\/energy-modeling$/);
+    await page.goto('/portal/energy-history?tab=data');
+    await expect(page).toHaveURL(/\/portal\/energy-modeling\?tab=setup&section=data$/);
+    const sections = page.getByTestId('energy-setup-sections');
+    await expect(sections.getByRole('button', { name: 'Fakturor och data' })).toHaveAttribute('aria-current', 'page');
+    await expect(sections.getByRole('link', { name: /energihistoriken/ })).toHaveCount(0);
+    // Uploading is part of the subscription, as it was on the old page.
+    await expect(page.getByText('Aktiv prenumeration krävs')).toBeVisible();
+    await expect(page.getByTestId('energy-data-upload')).toHaveCount(0);
   });
 
   test('user menu only contains account-level actions', async ({ page }) => {

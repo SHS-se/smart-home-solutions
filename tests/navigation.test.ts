@@ -27,7 +27,6 @@ Deno.test("customer nav covers the customer portal pages", () => {
   assertEquals(paths, [
     "/portal",
     "/portal/home-profile",
-    "/portal/energy-history",
     "/portal/energy-modeling",
     "/portal/offers",
     "/portal/billing",
@@ -36,20 +35,15 @@ Deno.test("customer nav covers the customer portal pages", () => {
   ]);
 });
 
-Deno.test("energy history exposes its four sections as sidebar sub-navigation", () => {
-  const energyHistory = getCustomerNavItems().find((item) => item.path === "/portal/energy-history")!;
-  assertEquals(energyHistory.subItems?.map((item) => item.path), [
-    "/portal/energy-history?tab=overview",
-    "/portal/energy-history?tab=data",
-    "/portal/energy-history?tab=events",
-    "/portal/energy-history?tab=temperature",
-  ]);
+Deno.test("energy history is not a menu entry: uploads and home changes live under Energy optimisation", () => {
+  const items = getCustomerNavItems();
+  assertFalse(items.some((item) => item.path.includes("energy-history")));
+  assertFalse(items.some((item) => item.subItems?.length));
 
-  const [overview, data] = energyHistory.subItems!;
-  assert(isNavSubItemActive(overview, "/portal/energy-history", ""));
-  assert(isNavSubItemActive(overview, "/portal/energy-history", "?tab=overview"));
-  assert(isNavSubItemActive(data, "/portal/energy-history", "?tab=data"));
-  assertFalse(isNavSubItemActive(data, "/portal/energy-history", "?tab=overview"));
+  // Sub-navigation matching stays for any menu that needs it.
+  const data = { path: "/portal/example?tab=data", labelSv: "Data", labelEn: "Data" };
+  assert(isNavSubItemActive(data, "/portal/example", "?tab=data"));
+  assertFalse(isNavSubItemActive(data, "/portal/example", "?tab=overview"));
 });
 
 Deno.test("customer nav contains no staff-only routes", () => {
@@ -73,7 +67,6 @@ Deno.test("customer-view nav mirrors the customer nav, scoped to the customer", 
   assertEquals(viewPaths, [
     `${base}/overview`,
     `${base}/home-profile`,
-    `${base}/energy-history`,
     `${base}/energy-modeling`,
     `${base}/offers`,
     `${base}/billing`,
@@ -145,7 +138,7 @@ Deno.test("role selector returns the right groups", () => {
   assertEquals(getNavGroupsForRole("staff"), staffNavGroups);
   const customerGroups = getNavGroupsForRole("customer");
   assertEquals(customerGroups.length, 1);
-  assertEquals(customerGroups[0].items.length, 8);
+  assertEquals(customerGroups[0].items.length, 7);
 });
 
 // ─── Active-state matching ─────────────────────────────────────────────────────

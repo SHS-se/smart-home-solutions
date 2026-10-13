@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CreditCard,
@@ -73,7 +73,16 @@ import { Card, CardContent } from '@/components/ui/card';
 interface EnergyHistoryProps {
   customerId?: string;
   isStaffView?: boolean;
+  /**
+   * Show one section inside Energy optimisation → Setup instead of the page.
+   * Uploading data and recording changes to the home live there; the page that
+   * remains (charts over the whole history) is for staff.
+   */
+  section?: 'data' | 'events';
 }
+
+/** Where each moved section now lives, under Energy optimisation → Setup. */
+const SETUP_SECTION = { data: 'data', events: 'changes' } as const;
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
 type EnergyHistorySection = 'overview' | 'data' | 'events' | 'temperature';
@@ -91,8 +100,11 @@ function isEnergyHistorySection(value: string | null): value is EnergyHistorySec
 const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   customerId: propCustomerId,
   isStaffView = false,
+  section,
 }) => {
-  const { customerData, isStaff } = useAuth();
+  const { customerData, isStaff, loading: authLoading } = useAuth();
+  const navigate = useNavigate();
+  const embedded = section !== undefined;
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -103,13 +115,15 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   } = useSubscription();
   const customerId = propCustomerId || customerData?.id || '';
   const requestedTab = searchParams.get('tab');
-  const activeTab: EnergyHistorySection = isEnergyHistorySection(requestedTab)
-    ? requestedTab
-    : 'overview';
+  const activeTab: EnergyHistorySection = section
+    ?? (isEnergyHistorySection(requestedTab) ? requestedTab : 'overview');
+  const portalPath = isStaffView && customerId ? `/portal/customers/${customerId}` : '/portal';
+  const setupPath = (moved: 'data' | 'events') => `${portalPath}/energy-modeling?tab=setup&section=${SETUP_SECTION[moved]}`;
   const [displayedPeriod, setDisplayedPeriod] = useState<EnergyHistoryPeriod>('12');
-  const showSection = (section: EnergyHistorySection) => {
+  const showSection = (next: EnergyHistorySection) => {
+    if (next === 'data' || next === 'events') { navigate(setupPath(next)); return; }
     const nextParams = new URLSearchParams(searchParams);
-    nextParams.set('tab', section);
+    nextParams.set('tab', next);
     setSearchParams(nextParams);
   };
   const queryKey = ['energy-billing-documents', customerId] as const;
@@ -373,14 +387,18 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     ]);
   };
 
-  // The energy class moved to the portal overview; old links follow it there.
-  if (requestedTab === 'performance') {
-    return (
-      <Navigate
-        to={isStaffView && customerId ? `/portal/customers/${customerId}/overview` : '/portal'}
-        replace
-      />
-    );
+  if (!embedded) {
+    // The energy class moved to the portal overview; old links follow it there.
+    if (requestedTab === 'performance') {
+      return <Navigate to={isStaffView && customerId ? `${portalPath}/overview` : '/portal'} replace />;
+    }
+    // Uploads and recorded changes moved to Setup, for everyone.
+    if (requestedTab === 'data' || requestedTab === 'events') {
+      return <Navigate to={setupPath(requestedTab)} replace />;
+    }
+    // What is left here is the full chart history, which customers no longer have in their menu.
+    if (authLoading) return null;
+    if (!isStaff) return <Navigate to={`${portalPath}/energy-modeling`} replace />;
   }
 
   const showPeriodControl = Boolean(
@@ -400,6 +418,26 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               'Import energy files, separate grid import from the home’s actual energy demand, and track cost and efficiency.',
             )}
           </p>
+          <nav
+            className="mt-3 flex flex-wrap gap-2"
+            aria-label={t('Avsnitt i energihistoriken', 'Energy history sections')}
+            data-testid="energy-history-sections"
+          >
+            {([
+              ['overview', t('Översikt', 'Overview')],
+              ['temperature', t('Temperatur', 'Temperature')],
+            ] as const).map(([key, label]) => (
+              <Button key={key} size="sm" variant={activeTab === key ? 'default' : 'outline'} asChild>
+                <Link to={`?tab=${key}`} aria-current={activeTab === key ? 'page' : undefined}>{label}</Link>
+              </Button>
+            ))}
+            <Button size="sm" variant="ghost" asChild>
+              <Link to={setupPath('data')}>{t('Fakturor och data', 'Bills and data')}</Link>
+            </Button>
+            <Button size="sm" variant="ghost" asChild>
+              <Link to={setupPath('events')}>{t('Förändringar i huset', 'Changes to the home')}</Link>
+            </Button>
+          </nav>
         </div>
       </div>
       {showPeriodControl && (
@@ -457,7 +495,7 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
 
   return (
     <div className="space-y-6">
-      {header}
+      {!embedded && header}
 
       {subscriptionLoading ? (
         <Card>

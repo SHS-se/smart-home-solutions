@@ -169,7 +169,7 @@ const EnergyClassPanel: React.FC<EnergyClassPanelProps> = ({ customerId, basePat
   }
 
   const profile = homeProfileQuery.data;
-  const showData = () => navigate(`${basePath}/energy-history?tab=data`);
+  const showData = () => navigate(`${basePath}/energy-modeling?tab=setup&section=data`);
 
   return (
     <EnergiprestandaSection
@@ -188,7 +188,7 @@ const EnergyClassPanel: React.FC<EnergyClassPanelProps> = ({ customerId, basePat
         geographicAdjustmentFactor: null,
       }}
       events={notesQuery.data ?? []}
-      onManageEventsClick={() => navigate(`${basePath}/energy-history?tab=events`)}
+      onManageEventsClick={() => navigate(`${basePath}/energy-modeling?tab=setup&section=changes`)}
       declaration={declarationQuery.data ?? null}
       onUploadDeclarationClick={showData}
       periodStartMonth={null}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,17 +10,20 @@ import SavingsTab from '@/components/portal/energy/SavingsTab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
 import HomeTimeZoneProvider from '@/components/portal/energy/HomeTimeZoneContext';
+import EnergyHistory from '@/pages/portal/EnergyHistory';
+import { Button } from '@/components/ui/button';
 
 interface EnergyModelingProps {
   customerId?: string;
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'savings' | 'comfort' | PlanSection;
+type EnergyTab = 'savings' | 'plan' | 'comfort' | 'setup';
+/** Everything the planner needs to be told: what it controls, how the house behaves, what was billed, what changed. */
+type SetupSection = Exclude<PlanSection, 'plan'> | 'data' | 'changes';
 
-const ENERGY_TABS = new Set<EnergyTab>([
-  'savings', 'plan', 'devices', 'comfort', 'thermal',
-]);
+const ENERGY_TABS = new Set<EnergyTab>(['savings', 'plan', 'comfort', 'setup']);
+const SETUP_SECTIONS = new Set<SetupSection>(['devices', 'thermal', 'data', 'changes']);
 
 /**
  * The open tab lives in the URL rather than in component state, so a refresh
@@ -31,6 +34,9 @@ const ENERGY_TABS = new Set<EnergyTab>([
  */
 function isEnergyTab(value: string | null): value is EnergyTab {
   return value !== null && ENERGY_TABS.has(value as EnergyTab);
+}
+function isSetupSection(value: string | null): value is SetupSection {
+  return value !== null && SETUP_SECTIONS.has(value as SetupSection);
 }
 
 /**
@@ -57,10 +63,15 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const [homeCount, setHomeCount] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : 'savings';
-  const setTab = (next: EnergyTab) => {
+  // Devices and Thermal were tabs of their own before Setup gathered them; their links still open.
+  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : isSetupSection(requestedTab) ? 'setup' : 'savings';
+  const requestedSection = searchParams.get('section');
+  const setupSection: SetupSection = isSetupSection(requestedSection) ? requestedSection
+    : isSetupSection(requestedTab) ? requestedTab : 'devices';
+  const setTab = (next: EnergyTab, section?: SetupSection) => {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('tab', next);
+    if (section) nextParams.set('section', section); else nextParams.delete('section');
     // Replace, so the browser's back button leaves the page rather than
     // walking back through every tab that was looked at.
     setSearchParams(nextParams, { replace: true });
@@ -101,9 +112,14 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const tabs: Array<{ key: EnergyTab; label: string }> = [
     { key: 'savings', label: t('Besparing', 'Savings') },
     { key: 'plan', label: t('Plan', 'Plan') },
-    { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
+    { key: 'setup', label: t('Inställningar', 'Setup') },
+  ];
+  const setupSections: Array<{ key: SetupSection; label: string }> = [
+    { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'thermal', label: t('Termik', 'Thermal') },
+    { key: 'data', label: t('Fakturor och data', 'Bills and data') },
+    { key: 'changes', label: t('Förändringar i huset', 'Changes to the home') },
   ];
 
   return (
@@ -124,13 +140,29 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         />
       )}
 
-      <Tabs value={tab} onValueChange={value => setTab(value as EnergyTab)}>
+      <Tabs value={tab} onValueChange={value => setTab(value as EnergyTab, value === 'setup' ? setupSection : undefined)}>
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
           {tabs.map(item => (
             <TabsTrigger key={item.key} value={item.key}>{item.label}</TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
+
+      {tab === 'setup' && (
+        <nav className="flex flex-wrap items-center gap-2" aria-label={t('Inställningar', 'Setup')} data-testid="energy-setup-sections">
+          {setupSections.map(item => (
+            <Button key={item.key} size="sm" variant={setupSection === item.key ? 'default' : 'outline'}
+              aria-current={setupSection === item.key ? 'page' : undefined} onClick={() => setTab('setup', item.key)}>
+              {item.label}
+            </Button>
+          ))}
+          {isStaff && propCustomerId && (
+            <Button size="sm" variant="ghost" className="ml-auto" asChild>
+              <Link to={`/portal/customers/${propCustomerId}/energy-history`}>{t('Hela energihistoriken (personal)', 'Full energy history (staff)')}</Link>
+            </Button>
+          )}
+        </nav>
+      )}
 
       {/*
         Rendered outside TabsContent on purpose. One PlanWorkspace instance stays
@@ -147,9 +179,15 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
           <SavingsTab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
         ) : tab === 'comfort' ? (
           <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
+        ) : tab === 'setup' && (setupSection === 'data' || setupSection === 'changes') ? (
+          <EnergyHistory
+            customerId={propCustomerId}
+            isStaffView={isStaffView}
+            section={setupSection === 'data' ? 'data' : 'events'}
+          />
         ) : (
           <PlanWorkspace
-            section={tab}
+            section={tab === 'setup' && setupSection !== 'data' && setupSection !== 'changes' ? setupSection : 'plan'}
             customerId={resolvedCustomerId}
             homeId={selectedHomeId}
             accountPath={isStaffView ? `/portal/customers/${resolvedCustomerId}/account` : '/portal/account'}

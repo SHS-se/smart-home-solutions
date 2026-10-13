@@ -22,7 +22,7 @@ const NORMAL_WEATHER_YEARS = 10;
 export default function HomeChangesCard({ customerId, sekPerKwh }: { customerId: string; sekPerKwh: number | null }) {
   const { t, language } = useLanguage();
   const locale = language === 'sv' ? 'sv-SE' : 'en-GB';
-  const eventsPath = `${useLocation().pathname.replace(/\/energy-modeling\/?$/, '')}/energy-history?tab=events`;
+  const eventsPath = `${useLocation().pathname}?tab=setup&section=changes`;
   const notes = useQuery({ queryKey: ['energy-history-notes', customerId], queryFn: () => fetchEnergyHistoryNotes(customerId), enabled: !!customerId, ...CACHED });
   const hasChanges = (notes.data ?? []).some(note => treatmentOf(note.event_type) === 'step');
   const usage = useQuery({ queryKey: ['energy-usage-readings', customerId], queryFn: () => fetchEnergyUsageReadings(customerId), enabled: hasChanges, ...CACHED });
