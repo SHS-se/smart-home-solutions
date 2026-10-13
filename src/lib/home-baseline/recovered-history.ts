@@ -87,8 +87,64 @@ export function prepareHourlyRecovery(series: StatisticSeries[], spec: RecoveryS
   return result;
 }
 
+/** Below this much impossible energy in the hours on hand there is nothing to correct. */
+export const LATE_METER_MIN_KWH = 1;
+/** Read an hour earlier, at most this share of the impossible energy may remain. */
+export const LATE_METER_MAX_REMAINING = .05;
+
+/**
+ * Move a late-reporting counter's energy back to the hour it was drawn.
+ *
+ * A device cannot use more than the whole house did. A counter that breaks that
+ * rule in its own hour, and no longer does when read one hour earlier, is
+ * reporting an hour late. Left alone, the hour the device really ran keeps its
+ * energy in the household's base load (it is never removed there), and the hour
+ * after loses energy the house did use.
+ *
+ * Decided per device and source statistic over the hours on hand, so a counter
+ * that was later replaced by a prompt one is corrected only where it was used.
+ */
+export function alignLateMeters(hours: readonly RecoveredHour[], members: ReadonlySet<string>): RecoveredHour[] {
+  const byTime = new Map(hours.map(hour => [Date.parse(hour.start_ts), hour]));
+  const sourceOf = (hour: RecoveredHour | undefined, id: string) => hour?.sources[`device:${id}`];
+  // A total summed from the device meters themselves can never contradict them.
+  const measuredTotal = (hour: RecoveredHour | undefined) => hour !== undefined && (hour.sources.total_load_kwh !== undefined || hour.sources.household_estimate !== undefined);
+  const measuredLoad = (hour: RecoveredHour | undefined) => measuredTotal(hour) ? hour!.actual.total_load_kwh ?? null : null;
+  const impossible = new Map<string, { id: string; source: string; asRead: number; earlier: number }>();
+  for (const hour of hours) for (const [id, kwh] of Object.entries(hour.device_energy_kwh)) {
+    const source = sourceOf(hour, id);
+    if (!source) continue;
+    const key = `${id}|${source}`, tally = impossible.get(key) ?? { id, source, asRead: 0, earlier: 0 };
+    const load = measuredLoad(hour), before = measuredLoad(byTime.get(Date.parse(hour.start_ts) - HOUR));
+    if (load !== null) tally.asRead += Math.max(0, kwh - load);
+    if (before !== null) tally.earlier += Math.max(0, kwh - before);
+    impossible.set(key, tally);
+  }
+  const late = [...impossible.values()].filter(tally => tally.asRead > LATE_METER_MIN_KWH && tally.earlier <= tally.asRead * LATE_METER_MAX_REMAINING);
+  if (!late.length) return [...hours];
+  return hours.map(hour => {
+    const next = byTime.get(Date.parse(hour.start_ts) + HOUR);
+    const moved = late.filter(({ id, source }) => sourceOf(hour, id) === source || sourceOf(next, id) === source);
+    if (!moved.length) return hour;
+    const device_energy_kwh = { ...hour.device_energy_kwh }, sources = { ...hour.sources };
+    for (const { id, source } of moved) {
+      // The reading that arrived in the next hour describes this one. The counter's
+      // last hour before it was replaced has no later reading and keeps none.
+      device_energy_kwh[id] = sourceOf(next, id) === source ? next!.device_energy_kwh[id] ?? 0 : 0;
+      sources[`device:${id}`] = source;
+    }
+    const removed = Object.entries(device_energy_kwh).reduce((n, [id, kwh]) => n + (members.has(id) ? kwh : 0), 0);
+    const other = Object.entries(device_energy_kwh).reduce((n, [id, kwh]) => n + (members.has(id) ? 0 : kwh), 0);
+    // Same rule as the first normalisation: the independent other meters stand in
+    // only where the removed devices still exceed the measured total.
+    const actual = measuredTotal(hour) ? hour.actual : { ...hour.actual, total_load_kwh: removed + other };
+    const baseline_load_kwh = !measuredTotal(hour) ? other : (actual.total_load_kwh ?? 0) - removed < -1e-9 ? other : null;
+    return { ...hour, actual, device_energy_kwh, sources, baseline_load_kwh };
+  });
+}
+
 /** Field-level precedence preserves every non-null measured value, including zero. */
-export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly RecoveredHour[]): HistoricalRows & { baselineLoads: { start_ts: string; kwh: number }[]; recovery: RecoverySummary } {
+export function mergeHourlyHistory(rows: HistoricalRows, recoveredHours: readonly RecoveredHour[]): HistoricalRows & { baselineLoads: { start_ts: string; kwh: number }[]; recovery: RecoverySummary } {
   const start = Date.parse(rows.start), end = Date.parse(rows.end), prior = start - QUARTER;
   const stamp = (value: string) => new Date(value).toISOString();
   const actual = new Map(rows.actual.map(r => [stamp(r.start_ts), { ...r, start_ts: stamp(r.start_ts) }]));
@@ -98,6 +154,7 @@ export function mergeHourlyHistory(rows: HistoricalRows, hours: readonly Recover
   const memberKeys = new Set(homePhysics(rows.snapshot).memberKeys);
   const memberIds = new Set(rows.devices.filter(d => memberKeys.has(d.device_key)).map(d => d.id));
   const excluded = new Set(rows.devices.filter(d => memberKeys.has(d.device_key) || d.category === 'ev_charging').map(d => d.id));
+  const hours = alignLateMeters(recoveredHours, memberIds);
   const sources = new Set<string>();
   const hourlyFields = new Map<string, Set<string>>();
   const recovered = (at: string, field: string) => {

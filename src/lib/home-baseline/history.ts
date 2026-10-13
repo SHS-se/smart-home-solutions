@@ -65,7 +65,8 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
         ? read<OutdoorRow[]>(window('energy_optimisation_outdoor_slots', 'start_ts,temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
       facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', w.start, w.end, w.count)) : Promise.resolve([]),
       read<RecoveredHour[]>(window('energy_roi_history_hours', 'start_ts,actual,device_energy_kwh,pool_c,outdoor_c,baseline_load_kwh,sources,invalid_readings',
-        new Date(Math.floor(Date.parse(first ? prior : w.start) / 3_600_000) * 3_600_000).toISOString(), w.end, 170)),
+        // One hour past the window: a late-reporting counter's last hour is read from the hour after it.
+        new Date(Math.floor(Date.parse(first ? prior : w.start) / 3_600_000) * 3_600_000).toISOString(), new Date(Date.parse(w.end) + 3_600_000).toISOString(), 171)),
       solarProfile ? read<SolarHour[]>(window('energy_roi_solar_hours', 'start_ts,raw_kwh,modeled_kwh',
         new Date(Math.floor(Date.parse(w.start) / 3_600_000) * 3_600_000).toISOString(), w.end, 170).eq('profile_hash', solarProfile.profile_hash)) : Promise.resolve([]),
     ]);
@@ -98,5 +99,5 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
   signal.throwIfAborted();
   return prepareHomeBaseline(mergeHourlyHistory({ snapshot, solar: solarProfile ? { profile: solarProfile, hours: [...new Map(batches.flatMap(b => b.solarHours).map(h => [h.start_ts, h])).values()] } : undefined, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,
     tariff: pricing.catalogue, actual: batches.flatMap(b => b.actual), prices: pricing.prices, actualPrices: pricing.actualPrices, priceArea: pricing.area,
-    deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) }, batches.flatMap(b => b.recovered)));
+    deviceSlots: batches.flatMap(b => b.deviceSlots), outdoor: batches.flatMap(b => b.outdoor) }, [...new Map(batches.flatMap(b => b.recovered).map(h => [h.start_ts, h])).values()]));
 }

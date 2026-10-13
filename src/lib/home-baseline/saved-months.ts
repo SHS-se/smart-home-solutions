@@ -12,9 +12,10 @@ import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calen
 import type { PoolCheckpoint } from './pool-carry.ts';
 
 // v5 pins the pool-continuation schema; the hash also pins energy interval accounting
-// and the rule that the plain thermostat holds the same pool target as the scheduler.
+// the rule that the plain thermostat holds the same pool target as the scheduler,
+// and the correction of counters that report an hour late.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v5:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v1', thermostat: 'shared-pool-target-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v5:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v1', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),

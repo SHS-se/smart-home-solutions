@@ -1,6 +1,6 @@
 import { assertAlmostEquals, assertEquals } from '@std/assert';
 import { baselineFixture } from './fixture.ts';
-import { energyDeltas, mergeHourlyHistory, prepareHourlyRecovery, type RecoverySpec } from './recovered-history.ts';
+import { alignLateMeters, energyDeltas, mergeHourlyHistory, prepareHourlyRecovery, type RecoveredHour, type RecoverySpec } from './recovered-history.ts';
 import { prepareHomeBaseline } from './model.ts';
 
 const start = '2026-04-30T22:00:00.000Z', hour = 3_600_000, at = Date.parse(start);
@@ -123,4 +123,50 @@ Deno.test('mixed hourly device recovery uses other meters when it conflicts with
   assertAlmostEquals(input.recorded.rows[0].loadW!, 400);
   assertEquals(merged.deviceSlots.find(r => r.start_ts === start)!.device_energy_kwh['legacy-car-id'], 2);
   assertEquals(input.recovery.deviceSumHours, 1);
+});
+
+// A night's charging as the house meter saw it (22:00–01:00) and as a late counter reported it (23:00–02:00).
+const recoveredHour = (i: number, load: number, car: number, other: number, source = 'late-car'): RecoveredHour => ({
+  start_ts: new Date(at + i * hour).toISOString(), actual: { total_load_kwh: load, grid_import_kwh: load },
+  device_energy_kwh: { 'car-id': car, 'other-id': other }, pool_c: null, outdoor_c: null,
+  // As first normalised: where the car's reading exceeds the house, the other meters stand in.
+  baseline_load_kwh: load - car < -1e-9 ? other : null,
+  sources: { grid_import_kwh: 'grid', household_estimate: 'grid_balance', 'device:car-id': source, 'device:other-id': 'other' }, invalid_readings: 0 });
+const night = () => [recoveredHour(0, 2, 0, .5), recoveredHour(1, 13, 0, .5), recoveredHour(2, 12.5, 10.5, .5), recoveredHour(3, 13.5, 11, .5),
+  recoveredHour(4, 5, 11, .5), recoveredHour(5, 2, 3.5, .5), recoveredHour(6, 2, 0, .5)];
+
+Deno.test('a counter that reports an hour late has its energy moved back to the hour it was drawn', () => {
+  const aligned = alignLateMeters(night(), new Set(['car-id']));
+  assertEquals(aligned.map(h => h.device_energy_kwh['car-id']), [0, 10.5, 11, 11, 3.5, 0, 0]);
+  // The house without the car is an ordinary 2 kWh every hour, instead of 13 at the start and a stand-in at the end.
+  assertEquals(aligned.map(h => h.actual.total_load_kwh! - h.device_energy_kwh['car-id']), [2, 2.5, 1.5, 2.5, 1.5, 2, 2]);
+  assertEquals(aligned.map(h => h.baseline_load_kwh), [null, null, null, null, null, null, null]);
+  assertEquals(aligned.reduce((n, h) => n + h.device_energy_kwh['car-id'], 0), 36, 'no energy is created or lost');
+  assertEquals(aligned.map(h => h.device_energy_kwh['other-id']), night().map(h => h.device_energy_kwh['other-id']));
+});
+
+Deno.test('a prompt counter is left alone, also after it replaces a late one', () => {
+  const prompt = [recoveredHour(0, 2, 0, .5, 'car'), recoveredHour(1, 13, 11, .5, 'car'), recoveredHour(2, 12.5, 10.5, .5, 'car'), recoveredHour(3, 2, 0, .5, 'car')];
+  assertEquals(alignLateMeters(prompt, new Set(['car-id'])), prompt);
+  // The late counter's nights are corrected; the prompt counter that took over keeps its own hours.
+  const replaced = [...night(), recoveredHour(7, 13, 11, .5, 'car'), recoveredHour(8, 2, 0, .5, 'car')];
+  const aligned = alignLateMeters(replaced, new Set(['car-id']));
+  assertEquals(aligned.map(h => h.device_energy_kwh['car-id']), [0, 10.5, 11, 11, 3.5, 0, 0, 11, 0]);
+  assertEquals(aligned.slice(7).map(h => h.sources['device:car-id']), ['car', 'car']);
+});
+
+Deno.test('one impossible reading that an earlier hour does not explain is not treated as lateness', () => {
+  // The hour before is just as small, so reading it earlier fixes nothing.
+  const odd = [recoveredHour(0, 2, 0, .5), recoveredHour(1, 2, 0, .5), recoveredHour(2, 2, 6, .5), recoveredHour(3, 2, 0, .5)];
+  assertEquals(alignLateMeters(odd, new Set(['car-id'])), odd);
+});
+
+Deno.test('the baseline model sees the corrected house: no phantom load in the hour charging began', () => {
+  const fixture = baselineFixture({ start, end: new Date(at + 7 * hour).toISOString() });
+  fixture.actual = []; fixture.deviceSlots = [];
+  const merged = mergeHourlyHistory(fixture, [recoveredHour(-1, 2, 0, .5), ...night()].map(h => ({ ...h, actual: { ...h.actual, ev_soc: .5, battery_soc: .5 } })));
+  const input = prepareHomeBaseline(merged);
+  const houseKw = (i: number) => input.problem.slots.slice(i * 4, i * 4 + 4).reduce((n, slot) => n + slot.base_w, 0) / 4000;
+  // Idle pool circulation is the only addition to the measured house in each hour.
+  [2, 2.5, 1.5, 2.5, 1.5, 2, 2].forEach((kw, i) => assertAlmostEquals(houseKw(i), kw + input.idlePumpW / 1000, 1e-9));
 });

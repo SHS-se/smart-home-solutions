@@ -50,15 +50,18 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
       command.ev_amps = levels[level];
       out = engine.project(quarter, [command]).outcome;
     }
-    // Main-fuse guard: when the household alone leaves no room, the pool heater
-    // waits this quarter and the thermostat keeps calling for heat. A plain
-    // thermostat would not trip the supply for a month; neither does its model.
-    const shed = out.kind === 'failed' && out.issue === 'shared_grid_limit' && command.pool_on;
-    if (shed) { command.pool_on = false; out = engine.project(quarter, [command]).outcome; }
+    // With the car paused and still no room, what is left is the house and its pool
+    // thermostat, and a thermostat does not know the main fuse: it runs, as it would
+    // in the real house. The quarter is recorded above the limit rather than
+    // invented otherwise. A house over its own limit with nothing running is a data
+    // fault and still stops the month.
+    if (out.kind === 'failed' && out.issue === 'shared_grid_limit' && command.pool_on && problem.slots[i].base_w <= problem.limits.import_w) {
+      out = engine.project({ ...quarter, limits: { ...quarter.limits, import_w: Number.MAX_SAFE_INTEGER } }, [command]).outcome;
+    }
     if (out.kind === 'failed') throw new Error(`Default operation at quarter ${i}: ${out.issue}`);
     const q = out.quarters[0];
     commands.push(command); quarters.push(q);
-    if (heating && !shed && q.heater_state?.kind === 'off') heating = false;
+    if (heating && q.heater_state?.kind === 'off') heating = false;
     initial = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c,
       heater_state: q.heater_state as ReadyProblem['initial']['heater_state'] };
   }
