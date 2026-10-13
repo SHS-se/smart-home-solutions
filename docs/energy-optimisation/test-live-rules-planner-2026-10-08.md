@@ -49,6 +49,11 @@ limits and permissions. Malformed commands and unrelated solve failures remain
 errors. The selected schedule records the violated constraint and source plan
 in its continuity diagnostics, and its published device commands are rebuilt
 from the replacement rather than copied from the released hour.
+Forced battery purchases and sales must also match their projected allocations,
+as required by HA's battery-command contract. A retained forced allocation that
+current grid or storage limits clip releases the lock; new forced commands carry
+the projected watts. Automatic battery operations retain their permission
+ceilings. A zero forced allocation is represented by the inert native operation.
 
 The 13 October incident was a retained plan built for 17.25 kW against a new
 14 kW import limit. Its retained opening car/pool load already exceeded 14 kW
@@ -59,6 +64,10 @@ Schema 9 native battery commands remain usable when optional battery execution f
 ## TEST completion and production acknowledgement
 
 The TEST HA mirror has no control authority and does not acknowledge returned TEST plans. TEST manual requests therefore complete on atomic publication of their matching ready plan. The server chooses this basis only for the exact TEST Supabase origin; payloads cannot choose it. Request, home, snapshot and plan identities must match. All HA acknowledgement fields remain pending, so cloud completion does not claim device acceptance or execution.
+
+Execution runtime reports also go only to the controlling backend. The observing
+TEST mirror can retain a historical HA status while production receives fresh
+reports; its stored plan identity is not a current cross-backend view of HA.
 
 Other environments retain exact Home Assistant acknowledgement as the completion milestone. Already outstanding legacy manual requests are released as failed after the planner upgrade, preserving their displayed plan and acknowledgement identity. The first rules publication made before the TEST completion change was released explicitly using its matching published-job evidence, without altering HA acknowledgement.
 

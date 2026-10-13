@@ -365,6 +365,19 @@ fn construct(
                     }
                     Err(_) => continue,
                 };
+                // HA requires forced purchases/sales to equal their physical
+                // allocations. Check the actual retained trajectory here;
+                // opportunity tables explore hypothetical inventory states.
+                if physics::locked(p, i)
+                    && ((c.battery == Operation::GridCharge
+                        && (q.charge_w - c.charge_limit_w).abs() > 0.01)
+                        || (c.battery == Operation::Export
+                            && (q.discharge_w - c.discharge_limit_w).abs() > 0.01))
+                {
+                    return Err(format!(
+                        "committed_command_infeasible:{i}:native_battery_power_limit"
+                    ));
+                }
                 if index.first_sale == Some(i) {
                     next.prepared = policy::measured(
                         l.last_charge / p.battery.as_ref().unwrap().capacity_kwh * 100.0,

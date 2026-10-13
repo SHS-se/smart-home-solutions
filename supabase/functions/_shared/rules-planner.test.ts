@@ -274,3 +274,31 @@ Deno.test("a malformed retained command is refused without releasing the hour", 
   prepared.problem.accepted![0].charge_limit_w = -1;
   assertThrows(() => generateRulesPlan(prepared), Error, "negative_native_power_limit");
 });
+
+Deno.test("a clipped retained grid purchase releases the hour and materializes executable battery allocations", () => {
+  const s = snapshot();
+  s.schema_version = 8;
+  s.capabilities.battery = true;
+  s.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
+  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000,
+    charge_efficiency: .95, discharge_efficiency: .95 };
+  s.ev_battery!.connected = false;
+  const prior = generateRulesPlan(prepare(s)).plan;
+  const locked = prior.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 0,
+    battery_command: { schema_version: 3 as const, operation: "grid_charge" as const, charge_limit_w: 3000,
+      discharge_limit_w: 0, allow_grid_charge: true, allow_battery_export: false } }));
+  s.grid.import_limit_w = 2000;
+  const prepared = prepare(s, { plan_id: prior.plan_id, slots: locked });
+  const before = JSON.stringify(prepared);
+  const replacement = generateRulesPlan(prepared).plan;
+  assertEquals(JSON.stringify(prepared), before);
+  assertEquals(replacement.plans.priority.continuity?.reason, `native_battery_power_limit at ${s.slots[0].start}`);
+  for (const slot of replacement.plans.priority.slots) {
+    assert(slot.grid_import_w <= 2000 + 1e-7);
+    const command = slot.battery_command!;
+    if (command.operation === "grid_charge" || command.operation === "export") {
+      assertAlmostEquals(command.charge_limit_w, slot.battery_charge_w, .01);
+      assertAlmostEquals(command.discharge_limit_w, slot.battery_discharge_w, .01);
+    }
+  }
+});
