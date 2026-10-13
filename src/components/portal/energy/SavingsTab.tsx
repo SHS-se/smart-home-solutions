@@ -10,30 +10,33 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { fetchEnergyBillingDocuments, toEnergyBillingSeriesDocuments } from '@/lib/energy-billing-storage';
 import { billedMonths } from '@/lib/home-baseline/billed-months';
 import { numericInput } from '@/lib/contract-roi';
-import { roiReport } from '@/lib/home-baseline/roi-report';
+import { billedRecord, savingsForecast } from '@/lib/home-baseline/savings-report';
 import { localDay } from '../../../../supabase/functions/_shared/planner-wasm/calendar';
 import HomeBaselineViewer from './roi/HomeBaselineViewer';
-import SchedulerMonthlySavings from './roi/SchedulerMonthlySavings';
+import ForecastTable from './roi/ForecastTable';
+import BilledMonthsTable from './roi/BilledMonthsTable';
 import { createCaptureSource } from '@/lib/home-baseline/source';
 import { createBaselineSession } from '@/lib/home-baseline/session';
 import { createSavingsRun } from '@/lib/home-baseline/savings-run';
 import { generateHomeBaseline } from '@/lib/home-baseline/browser';
 import { resolveBaselineAnchor } from '@/lib/home-baseline/history';
 import { monthStore } from '@/lib/home-baseline/month-store';
-import { RoiNumberField, RoiSelect } from './roi/RoiFields';
+import { RoiNumberField } from './roi/RoiFields';
+import { sek } from './roi/format';
 import { fetchRoiInstallations } from '@/lib/home-baseline/installations';
+import { DEFAULT_SETTINGS } from '@/lib/home-baseline/controller';
 import { ROI_SUPPLIER_TERMS } from '../../../../supabase/functions/_shared/roi-supplier-terms';
 
-const settingsSchema = z.object({ from: z.string(), to: z.string(), equipment: z.string(), installation: z.string(), subscription: z.string() });
+const settingsSchema = z.object({ from: z.string(), to: z.string(), subscription: z.string() });
 type Settings = z.infer<typeof settingsSchema>;
-const initialSettings: Settings = { from: '', to: '', equipment: '50000', installation: '15000', subscription: '299' };
+const initialSettings: Settings = { from: '', to: '', subscription: '299' };
 
 const shiftMonth = (key: string, offset: number) => new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5)) - 1 + offset, 1)).toISOString().slice(0, 7);
 
-interface ROITabProps { customerId: string; homeId: string | null; homeCount?: number }
+interface SavingsTabProps { customerId: string; homeId: string | null; homeCount?: number }
 
-function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
-  const { t } = useLanguage();
+function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps) {
+  const { t, language } = useLanguage();
   const baseline = useMemo(() => {
     const source = createCaptureSource(homeId ? { customerId, homeId } : null, { resolveAnchor: resolveBaselineAnchor, generate: generateHomeBaseline, store: monthStore });
     return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
@@ -60,20 +63,30 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
     baseline.savings.setRange(from, to); void baseline.savings.calculate();
     return () => baseline.savings.cancel();
   }, [baseline, from, to, homeId]);
+  const oreIncVat = (sekPerKwhExVat: number) => `${(sekPerKwhExVat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t('öre/kWh', 'öre/kWh')}`;
   const displayState = state.rangeKey === `${from}|${to}` ? state : { ...state, rows: [], error: null };
   const months = state.rangeKey === `${from}|${to}` ? state.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
   // Deployment retries can add bills while this tab is open. Refresh only invoice
   // evidence: saved baseline/scheduler ledgers and their generation stay untouched.
   const invoices = useQuery({ queryKey: ['energy-billing-documents', customerId], queryFn: () => fetchEnergyBillingDocuments(customerId), retry: false, refetchInterval: 30_000 });
   const bills = useMemo(() => billedMonths(toEnergyBillingSeriesDocuments(invoices.data ?? []), homeCount), [invoices.data, homeCount]);
-  const [basis, setBasis] = useState<'baseline' | 'actual'>('baseline');
-  const n = (value: string) => numericInput(value) ?? NaN;
-  let report: ReturnType<typeof roiReport> | null = null;
+  let forecast: ReturnType<typeof savingsForecast> | null = null;
   let invalid = false;
-  try { report = roiReport(months, bills, { equipmentSek: n(settings.equipment), installationSek: n(settings.installation), subscriptionSek: n(settings.subscription) }, basis); }
+  try { forecast = savingsForecast(months, numericInput(settings.subscription) ?? NaN); }
   catch { invalid = true; }
-  const ready = report && report.eligibleMonths > 0;
-  const amount = (v: number | null | undefined, unit = 'SEK', digits = 2) => v == null ? '—' : `${v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
+  const ready = forecast && forecast.rows.length > 0;
+  const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
+  const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
+  // Without SHS the pool runs on a plain thermostat; with SHS it follows the comfort target. Both are stated.
+  const pool = anchor.data?.snapshot.capabilities.pool ? anchor.data.snapshot.comfort?.pool ?? null : null;
+  const celsius = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const poolAssumption = !pool ? null : pool.target_c >= DEFAULT_SETTINGS.poolStartC && pool.target_c <= DEFAULT_SETTINGS.poolStopC
+    ? t(`Poolen hålls vid ${celsius(pool.target_c)} °C alla månader`, `Pool kept at ${celsius(pool.target_c)} °C every month`)
+    : t(`Pool alla månader: ${celsius(DEFAULT_SETTINGS.poolStartC)}–${celsius(DEFAULT_SETTINGS.poolStopC)} °C utan SHS, ${celsius(pool.target_c)} °C med SHS`,
+      `Pool every month: ${celsius(DEFAULT_SETTINGS.poolStartC)}–${celsius(DEFAULT_SETTINGS.poolStopC)} °C without SHS, ${celsius(pool.target_c)} °C with SHS`);
+  const assumptions = [t('Din nuvarande utrustning', 'Your current equipment'),
+    ...(from && to ? [t(`Väder, förbrukning och priser från ${monthName(from)} – ${monthName(to)}`, `Weather, consumption and prices from ${monthName(from)} – ${monthName(to)}`)] : []),
+    ...(poolAssumption ? [poolAssumption] : [])];
   const [graphOpen, setGraphOpen] = useState(false);
   useEffect(() => { setGraphOpen(false); }, [homeId]);
   const installations = useQuery({ queryKey: ['roi-installations', customerId, homeId],
@@ -90,34 +103,40 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
     {anchor.isError && <p role="alert" className="text-sm text-destructive">{anchor.error.message}</p>}
     {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
     {invalid && <p role="alert" className="text-sm text-destructive">{t('Kontrollera beloppen i inställningarna.', 'Check the amounts in settings.')}</p>}
-    <section className={`rounded-xl border p-5 sm:p-6 ${ready && report.netSek < 0 ? 'border-amber-200 bg-amber-50' : 'bg-energy/20'}`} data-testid="roi-hero" aria-label={t('Lönsamhet', 'ROI')}>
-      <div className="flex flex-wrap items-center gap-3"><p className="text-sm font-medium">{t('Besparing efter SHS-abonnemang', 'Savings after SHS subscription')}</p>
-      <RoiSelect id="roi-basis" label={t('Jämför med', 'Compare with')} value={basis} onChange={v => setBasis(v as 'baseline' | 'actual')}><option value="baseline">{t('Basmodell', 'Baseline model')}</option><option value="actual">{t('Faktiska fakturor', 'Actual bills')}</option></RoiSelect></div>
-      <p className="mt-2 text-3xl font-semibold tabular-nums" data-testid="roi-period-net">{ready ? amount(report.netSek) : '—'}</p>
+    <section className={`rounded-xl border p-5 sm:p-6 ${ready && forecast.netSek < 0 ? 'border-amber-200 bg-amber-50' : 'bg-energy/20'}`} data-testid="roi-hero" aria-label={t('Uppskattad besparing', 'Estimated saving')}>
+      <p className="text-sm font-medium">{t('Uppskattad besparing efter SHS-abonnemang', 'Estimated saving after the SHS subscription')}</p>
+      <p className="mt-2 text-3xl font-semibold tabular-nums" data-testid="roi-period-net">{ready ? sek(forecast.netSek) : '—'}</p>
       <dl className="mt-5 grid gap-4 sm:grid-cols-3 text-sm">
-        <div><dt className="text-muted-foreground">{t('Per månad', 'Per month')}</dt><dd className="mt-1 font-medium" data-testid="roi-monthly-net">{ready ? amount(report.monthlyNetSek) : '—'}</dd></div>
-        <div><dt className="text-muted-foreground">{t('Avkastning under perioden', 'Return over period')}</dt><dd className="mt-1 font-medium" data-testid="roi-return">{ready ? amount(report.roiPercent, '%', 1) : '—'}</dd></div>
-        <div><dt className="text-muted-foreground">{t('Återbetalning vid denna månadsbesparing', 'Payback at this monthly saving')}</dt><dd className="mt-1 font-medium" data-testid="roi-payback">{ready && report.paybackMonths !== null ? amount(report.paybackMonths, t('månader', 'months'), 1) : '—'}</dd></div>
+        <div><dt className="text-muted-foreground">{t('Per månad', 'Per month')}</dt><dd className="mt-1 font-medium" data-testid="roi-monthly-net">{ready ? sek(forecast.monthlyNetSek) : '—'}</dd></div>
+        <div><dt className="text-muted-foreground">{t('Före abonnemang', 'Before subscription')}</dt><dd className="mt-1 font-medium" data-testid="roi-gross">{ready ? sek(forecast.savingSek) : '—'}</dd></div>
+        <div><dt className="text-muted-foreground">{t('Abonnemang', 'Subscription')}</dt><dd className="mt-1 font-medium" data-testid="roi-subscription-cost">{ready ? sek(forecast.subscriptionSek) : '—'}</dd></div>
       </dl>
-      {ready && <p className="mt-4 text-xs text-muted-foreground">{report.eligibleMonths}/{state.rows.length} {t('månader beräknade', 'months calculated')}</p>}
+      <ul className="mt-5 flex flex-wrap gap-2 text-xs" data-testid="savings-assumptions" aria-label={t('Antaganden', 'Assumptions')}>
+        {assumptions.map(text => <li key={text} className="rounded-md border bg-background/70 px-2.5 py-1 text-muted-foreground">{text}</li>)}
+      </ul>
+      {ready && <p className="mt-4 text-xs text-muted-foreground">{forecast.rows.length}/{state.rows.length} {t('månader beräknade', 'months calculated')}</p>}
     </section>
-    <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Jämförelse och besparing', 'Comparison and savings')}</CardTitle>
+    <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Månad för månad', 'Month by month')}</CardTitle>
       {state.running ? <Button variant="outline" onClick={baseline.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
         : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
-      <SchedulerMonthlySavings state={displayState} report={report} installations={installations.data ?? []} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
-      <p className="text-xs text-muted-foreground">{t('Basmodell och Scheduler exkluderar effektavgift. Faktiska belopp inkluderar alla avgifter på el- och nätfakturorna. Saknade fakturor visas som —.', 'Baseline and Scheduler exclude demand charges. Actual amounts include all electricity and grid invoice charges. Missing bills show —.')}</p>
+      <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
+      <p className="text-xs text-muted-foreground">{t('Ingen av kolumnerna innehåller effektavgiften.', 'Neither column includes the demand charge.')}</p>
     </CardContent></Card>
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
-    <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('ROI-kostnader', 'ROI costs')}</summary>
+    <details className="rounded-xl border bg-card px-5" data-testid="what-happened"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Vad som hände: dina fakturor', 'What happened: your bills')}</summary>
+      <div className="space-y-3 pb-5">
+        <BilledMonthsTable record={record} installations={installations.data ?? []} />
+        <p className="text-xs text-muted-foreground">{t('Fakturorna innehåller alla avgifter på el- och nätfakturorna, även effektavgiften, och speglar den utrustning du hade då. Saknade fakturor visas som —.', 'Bills include every charge on the electricity and grid invoices, including the demand charge, and reflect the equipment you had at the time. Missing bills show —.')}</p>
+      </div>
+    </details>
+    <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Priser i beräkningen', 'Prices used')}</summary>
       <div className="space-y-1 pb-4 text-xs text-muted-foreground" data-testid="roi-supplier-terms">
-        <p>Tibber · {t('Fast påslag', 'Fixed markup')}: {amount(ROI_SUPPLIER_TERMS.definition.import.fixed_markup_sek_per_kwh_ex_vat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100, t('öre/kWh', 'öre/kWh'))} · {t('Rörlig inköpskostnad', 'Variable purchasing cost')}: {amount(ROI_SUPPLIER_TERMS.definition.import.variable_cost_sek_per_kwh_ex_vat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100, t('öre/kWh', 'öre/kWh'))} · {t('inkl. moms', 'incl. VAT')}.</p>
+        <p>Tibber · {t('Fast påslag', 'Fixed markup')}: {oreIncVat(ROI_SUPPLIER_TERMS.definition.import.fixed_markup_sek_per_kwh_ex_vat)} · {t('Rörlig inköpskostnad', 'Variable purchasing cost')}: {oreIncVat(ROI_SUPPLIER_TERMS.definition.import.variable_cost_sek_per_kwh_ex_vat)} · {t('inkl. moms', 'incl. VAT')}.</p>
         <p>{t('Senast publicerade inköpskostnad', 'Latest published purchasing cost')}: {ROI_SUPPLIER_TERMS.variableCostMonth} · <a className="underline" href={ROI_SUPPLIER_TERMS.sourceUrl} target="_blank" rel="noreferrer">{t('Tibbers villkor', 'Tibber terms')}</a> · {t('kontrollerade', 'checked')} {ROI_SUPPLIER_TERMS.verifiedOn}.</p>
       </div>
-      <div className="grid gap-4 pb-5 sm:grid-cols-3">
-        <RoiNumberField id="roi-equipment" label={t('Utrustning (kr)', 'Equipment (SEK)')} min={0} value={settings.equipment} onChange={v => set('equipment', v)} />
-        <RoiNumberField id="roi-installation" label={t('Installation (kr)', 'Installation (SEK)')} min={0} value={settings.installation} onChange={v => set('installation', v)} />
+      <div className="max-w-xs pb-5">
         <RoiNumberField id="roi-subscription" label={t('SHS-abonnemang (kr/månad)', 'SHS subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
       </div>
     </details>
@@ -125,4 +144,4 @@ function RoiCalculator({ customerId, homeId, homeCount = 1 }: ROITabProps) {
     {graphOpen && <HomeBaselineViewer session={baseline.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
   </div>;
 }
-export default function ROITab(props: ROITabProps) { return <RoiCalculator key={props.customerId} {...props} />; }
+export default function SavingsTab(props: SavingsTabProps) { return <SavingsEstimate key={props.customerId} {...props} />; }

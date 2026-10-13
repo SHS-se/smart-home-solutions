@@ -229,7 +229,7 @@ test.describe('requesting a replan', () => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(2/2)');
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
@@ -248,13 +248,20 @@ test.describe('requesting a replan', () => {
     expect(Object.values(history.saved()!.months).every(m => m.ledger.assumedPriceQuarters === 0)).toBe(true);
     await page.locator('#roi-subscription').fill('0');
     await expect(contract).toHaveText(saving!);
-    const gross = await cells.nth(3).textContent();
+    const gross = await cells.nth(2).textContent();
     expect(totalGross).toBeCloseTo(Object.values(totals).reduce((n,m)=>n+m.ledger.modeled.baselineBill.totalSek-m.ledger.modeled.schedulerBill.totalSek,0));
     await expect(page.getByTestId('roi-period-net')).toHaveText(gross!);
     await expect(page.locator('#roi-rate')).toHaveCount(0);
-    await page.locator('#roi-basis').selectOption('actual');
-    await expect(page.getByTestId('roi-period-net')).toContainText('SEK');
-    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK');
+    // The estimate never mixes in invoices or hardware payback; bills sit in their own section.
+    for (const gone of ['#roi-basis', '#roi-equipment', '#roi-installation']) await expect(page.locator(gone)).toHaveCount(0);
+    await expect(page.getByTestId('roi-payback')).toHaveCount(0);
+    await expect(page.getByTestId('scheduler-month-2026-09').locator('td')).toHaveCount(4);
+    await expect(page.getByTestId('savings-assumptions')).toContainText(/30[.,]5 °C/);
+    await page.getByTestId('what-happened').locator('summary').first().click();
+    await expect(page.getByTestId('billed-month-2026-09').getByTestId('roi-amount')).toHaveText('579,00 SEK');
+    // Tall enough to hold the whole tab: a stitched full-page capture repeats the sticky header mid-page.
+    await page.setViewportSize({ width: 1280, height: 1700 });
+    await page.screenshot({ path: 'test-results/savings-tab.png' });
     expect(history.reads()).toBe(reads);
     await page.locator('#roi-from').fill('2025-10');
     await expect(page.getByRole('alert')).toContainText('at most 12 months');
@@ -272,7 +279,7 @@ test.describe('requesting a replan', () => {
       consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [],
     })) : [] }));
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(2/2)');
     const net = await page.getByTestId('roi-period-net').textContent();
     expect(Object.keys(history.saved()!.months)).toHaveLength(2);
@@ -284,7 +291,7 @@ test.describe('requesting a replan', () => {
     const expectedBaseline = evidence.baseline.costSek + evidence.modeled.baselineBill.supplierFixedSek + evidence.modeled.baselineBill.gridFixedSek;
     const expectedScheduler = evidence.scheduler.costSek + evidence.modeled.schedulerBill.supplierFixedSek + evidence.modeled.schedulerBill.gridFixedSek;
     await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(0)).toHaveText(displayed(expectedBaseline));
-    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(2)).toHaveText(displayed(expectedScheduler));
+    await expect(page.getByTestId('scheduler-month-2026-09').locator('td').nth(1)).toHaveText(displayed(expectedScheduler));
     const savedBeforeReload = JSON.stringify(history.saved());
     const before = history.windows.length;
     await page.reload();
@@ -293,23 +300,25 @@ test.describe('requesting a replan', () => {
     expect(history.windows.length).toBe(before);
     expect(JSON.stringify(history.saved())).toBe(savedBeforeReload);
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
-    const row = page.getByTestId('scheduler-month-2026-09');
-    await expect(row.locator('th').getByTestId('actual-installations')).toContainText('Bergvärme');
-    await expect(row.locator('td').getByTestId('actual-installations')).toHaveCount(0);
+    const row = page.getByTestId('scheduler-month-2026-09'), billed = page.getByTestId('billed-month-2026-09');
+    await expect(row.getByTestId('actual-installations')).toHaveCount(0);
+    await page.getByTestId('what-happened').locator('summary').first().click();
+    await expect(billed.locator('th').getByTestId('actual-installations')).toContainText('Bergvärme');
+    await expect(billed.locator('td').getByTestId('actual-installations')).toHaveCount(0);
     await expect(page.getByTestId('scheduler-months').locator('thead th').first()).toHaveCSS('text-align','left');
-    await row.getByTestId('actual-installations').locator('summary').click();
-    await expect(row.getByTestId('actual-installations')).toContainText(/ground-source heat pump|Bergvärmen/);
+    await billed.getByTestId('actual-installations').locator('summary').click();
+    await expect(billed.getByTestId('actual-installations')).toContainText(/ground-source heat pump|Bergvärmen/);
     await expect(page.getByTestId('comparison-evidence')).toHaveCount(0);
     await expect(page.getByTestId('roi-assumption-impact')).toHaveCount(0);
     // A deployment adds missing invoices; polling updates Actual without repinning
     // the equipment or rerunning any completed baseline/scheduler projections.
-    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('—');
+    await expect(billed.getByTestId('roi-amount')).toHaveText('—');
     const savedBeforeBills = JSON.stringify(history.saved());
-    const modelCells = await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()));
+    const modelCells = await Promise.all([0, 1, 2].map(index => row.locator('td').nth(index).textContent()));
     const readsBeforeBills = history.reads();
     billsAvailable = true;
-    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK', { timeout: 45_000 });
-    expect(await Promise.all([0, 2, 3].map(index => row.locator('td').nth(index).textContent()))).toEqual(modelCells);
+    await expect(billed.getByTestId('roi-amount')).toHaveText('579,00 SEK', { timeout: 45_000 });
+    expect(await Promise.all([0, 1, 2].map(index => row.locator('td').nth(index).textContent()))).toEqual(modelCells);
     expect(JSON.stringify(history.saved())).toBe(savedBeforeBills);
     expect(history.reads()).toBe(readsBeforeBills);
     await page.getByTestId('scheduler-calculate').click();
@@ -326,7 +335,7 @@ test.describe('requesting a replan', () => {
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     const writes: string[] = [];
     page.on('request', req => { if (req.url().includes('/rest/v1/energy_optimisation_') && !['GET', 'HEAD'].includes(req.method())) writes.push(req.url()); });
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(2/2)');
     await page.getByTestId('roi-view-graphs').click();
     const viewer = page.getByTestId('roi-baseline');
@@ -370,11 +379,12 @@ test.describe('requesting a replan', () => {
     test.setTimeout(20 * 60_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-05', to: '2026-10' });
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(6/6)', 12 * 60_000);
+    await page.getByTestId('what-happened').locator('summary').first().click();
     for (const month of ['05', '06', '07', '08']) {
       const row = page.getByTestId(`scheduler-month-2026-${month}`);
-      await expect(row.locator('td')).toHaveCount(6);
+      await expect(row.locator('td')).toHaveCount(4);
       await expect(row.locator('td').first()).toContainText('SEK');
       await expect(row).not.toContainText('initial battery SOC');
       await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
@@ -382,12 +392,14 @@ test.describe('requesting a replan', () => {
       await page.getByTestId('baseline-details').locator('summary').first().click();
       await expect(page.getByTestId('baseline-models')).toContainText(/Battery|Batteri/);
       await expect(page.getByTestId('baseline-assumptions')).toHaveCount(0);
+      const billed = page.getByTestId(`billed-month-2026-${month}`);
+      await expect(row.getByTestId('actual-installations')).toHaveCount(0);
       if (month === '05') {
-        const period = row.locator('th');
+        const period = billed.locator('th');
         await expect(period.getByTestId('actual-installations')).toContainText(/Solar|Solceller/);
         await period.getByTestId('actual-installations').locator('summary').click();
         await expect(period.getByTestId('actual-installations')).toContainText(/battery was installed|Hembatteriet installerades/);
-      } else await expect(row.getByTestId('actual-installations')).toHaveCount(0);
+      } else await expect(billed.getByTestId('actual-installations')).toHaveCount(0);
       await page.getByTestId('baseline-details').locator('summary').first().click();
     }
     const september = page.getByTestId('scheduler-month-2026-09');
@@ -395,7 +407,7 @@ test.describe('requesting a replan', () => {
     const viewer = page.getByTestId('roi-baseline');
     await expect(page.getByTestId('baseline-frame')).toContainText(/September|september/);
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(september.locator('td').nth(1).getByTestId('roi-amount')).toHaveText('579,00 SEK');
+    await expect(page.getByTestId('billed-month-2026-09').getByTestId('roi-amount')).toHaveText('579,00 SEK');
     const download = page.waitForEvent('download');
     await viewer.getByRole('button', { name: /Export model|Exportera modell/ }).click();
     const capture = JSON.parse(readFileSync((await (await download).path())!, 'utf8'));
@@ -407,9 +419,8 @@ test.describe('requesting a replan', () => {
     expect(capture.modeled.schedulerBill.totalSek).toBeCloseTo(capture.scheduler.ledger.costSek + capture.modeled.schedulerBill.supplierFixedSek + capture.modeled.schedulerBill.gridFixedSek);
     expect(capture.input.recorded.ledger.costSek).toBe(2879);
     await expect(september.locator('td').nth(0)).toHaveText(display(capture.modeled.baselineBill.totalSek));
-    await expect(september.locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
-    await expect(september.locator('td').nth(3)).toHaveText(display(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek));
-    await expect(september.locator('td').nth(4)).toHaveText(display(579 - capture.modeled.schedulerBill.totalSek));
+    await expect(september.locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    await expect(september.locator('td').nth(2)).toHaveText(display(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek));
     const comparison = viewer.getByTestId('period-comparison');
     await expect(comparison.locator('thead th').nth(2)).toHaveText(/Actual consumption|Faktisk förbrukning/);
     const actualCells = comparison.locator('tbody tr');
@@ -483,12 +494,12 @@ test.describe('requesting a replan', () => {
       if (body.p_from >= start && body.p_from < end) await route.fulfill({ json: [] });
       else await route.fallback();
     });
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await page.locator('#roi-to').fill('2026-05');
     await expectRoiMonths(page, '(1/1)');
     const row = page.getByTestId('scheduler-month-2026-05');
     const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
-    await expect(row.locator('td').nth(1).getByTestId('roi-amount')).toHaveText(display(579));
+    await expect(page.getByTestId('billed-month-2026-05').getByTestId('roi-amount')).toHaveText(display(579));
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
     await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
     const viewer = page.getByTestId('roi-baseline');
@@ -500,8 +511,8 @@ test.describe('requesting a replan', () => {
     expect(capture.input.recorded.ledger.costSek).toBe(744);
     expect(capture.input.recovery.hours).toBe(744);
     expect(capture.input.problem.initial.ev_kwh).toBe(.75 * 75.6);
-    await expect(row.locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
-    await expect(row.locator('td').nth(3)).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek));
+    await expect(row.locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    await expect(row.locator('td').nth(2)).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek));
     await expect(page.getByTestId('roi-period-net')).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek-299));
   });
 
@@ -509,7 +520,7 @@ test.describe('requesting a replan', () => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(2/2)');
     history.failPrices();
     await page.locator('#roi-from').fill('2026-04');
@@ -529,7 +540,7 @@ test.describe('requesting a replan', () => {
     const end = history.fixture.end, start = new Date(Date.parse(end) - 3_600_000).toISOString();
     history.correctIntervals([{ field: 'solar_production_kwh', start, end, kwh: 2, source: 'pv' }]);
     await page.clock.setFixedTime(new Date(Date.parse(end) + 900_000));
-    await page.goto('/portal/energy-modeling?tab=roi');
+    await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(1/1)');
     await page.getByTestId('roi-view-graphs').click();
     await page.getByTestId('comparison-graph-actual').click();

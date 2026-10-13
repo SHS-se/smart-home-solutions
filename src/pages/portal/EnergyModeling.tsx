@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import PlanWorkspace, { type PlanSection } from '@/components/portal/energy/PlanWorkspace';
-import ROITab from '@/components/portal/energy/ROITab';
+import SavingsTab from '@/components/portal/energy/SavingsTab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
 import HomeTimeZoneProvider from '@/components/portal/energy/HomeTimeZoneContext';
@@ -16,17 +16,18 @@ interface EnergyModelingProps {
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'roi' | 'comfort' | PlanSection;
+type EnergyTab = 'savings' | 'comfort' | PlanSection;
 
 const ENERGY_TABS = new Set<EnergyTab>([
-  'roi', 'plan', 'devices', 'comfort', 'thermal',
+  'savings', 'plan', 'devices', 'comfort', 'thermal',
 ]);
 
 /**
  * The open tab lives in the URL rather than in component state, so a refresh
- * returns to the tab being read instead of to ROI — and so a link to a chart
+ * returns to the tab being read instead of to Savings — and so a link to a chart
  * is a link to that chart. An unknown value falls back rather than throwing:
- * tabs have been removed before, and an old bookmark should still open.
+ * tabs have been removed and renamed before (Savings was `roi`), and an old
+ * bookmark should still open.
  */
 function isEnergyTab(value: string | null): value is EnergyTab {
   return value !== null && ENERGY_TABS.has(value as EnergyTab);
@@ -56,7 +57,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   const [homeCount, setHomeCount] = useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : 'roi';
+  const tab: EnergyTab = isEnergyTab(requestedTab) ? requestedTab : 'savings';
   const setTab = (next: EnergyTab) => {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('tab', next);
@@ -98,7 +99,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
   }
 
   const tabs: Array<{ key: EnergyTab; label: string }> = [
-    { key: 'roi', label: t('Lönsamhet', 'ROI') },
+    { key: 'savings', label: t('Besparing', 'Savings') },
     { key: 'plan', label: t('Plan', 'Plan') },
     { key: 'devices', label: t('Enheter', 'Devices') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
@@ -142,8 +143,8 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         tab that forgot to would quietly fall back to the reader's own clock.
       */}
       <HomeTimeZoneProvider customerId={resolvedCustomerId} homeId={selectedHomeId}>
-        {tab === 'roi' ? (
-          <ROITab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
+        {tab === 'savings' ? (
+          <SavingsTab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
         ) : tab === 'comfort' ? (
           <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
         ) : (

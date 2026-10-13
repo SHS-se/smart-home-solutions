@@ -22,7 +22,7 @@ export const HOME_QUESTION_FEATURE_LABELS: Record<
   energy_history: { sv: 'Energihistorik', en: 'Energy history' },
   energy_simulator: { sv: 'Energisimulator', en: 'Energy simulator' },
   energy_setup: { sv: 'Energiinställningar', en: 'Energy setup' },
-  roi: { sv: 'Lönsamhet', en: 'ROI' },
+  roi: { sv: 'Besparing', en: 'Savings' },
 };
 
 export const HOME_QUESTION_FUNCTIONALITY: HomeQuestionFunctionality[] = [
