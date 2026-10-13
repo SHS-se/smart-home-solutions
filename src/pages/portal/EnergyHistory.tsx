@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CreditCard,
@@ -37,18 +37,13 @@ import {
   fetchEnergyTariffCalculations,
 } from '@/lib/energy-tariff-storage';
 import { fetchEnergyHistoryHomeProfileInputs } from '@/lib/home-profile-functional-data';
-import { fetchLatestEnergyDeclaration } from '@/lib/energy-declaration-storage';
 import {
   ENERGY_HISTORY_SAMPLE_CHANGES,
   ENERGY_HISTORY_SAMPLE_SERIES,
 } from '@/lib/energy-history-sample';
 import EnergyDataUploadCard from '@/components/portal/energy-history/EnergyDataUploadCard';
 import EnergyEventsSection from '@/components/portal/energy-history/EnergyEventsSection';
-import EnergiprestandaSection from '@/components/portal/energy-history/EnergiprestandaSection';
-import {
-  fetchAllWeatherObservations,
-  fetchEnergyDeviceReadings,
-} from '@/lib/energy-device-readings';
+import { fetchEnergyDeviceReadings } from '@/lib/energy-device-readings';
 import { resolveDailyUsageReadings } from '@/lib/energy-usage-resolution';
 import EnergyTemperatureAnalysis from '@/components/portal/energy-history/EnergyTemperatureAnalysis';
 import EnergyHistoryDocuments from '@/components/portal/energy-history/EnergyHistoryDocuments';
@@ -81,15 +76,13 @@ interface EnergyHistoryProps {
 }
 
 const SHARED_WEATHER_DATASET_QUERY_KEY = ['energy-shared-weather-dataset'] as const;
-type EnergyHistorySection = 'overview' | 'data' | 'events' | 'temperature' | 'performance';
+type EnergyHistorySection = 'overview' | 'data' | 'events' | 'temperature';
 const ENERGY_HISTORY_SECTIONS = new Set<EnergyHistorySection>([
   'overview',
   'data',
   'events',
   'temperature',
-  'performance',
 ]);
-const PERFORMANCE_WEATHER_MINIMUM_DAYS = 329;
 
 function isEnergyHistorySection(value: string | null): value is EnergyHistorySection {
   return value !== null && ENERGY_HISTORY_SECTIONS.has(value as EnergyHistorySection);
@@ -130,17 +123,13 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const billingDataEnabled = customerEnergyEnabled
     && (activeTab === 'overview' || activeTab === 'data' || activeTab === 'temperature');
   const homeProfileEnabled = customerEnergyEnabled
-    && (activeTab === 'overview' || activeTab === 'data' || activeTab === 'performance');
+    && (activeTab === 'overview' || activeTab === 'data');
   const usageDataEnabled = customerEnergyEnabled
-    && (activeTab === 'overview'
-      || activeTab === 'temperature'
-      || activeTab === 'performance');
+    && (activeTab === 'overview' || activeTab === 'temperature');
   const temperatureDataEnabled = customerEnergyEnabled && activeTab === 'temperature';
-  const performanceDataEnabled = customerEnergyEnabled && activeTab === 'performance';
   const managementDataEnabled = customerEnergyEnabled && activeTab === 'data';
   const notesDataEnabled = customerEnergyEnabled
-    && (activeTab === 'overview' || activeTab === 'temperature' || activeTab === 'events'
-      || activeTab === 'performance');
+    && (activeTab === 'overview' || activeTab === 'temperature' || activeTab === 'events');
   // The Data section's coverage table reads the same merged series, so it needs the
   // calculated halves too or it would report every month as thinner than it is.
   const tariffCalculationsEnabled = customerEnergyEnabled
@@ -157,15 +146,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const homeProfileQuery = useQuery({
     queryKey: ['energy-history-home-profile', customerId],
     queryFn: () => fetchEnergyHistoryHomeProfileInputs(customerId),
-    enabled: homeProfileEnabled,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-  });
-  const declarationQuery = useQuery({
-    queryKey: ['energy-history-declaration', customerId],
-    queryFn: () => fetchLatestEnergyDeclaration(customerId),
     enabled: homeProfileEnabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
@@ -239,16 +219,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
   const usageError = usageQuery.error ?? deviceReadingsQuery.error;
   const usageStartDate = usageReadings.at(0)?.reading_date ?? null;
   const usageEndDate = usageReadings.at(-1)?.reading_date ?? null;
-  const performanceCategoryDays = useMemo(() => new Set(
-    (deviceReadingsQuery.data ?? [])
-      .filter((reading) => (
-        reading.category === 'heating'
-        || reading.category === 'hot_water'
-        || reading.category === 'cooling'
-        || reading.category === 'property_energy'
-      ))
-      .map((reading) => reading.reading_date),
-  ).size, [deviceReadingsQuery.data]);
   const weatherDatasetQuery = useQuery({
     queryKey: SHARED_WEATHER_DATASET_QUERY_KEY,
     queryFn: fetchSharedWeatherDataset,
@@ -264,20 +234,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     enabled: temperatureDataEnabled && Boolean(usageStartDate && usageEndDate),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-  });
-  const allWeatherQuery = useQuery({
-    queryKey: ['energy-all-weather-observations'],
-    queryFn: fetchAllWeatherObservations,
-    // A normal-year weather baseline is only used after the measured window
-    // itself has near-complete annual coverage. Fetching all shared weather
-    // years for a newly installed integration added seconds without changing
-    // the result.
-    enabled: performanceDataEnabled
-      && performanceCategoryDays >= PERFORMANCE_WEATHER_MINIMUM_DAYS,
-    staleTime: 60 * 60 * 1000,
-    gcTime: 2 * 60 * 60 * 1000,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
@@ -417,6 +373,16 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
     ]);
   };
 
+  // The energy class moved to the portal overview; old links follow it there.
+  if (requestedTab === 'performance') {
+    return (
+      <Navigate
+        to={isStaffView && customerId ? `/portal/customers/${customerId}/overview` : '/portal'}
+        replace
+      />
+    );
+  }
+
   const showPeriodControl = Boolean(
     customerId && !subscriptionLoading && isSubscribed && activeTab !== 'data',
   );
@@ -430,8 +396,8 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
           <h1 className="text-3xl font-medium">{t('Energihistorik', 'Energy history')}</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             {t(
-              'Importera energifiler, skilj nätuttag från husets verkliga energibehov och följ kostnad, effektivitet och energiprestanda.',
-              'Import energy files, separate grid import from the home’s actual energy demand, and track cost, efficiency, and energy performance.',
+              'Importera energifiler, skilj nätuttag från husets verkliga energibehov och följ kostnad och effektivitet.',
+              'Import energy files, separate grid import from the home’s actual energy demand, and track cost and efficiency.',
             )}
           </p>
         </div>
@@ -623,33 +589,6 @@ const EnergyHistory: React.FC<EnergyHistoryProps> = ({
               loadError={notesQuery.error}
               onCreate={handleCreateNote}
               onDelete={handleDeleteNote}
-            />
-          )}
-          {activeTab === 'performance' && (
-            <EnergiprestandaSection
-              readings={deviceReadingsQuery.data ?? []}
-              usageReadings={usageReadings}
-              weatherObservations={allWeatherQuery.data ?? []}
-              atempM2={homeProfileQuery.data?.heatedAreaM2 ?? null}
-              heatedBoareaM2={homeProfileQuery.data?.heatedBoareaM2 ?? null}
-              heatedBiareaM2={homeProfileQuery.data?.heatedBiareaM2 ?? null}
-              hasSolar={homeProfileQuery.data?.hasSolar ?? null}
-              homeFacts={{
-                yearBuilt: homeProfileQuery.data?.yearBuilt ?? null,
-                dwelling: homeProfileQuery.data?.dwelling ?? null,
-                heating: homeProfileQuery.data?.heating ?? null,
-                // BBR 31 Table 9:2c is not loaded yet; the UI says so.
-                geographicAdjustmentFactor: null,
-              }}
-              events={notesQuery.data ?? []}
-              onManageEventsClick={() => showSection('events')}
-              declaration={declarationQuery.data ?? null}
-              onUploadDeclarationClick={() => showSection('data')}
-              periodStartMonth={displayedPeriodStart}
-              periodEndMonth={latestAnalyticalMonth}
-              isLoading={homeProfileQuery.isLoading || usageIsLoading || allWeatherQuery.isLoading}
-              error={homeProfileQuery.error ?? usageError ?? allWeatherQuery.error}
-              onUploadClick={() => showSection('data')}
             />
           )}
           {activeTab === 'temperature' && (

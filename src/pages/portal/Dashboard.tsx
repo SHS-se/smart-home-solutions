@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import CustomerDashboardCards from '@/components/portal/CustomerDashboardCards';
+import EnergyClassPanel from '@/components/portal/energy-history/EnergyClassPanel';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,16 +18,13 @@ const Dashboard: React.FC = () => {
   const { t } = useLanguage();
   
   const [ticketStats, setTicketStats] = useState({ open: 0, total: 0 });
-  const [invoiceStats, setInvoiceStats] = useState({ total: 0, lastDate: '' });
   const [customerStats, setCustomerStats] = useState({ total: 0 });
   const [contactStats, setContactStats] = useState({ total: 0, unconverted: 0 });
   const [skuStats, setSkuStats] = useState({ total: 0 });
   const [templateStats, setTemplateStats] = useState({ total: 0 });
   const [bomStats, setBomStats] = useState({ total: 0 });
   const [quoteStats, setQuoteStats] = useState({ total: 0, draft: 0 });
-  const [customerQuoteStats, setCustomerQuoteStats] = useState({ total: 0 });
   const [invoiceStats2, setInvoiceStats2] = useState({ total: 0, open: 0, paid: 0 });
-  const [homeProfileStats, setHomeProfileStats] = useState({ answered: 0, total: 0, photos: 0 });
   const [canBootstrap, setCanBootstrap] = useState(false);
   const [bootstrapLoading, setBootstrapLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(true);
@@ -100,37 +97,6 @@ const Dashboard: React.FC = () => {
           setBomStats({ total: bomsResult.count || 0 });
           setQuoteStats({ total: quotesResult.count || 0, draft: draftQuotesResult.count || 0 });
           setInvoiceStats2({ total: invoicesResult.count || 0, open: openInvoicesResult.count || 0, paid: paidInvoicesResult.count || 0 });
-        } else if (customerData) {
-          // Customer sees their tickets
-          const [
-            totalTicketsRes,
-            openTicketsRes,
-            invoicesRes,
-            quoteCountRes,
-            homeQuestionsRes,
-            homeAnswersRes,
-            homePhotosRes,
-          ] = await Promise.all([
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).neq('status', 'closed'),
-            supabase.from('invoices').select('issued_at', { count: 'exact' }).eq('customer_id', customerData.id).order('issued_at', { ascending: false }).limit(1),
-            supabase.from('quotes').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).eq('is_test', customerData.is_test ?? false).neq('status', 'draft').neq('status', 'cancelled'),
-            supabase.from('home_questions').select('*', { count: 'exact', head: true }).eq('is_active', true),
-            supabase.from('home_answers').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id).neq('answer_text', ''),
-            supabase.from('home_photos').select('*', { count: 'exact', head: true }).eq('customer_id', customerData.id),
-          ]);
-
-          setTicketStats({ open: openTicketsRes.count || 0, total: totalTicketsRes.count || 0 });
-          setCustomerQuoteStats({ total: quoteCountRes.count || 0 });
-          setInvoiceStats({
-            total: invoicesRes.count || 0,
-            lastDate: invoicesRes.data?.[0]?.issued_at || '',
-          });
-          setHomeProfileStats({
-            answered: homeAnswersRes.count || 0,
-            total: homeQuestionsRes.count || 0,
-            photos: homePhotosRes.count || 0,
-          });
         }
       } catch (error) {
         console.error('Error fetching stats:', error);
@@ -142,7 +108,7 @@ const Dashboard: React.FC = () => {
     if (!loading) {
       fetchStats();
     }
-  }, [user, isStaff, customerData, loading]);
+  }, [user, isStaff, loading]);
 
   const handleBootstrap = async () => {
     if (!user) return;
@@ -516,16 +482,7 @@ const Dashboard: React.FC = () => {
           </div>
         ) : (
           // Customer Dashboard
-          <CustomerDashboardCards
-              basePath="/portal"
-              customerName={customerData?.name || undefined}
-              billingEmail={customerData?.billing_email || user?.email}
-              statsLoading={statsLoading}
-              homeProfileStats={homeProfileStats}
-              invoiceStats={{ total: invoiceStats.total, lastDate: invoiceStats.lastDate || null }}
-              ticketStats={ticketStats}
-              quoteStats={{ total: customerQuoteStats.total }}
-            />
+          customerData && <EnergyClassPanel customerId={customerData.id} basePath="/portal" />
         )}
       </div>
     </>

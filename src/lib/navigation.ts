@@ -132,11 +132,6 @@ export function getCustomerNavItems(basePath: string = CUSTOMER_PORTAL_BASE): Ap
           labelSv: 'Temperatur',
           labelEn: 'Temperature',
         },
-        {
-          path: `${basePath}/energy-history?tab=performance`,
-          labelSv: 'Energiprestanda',
-          labelEn: 'Performance',
-        },
       ],
     },
     { path: `${basePath}/energy-modeling`, labelSv: 'Energioptimering', labelEn: 'Energy optimisation', icon: 'energy' },

@@ -414,7 +414,6 @@ async function login(page: Page) {
 const ENERGY_HISTORY_SECTION_TABS = {
   Data: 'data',
   Temperatur: 'temperature',
-  Energiprestanda: 'performance',
 } as const;
 
 type EnergyHistorySection = keyof typeof ENERGY_HISTORY_SECTION_TABS;
@@ -821,7 +820,7 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
   });
 
-  test('energiprestanda lives in its own section and grades without Home Assistant data', async ({ page }) => {
+  test('energiprestanda lives on the overview and grades without Home Assistant data', async ({ page }) => {
     const weatherObservationRequests: string[] = [];
     page.on('request', (request) => {
       if (request.url().includes('/rest/v1/energy_weather_observations')) {
@@ -829,8 +828,12 @@ test.describe('staff navigation shell', () => {
       }
     });
     await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-    await openEnergyHistorySection(page, 'Energiprestanda');
+    // The old section link follows the energy class to the overview.
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=performance`);
+    await page.waitForURL(`**/portal/customers/${CUSTOMER_ID}/overview`);
+    await expect(
+      page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Energiprestanda', exact: true }),
+    ).toHaveCount(0);
 
     const performance = page.getByTestId('energy-performance');
     await expect(performance.getByText('Energiprestanda (primärenergital)')).toBeVisible();
@@ -844,7 +847,7 @@ test.describe('staff navigation shell', () => {
     ).toBeVisible();
     await expect(page.getByText('Mer precision med Home Assistant')).toBeVisible();
     expect(weatherObservationRequests).toHaveLength(0);
-    await page.screenshot({ path: 'test-results/energy-performance-tab.png', fullPage: true });
+    await page.screenshot({ path: 'test-results/energy-performance-overview.png', fullPage: true });
   });
 
   test('energy imports expose privacy-safe deletion and parser review', async ({ page }) => {
@@ -1010,6 +1013,17 @@ test.describe('customer navigation shell', () => {
     await login(page);
 
     await expect(page.getByText('Kundportal').first()).toBeVisible();
+    // Without a subscription the overview advertises the energy class instead
+    // of showing one, and the old shortcut cards are gone.
+    const locked = page.getByTestId('energy-class-locked');
+    await expect(locked.getByRole('heading', { name: 'Energiklass för ditt hem' })).toBeVisible();
+    await expect(locked.getByRole('link', { name: 'Visa prenumeration' })).toHaveAttribute(
+      'href',
+      '/portal/billing',
+    );
+    await expect(page.getByTestId('energy-performance')).toHaveCount(0);
+    await expect(page.getByText('Besvarade frågor:')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/overview-energy-class-locked.png', fullPage: true });
     for (const label of ['Hemprofil', 'Energioptimering', 'Offerter', 'Fakturor', 'Konto']) {
       await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible();
     }
