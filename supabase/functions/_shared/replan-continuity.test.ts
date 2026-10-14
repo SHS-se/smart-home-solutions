@@ -13,14 +13,13 @@ import {
   continuityCandidates,
   HELD_RUN_RELEASE_SEK,
   heldRunCandidate,
-  REPLAN_DEADBAND_SEK,
   replanReference,
   usableReference,
 } from "./planner/replan-continuity.ts";
 import { heaterInputResponse } from "./planner/heat-pump-dispatch.ts";
 import { scoreDispatch } from "./planner/dispatch-plan.ts";
-import { solvedPlan } from "./planner/solved-plan.fixture.ts";
 import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { referencedSnapshot } from "./replan-continuity.fixture.ts";
 
 function batteryContinuitySnapshot(solar = true) {
   const input = batterySnapshot();
@@ -90,41 +89,6 @@ Deno.test("continuity can retain hold while a materially better fresh grid charg
   assertEquals(replenished.plans.priority.continuity!.selected, "proposed");
 });
 
-function referencedSnapshot(cheap = false) {
-  const input = snapshotV8();
-  if (cheap) {
-    input.slots.forEach((s) => {
-      if (s.import_price_sek_per_kwh !== null) s.import_price_sek_per_kwh *= .1;
-      if (s.export_price_sek_per_kwh !== null) s.export_price_sek_per_kwh *= .1;
-    });
-    // Guarantee house supply in the first quarter under any later pool run
-    // search; a 10 W reference adjustment then tests the same battery action.
-    input.slots[0].import_price_sek_per_kwh = 1;
-    // These continuity cases need a fixed declining valuation: a 10 W
-    // adjustment stays within the deadband, while replacing house supply
-    // with hold costs enough to switch immediately. Previously the automatic
-    // candidate search supplied this shape; balanced valuation need not do so.
-    const battery = input.battery!;
-    input.battery_curve_mode = "custom";
-    input.value_curves = { ...input.value_curves, battery: {
-      unit: "kwh",
-      points: [
-        { at: 0, sek_per_unit: .159 },
-        { at: (battery.max_soc - battery.min_soc) * battery.capacity_kwh, sek_per_unit: 0 },
-      ],
-    } };
-  }
-  const previous = solvedPlan(input, new Date(input.captured_at)).plan;
-  input.snapshot_id = "00000000-0000-4000-8000-000000000002";
-  input.replan_reference = replanReference(
-    previous,
-    input,
-    new Date(input.captured_at),
-  );
-  assert(input.replan_reference);
-  return { input, previous };
-}
-
 Deno.test("reference rejects expired, future, self, schema and capability mismatches", () => {
   const { input, previous } = referencedSnapshot();
   const now = new Date(input.captured_at);
@@ -173,58 +137,6 @@ Deno.test("agreement skips suffix search and replay inputs stay immutable", () =
   );
   assertEquals(alternatives.reason, "agrees");
   assertEquals(input.replan_reference, before);
-});
-
-Deno.test("small battery changes retain a feasible request while material gains switch immediately", () => {
-  const { input } = referencedSnapshot(true);
-  input.replan_reference!.battery!.discharge_w -= 10;
-  const stable = generateOptimisationPlan(input, new Date(input.captured_at));
-  assert(stable.plans.priority.continuity!.selected !== "proposed", JSON.stringify(stable.plans.priority.continuity));
-  assertEquals(
-    stable.plans.priority.slots[0].battery_discharge_w,
-    input.replan_reference!.battery!.discharge_w,
-  );
-  assert(
-    stable.plans.priority.continuity!.reference_sek! <=
-      stable.plans.priority.continuity!.proposed_sek! + REPLAN_DEADBAND_SEK,
-  );
-  const bench = dispatchWorkbench(input, [], stable.price_outlook)!;
-  assertAlmostEquals(
-    bench.planned.discharge_w.battery[0],
-    stable.plans.priority.slots[0].battery_discharge_w,
-    .005,
-  );
-  input.replan_reference!.battery = { operation: "hold", charge_w: 0, discharge_w: 0 };
-  const changed = generateOptimisationPlan(input, new Date(input.captured_at));
-  assertEquals(changed.plans.priority.continuity!.selected, "proposed");
-  assertEquals(changed.plans.priority.continuity!.reason, "material_benefit");
-  assert(changed.plans.priority.slots[0].battery_discharge_w > 0);
-});
-
-Deno.test("old battery rating and export requests cannot become command authority", () => {
-  const { input } = referencedSnapshot();
-  input.replan_reference!.battery = { operation: "grid_charge", charge_w: 1e6, discharge_w: 0 };
-  const result = generateOptimisationPlan(input, new Date(input.captured_at));
-  assertEquals(result.plans.priority.continuity!.selected, "proposed");
-  assertEquals(
-    result.plans.priority.continuity!.reason,
-    "reference_infeasible",
-  );
-  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
-  input.replan_reference!.battery = { operation: "export", charge_w: 0, discharge_w: 2000 };
-  const bundle = {
-    ...bench,
-    result: {
-      ...bench.planned,
-      ...scoreDispatch(bench.slots, bench.stores, bench.limits, bench.planned),
-      allocations: [],
-      battery: [],
-      stopped_because: "no_profitable_candidate" as const,
-      iterations: 0,
-    },
-  };
-  const candidates = continuityCandidates(bundle, input.replan_reference!);
-  assertEquals(candidates.candidates.length, 0);
 });
 
 Deno.test("pool continuity preserves the heat action using the current learned power", () => {
@@ -284,52 +196,6 @@ Deno.test("continuation sentinels and unexpected solver errors are not swallowed
       ),
     Error,
     "continuation",
-  );
-});
-
-Deno.test("fixed plan authority and changed store inventory exclude continuity", () => {
-  const { input, previous } = referencedSnapshot(true);
-  const bench = dispatchWorkbench({ ...input, replan_reference: null })!;
-  input.replan_reference!.battery!.discharge_w -= 10;
-  const fixed = {
-    id: "manual",
-    source_snapshot_id: previous.snapshot_id,
-    starts_at: input.slots[0].start,
-    ends_at: input.slots[1].start,
-    slots: [{
-      start: input.slots[0].start,
-      power_w: Object.fromEntries(
-        bench.stores.map((s) => [s.key, bench.planned.power_w[s.key][0]]),
-      ),
-      discharge_w: Object.fromEntries(
-        bench.stores.map((s) => [s.key, bench.planned.discharge_w[s.key][0]]),
-      ),
-      targets: previous.plans.priority.slots[0],
-      allow_export: false,
-    }],
-  };
-  const manual = generateOptimisationPlan(
-    input,
-    new Date(input.captured_at),
-    [],
-    undefined,
-    fixed,
-  );
-  assertEquals(
-    manual.plans.priority.continuity!.reason,
-    "fixed_plan_authority",
-  );
-  // The plan rounds its powers; the workbench's are not rounded.
-  assertAlmostEquals(
-    manual.plans.priority.slots[0].battery_discharge_w,
-    fixed.slots[0].discharge_w.battery,
-    .005,
-  );
-  input.replan_reference!.store_keys.push("unknown");
-  const changed = generateOptimisationPlan(input, new Date(input.captured_at));
-  assertEquals(
-    changed.plans.priority.continuity!.reason,
-    "store_inventory_changed",
   );
 });
 

@@ -10,7 +10,8 @@ Deno.test("CI deployment gate waits for quality, every unit shard, Rust and ever
   assert(gate.includes("!cancelled()"));
   assert(workflow.includes("fail-fast: false"));
   assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/4"));
-  assert(workflow.includes("run: npm run test:e2e:local -- --shard ${{ matrix.shard }}/3"));
+  assert(workflow.includes("node scripts/e2e-shard.mjs ${{ matrix.shard }}/3"));
+  assert(workflow.includes("npm run test:e2e:local -- --test-list"));
   assert(workflow.includes("needs: [changes, ci]"));
 });
 

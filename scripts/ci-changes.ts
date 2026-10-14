@@ -126,6 +126,8 @@ if (import.meta.main) {
   const changed = changedSince(arg("base"));
   const c = classifyPipeline(Deno.cwd(), changed, [
     "scripts/ci-changes.ts",
+    "scripts/e2e-shard.mjs",
+    ".github/actions/node-deps/action.yml",
     ...(workflow ? [`.github/workflows/${workflow}`] : []),
   ]);
   const lines = [

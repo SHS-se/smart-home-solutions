@@ -9,9 +9,13 @@ Deno.test("CI shards run every repository test file exactly once, including new 
   assertEquals(shards.flat().sort(), files.sort());
   assertEquals(new Set(shards.flat()).size, files.length);
   assertEquals(shardFiles([...files].reverse(), 4), shards);
-  // The two slowest modules must not serialize behind one another.
-  assertEquals(shards.filter(shard => shard.includes("supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts") ||
-    shard.includes("supabase/functions/_shared/replan-continuity.test.ts")).length, 2);
+  // The three slowest modules must not serialize behind one another.
+  const slowest = [
+    "supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts",
+    "supabase/functions/_shared/replan-continuity.test.ts",
+    "supabase/functions/_shared/replan-continuity-authority.test.ts",
+  ];
+  assertEquals(shards.filter(shard => slowest.some(file => shard.includes(file))).length, 3);
 });
 
 Deno.test("local and CI unit tests use the same runner options and discovery roots", () => {

@@ -97,14 +97,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
 
       - name: Lint
         run: npm run lint
@@ -134,14 +128,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22" # Matches the deployment PDF runtime smoke test.
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
 
       - name: Set up Deno
         uses: denoland/setup-deno@v2
@@ -158,13 +146,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
@@ -206,14 +189,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
 
       - name: Build
         # dev branch builds against the TEST Supabase (mode=test); all others use prod (.env).
@@ -233,12 +210,27 @@ jobs:
           path: dist
           retention-days: 7
 
+      - name: Restore Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        run: |
+          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = true ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: E2E tests (mocked backend)
-        # Same command locally and in CI; Playwright owns the preview server.
-        run: npm run test:e2e:local -- --shard ${{ matrix.shard }}/3
+        # Same command locally and in CI; Playwright owns the preview server. The shard's
+        # tests are balanced by measured duration (scripts/e2e-shard.mjs), not by count.
+        run: |
+          node scripts/e2e-shard.mjs ${{ matrix.shard }}/3 > "$RUNNER_TEMP/e2e-shard.txt"
+          npm run test:e2e:local -- --test-list "$RUNNER_TEMP/e2e-shard.txt"
 
   ci:
     name: Lint, test & build
@@ -329,14 +321,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Install dependencies for hosted planning qualification
-        run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
@@ -468,11 +454,8 @@ jobs:
       SUPABASE_PROJECT_REF: ${{ github.ref_name == 'main' && 'oosxndduqzhvrorgogaw' || 'vxqpgbzseckgceopitpm' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-      - run: npm ci
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
       - uses: supabase/setup-cli@v1
         with:
           version: latest

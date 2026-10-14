@@ -1,0 +1,25 @@
+name: Node dependencies
+description: >
+  Set up Node 22 and restore node_modules for the current lockfile. npm ci runs
+  only when the lockfile (or runner) changed; restoring is several times faster
+  than installing in every job.
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        # Matches the deployment PDF runtime smoke test; wrangler 4.x also requires Node >= 22.
+        node-version: "22"
+
+    - name: Restore node_modules
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: node_modules
+        key: node-modules-${{ runner.os }}-${{ runner.arch }}-node22-${{ hashFiles('package-lock.json') }}
+
+    - name: Install dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci

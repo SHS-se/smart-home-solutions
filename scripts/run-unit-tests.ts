@@ -7,21 +7,29 @@ const TEST_OPTIONS = [
   "--allow-read", "--allow-write", "--allow-run", "--allow-env",
 ];
 
-// Relative file costs from the 2026-10-05 CI log. Keep the expensive planner
+// Seconds per file from the 2026-10-14 CI log. Keep the expensive planner
 // modules apart; distribute every other (including newly added) test as well.
-// These are scheduling weights, never a filter on which tests run.
+// A shard takes as long as its slowest file, so split a file before it
+// approaches the others' combined share. These are scheduling weights, never
+// a filter on which tests run.
 const COSTS: Record<string, number> = {
-  "supabase/functions/_shared/energy-planning-step.test.ts": 153,
-  "supabase/functions/_shared/energy-planning-step-dark.test.ts": 208,
-  "supabase/functions/_shared/energy-planning-step-sunny.test.ts": 93,
-  "supabase/functions/_shared/replan-continuity.test.ts": 338,
-  "supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts": 269,
-  "supabase/functions/_shared/planner/energy-optimisation.test.ts": 213,
-  "src/lib/energy-shift/planner-value-stores.test.ts": 118,
-  "tests/bench-adapter.test.ts": 113,
-  "supabase/functions/_shared/energy-optimisation-ev.test.ts": 96,
-  "supabase/functions/_shared/battery-curve-override.test.ts": 62,
-  "src/lib/energy-shift/plan-workbench.test.ts": 37,
+  "supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts": 149,
+  "supabase/functions/_shared/replan-continuity.test.ts": 118,
+  "supabase/functions/_shared/replan-continuity-authority.test.ts": 100,
+  "supabase/functions/_shared/energy-planning-step-sunny.test.ts": 91,
+  "supabase/functions/_shared/energy-planning-step-dark.test.ts": 89,
+  "tests/bench-adapter.test.ts": 75,
+  "supabase/functions/_shared/planner/energy-optimisation.test.ts": 73,
+  "supabase/functions/_shared/energy-planning-step.test.ts": 69,
+  "src/lib/energy-shift/planner-value-stores.test.ts": 65,
+  "supabase/functions/_shared/energy-optimisation-ev.test.ts": 58,
+  "tests/bench-rule-engine.test.ts": 46,
+  "supabase/functions/_shared/battery-curve-override.test.ts": 28,
+  "tests/energy-planning-jobs.test.ts": 27,
+  "src/lib/home-baseline/model.test.ts": 25,
+  "src/lib/home-baseline/pool-carry.test.ts": 18,
+  "tests/bench-evaluation-storage.test.ts": 11,
+  "src/lib/planner-bench/opportunities.test.ts": 10,
 };
 
 export function testFiles(root: string): string[] {
