@@ -1,5 +1,8 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
+import { dispatchedEvSnapshot } from '../scripts/generate-ha-plan-fixture.ts';
+import { generateRulesPlan, prepareRulesPlanningInput, type PublishedCommandReference } from '../supabase/functions/_shared/rules-planner.ts';
+import { resolveRulePolicy } from '../supabase/functions/_shared/planner-wasm/rule-policy.ts';
 
 const home = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
@@ -410,6 +413,7 @@ async function oneShotDatabase() {
   const db = await durableDatabase();
   await db.exec(await migration(oneShotMigration));
   await db.exec(await migration('20261008144000_complete_test_rule_publications'));
+  await db.exec(await migration('20261014110000_preserve_committed_hot_water_power'));
   return db;
 }
 type AttemptClaim = { id: string; home_id: string; customer_id: string; snapshot_id: string; protocol: number; fence: number };
@@ -563,7 +567,7 @@ Deno.test('protocol 9 command references preserve pending-ack native commands an
   try {
     await insertCurrent(db);
     const slot = { start: '2026-10-08T08:00:00Z', pool_w: 1200, pool_command_w: 3764,
-      ev_target_current_a: 8, ev_min_current_a: 5, ev_max_current_a: 16, boiler_permitted: false,
+      ev_target_current_a: 8, ev_min_current_a: 5, ev_max_current_a: 16, boiler_permitted: false, boiler_expected_w: 0,
       battery_command: { schema_version: 3, operation: 'hold', charge_limit_w: 3000, discharge_limit_w: 0,
         allow_grid_charge: false, allow_battery_export: false },
       device_commands: { pool: { type: 'switch_schedule', on_seconds: 900 } } };
@@ -574,6 +578,41 @@ Deno.test('protocol 9 command references preserve pending-ack native commands an
     assertEquals(reference.reference_plan_id, other);
     assertEquals(reference.published_commands, { plan_id: other, slots: [slot] });
     assertEquals((await db.query<{ value: unknown }>('SELECT get_energy_replan_state($1) value', [other])).rows[0].value, null);
+  } finally { await db.close(); }
+});
+
+Deno.test('database command references support real replanning with and without hot water', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await insertCurrent(db);
+    for (const boiler of [false, true]) {
+      const s = dispatchedEvSnapshot();
+      s.slots = s.slots.slice(0, 8);
+      s.captured_at = s.slots[0].start;
+      s.capabilities.boiler = boiler;
+      s.comfort = { ev: { target_km: 300 } };
+      if (boiler) s.services.push({ id: 'water', device: 'boiler', priority: 1, required_kwh: 1,
+        earliest_start: s.slots[0].start, deadline: new Date(Date.parse(s.slots.at(-1)!.start) + 900_000).toISOString(),
+        control: { type: 'duty_cycle', rated_power_w: 2000, expected_power_w_by_slot: s.slots.map(() => 500) } });
+      const prepare = (reference: PublishedCommandReference | null) => prepareRulesPlanningInput({ snapshot: s, now: s.captured_at,
+        resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
+          shadow_import_sek_per_kwh: s.slots.map(() => 1.5) } }, reference, resolveRulePolicy());
+      const first = generateRulesPlan(prepare(null)).plan;
+      assertEquals(first.plans.priority.slots.map(slot => slot.boiler_expected_w), s.slots.map(() => boiler ? 500 : 0));
+      await db.query('UPDATE energy_optimisation_current SET plan=$1', [first]);
+      const state = (await db.query<{ value: { published_commands: PublishedCommandReference } }>(
+        'SELECT get_energy_replan_state($1) value', [home])).rows[0].value;
+      s.captured_at = new Date(Date.parse(s.captured_at) + 7 * 60_000).toISOString();
+      const prepared = prepare(state.published_commands);
+      // Exercise the same JSON boundary as the remote worker, then the real Wasm solver.
+      const replanned = generateRulesPlan(JSON.parse(JSON.stringify(prepared))).plan;
+      assert(prepared.problem.slots.every(slot => Number.isFinite(slot.base_w)));
+      assertEquals(replanned.status, 'ready');
+      assertEquals(replanned.plans.priority.slots.slice(0, 5).map(slot => slot.boiler_expected_w),
+        first.plans.priority.slots.slice(0, 5).map(slot => slot.boiler_expected_w));
+      assertEquals(replanned.plans.priority.slots.slice(0, 5).map(slot => slot.boiler_permitted),
+        first.plans.priority.slots.slice(0, 5).map(slot => slot.boiler_permitted));
+    }
   } finally { await db.close(); }
 });
 

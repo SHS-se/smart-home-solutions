@@ -45,6 +45,11 @@ export function planHotWaterDemand(input: {
   locked: Commitment[];
 }): { policies: (HotWaterDemandPolicy | null)[]; permitted: boolean[]; expected_w: number[]; deferred_kwh: number } {
   const { services, slots, hours, other_house_w: other, locked } = input;
+  for (let i = 0; i < locked.length; i++) {
+    if (!Number.isFinite(locked[i].boiler_expected_w)) {
+      throw new Error(`Committed hot-water power missing or non-finite at ${slots[i].start}`);
+    }
+  }
   for (const { control } of services) {
     if (!Number.isFinite(control.rated_power_w) || control.rated_power_w <= 0 ||
       control.expected_power_w_by_slot.length !== slots.length || control.expected_power_w_by_slot.some(w => !Number.isFinite(w) || w < 0)) throw new Error("Hot water requires its rated draw and complete consumption forecast");

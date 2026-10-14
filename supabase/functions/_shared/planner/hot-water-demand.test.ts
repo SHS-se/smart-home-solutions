@@ -1,4 +1,4 @@
-import { assertAlmostEquals, assertEquals } from "@std/assert";
+import { assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import type { DutyCycleServiceInput } from "./energy-optimisation.ts";
 import { hotWaterPermission, planHotWaterDemand } from "./hot-water-demand.ts";
 
@@ -52,4 +52,15 @@ Deno.test("hot-water committed permissions and power stay exact, with outstandin
   assertEquals(plan.permitted[0], false);
   assertEquals(plan.expected_w[0], 0);
   assertAlmostEquals(plan.expected_w.reduce((a, b) => a + b, 0) / 4000 + plan.deferred_kwh, .5);
+});
+
+Deno.test("hot-water preparation names missing or non-finite committed power before it can corrupt household demand", () => {
+  for (const power of [undefined, null, NaN, Infinity, -Infinity]) {
+    const input = example([500, 500, 500, 500]);
+    const locked = [{ boiler_permitted: true, boiler_expected_w: power as number }];
+    for (const services of [input.services, []]) {
+      assertThrows(() => planHotWaterDemand({ ...input, services, locked }), Error,
+        `Committed hot-water power missing or non-finite at ${input.slots[0].start}`);
+    }
+  }
 });
