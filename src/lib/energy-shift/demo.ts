@@ -116,7 +116,6 @@ export function createWebsiteDemoPlan(
           type: 'duty_cycle',
           rated_power_w: 3_000,
           expected_power_w_by_slot: boilerForecastW,
-          max_consecutive_inhibit_slots: 4,
         },
         priority: 1,
       },

@@ -334,7 +334,6 @@ Deno.test("hot-water permissions and demand remain fixed when the forecast chang
       type: "duty_cycle",
       rated_power_w: 1000,
       expected_power_w_by_slot: snapshot.slots.map(() => 400),
-      max_consecutive_inhibit_slots: 4,
     },
   });
   const source = generateOptimisationPlan(

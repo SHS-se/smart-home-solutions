@@ -183,7 +183,7 @@ Deno.test("rules boiler baseline forecast respects each declared service window"
   const boundary = s.slots[4].start;
   for (const [id, start, end] of [["first", s.slots[0].start, boundary], ["second", boundary, new Date(Date.parse(s.slots.at(-1)!.start) + 900000).toISOString()]]) {
     s.services.push({ id, device:"boiler", earliest_start:start, deadline:end, priority:1, required_kwh:1,
-      control:{type:"duty_cycle",rated_power_w:1000,expected_power_w_by_slot:s.slots.map(() => 400),max_consecutive_inhibit_slots:2} });
+      control:{type:"duty_cycle",rated_power_w:1000,expected_power_w_by_slot:s.slots.map(() => 400)} });
   }
   const prepared = prepare(s);
   assertEquals(prepared.boiler_w, s.slots.map(() => 400));

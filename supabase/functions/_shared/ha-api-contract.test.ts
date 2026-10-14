@@ -9,7 +9,7 @@ import {
   pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
-import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture, hotWaterPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
@@ -275,4 +275,19 @@ Deno.test("the schema-8 battery fixture is emitted by the real planner", async (
 Deno.test("schema 9 mixed-mode consumer fixture matches real planner output", async () => {
   const saved = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url)));
   assertEquals(saved, mixedModePlanFixture());
+});
+
+Deno.test("hot-water demand consumer fixture matches the real planner and its electrical balance", async () => {
+  const stored = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-8-hot-water-demand-plan.json", import.meta.url)));
+  assertEquals(stored, hotWaterPlanFixture());
+  const slots = stored.plan.plans.priority.slots;
+  assert(slots.slice(0, 8).every(s => !s.boiler_permitted && s.boiler_expected_w === 0));
+  assert(slots.slice(8).every(s => s.boiler_permitted));
+  for (const slot of slots) {
+    assertEquals(slot.device_commands.water.type, "house_demand_permission");
+    assertEquals(slot.device_commands.water.expected_permitted, slot.boiler_permitted);
+    assertEquals(slot.load_w, slot.base_w + slot.boiler_expected_w);
+    assertEquals(slot.device_loads_w.water, slot.boiler_expected_w);
+    assertEquals(slot.grid_import_w, slot.load_w);
+  }
 });

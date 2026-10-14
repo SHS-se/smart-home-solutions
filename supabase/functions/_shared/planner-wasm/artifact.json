@@ -1,7 +1,7 @@
 {
   "abi": 8,
   "wasm_sha256": "69004ca5561b968adfeba77012255ff6fc123a59db4498a21526657ad9e7edf0",
-  "source_sha256": "aac40a13b5dce49aecf87d95631aaab24c87ef0877f867fc1b9bf1e155d84591",
+  "source_sha256": "51ef0ccb0c0656d47a98eb83788271aeba2e1c62d7b1fab02d132c732f9abddd",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -53,6 +53,7 @@
     "supabase/functions/_shared/planner/demand-outlook.ts",
     "supabase/functions/_shared/planner/device-models.ts",
     "supabase/functions/_shared/planner/energy-price-shape.ts",
+    "supabase/functions/_shared/planner/hot-water-demand.ts",
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/pool-devices.ts",

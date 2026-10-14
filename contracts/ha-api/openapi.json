@@ -2093,6 +2093,33 @@
           },
           {
             "type": "object",
+            "description": "Planner-owned gross house-demand permission. Expected permission is a forecast; execution uses measured consumption and the thresholds. Unsupported consumers must reject this command.",
+            "required": [
+              "type",
+              "expected_permitted",
+              "allow_below_w",
+              "inhibit_above_w"
+            ],
+            "properties": {
+              "type": {
+                "const": "house_demand_permission"
+              },
+              "expected_permitted": {
+                "type": "boolean"
+              },
+              "allow_below_w": {
+                "type": "number",
+                "minimum": 0
+              },
+              "inhibit_above_w": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
             "required": [
               "type",
               "value",

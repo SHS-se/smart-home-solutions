@@ -342,7 +342,6 @@ export interface DutyCycleControl {
   type: "duty_cycle";
   rated_power_w: number;
   expected_power_w_by_slot: number[];
-  max_consecutive_inhibit_slots: number;
 }
 
 export interface FixedPowerServiceInput extends DispatchableServiceInputBase {
@@ -1593,8 +1592,6 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       if (
         service.device !== "boiler" ||
         !inRange(control.rated_power_w, 100, 100_000) ||
-        !Number.isInteger(control.max_consecutive_inhibit_slots) ||
-        !inRange(control.max_consecutive_inhibit_slots, 1, 96) ||
         !Array.isArray(control.expected_power_w_by_slot) ||
         control.expected_power_w_by_slot.length !== snapshot.slots.length ||
         control.expected_power_w_by_slot.some((value) =>
@@ -2308,25 +2305,6 @@ function applyEvCurrentEnvelopes(
   }
 }
 
-function wouldExceedInhibitLimit(
-  permitted: boolean[],
-  index: number,
-  maximum: number,
-): boolean {
-  let run = 1;
-  for (let cursor = index - 1; cursor >= 0 && !permitted[cursor]; cursor -= 1) {
-    run += 1;
-  }
-  for (
-    let cursor = index + 1;
-    cursor < permitted.length && !permitted[cursor];
-    cursor += 1
-  ) {
-    run += 1;
-  }
-  return run > maximum;
-}
-
 function applyDutyCycleServices(
   key: PlanKey,
   slots: PreparedSlot[],
@@ -2365,14 +2343,7 @@ function applyDutyCycleServices(
         const relativelyHighLoad =
           nonBoilerLoad + Math.max(service.control.rated_power_w, schedule.boiler[index]) -
               slots[index].pv_w > snapshot.grid.import_limit_w;
-        if (
-          !relativelyHighLoad ||
-          wouldExceedInhibitLimit(
-            schedule.boilerPermitted,
-            index,
-            service.control.max_consecutive_inhibit_slots,
-          )
-        ) continue;
+        if (!relativelyHighLoad) continue;
         schedule.boilerPermitted[index] = false;
         schedule.boiler[index] -= expected[index];
         inhibited.push(index);
@@ -4782,27 +4753,7 @@ function simulate(
     // by the model it replaced.
     if (schedule.dispatched.has(service.device)) continue;
     const indices = schedule.serviceSlots[service.id] ?? [];
-    if (isDutyCycleService(service)) {
-      let consecutive = 0;
-      const inhibited = new Set(
-        schedule.serviceInhibitedSlots[service.id] ?? [],
-      );
-      const earliest = isoMs(service.earliest_start);
-      const deadline = isoMs(service.deadline);
-      for (const slot of slots) {
-        if (slot.epoch_ms < earliest || slot.epoch_ms + SLOT_MS > deadline) {
-          continue;
-        }
-        consecutive = inhibited.has(slot.index) ? consecutive + 1 : 0;
-        if (consecutive > service.control.max_consecutive_inhibit_slots) {
-          errors.push(
-            `${service.id}: maximum consecutive inhibit was exceeded`,
-          );
-          break;
-        }
-      }
-      continue;
-    }
+    if (isDutyCycleService(service)) continue;
 
     if (
       indices.some((value, index) =>

@@ -223,7 +223,25 @@ export function mixedModePlanFixture() {
     plan: rulesFixturePlan(snapshot)};
 }
 
+export function hotWaterPlanFixture() {
+  const original = dispatchedEvSnapshot();
+  const slots = original.slots.slice(0, 16).map((slot, i) => ({ ...slot, pv_forecast_w: 0, base_load_forecast_w: i < 8 ? 4500 : 500 }));
+  const snapshot: OptimisationSnapshotV8 = { ...original, schema_version: 8, slots,
+    capabilities: { ...original.capabilities, ev: false, boiler: true }, ev_battery: null,
+    device_models: [{ key: "water", statistic_id: "sensor.water_energy", name: "Final water heater", category: "hot_water",
+      load_type: "duty_cycle", suggested_load_type: "duty_cycle", planning_role: "controllable", control_type: "permit_inhibit",
+      active_power_w: 2000, profile_sample_count: 1000, forecast_w_by_slot: slots.map(() => 500) }],
+    services: [{ id: "water:day", device: "boiler", earliest_start: slots[0].start,
+      deadline: new Date(Date.parse(slots.at(-1)!.start) + SLOT_MS).toISOString(), priority: 1, required_kwh: 2,
+      control: { type: "duty_cycle", rated_power_w: 2000, expected_power_w_by_slot: slots.map(() => 500) } }],
+  };
+  return { contract_fixture: "schema-8-hot-water-demand", generated_by: "generateRulesPlan",
+    validation_time: slots[0].start, plan: rulesFixturePlan(snapshot) };
+}
+
 if (import.meta.main) {
+  await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-hot-water-demand-plan.json", import.meta.url),
+    `${JSON.stringify(hotWaterPlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url),
     `${JSON.stringify(mixedModePlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-battery-plan.json", import.meta.url),

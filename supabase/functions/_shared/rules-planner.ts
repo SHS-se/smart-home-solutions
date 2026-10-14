@@ -1,5 +1,6 @@
 import { POOL_START_COST_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
+import { planHotWaterDemand, type HotWaterDemandPolicy } from "./planner/hot-water-demand.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
  * This boundary has no database, history, source fetching or model fitting API.
@@ -14,7 +15,7 @@ import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/fixed-energy-plan.ts";
-import type { GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/energy-optimisation.ts";
+import type { DutyCycleServiceInput, GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/energy-optimisation.ts";
 import { isolateMeasurements } from "./planner/measurement-isolation.ts";
 import { parseDeviceModels, parseHeaterResponse, publishHeater, WATER_KWH_PER_M3_K, type PublishedHeater, type ThermalStoreModel } from "./planner/device-models.ts";
 import { poolHeaters } from "./planner/pool-devices.ts";
@@ -24,13 +25,13 @@ import type { BatteryProjectionRow } from "./planner/battery-dispatch-projection
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v4:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
+export const RULES_MODEL_VERSION = `rules-planner-v5:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const fail = (message: string): never => { throw new Error(message); };
 
-export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "battery_command" | "device_commands">;
+export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "battery_command" | "device_commands">;
 export interface PublishedCommandReference {
   plan_id: string;
   slots: PublishedCommandSlot[];
@@ -48,6 +49,8 @@ export interface PreparedRulesInput {
   passive_w: Record<string, number[]>;
   boiler_w: number[];
   boiler_permitted: boolean[];
+  boiler_policies: (HotWaterDemandPolicy | null)[];
+  boiler_deferred_kwh: number;
   base_w: number[];
 }
 
@@ -181,12 +184,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     return [m.key, m.forecast_w_by_slot];
   }));
   for (const [key, values] of Object.entries(passive)) if (values.length !== count || values.some(v => !finite(v) || v < 0)) return fail(`Invalid supplied passive forecast: ${key}`);
-  const boilerService = snapshot.services.filter(s => s.device === "boiler");
+  const boilerService = snapshot.services.filter((s): s is DutyCycleServiceInput => s.device === "boiler");
   if (snapshot.capabilities.boiler && (!boilerService.length || boilerService.some(s => s.control.type !== "duty_cycle"))) return fail("Boiler requires its native permit/inhibit forecast");
-  const boilerW = snapshot.slots.map((slot, i) => sum(boilerService.map(s =>
-    s.control.type === "duty_cycle" && Date.parse(slot.start) + QUARTER_MS > Date.parse(s.earliest_start) && Date.parse(slot.start) < Date.parse(s.deadline)
-      ? s.control.expected_power_w_by_slot[i] : 0)));
-  const permitted = snapshot.slots.map(() => true);
   const previous = new Map(reference?.slots.map(slot => [Date.parse(slot.start), slot]) ?? []);
   const locked: PublishedCommandSlot[] = [];
   if (reference) {
@@ -202,8 +201,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     if (!locked[i].device_commands && snapshot.device_models.length && snapshot.schema_version >= 7) return fail("Committed device command map missing");
     for (const key of Object.keys(locked[i].device_commands ?? {})) if (!snapshot.device_models.some(m => m.key === key)) return fail(`Committed owner removed: ${key}`);
     if (snapshot.capabilities.boiler && typeof locked[i].boiler_permitted !== "boolean") return fail("Committed boiler permission missing");
-    permitted[i] = locked[i].boiler_permitted;
-    if (!permitted[i]) boilerW[i] = 0;
   }
   if (input.fixed_plan) {
     const fixed = new Map(input.fixed_plan.slots.map(s => [Date.parse(s.start), s.targets]));
@@ -223,6 +220,13 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   // demand margin or future measured load enters the prepared forecast.
   const level = demandLevel(snapshot.demand_outlook?.days, localDay(snapshot.captured_at, snapshot.timezone));
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
+  const boilerKeys = new Set(members.boiler.map(m => m.key));
+  const hotWater = planHotWaterDemand({ services: boilerService, slots: snapshot.slots,
+    hours: snapshot.slots.map(s => (Date.parse(s.start) + QUARTER_MS - Math.max(effective, Date.parse(s.start))) / 3_600_000),
+    other_house_w: snapshot.slots.map((_s, i) => baseW[i] + sum(snapshot.device_models.filter(m => !boilerKeys.has(m.key)).map(m => m.forecast_w_by_slot[i]))),
+    locked });
+  const boilerW = hotWater.expected_w;
+  const permitted = hotWater.permitted;
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
     abi: 8, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
@@ -265,7 +269,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   problem.end_credit = problemEndCredit(problem);
   return { snapshot, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, reference_plan_id: reference?.plan_id ?? null,
-    members, passive_w: passive, boiler_w: boilerW, boiler_permitted: permitted, base_w: baseW };
+    members, passive_w: passive, boiler_w: boilerW, boiler_permitted: permitted,
+    boiler_policies: hotWater.policies, boiler_deferred_kwh: hotWater.deferred_kwh, base_w: baseW };
 }
 
 function allocate(members: DeviceMember[], watts: number, into: Record<string, number>) {
@@ -285,7 +290,7 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
       ? { type: "switch_schedule", on_seconds: command.pool_on ? 900 : 0 }
       : { type: "unavailable", reason: "Dedicated pool owner supplies the native enable command" }
       : ev.has(model.key) ? { type: "variable_power", value: command.ev_amps, unit: "A" }
-      : boiler.has(model.key) ? { type: "permit_inhibit", permitted: input.boiler_permitted[i] }
+      : boiler.has(model.key) && input.boiler_policies[i] ? { type: "house_demand_permission", expected_permitted: input.boiler_permitted[i], ...input.boiler_policies[i]! }
       : { type: "unavailable", reason: "External forecast owner has no planner command" };
   }
   return result;
@@ -360,7 +365,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     net_cost_sek: sum(slots.map(s => (s.import_cost_sek ?? 0) - (s.export_revenue_sek ?? 0))),
     terminal_adjusted_cost_sek: sum(quarters.map(q => q.cost)), battery_soc_start: socs[0], battery_soc_end: socs.at(-1)!,
     battery_soc_low: Math.min(...socs), battery_end_of_solar_soc: {},
-    service_required_kwh: sum(snapshot.services.map(s => s.required_kwh)), service_delivered_kwh: energy(s => s.pool_w + s.ev_w + s.boiler_expected_w), duty_cycle_deferred_kwh: 0 };
+    service_required_kwh: sum(snapshot.services.map(s => s.required_kwh)), service_delivered_kwh: energy(s => s.pool_w + s.ev_w + s.boiler_expected_w), duty_cycle_deferred_kwh: input.boiler_deferred_kwh };
   const indices = (test: (s: PlannedSlot) => boolean) => slots.flatMap((s, i) => test(s) ? [i] : []);
   // A device planned as a state has no block schedule: the integration reads an
   // empty service schedule beside `dispatched_devices`, and refuses a filled one.
@@ -369,7 +374,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     (s.device === "pool" ? slot.pool_w : s.device === "ev" ? slot.ev_w : slot.boiler_expected_w) > 0)]));
   return { rows, generated: { key, label, status: "ready", validation_errors: [], slots, summary,
     service_slots: serviceSlots, service_currents_a: Object.fromEntries(snapshot.services.filter(s => s.device === "ev").map(s => [s.id, serviceSlots[s.id].map(i => slots[i].ev_target_current_a)])),
-    service_inhibited_slots: Object.fromEntries(snapshot.services.filter(s => s.device === "boiler").map(s => [s.id, indices(slot => !slot.boiler_permitted)])),
+    service_inhibited_slots: Object.fromEntries(snapshot.services.filter(s => s.device === "boiler").map(s => [s.id, indices(slot => !slot.boiler_permitted && Date.parse(slot.start) + QUARTER_MS > Date.parse(s.earliest_start) && Date.parse(slot.start) < Date.parse(s.deadline))])),
     dispatched_devices: dispatched, store_diagnostics: [] } };
 }
 

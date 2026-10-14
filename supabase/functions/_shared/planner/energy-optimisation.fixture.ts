@@ -117,7 +117,6 @@ export const input = (
           type: "duty_cycle",
           rated_power_w: 3_000,
           expected_power_w_by_slot: slots.map(() => 350),
-          max_consecutive_inhibit_slots: 4,
         },
         priority: 1,
       },

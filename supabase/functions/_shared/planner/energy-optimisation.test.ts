@@ -17,7 +17,6 @@ Deno.test("hot-water forecasts above running power remain usable demand", () => 
     control: {
       type: "duty_cycle", rated_power_w: 3062.1,
       expected_power_w_by_slot: snapshot.slots.map(() => 3400),
-      max_consecutive_inhibit_slots: 4,
     },
   }];
   assertEquals(validateSnapshot(snapshot), []);
@@ -295,7 +294,6 @@ Deno.test("the battery covers the boiler too, not just the base load", () => {
           type: "duty_cycle" as const,
           rated_power_w: 3_000,
           expected_power_w_by_slot: slots.map(() => 900),
-          max_consecutive_inhibit_slots: 20,
         },
       },
     ],
@@ -400,7 +398,6 @@ Deno.test("the stores leave the connection the services still need", () => {
           type: "duty_cycle" as const,
           rated_power_w: 3_000,
           expected_power_w_by_slot: slots.map(() => 900),
-          max_consecutive_inhibit_slots: 20,
         },
       },
       routedEvService(input({ slots })),
@@ -492,7 +489,6 @@ Deno.test("deferred hot water comes back at the cheapest hours, not the quietest
           type: "duty_cycle" as const,
           rated_power_w: 3_000,
           expected_power_w_by_slot: slots.map(() => 400),
-          max_consecutive_inhibit_slots: 20,
         },
       },
     ],
