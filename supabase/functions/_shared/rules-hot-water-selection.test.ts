@@ -95,6 +95,9 @@ Deno.test("72-hour hot-water refinement shares at most 64 projections across bot
   assert(projections <= 64, `hot water exceeded its complete refinement budget: ${projections} projections`);
   assert(solves <= 1, `hot water repeated native selection ${solves} times`);
   assert(selected.selection.account.score_sek >= native.selection.account.score_sek - 1e-8);
+  // Dropping water always looks cheaper; the selected plan still heats what the house draws.
+  assert(selected.input.boiler_deferred_kwh <= input.boiler_deferred_kwh + 1e-9,
+    `hot water deferred ${selected.input.boiler_deferred_kwh} kWh past its windows`);
   const replayed = core.project(selected.input.problem, selected.selection.commands).outcome;
   assert(replayed.kind === "projected");
   assertEquals(replayed.quarters, selected.selection.quarters);

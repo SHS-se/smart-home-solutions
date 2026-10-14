@@ -21,6 +21,45 @@ function fillingLevel(loads: number[], hours: number[], rated: number, energyWh:
   return high;
 }
 
+/** One window's water as the heater delivers it: its forecast draw where it is
+ * permitted, held-off energy queued and caught up later at most at rated power.
+ * Committed quarters deliver exactly their committed share.
+ */
+function serveWindow(service: DutyCycleServiceInput, indices: number[], hours: number[],
+  permitted: (i: number) => boolean, committed: (i: number) => number | undefined): { expected_w: Map<number, number>; pending_wh: number } {
+  const expected = new Map<number, number>();
+  let pendingWh = 0;
+  for (const i of indices) {
+    const forecast = service.control.expected_power_w_by_slot[i];
+    const fixed = committed(i);
+    if (fixed !== undefined) {
+      pendingWh = Math.max(0, pendingWh + (forecast - fixed) * hours[i]);
+    } else if (!permitted(i)) {
+      pendingWh += forecast * hours[i];
+    } else {
+      const catchup = Math.min(Math.max(0, service.control.rated_power_w - forecast), pendingWh / hours[i]);
+      expected.set(i, forecast + catchup);
+      pendingWh -= catchup * hours[i];
+    }
+  }
+  return { expected_w: expected, pending_wh: pendingWh };
+}
+
+/** The valley level, raised where the heater could not catch up on what it
+ * holds off before its window closes. The filling estimate assumes every
+ * quarter under the level absorbs rated power; the heater can only make up
+ * its own forecast's headroom, after the quarters it was held in. Delivery
+ * only grows as the level rises, so the lowest serving load level is exact.
+ */
+function servingLevel(service: DutyCycleServiceInput, indices: number[], available: number[], site: number[], hours: number[],
+  committed: (i: number) => number | undefined, eligible: readonly boolean[], energyWh: number): number {
+  const filling = fillingLevel(available.map(i => site[i]), available.map(i => hours[i]), service.control.rated_power_w, energyWh);
+  const serves = (level: number) => serveWindow(service, indices, hours, i => eligible[i] && site[i] <= level, committed).pending_wh <= 1e-6;
+  if (serves(filling)) return filling;
+  const levels = [...new Set(available.map(i => site[i]))].filter(w => w > filling).sort((a, b) => a - b);
+  return levels.find(serves) ?? Math.max(filling, ...levels);
+}
+
 /** Prepare permission and its empirical load forecast together from selected
  * household loads and economic eligibility. Recovery is forecast after inhibition, within the
  * original service window; it is not measured usable water or a heat guarantee.
@@ -53,17 +92,30 @@ export function planHotWaterDemand(input: {
     if (!Number.isFinite(control.rated_power_w) || control.rated_power_w <= 0 ||
       control.expected_power_w_by_slot.length !== slots.length || control.expected_power_w_by_slot.some(w => !Number.isFinite(w) || w < 0)) throw new Error("Hot water requires its rated draw and complete consumption forecast");
   }
-  const windows = services.map(service => {
-    const indices = slots.flatMap((slot, i) => Date.parse(slot.start) + 900_000 > Date.parse(service.earliest_start) && Date.parse(slot.start) < Date.parse(service.deadline) ? [i] : []);
+  const inWindow = services.map(service => slots.flatMap((slot, i) => Date.parse(slot.start) + 900_000 > Date.parse(service.earliest_start) && Date.parse(slot.start) < Date.parse(service.deadline) ? [i] : []));
+  const active = slots.map((_slot, i) => services.flatMap((service, s) => inWindow[s].includes(i) ? [service] : []));
+  // A committed quarter's measured-in power is shared between the windows open in it.
+  const committedShare = (service: DutyCycleServiceInput) => (i: number): number | undefined => {
+    if (!locked[i]) return undefined;
+    const forecast = service.control.expected_power_w_by_slot[i];
+    const total = active[i].reduce((sum, s) => sum + s.control.expected_power_w_by_slot[i], 0);
+    const rated = active[i].reduce((sum, s) => sum + s.control.rated_power_w, 0);
+    return locked[i].boiler_expected_w * (total > 0 ? forecast / total : service.control.rated_power_w / rated);
+  };
+  const windows = services.map((service, s) => {
+    const indices = inWindow[s];
     const energy = indices.reduce((sum, i) => sum + service.control.expected_power_w_by_slot[i] * hours[i], 0);
     const available = indices.filter(i => eligible[i]);
-    return { service, indices, level: available.length ? input.level_mode === "all_loads" ? Math.max(...available.map(i => site[i])) : fillingLevel(available.map(i => site[i]), available.map(i => hours[i]), service.control.rated_power_w, energy) : 0 };
+    return { service, indices, level: available.length ? input.level_mode === "all_loads" ? Math.max(...available.map(i => site[i]))
+      : servingLevel(service, indices, available, site, hours, committedShare(service), eligible, energy) : 0 };
   });
-  const active = slots.map((_slot, i) => windows.filter(w => w.indices.includes(i)));
-  const sitePolicies = input.site_policies ? [...input.site_policies] : active.map(windows => windows.length ? {
-    allow_below_w: Math.max(...windows.map(w => w.level)),
-    inhibit_above_w: Math.max(...windows.map(w => w.level)) + windows.reduce((sum, w) => sum + w.service.control.rated_power_w, 0),
-  } : null);
+  const sitePolicies = input.site_policies ? [...input.site_policies] : slots.map((_slot, i) => {
+    const open = windows.filter(w => w.indices.includes(i));
+    return open.length ? {
+      allow_below_w: Math.max(...open.map(w => w.level)),
+      inhibit_above_w: Math.max(...open.map(w => w.level)) + open.reduce((sum, w) => sum + w.service.control.rated_power_w, 0),
+    } : null;
+  });
   // HA measures gross appliances. Translate the chosen battery contribution
   // out of the site-load policy, preserving its rated-draw hysteresis width.
   // A negative gross admission level has no attainable measured-house value.
@@ -77,7 +129,7 @@ export function planHotWaterDemand(input: {
   let previous = true;
   for (let i = 0; i < slots.length; i++) {
     const policy = policies[i];
-    const rated = active[i].reduce((sum, w) => sum + w.service.control.rated_power_w, 0);
+    const rated = active[i].reduce((sum, service) => sum + service.control.rated_power_w, 0);
     const permit = locked[i]?.boiler_permitted ?? input.permission_prefix?.[i] ?? (!admitted[i] ? false : policy ? hotWaterPermission(policy, other[i] + (previous ? rated : 0), previous) : true);
     permitted.push(permit);
     previous = permit;
@@ -86,26 +138,11 @@ export function planHotWaterDemand(input: {
   let deferred = 0;
   const deferredByService: Record<string, number> = {};
   for (const { service, indices } of windows) {
-    let pendingWh = 0;
-    for (const i of indices) {
-      const forecast = service.control.expected_power_w_by_slot[i];
-      if (locked[i]) {
-        const total = active[i].reduce((sum, w) => sum + w.service.control.expected_power_w_by_slot[i], 0);
-        const rated = active[i].reduce((sum, w) => sum + w.service.control.rated_power_w, 0);
-        const share = total > 0 ? forecast / total : service.control.rated_power_w / rated;
-        const committed = locked[i].boiler_expected_w * share;
-        pendingWh = Math.max(0, pendingWh + (forecast - committed) * hours[i]);
-      } else if (!permitted[i]) {
-        pendingWh += forecast * hours[i];
-      } else {
-        const catchup = Math.min(Math.max(0, service.control.rated_power_w - forecast), pendingWh / hours[i]);
-        expected[i] += forecast + catchup;
-        pendingWh -= catchup * hours[i];
-      }
-    }
-    deferred += pendingWh / 1000;
-    deferredByService[service.id] = pendingWh / 1000;
+    const served = serveWindow(service, indices, hours, i => permitted[i], committedShare(service));
+    for (const [i, w] of served.expected_w) expected[i] += w;
+    deferred += served.pending_wh / 1000;
+    deferredByService[service.id] = served.pending_wh / 1000;
   }
   for (let i = 0; i < locked.length; i++) expected[i] = locked[i].boiler_expected_w;
-  return { policies, permitted, expected_w: expected, deferred_kwh: deferred, deferred_kwh_by_service: deferredByService, site_policies: sitePolicies, eligible: admitted, rated_w: active.map(windows => windows.reduce((sum, w) => sum + w.service.control.rated_power_w, 0)) };
+  return { policies, permitted, expected_w: expected, deferred_kwh: deferred, deferred_kwh_by_service: deferredByService, site_policies: sitePolicies, eligible: admitted, rated_w: active.map(open => open.reduce((sum, service) => sum + service.control.rated_power_w, 0)) };
 }

@@ -25,6 +25,21 @@ Deno.test("hot-water load level moves with household demand and conserves deferr
   assertEquals(cold.permitted, plan.permitted);
 });
 
+Deno.test("a load valley before the water draw cannot hold the draw off: the level rises until the window is served", () => {
+  // The filling estimate would put 1 kWh into the quiet first hour, but the
+  // heater cannot heat ahead of a draw it was held off for.
+  const other = [500, 500, 500, 500, 4500, 4500, 4500, 4500];
+  const plan = planHotWaterDemand(example(other, [0, 0, 0, 0, 1000, 1000, 1000, 1000]));
+  assertEquals(plan.deferred_kwh, 0);
+  assertEquals(plan.permitted, other.map(() => true));
+  assertEquals(plan.expected_w, [0, 0, 0, 0, 1000, 1000, 1000, 1000]);
+  assertAlmostEquals(plan.policies[0]!.allow_below_w, 4500);
+  // Where held-off water can be caught up in a later valley, the level stays in the valley.
+  const later = planHotWaterDemand(example([4500, 4500, 500, 500, 500, 500, 4500, 4500], [1000, 1000, 0, 0, 0, 0, 0, 0]));
+  assertEquals(later.deferred_kwh, 0);
+  assertEquals(later.permitted, [false, false, true, true, true, true, false, false]);
+});
+
 Deno.test("hot-water own rated draw does not reverse a permission just granted", () => {
   const policy = { allow_below_w: 1500, inhibit_above_w: 3500 };
   assertEquals(hotWaterPermission(policy, 1500, false), true);

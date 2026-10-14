@@ -79,7 +79,14 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
     return undefined;
   };
   const servesWork = (proposed: Candidate, reference: Candidate) =>
-    Object.entries(proposed.deferred).every(([id, kwh]) => kwh <= reference.deferred[id] + 1e-9);
+    Object.entries(proposed.deferred).every(([id, kwh]) => kwh <= (reference.deferred[id] ?? Infinity) + 1e-9);
+  const deferredKwh = (c: Candidate) => Object.values(c.deferred).reduce((sum, kwh) => sum + kwh, 0);
+  // Dropped water is never bought, so it always looks cheaper. Serving the
+  // window's forecast comes first; price only chooses between plans that serve
+  // the same work.
+  const better = (proposed: Candidate | undefined, reference: Candidate): proposed is Candidate =>
+    !!proposed && servesWork(proposed, reference) && (deferredKwh(proposed) < deferredKwh(reference) - 1e-6 ||
+      proposed.selection.account.score_sek > reference.selection.account.score_sek + MIN_GAIN_SEK);
   const improve = (start: Candidate, limit: number): Candidate => {
     let best = start;
     const indices = input.snapshot.slots.flatMap((_s, i) => i >= input.locked_slots.length && start.input.boiler_policies[i] ? [i] : []);
@@ -100,8 +107,7 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
         // Do not make apparent savings by dropping forecast electrical work.
         // Unresolved work is a forecast diagnostic, never hard infeasibility.
         for (const proposed of proposals) {
-          if (proposed && servesWork(proposed, best) &&
-            proposed.selection.account.score_sek > best.selection.account.score_sek + MIN_GAIN_SEK) best = proposed;
+          if (better(proposed, best)) best = proposed;
         }
       }
     }
@@ -112,7 +118,7 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
   const valleys = evaluate(seed, input.boiler_eligible);
   // Reserve half the projections for water's response to coordinated native
   // loads. The counter is never reset when a new search pass begins.
-  let best = improve(valleys ?? seed, PROJECTION_LIMIT / 2);
+  let best = improve(valleys && servesWork(valleys, seed) ? valleys : seed, PROJECTION_LIMIT / 2);
   // Give battery/pool/EV selection one opportunity to respond to the newly
   // selected water timing. Re-evaluate water against its actual chosen loads.
   const response = core.solve(best.input.problem).outcome;
@@ -120,8 +126,7 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
     const coordinated = evaluate({ input: best.input, selection: response.selection, deferred: best.deferred }, best.input.boiler_eligible);
     if (coordinated) {
       const proposed = improve(coordinated, PROJECTION_LIMIT);
-      if (servesWork(proposed, best) &&
-        proposed.selection.account.score_sek > best.selection.account.score_sek + MIN_GAIN_SEK) best = proposed;
+      if (better(proposed, best)) best = proposed;
     }
   }
   return best;
