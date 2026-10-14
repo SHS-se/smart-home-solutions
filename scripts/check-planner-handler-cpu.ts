@@ -89,17 +89,19 @@ async function coldSample(kind: "plan" | "reference"): Promise<Sample> {
 }
 
 async function cpuModel(): Promise<string> {
-  try {
-    const info = await Deno.readTextFile("/proc/cpuinfo");
-    const model = /^model name\s*:\s*(.+)$/m.exec(info)?.[1];
-    if (model) return `${model.trim()} × ${info.match(/^processor\s*:/gm)?.length ?? "?"}`;
-  } catch { /* not Linux */ }
-  try {
-    const { stdout } = await new Deno.Command("sysctl", { args: ["-n", "machdep.cpu.brand_string"], stdout: "piped" }).output();
-    return new TextDecoder().decode(stdout).trim() || "unknown";
-  } catch {
-    return "unknown";
-  }
+  // Through a subprocess: --allow-read alone does not open /proc in Deno 2.
+  const run = async (command: string, args: string[]) => {
+    try {
+      const { success, stdout } = await new Deno.Command(command, { args, stdout: "piped", stderr: "null" }).output();
+      return success ? new TextDecoder().decode(stdout) : "";
+    } catch {
+      return "";
+    }
+  };
+  const info = await run("cat", ["/proc/cpuinfo"]);
+  const model = /^model name\s*:\s*(.+)$/m.exec(info)?.[1];
+  if (model) return `${model.trim()} × ${info.match(/^processor\s*:/gm)?.length ?? "?"}`;
+  return (await run("sysctl", ["-n", "machdep.cpu.brand_string"])).trim() || "unknown";
 }
 
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
