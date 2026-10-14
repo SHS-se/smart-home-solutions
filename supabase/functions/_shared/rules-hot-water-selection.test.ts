@@ -6,6 +6,7 @@ import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import { projectedAccount, refineHotWater } from "./rules-hot-water-selection.ts";
+import { cpuPlanningInput } from "../../../tests/planner-handler-cpu.fixture.ts";
 
 const core = createWasmPlanner(Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0)));
 function prepared(battery = false) {
@@ -74,4 +75,27 @@ Deno.test("morning water uses battery opportunity cost even with zero grid impor
   assert(selected.selection.account.score_sek > initial.selection.account.score_sek + .01);
   assert(selected.selection.account.credit_sek !== initial.selection.account.credit_sek ||
     selected.selection.account.wear_sek !== initial.selection.account.wear_sek);
+});
+
+Deno.test("72-hour hot-water refinement shares at most 64 projections across both search passes", () => {
+  const input = cpuPlanningInput();
+  assertEquals(input.problem.slots.length, 288);
+  assertEquals(input.boiler_services.length, 4);
+  const native = core.solve(input.problem).outcome;
+  assert(native.kind === "selected");
+  let projections = 0, solves = 0;
+  const counted = { ...core, project(...args: Parameters<typeof core.project>) {
+    projections++;
+    return core.project(...args);
+  }, solve(...args: Parameters<typeof core.solve>) {
+    solves++;
+    return core.solve(...args);
+  } };
+  const selected = refineHotWater(counted, input, native.selection);
+  assert(projections <= 64, `hot water exceeded its complete refinement budget: ${projections} projections`);
+  assert(solves <= 1, `hot water repeated native selection ${solves} times`);
+  assert(selected.selection.account.score_sek >= native.selection.account.score_sek - 1e-8);
+  const replayed = core.project(selected.input.problem, selected.selection.commands).outcome;
+  assert(replayed.kind === "projected");
+  assertEquals(replayed.quarters, selected.selection.quarters);
 });

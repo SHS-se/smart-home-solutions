@@ -57,7 +57,9 @@ levels are ordinary policy candidates for each price mask. Permission changes
 are fixed in causal prefix order and checked against their own battery flows.
 A negative gross admission level publishes explicit inhibition.
 
-Search uses 64 mask proposals per pass and bounded prefix certification.
+Search shares 64 native projections across prefix certification, both policy
+variants and both passes. The first pass may spend 32, leaving the remaining
+projections for coordination. The counter never resets between passes.
 Search is bounded coordinate refinement: remove/release runs of eligible
 quarters, expensive starts first, accepting only exact economic improvements.
 One subsequent native solve can respond to selected water timing, followed by
@@ -91,7 +93,39 @@ at zero house load, then checks permission and shedding after the price pause.
 Local elapsed measurements are diagnostics, not hosted CPU or tank-temperature
 availability guarantees. The native ABI and HA command contract are unchanged.
 
-Final validation: 1,805 Deno tests passed; 1,144 HA tests passed; the frontend
+## Complete-worker CPU regression
+
+The original mask counter did not bound complete refinement work. On the
+288-quarter October input, one water device with four service windows caused
+405 native projections plus two full solves. The complete cold handler used
+2,068 ms of local process CPU, despite a 1,560 ms elapsed measurement. A native
+solve's deterministic work bound and the old native-only hosted probe did not
+cover this JavaScript refinement and materialization work.
+
+The shared projection budget reduces that input to 64 projections and two
+solves. The complete cold handler used 971 ms local process CPU; the selected
+score differs by approximately 0.0022 SEK across the 72-hour horizon. Every
+published candidate still has an exact native projection and preserves the
+per-service electrical-work comparison.
+
+`deno task test:planner-handler-cpu` runs the complete cold handler, including
+Wasm initialization, hot-water search, baseline, materialization and JSON,
+with a 1,500 ms process-CPU gate. CI runs it separately from parallel unit
+tests. A deterministic regression also counts projections and coordination
+solves on the anonymized full-horizon input, independently of machine speed.
+The private TEST probe's handler mode executes this same complete path without
+database, publication or HA access. `deno task probe:planner-handler` checks
+three hosted executions and exact output-digest parity. TEST planner deployments
+run this qualification before deploying planning executors and callers.
+
+Original implementation validation: 1,805 Deno tests passed; 1,144 HA tests passed; the frontend
 build and all four mocked-backend E2E suites passed (70 passed, one existing
 skip). Root lint passed with zero errors and 27 existing warnings. A final local
-replay with the other suites stopped took 1.529 seconds.
+replay with the other suites stopped took 1.529 seconds of elapsed time. That
+measurement did not bound complete-handler process CPU.
+
+CPU-budget change validation: 1,807 Deno tests passed; the complete cold-handler
+CPU gate passed at 971 ms; frontend build and typecheck passed; all four local
+Playwright suites passed (70 tests, one existing skip). Root lint reports zero
+errors and 27 existing warnings. Hosted qualification requires deployment of
+the updated private TEST probe; these local figures are not hosted CPU readings.

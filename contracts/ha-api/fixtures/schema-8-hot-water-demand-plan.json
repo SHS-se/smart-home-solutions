@@ -12,7 +12,7 @@
       "boiler": true,
       "ev": false
     },
-    "model_version": "rules-planner-v6:28e5540f7d4f080100d1281abedb08b88d17a11ad0fe144451428459a5e564ed",
+    "model_version": "rules-planner-v6:84fdb4642b7298974f43bcde7622a2f82437a3b23b3c0206b8ce0dd7a7fe8e3d",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -364,8 +364,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -425,8 +427,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -486,8 +490,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -547,8 +553,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -608,8 +616,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -669,8 +679,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1408,8 +1420,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1470,8 +1484,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1532,8 +1548,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1594,8 +1612,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1656,8 +1676,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -1718,8 +1740,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2466,8 +2490,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2528,8 +2554,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2590,8 +2618,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2652,8 +2682,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2714,8 +2746,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,
@@ -2776,8 +2810,10 @@
             },
             "device_commands": {
               "water": {
-                "type": "permit_inhibit",
-                "permitted": false
+                "type": "house_demand_permission",
+                "expected_permitted": false,
+                "allow_below_w": 2500,
+                "inhibit_above_w": 4500
               }
             },
             "ev_target_current_a": 0,

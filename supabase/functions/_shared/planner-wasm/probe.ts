@@ -1,6 +1,8 @@
 import { builderRecipe } from "./ready-problem.ts";
 import { createWasmPlanner } from "./core.ts";
 import { readyProblemSchema } from "./ready-schema.ts";
+import { handleEnergyPlanningStep } from "../energy-planning-worker.ts";
+import { RULES_PLANNING_PROTOCOL } from "../rules-planning-client.ts";
 
 interface Build {
   abi: number;
@@ -74,6 +76,28 @@ export function createPlannerProbe(
       raw = JSON.parse(new TextDecoder().decode(body));
     } catch {
       return Response.json({ error: "invalid_ready_json" }, { status: 400 });
+    }
+    if (raw && typeof raw === "object" && "mode" in raw && raw.mode === "handler") {
+      const payload = raw as { protocol?: number; input?: unknown };
+      if (payload.protocol !== RULES_PLANNING_PROTOCOL || !payload.input) {
+        return Response.json({ error: "invalid_handler_probe" }, { status: 400 });
+      }
+      // Execute the production handler's complete path without database,
+      // publication or HA calls. Decode its already encoded response so this
+      // qualification includes materialization and JSON, not just core.solve.
+      const before = performance.now();
+      const response = await handleEnergyPlanningStep(new Request("https://probe.test/plan", {
+        method: "POST", headers: { "x-shs-planning-secret": secret, "x-request-id": "handler-probe" },
+        body: JSON.stringify({ protocol: payload.protocol, input: payload.input }),
+      }), secret);
+      const bytes = await response.arrayBuffer();
+      const result = JSON.parse(new TextDecoder().decode(bytes));
+      if (!response.ok) return Response.json(result, { status: response.status });
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(result.result)));
+      return Response.json({ qualification: "test_live_candidate", build,
+        handler_elapsed_ms: performance.now() - before, response_bytes: bytes.byteLength,
+        slots: result.result.plan.plans.priority.slots.length, model_version: result.result.plan.model_version,
+        result_sha256: Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("") });
     }
     const parsed = readyProblemSchema.safeParse(raw);
     if (!parsed.success) {

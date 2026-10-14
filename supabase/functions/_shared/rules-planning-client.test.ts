@@ -4,6 +4,10 @@ import { prepareRulesPlanningInput } from "./rules-planner.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
+import { createPlannerProbe } from "./planner-wasm/probe.ts";
+import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
+import artifact from "./planner-wasm/artifact.json" with { type: "json" };
+import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 
 const connection = { url: "https://planner.test", planningSecret: "private", requestId: "test-request" };
 function input() {
@@ -52,4 +56,20 @@ Deno.test("one-shot worker requires its private secret and rejects auction proto
   }), connection.planningSecret);
   assertEquals((await call(RULES_PLANNING_PROTOCOL, "wrong")).status, 401);
   assertEquals((await call(8, connection.planningSecret)).status, 409);
+});
+
+Deno.test("private TEST probe executes the complete handler and returns an output digest", async () => {
+  const probe = createPlannerProbe(SOLVER_BASE64, artifact, runtime.recipe, "private", "https://vxqpgbzseckgceopitpm.supabase.co");
+  const response = await probe(new Request("https://probe.test", { method: "POST",
+    headers: { authorization: "Bearer private" },
+    body: JSON.stringify({ mode: "handler", protocol: RULES_PLANNING_PROTOCOL, input: input() }) }));
+  assertEquals(response.status, 200);
+  const result = await response.json();
+  assertEquals(result.slots, 8);
+  assertEquals(result.build, artifact);
+  const local = await handleEnergyPlanningStep(new Request("https://probe.test/plan", { method: "POST",
+    headers: { "x-shs-planning-secret": "private", "x-request-id": "handler-probe" },
+    body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, input: input() }) }), "private");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify((await local.json()).result)));
+  assertEquals(result.result_sha256, Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join(""));
 });

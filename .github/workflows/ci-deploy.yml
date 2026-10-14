@@ -178,6 +178,9 @@ jobs:
           rustfmt --check scripts/rustc-wasm-wrapper.rs
       - name: Check Rust lint
         run: cargo clippy --manifest-path planner-core/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Check complete cold planning worker CPU
+        run: deno task test:planner-handler-cpu
       - name: Test Rust device models
         run: cargo test --manifest-path planner-core/Cargo.toml --locked
       - name: Build and verify tracked Wasm
@@ -320,6 +323,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies for hosted planning qualification
+        run: npm ci
+
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@v1
         with:
@@ -341,11 +353,15 @@ jobs:
           set -euo pipefail
           rest=()
           planning_deployed=false
+          # Qualify the complete handler in a private, nonpublishing TEST
+          # endpoint before deploying the planning executors and callers.
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-planner-probe "* ]]; then
+            deno task deploy:planner-probe
+            deno task probe:planner-handler
+          fi
           for name in $FUNCTIONS; do
             if [ "$name" = energy-planner-probe ]; then
-              if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]; then
-                deno task deploy:planner-probe
-              fi
+              continue
             elif [ "$name" = energy-optimisation-plan-step ]; then
               if [ "$planning_deployed" = false ]; then
                 bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"

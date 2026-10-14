@@ -9,7 +9,9 @@ type Core = ReturnType<typeof createWasmPlanner>;
 interface Candidate { input: PreparedRulesInput; selection: Selection; deferred: Record<string, number> }
 // Search work, not a delivery deadline or a bound on observations. Included in
 // the artifact source identity. Every trial projects the complete trajectory.
-const MASK_TRIALS = 64;
+// One complete refinement budget, including prefix certification and both
+// policy variants in both passes. A mask is not a unit of projection work.
+const PROJECTION_LIMIT = 64;
 const MIN_GAIN_SEK = .001;
 
 /** Pool/EV commands fix their states and points. Only the native cash, wear
@@ -28,7 +30,9 @@ export function projectedAccount(problem: ReadyProblem, quarters: NativeQuarter[
  */
 export function refineHotWater(core: Core, input: PreparedRulesInput, native: Selection): Candidate {
   if (!input.boiler_services.length) return { input, selection: native, deferred: {} };
-  const evaluate = (source: Candidate, eligible: boolean[], level_mode?: "all_loads"): Candidate | undefined => {
+  let projections = 0;
+  const evaluate = (source: Candidate, eligible: boolean[], level_mode?: "all_loads", limit = PROJECTION_LIMIT): Candidate | undefined => {
+    if (projections >= limit) return undefined;
     const p = source.input;
     const other = p.base_w.map((w, i) => w + Object.values(p.passive_w).reduce((sum, values) => sum + values[i], 0) +
       source.selection.quarters[i].pool_w + source.selection.quarters[i].ev_w);
@@ -40,13 +44,14 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
     // Resolve changed permissions in causal prefix order: future water cannot
     // change an earlier battery flow. Every fixed prefix is checked against its
     // own projection. An unsettled search proposal is declined, not published.
-    for (let iteration = 0; iteration < 8; iteration++) {
+    for (let iteration = 0; iteration < 8 && projections < limit; iteration++) {
       const water = planHotWaterDemand({ services: p.boiler_services, slots: p.snapshot.slots,
         hours: p.problem.slots.map(s => s.hours + Math.min(0, s.start_seconds) / 3600),
         other_house_w: other, locked: p.locked_slots, eligible, level_mode,
         battery_offset_w: quarters.map(q => q.charge_w - q.discharge_w), site_policies: sitePolicies, permission_prefix: permissionPrefix });
       sitePolicies = water.site_policies;
       const problem = { ...p.problem, slots: p.problem.slots.map((s, i) => ({ ...s, base_w: s.base_w - p.boiler_w[i] + water.expected_w[i] })) };
+      projections++;
       const projection = core.project(problem, source.selection.commands).outcome;
       if (projection.kind === "failed") return undefined;
       const checked = planHotWaterDemand({ services: p.boiler_services, slots: p.snapshot.slots,
@@ -75,21 +80,23 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
   };
   const servesWork = (proposed: Candidate, reference: Candidate) =>
     Object.entries(proposed.deferred).every(([id, kwh]) => kwh <= reference.deferred[id] + 1e-9);
-  const improve = (start: Candidate): Candidate => {
-    let best = start, trials = 0;
+  const improve = (start: Candidate, limit: number): Candidate => {
+    let best = start;
     const indices = input.snapshot.slots.flatMap((_s, i) => i >= input.locked_slots.length && start.input.boiler_policies[i] ? [i] : []);
-    // Prices order proposals only. A battery/PV quarter is accepted according
-    // to its complete projection, including the energy left in every store.
-    indices.sort((a, b) => start.input.problem.slots[b].import_price - start.input.problem.slots[a].import_price || a - b);
+    // Spend the bounded search on actual water draws before quarters already
+    // inhibited by household load. Prices order proposals only; acceptance
+    // still uses the complete projection and energy left in every store.
+    indices.sort((a, b) => Number(start.input.boiler_w[b] > 0) - Number(start.input.boiler_w[a] > 0) ||
+      start.input.problem.slots[b].import_price - start.input.problem.slots[a].import_price || a - b);
     for (const from of indices) {
       for (const length of [4, 1, 8, 2]) {
-        if (trials++ >= MASK_TRIALS) return best;
+        if (projections >= limit) return best;
         const eligible = [...best.input.boiler_eligible];
         const value = !eligible[from];
         for (let i = from; i < Math.min(from + length, eligible.length); i++) {
           if (i >= input.locked_slots.length) eligible[i] = value;
         }
-        const proposals = [evaluate(best, eligible), evaluate(best, eligible, "all_loads")];
+        const proposals = [evaluate(best, eligible, undefined, limit), evaluate(best, eligible, "all_loads", limit)];
         // Do not make apparent savings by dropping forecast electrical work.
         // Unresolved work is a forecast diagnostic, never hard infeasibility.
         for (const proposed of proposals) {
@@ -103,14 +110,16 @@ export function refineHotWater(core: Core, input: PreparedRulesInput, native: Se
   const seed = evaluate({ input, selection: native, deferred: {} }, input.boiler_eligible, "all_loads");
   if (!seed) throw new Error("Hot-water selected-load projection exceeds native equipment limits");
   const valleys = evaluate(seed, input.boiler_eligible);
-  let best = improve(valleys ?? seed);
+  // Reserve half the projections for water's response to coordinated native
+  // loads. The counter is never reset when a new search pass begins.
+  let best = improve(valleys ?? seed, PROJECTION_LIMIT / 2);
   // Give battery/pool/EV selection one opportunity to respond to the newly
   // selected water timing. Re-evaluate water against its actual chosen loads.
   const response = core.solve(best.input.problem).outcome;
   if (response.kind === "selected") {
     const coordinated = evaluate({ input: best.input, selection: response.selection, deferred: best.deferred }, best.input.boiler_eligible);
     if (coordinated) {
-      const proposed = improve(coordinated);
+      const proposed = improve(coordinated, PROJECTION_LIMIT);
       if (servesWork(proposed, best) &&
         proposed.selection.account.score_sek > best.selection.account.score_sek + MIN_GAIN_SEK) best = proposed;
     }
