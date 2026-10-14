@@ -1,7 +1,7 @@
 {
   "abi": 8,
   "wasm_sha256": "69004ca5561b968adfeba77012255ff6fc123a59db4498a21526657ad9e7edf0",
-  "source_sha256": "f0eb06ffdd26a165abc3a0a53bc259d84be5b168a70c8f95fac082f7a232e87b",
+  "source_sha256": "8ae86d83879899456f03a00589278f30b24cae818de9a1718acb21896d8b157a",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -57,6 +57,7 @@
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/pool-devices.ts",
+    "supabase/functions/_shared/rules-hot-water-selection.ts",
     "supabase/functions/_shared/rules-planner.ts",
     "supabase/functions/_shared/time-zone-formatter.ts"
   ]

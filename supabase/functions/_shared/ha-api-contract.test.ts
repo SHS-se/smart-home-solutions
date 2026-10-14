@@ -281,11 +281,12 @@ Deno.test("hot-water demand consumer fixture matches the real planner and its el
   const stored = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-8-hot-water-demand-plan.json", import.meta.url)));
   assertEquals(stored, hotWaterPlanFixture());
   const slots = stored.plan.plans.priority.slots;
-  assert(slots.slice(0, 8).every(s => !s.boiler_permitted && s.boiler_expected_w === 0));
-  assert(slots.slice(8).every(s => s.boiler_permitted));
+  assert(slots.slice(0, 12).every(s => !s.boiler_permitted && s.boiler_expected_w === 0));
+  assert(slots.slice(12).every(s => s.boiler_permitted));
   for (const slot of slots) {
-    assertEquals(slot.device_commands.water.type, "house_demand_permission");
-    assertEquals(slot.device_commands.water.expected_permitted, slot.boiler_permitted);
+    const command = slot.device_commands.water;
+    if (command.type === "house_demand_permission") assertEquals(command.expected_permitted, slot.boiler_permitted);
+    else assertEquals(command, { type: "permit_inhibit", permitted: false });
     assertEquals(slot.load_w, slot.base_w + slot.boiler_expected_w);
     assertEquals(slot.device_loads_w.water, slot.boiler_expected_w);
     assertEquals(slot.grid_import_w, slot.load_w);

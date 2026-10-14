@@ -228,9 +228,9 @@ export function mixedModePlanFixture() {
     plan: rulesFixturePlan(snapshot)};
 }
 
-export function hotWaterPlanFixture() {
+export function hotWaterSnapshot(): OptimisationSnapshotV8 {
   const original = dispatchedEvSnapshot();
-  const slots = original.slots.slice(0, 16).map((slot, i) => ({ ...slot, pv_forecast_w: 0, base_load_forecast_w: i < 8 ? 4500 : 500 }));
+  const slots = original.slots.slice(0, 16).map((slot, i) => ({ ...slot, pv_forecast_w: 0, base_load_forecast_w: i < 8 ? 4500 : 500, import_price_sek_per_kwh: i < 12 ? 3 : .2 }));
   const snapshot: OptimisationSnapshotV8 = { ...original, schema_version: 8, slots,
     capabilities: { ...original.capabilities, ev: false, boiler: true }, ev_battery: null,
     device_models: [{ key: "water", statistic_id: "sensor.water_energy", name: "Final water heater", category: "hot_water",
@@ -240,8 +240,13 @@ export function hotWaterPlanFixture() {
       deadline: new Date(Date.parse(slots.at(-1)!.start) + SLOT_MS).toISOString(), priority: 1, required_kwh: 2,
       control: { type: "duty_cycle", rated_power_w: 2000, expected_power_w_by_slot: slots.map(() => 500) } }],
   };
+  return snapshot;
+}
+
+export function hotWaterPlanFixture() {
+  const snapshot = hotWaterSnapshot();
   return { contract_fixture: "schema-8-hot-water-demand", generated_by: "generateRulesPlan",
-    validation_time: slots[0].start, plan: rulesFixturePlan(snapshot) };
+    validation_time: snapshot.slots[0].start, plan: rulesFixturePlan(snapshot) };
 }
 
 if (import.meta.main) {

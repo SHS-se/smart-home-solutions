@@ -333,3 +333,69 @@ Deno.test("a clipped retained grid purchase releases the hour and materializes e
     }
   }
 });
+
+function waterSnapshot(): OptimisationSnapshot {
+  const s = snapshot();
+  s.capabilities.ev = false;
+  s.ev_battery = null;
+  s.capabilities.boiler = true;
+  s.comfort = null;
+  s.slots = s.slots.map((slot, i) => ({ ...slot, base_load_forecast_w: 500,
+    import_price_sek_per_kwh: i < 4 ? 3 : .2, export_price_sek_per_kwh: i < 4 ? 2 : .1 }));
+  s.services = [{ id: "water", device: "boiler", priority: 1, required_kwh: 1,
+    earliest_start: s.slots[0].start, deadline: new Date(Date.parse(s.slots.at(-1)!.start) + 900000).toISOString(),
+    control: { type: "duty_cycle", rated_power_w: 2000, expected_power_w_by_slot: s.slots.map(() => 500) } }];
+  s.device_models = [{ key: "water", name: "Water", statistic_id: "water", category: "hot_water",
+    load_type: "duty_cycle", suggested_load_type: "duty_cycle", planning_role: "controllable",
+    control_type: "permit_inhibit", active_power_w: 2000, profile_sample_count: 100,
+    forecast_w_by_slot: s.slots.map(() => 500) }];
+  return s;
+}
+
+Deno.test("hot water price timing preserves electrical work and keeps the measured-load policy", () => {
+  const s = waterSnapshot();
+  const input = prepare(s);
+  const before = JSON.stringify(input);
+  const plan = generateRulesPlan(input).plan.plans.priority;
+  assertEquals(plan.slots.slice(0, 4).map(s => s.boiler_expected_w), [0, 0, 0, 0]);
+  assert(plan.slots.slice(0, 4).every(s => s.device_commands!.water.type === "permit_inhibit" && !s.device_commands!.water.permitted));
+  assert(plan.slots.slice(4).every(s => s.device_commands!.water.type === "house_demand_permission"));
+  assertAlmostEquals(plan.slots.reduce((sum, s) => sum + s.boiler_expected_w / 4000, 0), 1);
+  assertAlmostEquals(plan.summary.duty_cycle_deferred_kwh!, 0);
+  assert(plan.summary.net_cost_sek! < 3.2);
+  assertEquals(JSON.stringify(input), before);
+  const previous = { plan_id: "water-prior", slots: plan.slots };
+  s.slots = s.slots.map(slot => ({ ...slot, import_price_sek_per_kwh: .1 }));
+  const next = generateRulesPlan(prepare(s, previous)).plan.plans.priority;
+  for (let i = 0; i < 4; i++) {
+    assertEquals(next.slots[i].device_commands, plan.slots[i].device_commands);
+    assertEquals(next.slots[i].boiler_expected_w, plan.slots[i].boiler_expected_w);
+  }
+});
+
+Deno.test("hot-water policy uses selected pool and EV loads rather than their historical forecasts", () => {
+  const s = waterSnapshot();
+  s.capabilities.pool = true;
+  s.outdoor_temperature_c = s.slots.map(() => 5);
+  s.pool = { water_temperature_c: 32, volume_m3: 50, heating_running: false };
+  s.comfort = { pool: { target_c: 29 }, ev: { target_km: 50 } };
+  s.pool_model = { loss_kw_per_k: 0, rated_cop: 4, cop_per_air_c: null,
+    heater_response: { kind: "steady" }, hardware: { start_c: 28, stop_c: 34, control: "external_enable",
+      source_entity_ids: { start: "number.start", stop: "number.stop" } }, response: [] };
+  s.capabilities.ev = true;
+  s.ev_battery = snapshot().ev_battery;
+  s.ev_battery!.soc = .95;
+  s.services.push(...snapshot().services);
+  for (const [key, category, watts, role] of [["heater", "pool_heating", 3000, "heater"],
+    ["pump", "pool_heating", 700, "circulation"], ["car", "ev_charging", 11040, null]] as const) {
+    s.device_models.push({ key, name: key, statistic_id: key, category,
+      ...(role ? { planning_service: "pool", pool_role: role } : {}),
+      suggested_load_type: "fixed_full_load", load_type: "fixed_full_load", control_type: role ? "switch_schedule" : "variable_power",
+      planning_role: "controllable", active_power_w: watts, profile_sample_count: 100, forecast_w_by_slot: s.slots.map(() => watts) });
+  }
+  const withHistory = generateRulesPlan(prepare(s)).plan.plans.priority;
+  assert(withHistory.slots.every(s => s.pool_w === 0 && s.ev_w === 0));
+  s.device_models = s.device_models.map(m => m.key === "water" ? m : { ...m, forecast_w_by_slot: s.slots.map(() => 0) });
+  const withoutHistory = generateRulesPlan(prepare(s)).plan.plans.priority;
+  assertEquals(withHistory.slots, withoutHistory.slots);
+});

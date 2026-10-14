@@ -64,3 +64,33 @@ Deno.test("hot-water preparation names missing or non-finite committed power bef
     }
   }
 });
+
+Deno.test("economic inhibition queues causal work and derives thresholds from eligible quarters", () => {
+  const input = example([500, 500, 500, 500, 500, 500, 500, 500]);
+  const water = planHotWaterDemand({ ...input, eligible: [false, false, false, false, true, true, true, true] });
+  assertEquals(water.expected_w, [0, 0, 0, 0, 2000, 1000, 500, 500]);
+  assertAlmostEquals(water.policies[4]!.allow_below_w, 1500);
+  assertEquals(water.deferred_kwh, 0);
+  const allOff = planHotWaterDemand({ ...input, eligible: input.slots.map(() => false) });
+  assertEquals(allOff.expected_w, input.slots.map(() => 0));
+  assertAlmostEquals(allOff.deferred_kwh, 1);
+});
+
+Deno.test("chosen battery charging shifts the site-load level and translates to the gross-house meter", () => {
+  const input = example([500, 500, 500, 500, 500, 500, 500, 500]);
+  const plan = planHotWaterDemand({ ...input, battery_offset_w: [4000, 4000, 4000, 4000, 0, 0, 0, 0] });
+  assertEquals(plan.permitted, [false, false, false, false, true, true, true, true]);
+  assertEquals(plan.expected_w, [0, 0, 0, 0, 2000, 1000, 500, 500]);
+  assertEquals(plan.policies[0], null);
+  assertEquals(plan.eligible.slice(0, 4), [false, false, false, false]);
+  assertAlmostEquals(plan.policies[4]!.allow_below_w, 1500);
+  assertAlmostEquals(plan.policies[4]!.inhibit_above_w, 3500);
+});
+
+Deno.test("a negative translated admission level inhibits even a zero-watt house", () => {
+  const input = example(Array(8).fill(0));
+  const plan = planHotWaterDemand({ ...input, battery_offset_w: [4000, 4000, 4000, 4000, 0, 0, 0, 0] });
+  assertEquals(plan.permitted, [false, false, false, false, true, true, true, true]);
+  assertEquals(plan.eligible, plan.permitted);
+  assertEquals(plan.expected_w, [0, 0, 0, 0, 2000, 1000, 500, 500]);
+});

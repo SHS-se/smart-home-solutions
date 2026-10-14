@@ -11,7 +11,7 @@ choice. This supersedes maximum-inhibition requirements in earlier documents.
 ```ts
 const water = planHotWaterDemand({ services, slots, hours,
   other_house_w: householdForecastWithoutControlledWater, locked });
-// Before native selection, count water.expected_w once in ReadySlot.base_w.
+// Candidate projections count water.expected_w once in ReadySlot.base_w.
 const command = { type: "house_demand_permission",
   expected_permitted: water.permitted[i], ...water.policies[i] };
 ```
@@ -44,15 +44,15 @@ rules. Explicit modes and overrides retain their authority. The thermostat
 determines actual heating while permitted.
 
 `planner/hot-water-demand.ts` prepares policy and empirical electrical demand
-together before Rust/Wasm selection. Deferred energy is forecast into later
+together for complete native candidate projections. Deferred energy is forecast into later
 permitted quarters of its original service window using available running-power
 headroom. Outstanding energy is visible in `duty_cycle_deferred_kwh`. Locked
 next-hour expected power and permissions stay exact, and locked commands retain
 their complete policy. A locked policy still responds to measurements.
 
-The native ABI is unchanged. The new closed command discriminator makes authority
-explicit; unsupported readers reject it. There is no translation into a static
-boolean. Update the integration/app before publishing these commands. The new
+The native ABI is unchanged. Eligible quarters use the closed demand-policy
+command discriminator; unsupported readers reject it. Price pauses use the
+existing explicit `permit_inhibit: false` command. Update the integration/app before publishing these commands. The new
 generated hot-water fixture is tested against both the real producer and HA
 consumer; existing generated fixtures remain exact.
 
@@ -72,11 +72,12 @@ quarter latch, presumed rating subtraction and deferred-energy ledger. Those add
 decision conditions or accounting claims beyond the requested control. The
 subsequent explicit user decision removes maximum-pause protection.
 
-We accept thresholds derived from device forecasts before native pool/EV
-selection in exchange for a small executable policy. Native choices and
-unforecast appliances can change actual permission; the hot-water trajectory is
-conditional, not proof of delivery. Joint thermal optimisation would require
-additional physical evidence, not post-processing the solved battery trajectory.
+The subsequent [price-selection design](hot-water-price-selection-2026-10.md)
+supersedes thresholds from historical controlled-device forecasts. Complete
+candidate projections use chosen pool, EV and home-battery flows. Battery power
+enters the site-load level and is translated out of the published gross-house
+thresholds. Unforecast appliances can change actual permission; the electrical
+trajectory remains conditional, not proof of usable hot water.
 
 The declared running draw must describe the controlled equipment. A shared Nibe
 meter is never subtracted as presumed hot-water power. This does not establish
