@@ -1,12 +1,8 @@
 import type { DutyCycleServiceInput, PlannedSlot, ForecastSlotInput } from "./energy-optimisation.ts";
+import { hotWaterPermission, type HotWaterDemandPolicy } from "./device-models.ts";
 
-/** Gross household watts, including the heater and excluding battery charging.
- * These are operating thresholds, never admissibility bounds on measurements.
- */
-export interface HotWaterDemandPolicy {
-  allow_below_w: number;
-  inhibit_above_w: number;
-}
+// The gate is the water heater's own behaviour, so the bench's referee steps it too.
+export { hotWaterPermission, type HotWaterDemandPolicy };
 type Commitment = Pick<PlannedSlot, "boiler_permitted" | "boiler_expected_w">;
 
 /** The load level that could absorb the window's expected water energy in its
@@ -23,14 +19,6 @@ function fillingLevel(loads: number[], hours: number[], rated: number, energyWh:
     else high = level;
   }
   return high;
-}
-
-export function hotWaterPermission(policy: HotWaterDemandPolicy, houseW: number, previous: boolean): boolean {
-  if (houseW <= policy.allow_below_w) return true;
-  // Strict at the upper boundary: allowing a rated draw at the lower boundary
-  // must not immediately inhibit the very draw just permitted.
-  if (houseW > policy.inhibit_above_w) return false;
-  return previous;
 }
 
 /** Prepare permission and its empirical load forecast together from selected

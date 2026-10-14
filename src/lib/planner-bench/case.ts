@@ -90,7 +90,14 @@ export interface BenchRecorded {
    * forecasts. Absent on a window the home did not measure in full, which is
    * then refereed on the forecasts.
    */
-  actual?: { base_load_w: Series; solar_w: Series };
+  actual?: {
+    base_load_w: Series; solar_w: Series;
+    /**
+     * Devices measured inside `base_load_w`, as the case's `other_devices_w` are
+     * forecast inside its base load. Absent on a case recorded before they were kept.
+     */
+    other_devices_w?: Record<string, Series>;
+  };
   /** Measured at the house; given to planners as a perfect forecast. */
   outdoor_temperature_c: Series;
   solar_irradiance_w_per_m2: (number | null)[];
@@ -181,6 +188,11 @@ export function parseRecorded(raw: unknown): BenchRecorded {
     if (!isRecord(recorded.actual)) throw new CaseFormatError('recorded.actual is malformed.');
     series(recorded.actual.base_load_w, 'recorded.actual.base_load_w');
     series(recorded.actual.solar_w, 'recorded.actual.solar_w');
+    const others = recorded.actual.other_devices_w;
+    if (others !== undefined) {
+      if (!isRecord(others)) throw new CaseFormatError('recorded.actual.other_devices_w is malformed.');
+      for (const [key, values] of Object.entries(others)) series(values, `recorded.actual.other_devices_w.${key}`);
+    }
   }
   const demand = recorded.history.demand_days;
   if (demand !== undefined && (!Array.isArray(demand)

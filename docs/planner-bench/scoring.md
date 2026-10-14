@@ -24,7 +24,7 @@ conversion are defined in `planner-wasm/end-credit.ts`. Above-target inventory
 earns no extra credit. Scores compare planners on the same case; case scores
 add into a run score.
 
-## Five comfort checks
+## Six comfort checks
 
 | Check | Default threshold | Deduction per quarter | Automatic case failure |
 |---|---|---|---|
@@ -33,6 +33,7 @@ add into a run score.
 | Pool overheated | Target +2 °C | −1 | No |
 | Car short of range | More than 50 km short | −1 | No |
 | Car far short of range | More than 100 km short | −1 | Yes |
+| Hot water ran cold | Tank owed more than 3 kWh | −1 | No |
 
 The two shortfall tiers stack. A level starts counting only when full power
 from the initial state could have reached it, followed by 24 hours to choose
@@ -40,6 +41,16 @@ when to supply it. A level already met at the start counts immediately.
 Pool overheating counts heating after the threshold has already been reached,
 or warmth above it when the next full day is neither over 10% dearer nor over
 10% less sunny. This cleanup preserves those service semantics.
+
+Hot water ran cold is the referee's own check (`REFEREE_RULE_DEFAULTS` in
+`rule-policy.ts`): no planner is given it, because production plans the water
+heater around the kernel rather than in it. Heating a plan held off is owed to
+the tank and made up at the heater's rated power once it may run again; past
+the threshold the taps are taken to run cold. The threshold stands in for the
+tank's slack (about 150 litres 17 °C under its set point) and is an estimate.
+Whatever is still owed at the end of the window is added to the bill at the
+end credit's reference price (`bill.hot_water`). The check applies only to cases
+whose hot water was measured.
 
 Thresholds, nonzero points and enabled state remain configurable. A required
 check firing fails the automatic case verdict; the planner still ranks its

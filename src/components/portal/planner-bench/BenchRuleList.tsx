@@ -203,6 +203,19 @@ export default function BenchRuleList({
   };
 
   const comfortDetail = (rule: ResolvedRule) => {
+    if (rule.about === 'water') return <>
+      <p>
+        {t(`Tanken ligger mer än ${rule.threshold} kWh efter: uppvärmning som planen höll tillbaka och ännu inte tagit igen.`,
+          `The tank is more than ${rule.threshold} kWh behind: heating the plan held off and has not yet made up.`)}
+        {' '}{t('Det som fortfarande saknas vid periodens slut läggs på elräkningen till referenspriset.', 'What is still owed at the end of the window is added to the bill at the reference price.')}
+        {' '}{t('Gäller bara fall där varmvattnet är uppmätt. Ingen planerare får regeln: domaren bedömer den.', 'Applies only to cases with measured hot water. No planner is given this rule: the referee judges it.')}
+      </p>
+      {sides.map(s => {
+        const application = s.score?.applicability[rule.key];
+        return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
+      })}
+      {settings(rule, t('Gräns (kWh)', 'Limit (kWh)'), '0.5')}
+    </>;
     const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;
     const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;

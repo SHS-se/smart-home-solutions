@@ -48,6 +48,8 @@ export interface HourlyHistory {
     solar_kwh: number[];
     /** Meters of what the bench household plans itself (pool, car): taken out of the load. */
     planned_devices_kwh: Record<string, number[]>;
+    /** Meters that stay in the base load and are kept apart as well (the water heater). */
+    folded_devices_kwh?: Record<string, number[]>;
     outdoor_temperature_c: number[];
   };
   start_state: CaseStartState;
@@ -83,7 +85,7 @@ export function spread(hourly: number[], nonNegative: boolean): number[] {
 }
 
 /** Energy per hour as power per quarter in whole watts, each hour's quarters adding up to exactly its energy. */
-function wattQuarters(hourlyKwh: number[]): Series {
+export function wattQuarters(hourlyKwh: number[]): Series {
   const hourlyW = hourlyKwh.map(kwh => Math.round(Math.max(0, kwh) * 1_000));
   const smooth = spread(hourlyW, true);
   return hourlyW.flatMap((mean, hour) => {
@@ -112,6 +114,10 @@ export function caseFromHourlyHistory(
   const load = hours(history.hourly.load_kwh, 'load_kwh'), solar = hours(history.hourly.solar_kwh, 'solar_kwh');
   const temperature = hours(history.hourly.outdoor_temperature_c, 'outdoor_temperature_c');
   const planned = Object.entries(history.hourly.planned_devices_kwh).map(([key, values]) => hours(values, `planned_devices_kwh.${key}`));
+  if (history.hourly.folded_devices_kwh !== undefined && !isRecord(history.hourly.folded_devices_kwh)) throw new HistoryFormatError('folded_devices_kwh is malformed.');
+  // Measured is what a planner is told, for these as for the load around them.
+  const folded = Object.fromEntries(Object.entries(history.hourly.folded_devices_kwh ?? {})
+    .map(([key, values]) => [key, wattQuarters(hours(values, `folded_devices_kwh.${key}`))]));
 
   const base = load.map((kwh, i) => kwh - planned.reduce((sum, device) => sum + device[i], 0));
   const miscounted = base.filter(kwh => kwh < -MISCOUNTED_KWH).length;
@@ -141,13 +147,13 @@ export function caseFromHourlyHistory(
     known_prices: { import_sek_per_kwh: known(buy), export_sek_per_kwh: known(sell) },
     solar_forecast_w: solarW,
     base_load_forecast_w: baseLoad,
-    other_devices_w: {},
+    other_devices_w: folded,
     start_state: history.start_state,
     comfort: null,
   };
   const recorded: BenchRecorded = {
     prices: { import_sek_per_kwh: buy as number[], export_sek_per_kwh: sell as number[] },
-    actual: { base_load_w: baseLoad, solar_w: solarW },
+    actual: { base_load_w: baseLoad, solar_w: solarW, ...(Object.keys(folded).length ? { other_devices_w: folded } : {}) },
     outdoor_temperature_c: spread(temperature, false).map(c => Math.round(c * 100) / 100),
     solar_irradiance_w_per_m2: new Array(QUARTERS).fill(null),
     ...(wind ? { wind } : {}),

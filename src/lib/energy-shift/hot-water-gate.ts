@@ -25,6 +25,23 @@ export interface HotWaterQuarter {
   allowBelowW: number | null;
   /** A running heater is stopped once the house draws more than this. */
   inhibitAboveW: number | null;
+  /** Heating the tank is owed at the end of the quarter, kWh; known only where a referee carried the plan out. */
+  owedKwh?: number;
+}
+
+/**
+ * A quarter as the planner bench's referee carried it out: what the plan told
+ * the heater, and whether the gate let it run on the house's simulated draw.
+ */
+export function refereedHotWaterQuarter(water: {
+  command: readonly ('free' | 'inhibit' | 'gate')[]; permitted: readonly number[];
+  allowBelowW: readonly (number | null)[]; inhibitAboveW: readonly (number | null)[]; owedKwh: readonly number[];
+}, i: number, expectedW: number): HotWaterQuarter {
+  const command = water.command[i];
+  return {
+    state: command === 'free' ? 'uncontrolled' : command === 'inhibit' ? 'blocked' : water.permitted[i] ? 'allowed' : 'load_gate',
+    expectedW, allowBelowW: water.allowBelowW[i], inhibitAboveW: water.inhibitAboveW[i], owedKwh: water.owedKwh[i],
+  };
 }
 
 export function hotWaterQuarter(

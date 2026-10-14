@@ -4,12 +4,12 @@ import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type 
 import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { canonicalJson } from './case';
-import { criteriaErrors, CriteriaError, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
+import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 32;
+export const SCORER_VERSION = 33;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -32,7 +32,7 @@ export interface QuarterRule {
   /** Signed comfort deduction in kronor. */
   points: number;
   /** What the rule measures, for explaining it; nothing in the scoring depends on it. */
-  about: 'pool' | 'car';
+  about: 'pool' | 'car' | 'water';
   /** A case in which this rule fires anywhere is shown as failed. */
   required?: boolean;
   fires: (q: QuarterView, threshold: number) => boolean;
@@ -80,6 +80,11 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
   },
   {
     key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
+  },
+  // Heating held off is owed to the tank; past this much the taps run cold. Scored by the referee only (rule-policy.ts).
+  {
+    key: 'water_cold', about: 'water', label: 'Hot water ran cold', describe: t => `the tank owed more than ${t} kWh of heating`,
+    fires: (q, t) => (q.s.hotWater?.owedKwh[q.i] ?? 0) > t, eligibleFrom: s => s.hotWater ? 0 : Infinity,
   },
 ];
 
@@ -213,6 +218,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
     const reason = !rule.enabled ? 'Switched off for this case.'
+      : rule.about === 'water' && !s.hotWater ? 'The case has no measured hot water.'
       : !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;
@@ -262,8 +268,9 @@ export const plannerInputsFingerprint = (rules: readonly {
   rules: rules.map(r => ({ key: r.key, threshold: r.threshold, points: r.points,
     required: r.required ?? false })), service_guard: guard,
 });
+/** The rules a planner is given: the referee's own (rule-policy.ts) never reach it. */
 export const plannerRulesFingerprint = (overrides: CriteriaOverrides = {}) =>
-  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled), serviceGuard(overrides));
+  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled && !(r.key in REFEREE_RULE_DEFAULTS)), serviceGuard(overrides));
 
 /** Full supplied inputs: historical planners may consume rules today's scorer removed. */
 export const plannerCriteriaFingerprint = (overrides: CriteriaOverrides = {}) => canonicalJson(overrides);

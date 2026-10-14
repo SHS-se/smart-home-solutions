@@ -28,6 +28,21 @@ export interface BenchSeries {
   /** Device-model command starts; absent on stale pre-transition evaluations. */
   poolStart?: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
   hotWaterW: number[];
+  /**
+   * The water heater as carried out, where the case measures one; absent
+   * otherwise, and on results from before it was modelled.
+   */
+  hotWater?: {
+    /** Heating the tank is owed at the end of each quarter, kWh. */
+    owedKwh: number[];
+    /** 1 where the heater was allowed to run. */
+    permitted: number[];
+    /** What the plan told the heater (referee.ts HotWaterCommand). */
+    command: ('free' | 'inhibit' | 'gate')[];
+    /** A gate's levels, house draw in W; null without a gate. */
+    allowBelowW: (number | null)[];
+    inhibitAboveW: (number | null)[];
+  };
   carW: number[];
   gridImportW: number[];
   gridExportW: number[];
@@ -79,7 +94,9 @@ export interface Bill {
   wear_sek: number;
   /** Energy left in the stores beyond the start, each store up to its target (end-credit.ts). */
   credit: import('../../../supabase/functions/_shared/planner-wasm/end-credit').EndCredit;
-  /** grid_sek + wear_sek − credit.credit_sek. */
+  /** Heating the water tank is still owed at the end, bought at the credit's reference price. Absent without a modelled heater. */
+  hot_water?: { owed_kwh: number; owed_sek: number };
+  /** grid_sek + wear_sek − credit.credit_sek + hot_water.owed_sek. */
   net_sek: number;
 }
 

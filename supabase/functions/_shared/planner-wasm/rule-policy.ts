@@ -12,19 +12,28 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
   ev_low: { threshold: 50, points: -1 },
   ev_short: { threshold: 100, points: -1, required: true },
 };
+/**
+ * Rules only the bench's referee scores. No planner is given them: the kernel
+ * has no model of what they measure (the water tank is planned around it), so
+ * a saved override for one never reaches a plan.
+ */
+export const REFEREE_RULE_DEFAULTS: Record<"water_cold", RuleDefault> = {
+  // kWh of heating the water tank is owed: about 150 litres 17 °C under its set point.
+  water_cold: { threshold: 3, points: -1 },
+};
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
 export class CriteriaError extends Error {}
 
 export function ruleDefaults(key: string): RuleDefault {
-  const value = Object.entries(RULE_DEFAULTS).find(([candidate]) => candidate === key)?.[1];
+  const value = [...Object.entries(RULE_DEFAULTS), ...Object.entries(REFEREE_RULE_DEFAULTS)].find(([candidate]) => candidate === key)?.[1];
   if (!value) throw new CriteriaError(`Unknown rule "${key}".`);
   return value;
 }
 export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
   const errors: string[] = [];
   for (const [key, o] of Object.entries(overrides ?? {})) {
-    if (!(key in RULE_DEFAULTS)) { errors.push(`Unknown rule "${key}".`); continue; }
+    if (!(key in RULE_DEFAULTS) && !(key in REFEREE_RULE_DEFAULTS)) { errors.push(`Unknown rule "${key}".`); continue; }
     if (typeof o !== "object" || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== "boolean") errors.push(`${key}: enabled must be true or false.`);
     if (o.threshold !== undefined && !(Number.isFinite(o.threshold) && o.threshold >= 0)) errors.push(`${key}: the threshold must be a number, 0 or more.`);

@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { loadPlanner } from "../bench/adapter.ts";
 import { plannerVersion, usesRulePlanner } from "../bench/planner-version.ts";
-import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
+import { hotWaterContext, loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import { diskTree, type SourceTree } from "../scripts/module-graph.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { BASE_LANE, laneParts, LANES, toldCase } from "../src/lib/planner-bench/lanes.ts";
@@ -207,4 +207,26 @@ Deno.test("real bench worker stores all rule-engine lanes and replans when saved
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("a case with a water heater forecast is planned with production's hot-water stage around the kernel", async () => {
+  const planner = await loadPlanner(root);
+  const c = causalCase();
+  const key = HOUSEHOLD.hot_water.key;
+  c.other_devices_w = { ...c.other_devices_w, [key]: c.base_load_forecast_w.map((w, i) => Math.min(w, i % 96 < 28 ? 0 : 300)) };
+  const context = hotWaterContext(c, HOUSEHOLD)!;
+  // One window per local day, as the home sends them, covering the case and nothing else.
+  assertEquals(Date.parse(context.input.services[0].earliest_start), Date.parse(c.start));
+  assertEquals(Date.parse(context.input.services.at(-1)!.deadline), Date.parse(c.start) + 288 * 900_000);
+  const required = context.input.services.reduce((sum, s) => sum + s.required_kwh, 0);
+  assertEquals(Math.round(required * 1000), Math.round(c.other_devices_w[key].reduce((a, b) => a + b, 0) / 4));
+  // The kernel is told the rest of the house plus the water it expects, never the water twice.
+  const problem = readyProblem(toldCase(c, BASE_LANE), HOUSEHOLD);
+  const i = 60;
+  assertEquals(problem.slots[i].base_w, context.input.other_house_w[i] + context.initial.expected_w[i]);
+  const { record } = planner.plan(toldCase(c, BASE_LANE), HOUSEHOLD);
+  assertEquals(record.decisions.hot_water?.length, 288);
+  assertEquals(record.decisions.hot_water_expected_w?.length, 288);
+  // Without a forecast the heater is not planned at all.
+  assertEquals(planner.plan(toldCase(causalCase(), BASE_LANE), HOUSEHOLD).record.decisions.hot_water, undefined);
 });

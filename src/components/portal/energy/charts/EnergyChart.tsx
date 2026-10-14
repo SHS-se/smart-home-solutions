@@ -1138,6 +1138,9 @@ const HotWaterReading: React.FC<{ quarter: HotWaterQuarter }> = ({ quarter }) =>
   return (
     <div className="mt-1 border-t pt-1">
       <Reading name={t('Varmvatten', 'Hot water')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
+      {quarter.owedKwh !== undefined && quarter.owedKwh > 0.005 && (
+        <Reading name={t('Tanken ligger efter', 'Tank behind by')} value={`${quarter.owedKwh.toFixed(2)} kWh`} />
+      )}
       {quarter.allowBelowW !== null && quarter.inhibitAboveW !== null && (
         <p className="text-muted-foreground">{t(
           `Får starta under ${(quarter.allowBelowW / 1_000).toFixed(1)} kW, stoppas över ${(quarter.inhibitAboveW / 1_000).toFixed(1)} kW`,

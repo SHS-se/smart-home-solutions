@@ -193,9 +193,20 @@ quarter when it is unset, as for history. Missing saved preferences fail the run
 `--shas none` only rescores existing decisions using the case’s captured targets;
 it does not load new preferences or replan.
 
-Hot water and room heaters are not planned yet; they are fixed demand inside
-base load. Taking one over later means adding it to the household and taking
-its series out of base load, which `other_devices_w` keeps possible.
+Room heaters are not planned yet; they are fixed demand inside base load.
+
+Hot water is planned where a case carries the heater's forecast
+(`other_devices_w["sensor.hot_water_energy"]`, inside base load) and the planner
+can plan it. A rules-kernel planner from this change on is handed one water
+window per local day, as the home sends them, and runs production's own water
+stage around the kernel (`hotWaterContext` and `refineHotWater` in
+`bench/wasm-planner.ts`); its plan says, per quarter, whether the heater is
+inhibited, gated on the house's draw, or left alone. Older planners leave the
+heater running as the house ran it, which scores exactly as before. The referee
+takes the measured heater (`recorded.actual.other_devices_w`) out of base load
+and gates it on the house's simulated draw, owing the tank what it may not heat.
+Cases from August 2026 take it from the quarter tables; older ones from Home
+Assistant's hourly statistics, spread over quarters as the rest of their load.
 
 ## Value curves
 

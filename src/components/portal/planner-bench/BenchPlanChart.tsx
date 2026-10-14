@@ -18,7 +18,9 @@
 
 import React, { useMemo } from 'react';
 import EnergyChart, { type EnergyCostLine, type EnergyStoreLines, type EnergyQuarterAudit } from '@/components/portal/energy/charts/EnergyChart';
-import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
+import { projectPlanChart, type ChartHotWater } from '@/lib/energy-shift/plan-chart-data';
+import { refereedHotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
+import { PLAN_COLOURS } from '@/components/portal/energy/charts/palette';
 import { modelChartData } from '@/lib/energy-shift/model-chart-data';
 import { useLanguage } from '@/contexts/LanguageContext';
 import type { BenchSeries } from '@/lib/planner-bench/types';
@@ -55,8 +57,14 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
 
   const chart = useMemo(() => {
     const data = modelChartData(series);
-    return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices });
-  }, [series, timeZone, range.from, range.to]);
+    // The water heater as the referee carried the plan out, drawn as the live plan draws it.
+    const water = series.hotWater;
+    const hotWater: ChartHotWater | undefined = water && {
+      name: t('Varmvatten', 'Hot water'), colour: PLAN_COLOURS.water, keys: [],
+      byStart: new Map(series.start.map((start, i) => [Date.parse(start), refereedHotWaterQuarter(water, i, series.hotWaterW[i])])),
+    };
+    return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices, hotWater });
+  }, [series, timeZone, range.from, range.to, t]);
   const { rows, consumption } = chart;
 
   const { current, test } = compared;

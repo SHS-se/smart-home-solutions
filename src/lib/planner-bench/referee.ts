@@ -37,14 +37,14 @@ import { proportionalSupply } from '../../../supabase/functions/_shared/battery-
 
 import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
 import {
-  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
+  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, hotWaterPermission, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 17;
+export const REFEREE_VERSION = 18;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -63,7 +63,30 @@ export interface Decisions {
    * the audit tries) is read from the decision instead.
    */
   battery_follow?: BatteryFollow[];
+  /**
+   * What the plan tells the water heater in each quarter. Absent on a planner
+   * that does not plan hot water, whose heater then runs as the house drew it.
+   */
+  hot_water?: HotWaterCommand[];
+  /**
+   * The water heating the planner expected under those commands, W. Whether a
+   * plan asks for the impossible is judged against what the planner was told,
+   * and the heater's timing is part of that: in the told world the heater runs
+   * as expected, not as the gate would decide on loads the planner never saw.
+   */
+  hot_water_expected_w?: number[];
 }
+
+/**
+ * No instruction, an outright inhibit, or a gate the house applies to its own
+ * measured draw (battery charging excluded): the heater may start below the
+ * one level and is stopped above the other.
+ */
+export type HotWaterCommand =
+  | { kind: 'free' }
+  | { kind: 'inhibit' }
+  | { kind: 'gate'; allow_below_w: number; inhibit_above_w: number };
+const FREE: HotWaterCommand = { kind: 'free' };
 
 export interface BatteryFollow {
   /** False for a quarter at fixed power: a grid charge, a sale to the grid, or switched off. */
@@ -99,6 +122,10 @@ export interface Outcome {
 export interface Simulation {
   poolStart: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
   poolW: Float64Array; compressorW: Float64Array; pumpW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array;
+  /** The fixed load as carried out: base load with the water heater as it ran. */
+  baseW: Float64Array;
+  /** The water heater, where the case has one; null otherwise. */
+  water: { w: Float64Array; owedKwh: Float64Array; permitted: Uint8Array } | null;
   /** Grid power: import positive, export negative. */
   netW: Float64Array;
   batteryKwh: Float64Array; poolC: Float64Array; evKwh: Float64Array;
@@ -133,6 +160,16 @@ export function householdSeries(c: BenchCase, world: World = 'recorded'): { base
 }
 
 /**
+ * What the house drew from its water heater inside the base load, in the same
+ * world; null where the case does not say, and the heater then stays part of
+ * the fixed load. A measured window needs the heater measured too.
+ */
+export function hotWaterNeed(c: BenchCase, h: Household, world: World = 'recorded'): Series | null {
+  const actual = world === 'recorded' ? c.recorded.actual : undefined;
+  return (actual ? actual.other_devices_w?.[h.hot_water.key] : c.other_devices_w[h.hot_water.key]) ?? null;
+}
+
+/**
  * The one physical simulation. The stored account of a plan and every
  * alternative the opportunity audit tries (opportunities.ts) step the
  * household here, so an alternative is held to the physics the plan was.
@@ -140,6 +177,12 @@ export function householdSeries(c: BenchCase, world: World = 'recorded'): { base
 export function simulate(c: BenchCase, h: Household, d: Decisions, world: World = 'recorded'): Simulation {
   const violations: Violation[] = [];
   const { baseW, solarW } = householdSeries(c, world);
+  // The water heater is taken out of the base load and heated as the plan
+  // permits. What it is not allowed to heat the tank is owed, and made up at
+  // up to its rated power once it is allowed again.
+  const needW = hotWaterNeed(c, h, world);
+  const ratedW = h.hot_water.rated_w;
+  let owedKwh = 0, waterPermitted = true;
   // Only a measured window differs from what the planner was told.
   const measured = world === 'recorded' && c.recorded.actual !== undefined;
   const clip = (quarter: number, kind: ViolationKind, wanted: number, allowed: number, report = true) => {
@@ -176,6 +219,8 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     poolStart: [],
     poolW: new Float64Array(QUARTERS), evW: new Float64Array(QUARTERS), chargeW: new Float64Array(QUARTERS), dischargeW: new Float64Array(QUARTERS),
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
+    baseW: new Float64Array(QUARTERS),
+    water: needW && { w: new Float64Array(QUARTERS), owedKwh: new Float64Array(QUARTERS), permitted: new Uint8Array(QUARTERS) },
     costSek: new Float64Array(QUARTERS), cost: 0, violations, start: { batteryKwh, poolC, evKwh },
   };
 
@@ -190,14 +235,38 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     out.poolStart.push(projected.start);
     let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
+    // The house gates the heater on what it measures, the heater's own draw included while it is allowed.
+    let fixedW = baseW[i];
+    if (needW && out.water) {
+      const command = d.hot_water?.[i] ?? FREE;
+      // A heater meter reading more than the house drew in all is a mismatch between meters: the house's own reading holds.
+      const need = Math.min(needW[i], Math.max(0, baseW[i]));
+      const otherW = baseW[i] - need;
+      waterPermitted = command.kind === 'free' ? true : command.kind === 'inhibit' ? false
+        : hotWaterPermission(command, otherW + poolW + evW + (waterPermitted ? ratedW : 0), waterPermitted);
+      let waterW = 0;
+      const expected = world === 'told' ? d.hot_water_expected_w?.[i] : undefined;
+      if (expected !== undefined) {
+        waterW = expected;
+        owedKwh = Math.max(0, owedKwh + (need - expected) * HOURS / 1_000);
+      } else if (waterPermitted) {
+        const catchUpW = Math.min(Math.max(0, ratedW - need), owedKwh * 1_000 / HOURS);
+        waterW = need + catchUpW;
+        owedKwh = Math.max(0, owedKwh - catchUpW * HOURS / 1_000);
+      } else {
+        owedKwh += need * HOURS / 1_000;
+      }
+      fixedW = otherW + waterW;
+      out.water.w[i] = waterW; out.water.owedKwh[i] = owedKwh; out.water.permitted[i] = waterPermitted ? 1 : 0;
+    }
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
     let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);
     if (measured) {
       const follow = followLimits(c, h, d, i, poolW, evW, chargeW, dischargeW);
       if (follow) {
-        const houseW = baseW[i] + poolW + evW - solarW[i];
+        const houseW = fixedW + poolW + evW - solarW[i];
         chargeW = Math.min(follow.charge_limit_w, h.battery.charge_max_w, Math.max(0, -houseW));
-        const grossW = baseW[i] + poolW + evW;
+        const grossW = fixedW + poolW + evW;
         const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
         dischargeW = Math.min(follow.discharge_limit_w, h.battery.discharge_max_w,
           proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW);
@@ -209,7 +278,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
 
     // All fixed and demand-following modes share the permission, including export.
     // If excluded demand remains on the bus, battery export cannot bypass it.
-    const grossW = baseW[i] + poolW + evW;
+    const grossW = fixedW + poolW + evW;
     const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
     const supplyW = proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW;
     if (Math.max(0, grossW - solarW[i]) > supplyW + 1e-6) {
@@ -220,14 +289,14 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     poolC = stepThermalStore(h.pool.store, poolC, projected.heat_w, air[i], HOURS);
     evKwh += evW * h.car.battery.charge_efficiency * HOURS / 1_000;
 
-    const netW = baseW[i] + poolW + evW + chargeW - dischargeW - solarW[i];
+    const netW = fixedW + poolW + evW + chargeW - dischargeW - solarW[i];
     if (!measured && netW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(netW - h.site.import_limit_w) });
     if (!measured && -netW - h.site.export_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(-netW - h.site.export_limit_w) });
     const quarterCost = (netW > 0 ? netW * buy[i] : netW * sell[i]) * HOURS / 1_000;
     out.cost += quarterCost;
 
     out.poolW[i] = poolW; out.evW[i] = evW; out.chargeW[i] = chargeW; out.dischargeW[i] = dischargeW;
-    out.netW[i] = netW; out.batteryKwh[i] = batteryKwh; out.poolC[i] = poolC; out.evKwh[i] = evKwh;
+    out.netW[i] = netW; out.batteryKwh[i] = batteryKwh; out.poolC[i] = poolC; out.evKwh[i] = evKwh; out.baseW[i] = fixedW;
     out.costSek[i] = quarterCost;
   }
   return out;
@@ -283,13 +352,17 @@ export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simula
     { battery_kwh: sim.start.batteryKwh, pool_c: sim.start.poolC, ev_kwh: sim.start.evKwh },
     { battery_kwh: sim.batteryKwh[last], pool_c: sim.poolC[last], ev_kwh: sim.evKwh[last] });
   const wear = wearOf(h, sim);
+  // Heating the tank is still owed at the end is bought later, at the window's reference price.
+  const owedKwh = sim.water?.owedKwh[last] ?? 0;
+  const water = sim.water ? { owed_kwh: r4(owedKwh), owed_sek: r4(owedKwh * credit.reference_sek_per_kwh) } : undefined;
   const round = (store: typeof credit.battery) => store && {
     start: r4(store.start), end: r4(store.end), cap: r4(store.cap), counted: r4(store.counted), grid_kwh: r4(store.grid_kwh), credit_sek: r4(store.credit_sek),
   };
   return {
     grid_sek: r4(sim.cost), wear_sek: r4(wear),
     credit: { reference_sek_per_kwh: r4(credit.reference_sek_per_kwh), battery: round(credit.battery), pool: round(credit.pool), ev: round(credit.ev), credit_sek: r4(credit.credit_sek) },
-    net_sek: r4(sim.cost + wear - credit.credit_sek),
+    ...(water ? { hot_water: water } : {}),
+    net_sek: r4(sim.cost + wear - credit.credit_sek + (water?.owed_sek ?? 0)),
   };
 }
 
@@ -329,7 +402,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   const sim = simulate(c, h, d);
   // What the household cannot do is judged on what the planner was told.
   const violations = c.recorded.actual ? simulate(c, h, d, 'told').violations : sim.violations;
-  const { baseW, solarW } = householdSeries(c);
+  const { solarW } = householdSeries(c);
   const reach = reachability(c, h);
 
   const series: BenchSeries = {
@@ -362,9 +435,9 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.exportPrice.push(r4(c.recorded.prices.export_sek_per_kwh[i]));
     series.believedImportPrice!.push(believedImportPrice && Number.isFinite(believedImportPrice[i]) ? r4(believedImportPrice[i]) : null);
     series.solarW.push(r1(solarW[i]));
-    series.loadW.push(r1(baseW[i] + sim.poolW[i] + sim.evW[i]));
+    series.loadW.push(r1(sim.baseW[i] + sim.poolW[i] + sim.evW[i]));
     series.poolW.push(r1(sim.poolW[i]));
-    series.hotWaterW.push(0);
+    series.hotWaterW.push(r1(sim.water?.w[i] ?? 0));
     series.carW.push(r1(sim.evW[i]));
     series.gridImportW.push(r1(Math.max(0, sim.netW[i])));
     series.gridExportW.push(r1(Math.max(0, -sim.netW[i])));
@@ -378,6 +451,15 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.poolC.push(Math.round(sim.poolC[i] * 1000) / 1000);
     series.costSek.push(r4(sim.costSek[i]));
     series.wearSek!.push(r4(sim.dischargeW[i] * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh));
+  }
+  if (sim.water) {
+    const commands = Array.from({ length: QUARTERS }, (_, i) => d.hot_water?.[i] ?? FREE);
+    series.hotWater = {
+      owedKwh: Array.from(sim.water.owedKwh, r4), permitted: Array.from(sim.water.permitted),
+      command: commands.map(command => command.kind),
+      allowBelowW: commands.map(command => command.kind === 'gate' ? r1(command.allow_below_w) : null),
+      inhibitAboveW: commands.map(command => command.kind === 'gate' ? r1(command.inhibit_above_w) : null),
+    };
   }
   series.bill = billOf(c, h, targets, sim);
 

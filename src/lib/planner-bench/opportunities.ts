@@ -43,7 +43,7 @@ import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, 
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 14;
+export const OPPORTUNITY_AUDIT_VERSION = 15;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -390,6 +390,7 @@ export function findOpportunities(
     pool_w: [...decisions.pool_w], ev_w: [...decisions.ev_w],
     battery_charge_w: [...decisions.battery_charge_w], battery_discharge_w: [...decisions.battery_discharge_w],
     ...(decisions.battery_follow ? { battery_follow: decisions.battery_follow } : {}),
+    ...(decisions.hot_water ? { hot_water: decisions.hot_water } : {}),
   }, original);
 
   const gridCost = (i: number, net: number) => (net > 0 ? net * buy[i] : net * sell[i]) * KWH;
@@ -508,6 +509,9 @@ export function findOpportunities(
     const warmer = sim.poolC[last] - original.poolC[last];
     if (warmer < -1e-9 || warmer > POOL_END_TOLERANCE_C) return null;
     if (!serviceNotWorse(plan.exposure, exposureOf(sim))) return null;
+    // Moving other loads moves the house's draw under the water heater's gate: never leave the tank further behind.
+    const owed = plan.sim.water?.owedKwh;
+    if (owed && sim.water?.owedKwh.some((kwh, i) => kwh > owed[i] + 1e-9)) return null;
     const grid = plan.sim.cost - sim.cost;
     const wear = wearOf(h, sim) - plan.wearSek;
     return grid - wear >= MIN_SAVING_SEK ? { grid, wear } : null;

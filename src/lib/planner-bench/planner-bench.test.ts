@@ -198,7 +198,9 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   const series = comfortSeries(() => 28.5, () => 300);
   assertThrows(() => scoreQuarters(series, { pool_low: { points: 3 } }), CriteriaError);
   assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
-  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short']);
+  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'water_cold']);
+  // The referee's own rule is overridden like any other, and never reaches a planner's policy.
+  assertEquals(criteriaErrors({ water_cold: { threshold: 2, points: -2 } }), []);
   assertEquals(criteriaErrors({ cheap_buy: { points: 1 } }), ['Unknown rule "cheap_buy".']);
   assertThrows(() => resolveRules({ ev_from_home_battery: { points: -1 } }), CriteriaError);
   assertEquals(criteriaFingerprint({ pool_low: { threshold: 2 }, ev_low: { points: -2 } }),

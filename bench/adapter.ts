@@ -318,7 +318,8 @@ export async function loadPlanner(root: string): Promise<LoadedPlanner> {
       generation: planner.version.startsWith("wasm-v8:") ? "ready-wasm-v8" : planner.version.startsWith("wasm-v7:") ? "ready-wasm-v7" : planner.version.startsWith("wasm-v6:") ? "ready-wasm-v6" : planner.version.startsWith("wasm-v5:") ? "ready-wasm-v5" : planner.version.startsWith("wasm-v4:") ? "ready-wasm-v4" : planner.version.startsWith("wasm-v3:") ? "ready-wasm-v3" : "ready-wasm-v2",
       plan(c, household, scale = 1, criteria = {}) {
         const p = candidate.readyProblem(c, household, criteria);
-        const result = planner.plan(p);
+        // Planners from before hot water was planned take no second argument and leave the heater as the house ran it.
+        const result = planner.plan(p, candidate.hotWaterContext?.(c, household) ?? null);
         return {
           record: {
             ...result.record,

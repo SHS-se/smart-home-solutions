@@ -30,6 +30,16 @@ export interface Household extends DeviceModels {
     /** State of charge the battery should not end the horizon below. */
     battery_terminal_soc_min: number;
   };
+  /**
+   * The water heater: a meter a case may carry a forecast and a measurement
+   * of. How far its tank may fall behind is a rule (water_cold, score.ts).
+   */
+  hot_water: {
+    /** The meter's key in a case's `other_devices_w`. */
+    key: string;
+    /** What the heater draws while it heats. */
+    rated_w: number;
+  };
 }
 
 export const HOUSEHOLD: Household = {
@@ -39,6 +49,8 @@ export const HOUSEHOLD: Household = {
     battery_export_enabled: true, battery_export_reserve_soc: 0.8, battery_export_min_price_sek_per_kwh: 2.5,
     battery_degradation_sek_per_kwh: 0.05, battery_terminal_soc_min: 0.2,
   },
+  // The home's water heater, at its measured running power.
+  hot_water: { key: 'sensor.hot_water_energy', rated_w: 1_274 },
   ...parseDeviceModels({
     battery: {
       capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1,

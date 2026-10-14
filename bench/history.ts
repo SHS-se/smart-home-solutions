@@ -10,6 +10,7 @@ import {
   QUARTERS, QUARTER_MS, quarterStarts,
   type BenchRecorded, type BenchScenarioData,
 } from "../src/lib/planner-bench/case.ts";
+import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 
 /** The live planner reads this much price history; a case stores what exists of it. */
 export const PRICE_HISTORY_DAYS = 60;
@@ -94,12 +95,13 @@ const MAX_MISCOUNTED_SHARE = 0.02;
  * gave, for every quarter of a case's window; null unless the home measured
  * all of it. The bench household plans the pool and the car itself, so their
  * measured energy is taken out; everything else is the base load a planner was
- * given a forecast of.
+ * given a forecast of. The water heater stays in it and is kept apart as well,
+ * where every quarter measured it, for the referee to take out.
  */
 export async function recordedActual(source: HistorySource, caseStart: string): Promise<NonNullable<BenchRecorded["actual"]> | null> {
   const start = Date.parse(caseStart);
   const rows = await quarterRows(source, "energy_optimisation_actual_slots",
-    "total_load_kwh,solar_production_kwh,pool_heating_kwh,ev_charging_kwh", start, start + QUARTERS * QUARTER_MS);
+    "total_load_kwh,solar_production_kwh,pool_heating_kwh,ev_charging_kwh,hot_water_kwh", start, start + QUARTERS * QUARTER_MS);
   const total = onto(rows, "total_load_kwh", start, QUARTERS), solar = onto(rows, "solar_production_kwh", start, QUARTERS);
   const pool = onto(rows, "pool_heating_kwh", start, QUARTERS), car = onto(rows, "ev_charging_kwh", start, QUARTERS);
   if (total.some(v => v === null) || solar.some(v => v === null)) return null;
@@ -107,7 +109,11 @@ export async function recordedActual(source: HistorySource, caseStart: string): 
   const base = total.map((kwh, i) => (kwh! - (pool[i] ?? 0) - (car[i] ?? 0)) * perHour);
   // Meters that disagree in more than the odd quarter do not describe the house.
   if (base.filter(w => w < -200).length > MAX_MISCOUNTED_SHARE * QUARTERS) return null;
-  return { base_load_w: base.map(w => Math.round(Math.max(0, w))), solar_w: solar.map(kwh => Math.round(Math.max(0, kwh! * perHour))) };
+  const water = onto(rows, "hot_water_kwh", start, QUARTERS);
+  return {
+    base_load_w: base.map(w => Math.round(Math.max(0, w))), solar_w: solar.map(kwh => Math.round(Math.max(0, kwh! * perHour))),
+    ...(water.every(v => v !== null) ? { other_devices_w: { [HOUSEHOLD.hot_water.key]: water.map(kwh => Math.round(kwh! * perHour)) } } : {}),
+  };
 }
 
 /** The home's matured days before a case's start: base load as forecast the day before, and as drawn. */

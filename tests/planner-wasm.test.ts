@@ -394,8 +394,9 @@ Deno.test("withheld future prices and actual household measurements cannot affec
 });
 
 Deno.test("every bench rule and economic family has an explicit planner mapping", () => {
+  // Every rule maps to the kernel, but the referee's own: the kernel never plans the water tank.
   assertEquals(
-    [...RULE_KEYS].sort(),
+    [...RULE_KEYS, "water_cold"].sort(),
     resolveRules({}).map((r) => r.key).sort(),
   );
   assertEquals(policy.direct_rules.toSorted(), [...RULE_KEYS].sort());
@@ -404,7 +405,7 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
   assertEquals(policy.economic_rules.toSorted(), OPPORTUNITY_RULES.map(r => r.key).sort());
   const criteria = { pool_low: { enabled: false }, pool_hot: { threshold: 3, points: -2 } };
   const p = readyProblem(causalCase(), HOUSEHOLD, criteria);
-  assertEquals(p.rules, resolveRules(criteria).filter(r => r.enabled).map(r => ({
+  assertEquals(p.rules, resolveRules(criteria).filter(r => r.enabled && r.key !== "water_cold").map(r => ({
     key: r.key, threshold: r.threshold, points: r.points, required: r.required ?? false,
   })));
   assertEquals(p.service_guard.pool, [1, 2]);
