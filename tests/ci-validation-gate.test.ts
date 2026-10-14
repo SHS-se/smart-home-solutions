@@ -5,11 +5,12 @@ const gate = workflow.split("\n  ci:\n")[1].split("\n  migrate:\n")[0];
 const script = gate.split("        run: |\n")[1]
   .split("\n").filter(line => line.trim()).map(line => line.slice(10)).join("\n");
 
-Deno.test("CI deployment gate waits for quality, every unit shard, Rust and browser tests", () => {
+Deno.test("CI deployment gate waits for quality, every unit shard, Rust and every browser shard", () => {
   assert(gate.includes("needs: [changes, quality, unit, planner-rust, frontend]"));
   assert(gate.includes("!cancelled()"));
   assert(workflow.includes("fail-fast: false"));
   assert(workflow.includes("run: deno task test --shard ${{ matrix.shard }}/4"));
+  assert(workflow.includes("run: npm run test:e2e:local -- --shard ${{ matrix.shard }}/3"));
   assert(workflow.includes("needs: [changes, ci]"));
 });
 

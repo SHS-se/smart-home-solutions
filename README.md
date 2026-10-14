@@ -103,7 +103,8 @@ Run the complete unit suite locally with `deno task test`. To reproduce one CI
 shard, use `deno task test --shard 1/4` (indices 1–4). The shared runner discovers
 all test files, keeps the expensive planner modules apart using measured CI
 costs, and assigns each file to exactly one shard. Newly added tests are included
-automatically. Full local validation also requires `npm run lint`,
+automatically. CI also splits the browser tests three ways; reproduce one with
+`npm run test:e2e:local -- --shard 1/3`. Full local validation also requires `npm run lint`,
 `npm run typecheck`, `npm run build:test` on `dev`, and `npm run test:e2e:local`.
 
 ## Can I connect a custom domain to my Lovable project?

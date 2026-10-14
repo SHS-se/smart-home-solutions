@@ -1,6 +1,6 @@
 name: CI & Deploy
 
-# Runs lint, four unit-test shards and frontend validation in parallel on push/PR.
+# Runs lint, four unit-test shards and three browser-test shards in parallel on push/PR.
 # After the gate passes, on push to main/dev it (1) applies Supabase migrations to the matching
 # project, then (2) deploys the Supabase edge functions to that project, then (3) deploys the
 # frontend to a per-environment Cloudflare Pages project and (4) prunes that project's old
@@ -195,10 +195,14 @@ jobs:
           deno task test:planner-native-parity
 
   frontend:
-    name: Build & browser tests
+    name: Build & browser tests (${{ matrix.shard }}/3)
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -221,6 +225,8 @@ jobs:
           fi
 
       - name: Upload build output
+        # Every shard builds the same commit; one upload is enough for the deploy.
+        if: matrix.shard == 1
         uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -232,7 +238,7 @@ jobs:
 
       - name: E2E tests (mocked backend)
         # Same command locally and in CI; Playwright owns the preview server.
-        run: npm run test:e2e:local
+        run: npm run test:e2e:local -- --shard ${{ matrix.shard }}/3
 
   ci:
     name: Lint, test & build
