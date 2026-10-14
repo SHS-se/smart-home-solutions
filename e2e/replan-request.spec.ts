@@ -268,6 +268,9 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('roi-payback')).toHaveCount(0);
     await expect(page.getByTestId('scheduler-month-2026-09').locator('td')).toHaveCount(4);
     await expect(page.getByTestId('savings-assumptions')).toContainText(/30[.,]5 °C/);
+    // No planning run has recorded SHS control here, so there is no track record yet, only the promise of one.
+    await expect(page.getByTestId('track-record')).toHaveCount(0);
+    await expect(page.getByTestId('track-record-pending')).toBeVisible();
     await page.getByTestId('what-happened').locator('summary').first().click();
     await expect(page.getByTestId('billed-month-2026-09').getByTestId('roi-amount')).toHaveText('579,00 SEK');
     // Tall enough to hold the whole tab: a stitched full-page capture repeats the sticky header mid-page.
@@ -365,6 +368,30 @@ test.describe('requesting a replan', () => {
     await expect(row.getByTestId('model-price')).toHaveText(display(priced));
     // October has no invoice yet, so it is not compared.
     await expect(page.getByTestId('billed-month-2026-10').getByTestId('model-price')).toHaveText('—');
+  });
+
+  test('the track record counts only full months SHS controlled, against the estimate for those months', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    const requests: Record<string, unknown>[] = [];
+    await context.route('**/rest/v1/rpc/get_energy_control_months*', route => {
+      requests.push(route.request().postDataJSON());
+      // September fully controlled; October is still in progress.
+      return route.fulfill({ json: [
+        { month_key: '2026-09', runs: 1000, controlling: { $battery: 1000, $pool: 990, $ev: 1000 } },
+        { month_key: '2026-10', runs: 500, controlling: { $battery: 500, $pool: 500, $ev: 500 } },
+      ] });
+    });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(2/2)');
+    const september = history.saved()!.months['2026-09'].ledger;
+    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    const record = page.getByTestId('track-record');
+    await expect(record).toContainText('under de 1 månad SHS styrde huset');
+    await expect(record).toContainText(display(september.baseline.costSek - september.recorded.costSek));
+    await expect(record).toContainText(display(september.baseline.costSek - september.scheduler.costSek));
+    expect(requests.at(-1)).toMatchObject({ p_customer_id: CUSTOMER_ID, p_home_id: HOME_ID, p_time_zone: 'Europe/Stockholm' });
   });
 
   test('the estimate holds one pool temperature in both columns, and changing it recalculates', async ({ context, page }) => {

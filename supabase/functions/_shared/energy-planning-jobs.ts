@@ -166,7 +166,10 @@ export class PlanningJobs {
       const run = { ...ack, id: generated.plan_id, customer_id: job.customer_id,
         home_id: job.home_id, snapshot_id: snapshot.snapshot_id, input_hash: inputHash,
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
-        summary: compactPlanSummary(generated), validation_errors: generated.validation_errors };
+        // Which devices SHS was actually controlling when this plan was made. The
+        // savings track record counts only months under control; nothing else records it.
+        summary: { ...compactPlanSummary(generated), operating_modes: snapshot.operating_scope?.modes ?? null },
+        validation_errors: generated.validation_errors };
       publication = { current, run };
     } catch (error) {
       return deliver(await this.computeFailure(owner, error));

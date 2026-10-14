@@ -4,7 +4,7 @@ import { PlanningJobs, PlanningJobError, planningCompletionBasis, type PlanningR
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { RULES_MODEL_VERSION, generateRulesPlan, prepareRulesPlanningInput } from "./rules-planner.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
-import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixturePlan } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput, rulesFixturePlan } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { expandStoredPlan, storedPlan } from "./stored-plan.ts";
 
@@ -33,10 +33,11 @@ Deno.test("only the exact TEST server origin completes on publication", () => {
   }
 });
 
-function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean } = {}) {
+function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; planningInput?: typeof input } = {}) {
+  const job = options.planningInput ?? input;
   let fence = 0;
   let owned = options.claimed ?? false;
-  let receipt: PlanningReceipt = { job_id: jobId, snapshot_id: input.snapshot.snapshot_id,
+  let receipt: PlanningReceipt = { job_id: jobId, snapshot_id: job.snapshot.snapshot_id,
     state: "pending", pending: true, retry_after_ms: 1 };
   const calls: { name: string; body: Record<string, unknown> }[] = [];
   let publication: Record<string, unknown> | undefined;
@@ -54,12 +55,12 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
         assertEquals(body.p_home_id, jobId);
         if (owned || receipt.state !== "pending") return Response.json(null);
         owned = true; fence++;
-        return Response.json({ id: jobId, home_id: jobId, customer_id: jobId, snapshot_id: input.snapshot.snapshot_id,
+        return Response.json({ id: jobId, home_id: jobId, customer_id: jobId, snapshot_id: job.snapshot.snapshot_id,
           fence, protocol: options.obsolete ? 8 : RULES_PLANNING_PROTOCOL });
       }
       if (name === "load_energy_planning_attempt") {
         assertEquals(body.p_fence, fence);
-        return Response.json({ input, context });
+        return Response.json({ input: job, context });
       }
       if (name === "publish_energy_planning_job") {
         assertEquals(body.fence, fence);
@@ -70,7 +71,7 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
           return Response.json(receipt);
         }
         publication = body; owned = false;
-        receipt = { job_id: jobId, snapshot_id: input.snapshot.snapshot_id, state: "published", pending: false,
+        receipt = { job_id: jobId, snapshot_id: job.snapshot.snapshot_id, state: "published", pending: false,
           plan_id: body.current.plan_id, plan: body.current.plan };
         if (options.lostPublication) return Response.json({ message: "reply lost", code: "XX000" }, {status: 500});
         const { plan: _plan, ...publicationReceipt } = receipt;
@@ -79,7 +80,7 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
       if (name === "fail_energy_planning_job") {
         assertEquals(body.fence, fence);
         owned = false;
-        receipt = { job_id: jobId, snapshot_id: input.snapshot.snapshot_id,
+        receipt = { job_id: jobId, snapshot_id: job.snapshot.snapshot_id,
           state: "failed", pending: false, code: body.code, detail: body.detail };
         return Response.json(receipt);
       }
@@ -106,9 +107,22 @@ Deno.test("durable owner solves and atomically publishes in one fenced exchange 
   assertEquals(wire(expandStoredPlan(current.plan)), wire(expected.plan));
   assertEquals(current.ha_ack_status, "pending", "Cloud publication is not HA completion");
   assertEquals(current.generation_request_id, context.request_id);
+  // A snapshot without an operating scope (schema 8) records no control modes.
+  assertEquals((state.publication()!.run as { summary: { operating_modes: unknown } }).summary.operating_modes, null);
   assertEquals(state.calls.filter(call => call.name === "read_energy_planning_job").length, 1,
     "Verified omitted-plan publication returns the locally computed exact plan");
   assert(!state.calls.some(call => call.name.includes("batch")));
+});
+
+Deno.test("a published run records which devices SHS was controlling, for the savings track record", async () => {
+  const mixed = mixedModeSnapshot();
+  const planningInput = rulesFixtureInput(mixed);
+  const state = memoryJobs({ planningInput });
+  const receipt = await state.jobs.advanceForHome(jobId, { jobId }, connection, realWorker);
+  assert(receipt?.state === "published");
+  const run = state.publication()!.run as { summary: { operating_modes: Record<string, string> } };
+  assertEquals(run.summary.operating_modes, mixed.operating_scope.modes);
+  assert(Object.values(run.summary.operating_modes).includes("controlling"));
 });
 
 Deno.test("lost atomic publication reply recovers exact receipt and does not recompute terminal job", async () => {

@@ -20,6 +20,8 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   let report: SavedReport | null = null;
   await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
   await context.route('**/rest/v1/rpc/get_energy_roi_criteria*', route => route.fulfill({ json: {} }));
+  // No planning run has recorded SHS control unless a test says so.
+  await context.route('**/rest/v1/rpc/get_energy_control_months*', route => route.fulfill({ json: [] }));
   await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['05','06','07','08','09'].flatMap(month => ['electricity','grid'].map(kind => ({ id: `${month}:${kind}`, customer_id: customerId, document_kind: kind, period_start: `2026-${month}-01`, period_end: `2026-${month}-${['06','09'].includes(month) ? '30' : '31'}`, total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [] }))) }));
   await context.route('**/rest/v1/energy_roi_solar_profiles*', route => route.fulfill({ json: null }));
   await context.route('**/rest/v1/energy_roi_pool_seeds*', route => route.fulfill({ json: null }));

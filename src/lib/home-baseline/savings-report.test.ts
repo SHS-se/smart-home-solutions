@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from '@std/assert';
-import { billedRecord, modelCheck, savingsForecast } from './savings-report';
+import { billedRecord, modelCheck, savingsForecast, trackRecord } from './savings-report';
 import type { EnergyBillingMonth } from '../energy-billing-series';
 import type { MonthLedger } from './savings';
 import type { BilledMonth } from './billed-months';
@@ -55,4 +55,26 @@ Deno.test('a month is checked only when both sides describe the same charges', (
   assertEquals(modelCheck([metered('2026-06', 850, 120), metered('2026-07', 850, 120, { gaps: { gridImportQuarters: 29, gridExportQuarters: 1 } } as Partial<MonthLedger>), metered('2026-08', 850, 0)], bills, invoices), null);
   // Without a demand charge in the tariff there is nothing to itemise.
   assertEquals(modelCheck([metered('2026-06', 850, 0)], bills, invoices)!.rows.map(r => r.billedSek), [1000]);
+});
+
+const run = (key: string, baselineSek: number, recordedSek: number, schedulerSek: number, extra: Partial<MonthLedger> = {}) => ({ month: key, coverage: 1, quarters: 2880,
+  baseline: { costSek: baselineSek }, recorded: { costSek: recordedSek }, scheduler: { costSek: schedulerSek },
+  gaps: { gridImportQuarters: 0, gridExportQuarters: 0 }, ...extra } as unknown as MonthLedger);
+const devices = ['$battery', '$pool', '$ev'];
+
+Deno.test('the track record counts only months SHS controlled every scheduled device, and compares them with the estimate', () => {
+  const control = [
+    { month: '2026-08', runs: 100, controlling: { $battery: 100, $pool: 100, $ev: 95 } },
+    { month: '2026-09', runs: 100, controlling: { $battery: 100, $pool: 40, $ev: 100 } },
+    { month: '2026-10', runs: 100, controlling: { $battery: 100, $pool: 100, $ev: 100 } },
+  ];
+  const record = trackRecord([run('2026-07', 900, 800, 700), run('2026-08', 1000, 850, 800), run('2026-09', 1000, 900, 800), run('2026-10', 1000, 880, 820, { coverage: .5 })], control, devices)!;
+  // July has no record of control, the pool was mostly manual in September, and October is not over.
+  assertEquals(record.rows, [{ month: '2026-08', measuredSek: 150, estimatedSek: 200 }]);
+  assertEquals([record.measuredSek, record.estimatedSek, record.realised], [150, 200, .75]);
+});
+
+Deno.test('no controlled month means no track record, and a home with no scheduled devices has none', () => {
+  assertEquals(trackRecord([run('2026-08', 1000, 850, 800)], [], devices), null);
+  assertEquals(trackRecord([run('2026-08', 1000, 850, 800)], [{ month: '2026-08', runs: 10, controlling: {} }], []), null);
 });

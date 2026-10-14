@@ -2,6 +2,7 @@ import type { MonthLedger } from './savings';
 import type { BilledMonth } from './billed-months';
 import { modeledCosts } from './roi-pricing';
 import type { EnergyBillingMonth } from '../energy-billing-series';
+import type { ControlMonth } from './control-months';
 
 /** The same months with and without the scheduler, on today's equipment.
  * Demand-free modeled costs only: an invoice never enters the estimate. */
@@ -57,3 +58,32 @@ export function modelCheck(months: readonly MonthLedger[], bills: ReadonlyMap<st
   return { rows, pricedSek, billedSek, differenceSek: pricedSek - billedSek, share: billedSek > 0 ? (pricedSek - billedSek) / billedSek : null };
 }
 export type ModelCheck = NonNullable<ReturnType<typeof modelCheck>>;
+
+/** A month counts as under SHS control when this share of its planning runs had every scheduled device controlled. */
+export const TRACK_RECORD_MIN_CONTROL = .9;
+
+/**
+ * What SHS actually saved, in the months it controlled the home: the cost of the
+ * same month without SHS, modelled from the same measurements, against the cost
+ * of what really happened. Set beside what the estimate expected for those
+ * months, it shows how much of the estimate is realised in practice.
+ *
+ * Energy only, on the estimate's prices: fixed fees are the same either way and
+ * the demand charge is left out, as in the estimate.
+ */
+export function trackRecord(months: readonly MonthLedger[], control: readonly ControlMonth[], devices: readonly string[]) {
+  const byMonth = new Map(control.map(c => [c.month, c]));
+  const controlled = (month: string) => {
+    const c = byMonth.get(month);
+    return !!c && c.runs > 0 && devices.length > 0 && devices.every(device => (c.controlling[device] ?? 0) / c.runs >= TRACK_RECORD_MIN_CONTROL);
+  };
+  const rows = months.flatMap(ledger => {
+    const unmetered = (ledger.gaps.gridImportQuarters + ledger.gaps.gridExportQuarters) / ledger.quarters;
+    if (ledger.coverage !== 1 || unmetered > MODEL_CHECK_MAX_UNMETERED || !controlled(ledger.month)) return [];
+    return [{ month: ledger.month, measuredSek: ledger.baseline.costSek - ledger.recorded.costSek, estimatedSek: ledger.baseline.costSek - ledger.scheduler.costSek }];
+  });
+  if (!rows.length) return null;
+  const measuredSek = rows.reduce((n, r) => n + r.measuredSek, 0), estimatedSek = rows.reduce((n, r) => n + r.estimatedSek, 0);
+  return { rows, measuredSek, estimatedSek, realised: estimatedSek > 0 ? measuredSek / estimatedSek : null };
+}
+export type TrackRecord = NonNullable<ReturnType<typeof trackRecord>>;

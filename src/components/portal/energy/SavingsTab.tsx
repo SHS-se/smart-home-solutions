@@ -10,7 +10,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { fetchEnergyBillingDocuments, toEnergyBillingSeriesDocuments } from '@/lib/energy-billing-storage';
 import { billedMonths } from '@/lib/home-baseline/billed-months';
 import { numericInput } from '@/lib/contract-roi';
-import { billedRecord, modelCheck, savingsForecast } from '@/lib/home-baseline/savings-report';
+import { billedRecord, modelCheck, savingsForecast, trackRecord } from '@/lib/home-baseline/savings-report';
+import { fetchControlMonths } from '@/lib/home-baseline/control-months';
 import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
 import { localDay } from '../../../../supabase/functions/_shared/planner-wasm/calendar';
 import HomeBaselineViewer from './roi/HomeBaselineViewer';
@@ -92,6 +93,14 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   const boughtKwh = months.reduce((n, m) => n + m.recorded.importKwh, 0);
   const sekPerKwh = boughtKwh > 0 ? months.reduce((n, m) => n + m.recorded.importCostSek, 0) / boughtKwh : null;
   const check = modelCheck(months, bills, invoiceMonths);
+  // Which of these months SHS actually controlled, from the modes each planning run recorded.
+  const controlRange = months.length && anchor.data ? { from: months[0].start, to: months[months.length - 1].end, timeZone: anchor.data.snapshot.timezone } : null;
+  const control = useQuery({ queryKey: ['energy-control-months', customerId, homeId, controlRange?.from, controlRange?.to],
+    queryFn: () => fetchControlMonths({ customerId, homeId: homeId! }, controlRange!.from, controlRange!.to, controlRange!.timeZone),
+    enabled: !!homeId && !!controlRange, retry: false, staleTime: 15 * 60 * 1000 });
+  const capabilities = anchor.data?.snapshot.capabilities;
+  const scheduled = capabilities ? (['battery', 'pool', 'ev'] as const).filter(device => capabilities[device]).map(device => `$${device}`) : [];
+  const track = control.data ? trackRecord(months, control.data, scheduled) : null;
   const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
   const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
   const [graphOpen, setGraphOpen] = useState(false);
@@ -148,6 +157,10 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     </CardHeader><CardContent className="space-y-3">
       <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
       <p className="text-xs text-muted-foreground">{t('Ingen av kolumnerna innehåller effektavgiften.', 'Neither column includes the demand charge.')}</p>
+      {track ? <p className="text-sm" data-testid="track-record">{t(
+        `Facit: under de ${track.rows.length} ${track.rows.length === 1 ? 'månad' : 'månader'} SHS styrde huset blev den uppmätta besparingen ${sek(track.measuredSek)}, mot ${sek(track.estimatedSek)} uppskattat för samma månader${track.realised !== null ? ` (${Math.round(track.realised * 100)} %)` : ''}.`,
+        `Track record: in the ${track.rows.length} ${track.rows.length === 1 ? 'month' : 'months'} SHS controlled the home, the measured saving was ${sek(track.measuredSek)}, against ${sek(track.estimatedSek)} estimated for the same months${track.realised !== null ? ` (${Math.round(track.realised * 100)}%)` : ''}.`)}</p>
+        : control.isSuccess && <p className="text-xs text-muted-foreground" data-testid="track-record-pending">{t('Facit: börjar med den första hela månaden SHS styr huset.', 'Track record: starts with the first full month SHS controls the home.')}</p>}
     </CardContent></Card>
     <HomeChangesCard customerId={customerId} sekPerKwh={sekPerKwh} />
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}

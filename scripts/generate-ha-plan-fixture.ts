@@ -123,7 +123,8 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
 }
 
 /** Explicit fixture facts, passed through the same live ready-input boundary. */
-export function rulesFixturePlan(source: OptimisationSnapshot) {
+/** The planning input a fixture snapshot is planned from: targets, wear and pool physics filled in. */
+export function rulesFixtureInput(source: OptimisationSnapshot) {
   const snapshot = structuredClone(source);
   snapshot.captured_at = new Date(Math.max(Date.parse(snapshot.captured_at), Date.parse(snapshot.slots[0].start))).toISOString();
   snapshot.comfort = { ...(snapshot.capabilities.ev ? { ev: { target_km: 300 } } : {}),
@@ -142,13 +143,17 @@ export function rulesFixturePlan(source: OptimisationSnapshot) {
   if (snapshot.schema_version === 9 && snapshot.capabilities.battery) snapshot.battery_execution_feedback = {
     generation: 1, source_receipt: 0, previous_contract_id: null, scope_revision: "fixture-whole-house", objectives: [],
   };
-  return generateRulesPlan(prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
+  return prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
       shadow_import_sek_per_kwh: snapshot.slots.map(slot => {
         if (slot.import_price_sek_per_kwh === null) throw new Error("Fixture must supply every forecast price");
         return slot.import_price_sek_per_kwh;
       }) },
-  }, null, resolveRulePolicy())).plan;
+  }, null, resolveRulePolicy());
+}
+
+export function rulesFixturePlan(source: OptimisationSnapshot) {
+  return generateRulesPlan(rulesFixtureInput(source)).plan;
 }
 
 export function dispatchedEvPlanFixture() {
