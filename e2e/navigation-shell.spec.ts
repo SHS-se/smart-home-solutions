@@ -411,32 +411,6 @@ async function login(page: Page) {
   await page.waitForURL('**/portal');
 }
 
-// Energy history is a staff page with two chart sections; uploads live under
-// Energy optimisation → Setup, reached from the same row of links.
-const ENERGY_HISTORY_SECTIONS = {
-  Data: { link: 'Fakturor och data', url: /\/energy-modeling\?tab=setup&section=data$/ },
-  Temperatur: { link: 'Temperatur', url: /\/energy-history\?tab=temperature$/ },
-} as const;
-
-type EnergyHistorySection = keyof typeof ENERGY_HISTORY_SECTIONS;
-
-function energyHistorySectionLink(page: Page, section: EnergyHistorySection) {
-  return page
-    .getByTestId('energy-history-sections')
-    .getByRole('link', { name: ENERGY_HISTORY_SECTIONS[section].link, exact: true });
-}
-
-async function openEnergyHistorySection(page: Page, section: EnergyHistorySection) {
-  await energyHistorySectionLink(page, section).click();
-  await expect(page).toHaveURL(ENERGY_HISTORY_SECTIONS[section].url);
-  if (section === 'Data') {
-    await expect(page.getByTestId('energy-setup-sections').getByRole('button', { name: 'Fakturor och data' }))
-      .toHaveAttribute('aria-current', 'page');
-  } else {
-    await expect(energyHistorySectionLink(page, section)).toHaveAttribute('aria-current', 'page');
-  }
-}
-
 test.describe('staff navigation shell', () => {
   test.beforeEach(async ({ context }) => {
     await mockSupabase(context, 'staff');
@@ -674,60 +648,6 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByText('du ser kundens portal som personal')).toBeVisible();
   });
 
-  test('temperature history explains the automatic shared SMHI data', async ({ page }) => {
-    await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-    const weatherRequestPromise = page.waitForRequest(
-      (request) => request.url().includes('/rest/v1/energy_weather_observations'),
-    );
-    await openEnergyHistorySection(page, 'Temperatur');
-    const weatherRequest = await weatherRequestPromise;
-    const weatherUrl = new URL(weatherRequest.url());
-
-    const temperatureTabs = page.getByRole('tablist');
-    const analysisData = page.getByTestId('temperature-energy-source');
-    await expect(temperatureTabs).toBeVisible();
-    await expect(analysisData.getByText('Analysunderlag', { exact: true })).toBeVisible();
-    const [temperatureTabsBox, analysisDataBox] = await Promise.all([
-      temperatureTabs.boundingBox(),
-      analysisData.boundingBox(),
-    ]);
-    expect(temperatureTabsBox?.y).toBeLessThan(analysisDataBox?.y ?? 0);
-
-    await analysisData.getByText('Visa källor och metod').click();
-    await expect(analysisData.getByText('Automatisk temperaturdata från SMHI', { exact: true })).toBeVisible();
-    await expect(page.getByText(/hämtas automatiskt varje natt/)).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Visa originaldata hos SMHI' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Uppdatera väderdata/ })).toHaveCount(0);
-    expect(weatherUrl.searchParams.getAll('observed_on')).toEqual([
-      'gte.2024-01-03',
-      'lte.2026-03-03',
-    ]);
-  });
-
-  test('overview annotates charts with recorded events', async ({ page }) => {
-    await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-
-    const overviewTabs = page.getByRole('tablist');
-    const overviewContext = page.getByRole('heading', { name: 'Överblick för den visade perioden' });
-    await expect(overviewTabs).toBeVisible();
-    await expect(overviewContext).toBeVisible();
-    const [overviewTabsBox, overviewContextBox] = await Promise.all([
-      overviewTabs.boundingBox(),
-      overviewContext.boundingBox(),
-    ]);
-    expect(overviewTabsBox?.y).toBeLessThan(overviewContextBox?.y ?? 0);
-
-    await expect(page.getByText('◆ 1 händelser')).toBeVisible();
-    await expect(page.locator('line[stroke="#0f766e"][stroke-dasharray="4 4"]')).toHaveCount(1);
-
-    // The entry form used to live under a chart in Jämförelser. It moved to its
-    // own section, so Jämförelser should now be charts only.
-    await page.getByRole('tab', { name: 'Jämförelser' }).click();
-    await expect(page.getByTestId('energy-history-events')).toHaveCount(0);
-  });
-
   test('events are recorded in their own section, typed, with a period end date', async ({ page }) => {
     await login(page);
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=events`);
@@ -751,20 +671,9 @@ test.describe('staff navigation shell', () => {
     await page.screenshot({ path: 'test-results/energy-history-events.png', fullPage: true });
   });
 
-  test('energy history separates grid savings from whole-home efficiency and uses one upload box', async ({ page }) => {
+  test('bills and data take every file in one upload box', async ({ page }) => {
     await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-
-    await page.getByRole('tab', { name: 'Energiflöden' }).click();
-    const sourceComparison = page.getByTestId('energy-source-comparison');
-    await expect(sourceComparison.getByText('Nätuttag och husets verkliga energibehov')).toBeVisible();
-    await expect(sourceComparison.getByText('Tekniskt årsbehov')).toBeVisible();
-    await expect(sourceComparison.getByText(/totaldagar/)).toBeVisible();
-
-    await expect(page.getByTestId('energy-performance')).toHaveCount(0);
-    await page.screenshot({ path: 'test-results/energy-source-accounting.png', fullPage: true });
-
-    await openEnergyHistorySection(page, 'Data');
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=data`);
     const upload = page.getByTestId('energy-data-upload');
     await expect(upload.getByRole('heading', { name: 'Ladda upp energidata' })).toBeVisible();
     await expect(upload.locator('input[type="file"]')).toHaveCount(1);
@@ -772,7 +681,7 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('heading', { name: 'Elhandelsfakturor' })).toHaveCount(0);
   });
 
-  test('gaps are shown discreetly and only where a receipt would help', async ({ page }) => {
+  test('missing bills are listed in the coverage table, without an alarm', async ({ page }) => {
     // Two grid invoices with April missing between them, and no electricity
     // invoice at all — the shape that used to raise a permanent yellow banner.
     const gridInvoice = (id: string, month: string, days: number) => ({
@@ -801,27 +710,15 @@ test.describe('staff navigation shell', () => {
     }));
 
     await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-
-    // The alarm is gone for good.
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-modeling?tab=setup&section=data`);
     await expect(page.getByText('Luckor eller delperioder upptäckta')).toHaveCount(0);
-
-    // What remains is one quiet, actionable line naming the receipts.
-    const hint = page.getByText('Ihåliga punkter är månader utan komplett kvitto.');
-    await expect(hint).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ladda upp' })).toBeVisible();
-
-    // The months themselves are marked in the chart: a hollow, dashed marker
-    // where an estimate carries the month, a solid one where a receipt does.
-    await expect(
-      page.locator('svg circle[stroke-dasharray="2 1.5"]').first(),
-    ).toBeVisible();
-
-    await page.screenshot({ path: 'test-results/energy-gap-hint.png', fullPage: true });
-
-    // The full inventory lives in the Data section, where it is reference material.
-    await openEnergyHistorySection(page, 'Data');
     await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
+    // Staff can see when the tariff terms changed, behind a closed panel of their own.
+    const checks = page.getByTestId('energy-billing-diagnostics');
+    await expect(checks).not.toHaveAttribute('open', '');
+    await checks.locator('summary').click();
+    await expect(checks.getByRole('heading', { name: 'Förändrade villkor' })).toBeVisible();
+    await page.screenshot({ path: 'test-results/energy-gap-hint.png', fullPage: true });
   });
 
   test('energiprestanda lives on the overview and grades without Home Assistant data', async ({ page }) => {
@@ -901,20 +798,16 @@ test.describe('staff navigation shell', () => {
     await expect(page.getByRole('tab', { name: 'Enheter' })).toHaveCount(0);
     await expect(page.getByTestId('energy-data-upload')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Månadstäckning' })).toBeVisible();
-    // The page header and period control belong to the staff chart history, not to Setup.
-    await expect(page.getByRole('heading', { name: 'Energihistorik', exact: true })).toHaveCount(0);
-    await expect(page.getByTestId('energy-history-period')).toHaveCount(0);
     await page.screenshot({ path: 'test-results/energy-setup-data.png', fullPage: true });
 
     await sections.getByRole('button', { name: 'Förändringar i huset' }).click();
     await expect(page).toHaveURL(/tab=setup&section=changes$/);
     await expect(page.getByTestId('energy-events-section')).toBeVisible();
 
-    // Energy history left the menu; staff still reach the full chart history from Setup.
+    // Energy history is gone, from the menu and as a page.
     await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Energihistorik' })).toHaveCount(0);
-    await sections.getByRole('link', { name: 'Hela energihistoriken (personal)' }).click();
-    await expect(page).toHaveURL(new RegExp(`/portal/customers/${CUSTOMER_ID}/energy-history$`));
-    await expect(page.getByRole('heading', { name: 'Energihistorik', exact: true })).toBeVisible();
+    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=temperature`);
+    await expect(page).toHaveURL(new RegExp(`/portal/customers/${CUSTOMER_ID}/energy-modeling$`));
 
     // Bookmarks to the sections that moved, and to the tabs that became sections.
     await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=data`);
@@ -971,79 +864,6 @@ test.describe('staff navigation shell', () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByTestId('energy-parse-failures')).toHaveCount(0);
     await expect(page.getByTestId('staff-energy-parse-alert')).toHaveCount(0);
-  });
-
-  test('temperature charts provide readable series controls', async ({ page }) => {
-    await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-    await openEnergyHistorySection(page, 'Temperatur');
-
-    await expect(page.getByTestId('temperature-energy-source')).toContainText('totaldagar');
-    await expect(page.getByTestId('weather-normalized-history-chart')).toBeVisible();
-    await page.getByRole('tab', { name: 'Händelser' }).click();
-    await expect(page.getByTestId('event-impact-chart')).toBeVisible();
-    await expect(page.getByTestId('event-impact-chart').locator('.recharts-bar-rectangle')).toHaveCount(2);
-    await expect(page.getByTestId('event-impact-chart')).toContainText('Köpt el från nätet');
-    await expect(page.getByTestId('event-impact-chart')).toContainText('inte hela hemmets energieffektivitet');
-    await expect(page.getByTestId('event-impact-chart')).toContainText('Medeltemperatur ute');
-    await expect(page.getByTestId('event-impact-chart')).toContainText('Beräknad fakturaskillnad (rå)');
-    await page.waitForTimeout(1200);
-    await page.screenshot({ path: 'test-results/energy-event-impact.png', fullPage: true });
-
-    await page.getByRole('tab', { name: 'Temperaturprofil' }).click();
-    const yearControls = page.getByRole('group', { name: 'Visa årsserier' });
-    await expect(yearControls).toBeVisible();
-    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveCount(0);
-    await expect(yearControls.getByRole('button', { name: '2025' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(yearControls.getByRole('button', { name: 'Trendlinjer' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('.recharts-legend-wrapper')).toHaveCount(0);
-
-    await page.getByRole('button', { name: '36 mån' }).click();
-    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'true');
-    await yearControls.getByRole('button', { name: '2024' }).click();
-    await expect(yearControls.getByRole('button', { name: '2024' })).toHaveAttribute('aria-pressed', 'false');
-
-    await page.getByRole('button', { name: 'Samlad profil' }).click();
-    const overallControls = page.getByRole('group', { name: 'Visa serier' });
-    await expect(overallControls.getByRole('button', { name: 'Genomsnittlig energianvändning' })).toHaveAttribute('aria-pressed', 'true');
-    await overallControls.getByRole('button', { name: 'Trendlinje' }).click();
-    await expect(overallControls.getByRole('button', { name: 'Trendlinje' })).toHaveAttribute('aria-pressed', 'false');
-    await page.waitForTimeout(1200);
-    await page.screenshot({ path: 'test-results/energy-temperature-normalized.png', fullPage: true });
-  });
-
-  test('energy history subnavigation stays first at narrow widths', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await login(page);
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history`);
-
-    const overviewTabs = page.getByRole('tablist');
-    const overviewContext = page.getByRole('heading', { name: 'Överblick för den visade perioden' });
-    await expect(overviewTabs).toBeVisible();
-    await expect(overviewTabs.getByRole('tab', { name: 'Sammanfattning' })).toBeVisible();
-    const [overviewTabsBox, overviewContextBox] = await Promise.all([
-      overviewTabs.boundingBox(),
-      overviewContext.boundingBox(),
-    ]);
-    expect(overviewTabsBox?.y).toBeLessThan(overviewContextBox?.y ?? 0);
-    await expect(page.getByTestId('energy-history-period')).toBeVisible();
-
-    await page.goto(`/portal/customers/${CUSTOMER_ID}/energy-history?tab=temperature`);
-    const temperatureTabs = page.getByRole('tablist');
-    const analysisData = page.getByTestId('temperature-energy-source');
-    await expect(temperatureTabs.getByRole('tab', { name: 'Temperaturprofil' })).toBeVisible();
-    const [temperatureTabsBox, analysisDataBox] = await Promise.all([
-      temperatureTabs.boundingBox(),
-      analysisData.boundingBox(),
-    ]);
-    expect(temperatureTabsBox?.y).toBeLessThan(analysisDataBox?.y ?? 0);
-    const temperatureTabsWidth = await temperatureTabs.evaluate((element) => ({
-      clientWidth: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-    }));
-    expect(temperatureTabsWidth.scrollWidth).toBeLessThanOrEqual(
-      temperatureTabsWidth.clientWidth,
-    );
   });
 
   test('staff receives a portal-wide warning when the shared weather sync fails', async ({ page }) => {

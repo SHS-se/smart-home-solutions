@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Zap } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,7 +10,7 @@ import SavingsTab from '@/components/portal/energy/SavingsTab';
 import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
 import HomeTimeZoneProvider from '@/components/portal/energy/HomeTimeZoneContext';
-import EnergyHistory from '@/pages/portal/EnergyHistory';
+import SetupRecords from '@/components/portal/energy/SetupRecords';
 import { Button } from '@/components/ui/button';
 
 interface EnergyModelingProps {
@@ -156,11 +156,6 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
               {item.label}
             </Button>
           ))}
-          {isStaff && propCustomerId && (
-            <Button size="sm" variant="ghost" className="ml-auto" asChild>
-              <Link to={`/portal/customers/${propCustomerId}/energy-history`}>{t('Hela energihistoriken (personal)', 'Full energy history (staff)')}</Link>
-            </Button>
-          )}
         </nav>
       )}
 
@@ -180,11 +175,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
         ) : tab === 'comfort' ? (
           <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
         ) : tab === 'setup' && (setupSection === 'data' || setupSection === 'changes') ? (
-          <EnergyHistory
-            customerId={propCustomerId}
-            isStaffView={isStaffView}
-            section={setupSection === 'data' ? 'data' : 'events'}
-          />
+          <SetupRecords customerId={resolvedCustomerId} isStaffView={isStaffView} section={setupSection} />
         ) : (
           <PlanWorkspace
             section={tab === 'setup' && setupSection !== 'data' && setupSection !== 'changes' ? setupSection : 'plan'}

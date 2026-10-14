@@ -57,7 +57,7 @@ const PublicInvoicePage = lazy(() => import("./pages/portal/PublicInvoicePage"))
 const CustomerInvoicePage = lazy(() => import("./pages/portal/CustomerInvoicePage"));
 const HomeProfile = lazy(() => import("./pages/portal/HomeProfile"));
 const EnergyModeling = lazy(() => import("./pages/portal/EnergyModeling"));
-const EnergyHistory = lazy(() => import("./pages/portal/EnergyHistory"));
+const EnergyHistoryRedirect = lazy(() => import("./pages/portal/EnergyHistoryRedirect"));
 const SetPassword = lazy(() => import("./pages/onboarding/SetPassword"));
 const Verify = lazy(() => import("./pages/Verify"));
 const CustomerViewDashboard = lazy(() => import("./pages/portal/customer-view/CustomerViewDashboard"));
@@ -69,7 +69,6 @@ const CustomerViewOffers = lazy(() => import("./pages/portal/customer-view/Custo
 const CustomerViewOfferDetail = lazy(() => import("./pages/portal/customer-view/CustomerViewOfferDetail"));
 const CustomerViewHomeProfile = lazy(() => import("./pages/portal/customer-view/CustomerViewHomeProfile"));
 const CustomerViewEnergyModeling = lazy(() => import("./pages/portal/customer-view/CustomerViewEnergyModeling"));
-const CustomerViewEnergyHistory = lazy(() => import("./pages/portal/customer-view/CustomerViewEnergyHistory"));
 
 // Accounting pages
 const AccountingOverview = lazy(() => import("./pages/accounting/AccountingOverview"));
@@ -170,7 +169,7 @@ const App = () => (
                       <Route path="/portal/tickets/new" element={<NewTicket />} />
                       <Route path="/portal/tickets/:ticketNumber" element={<TicketDetail />} />
                       <Route path="/portal/home-profile" element={<HomeProfile />} />
-                      <Route path="/portal/energy-history" element={<EnergyHistory />} />
+                      <Route path="/portal/energy-history" element={<EnergyHistoryRedirect />} />
                       <Route path="/portal/energy-modeling" element={<EnergyModeling />} />
 
                       {/* Global staff routes */}
@@ -228,7 +227,7 @@ const App = () => (
                         <Route path="offers" element={<CustomerViewOffers />} />
                         <Route path="offers/:quoteId" element={<CustomerViewOfferDetail />} />
                         <Route path="home-profile" element={<CustomerViewHomeProfile />} />
-                        <Route path="energy-history" element={<CustomerViewEnergyHistory />} />
+                        <Route path="energy-history" element={<EnergyHistoryRedirect />} />
                         <Route path="energy-modeling" element={<CustomerViewEnergyModeling />} />
                       </Route>
                     </Route>

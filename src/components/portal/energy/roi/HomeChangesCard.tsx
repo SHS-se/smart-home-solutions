@@ -8,6 +8,9 @@ import { fetchEnergyDeviceReadings } from '@/lib/energy-device-readings';
 import { ENERGY_EVENT_LABELS, treatmentOf } from '@/lib/energy-events';
 import { fetchEnergyHistoryNotes, fetchEnergyUsageReadings, fetchSharedWeatherObservations } from '@/lib/energy-temperature-storage';
 import { resolveDailyUsageReadings } from '@/lib/energy-usage-resolution';
+import { buildMonthlyEnergyFlows, toDailyEnergyReadings } from '@/lib/energy-usage-series';
+import { buildMonthlyEnergySavings, summariseEnergySavings } from '@/lib/energy-savings';
+import { useEnergyBillingSeries } from '@/hooks/use-energy-billing-series';
 
 // Same keys and lifetimes as the Energy history page, so both read one cached copy.
 const CACHED = { staleTime: 5 * 60 * 1000, gcTime: 30 * 60 * 1000, refetchOnMount: false, refetchOnWindowFocus: false, retry: false } as const;
@@ -30,12 +33,24 @@ export default function HomeChangesCard({ customerId, sekPerKwh }: { customerId:
   const thisYear = new Date().getUTCFullYear();
   const weatherFrom = `${thisYear - NORMAL_WEATHER_YEARS}-01-01`, weatherTo = `${thisYear}-12-31`;
   const weather = useQuery({ queryKey: ['energy-shared-weather-observations', weatherFrom, weatherTo], queryFn: () => fetchSharedWeatherObservations(weatherFrom, weatherTo), enabled: hasChanges, ...CACHED, staleTime: 60 * 60 * 1000 });
-  const impacts = useMemo(() => !hasChanges || !usage.data || !devices.data || !weather.data ? null : changeImpacts({
-    bought: resolveDailyUsageReadings(usage.data, devices.data).filter(reading => reading.reading_kind === 'grid_import')
+  const readings = useMemo(() => usage.data && devices.data ? resolveDailyUsageReadings(usage.data, devices.data) : null, [usage.data, devices.data]);
+  const impacts = useMemo(() => !hasChanges || !readings || !weather.data ? null : changeImpacts({
+    bought: readings.filter(reading => reading.reading_kind === 'grid_import')
       .map(reading => ({ date: reading.reading_date, kwh: Number(reading.consumption_kwh) })),
     weather: weather.data.map(day => ({ observed_on: day.observed_on, temperature_c: Number(day.temperature_c) })),
     events: notes.data ?? [],
-  }).reverse(), [hasChanges, usage.data, devices.data, weather.data, notes.data]);
+  }).reverse(), [hasChanges, readings, weather.data, notes.data]);
+  // Solar and a battery need no before-and-after: what the home used without buying it is
+  // measured directly, by comparing whole-home use with grid import, and priced from the bills.
+  const generates = (impact: ChangeImpact) => impact.changes.some(change => change.eventType === 'solar_installed' || change.eventType === 'battery_installed');
+  const hasGeneration = (notes.data ?? []).some(note => note.event_type === 'solar_installed' || note.event_type === 'battery_installed');
+  const billing = useEnergyBillingSeries(customerId, hasGeneration);
+  const flows = useMemo(() => readings ? buildMonthlyEnergyFlows(toDailyEnergyReadings(readings)) : null, [readings]);
+  const generationValue = (date: string) => {
+    if (!flows || billing.isLoading || billing.error) return null;
+    const summary = summariseEnergySavings(buildMonthlyEnergySavings(billing.series.filter(month => month.monthKey >= date.slice(0, 7)), flows));
+    return summary.savingSek !== null && summary.measuredMonths > 0 ? summary : null;
+  };
 
   // Without access to energy history (no subscription) there is nothing to show and no error worth raising here.
   if (notes.isLoading || notes.isError || usage.isError || devices.isError || weather.isError) return null;
@@ -43,6 +58,16 @@ export default function HomeChangesCard({ customerId, sekPerKwh }: { customerId:
   const signed = (value: number) => Math.round(value).toLocaleString(locale, { signDisplay: 'exceptZero' });
   const day = (date: string) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T00:00:00Z`));
   const untyped = untypedEvents(notes.data ?? []);
+
+  const month = (key: string) => new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
+  const generated = (impact: ChangeImpact) => {
+    const value = generates(impact) ? generationValue(impact.date) : null;
+    if (!value) return null;
+    const period = value.firstMeasuredMonth === value.lastMeasuredMonth ? month(value.firstMeasuredMonth!) : `${month(value.firstMeasuredMonth!)} – ${month(value.lastMeasuredMonth!)}`;
+    return <p className="mt-1 text-sm" data-testid="home-change-generation">{t(
+      `Uppmätt sedan dess: ${whole(value.selfConsumedKwh ?? 0)} kWh använt utan att köpa det och ${whole(value.exportedKwh ?? 0)} kWh sålt, värt ${whole(value.savingSek!)} SEK (${period}).`,
+      `Measured since: ${whole(value.selfConsumedKwh ?? 0)} kWh used without buying it and ${whole(value.exportedKwh ?? 0)} kWh sold, worth ${whole(value.savingSek!)} SEK (${period}).`)}</p>;
+  };
 
   const finding = (impact: ChangeImpact) => {
     if (impact.status === 'insufficient') return <p className="text-sm text-muted-foreground">{
@@ -73,6 +98,7 @@ export default function HomeChangesCard({ customerId, sekPerKwh }: { customerId:
         <span className="ml-2 font-normal text-muted-foreground">{day(impact.date)}</span></p>
       {impact.changes.some(change => change.text) && <p className="mb-1 truncate text-xs text-muted-foreground">{impact.changes.map(change => change.text.split('\n')[0]).filter(Boolean).join(' · ')}</p>}
       {finding(impact)}
+      {generated(impact)}
     </div>)}
     {!hasChanges && <p className="text-sm text-muted-foreground" data-testid="home-changes-empty">{untyped === 0
       ? t('Registrera renoveringar och installationer som händelser, så mäts vad som följde.', 'Record renovations and installations as events, and what followed is measured.')
