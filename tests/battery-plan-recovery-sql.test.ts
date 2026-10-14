@@ -13,7 +13,7 @@ Deno.test('battery handover recovery follows actual admission and preserves othe
   const db=new PGlite();
   try {
     await db.exec(`CREATE TABLE energy_optimisation_current(home_id uuid PRIMARY KEY,plan_id uuid,status text,
-      issued_at timestamptz,plan_jsonb jsonb,ha_runtime jsonb,ha_runtime_received_at timestamptz,replan_recommendations jsonb);`);
+      issued_at timestamptz,plan jsonb,ha_runtime jsonb,ha_runtime_received_at timestamptz,replan_recommendations jsonb);`);
     const configuration={key:'integration_change',reason:'Configuration changed',occurred_at:'2026-10-14T19:42:00Z'};
     const legacy={key:'integration_change',reason:'Battery controller: plan_handover_rejected. Consider a manual replan.',occurred_at:'2026-10-14T19:41:14Z'};
     await db.query(`INSERT INTO energy_optimisation_current VALUES ($1,$2,'ready','2026-10-14T19:40:57Z',$3,null,null,$4)`,
@@ -30,7 +30,7 @@ Deno.test('battery handover recovery follows actual admission and preserves othe
     await db.query('UPDATE energy_optimisation_current SET replan_recommendations=$1',[migrated]);
     await db.exec(`CREATE TRIGGER solved BEFORE UPDATE OF plan_id ON energy_optimisation_current
       FOR EACH ROW EXECUTE FUNCTION clear_solved_energy_recommendations();`);
-    await db.query(`UPDATE energy_optimisation_current SET plan_id=$1,issued_at='2026-10-14T19:41:30Z',plan_jsonb=$2`,
+    await db.query(`UPDATE energy_optimisation_current SET plan_id=$1,issued_at='2026-10-14T19:41:30Z',plan=$2`,
       [replacement,{battery_execution:reference('replacement',4)}]);
     // Publication must not claim the battery has accepted this plan.
     assertEquals((await warnings()).length,2);
