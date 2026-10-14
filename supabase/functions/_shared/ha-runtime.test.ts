@@ -3,7 +3,17 @@ import { validRuntime as validate } from './ha-runtime.ts';
 const validRuntime = (value: unknown) => validate(value, Date.parse('2026-09-09T10:00:00Z'));
 const runtime = { observed_at: '2026-09-09T10:00:00Z', plan_id: null, state: 'unavailable',
   reason: 'Waiting for a plan', binding_until: null, valid_until: null, recovering: true,
-  retry_at: null, last_error: null };
+  retry_at: null, last_error: null, battery_plan: null };
+
+Deno.test('battery admission feedback is explicit and bounded', () => {
+  const accepted = {plan_id:'2f1c0c74-9d31-4f0e-9a45-9c6f2f5f0a11',contract_id:'contract',scope_revision:'scope',generation:4};
+  const rejection = {contract_id:'candidate',generation:5,reason:'amendment missing'};
+  assertEquals(validRuntime({...runtime,battery_plan:{accepted,rejection}}),true);
+  for (const battery_plan of [{}, {accepted,rejection:{...rejection,generation:-1}},
+    {accepted:{...accepted,plan_id:'bad'},rejection:null}, {accepted:null,rejection:{...rejection,reason:'x'.repeat(1001)}}]) {
+    assertEquals(validRuntime({...runtime,battery_plan}),false);
+  }
+});
 Deno.test('runtime accepts missing plans and all operational states', () => {
   for (const state of ['unavailable', 'invalid', 'incomplete', 'infeasible', 'disabled', 'not_configured', 'advisory_only', 'expired'])
     assertEquals(validRuntime({ ...runtime, state }), true);

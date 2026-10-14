@@ -36,6 +36,15 @@ Outdoor temperature and irradiance may use the already documented server adapter
 
 ## Plan lifecycle and time
 
+The runtime report's required nullable `battery_plan` field distinguishes actual
+battery admission from publication or cache validation. Its `accepted` record
+names the admitted plan, contract, scope revision and local request generation;
+its `rejection` record names a failed candidate, generation and reason. The
+server records handover failures under `battery_plan_handover` and resolves only
+the matching scope's older/equal failures after actual admission of the current
+published contract. Publication alone leaves that warning intact. Other
+configuration and economic recommendations keep their existing lifecycle.
+
 Keep these concepts distinct:
 
 | Concept | Meaning |
