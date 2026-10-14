@@ -1,7 +1,7 @@
 {
   "abi": 8,
   "wasm_sha256": "69004ca5561b968adfeba77012255ff6fc123a59db4498a21526657ad9e7edf0",
-  "source_sha256": "662513b9919e1b609b38b0a67373227e2440a6bbf1d9230a4e0b8568e63e1090",
+  "source_sha256": "9ca108a0c6360a548037a3e5fcac8a19222c9bd42c395b44403572da7ee53c2c",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -41,6 +41,7 @@
     "src/lib/planner-bench/service.ts",
     "src/lib/planner-bench/step-moves.ts",
     "supabase/functions/_shared/battery-supply.ts",
+    "supabase/functions/_shared/hot-water-opportunities.ts",
     "supabase/functions/_shared/planner-wasm/calendar.ts",
     "supabase/functions/_shared/planner-wasm/core.ts",
     "supabase/functions/_shared/planner-wasm/cost-policy.ts",
@@ -53,11 +54,10 @@
     "supabase/functions/_shared/planner/demand-outlook.ts",
     "supabase/functions/_shared/planner/device-models.ts",
     "supabase/functions/_shared/planner/energy-price-shape.ts",
-    "supabase/functions/_shared/planner/hot-water-demand.ts",
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/pool-devices.ts",
-    "supabase/functions/_shared/rules-hot-water-selection.ts",
+    "supabase/functions/_shared/rules-hot-water.ts",
     "supabase/functions/_shared/rules-planner.ts",
     "supabase/functions/_shared/time-zone-formatter.ts"
   ]

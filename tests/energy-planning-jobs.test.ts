@@ -414,6 +414,7 @@ async function oneShotDatabase() {
   await db.exec(await migration(oneShotMigration));
   await db.exec(await migration('20261008144000_complete_test_rule_publications'));
   await db.exec(await migration('20261014110000_preserve_committed_hot_water_power'));
+  await db.exec(await migration('20261014220000_hot_water_opportunity_ledger'));
   return db;
 }
 type AttemptClaim = { id: string; home_id: string; customer_id: string; snapshot_id: string; protocol: number; fence: number };
@@ -567,16 +568,16 @@ Deno.test('protocol 9 command references preserve pending-ack native commands an
   try {
     await insertCurrent(db);
     const slot = { start: '2026-10-08T08:00:00Z', pool_w: 1200, pool_command_w: 3764,
-      ev_target_current_a: 8, ev_min_current_a: 5, ev_max_current_a: 16, boiler_permitted: false, boiler_expected_w: 0,
+      ev_target_current_a: 8, ev_min_current_a: 5, ev_max_current_a: 16, boiler_permitted: false, boiler_expected_w: 0, boiler_battery_allowed: false,
       battery_command: { schema_version: 3, operation: 'hold', charge_limit_w: 3000, discharge_limit_w: 0,
         allow_grid_charge: false, allow_battery_export: false },
       device_commands: { pool: { type: 'switch_schedule', on_seconds: 900 } } };
     await db.query('UPDATE energy_optimisation_current SET plan=$1,ha_ack_status=$2',
-      [{ status: 'ready', plans: { priority: { slots: [slot] } } }, 'pending']);
+      [{ status: 'ready', hot_water_permissions: ['2026-10-08T06:00:00Z'], plans: { priority: { slots: [slot] } } }, 'pending']);
     const reference = (await db.query<{ value: { reference_plan_id: string; published_commands: unknown } }>(
       'SELECT get_energy_replan_state($1) value', [home])).rows[0].value;
     assertEquals(reference.reference_plan_id, other);
-    assertEquals(reference.published_commands, { plan_id: other, slots: [slot] });
+    assertEquals(reference.published_commands, { plan_id: other, hot_water_permissions: ['2026-10-08T06:00:00Z'], slots: [slot] });
     assertEquals((await db.query<{ value: unknown }>('SELECT get_energy_replan_state($1) value', [other])).rows[0].value, null);
   } finally { await db.close(); }
 });

@@ -669,6 +669,8 @@ export interface QuarterDecisionDiagnostic {
 }
 
 export interface PlannedSlot {
+  /** Hot water may use storage only with forecast replaceable surplus. */
+  boiler_battery_allowed?: boolean;
   /** Physical time modelled after the effective planning timestamp. */
   duration_hours?: number;
   start: string;
@@ -785,6 +787,9 @@ export interface GeneratedPlan {
 }
 
 export interface OptimisationPlan {
+  /** Selected opportunities retained across rolling replans, keyed by UTC start. */
+  hot_water_permissions?: string[];
+  hot_water_shortfall_minutes?: Record<string, number>;
   /** Exact solver inputs for current-plan charts; never reconstructed in a UI. */
   resolved_value_stores?: Array<{
     key: string; curve: UtilityCurve; initial_state: number; max_state?: number;

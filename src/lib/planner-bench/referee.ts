@@ -37,14 +37,14 @@ import { proportionalSupply } from '../../../supabase/functions/_shared/battery-
 
 import { QUARTERS, quarterStarts, publishedQuarters, type BenchCase, type Series, type Targets } from './case';
 import {
-  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, hotWaterPermission, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
+  carryOut, chargerLevels, electricKwhPerDegree, heatPumpLevels, publishHeater, stepHeater, stepThermalStore, type Level, type Levels,
 } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 18;
+export const REFEREE_VERSION = 19;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -85,7 +85,7 @@ export interface Decisions {
 export type HotWaterCommand =
   | { kind: 'free' }
   | { kind: 'inhibit' }
-  | { kind: 'gate'; allow_below_w: number; inhibit_above_w: number };
+  | { kind: 'permit' };
 const FREE: HotWaterCommand = { kind: 'free' };
 
 export interface BatteryFollow {
@@ -235,15 +235,16 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     out.poolStart.push(projected.start);
     let evW = onLevel(i, 'ev_step', carLevels, clip(i, 'ev_power', asked(i, d.ev_w[i]), carMaxW)).draw_w;
     evW = clip(i, 'ev_full', evW, Math.max(0, (carLimitKwh - evKwh) / (h.car.battery.charge_efficiency * HOURS) * 1_000));
-    // The house gates the heater on what it measures, the heater's own draw included while it is allowed.
+    // Binary allowance with completion of an active heating run.
     let fixedW = baseW[i];
     if (needW && out.water) {
       const command = d.hot_water?.[i] ?? FREE;
       // A heater meter reading more than the house drew in all is a mismatch between meters: the house's own reading holds.
       const need = Math.min(needW[i], Math.max(0, baseW[i]));
       const otherW = baseW[i] - need;
-      waterPermitted = command.kind === 'free' ? true : command.kind === 'inhibit' ? false
-        : hotWaterPermission(command, otherW + poolW + evW + (waterPermitted ? ratedW : 0), waterPermitted);
+      // The recorded world's controller lets an active run finish at 500 W.
+      const finishing = world !== 'told' && waterPermitted && (out.water.w[i - 1] ?? 0) >= 500 && owedKwh > 0;
+      waterPermitted = command.kind !== 'inhibit' || finishing;
       let waterW = 0;
       const expected = world === 'told' ? d.hot_water_expected_w?.[i] : undefined;
       if (expected !== undefined) {
@@ -457,8 +458,6 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.hotWater = {
       owedKwh: Array.from(sim.water.owedKwh, r4), permitted: Array.from(sim.water.permitted),
       command: commands.map(command => command.kind),
-      allowBelowW: commands.map(command => command.kind === 'gate' ? r1(command.allow_below_w) : null),
-      inhibitAboveW: commands.map(command => command.kind === 'gate' ? r1(command.inhibit_above_w) : null),
     };
   }
   series.bill = billOf(c, h, targets, sim);

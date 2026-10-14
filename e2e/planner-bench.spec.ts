@@ -74,7 +74,7 @@ const PRICE_SERIES: EstimateSeries = (() => {
 function series(runStart: number, runQuarters: number): BenchSeries {
   const n = 288, start = Date.parse('2026-09-24T00:00:00Z');
   const s: BenchSeries = {
-    devices: [{ key: 'pool', name: 'Pool', schedulable: true }, { key: 'hotWater', name: 'Hot water', schedulable: true }, { key: 'car', name: 'Car', schedulable: true }],
+    devices: [{ key: 'pool', name: 'Pool', schedulable: true }, { key: 'car', name: 'Car', schedulable: true }],
     deviceW: {},
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
@@ -116,7 +116,10 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
-  s.deviceW = { pool: s.poolW, hotWater: s.hotWaterW, car: s.carW };
+  s.hotWater = { owedKwh: new Array(n).fill(0),
+    permitted: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 1 : 0),
+    command: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 'permit' : 'inhibit') };
+  s.deviceW = { pool: s.poolW, car: s.carW };
   s.carKm = new Array(n).fill(0);
   // The bill the score is made of: this fixture's grid cost, no wear and nothing left in the stores.
   s.wearSek = new Array(n).fill(0);
@@ -714,6 +717,10 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-quarter-explanation')).toContainText(/Service deductions|Serviceavdrag/);
 
     // Both planners' costs are a panel of the plan chart itself; the toggle swaps the rest of it.
+    await expect(page.locator('#plan-water-lane')).toBeVisible();
+    await expect(page.locator('#plan-water-lane [data-water=allowed]')).toHaveCount(30);
+    await expect(page.locator('#plan-water-lane [data-water=blocked]')).toHaveCount(258);
+    await expect(page.locator('#plan-water-gate')).toHaveCount(0);
     await expect(page.locator('#plan-cost')).toContainText(/What it costs|Kostnad/);
     await expect(page.locator('#plan-cost path')).toHaveCount(2);
     // It follows the period shown, like every other panel.

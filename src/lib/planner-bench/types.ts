@@ -38,10 +38,7 @@ export interface BenchSeries {
     /** 1 where the heater was allowed to run. */
     permitted: number[];
     /** What the plan told the heater (referee.ts HotWaterCommand). */
-    command: ('free' | 'inhibit' | 'gate')[];
-    /** A gate's levels, house draw in W; null without a gate. */
-    allowBelowW: (number | null)[];
-    inhibitAboveW: (number | null)[];
+    command: ('free' | 'inhibit' | 'permit')[];
   };
   carW: number[];
   gridImportW: number[];

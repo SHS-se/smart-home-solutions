@@ -16,9 +16,8 @@ import {
 } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { buildPriceOutlook } from "../supabase/functions/_shared/planner/energy-price-shape.ts";
 import { publishHeater } from "../supabase/functions/_shared/planner/device-models.ts";
-import { planHotWaterDemand } from "../supabase/functions/_shared/planner/hot-water-demand.ts";
 import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
-import { refineHotWater } from "../supabase/functions/_shared/rules-hot-water-selection.ts";
+import { addHotWater } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import type { HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
 import {
@@ -36,7 +35,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v9";
+export const READY_PRODUCER_VERSION = "bench-ready-v10";
 
 /**
  * The water heater as production plans it, around the kernel rather than in
@@ -72,25 +71,19 @@ export function hotWaterInput(c: BenchCase, h: Household): HotWaterInput | null 
   };
 }
 
-/** What `plan` refines the water against: the input and production's first water plan for it. */
+/** Daily opportunities share the production allocator. */
 export interface HotWaterContext {
   input: HotWaterInput;
   starts: string[];
-  initial: ReturnType<typeof planHotWaterDemand>;
+  timezone: string;
 }
 
-/** Production's first water plan: every quarter eligible, gated at its window's load level. */
+/** The household solve starts without unlocked water. */
 export function hotWaterContext(c: BenchCase, h: Household): HotWaterContext | null {
   const input = hotWaterInput(c, h);
   if (!input) return null;
   const starts = quarterStarts(c.start);
-  return {
-    input, starts,
-    initial: planHotWaterDemand({
-      level_mode: "all_loads", services: input.services, slots: starts.map((start) => ({ start })),
-      hours: input.other_house_w.map(() => 0.25), other_house_w: input.other_house_w, locked: [],
-    }),
-  };
+  return { input, starts, timezone: c.timezone };
 }
 
 /** This runs as forecast preparation, outside solve; production will consume ready artifacts. */
@@ -152,7 +145,7 @@ export function readyProblem(
       start_seconds: i * 900,
       hours: 0.25,
       base_w: water
-        ? water.input.other_house_w[i] + water.initial.expected_w[i]
+        ? water.input.other_house_w[i]
         : c.base_load_forecast_w[i] * (level?.factor ?? 1),
       base_ev_w: 0,
       solar_w: c.solar_forecast_w[i],
@@ -263,28 +256,22 @@ export async function loadWasmCandidate(root: string) {
       const { outcome, wasm_memory_bytes } = core.solve(problem);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
       let s = outcome.selection;
-      // The water heater is selected around the kernel, as production does
-      // (rules-planner.ts): its gates against the chosen battery flows.
+      // Production selects binary daily opportunities after the household solve.
       let hotWater: HotWaterCommand[] | undefined;
       let refinedWaterW: number[] = [];
       if (water) {
         const prepared = {
-          snapshot: { slots: water.starts.map((start) => ({ start })) },
+          snapshot: { slots: water.starts.map((start) => ({ start })), timezone: water.timezone },
           problem, locked_slots: [], base_w: water.input.other_house_w, passive_w: {},
-          boiler_services: water.input.services, boiler_eligible: water.starts.map(() => true),
-          boiler_w: water.initial.expected_w, boiler_permitted: water.initial.permitted,
-          boiler_policies: water.initial.policies, boiler_deferred_kwh: water.initial.deferred_kwh,
+          boiler_services: water.input.services,
+          boiler_w: water.starts.map(() => 0), boiler_rated_w: water.starts.map(() => 0), boiler_permitted: water.starts.map(() => false),
+          boiler_battery_allowed: water.starts.map(() => false), boiler_permission_starts: [], boiler_shortfall_minutes: {},
         } as unknown as PreparedRulesInput;
-        const refined = refineHotWater(core, prepared, s);
+        const refined = addHotWater(core, prepared, s);
         s = refined.selection;
         const w = refined.input;
         refinedWaterW = [...w.boiler_w];
-        hotWater = water.starts.map((_start, i): HotWaterCommand => {
-          const policy = w.boiler_policies[i];
-          return !w.boiler_eligible[i] ? { kind: "inhibit" }
-            : policy ? { kind: "gate", allow_below_w: policy.allow_below_w, inhibit_above_w: policy.inhibit_above_w }
-            : { kind: "free" };
-        });
+        hotWater = water.starts.map((_start, i): HotWaterCommand => ({ kind: w.boiler_permitted[i] ? "permit" : "inhibit" }));
       }
       const elapsed_ms = performance.now() - start;
       return {

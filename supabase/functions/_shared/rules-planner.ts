@@ -1,7 +1,6 @@
-import { refineHotWater } from "./rules-hot-water-selection.ts";
+import { addHotWater, waterBatteryCommands } from "./rules-hot-water.ts";
 import { POOL_START_COST_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
-import { planHotWaterDemand, type HotWaterDemandPolicy } from "./planner/hot-water-demand.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
  * This boundary has no database, history, source fetching or model fitting API.
@@ -26,15 +25,16 @@ import type { BatteryProjectionRow } from "./planner/battery-dispatch-projection
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v6:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
+export const RULES_MODEL_VERSION = `rules-planner-v7:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const fail = (message: string): never => { throw new Error(message); };
 
-export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "battery_command" | "device_commands">;
+export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "boiler_battery_allowed" | "battery_command" | "device_commands">;
 export interface PublishedCommandReference {
   plan_id: string;
+  hot_water_permissions?: string[];
   slots: PublishedCommandSlot[];
 }
 interface DeviceMember { key: string; watts: number }
@@ -49,11 +49,12 @@ export interface PreparedRulesInput {
   members: { heater: DeviceMember[]; auxiliary: DeviceMember[]; ev: DeviceMember[]; boiler: DeviceMember[] };
   passive_w: Record<string, number[]>;
   boiler_services: DutyCycleServiceInput[];
-  boiler_eligible: boolean[];
   boiler_w: number[];
+  boiler_rated_w: number[];
   boiler_permitted: boolean[];
-  boiler_policies: (HotWaterDemandPolicy | null)[];
-  boiler_deferred_kwh: number;
+  boiler_battery_allowed: boolean[];
+  boiler_permission_starts: string[];
+  boiler_shortfall_minutes: Record<string, number>;
   base_w: number[];
 }
 
@@ -204,6 +205,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     if (!locked[i].device_commands && snapshot.device_models.length && snapshot.schema_version >= 7) return fail("Committed device command map missing");
     for (const key of Object.keys(locked[i].device_commands ?? {})) if (!snapshot.device_models.some(m => m.key === key)) return fail(`Committed owner removed: ${key}`);
     if (snapshot.capabilities.boiler && typeof locked[i].boiler_permitted !== "boolean") return fail("Committed boiler permission missing");
+    if (snapshot.capabilities.boiler && !finite(locked[i].boiler_expected_w)) return fail(`Committed hot-water power missing or non-finite at ${snapshot.slots[i].start}`);
   }
   if (input.fixed_plan) {
     const fixed = new Map(input.fixed_plan.slots.map(s => [Date.parse(s.start), s.targets]));
@@ -223,12 +225,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   // demand margin or future measured load enters the prepared forecast.
   const level = demandLevel(snapshot.demand_outlook?.days, localDay(snapshot.captured_at, snapshot.timezone));
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
-  const hotWater = planHotWaterDemand({ level_mode: "all_loads", services: boilerService, slots: snapshot.slots,
-    hours: snapshot.slots.map(s => (Date.parse(s.start) + QUARTER_MS - Math.max(effective, Date.parse(s.start))) / 3_600_000),
-    other_house_w: snapshot.slots.map((_s, i) => baseW[i] + sum(Object.values(passive).map(values => values[i]))),
-    locked });
-  const boilerW = hotWater.expected_w;
-  const permitted = hotWater.permitted;
+  const boilerW = snapshot.slots.map((_s, i) => locked[i]?.boiler_expected_w ?? 0);
+  const permitted = snapshot.slots.map((_s, i) => locked[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
     abi: 8, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
@@ -271,8 +269,10 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   problem.end_credit = problemEndCredit(problem);
   return { snapshot, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, reference_plan_id: reference?.plan_id ?? null,
-    members, passive_w: passive, boiler_services: boilerService, boiler_eligible: snapshot.slots.map(() => true), boiler_w: boilerW, boiler_permitted: permitted,
-    boiler_policies: hotWater.policies, boiler_deferred_kwh: hotWater.deferred_kwh, base_w: baseW };
+    members, passive_w: passive, boiler_services: boilerService, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
+    boiler_battery_allowed: snapshot.slots.map((_s, i) => locked[i]?.boiler_battery_allowed ?? false),
+    boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
+    boiler_shortfall_minutes: {}, base_w: baseW };
 }
 
 function allocate(members: DeviceMember[], watts: number, into: Record<string, number>) {
@@ -292,9 +292,7 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
       ? { type: "switch_schedule", on_seconds: command.pool_on ? 900 : 0 }
       : { type: "unavailable", reason: "Dedicated pool owner supplies the native enable command" }
       : ev.has(model.key) ? { type: "variable_power", value: command.ev_amps, unit: "A" }
-      : boiler.has(model.key) && !input.boiler_eligible[i] ? { type: "permit_inhibit", permitted: false }
-      : boiler.has(model.key) && input.boiler_policies[i]
-        ? { type: "house_demand_permission", expected_permitted: input.boiler_permitted[i], ...input.boiler_policies[i]! }
+      : boiler.has(model.key) ? { type: "permit_inhibit", permitted: input.boiler_permitted[i] }
       : { type: "unavailable", reason: "External forecast owner has no planner command" };
   }
   return result;
@@ -345,6 +343,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       pool_w: q.pool_w, pool_command_w: locked?.pool_command_w ?? (command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0),
       ...(q.pool_c === null ? {} : { pool_temperature_c: q.pool_c }),
       boiler_expected_w: input.boiler_w[i], boiler_permitted: input.boiler_permitted[i],
+      ...(input.boiler_services.length ? { boiler_battery_allowed: input.boiler_battery_allowed[i] } : {}),
       ev_w: q.ev_w, room_heating_w: {}, device_loads_w: loads, device_commands: commandMap(input, command, i),
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: f.ev_available,
@@ -369,7 +368,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     net_cost_sek: sum(slots.map(s => (s.import_cost_sek ?? 0) - (s.export_revenue_sek ?? 0))),
     terminal_adjusted_cost_sek: sum(quarters.map(q => q.cost)), battery_soc_start: socs[0], battery_soc_end: socs.at(-1)!,
     battery_soc_low: Math.min(...socs), battery_end_of_solar_soc: {},
-    service_required_kwh: sum(snapshot.services.map(s => s.required_kwh)), service_delivered_kwh: energy(s => s.pool_w + s.ev_w + s.boiler_expected_w), duty_cycle_deferred_kwh: input.boiler_deferred_kwh };
+    service_required_kwh: sum(snapshot.services.map(s => s.required_kwh)), service_delivered_kwh: energy(s => s.pool_w + s.ev_w + s.boiler_expected_w), duty_cycle_deferred_kwh: 0 };
   const indices = (test: (s: PlannedSlot) => boolean) => slots.flatMap((s, i) => test(s) ? [i] : []);
   // A device planned as a state has no block schedule: the integration reads an
   // empty service schedule beside `dispatched_devices`, and refuses a filled one.
@@ -402,12 +401,8 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       // Clear the native lock and its materialization maps together, so the
       // published device requests describe the replacement actually solved.
       input = { ...input, locked_slots: [], problem: { ...input.problem, accepted: null, locked_through_seconds: 0 } };
-      const water = planHotWaterDemand({ level_mode: "all_loads", services: input.boiler_services, slots: input.snapshot.slots,
-        hours: input.problem.slots.map(s => s.hours + Math.min(0, s.start_seconds) / 3600),
-        other_house_w: input.base_w.map((w, i) => w + sum(Object.values(input.passive_w).map(v => v[i]))), locked: [] });
-      input = { ...input, boiler_w: water.expected_w, boiler_permitted: water.permitted, boiler_policies: water.policies,
-        boiler_deferred_kwh: water.deferred_kwh, problem: { ...input.problem, slots: input.problem.slots.map((s, i) =>
-          ({ ...s, base_w: s.base_w - input.boiler_w[i] + water.expected_w[i] })) } };
+      input = { ...input, boiler_w: input.boiler_w.map(() => 0), boiler_permitted: input.boiler_permitted.map(() => false),
+        problem: { ...input.problem, slots: input.problem.slots.map((s, i) => ({ ...s, base_w: s.base_w - input.boiler_w[i] })) } };
       solved = core.solve(input.problem).outcome;
     }
   }
@@ -421,7 +416,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     }
     return fail(solved.issue);
   }
-  const refined = refineHotWater(core, input, solved.selection);
+  const refined = addHotWater(core, input, solved.selection);
   input = refined.input;
   const selected = refined.selection;
   const p = input.problem;
@@ -434,10 +429,10 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       return points ? [[rule.key, points]] : [];
     }));
   });
-  const baselineCommands = selected.commands.map((c, i) => input.problem.accepted?.[i] ?? {
+  const baselineCommands = waterBatteryCommands(input, selected.commands.map((c, i) => input.problem.accepted?.[i] ?? {
     ...c, battery: p.battery ? "self_consumption" as const : "idle" as const,
     charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,
-  });
+  }), selected.quarters);
   const baselineProjection = core.project(p, baselineCommands).outcome;
   if (baselineProjection.kind === "failed") return fail(`Baseline projection: ${baselineProjection.issue}`);
   const baseline = scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery");
@@ -448,6 +443,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     model_version: RULES_MODEL_VERSION, decision_diagnostics_version: 2, plan_id: snapshot.snapshot_id, snapshot_id: snapshot.snapshot_id,
     issued_at: input.now, valid_until: new Date(Date.parse(snapshot.slots.at(-1)!.start) + QUARTER_MS).toISOString(),
     binding_until: bindingUntil ? new Date(Date.parse(bindingUntil.start) + QUARTER_MS).toISOString() : snapshot.slots[0].start,
+    hot_water_permissions: input.boiler_permission_starts, hot_water_shortfall_minutes: input.boiler_shortfall_minutes,
     timezone: snapshot.timezone, slot_minutes: 15, status: "ready", validation_errors: [], measurement_issues: snapshot.measurement_issues ?? [],
     sources: snapshot.sources, pv_calibration: snapshot.pv_calibration, price_outlook: input.price_outlook,
     battery_value_curve: null, resolved_value_stores: [], policy: { ...snapshot.policy, battery_end_of_solar_target_soc: 0, battery_target_is_hard: false, terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0 }, battery_supply_scope: { kind: "selected", include_base: true,

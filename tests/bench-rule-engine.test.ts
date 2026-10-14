@@ -220,10 +220,10 @@ Deno.test("a case with a water heater forecast is planned with production's hot-
   assertEquals(Date.parse(context.input.services.at(-1)!.deadline), Date.parse(c.start) + 288 * 900_000);
   const required = context.input.services.reduce((sum, s) => sum + s.required_kwh, 0);
   assertEquals(Math.round(required * 1000), Math.round(c.other_devices_w[key].reduce((a, b) => a + b, 0) / 4));
-  // The kernel is told the rest of the house plus the water it expects, never the water twice.
+  // Water allowances are added after the kernel selects the household loads.
   const problem = readyProblem(toldCase(c, BASE_LANE), HOUSEHOLD);
   const i = 60;
-  assertEquals(problem.slots[i].base_w, context.input.other_house_w[i] + context.initial.expected_w[i]);
+  assertEquals(problem.slots[i].base_w, context.input.other_house_w[i]);
   const { record } = planner.plan(toldCase(c, BASE_LANE), HOUSEHOLD);
   assertEquals(record.decisions.hot_water?.length, 288);
   assertEquals(record.decisions.hot_water_expected_w?.length, 288);

@@ -1,91 +1,61 @@
-# Hot-water permission from household demand
+# Daily hot-water allowances
 
-User requirement, 14 October 2026: inhibit hot water when house consumption is
-high, permit it when consumption is low, and let the planner decide relative
-levels. There is **no maximum pause and no forced permitted interval**. The old
-one-hour configuration default is retired; it was not evidence of a customer
-choice. This supersedes maximum-inhibition requirements in earlier documents.
+User requirements, 14 October 2026. This replaces the household-load threshold
+policy and its economic refinement. The planner controls permission, not tank
+energy or thermostat demand.
 
-## Usage and shape
+For each local day select at least 150 permission minutes (ten complete
+quarters). Preserve elapsed daily opportunities and the exact committed next
+hour across replans. The plan's `hot_water_permissions` ledger is carried through
+`get_energy_replan_state`; future uncommitted opportunities may move. Local-day
+identity handles 23/25-hour DST days; UTC starts distinguish repeated hours.
+A partial current quarter contributes its remaining minutes. A horizon or real
+equipment limit that prevents 150 minutes produces explicit
+`hot_water_shortfall_minutes`, not fabricated heat or permission.
 
-```ts
-const water = planHotWaterDemand({ services, slots, hours,
-  other_house_w: householdForecastWithoutControlledWater, locked });
-// Candidate projections count water.expected_w once in ReadySlot.base_w.
-const command = { type: "house_demand_permission",
-  expected_permitted: water.permitted[i], ...water.policies[i] };
-```
+Select opportunities after one native household solve. Prefer quarters without
+chosen pool/EV runs, outside the typical 06:00–09:00 and 18:00–21:00 peaks, and
+at or below that day's median other-household demand. Within those preference
+groups sort by marginal electricity price, other demand, then time. Solar's
+marginal price is foregone export. These are preferences, not measurement-validity
+bounds or hard household-demand gates. Full declared running power must fit the
+configured grid headroom. Include any simultaneously operating heat-pump demand
+in the relevant physical load model; do not presume a shared meter isolates it.
 
-```python
-house_w = self.watts(options["house_consumption_power_entity"])
-permit = demand_permission(command, house_w, observed_switch_state == "on")
-# Existing capture, authority, overrides and journal perform any changed writes.
-```
+Distribute empirical forecast electricity over the selected capacity, capped at
+the declared running draw; preserve committed watts exactly. Ten quarters at
+3 kW offer at most 7.5 kWh, not a promise of electricity or usable water. There
+is no planner tank queue, catch-up deadline, thermal state or moving threshold.
 
-The planner owns `allow_below_w` and `inhibit_above_w`. HA uses gross measured
-house consumption, including hot water and excluding battery charging. This is
-not grid import or consumption minus solar. Expected permission and electrical
-power are forecasts, not actuator state. HA executes a compact policy without
-replanning or choosing an economic alternative.
+Water is normally excluded from battery supply. Each quarter publishes
+`boiler_battery_allowed`. A stored-energy exception reserves the full permitted
+running power, only against otherwise exported solar at a future full battery,
+allowing for both conversion efficiencies and all intervening household demand
+and the physical reserve. Each refill budget can be spent once. Calendar month
+and high state of charge alone confer no exception. Native projection uses the
+same proportional-PV supply partition that HA enforces from actual device power.
+Pool/EV decisions stay fixed; water requires one final projection and no extra
+solve. This accepts less joint economic optimality in exchange for bounded,
+simple scheduling. Preserve actual cost, wear and terminal-credit accounting.
 
-For each service window, the planner finds a load level whose available valleys
-could absorb the expected hot-water energy at the declared running power:
-`sum(min(rated_w, max(0, level - other_house_w[i])) * hours[i]) = expected_Wh`.
-That level is the lower threshold; the upper threshold adds the declared draw.
-Allowing the rated draw at the lower boundary cannot immediately reverse
-permission. A flat profile stays permitted; colder household forecasts shift
-the levels upwards. Forecasts above running power remain usable and unchanged.
+HA receives only `permit_inhibit`. When a scheduled block encounters a permitted
+heater drawing above 500 W, keep permission on until its live heater power falls
+strictly below 500 W. Exactly 500 W retains permission. Reevaluate on meter
+changes inside the quarter, including after restart. An already blocked heater
+is never started by this rule. The device needs an instantaneous heater power
+sensor; a static watt rating or total house power is not completion evidence.
+Existing manual override, mode handover and unavailable-reading continuity keep
+their authority. Completion can extend into an expensive or busy quarter; actual
+energy remains visible to the existing deviation accounting.
 
-At or below the lower level, permit; strictly above the upper level, inhibit;
-between them, retain observed switch permission. There is no timer, quarter
-latch, fixed watt threshold, battery-only exception or forecast-validity gate.
-Missing readings and plans hold the last setting under existing continuity
-rules. Explicit modes and overrides retain their authority. The thermostat
-determines actual heating while permitted.
+The shared live/bench chart shows only the planned blue/grey Allowed/Blocked
+strip. Remove the load-gate line, its axis contribution and threshold tooltip.
+The controller's live explanation identifies a finishing run separately from
+planned permission. Bench tank debt remains a synthetic referee diagnostic,
+never an assertion of observed real tank state.
 
-`planner/hot-water-demand.ts` prepares policy and empirical electrical demand
-together for complete native candidate projections. Deferred energy is forecast into later
-permitted quarters of its original service window using available running-power
-headroom. Outstanding energy is visible in `duty_cycle_deferred_kwh`. Locked
-next-hour expected power and permissions stay exact, and locked commands retain
-their complete policy. A locked policy still responds to measurements.
-
-The native ABI is unchanged. Eligible quarters use the closed demand-policy
-command discriminator; unsupported readers reject it. Price pauses use the
-existing explicit `permit_inhibit: false` command. Update the integration/app before publishing these commands. The new
-generated hot-water fixture is tested against both the real producer and HA
-consumer; existing generated fixtures remain exact.
-
-The HA gateway receives the shared house-power binding through native
-configuration. Readiness names the Energy field even without a battery.
-Correction links, highlighting and required-field visibility use the existing
-editor catalog. Retired pause settings are removed by the acknowledged app
-configuration writer, preserving execution modes and actuator ownership.
-
-## Synthesis and tradeoffs
-
-The independent Codex candidate is the base: planner-owned measured-demand
-policy, with HA retaining observation and actuator ownership. Adopt Claude's
-conclusion that no new solver ABI is needed, its explicit frozen-policy handling,
-and separation of permission from predicted watts. Reject its battery-only gate,
-quarter latch, presumed rating subtraction and deferred-energy ledger. Those add
-decision conditions or accounting claims beyond the requested control. The
-subsequent explicit user decision removes maximum-pause protection.
-
-The subsequent [price-selection design](hot-water-price-selection-2026-10.md)
-supersedes thresholds from historical controlled-device forecasts. Complete
-candidate projections use chosen pool, EV and home-battery flows. Battery power
-enters the site-load level and is translated out of the published gross-house
-thresholds. Unforecast appliances can change actual permission; the electrical
-trajectory remains conditional, not proof of usable hot water.
-
-The declared running draw must describe the controlled equipment. A shared Nibe
-meter is never subtracted as presumed hot-water power. This does not establish
-tank state, change Nibe service priority, commission an actuator, correct winter
-baseload forecasts or remove battery replan recommendations.
-
-Verification covers seasonal level shifts, own-draw stability, extended
-inhibition without forced runs, energy conservation, exact commitments, real
-same-quarter execution, subscriptions without a battery, restarts, unavailable
-readings, Verification without writes, retired settings, correction navigation
-and generated producer/consumer agreement.
+Validation covers daily quota/price/load ranking, DST, rolling history, exact
+commitments, headroom shortfalls, source permission and finite surplus budgets;
+controller 501/500/499 W, same-quarter events, restart, unavailable readings,
+Verification and configuration correction; generated real-producer fixtures,
+full Deno/HA suites, lint, frontend build, local E2E and complete-handler CPU.

@@ -36,15 +36,6 @@ Deno.test('held-off heating is owed to the tank and made up at rated power, ener
   assertAlmostEquals(kwh(sim.water!.w), QUARTERS * NEED_W / 4_000, 1e-9);
 });
 
-Deno.test('a gate the house is above holds the heater off', () => {
-  // 600 W of the rest of the house, and the heater's own 1.27 kW once it runs, are above the 1 kW the gate stops at.
-  const sim = simulate(measured(), HOUSEHOLD, commanding(() => ({ kind: 'gate', allow_below_w: 500, inhibit_above_w: 1_000 })));
-  assertEquals(Array.from(sim.water!.permitted), quarters(() => 0));
-  // Below the lower level it may start, and between the two it keeps what it was doing.
-  const open = simulate(measured(), HOUSEHOLD, commanding(() => ({ kind: 'gate', allow_below_w: 700, inhibit_above_w: 2_000 })));
-  assertEquals(Array.from(open.water!.permitted), quarters(() => 1));
-});
-
 Deno.test('a tank left behind runs cold, and what it is owed at the end is billed', () => {
   const outcome = referee(measured(), HOUSEHOLD, TARGETS, commanding(() => ({ kind: 'inhibit' })));
   const owed = QUARTERS * NEED_W / 4_000;
@@ -59,7 +50,7 @@ Deno.test('a tank left behind runs cold, and what it is owed at the end is bille
 });
 
 Deno.test('in the world the planner was told the heater runs as the plan expected', () => {
-  const told = simulate(measured(), HOUSEHOLD, { ...commanding(() => ({ kind: 'gate', allow_below_w: 500, inhibit_above_w: 1_000 })),
+  const told = simulate(measured(), HOUSEHOLD, { ...commanding(() => ({ kind: 'permit' })),
     hot_water_expected_w: quarters(() => NEED_W) }, 'told');
   assertEquals(Array.from(told.water!.w), quarters(() => NEED_W));
 });

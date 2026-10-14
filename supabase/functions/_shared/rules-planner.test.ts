@@ -177,7 +177,7 @@ Deno.test("rules rejects configured hard battery target rather than claiming it 
   s.policy.battery_target_is_hard = true;
   assertThrows(() => prepare(s), Error, "Unsupported configured hard battery target");
 });
-Deno.test("rules boiler baseline forecast respects each declared service window", () => {
+Deno.test("rules prepares household without unlocked water before allocating daily opportunities", () => {
   const s = snapshot();
   s.capabilities.boiler = true;
   const boundary = s.slots[4].start;
@@ -186,8 +186,8 @@ Deno.test("rules boiler baseline forecast respects each declared service window"
       control:{type:"duty_cycle",rated_power_w:1000,expected_power_w_by_slot:s.slots.map(() => 400)} });
   }
   const prepared = prepare(s);
-  assertEquals(prepared.boiler_w, s.slots.map(() => 400));
-  assertEquals(prepared.problem.slots.map(slot => slot.base_w), s.slots.map(slot => slot.base_load_forecast_w + 400));
+  assertEquals(prepared.boiler_w, s.slots.map(() => 0));
+  assertEquals(prepared.problem.slots.map(slot => slot.base_w), s.slots.map(slot => slot.base_load_forecast_w));
 });
 Deno.test("rules plans an electrical-only home without fabricated controllable equipment", () => {
   const s = snapshot();
@@ -352,14 +352,13 @@ function waterSnapshot(): OptimisationSnapshot {
   return s;
 }
 
-Deno.test("hot water price timing preserves electrical work and keeps the measured-load policy", () => {
+Deno.test("hot water chooses daily opportunities and preserves committed permission", () => {
   const s = waterSnapshot();
   const input = prepare(s);
   const before = JSON.stringify(input);
   const plan = generateRulesPlan(input).plan.plans.priority;
-  assertEquals(plan.slots.slice(0, 4).map(s => s.boiler_expected_w), [0, 0, 0, 0]);
-  assert(plan.slots.slice(0, 4).every(s => s.device_commands!.water.type === "permit_inhibit" && !s.device_commands!.water.permitted));
-  assert(plan.slots.slice(4).every(s => s.device_commands!.water.type === "house_demand_permission"));
+  assert(plan.slots.every(s => s.device_commands!.water.type === "permit_inhibit"));
+  assertEquals(plan.slots.filter(s => s.boiler_permitted).length, Math.min(10, plan.slots.length));
   assertAlmostEquals(plan.slots.reduce((sum, s) => sum + s.boiler_expected_w / 4000, 0), 1);
   assertAlmostEquals(plan.summary.duty_cycle_deferred_kwh!, 0);
   assert(plan.summary.net_cost_sek! < 3.2);

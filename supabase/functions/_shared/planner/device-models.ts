@@ -414,23 +414,3 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
   }
   return models;
 }
-
-/** Gross household watts, including the heater and excluding battery charging.
- * These are operating thresholds, never admissibility bounds on measurements.
- */
-export interface HotWaterDemandPolicy {
-  allow_below_w: number;
-  inhibit_above_w: number;
-}
-
-/** Whether the house lets its water heater run, on what it measures: below the
- * one level it may start, above the other it is stopped, and between the two
- * it keeps doing what it was doing.
- */
-export function hotWaterPermission(policy: HotWaterDemandPolicy, houseW: number, previous: boolean): boolean {
-  if (houseW <= policy.allow_below_w) return true;
-  // Strict at the upper boundary: allowing a rated draw at the lower boundary
-  // must not immediately inhibit the very draw just permitted.
-  if (houseW > policy.inhibit_above_w) return false;
-  return previous;
-}

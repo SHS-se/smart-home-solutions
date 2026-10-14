@@ -239,7 +239,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
     // When hot water may run, as a strip of its own straight under the panel
-    // whose stack and gate line explain it.
+    // whose stack shows the expected electricity.
     const showWater = rows.some(row => row.hotWater);
     const water: Panel = { top: load.top + load.height + 6, height: showWater ? 10 : 0 };
     const soc: Panel = { top: load.top + load.height + GAP + (showWater ? 18 : 0), height: showSoc ? 62 : 0 };
@@ -295,7 +295,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       0.5,
       ...loadBands.flatMap(band => band.map(pair => pair[1])).filter(Number.isFinite),
       ...rows.map(row => (row.solarW ?? 0) / 1_000),
-      ...rows.map(row => (row.hotWater?.allowBelowW ?? 0) / 1_000),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
 
@@ -350,7 +349,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   } = geometry;
 
   const gradientId = `energy-price-ramp-${chartId}`;
-  const waterHatchId = `energy-water-hatch-${chartId}`;
   const priceStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
 
   const { hourTicks, dayTicks } = useMemo(
@@ -437,13 +435,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             if (index !== null) onQuarterClick?.(index);
           }}
         >
-          {showWater && (
-            <defs>
-              <pattern id={waterHatchId} width={4} height={4} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                <line x1={0} y1={0} x2={0} y2={4} stroke={PLAN_COLOURS.water} strokeWidth={2} />
-              </pattern>
-            </defs>
-          )}
           {bands && (
             <defs>
               <linearGradient
@@ -621,16 +612,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             strokeDasharray="1 3" strokeLinecap="round"
           />
 
-          {/* The hot-water gate: the heater may start while the whole stack
-              stays under this line, and is stopped once it rises a rated
-              draw above it (the tooltip gives both). */}
-          {showWater && (
-            <path
-              id="plan-water-gate"
-              d={stepLinePath(rows.map(row => kw(row.hotWater?.allowBelowW ?? null)), x, loadY)}
-              fill="none" stroke={PLAN_COLOURS.waterLine} strokeWidth={1.75} strokeDasharray="5 3"
-            />
-          )}
           {showWater && (
             <g id="plan-water-lane">
               <text x={RIGHT + 7} y={water.top + 8.5} className={AXIS_TEXT}>
@@ -643,7 +624,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   <rect
                     key={index} data-water={state}
                     x={x(index)} y={water.top} width={Math.max(0.5, x(index + 1) - x(index))} height={water.height}
-                    fill={state === 'allowed' ? PLAN_COLOURS.water : state === 'load_gate' ? `url(#${waterHatchId})` : undefined}
+                    fill={state === 'allowed' ? PLAN_COLOURS.water : undefined}
                     className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
                     fillOpacity={state === 'blocked' ? 0.45 : 1}
                   />
@@ -1127,26 +1108,17 @@ const PlanTooltip: React.FC<{
 
 const WATER_STATE = (t: (sv: string, en: string) => string): Record<HotWaterState, string> => ({
   allowed: t('tillåtet', 'allowed'),
-  load_gate: t('spärras troligen av last', 'likely held off by load'),
   blocked: t('spärrat av plan', 'blocked by plan'),
   uncontrolled: t('ej styrt', 'not controlled'),
 });
 
-/** What the plan told the water heater, and the load limits it applies. */
+/** Planned permission; the thermostat and controller determine actual heating. */
 const HotWaterReading: React.FC<{ quarter: HotWaterQuarter }> = ({ quarter }) => {
   const { t } = useLanguage();
   return (
     <div className="mt-1 border-t pt-1">
       <Reading name={t('Varmvatten', 'Hot water')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
-      {quarter.owedKwh !== undefined && quarter.owedKwh > 0.005 && (
-        <Reading name={t('Tanken ligger efter', 'Tank behind by')} value={`${quarter.owedKwh.toFixed(2)} kWh`} />
-      )}
-      {quarter.allowBelowW !== null && quarter.inhibitAboveW !== null && (
-        <p className="text-muted-foreground">{t(
-          `Får starta under ${(quarter.allowBelowW / 1_000).toFixed(1)} kW, stoppas över ${(quarter.inhibitAboveW / 1_000).toFixed(1)} kW`,
-          `May start below ${(quarter.allowBelowW / 1_000).toFixed(1)} kW, stopped above ${(quarter.inhibitAboveW / 1_000).toFixed(1)} kW`,
-        )}</p>
-      )}
+      <p className="text-muted-foreground">{t('Termostaten styr. Pågående uppvärmning får avslutas.', 'Thermostat controlled. Active heating may finish.')}</p>
     </div>
   );
 };
