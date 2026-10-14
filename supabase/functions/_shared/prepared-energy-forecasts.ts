@@ -39,6 +39,8 @@ const zone = z.object({
 });
 const forecastSchema = z.object({
   slot_starts: timestamp.array().nonempty(),
+  /** Published inputs, distinct from estimates that happen to have the same value. */
+  published_import_sek_per_kwh: finite.nullable().array(),
   price_outlook: z.object({
     level_basis: z.enum(["wind", "recent_norm", "published"]).optional(),
     shaped: z.boolean(),
@@ -113,6 +115,7 @@ function parseForecast(raw: unknown): PreparedEnergyForecast {
     }
   };
   coverage(forecast.price_outlook.shadow_import_sek_per_kwh, "prices");
+  coverage(forecast.published_import_sek_per_kwh, "published price inputs");
   coverage(forecast.outdoor_temperature_c, "outdoor temperature");
   coverage(forecast.solar_irradiance_w_per_m2, "irradiance");
   for (const zone of forecast.thermal_zones) {
@@ -132,6 +135,7 @@ export async function storePreparedForecasts(
 ): Promise<void> {
   const forecast = parseForecast({
     slot_starts: preparedSnapshot.slots.map((slot) => slot.start),
+    published_import_sek_per_kwh: preparedSnapshot.slots.map((slot) => slot.import_price_sek_per_kwh),
     price_outlook: resolvedOutlook,
     outdoor_temperature_c: preparedSnapshot.outdoor_temperature_c ?? null,
     solar_irradiance_w_per_m2: preparedSnapshot.solar_irradiance_w_per_m2 ??
@@ -155,7 +159,9 @@ export async function storePreparedForecasts(
  * Only exchanges that keep the accepted plan publish a forecast. A home whose
  * exchanges all plan, on a manual request or on prices newer than its plan, has
  * none, and one back from a long silence has one that ends short of the new
- * horizon. No later exchange would publish it, so admission prepares it once.
+ * horizon. A new price release also changes the forecast's boundary and level;
+ * it cannot be spliced onto a tail fitted to the previous release. Admission
+ * prepares once when coverage or the published price inputs have changed.
  */
 export async function readOrPrepareForecasts(
   db: PreparedForecastDatabase,
@@ -166,10 +172,11 @@ export async function readOrPrepareForecasts(
   try {
     return await readPreparedForecasts(db, homeId, snapshot);
   } catch (error) {
-    const missing = error instanceof PreparedForecastError &&
+    const needsPreparation = error instanceof PreparedForecastError &&
       (error.code === "prepared_forecast_unavailable" ||
-        error.code === "prepared_forecast_coverage_missing");
-    if (!missing) throw error;
+        error.code === "prepared_forecast_coverage_missing" ||
+        error.code === "prepared_forecast_prices_changed");
+    if (!needsPreparation) throw error;
   }
   await prepare();
   return await readPreparedForecasts(db, homeId, snapshot);
@@ -232,6 +239,15 @@ export async function readPreparedForecasts(
       return published;
     },
   );
+  // Compare source values, not publication clocks or a jump-size threshold.
+  // Rebuild the complete outlook so its existing boundary carry is applied to
+  // the current last published quarter, with the current published-day level.
+  if (indices.some((index, i) => forecast.published_import_sek_per_kwh[index] !== snapshot.slots[i].import_price_sek_per_kwh)) {
+    throw new PreparedForecastError(
+      "prepared_forecast_prices_changed",
+      "Prepared price outlook uses different published prices; prepare it from the current release",
+    );
+  }
   return {
     issued_at: row.data.issued_at,
     price_outlook: {

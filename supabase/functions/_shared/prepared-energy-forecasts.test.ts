@@ -1,4 +1,6 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals, assertRejects } from "@std/assert";
+import replayPrices from "./prepared-energy-forecasts.fixture.json" with { type: "json" };
+import { buildPriceOutlook } from "./planner/energy-price-shape.ts";
 import {
   PREPARED_FORECAST_TABLE,
   type PreparedForecastDatabase,
@@ -100,9 +102,11 @@ function zone(): ThermalZonePlanningInput {
   };
 }
 
-Deno.test("prepared forecast read aligns by timestamp and newly published prices remain exact", async () => {
+Deno.test("prepared forecast read aligns by timestamp and unchanged published prices remain exact", async () => {
   const db = new Store(), prepared = source();
   prepared.thermal_zones = [zone()];
+  prepared.slots[1].import_price_sek_per_kwh = null;
+  prepared.slots[2].import_price_sek_per_kwh = -0.0123456789;
   const original = structuredClone(prepared);
   await storePreparedForecasts(db, "home-a", prepared, prices());
   assertEquals(prepared, original);
@@ -198,6 +202,67 @@ Deno.test("admission prepares a forecast once when none is published or it ends 
   assertEquals(prepared, 3);
 });
 
+Deno.test("a new day-ahead release refreshes the cached tail before admission (14 October replay)", async () => {
+  // Only the replay's price data is retained, without household/device details.
+  const db = new Store(), request = source();
+  request.captured_at = replayPrices.captured_at;
+  request.timezone = replayPrices.timezone;
+  const start = Date.parse(replayPrices.first_start);
+  request.slots = replayPrices.published_import_sek_per_kwh.map((price, i) => ({
+    ...request.slots[0], start: new Date(start + i * 900_000).toISOString(), import_price_sek_per_kwh: price,
+  }));
+  delete request.outdoor_temperature_c;
+  delete request.solar_irradiance_w_per_m2;
+  const previous = structuredClone(request);
+  // Before tomorrow's release only today's remaining 44 quarters were known.
+  previous.slots.slice(44).forEach(slot => slot.import_price_sek_per_kwh = null);
+  // The replay contains the outlook after published values were overlaid.
+  // This also tests a newly published value that matches the old estimate:
+  // its publication still moves the boundary the whole tail must start from.
+  await storePreparedForecasts(db, "home-a", previous, {
+    ...prices(), shadow_import_sek_per_kwh: replayPrices.stale_shadow_import_sek_per_kwh,
+  });
+  let preparations = 0;
+  const prepare = async () => {
+    preparations++;
+    const fresh = buildPriceOutlook(request.slots, [], { timeZone: request.timezone, asOf: Date.parse(request.captured_at) });
+    await storePreparedForecasts(db, "home-a", request, {
+      shaped: fresh.shaped, observed_days: fresh.observedDays, effective_days: fresh.effectiveDays,
+      level_sek_per_kwh: fresh.levelSekPerKwh, shadow_import_sek_per_kwh: fresh.shadowImportSekPerKwh,
+      level_basis: fresh.levelBasis,
+    });
+  };
+  const firstUnpublished = request.slots.findIndex(slot => slot.import_price_sek_per_kwh === null);
+  assertEquals(firstUnpublished, 140);
+  assertAlmostEquals(replayPrices.stale_shadow_import_sek_per_kwh[140] - request.slots[139].import_price_sek_per_kwh!, .557170122858059);
+  const result = await readOrPrepareForecasts(db, "home-a", request, prepare);
+  assertEquals(preparations, 1);
+  const shadow = result.price_outlook.shadow_import_sek_per_kwh;
+  assertEquals(shadow.slice(0, firstUnpublished), request.slots.slice(0, firstUnpublished).map(slot => slot.import_price_sek_per_kwh));
+  assertAlmostEquals(shadow[firstUnpublished], .93317);
+  assertEquals((await readOrPrepareForecasts(db, "home-a", request, prepare)).price_outlook, result.price_outlook);
+  assertEquals(preparations, 1, "an unchanged price release reuses the prepared forecast");
+});
+
+Deno.test("a corrected published price refreshes its forecast even with an earlier source timestamp", async () => {
+  const db = new Store(), request = source();
+  await storePreparedForecasts(db, "home-a", request, prices());
+  request.captured_at = "2000-01-01T00:00:00Z";
+  request.slots[1].import_price_sek_per_kwh! += .1;
+  let preparations = 0;
+  await readOrPrepareForecasts(db, "home-a", request, async () => {
+    preparations++;
+    await storePreparedForecasts(db, "home-a", request, prices());
+  });
+  assertEquals(preparations, 1);
+  request.slots[1].import_price_sek_per_kwh! += .1;
+  const stale = await assertRejects(() => readOrPrepareForecasts(db, "home-a", request, async () => {
+    preparations++;
+  }), PreparedForecastError);
+  assertEquals(stale.code, "prepared_forecast_prices_changed");
+  assertEquals(preparations, 2, "a preparation that still uses old prices fails without retrying or splicing");
+});
+
 Deno.test("forecast publication refuses misaligned data and read rejects malformed stored products", async () => {
   const db = new Store(), prepared = source();
   prepared.thermal_zones = [{ ...zone(), target_c: [20] }];
@@ -231,6 +296,7 @@ Deno.test("forecast publication refuses misaligned data and read rejects malform
 
 Deno.test("explicit absent server weather never adopts an incoming weather series", async () => {
   const db = new Store(), prepared = source();
+  prepared.slots[0].import_price_sek_per_kwh = 0;
   delete prepared.outdoor_temperature_c;
   delete prepared.solar_irradiance_w_per_m2;
   delete prepared.thermal_zones;
