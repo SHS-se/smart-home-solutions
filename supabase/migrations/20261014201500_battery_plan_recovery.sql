@@ -13,7 +13,7 @@ BEGIN
     (current_row.ha_runtime->>'observed_at')::timestamptz >= (p_runtime->>'observed_at')::timestamptz) THEN
     RETURN false;
   END IF;
-  reference := current_row.plan_jsonb->'battery_execution';
+  reference := current_row.plan->'battery_execution';
   recommendations := current_row.replan_recommendations;
   IF current_row.status='ready' AND admitted->>'plan_id'=current_row.plan_id::text
     AND admitted->>'contract_id'=reference->>'id'
@@ -63,9 +63,9 @@ SET replan_recommendations=(SELECT coalesce(jsonb_agg(
   CASE WHEN r->>'key'='integration_change' AND
     r->>'reason'='Battery controller: plan_handover_rejected. Consider a manual replan.'
   THEN r || jsonb_build_object('key','battery_plan_handover',
-    'scope_revision',c.plan_jsonb->'battery_execution'->>'scope_revision',
-    'generation',(c.plan_jsonb->'battery_execution'->>'generation')::bigint)
+    'scope_revision',c.plan->'battery_execution'->>'scope_revision',
+    'generation',(c.plan->'battery_execution'->>'generation')::bigint)
   ELSE r END),'[]'::jsonb) FROM jsonb_array_elements(c.replan_recommendations) r)
-WHERE c.plan_jsonb->'battery_execution'->>'scope_revision' IS NOT NULL
-  AND c.plan_jsonb->'battery_execution'->>'generation' IS NOT NULL
+WHERE c.plan->'battery_execution'->>'scope_revision' IS NOT NULL
+  AND c.plan->'battery_execution'->>'generation' IS NOT NULL
   AND c.replan_recommendations @> '[{"key":"integration_change","reason":"Battery controller: plan_handover_rejected. Consider a manual replan."}]'::jsonb;
