@@ -31,7 +31,8 @@ import {
   type TimelineRow,
 } from '@/lib/energy-shift/energy-timeline';
 import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
-import { projectPlanChart } from '@/lib/energy-shift/plan-chart-data';
+import { projectPlanChart, type ChartHotWater } from '@/lib/energy-shift/plan-chart-data';
+import { hotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
@@ -40,7 +41,7 @@ import { replayDescription } from '@/lib/energy-shift/plan-replay';
 import EnergyChart from '../../charts/EnergyChart';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
-import { loadColour, PLAN_COLOURS } from '../../charts/palette';
+import { PLAN_COLOURS, seriesColour } from '../../charts/palette';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
 const QUARTER_W_TO_KWH = 4_000;
@@ -80,11 +81,22 @@ const PowerSection: React.FC<{
 
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
+  const { plan } = model;
+  const hotWater = useMemo((): ChartHotWater | undefined => {
+    if (!plan.capabilities.boiler) return undefined;
+    const keys = plan.device_models.filter(device => device.category === 'hot_water').map(device => device.key);
+    return {
+      name: t('Varmvatten', 'Hot water'), colour: PLAN_COLOURS.water, keys,
+      byStart: new Map(model.active.slots.map(slot => [Date.parse(slot.start), hotWaterQuarter(slot, keys)])),
+    };
+  }, [model.active.slots, plan.capabilities.boiler, plan.device_models, t]);
+
   const chart = useMemo(() => projectPlanChart({ rows, range, timeZone: homeTimeZone, prices: { kind: 'live' },
     devices: [...new Set([...deviceNameByKey.keys(), ...schedulableKeys])].map(key => ({
       key, name: deviceNameByKey.get(key) ?? key, schedulable: schedulableKeys.has(key),
     })),
-  }), [rows, range, homeTimeZone, deviceNameByKey, schedulableKeys]);
+    hotWater,
+  }), [rows, range, homeTimeZone, deviceNameByKey, schedulableKeys, hotWater]);
   const { rows: panelRows, consumption } = chart;
 
   const divider = nowDividerIndex(rows, range);
@@ -194,6 +206,7 @@ const PowerSection: React.FC<{
         series={consumption.series}
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
+        hasHotWater={panelRows.some(row => row.hotWater)}
       />
       <div className="mt-6">
         <h3 className="text-sm font-medium">
@@ -216,7 +229,8 @@ const PanelLegend: React.FC<{
   series: ConsumptionSeries[];
   hasBattery: boolean;
   hasEvBattery: boolean;
-}> = ({ series, hasBattery, hasEvBattery }) => {
+  hasHotWater: boolean;
+}> = ({ series, hasBattery, hasEvBattery, hasHotWater }) => {
   const { t } = useLanguage();
   const flows: Array<{ label: string; colour: string; line?: boolean }> = [
     { label: t('Sol', 'Solar'), colour: PLAN_COLOURS.solar },
@@ -233,11 +247,27 @@ const PanelLegend: React.FC<{
       ))}
       <span className="text-border" aria-hidden="true">|</span>
       {series.map(entry => (
-        <Key key={entry.key} colour={loadColour(entry.slot)}>{entry.key === '$other_planned' ? t('Övriga planerade enheter', 'Other planned devices') : entry.name}</Key>
+        <Key key={entry.key} colour={seriesColour(entry)}>{entry.key === '$other_planned' ? t('Övriga planerade enheter', 'Other planned devices') : entry.name}</Key>
       ))}
       <Key colour={PLAN_COLOURS.base}>
         {t('Baslast', 'Base load')}
       </Key>
+      {hasHotWater && <>
+        <span className="text-border" aria-hidden="true">|</span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="flex gap-px" aria-hidden="true">
+            <span className="h-2.5 w-2.5" style={{ backgroundColor: PLAN_COLOURS.water }} />
+            <span className="h-2.5 w-2.5" style={{ background: HATCH }} />
+            <span className="h-2.5 w-2.5 bg-muted-foreground/60" />
+          </span>
+          {t('Varmvatten tillåtet · spärras troligen av last · spärrat av plan',
+            'Hot water allowed · likely held off by load · blocked by plan')}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-3.5 border-t-2 border-dashed" style={{ borderColor: PLAN_COLOURS.waterLine }} aria-hidden="true" />
+          {t('Varmvatten får starta under', 'Hot water may start below')}
+        </span>
+      </>}
       <span className="inline-flex items-center gap-1.5">
         <span className="flex" aria-hidden="true">
           {[1, 3, 5, 7].map(step => (
@@ -256,6 +286,8 @@ const PanelLegend: React.FC<{
     </div>
   );
 };
+
+const HATCH = `repeating-linear-gradient(45deg, ${PLAN_COLOURS.water} 0 1.5px, transparent 1.5px 4px)`;
 
 const Key: React.FC<{ colour: string; line?: boolean; children: React.ReactNode }> = ({
   colour, line, children,

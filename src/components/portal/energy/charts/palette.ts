@@ -12,7 +12,13 @@ export const PLAN_COLOURS = {
   battery: 'var(--plan-battery)',
   ev: 'var(--plan-ev)',
   base: 'var(--plan-base)',
+  water: 'var(--plan-water)',
+  waterLine: 'var(--plan-water-line)',
 } as const;
 
 export const loadColour = (slot: number): string => `var(--plan-load-${slot})`;
+
+/** A band's own colour where it has one, its palette slot otherwise. */
+export const seriesColour = (entry: { slot: number; colour?: string }): string =>
+  entry.colour ?? loadColour(entry.slot);
 

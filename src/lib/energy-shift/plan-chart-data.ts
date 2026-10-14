@@ -3,6 +3,7 @@
 import { activeDeviceKeys, type TimelineRow, type TimelineRange } from './energy-timeline';
 import { splitConsumption } from './consumption-series';
 import { formatHomeDayMonthTime } from './home-time';
+import type { HotWaterQuarter } from './hot-water-gate';
 
 export interface PlanPanelRow {
   startMs: number;
@@ -37,20 +38,35 @@ export interface PlanPanelRow {
   cumulativeCostSek: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolTemperatureC?: number | null;
+  /** The plan's hot-water decision, on planned quarters of a home that has one. */
+  hotWater?: HotWaterQuarter | null;
 }
 
 export interface ChartDevice { key: string; name: string; schedulable: boolean }
 /** `bench`: every price is the real one, and the planner was given it. */
 export type ChartPrices = { kind: 'live' } | { kind: 'bench' } | { kind: 'actual' };
 const quoted = (value: number | null) => value !== null && Number.isFinite(value);
+/**
+ * Hot water as one band, whatever meters measure it: the plan's own forecast on
+ * planned quarters, the sum of the hot-water meters on measured ones.
+ */
+export interface ChartHotWater {
+  name: string;
+  colour: string;
+  /** Meters in the hot-water category; drawn in the hot-water band, never on their own. */
+  keys: readonly string[];
+  /** The plan's decision for each planned quarter, by start. */
+  byStart: ReadonlyMap<number, HotWaterQuarter>;
+}
+export const HOT_WATER_SERIES_KEY = '$hot_water';
 const priced = (value: number | null, shadow: number | null) => quoted(value) ? value
   : shadow !== null && Number.isFinite(shadow) ? shadow : null;
 
 export function projectPlanChart(input: {
   rows: readonly TimelineRow[]; range: TimelineRange; timeZone: string;
-  devices: readonly ChartDevice[]; prices: ChartPrices;
+  devices: readonly ChartDevice[]; prices: ChartPrices; hotWater?: ChartHotWater;
 }) {
-  const { rows, range, timeZone, devices, prices } = input;
+  const { rows, range, timeZone, devices, prices, hotWater } = input;
   const view = rows.slice(range.from, range.to);
   let running: number | null = 0;
   const panelRows: PlanPanelRow[] = view.map((row, i) => {
@@ -66,13 +82,21 @@ export function projectPlanChart(input: {
       exportPriceSekPerKwh: prices.kind !== 'live' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
       importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),
       cumulativeCostSek: running, poolTemperatureC: row.poolC ?? null,
+      ...(hotWater ? { hotWater: row.measured ? null : hotWater.byStart.get(row.startMs) ?? null } : {}),
     };
   });
   const catalogue = new Map(devices.map(d => [d.key, d]));
-  const active = new Set([...activeDeviceKeys(rows, range), ...devices.filter(d => d.schedulable).map(d => d.key)]);
-  const consumption = splitConsumption([...active].map(key => ({
+  const waterKeys = new Set(hotWater?.keys ?? []);
+  const active = new Set([...activeDeviceKeys(rows, range), ...devices.filter(d => d.schedulable).map(d => d.key)]
+    .filter(key => !waterKeys.has(key)));
+  const water = hotWater ? [{
+    key: HOT_WATER_SERIES_KEY, name: hotWater.name, schedulable: true, pinned: true, colour: hotWater.colour,
+    values: view.map((row, i) => panelRows[i].hotWater?.expectedW
+      ?? [...waterKeys].reduce((sum, key) => sum + (row.deviceW[key] ?? 0), 0)),
+  }] : [];
+  const consumption = splitConsumption([...[...active].map(key => ({
     key, name: catalogue.get(key)?.name ?? key,
     values: view.map(row => row.deviceW[key] ?? NaN), schedulable: catalogue.get(key)?.schedulable ?? false,
-  })), view.map(row => row.loadW));
+  })), ...water], view.map(row => row.loadW));
   return { rows: panelRows, consumption, realPrices: prices.kind !== 'live' };
 }

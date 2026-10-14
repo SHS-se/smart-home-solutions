@@ -102,6 +102,11 @@
     --plan-load-8: #a855b5;
     /* Base load is grey on purpose: it is the background, not a series. */
     --plan-base: #8a8f98;
+    /* Hot water is pinned to one colour in every home, because the strip
+       under the consumption panel says when it may run in the same hue. The
+       line is the load gate it may start under. */
+    --plan-water: #38bdf8;
+    --plan-water-line: #0284c7;
 
     /* Planner bench quarter scores, -2..+2. Red to green through grey, with
        lightness stepping too, so the five stay apart without hue. */

@@ -20,6 +20,10 @@ export interface ConsumptionCandidate {
   values: number[];
   /** Whether the plan can move this load at all. */
   schedulable: boolean;
+  /** Always drawn, first above base load, whatever it used. */
+  pinned?: boolean;
+  /** A fixed colour, for a band that means one thing in every home. */
+  colour?: string;
 }
 
 export interface ConsumptionSeries {
@@ -35,6 +39,8 @@ export interface ConsumptionSeries {
    * colour, so yesterday's chart and today's agree about what green means.
    */
   slot: number;
+  /** Overrides the palette slot. */
+  colour?: string;
 }
 
 export interface ConsumptionIssue {
@@ -103,14 +109,14 @@ export const splitConsumption = (
   // survivors. Sorted by key rather than by energy for the same reason.
   const slotByKey = new Map(
     candidates
-      .filter(candidate => candidate.schedulable)
+      .filter(candidate => candidate.schedulable && !candidate.colour)
       .map(candidate => candidate.key)
       .sort()
       .map((key, index) => [key, index % MAX_SERIES]),
   );
 
   const eligible = candidates
-    .filter(candidate => candidate.schedulable && earnsOwnBand(candidate.values))
+    .filter(candidate => candidate.schedulable && (candidate.pinned || earnsOwnBand(candidate.values)))
     .map(candidate => ({
       key: candidate.key,
       name: candidate.name,
@@ -118,8 +124,12 @@ export const splitConsumption = (
       kwh: totalKwh(candidate.values),
       partial: candidate.values.map(() => false),
       slot: slotByKey.get(candidate.key) ?? 0,
+      ...(candidate.colour ? { colour: candidate.colour } : {}),
+      pinned: candidate.pinned ?? false,
     }))
-    .sort((left, right) => right.kwh - left.kwh || left.key.localeCompare(right.key));
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned)
+      || right.kwh - left.kwh || left.key.localeCompare(right.key))
+    .map(({ pinned: _pinned, ...entry }) => entry);
 
   const series = eligible.slice(0, MAX_SERIES);
   const drawn = new Set(series.map(entry => entry.key));

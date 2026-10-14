@@ -32,7 +32,7 @@ import {
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
-import { loadColour, PLAN_COLOURS } from './palette';
+import { loadColour, PLAN_COLOURS, seriesColour } from './palette';
 import { scoreColour } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
@@ -40,6 +40,7 @@ import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time
 import { energyChartTicks } from '@/lib/energy-shift/energy-chart-axis';
 
 import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
+import type { HotWaterQuarter, HotWaterState } from '@/lib/energy-shift/hot-water-gate';
 export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 
 const VIEW_W = 1160;
@@ -237,7 +238,11 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
-    const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
+    // When hot water may run, as a strip of its own straight under the panel
+    // whose stack and gate line explain it.
+    const showWater = rows.some(row => row.hotWater);
+    const water: Panel = { top: load.top + load.height + 6, height: showWater ? 10 : 0 };
+    const soc: Panel = { top: load.top + load.height + GAP + (showWater ? 18 : 0), height: showSoc ? 62 : 0 };
     const poolC = rows.map(row => row.poolTemperatureC ?? null);
     const knownPoolC = poolC.filter((value): value is number => value !== null);
     const showPool = knownPoolC.length > 0;
@@ -249,7 +254,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const showCost = knownCost.length > 0;
     const cost: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showCost ? 90 : 0 };
     const axisY = showCost ? cost.top + cost.height
-      : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
+      : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : water.top + water.height);
     // The score is a section of its own, below the axis labels of the panels above.
     const scoreStrip: Panel | null = quarterAudit || quarterScores
       ? { top: axisY + 42 + GAP, height: quarterAudit ? quarterAudit.lanes.length * 28 : 16 } : null;
@@ -290,6 +295,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       0.5,
       ...loadBands.flatMap(band => band.map(pair => pair[1])).filter(Number.isFinite),
       ...rows.map(row => (row.solarW ?? 0) / 1_000),
+      ...rows.map(row => (row.hotWater?.allowBelowW ?? 0) / 1_000),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
 
@@ -328,7 +334,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       price, priceY, priceMin, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice,
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
-      load, loadY, loadMax, loadBands, loadLabels,
+      load, loadY, loadMax, loadBands, loadLabels, water, showWater,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
@@ -338,12 +344,13 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice,
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
-    load, loadY, loadMax, loadBands, loadLabels,
+    load, loadY, loadMax, loadBands, loadLabels, water, showWater,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
     cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
   const gradientId = `energy-price-ramp-${chartId}`;
+  const waterHatchId = `energy-water-hatch-${chartId}`;
   const priceStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
 
   const { hourTicks, dayTicks } = useMemo(
@@ -430,6 +437,13 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             if (index !== null) onQuarterClick?.(index);
           }}
         >
+          {showWater && (
+            <defs>
+              <pattern id={waterHatchId} width={4} height={4} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <line x1={0} y1={0} x2={0} y2={4} stroke={PLAN_COLOURS.water} strokeWidth={2} />
+              </pattern>
+            </defs>
+          )}
           {bands && (
             <defs>
               <linearGradient
@@ -583,7 +597,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             <path
               key={index === 0 ? 'base' : series[index - 1].key}
               d={stepBandPath(band, x, loadY)}
-              fill={index === 0 ? PLAN_COLOURS.base : loadColour(series[index - 1].slot)}
+              fill={index === 0 ? PLAN_COLOURS.base : seriesColour(series[index - 1])}
               fillOpacity={0.92}
             />
           ))}
@@ -606,6 +620,37 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             fill="none" stroke={PLAN_COLOURS.solar} strokeWidth={2}
             strokeDasharray="1 3" strokeLinecap="round"
           />
+
+          {/* The hot-water gate: the heater may start while the whole stack
+              stays under this line, and is stopped once it rises a rated
+              draw above it (the tooltip gives both). */}
+          {showWater && (
+            <path
+              id="plan-water-gate"
+              d={stepLinePath(rows.map(row => kw(row.hotWater?.allowBelowW ?? null)), x, loadY)}
+              fill="none" stroke={PLAN_COLOURS.waterLine} strokeWidth={1.75} strokeDasharray="5 3"
+            />
+          )}
+          {showWater && (
+            <g id="plan-water-lane">
+              <text x={RIGHT + 7} y={water.top + 8.5} className={AXIS_TEXT}>
+                {t('varmvatten', 'hot water')}
+              </text>
+              {rows.map((row, index) => {
+                const state = row.hotWater?.state;
+                if (!state || state === 'uncontrolled') return null;
+                return (
+                  <rect
+                    key={index} data-water={state}
+                    x={x(index)} y={water.top} width={Math.max(0.5, x(index + 1) - x(index))} height={water.height}
+                    fill={state === 'allowed' ? PLAN_COLOURS.water : state === 'load_gate' ? `url(#${waterHatchId})` : undefined}
+                    className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
+                    fillOpacity={state === 'blocked' ? 0.45 : 1}
+                  />
+                );
+              })}
+            </g>
+          )}
 
           {/* -------------------------------------------------- Storage --- */}
           {showSoc && (
@@ -965,7 +1010,7 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
+  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (row.hotWater ? 36 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -999,7 +1044,7 @@ const PlanTooltip: React.FC<{
         />
         {running.map(entry => (
           <Reading
-            key={entry.key} name={entry.name} colour={loadColour(entry.slot)}
+            key={entry.key} name={entry.name} colour={seriesColour(entry)}
             value={`${entry.partial[index] ? "≥ " : ""}${(entry.value / 1_000).toFixed(2)} kW`}
           />
         ))}
@@ -1010,6 +1055,7 @@ const PlanTooltip: React.FC<{
         {consumptionIssue && <p className="mt-1 text-muted-foreground">
           {consumptionGapDescription(consumptionIssue, t)}
         </p>}
+        {row.hotWater && <HotWaterReading quarter={row.hotWater} />}
       </div>
       <div className="mt-1 border-t pt-1">
         {hasBattery && row.homeSoc !== null && (
@@ -1075,6 +1121,29 @@ const PlanTooltip: React.FC<{
           )}
       </div>
       </>}
+    </div>
+  );
+};
+
+const WATER_STATE = (t: (sv: string, en: string) => string): Record<HotWaterState, string> => ({
+  allowed: t('tillåtet', 'allowed'),
+  load_gate: t('spärras troligen av last', 'likely held off by load'),
+  blocked: t('spärrat av plan', 'blocked by plan'),
+  uncontrolled: t('ej styrt', 'not controlled'),
+});
+
+/** What the plan told the water heater, and the load limits it applies. */
+const HotWaterReading: React.FC<{ quarter: HotWaterQuarter }> = ({ quarter }) => {
+  const { t } = useLanguage();
+  return (
+    <div className="mt-1 border-t pt-1">
+      <Reading name={t('Varmvatten', 'Hot water')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
+      {quarter.allowBelowW !== null && quarter.inhibitAboveW !== null && (
+        <p className="text-muted-foreground">{t(
+          `Får starta under ${(quarter.allowBelowW / 1_000).toFixed(1)} kW, stoppas över ${(quarter.inhibitAboveW / 1_000).toFixed(1)} kW`,
+          `May start below ${(quarter.allowBelowW / 1_000).toFixed(1)} kW, stopped above ${(quarter.inhibitAboveW / 1_000).toFixed(1)} kW`,
+        )}</p>
+      )}
     </div>
   );
 };
