@@ -10,7 +10,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { fetchEnergyBillingDocuments, toEnergyBillingSeriesDocuments } from '@/lib/energy-billing-storage';
 import { billedMonths } from '@/lib/home-baseline/billed-months';
 import { numericInput } from '@/lib/contract-roi';
-import { billedRecord, savingsForecast } from '@/lib/home-baseline/savings-report';
+import { billedRecord, modelCheck, savingsForecast } from '@/lib/home-baseline/savings-report';
+import { buildEnergyBillingSeries } from '@/lib/energy-billing-series';
 import { localDay } from '../../../../supabase/functions/_shared/planner-wasm/calendar';
 import HomeBaselineViewer from './roi/HomeBaselineViewer';
 import ForecastTable from './roi/ForecastTable';
@@ -80,6 +81,8 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   // evidence: saved baseline/scheduler ledgers and their generation stay untouched.
   const invoices = useQuery({ queryKey: ['energy-billing-documents', customerId], queryFn: () => fetchEnergyBillingDocuments(customerId), retry: false, refetchInterval: 30_000 });
   const bills = useMemo(() => billedMonths(toEnergyBillingSeriesDocuments(invoices.data ?? []), homeCount), [invoices.data, homeCount]);
+  // The same invoices, itemised, so the model check can take the demand charge out of them.
+  const invoiceMonths = useMemo(() => new Map(buildEnergyBillingSeries(toEnergyBillingSeriesDocuments(invoices.data ?? [])).map(m => [m.monthKey, m])), [invoices.data]);
   let forecast: ReturnType<typeof savingsForecast> | null = null;
   let invalid = false;
   try { forecast = savingsForecast(months, numericInput(settings.subscription) ?? NaN); }
@@ -88,6 +91,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   // What an imported kWh costs in the months of the estimate, for putting a price on past changes.
   const boughtKwh = months.reduce((n, m) => n + m.recorded.importKwh, 0);
   const sekPerKwh = boughtKwh > 0 ? months.reduce((n, m) => n + m.recorded.importCostSek, 0) / boughtKwh : null;
+  const check = modelCheck(months, bills, invoiceMonths);
   const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
   const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
   const [graphOpen, setGraphOpen] = useState(false);
@@ -148,10 +152,15 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     <HomeChangesCard customerId={customerId} sekPerKwh={sekPerKwh} />
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
-    <details className="rounded-xl border bg-card px-5" data-testid="what-happened"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Vad som hände: dina fakturor', 'What happened: your bills')}</summary>
+    <details className="rounded-xl border bg-card px-5" data-testid="what-happened"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Vad som hände: dina fakturor', 'What happened: your bills')}
+      {check && check.share !== null && <span className="ml-2 font-normal text-muted-foreground" data-testid="model-check">{t(
+        `· modellens priser för din uppmätta el låg ${Math.abs(Math.round(check.share * 1000) / 10).toLocaleString()} % ${check.share >= 0 ? 'över' : 'under'} fakturorna (${check.rows.length} ${check.rows.length === 1 ? 'månad' : 'månader'})`,
+        `· the model's prices for your metered electricity came ${Math.abs(Math.round(check.share * 1000) / 10).toLocaleString()}% ${check.share >= 0 ? 'above' : 'below'} the bills (${check.rows.length} ${check.rows.length === 1 ? 'month' : 'months'})`)}</span>}
+    </summary>
       <div className="space-y-3 pb-5">
-        <BilledMonthsTable record={record} installations={installations.data ?? []} />
+        <BilledMonthsTable record={record} check={check} installations={installations.data ?? []} />
         <p className="text-xs text-muted-foreground">{t('Fakturorna innehåller alla avgifter på el- och nätfakturorna, även effektavgiften, och speglar den utrustning du hade då. Saknade fakturor visas som —.', 'Bills include every charge on the electricity and grid invoices, including the demand charge, and reflect the equipment you had at the time. Missing bills show —.')}</p>
+        {check && <p className="text-xs text-muted-foreground">{t('Modellens pris är din uppmätta förbrukning prissatt som i uppskattningen. Den jämförs med fakturan utan effektavgift, som uppskattningen också utelämnar, och bara för månader med minst 99 % uppmätt och där fakturan specificerar effektavgiften.', 'The model’s price is your metered use priced the way the estimate prices it. It is compared with the bill without the demand charge, which the estimate also leaves out, and only for months at least 99% metered whose invoice itemises the demand charge.')}</p>}
       </div>
     </details>
     <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Antaganden och priser', 'Assumptions and prices')}</summary>

@@ -340,6 +340,33 @@ test.describe('requesting a replan', () => {
     expect(history.windows.length).toBeGreaterThan(before);
   });
 
+  test('the model check prices metered use like an itemised invoice, both without the demand charge', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    // September's grid invoice itemises its lines: 80 kr demand charge and 25 % VAT on 364.80 kr of lines.
+    const line = (category: string, amount_sek: number, sort_order: number) => ({ category, amount_sek, sort_order, quantity: null, label: category, period_start: null, period_end: null });
+    await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['electricity', 'grid'].map(kind => ({
+      id: `09:${kind}`, customer_id: CUSTOMER_ID, document_kind: kind, period_start: '2026-09-01', period_end: '2026-09-30',
+      total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null,
+      energy_billing_line_items: kind === 'grid' ? [line('fixed_fee', 100, 0), line('energy_transfer', 184.8, 1), line('peak_demand', 80, 2), line('vat', 91.2, 3)] : [],
+    })) }));
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(2/2)');
+    const september = history.saved()!.months['2026-09'].ledger;
+    const priced = september.recorded.costSek + september.modeled.baselineBill.supplierFixedSek + september.modeled.baselineBill.gridFixedSek;
+    const display = (n: number) => `${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    // 579 kr billed, less the demand charge with its VAT (100 kr).
+    await expect(page.getByTestId('model-check')).toContainText(/modellens priser för din uppmätta el låg .* (över|under) fakturorna \(1 månad\)/);
+    await page.getByTestId('what-happened').locator('summary').first().click();
+    const row = page.getByTestId('billed-month-2026-09');
+    await expect(row.locator('td').nth(0)).toHaveText('579,00 SEK');
+    await expect(row.locator('td').nth(1)).toHaveText('479,00 SEK');
+    await expect(row.getByTestId('model-price')).toHaveText(display(priced));
+    // October has no invoice yet, so it is not compared.
+    await expect(page.getByTestId('billed-month-2026-10').getByTestId('model-price')).toHaveText('—');
+  });
+
   test('the estimate holds one pool temperature in both columns, and changing it recalculates', async ({ context, page }) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
