@@ -34,7 +34,7 @@ export interface BenchChartExportInput {
 const overlaps = (f: OpportunityFinding, from: number, to: number) =>
   (f.from < to && f.fromEnd >= from) || (f.to < to && f.toEnd >= from);
 
-function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', shown: boolean, from: number, to: number, points: ReadonlyMap<string, number>) {
+function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', shown: boolean, from: number, to: number) {
   const { series: s, score } = source;
   const audit = score?.audit && !score.auditPending ? score.audit : null;
   let running = 0, quarterPoints = 0;
@@ -59,7 +59,7 @@ function exportedPlan(source: ExportedPlanSource, role: 'current' | 'test', show
       cumulative_cost_sek: running,
       // Service deductions in this quarter, a point a krona.
       score: scored?.score ?? null,
-      rules_fired: Object.fromEntries((scored?.fired ?? []).map(key => [key, points.get(key) ?? null])),
+      rules_fired: scored?.deductions ?? {},
     };
   });
   return {
@@ -89,7 +89,6 @@ export function benchChartExport(input: BenchChartExportInput) {
   const length = (plans[input.shown] ?? plans.current ?? plans.test)?.series.start.length ?? 0;
   const from = Math.max(0, period.from), to = Math.min(length, period.to);
   const starts = (plans[input.shown] ?? plans.current ?? plans.test)?.series.start ?? [];
-  const points = new Map(input.rules.map(rule => [rule.key, rule.points]));
   return {
     format: 'shs-planner-bench-chart',
     schema_version: 2,
@@ -106,7 +105,7 @@ export function benchChartExport(input: BenchChartExportInput) {
       const source = plans[role];
       // The same commit on both sides is one plan, not two.
       if (!source || (role === 'test' && plans.current?.sha === source.sha)) return [];
-      return [exportedPlan(source, role, role === input.shown || plans.current?.sha === plans.test?.sha, from, to, points)];
+      return [exportedPlan(source, role, role === input.shown || plans.current?.sha === plans.test?.sha, from, to)];
     }),
   };
 }

@@ -1,4 +1,5 @@
 import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
+import { WATER_MINUTES_PER_DAY } from "../hot-water-opportunities.ts";
 
 export interface CriterionOverride { enabled?: boolean; threshold?: number; points?: number }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
@@ -17,9 +18,9 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
  * has no model of what they measure (the water tank is planned around it), so
  * a saved override for one never reaches a plan.
  */
-export const REFEREE_RULE_DEFAULTS: Record<"water_cold", RuleDefault> = {
-  // kWh of heating the water tank is owed: about 150 litres 17 °C under its set point.
-  water_cold: { threshold: 3, points: -1 },
+export const REFEREE_RULE_DEFAULTS: Record<"water_opportunities", RuleDefault> = {
+  // One deduction per missing quarter, assessed over each home's local day.
+  water_opportunities: { threshold: WATER_MINUTES_PER_DAY / 15, points: -1 },
 };
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;

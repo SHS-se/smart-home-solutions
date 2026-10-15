@@ -156,10 +156,13 @@ export default function BenchRuleList({
     ...resolveRules(draft).map((rule): Row => {
       const cells = bySide(s => {
         const application = s.score?.applicability[rule.key];
-        if (!s.series?.comfort || !s.score) return nothing(t('Saknar underlag', 'Missing evidence'));
+        if (!s.score || !s.series?.comfort && rule.about !== 'water') return nothing(t('Saknar underlag', 'Missing evidence'));
         if (!rule.enabled) return nothing(t('Av', 'Off'));
         if (application && !application.applicable) return nothing('N/A');
-        return counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
+        const cell = counted(s.score.quarters.flatMap((q, i) => q.fired.includes(rule.key) ? [i] : []), rule.points);
+        const points = s.score.quarters.reduce((sum, q, i) => sum + (inRange(i) ? q.deductions[rule.key] ?? 0 : 0), 0);
+        return { ...cell, points, note: rule.about === 'water' && cell.events.length
+          ? `${points / rule.points} ${t('kv saknas', 'missing q')} · ${signed(points)}` : null };
       });
       return { key: rule.key, label: rule.label, perQuarter: rule.points, required: !!rule.required, cells, triggered: fired(cells), comfort: rule };
     }),
@@ -196,7 +199,7 @@ export default function BenchRuleList({
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
@@ -205,16 +208,16 @@ export default function BenchRuleList({
   const comfortDetail = (rule: ResolvedRule) => {
     if (rule.about === 'water') return <>
       <p>
-        {t(`Tanken ligger mer än ${rule.threshold} kWh efter: uppvärmning som planen höll tillbaka och ännu inte tagit igen.`,
-          `The tank is more than ${rule.threshold} kWh behind: heating the plan held off and has not yet made up.`)}
-        {' '}{t('Det som fortfarande saknas vid periodens slut läggs på elräkningen till referenspriset.', 'What is still owed at the end of the window is added to the bill at the reference price.')}
-        {' '}{t('Gäller bara fall där varmvattnet är uppmätt. Ingen planerare får regeln: domaren bedömer den.', 'Applies only to cases with measured hot water. No planner is given this rule: the referee judges it.')}
+        {t(`Varje lokalt kalenderdygn behöver ${rule.threshold} tillåtna kvartar. Varje saknad kvart räknas vid dygnets sista synliga kvart.`,
+          `Each local calendar day needs ${rule.threshold} allowed quarters. Each missing quarter is counted at the day's last visible quarter.`)}
+        {' '}{t('Termostatens förbrukning bedöms inte. Pågående uppvärmning som får avslutas ersätter inte planerade kvartar. Förbrukningsmätare behövs inte för kontrollen.',
+          'Thermostat consumption is not assessed. Finish-heating overruns do not replace planned quarters. Consumption meters are not needed for this check.')}
       </p>
       {sides.map(s => {
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
       })}
-      {settings(rule, t('Gräns (kWh)', 'Limit (kWh)'), '0.5')}
+      {settings(rule, t('Tillåtna kvartar per dygn', 'Allowed quarters per day'), '1')}
     </>;
     const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;
@@ -343,7 +346,7 @@ export default function BenchRuleList({
       </button>
       {showIdle && <div className="border-t">
         {idle.map(renderRow)}
-        <p className="py-2 text-xs text-muted-foreground">{t('Bilen antas alltid ansluten. Avgångar, frånvaro, rumsvärme, varmvattenstyrning, korta moln, prognosrisk, effekttariffer, startkostnader och körskydd ingår inte. Att ingen förlust hittades betyder inte att planen är optimal.', 'The car is always considered plugged in. Departures, absence, room heating, hot water control, brief clouds, forecast risk, peak tariffs, equipment start costs and run protection are not modelled. No loss found does not mean the plan is optimal.')}</p>
+        <p className="py-2 text-xs text-muted-foreground">{t('Bilen antas alltid ansluten. Avgångar, frånvaro, rumsvärme, korta moln, prognosrisk och effekttariffer ingår inte. Att ingen förlust hittades betyder inte att planen är optimal.', 'The car is always considered plugged in. Departures, absence, room heating, brief clouds, forecast risk and peak tariffs are not modelled. No loss found does not mean the plan is optimal.')}</p>
       </div>}
     </div>
   </section>;

@@ -37,16 +37,16 @@ Deno.test('held-off heating is owed to the tank and made up at rated power, ener
   assertAlmostEquals(kwh(sim.water!.w), QUARTERS * NEED_W / 4_000, 1e-9);
 });
 
-Deno.test('a tank left behind runs cold, and what it is owed at the end is billed', () => {
+Deno.test('a boiler left blocked misses daily permissions, and outstanding energy is billed separately', () => {
   const outcome = referee(measured(), HOUSEHOLD, TARGETS, commanding(() => ({ kind: 'inhibit' })));
   const owed = QUARTERS * NEED_W / 4_000;
   assertAlmostEquals(outcome.series.hotWater!.owedKwh[QUARTERS - 1], owed);
   const bill = outcome.series.bill!;
   assertAlmostEquals(bill.hot_water!.owed_sek, owed * bill.credit.reference_sek_per_kwh, 1e-3);
   assertAlmostEquals(bill.net_sek, bill.grid_sek + bill.wear_sek - bill.credit.credit_sek + bill.hot_water!.owed_sek, 1e-3);
-  // 3 kWh is 30 quarters of 400 W: from the 31st the water is cold.
+  // This window touches four Stockholm dates: ten missing opportunities each.
   const scored = scoreQuarters(outcome.series, {});
-  assertEquals(scored.counts.water_cold, QUARTERS - 30);
+  assertEquals(scored.counts.water_opportunities, 40);
   assertEquals(outcome.series.hotWater!.command[0], 'inhibit');
 });
 
@@ -69,6 +69,21 @@ Deno.test('boiler permission never shifts heat-pump preheating or mixed hot-wate
   assertEquals(HOUSEHOLD.hot_water.rated_w, 3000);
 });
 
+Deno.test('scheduled boiler energy replaces its inclusive base load once, including catch-up heating', () => {
+  const c = measured();
+  const inclusiveW = 2274; // 600 W appliances + 1274 W autonomous preheat + 400 W boiler.
+  c.base_load_forecast_w = quarters(() => inclusiveW);
+  c.recorded.actual!.base_load_w = quarters(() => inclusiveW);
+  const result = referee(c, HOUSEHOLD, TARGETS, commanding(i => i < 8 ? { kind: 'inhibit' } : { kind: 'permit' }));
+  const s = result.series;
+  assertEquals(s.hotWaterW[0], 0);
+  assertEquals(s.hotWaterW[8], HOUSEHOLD.hot_water.rated_w);
+  for (let i = 0; i < QUARTERS; i++) {
+    assertAlmostEquals(s.loadW[i] - s.poolW[i] - s.carW[i] - s.hotWaterW[i], inclusiveW - NEED_W, 1e-3);
+  }
+  assertAlmostEquals(kwh(s.hotWaterW) + s.hotWater!.owedKwh.at(-1)!, QUARTERS * NEED_W / 4000, 1e-3);
+});
+
 Deno.test('permission without boiler meters leaves load intact and water assessment unavailable', () => {
   const c = measured();
   c.other_devices_w = { 'sensor.hot_water_energy': quarters(() => 400) };
@@ -77,5 +92,7 @@ Deno.test('permission without boiler meters leaves load intact and water assessm
   assertEquals(result.series.hotWater!.demandKnown, false);
   assertEquals(result.series.loadW, quarters(() => 1000));
   assertEquals(result.series.bill!.hot_water, undefined);
-  assertEquals(scoreQuarters(result.series, {}).applicability.water_cold.applicable, false);
+  // Permissions are assessable even though consumption is not.
+  assertEquals(scoreQuarters(result.series, {}).applicability.water_opportunities.applicable, true);
+  assertEquals(scoreQuarters(result.series, {}).counts.water_opportunities, 40);
 });

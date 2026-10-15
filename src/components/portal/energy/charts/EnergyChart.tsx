@@ -59,6 +59,13 @@ const POOL_COLOUR = loadColour(2);
 
 interface Panel { top: number; height: number }
 
+interface SlotEnergy {
+  /** Modeled electrical energy in the displayed period; null means unmetered. */
+  kwh: number | null;
+  /** Battery output is separate from its charging energy. */
+  dischargedKwh?: number;
+}
+
 /** A running cost series for any model or comparison. */
 export interface EnergyCostLine {
   key: string;
@@ -82,10 +89,12 @@ export interface EnergyStoreLines {
 export interface EnergyQuarterAudit {
   title: string;
   description: string;
+  boilerEnergy: SlotEnergy;
   lanes: readonly {
     key: string;
     label: string;
     colour: string;
+    energy: SlotEnergy;
     cells: readonly {
       description: string;
       sourceKnown: boolean;
@@ -106,6 +115,29 @@ const PanelHeading: React.FC<{ title: string; unit: string; y: number }> = ({ ti
     <text x={MARGIN_LEFT + title.length * 6.6 + 10} y={y} className={AXIS_TEXT}>{unit}</text>
   </>
 );
+
+/** Shared tracks and energy labels keep device controls visually aligned. */
+const SlotControlLane: React.FC<{
+  device: string; label: string; top: number; energy?: SlotEnergy; children: React.ReactNode;
+  t: (sv: string, en: string) => string;
+}> = ({ device, label, top, energy, children, t }) => {
+  const format = (value: number | null) => value === null ? '— kWh' : `${value.toFixed(1)} kWh`;
+  const battery = energy?.dischargedKwh !== undefined;
+  return <g data-slot-device={device}>
+    <text x={MARGIN_LEFT - 7} y={top + 14} textAnchor="end" className={AXIS_TEXT}>{label}</text>
+    <rect x={MARGIN_LEFT} y={top} width={PLOT_W} height={24} className="fill-muted" />
+    {children}
+    {energy && <g data-slot-energy={device}>
+      <title>{t('Modellerad energi under visad period', 'Modeled energy in displayed period')}</title>
+      <text x={RIGHT + 7} y={top + (battery ? 9 : 14)} className={AXIS_TEXT}>
+        {format(energy.kwh)}{battery ? ` ${t('in', 'in')}` : ''}
+      </text>
+      {battery && <text x={RIGHT + 7} y={top + 21} className={AXIS_TEXT}>
+        {format(energy.dischargedKwh!)} {t('ut', 'out')}
+      </text>}
+    </g>}
+  </g>;
+};
 
 const Gridlines: React.FC<{ ticks: number[]; y: Scale; format: (tick: number) => string }> = ({
   ticks, y, format,
@@ -256,7 +288,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const auditHeight = quarterAudit ? quarterAudit.lanes.length * 28 : quarterScores ? 16 : 0;
     const scoreStrip: Panel | null = quarterAudit || quarterScores || showWater
       ? { top: axisY + 42 + GAP, height: auditHeight + (showWater ? 28 : 0) } : null;
-    const water: Panel = { top: (scoreStrip?.top ?? 0) + auditHeight + 7, height: 10 };
+    const water: Panel = { top: (scoreStrip?.top ?? 0) + auditHeight, height: 24 };
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -820,12 +852,11 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               />
               <PanelHeading
                 title={t('Kvartsstyrning', 'Slot control')}
-                unit={quarterAudit?.description ?? (quarterScores ? t('regelpoäng per kvart', 'rule points per quarter') : t('blå: tillåten · grå: spärrad', 'blue: allowed · grey: blocked'))}
+                unit={quarterAudit?.description ?? (quarterScores ? t('regelpoäng per kvart', 'rule points per quarter') : t('blå: tillåten · tom: spärrad', 'blue: allowed · empty: blocked'))}
                 y={scoreStrip.top - 6}
               />
-              {quarterAudit?.lanes.map((lane, laneIndex) => <g key={lane.key}>
-                <text x={MARGIN_LEFT - 7} y={scoreStrip.top + laneIndex * 28 + 14} textAnchor="end" className={AXIS_TEXT}>{lane.label}</text>
-                <rect x={MARGIN_LEFT} y={scoreStrip.top + laneIndex * 28} width={PLOT_W} height={24} className="fill-muted" />
+              {quarterAudit?.lanes.map((lane, laneIndex) => <SlotControlLane key={lane.key}
+                device={lane.key} label={lane.label} top={scoreStrip.top + laneIndex * 28} energy={lane.energy} t={t}>
                 {lane.cells.map((cell, index) => {
                   if (!cell.description) return null;
                   const width = x(index + 1) - x(index);
@@ -842,7 +873,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                     })}
                   </g>;
                 })}
-              </g>)}
+              </SlotControlLane>)}
               {!quarterAudit && quarterScores?.map((score, index) => {
                 if (score === null || score === undefined) return null;
                 const left = x(index), width = x(index + 1) - left;
@@ -867,23 +898,19 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               })}
           {showWater && (
             <g id="plan-water-lane">
-              <rect x={MARGIN_LEFT} y={water.top - 7} width={PLOT_W} height={24} className="fill-muted" />
-              <text x={MARGIN_LEFT - 7} y={water.top + 8.5} textAnchor="end" className={AXIS_TEXT}>
-                {t('Beredare', 'Boiler')}
-              </text>
+              <SlotControlLane device="boiler" label={t('Beredare', 'Boiler')} top={water.top} energy={quarterAudit?.boilerEnergy} t={t}>
               {rows.map((row, index) => {
                 const state = row.hotWater?.state;
                 if (!state || state === 'uncontrolled') return null;
                 return (
                   <rect
                     key={index} data-water={state}
-                    x={x(index)} y={water.top} width={Math.max(0.5, x(index + 1) - x(index))} height={water.height}
-                    fill={state === 'allowed' ? PLAN_COLOURS.water : undefined}
-                    className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
-                    fillOpacity={state === 'blocked' ? 0.45 : 1}
+                    x={x(index) + .5} y={water.top + 8} width={Math.max(0.5, x(index + 1) - x(index) - 1)} height={8}
+                    fill={state === 'allowed' ? PLAN_COLOURS.water : 'transparent'}
                   ><title>{hotWaterStateLabel(state, t)}</title></rect>
                 );
               })}
+              </SlotControlLane>
             </g>
           )}
 

@@ -33,6 +33,8 @@ export interface BenchSeries {
    * otherwise, and on results from before it was modelled.
    */
   hotWater?: {
+    /** The home's calendar for its daily permission requirement. */
+    timeZone: string;
     /** False when only permission is known; no electrical or comfort assessment. */
     demandKnown: boolean;
     /** Heating the tank is owed at the end of each quarter, kWh. */

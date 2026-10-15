@@ -215,6 +215,22 @@ outcomes. Hourly conversion preserves each meter's hourly energy. Identity-
 bearing device quarter records are kept separately; category hot-water totals
 cannot be reassigned to the boiler.
 
+The Slot control rows show electrical kWh for the displayed period (the full
+72-hour case or the selected day), integrated from each simulated device's
+power and slot duration. Battery charging and discharging are shown separately.
+Boiler energy is simulated consumption, not permission time multiplied by its
+3 kW rating. Its historical draw is removed from the inclusive base load before
+the simulated draw is added, so preheating remains in base load and the boiler
+is counted once.
+
+The referee checks daily permission coverage, not water temperature. Its
+`water_opportunities` rule deducts one point per missing quarter below ten
+allowed quarters per local day touched by the horizon. It counts plan commands,
+so thermostat idling does not incur a penalty and a controller's finish-heating
+overrun does not substitute for planned opportunities. The check works without
+separate consumption meters. Inferred heating backlog remains an electrical
+accounting quantity, never evidence that the taps ran cold.
+
 ## Value curves
 
 A value curve says what one more unit in a store is worth at each level: a kWh

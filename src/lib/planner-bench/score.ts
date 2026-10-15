@@ -5,11 +5,12 @@ import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } f
 import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
+import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 33;
+export const SCORER_VERSION = 34;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -22,6 +23,8 @@ export interface QuarterView {
   ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
+  /** Missing daily permissions, assessed at the day's last visible quarter. */
+  waterShortfall: number;
 }
 
 export interface QuarterRule {
@@ -35,7 +38,8 @@ export interface QuarterRule {
   about: 'pool' | 'car' | 'water';
   /** A case in which this rule fires anywhere is shown as failed. */
   required?: boolean;
-  fires: (q: QuarterView, threshold: number) => boolean;
+  /** True counts once; a number counts that many missing service units. */
+  fires: (q: QuarterView, threshold: number) => boolean | number;
   /** The first quarter in which the rule could fire; Infinity when it never can. */
   eligibleFrom: (s: BenchSeries, threshold: number) => number;
 }
@@ -81,10 +85,10 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
   {
     key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
-  // Heating held off is owed to the tank; past this much the taps run cold. Scored by the referee only (rule-policy.ts).
   {
-    key: 'water_cold', about: 'water', label: 'Hot water ran cold', describe: t => `the tank owed more than ${t} kWh of heating`,
-    fires: (q, t) => !!q.s.hotWater?.demandKnown && (q.s.hotWater.owedKwh[q.i] ?? 0) > t, eligibleFrom: s => s.hotWater?.demandKnown ? 0 : Infinity,
+    key: 'water_opportunities', about: 'water', label: 'Boiler permission shortfall',
+    describe: t => `fewer than ${t} allowed quarters per local day; counts each missing quarter`,
+    fires: q => q.waterShortfall, eligibleFrom: s => s.hotWater ? 0 : Infinity,
   },
 ];
 
@@ -113,6 +117,8 @@ export interface QuarterScore {
   score: number;
   /** Deduction rules that fired, in rule order. */
   fired: string[];
+  /** Each rule's actual contribution, including multiple missing daily quarters. */
+  deductions: Record<string, number>;
 }
 
 export interface ServiceApplicability {
@@ -169,9 +175,33 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   return tally(s, overrides, verdict);
 }
 
+/** Judge the plan's permissions, never a guessed thermostat or tank state.
+ * Like the allocator, each local day touched by the horizon has its own quota.
+ * Charge once at the day's last visible quarter, including a partial day at
+ * the horizon boundary, without charging repeatedly throughout the day. */
+function waterShortfallQuarters(s: BenchSeries, requiredQuarters: number): Map<number, number> {
+  const missing = new Map<number, number>();
+  if (!s.hotWater) return missing;
+  const days = new Map<string, number[]>();
+  s.start.forEach((start, i) => {
+    const day = localDay(start, s.hotWater!.timeZone);
+    const slots = days.get(day) ?? [];
+    slots.push(i);
+    days.set(day, slots);
+  });
+  for (const indices of days.values()) {
+    const allowed = indices.reduce((sum, i) => sum + (s.hotWater!.command[i] !== 'inhibit' ? s.hours[i] * 4 : 0), 0);
+    const shortfall = Math.max(0, Math.ceil(requiredQuarters - allowed - 1e-6));
+    if (!shortfall) continue;
+    missing.set(indices.at(-1)!, shortfall);
+  }
+  return missing;
+}
+
 function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | null): CaseScore {
   const resolved = resolveRules(overrides);
   const rules = resolved.filter(r => r.enabled);
+  const waterShortfalls = waterShortfallQuarters(s, resolved.find(r => r.key === 'water_opportunities')!.threshold);
   const n = s.start.length;
   const audit = s.audit ?? null;
   const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
@@ -200,25 +230,28 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
-    const q: QuarterView = { s, i, due: due(i), ahead: aheadOf(i) };
-    const firing = rules.filter(rule => rule.fires(q, rule.threshold));
+    const q: QuarterView = { s, i, due: due(i), ahead: aheadOf(i), waterShortfall: waterShortfalls.get(i) ?? 0 };
     let score = 0;
     const fired: string[] = [];
-    for (const rule of firing) {
-      score += rule.points;
+    const deductions: Record<string, number> = {};
+    for (const rule of rules) {
+      const occurrences = Number(rule.fires(q, rule.threshold));
+      if (!occurrences) continue;
+      deductions[rule.key] = rule.points * occurrences;
+      score += deductions[rule.key];
       fired.push(rule.key);
-      counts[rule.key] = (counts[rule.key] ?? 0) + 1;
+      counts[rule.key] = (counts[rule.key] ?? 0) + occurrences;
     }
     histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
     sum += score;
-    quarters.push({ score, fired });
+    quarters.push({ score, fired, deductions });
   }
   const requiredFired = rules.filter(r => r.required && counts[r.key]).map(r => r.key);
 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
     const reason = !rule.enabled ? 'Switched off for this case.'
-      : rule.about === 'water' && !s.hotWater?.demandKnown ? 'The case has no separate boiler consumption measurements.'
+      : rule.about === 'water' ? s.hotWater ? `Counts missing permissions per local day, independently of thermostat consumption.` : 'The plan has no boiler permissions.'
       : !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;

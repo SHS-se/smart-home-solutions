@@ -45,7 +45,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 20;
+export const REFEREE_VERSION = 21;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -457,6 +457,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   if (sim.water || d.hot_water) {
     const commands = Array.from({ length: QUARTERS }, (_, i) => d.hot_water?.[i] ?? FREE);
     series.hotWater = {
+      timeZone: c.timezone,
       demandKnown: sim.water !== null,
       owedKwh: sim.water ? Array.from(sim.water.owedKwh, r4) : [],
       permitted: sim.water ? Array.from(sim.water.permitted) : commands.map(command => command.kind !== 'inhibit' ? 1 : 0),

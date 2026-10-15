@@ -538,6 +538,10 @@ const CaseCost: React.FC<{ detail: BenchResultDetail }> = ({ detail: d }) => {
           `${t('upp till målen, vid', 'up to the targets, at')} ${d.series.bill.credit.reference_sek_per_kwh.toFixed(2)} kr/kWh`,
         ].join(' · ')}{')'}
       </span>
+      {d.series.bill.hot_water && d.series.bill.hot_water.owed_sek > 0 && <>
+        {' + '}{t('uppskjuten beredarenergi', 'deferred boiler energy')}{' '}
+        <span className="font-mono" title={`${d.series.bill.hot_water.owed_kwh.toFixed(2)} kWh`}>{d.series.bill.hot_water.owed_sek.toFixed(1)}</span>
+      </>}
     </div>}
     <div className="text-muted-foreground">
       {t('Planeraren räknade med', 'The planner expected')} <span className="font-mono">{d.record?.beliefs.grid_cost_sek?.toFixed(1) ?? '—'} kr</span>

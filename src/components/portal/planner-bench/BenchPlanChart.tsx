@@ -87,13 +87,18 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     return { name: currentName, homeSoc: view(current.homeSoc), evSoc: view(current.carSoc), poolC: view(current.poolC) };
   }, [current, series, range.from, range.to, currentName]);
 
+  const energyKwh = (watts: readonly number[]) => watts.slice(range.from, range.to)
+    .reduce((sum, w, i) => sum + w * series.hours[range.from + i] / 1000, 0);
   const quarterAudit: EnergyQuarterAudit = {
     title: t('Kvartsstyrning', 'Slot control'),
     description: t('övre: källa · nedre: destination · kontur: efterklokhet', 'upper: source · lower: destination · outline: hindsight'),
+    boilerEnergy: { kwh: series.hotWater?.demandKnown ? energyKwh(series.hotWaterW) : null },
     lanes: (['pool', 'ev', 'battery'] as const).map(device => ({
       key: device,
       label: device === 'pool' ? 'Pool' : device === 'ev' ? t('Bil', 'Car') : t('Batteri', 'Battery'),
       colour: device === 'pool' ? 'var(--plan-load-2)' : device === 'ev' ? 'var(--plan-ev)' : 'var(--plan-battery)',
+      energy: device === 'battery' ? { kwh: energyKwh(series.batteryChargeW), dischargedKwh: energyKwh(series.batteryDischargeW) }
+        : { kwh: energyKwh(device === 'pool' ? series.poolW : series.carW) },
       cells: rows.map((_, index) => {
         const quarter = range.from + index;
         const findings = audit?.status === 'complete' ? audit.findings.filter(f => f.device === device) : [];

@@ -2,7 +2,7 @@ import { assertEquals } from '@std/assert';
 import { benchChartExport, benchChartFilename } from './chart-export.ts';
 import { evaluate } from './evaluate.ts';
 import { resolveRules, scoreQuarters } from './score.ts';
-import { plan, world } from './world.fixture.ts';
+import { plan, quarters, world } from './world.fixture.ts';
 import type { PlanRecord } from './types.ts';
 
 const c = world();
@@ -45,4 +45,13 @@ Deno.test('a single day exports only that day, with its cost counted from the st
 Deno.test('one commit on both sides is exported once, and the file is named after what it holds', () => {
   assertEquals(exported(0, n, 'full 72 h', source('main', 'a')).plans.map(p => [p.name, p.shown]), [['main', true]]);
   assertEquals(benchChartFilename('C-0924', 'main · dev', '25/09'), 'bench-C-0924-main-dev-25-09.json');
+});
+
+Deno.test('exported rule contributions include every missing daily boiler opportunity', () => {
+  const blocked = evaluate(c, { ...record, decisions: { ...plan(), hot_water: quarters(() => ({ kind: 'inhibit' as const })) } }, {});
+  const scored = scoreQuarters(blocked.series);
+  const file = exported(0, n, 'full 72 h', { ...source('dev', 'b'), series: blocked.series, score: scored });
+  const quarters_ = file.plans[1].quarters;
+  assertEquals(quarters_.reduce((sum, q) => sum + (q.rules_fired.water_opportunities ?? 0), 0), -40);
+  for (const q of quarters_) assertEquals(Object.values(q.rules_fired).reduce((a: number, b) => a + b, 0), q.score);
 });

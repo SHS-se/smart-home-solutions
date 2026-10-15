@@ -116,7 +116,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
-  s.hotWater = { demandKnown: true, owedKwh: new Array(n).fill(0),
+  s.hotWater = { timeZone: 'Europe/Stockholm', demandKnown: true, owedKwh: new Array(n).fill(0),
     permitted: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 1 : 0),
     command: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 'permit' : 'inhibit') };
   s.deviceW = { pool: s.poolW, car: s.carW };
@@ -722,6 +722,20 @@ test.describe('planner bench', () => {
     await expect(page.locator('#plan-water-lane [data-water=blocked]')).toHaveCount(258);
     await expect(page.locator('#plan-water-gate')).toHaveCount(0);
     await expect(page.locator('#plan-slot-control #plan-water-lane')).toBeVisible();
+    // Totals are electrical consumption, not allowed quarters times the heater rating.
+    await expect(page.locator('[data-slot-energy=pool]')).toHaveText(/42\.0 kWh/);
+    await expect(page.locator('[data-slot-energy=ev]')).toHaveText(/0\.0 kWh/);
+    await expect(page.locator('[data-slot-energy=battery]')).toHaveText(/0\.0 kWh in.*0\.0 kWh (out|ut)/);
+    await expect(page.locator('[data-slot-energy=boiler]')).toHaveText(/1\.5 kWh/);
+    // Off quarters use the same quiet track as the other lanes.
+    await expect(page.locator('#plan-water-lane [data-water=blocked]').first()).toHaveAttribute('fill', 'transparent');
+    const marker = page.locator('#plan-water-lane [data-water=allowed]').first();
+    await expect(marker).toHaveAttribute('height', '8');
+    const laneTracks = await page.locator('[data-slot-device] > rect.fill-muted').evaluateAll(rects => rects.map(rect => ({
+      height: rect.getAttribute('height'), fill: rect.getAttribute('class'),
+    })));
+    expect(laneTracks).toHaveLength(4);
+    expect(laneTracks.every(track => track.height === '24' && track.fill === 'fill-muted')).toBe(true);
     const waterLane = (await page.locator('#plan-water-lane').boundingBox())!;
     const costPanel = (await page.locator('#plan-cost').boundingBox())!;
     expect(waterLane.y).toBeGreaterThan(costPanel.y + costPanel.height);
@@ -741,9 +755,12 @@ test.describe('planner bench', () => {
     const wholeCase = await testCost.getAttribute('d');
     await page.locator('#bench-day-1').click();
     await expect(testCost).not.toHaveAttribute('d', wholeCase!);
+    await expect(page.locator('[data-slot-energy=pool]')).toHaveText(/0\.0 kWh/);
+    await expect(page.locator('[data-slot-energy=boiler]')).toHaveText(/0\.5 kWh/);
     await page.locator('#plan-cost').screenshot({ path: test.info().outputPath('plan-cost-day.png') });
     await page.locator('#bench-day-all').click();
     await expect(testCost).toHaveAttribute('d', wholeCase!);
+    await expect(page.locator('[data-slot-energy=boiler]')).toHaveText(/1\.5 kWh/);
     // So is the pool's temperature, with the owner's target drawn in.
     await expect(page.locator('#plan-temperature')).toContainText(/30\.5 °C (target|mål)/);
     // The test plan is drawn against the current planner's battery and pool, dashed.
@@ -759,6 +776,15 @@ test.describe('planner bench', () => {
     await expect(async () => expect(await chart.innerHTML()).not.toBe(drawn)).toPass({ timeout: 10_000 });
     // The current plan shown on its own has nothing to be dashed against.
     await expect(compared).toHaveCount(0);
+    await expect(page.locator('[data-slot-energy=pool]')).toHaveText(/35\.0 kWh/);
+
+    // Daily permission deficits show their full contribution, not a count of charged days.
+    const waterRule = page.locator('#bench-rule-water_opportunities');
+    await expect(waterRule).toContainText(/10 (missing q|kv saknas) · −10/);
+    await waterRule.getByRole('button').first().click();
+    await expect(waterRule).toContainText(/Thermostat consumption is not assessed|Termostatens förbrukning bedöms inte/);
+    await expect(page.locator('#bench-water_opportunities-threshold')).toHaveValue('10');
+    await expect(page.locator('#bench-rule-water_cold')).toHaveCount(0);
 
     // Each planner's bill for the case in view sits in its own box in the case card, with its points; the summary holds totals only.
     const summary = page.locator('#bench-summary');

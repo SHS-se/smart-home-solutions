@@ -120,10 +120,10 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   // Exactly 1 °C below and exactly 50 km short are still fine; just past them lose a point each.
   assertEquals(scoreQuarters(comfortSeries(() => 29, () => 250)).sum, 0);
   const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 249));
-  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'] });
+  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'], deductions: { pool_low: -1, ev_low: -1 } });
   // More than 2 °C below and more than 100 km short lose a second point each; a store never loses more than two.
   const far = scoreQuarters(comfortSeries(() => 27.9, () => 199));
-  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'] });
+  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], deductions: { pool_low: -1, pool_cold: -1, ev_low: -1, ev_short: -1 } });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
   // A car above its target loses nothing.
@@ -139,11 +139,11 @@ Deno.test('overheating accounts for the following day’s price and solar withou
   };
   // The same every day: nothing to hold the heat for. The last day has no next day and is not judged.
   const waste = hot(() => 1, () => 1000);
-  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'] }, { score: 0, fired: [] }]);
+  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'], deductions: { pool_hot: -1 } }, { score: 0, fired: [], deductions: {} }]);
   assertEquals([waste.counts.pool_hot, waste.sum, waste.passed], [192, -192, true]);
   // Dearer on the second day only: storing heat on day one avoids an overheating deduction.
   const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
-  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [] }, { score: -1, fired: ['pool_hot'] }]);
+  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [], deductions: {} }, { score: -1, fired: ['pool_hot'], deductions: { pool_hot: -1 } }]);
   assertEquals(dearer.sum, -96);
   // Less sun the next day counts the same; a difference within the margin does not.
   assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, []);
@@ -198,9 +198,10 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   const series = comfortSeries(() => 28.5, () => 300);
   assertThrows(() => scoreQuarters(series, { pool_low: { points: 3 } }), CriteriaError);
   assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
-  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'water_cold']);
+  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'water_opportunities']);
   // The referee's own rule is overridden like any other, and never reaches a planner's policy.
-  assertEquals(criteriaErrors({ water_cold: { threshold: 2, points: -2 } }), []);
+  assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
+  assertEquals(criteriaErrors({ water_cold: { threshold: 3 } }), ['Unknown rule "water_cold".']);
   assertEquals(criteriaErrors({ cheap_buy: { points: 1 } }), ['Unknown rule "cheap_buy".']);
   assertThrows(() => resolveRules({ ev_from_home_battery: { points: -1 } }), CriteriaError);
   assertEquals(criteriaFingerprint({ pool_low: { threshold: 2 }, ev_low: { points: -2 } }),

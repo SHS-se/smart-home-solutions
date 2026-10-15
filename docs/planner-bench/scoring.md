@@ -33,7 +33,7 @@ add into a run score.
 | Pool overheated | Target +2 °C | −1 | No |
 | Car short of range | More than 50 km short | −1 | No |
 | Car far short of range | More than 100 km short | −1 | Yes |
-| Hot water ran cold | Tank owed more than 3 kWh | −1 | No |
+| Boiler permission shortfall | Fewer than 10 allowed quarters per local day | −1 per missing quarter | No |
 
 The two shortfall tiers stack. A level starts counting only when full power
 from the initial state could have reached it, followed by 24 hours to choose
@@ -42,15 +42,22 @@ Pool overheating counts heating after the threshold has already been reached,
 or warmth above it when the next full day is neither over 10% dearer nor over
 10% less sunny. This cleanup preserves those service semantics.
 
-Hot water ran cold is the referee's own check (`REFEREE_RULE_DEFAULTS` in
-`rule-policy.ts`): no planner is given it, because production plans the water
-heater around the kernel rather than in it. Heating a plan held off is owed to
-the tank and made up at the heater's rated power once it may run again; past
-the threshold the taps are taken to run cold. The threshold stands in for the
-tank's slack (about 150 litres 17 °C under its set point) and is an estimate.
-Whatever is still owed at the end of the window is added to the bill at the
-end credit's reference price (`bill.hot_water`). The check applies only to cases
-whose hot water was measured.
+Boiler permission shortfall is the referee's own check
+(`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it,
+because production allocates boiler opportunities around the kernel. Each local
+day touched by the horizon must have ten allowed quarters (150 minutes), as in
+the allocator. A day with eight allowed quarters loses two points; a day with
+ten or more loses none. Each day's deduction is charged at its last visible quarter.
+Days are independent, including 23- and 25-hour daylight-saving days; extra
+permissions on one day do not cover another. Uncontrolled/free commands count
+as allowed. Controller overruns do not replace the plan's permissions.
+
+This check does not require boiler meters or infer cold water from heating
+debt. The unknown thermostat may leave every permitted slot idle without a
+service penalty. Electrical accounting still defers held-off measured demand,
+makes it up at rated power, and adds outstanding energy at the horizon's end to
+the bill at the end-credit reference price (`bill.hot_water`), so leaving
+consumption unserved cannot create a free energy saving.
 
 Thresholds, nonzero points and enabled state remain configurable. A required
 check firing fails the automatic case verdict; the planner still ranks its
