@@ -33,7 +33,7 @@ add into a run score.
 | Pool overheated | Target +2 °C | −1 | No |
 | Car short of range | More than 50 km short | −1 | No |
 | Car far short of range | More than 100 km short | −1 | Yes |
-| Boiler permission shortfall | Fewer than 10 allowed quarters per local day | −1 per missing quarter | No |
+| Boiler permission shortfall | Fewer than 10 allowed quarters per 24-hour sample period | −1 per missing quarter | No |
 
 The two shortfall tiers stack. A level starts counting only when full power
 from the initial state could have reached it, followed by 24 hours to choose
@@ -43,21 +43,20 @@ or warmth above it when the next full day is neither over 10% dearer nor over
 10% less sunny. This cleanup preserves those service semantics.
 
 Boiler permission shortfall is the referee's own check
-(`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it,
-because production allocates boiler opportunities around the kernel. Each local
-day touched by the horizon must have ten allowed quarters (150 minutes), as in
-the allocator. A day with eight allowed quarters loses two points; a day with
-ten or more loses none. Each day's deduction is charged at its last visible quarter.
-Days are independent, including 23- and 25-hour daylight-saving days; extra
-permissions on one day do not cover another. Uncontrolled/free commands count
-as allowed. Controller overruns do not replace the plan's permissions.
+(`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it.
+The 72-hour sample is divided into three consecutive 24-hour periods starting
+at the sample's first quarter. Each period needs ten allowed quarters (150
+minutes). Eight allowed quarters lose two points; ten or more lose none.
+Each period's deduction is charged at its final quarter. Extra permissions
+in another period do not cover a shortfall. Uncontrolled/free commands count
+as allowed; controller overruns do not replace planned permissions. Midnight,
+timezone and daylight-saving changes do not introduce extra periods.
 
-This check does not require boiler meters or infer cold water from heating
-debt. The unknown thermostat may leave every permitted slot idle without a
-service penalty. Electrical accounting still defers held-off measured demand,
-makes it up at rated power, and adds outstanding energy at the horizon's end to
-the bill at the end-credit reference price (`bill.hot_water`), so leaving
-consumption unserved cannot create a free energy saving.
+This is the only hot-water penalty. It does not require boiler meters, infer
+water temperature, or charge for deferred heating. The electrical simulation
+can still shift recorded heating between quarters, but its remaining energy
+counter is never converted to money or scored. The net bill is grid cost plus
+modelled equipment wear minus the battery, pool and EV store credit.
 
 Thresholds, nonzero points and enabled state remain configurable. A required
 check firing fails the automatic case verdict; the planner still ranks its

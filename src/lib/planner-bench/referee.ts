@@ -45,7 +45,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 21;
+export const REFEREE_VERSION = 22;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -354,17 +354,13 @@ export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simula
     { battery_kwh: sim.start.batteryKwh, pool_c: sim.start.poolC, ev_kwh: sim.start.evKwh },
     { battery_kwh: sim.batteryKwh[last], pool_c: sim.poolC[last], ev_kwh: sim.evKwh[last] });
   const wear = wearOf(h, sim);
-  // Heating the tank is still owed at the end is bought later, at the window's reference price.
-  const owedKwh = sim.water?.owedKwh[last] ?? 0;
-  const water = sim.water ? { owed_kwh: r4(owedKwh), owed_sek: r4(owedKwh * credit.reference_sek_per_kwh) } : undefined;
   const round = (store: typeof credit.battery) => store && {
     start: r4(store.start), end: r4(store.end), cap: r4(store.cap), counted: r4(store.counted), grid_kwh: r4(store.grid_kwh), credit_sek: r4(store.credit_sek),
   };
   return {
     grid_sek: r4(sim.cost), wear_sek: r4(wear),
     credit: { reference_sek_per_kwh: r4(credit.reference_sek_per_kwh), battery: round(credit.battery), pool: round(credit.pool), ev: round(credit.ev), credit_sek: r4(credit.credit_sek) },
-    ...(water ? { hot_water: water } : {}),
-    net_sek: r4(sim.cost + wear - credit.credit_sek + (water?.owed_sek ?? 0)),
+    net_sek: r4(sim.cost + wear - credit.credit_sek),
   };
 }
 
@@ -457,7 +453,6 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   if (sim.water || d.hot_water) {
     const commands = Array.from({ length: QUARTERS }, (_, i) => d.hot_water?.[i] ?? FREE);
     series.hotWater = {
-      timeZone: c.timezone,
       demandKnown: sim.water !== null,
       owedKwh: sim.water ? Array.from(sim.water.owedKwh, r4) : [],
       permitted: sim.water ? Array.from(sim.water.permitted) : commands.map(command => command.kind !== 'inhibit' ? 1 : 0),

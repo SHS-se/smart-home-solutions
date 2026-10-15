@@ -52,6 +52,6 @@ Deno.test('exported rule contributions include every missing daily boiler opport
   const scored = scoreQuarters(blocked.series);
   const file = exported(0, n, 'full 72 h', { ...source('dev', 'b'), series: blocked.series, score: scored });
   const quarters_ = file.plans[1].quarters;
-  assertEquals(quarters_.reduce((sum, q) => sum + (q.rules_fired.water_opportunities ?? 0), 0), -40);
+  assertEquals(quarters_.reduce((sum, q) => sum + (q.rules_fired.water_opportunities ?? 0), 0), -30);
   for (const q of quarters_) assertEquals(Object.values(q.rules_fired).reduce((a: number, b) => a + b, 0), q.score);
 });

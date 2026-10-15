@@ -19,7 +19,7 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
  * a saved override for one never reaches a plan.
  */
 export const REFEREE_RULE_DEFAULTS: Record<"water_opportunities", RuleDefault> = {
-  // One deduction per missing quarter, assessed over each home's local day.
+  // One deduction per missing quarter in each 24-hour benchmark sample period.
   water_opportunities: { threshold: WATER_MINUTES_PER_DAY / 15, points: -1 },
 };
 export const RULE_POINTS_MIN = -2;

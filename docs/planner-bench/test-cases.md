@@ -225,11 +225,13 @@ is counted once.
 
 The referee checks daily permission coverage, not water temperature. Its
 `water_opportunities` rule deducts one point per missing quarter below ten
-allowed quarters per local day touched by the horizon. It counts plan commands,
+allowed quarters in each of the sample’s three consecutive 24-hour periods,
+starting at the first sample quarter. It counts plan commands,
 so thermostat idling does not incur a penalty and a controller's finish-heating
 overrun does not substitute for planned opportunities. The check works without
 separate consumption meters. Inferred heating backlog remains an electrical
-accounting quantity, never evidence that the taps ran cold.
+simulation quantity, never evidence that the taps ran cold and never a bill
+charge. This permission shortfall is the only hot-water penalty.
 
 ## Value curves
 

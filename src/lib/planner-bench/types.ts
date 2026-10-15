@@ -33,11 +33,9 @@ export interface BenchSeries {
    * otherwise, and on results from before it was modelled.
    */
   hotWater?: {
-    /** The home's calendar for its daily permission requirement. */
-    timeZone: string;
     /** False when only permission is known; no electrical or comfort assessment. */
     demandKnown: boolean;
-    /** Heating the tank is owed at the end of each quarter, kWh. */
+    /** Recorded energy shifted beyond this quarter in the electrical simulation; never billed or scored. */
     owedKwh: number[];
     /** 1 where the heater was allowed to run. */
     permitted: number[];
@@ -95,9 +93,7 @@ export interface Bill {
   wear_sek: number;
   /** Energy left in the stores beyond the start, each store up to its target (end-credit.ts). */
   credit: import('../../../supabase/functions/_shared/planner-wasm/end-credit').EndCredit;
-  /** Heating the water tank is still owed at the end, bought at the credit's reference price. Absent without a modelled heater. */
-  hot_water?: { owed_kwh: number; owed_sek: number };
-  /** grid_sek + wear_sek − credit.credit_sek + hot_water.owed_sek. */
+  /** grid_sek + wear_sek − credit.credit_sek. */
   net_sek: number;
 }
 

@@ -208,8 +208,8 @@ export default function BenchRuleList({
   const comfortDetail = (rule: ResolvedRule) => {
     if (rule.about === 'water') return <>
       <p>
-        {t(`Varje lokalt kalenderdygn behöver ${rule.threshold} tillåtna kvartar. Varje saknad kvart räknas vid dygnets sista synliga kvart.`,
-          `Each local calendar day needs ${rule.threshold} allowed quarters. Each missing quarter is counted at the day's last visible quarter.`)}
+        {t(`Vart och ett av provets tre 24-timmarsperioder behöver ${rule.threshold} tillåtna kvartar. Varje saknad kvart räknas vid periodens sista kvart.`,
+          `Each of the sample’s three consecutive 24-hour periods needs ${rule.threshold} allowed quarters. Each missing quarter is counted at the period’s last quarter.`)}
         {' '}{t('Termostatens förbrukning bedöms inte. Pågående uppvärmning som får avslutas ersätter inte planerade kvartar. Förbrukningsmätare behövs inte för kontrollen.',
           'Thermostat consumption is not assessed. Finish-heating overruns do not replace planned quarters. Consumption meters are not needed for this check.')}
       </p>
@@ -217,7 +217,7 @@ export default function BenchRuleList({
         const application = s.score?.applicability[rule.key];
         return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
       })}
-      {settings(rule, t('Tillåtna kvartar per dygn', 'Allowed quarters per day'), '1')}
+      {settings(rule, t('Tillåtna kvartar per 24 timmar', 'Allowed quarters per 24 hours'), '1')}
     </>;
     const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
     const comfort = test?.comfort ?? current?.comfort;

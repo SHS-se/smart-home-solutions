@@ -5,12 +5,11 @@ import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } f
 import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
-import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 34;
+export const SCORER_VERSION = 35;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -23,7 +22,7 @@ export interface QuarterView {
   ahead: { dearer: boolean; lessSun: boolean } | null;
   /** Whether a level was reachable long enough ago for missing it to count. */
   due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
-  /** Missing daily permissions, assessed at the day's last visible quarter. */
+  /** Missing permissions in this sample day, assessed at its final quarter. */
   waterShortfall: number;
 }
 
@@ -87,7 +86,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
   },
   {
     key: 'water_opportunities', about: 'water', label: 'Boiler permission shortfall',
-    describe: t => `fewer than ${t} allowed quarters per local day; counts each missing quarter`,
+    describe: t => `fewer than ${t} allowed quarters per consecutive 24-hour sample period; counts each missing quarter`,
     fires: q => q.waterShortfall, eligibleFrom: s => s.hotWater ? 0 : Infinity,
   },
 ];
@@ -175,25 +174,18 @@ export function scoreQuarters(s: BenchSeries, overrides: CriteriaOverrides = {},
   return tally(s, overrides, verdict);
 }
 
-/** Judge the plan's permissions, never a guessed thermostat or tank state.
- * Like the allocator, each local day touched by the horizon has its own quota.
- * Charge once at the day's last visible quarter, including a partial day at
- * the horizon boundary, without charging repeatedly throughout the day. */
+/** Judge the plan's permissions over the sample's three 24-hour periods,
+ * never a guessed thermostat state or extra calendar-day fragments. */
 function waterShortfallQuarters(s: BenchSeries, requiredQuarters: number): Map<number, number> {
   const missing = new Map<number, number>();
   if (!s.hotWater) return missing;
-  const days = new Map<string, number[]>();
-  s.start.forEach((start, i) => {
-    const day = localDay(start, s.hotWater!.timeZone);
-    const slots = days.get(day) ?? [];
-    slots.push(i);
-    days.set(day, slots);
-  });
-  for (const indices of days.values()) {
-    const allowed = indices.reduce((sum, i) => sum + (s.hotWater!.command[i] !== 'inhibit' ? s.hours[i] * 4 : 0), 0);
+  for (let from = 0; from < s.start.length; from += DAY_QUARTERS) {
+    const end = Math.min(from + DAY_QUARTERS, s.start.length);
+    let allowed = 0;
+    for (let i = from; i < end; i++) if (s.hotWater.command[i] !== 'inhibit') allowed += s.hours[i] * 4;
     const shortfall = Math.max(0, Math.ceil(requiredQuarters - allowed - 1e-6));
     if (!shortfall) continue;
-    missing.set(indices.at(-1)!, shortfall);
+    missing.set(end - 1, shortfall);
   }
   return missing;
 }
@@ -251,7 +243,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
     const reason = !rule.enabled ? 'Switched off for this case.'
-      : rule.about === 'water' ? s.hotWater ? `Counts missing permissions per local day, independently of thermostat consumption.` : 'The plan has no boiler permissions.'
+      : rule.about === 'water' ? s.hotWater ? 'Counts missing permissions in each consecutive 24-hour sample period, independently of thermostat consumption.' : 'The plan has no boiler permissions.'
       : !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;

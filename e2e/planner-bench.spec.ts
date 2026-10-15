@@ -116,7 +116,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
-  s.hotWater = { timeZone: 'Europe/Stockholm', demandKnown: true, owedKwh: new Array(n).fill(0),
+  s.hotWater = { demandKnown: true, owedKwh: new Array(n).fill(0),
     permitted: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 1 : 0),
     command: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 'permit' : 'inhibit') };
   s.deviceW = { pool: s.poolW, car: s.carW };
@@ -778,9 +778,10 @@ test.describe('planner bench', () => {
     await expect(compared).toHaveCount(0);
     await expect(page.locator('[data-slot-energy=pool]')).toHaveText(/35\.0 kWh/);
 
-    // Daily permission deficits show their full contribution, not a count of charged days.
+    // Three sample days with ten permissions each incur no boiler penalty.
+    await page.locator('#bench-untriggered-rules > button').click();
     const waterRule = page.locator('#bench-rule-water_opportunities');
-    await expect(waterRule).toContainText(/10 (missing q|kv saknas) · −10/);
+    await expect(waterRule).not.toContainText(/missing q|kv saknas/);
     await waterRule.getByRole('button').first().click();
     await expect(waterRule).toContainText(/Thermostat consumption is not assessed|Termostatens förbrukning bedöms inte/);
     await expect(page.locator('#bench-water_opportunities-threshold')).toHaveValue('10');
