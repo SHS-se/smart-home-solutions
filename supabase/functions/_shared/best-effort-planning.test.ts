@@ -93,3 +93,13 @@ Deno.test("a cold room relay without learned watts retains explicit control inte
   assertEquals(rooms.power.relay[0], 0);
   assert(rooms.warnings.some(w => w.code === "room_estimate"));
 });
+
+Deno.test("missing economic wear metadata cannot abort household or battery planning", () => {
+  const source = batterySnapshot();
+  delete source.value_settings;
+  const plan = runRulesPlanner({snapshot: source, now: source.captured_at, price_archive: [],
+    resolved_price_outlook: rulesFixtureInput(source).price_outlook}).plan;
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.capabilities.battery, true);
+  assert(plan.planning_warnings!.some(w => w.code === "battery_wear_estimated"));
+});

@@ -332,7 +332,7 @@ Deno.test("a forecast cache read failure still uses fresh prepared service data"
  const db=new Store();db.readError={message:"temporarily unavailable"};const snapshot=source();snapshot.thermal_zones=[zone()];
  const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at};let prepared=0;
  const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;return ready;});
- assertEquals(prepared,1);assertEquals(result,ready);assertEquals(result.snapshot.thermal_zones!.length,1);
+ assertEquals(prepared,1);assertEquals(result.issued_at,ready.issued_at);assertEquals(result.price_outlook,ready.price_outlook);assertEquals(result.snapshot.thermal_zones!.length,1);
 });
 
 Deno.test("an installation address edit cannot reuse weather cached for a different site",async()=>{
@@ -342,4 +342,23 @@ Deno.test("an installation address edit cannot reuse weather cached for a differ
  const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;
    await storePreparedForecasts(db,"home-a",snapshot,prices());});
  assertEquals(prepared,1);assertEquals(result.snapshot.location,snapshot.location);
+});
+
+Deno.test("fresh preparation cannot erase resolved website settings or newer measured state", async () => {
+  const db = new Store();
+  const request = source(), older = structuredClone(request);
+  request.value_settings = {battery_degradation_sek_per_kwh: .12, vehicle_fallback_sek_per_km: null};
+  request.comfort = {pool: {target_c: 30}, ev: {target_km: 60}};
+  request.grid.import_limit_w = 13000;
+  request.captured_at = "2026-10-15T22:30:00Z";
+  request.battery = {...request.battery!, soc: .7};
+  delete older.value_settings;
+  older.thermal_zones = [zone()];
+  const result = await readOrPrepareForecasts(db, "home-a", request, async () => ({
+    snapshot: older, price_outlook: prices(), issued_at: request.captured_at,
+  }));
+  for (const key of ["value_settings", "comfort", "grid", "battery", "captured_at", "services", "device_models"] as const) {
+    assertEquals(result.snapshot[key], request[key], key);
+  }
+  assertEquals(result.snapshot.thermal_zones, older.thermal_zones);
 });

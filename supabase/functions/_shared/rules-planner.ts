@@ -1,3 +1,4 @@
+import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
 import { addHotWater, waterBatteryCommands } from "./rules-hot-water.ts";
 import { POOL_START_COST_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
@@ -134,7 +135,14 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (outlook.shadow_import_sek_per_kwh.length !== count || !outlook.shadow_import_sek_per_kwh.every(finite)) return fail("Resolved prices must cover every planning interval");
   const battery = snapshot.capabilities.battery ? snapshot.device_physics?.battery ?? snapshot.battery : null;
   if (snapshot.capabilities.battery && !battery) return fail("Battery capability requires a physical model and state");
-  if (battery && (!finite(snapshot.value_settings?.battery_degradation_sek_per_kwh) || snapshot.value_settings!.battery_degradation_sek_per_kwh < 0)) return fail("Battery requires its resolved wear setting");
+  if (battery && (!finite(snapshot.value_settings?.battery_degradation_sek_per_kwh) || snapshot.value_settings!.battery_degradation_sek_per_kwh < 0)) {
+    snapshot.value_settings = {...DEFAULT_VALUE_SETTINGS, ...snapshot.value_settings,
+      battery_degradation_sek_per_kwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh};
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "battery_wear_estimated", "battery", "The battery wear cost was unavailable.",
+      "Planning continues using the shipped battery wear cost; equipment limits and supply permissions remain in force.",
+      {battery_degradation_sek_per_kwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh})]);
+  }
   let ev = snapshot.capabilities.ev ? snapshot.ev_battery : null;
   const evService = snapshot.services.find(s => s.device === "ev" && s.control.type === "discrete_current");
   let charger = ev ? snapshot.device_physics?.car?.charger ?? (evService?.control.type === "discrete_current" ? evService.control : null) : null;

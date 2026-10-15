@@ -190,7 +190,20 @@ export async function readOrPrepareForecasts(
   }
   const fresh = await prepare();
   // A successful fresh preparation is usable even if publication storage is down.
-  if (fresh) return fresh;
+  if (fresh) return {
+    issued_at: fresh.issued_at,
+    price_outlook: fresh.price_outlook,
+    snapshot: {
+      ...snapshot,
+      // Preparation owns forecast fields, never current measurements, equipment,
+      // or the website's resolved comfort, wear, grid and operating choices.
+      outdoor_temperature_c: fresh.snapshot.outdoor_temperature_c,
+      solar_irradiance_w_per_m2: fresh.snapshot.solar_irradiance_w_per_m2,
+      thermal_zones: fresh.snapshot.thermal_zones,
+      sources: {...snapshot.sources, outdoor_temperature: fresh.snapshot.sources.outdoor_temperature},
+      planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, fresh.snapshot.planning_warnings),
+    },
+  };
   return await readPreparedForecasts(db, homeId, snapshot);
 }
 

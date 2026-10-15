@@ -1,7 +1,7 @@
 {
   "abi": 8,
   "wasm_sha256": "3bf01baeee27f5e8c862d6374bee736aeaaacca8943cc8cdb97d79c2bb32bdd3",
-  "source_sha256": "2544220442dcae7190c1e33fe037be9fc93be8a2ba2479b3527ac1c8fbc0b9ae",
+  "source_sha256": "c9f75648e5576ac791c6599210b2fa828f5219bfb09bb8d467169c03b797d52d",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -60,7 +60,9 @@
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/planning-warnings.ts",
     "supabase/functions/_shared/planner/pool-devices.ts",
+    "supabase/functions/_shared/planner/store-value.ts",
     "supabase/functions/_shared/planner/thermal-model.ts",
+    "supabase/functions/_shared/planner/value-curves.ts",
     "supabase/functions/_shared/rules-hot-water.ts",
     "supabase/functions/_shared/rules-planner.ts",
     "supabase/functions/_shared/rules-pool-service.ts",

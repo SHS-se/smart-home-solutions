@@ -39,3 +39,8 @@ boiler running power is represented as `null`, not a required setup field or a
 fabricated hardware rating. Daily permission scheduling remains active; its
 uncertain demand estimate is reported separately. A current power reading supplies
 capacity, not an invented all-day duty cycle.
+
+Fresh and cached forecast preparation replace only forecast-owned fields. Current
+measurements and resolved website settings stay authoritative across both paths.
+Missing economic battery wear metadata uses the shipped cost with a visible
+warning; it cannot stop an otherwise usable household plan.
