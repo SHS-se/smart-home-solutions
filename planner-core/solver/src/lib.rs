@@ -13,6 +13,7 @@ use shs_planner_models::{
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Slot {
+    pub battery_export_allowed: Option<bool>,
     pub local_month: u8,
     pub start_seconds: f64,
     pub hours: f64,
@@ -135,6 +136,8 @@ pub struct Problem {
     pub service_guard: ServiceGuard,
     /// None means first-ever plan. A partial accepted prefix is never silently filled.
     pub accepted: Option<Vec<Command>>,
+    /// Explicit reviewed bookings, independent of the automatic next-hour lock.
+    pub fixed_commands: Option<Vec<Option<Command>>>,
     /// Relative to capture; every intersecting slot remains committed.
     pub locked_through_seconds: f64,
 }
@@ -315,6 +318,9 @@ fn validate(p: &Problem) -> Result<(), String> {
     {
         return bad("missing_capture_interval");
     }
+    if p.fixed_commands.as_ref().is_some_and(|cs| cs.len() != p.slots.len()) {
+        return bad("invalid_fixed_commands");
+    }
     if p.locked_through_seconds != 0.0 && p.accepted.is_none() {
         return bad("commitment_unavailable");
     }
@@ -324,9 +330,9 @@ fn validate(p: &Problem) -> Result<(), String> {
                 .iter()
                 .take_while(|s| s.start_seconds < p.locked_through_seconds)
                 .count()
-            || p.locked_through_seconds != 3600.0
+            || p.locked_through_seconds <= 0.0 || p.locked_through_seconds > 3600.0
             || p.slots.last().unwrap().start_seconds + p.slots.last().unwrap().hours * 3600.0
-                < 3600.0
+                < p.locked_through_seconds
         {
             return bad("commitment_unavailable");
         }

@@ -23,7 +23,7 @@
 // fit drops straight into it.
 
 import { solveLinearSystem } from "./planner/thermal-model.ts";
-import { WATER_KWH_PER_M3_K } from "./planner/store-models.ts";
+import { WATER_KWH_PER_M3_K } from "./planner/device-models.ts";
 
 export const SLOT_HOURS = 0.25;
 
@@ -75,7 +75,7 @@ export type PoolFitRejection =
   | "unphysical";
 
 export type PoolFitResult =
-  | { fitted: PoolFit }
+  | { fitted: PoolFit; warnings?: PoolFitRejection[] }
   | { rejected: PoolFitRejection; sample_count: number; heated_sample_count: number };
 
 /**
@@ -103,18 +103,20 @@ export function fitPoolModel(
     sample_count: usable.length,
     heated_sample_count: heated.length,
   };
-  if (usable.length < MIN_POOL_SAMPLES || capacityKwhPerK <= 0) {
+  const warnings: PoolFitRejection[] = [];
+  if (!usable.length || capacityKwhPerK <= 0) {
     return { rejected: "insufficient_samples", ...counts };
   }
+  if (usable.length < MIN_POOL_SAMPLES) warnings.push("insufficient_samples");
   if (heated.length < MIN_HEATED_POOL_SAMPLES) {
-    return { rejected: "insufficient_heating", ...counts };
+    warnings.push("insufficient_heating");
   }
   const heatedAir = heated.map((sample) => sample.outdoor_temperature_c);
   if (Math.max(...heatedAir) - Math.min(...heatedAir) < MIN_AIR_SPREAD_C) {
     // Without a spread of air temperatures during heating, the rated COP and
     // its slope are collinear: any pair that produces the same COP at the one
     // observed temperature fits equally well.
-    return { rejected: "insufficient_air_spread", ...counts };
+    warnings.push("insufficient_air_spread");
   }
 
   const rows = usable.map((sample) => {
@@ -132,16 +134,28 @@ export function fitPoolModel(
     };
   });
 
-  const size = 4;
-  const matrix = Array.from({ length: size }, () => new Array(size).fill(0));
-  const vector = new Array(size).fill(0);
-  for (const row of rows) {
-    for (let i = 0; i < size; i += 1) {
-      vector[i] += row.x[i] * row.rate;
-      for (let j = 0; j < size; j += 1) matrix[i][j] += row.x[i] * row.x[j];
+  const solve = (columns: number[]) => {
+    const size = columns.length;
+    const matrix = Array.from({ length: size }, () => new Array(size).fill(0));
+    const vector = new Array(size).fill(0);
+    for (const row of rows) {
+      for (let i = 0; i < size; i += 1) {
+        vector[i] += row.x[columns[i]] * row.rate;
+        for (let j = 0; j < size; j += 1) matrix[i][j] += row.x[columns[i]] * row.x[columns[j]];
+      }
+    }
+    return solveLinearSystem(matrix, vector);
+  };
+  let solution = solve([0, 1, 2, 3]);
+  if (!solution) {
+    // Constant air cannot identify a COP slope; the measured constant COP,
+    // heat loss and background may still be identifiable.
+    const reduced = solve([0, 2, 3]);
+    if (reduced) {
+      solution = [reduced[0], 0, reduced[1], reduced[2]];
+      if (!warnings.includes("insufficient_air_spread")) warnings.push("insufficient_air_spread");
     }
   }
-  const solution = solveLinearSystem(matrix, vector);
   if (!solution || solution.some((value) => !Number.isFinite(value))) {
     return { rejected: "singular", ...counts };
   }
@@ -159,7 +173,7 @@ export function fitPoolModel(
     ssResidual += (row.rate - predicted) ** 2;
   }
   const r2 = ssTotal > 0 ? 1 - ssResidual / ssTotal : 0;
-  if (r2 < MIN_POOL_FIT_R2) return { rejected: "poor_fit", ...counts };
+  if (r2 < MIN_POOL_FIT_R2) warnings.push("poor_fit");
 
   // Convert the regression's coefficients back into physical parameters.
   // `gain` is °C per hour per kW, so multiplying by the heat capacity gives the
@@ -174,14 +188,14 @@ export function fitPoolModel(
   // returns less heat than the electricity it drew, is not a model worth
   // planning against however well it fits.
   if (
-    !(ratedCop > 1) || !(ratedCop < 12) ||
-    !(lossKwPerK > 0) || !(lossKwPerK < 20) ||
-    !Number.isFinite(copPerAirC) || Math.abs(copPerAirC) > 0.2
+    !(ratedCop > 0) || !(lossKwPerK >= 0) ||
+    ![ratedCop, lossKwPerK, copPerAirC].every(Number.isFinite)
   ) {
     return { rejected: "unphysical", ...counts };
   }
 
   return {
+    ...(warnings.length ? { warnings } : {}),
     fitted: {
       loss_kw_per_k: Number(lossKwPerK.toFixed(4)),
       rated_cop: Number(ratedCop.toFixed(3)),
@@ -264,7 +278,7 @@ export interface PoolLossFit {
 }
 
 export type PoolLossFitResult =
-  | { fitted: PoolLossFit }
+  | { fitted: PoolLossFit; warnings?: string[] }
   | { rejected: "insufficient_idle" | "unphysical"; hours: number; run_count: number };
 
 /**
@@ -327,7 +341,7 @@ export function fitPoolLoss(
   let quarters = 0;
   let runCount = 0;
   for (const stretch of runs) {
-    if (stretch.length < MIN_POOL_LOSS_RUN_QUARTERS) continue;
+    if (!stretch.length) continue;
     fallC += stretch[0].water_temperature_c -
       stretch[stretch.length - 1].next_water_temperature_c;
     exposureKh += stretch.reduce((total, sample) =>
@@ -337,16 +351,18 @@ export function fitPoolLoss(
   }
   const hours = quarters * SLOT_HOURS;
   const counts = { hours, run_count: runCount };
-  if (hours < MIN_POOL_LOSS_HOURS || capacityKwhPerK <= 0) {
+  if (!hours || capacityKwhPerK <= 0) {
     return { rejected: "insufficient_idle", ...counts };
   }
   const lossKwPerK = fallC * capacityKwhPerK / exposureKh;
   // A pool warmer than the air that warmed on its own, or one colder than it,
   // is not a loss coefficient however long it was watched.
-  if (!(exposureKh > 0) || !(lossKwPerK > 0) || !(lossKwPerK < 20)) {
+  if (!(exposureKh > 0) || !(lossKwPerK >= 0) || !Number.isFinite(lossKwPerK)) {
     return { rejected: "unphysical", ...counts };
   }
   return {
+    ...(hours < MIN_POOL_LOSS_HOURS || runs.some(run => run.length < MIN_POOL_LOSS_RUN_QUARTERS)
+      ? { warnings: ["limited_idle_observations"] } : {}),
     fitted: { loss_kw_per_k: Number(lossKwPerK.toFixed(4)), ...counts },
   };
 }
@@ -429,13 +445,13 @@ export function fitPoolResponse(samples: PoolResponseSample[]): PoolResponseBin[
       bin.idleHours += SLOT_HOURS;
     }
   }
-  const settled = [...bins.values()].filter((bin) => bin.idleHours >= MIN_POOL_RESPONSE_IDLE_HOURS);
+  const settled = [...bins.values()].filter((bin) => bin.idleHours > 0);
   const idleHours = settled.reduce((sum, bin) => sum + bin.idleHours, 0);
   // Where a bin has no idle time of its own, heating there is set against the pool's usual cooling.
   const usualIdle = idleHours > 0 ? settled.reduce((sum, bin) => sum + bin.idleC, 0) / idleHours : 0;
   return [...bins.entries()].sort(([a], [b]) => a - b).map(([key, bin]) => {
-    const idleRate = bin.idleHours >= MIN_POOL_RESPONSE_IDLE_HOURS ? bin.idleC / bin.idleHours : null;
-    const gain = bin.kwh >= MIN_POOL_RESPONSE_HEATED_KWH
+    const idleRate = bin.idleHours > 0 ? bin.idleC / bin.idleHours : null;
+    const gain = bin.kwh > 0
       ? (bin.heatC - (idleRate ?? usualIdle) * bin.heatHours) / bin.kwh
       : null;
     return {

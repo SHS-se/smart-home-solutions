@@ -14,7 +14,7 @@ import type {
   OptimisationPlan,
   OptimisationSnapshot,
   ThermalZonePlanningInput,
-} from "./planner/energy-optimisation.ts";
+} from "./planner/planning-contracts.ts";
 
 type Publication = Parameters<
   ReturnType<PreparedForecastDatabase["from"]>["upsert"]
@@ -199,7 +199,7 @@ Deno.test("admission prepares a forecast once when none is published or it ends 
     PreparedForecastError,
   );
   assertEquals(failed.code, "prepared_forecast_read_failed");
-  assertEquals(prepared, 3);
+  assertEquals(prepared, 4);
 });
 
 Deno.test("a new day-ahead release refreshes the cached tail before admission (14 October replay)", async () => {
@@ -326,4 +326,20 @@ Deno.test("service forecast storage errors remain named failures", async () => {
   );
   assertEquals(write.code, "prepared_forecast_write_failed");
   assertEquals(db.writes, []);
+});
+
+Deno.test("a forecast cache read failure still uses fresh prepared service data",async()=>{
+ const db=new Store();db.readError={message:"temporarily unavailable"};const snapshot=source();snapshot.thermal_zones=[zone()];
+ const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at};let prepared=0;
+ const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;return ready;});
+ assertEquals(prepared,1);assertEquals(result,ready);assertEquals(result.snapshot.thermal_zones!.length,1);
+});
+
+Deno.test("an installation address edit cannot reuse weather cached for a different site",async()=>{
+ const db=new Store(),snapshot=source();snapshot.location={latitude:59,longitude:18};
+ await storePreparedForecasts(db,"home-a",snapshot,prices());
+ snapshot.location={latitude:58,longitude:17};let prepared=0;
+ const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;
+   await storePreparedForecasts(db,"home-a",snapshot,prices());});
+ assertEquals(prepared,1);assertEquals(result.snapshot.location,snapshot.location);
 });

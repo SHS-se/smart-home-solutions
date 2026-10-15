@@ -117,9 +117,14 @@ export const projectionOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
   z.object({ kind: z.literal("projected"), quarters: quarter.array() }),
 ]);
-export type NativeQuarter = z.infer<typeof quarter>;
-export type ProjectionOutcome = z.infer<typeof projectionOutcome>;
-export type SolveOutcome = z.infer<typeof solveOutcome>;
+// All fields in the validated wire schemas are required. Preserve that fact
+// for browser consumers whose project disables strictNullChecks (Zod otherwise
+// infers optional object keys there); runtime parsing remains unchanged.
+type Wire<T> = T extends readonly (infer Item)[] ? Wire<Item>[]
+  : T extends object ? { [Key in keyof T]-?: Wire<T[Key]> } : T;
+export type NativeQuarter = Wire<z.infer<typeof quarter>>;
+export type ProjectionOutcome = Wire<z.infer<typeof projectionOutcome>>;
+export type SolveOutcome = Wire<z.infer<typeof solveOutcome>>;
 
 // Hosted Edge wraps the public Memory constructor. Exported memories retain
 // their native brand, so constructor identity is not a portable ABI check.
@@ -195,7 +200,7 @@ export function createWasmPlanner(bytes: Uint8Array) {
       const result = invoke(
         problem,
         "planner_solve",
-        (value) => solveOutcome.parse(value),
+        (value) => solveOutcome.parse(value) as SolveOutcome,
       );
       const { outcome } = result;
       if (outcome.kind === "selected") {
@@ -228,7 +233,7 @@ export function createWasmPlanner(bytes: Uint8Array) {
       const result = invoke(
         { problem, commands },
         "planner_project",
-        (value) => projectionOutcome.parse(value),
+        (value) => projectionOutcome.parse(value) as ProjectionOutcome,
       );
       if (
         result.outcome.kind === "projected" &&

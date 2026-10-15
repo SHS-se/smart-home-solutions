@@ -3,8 +3,8 @@
  * Integer mWh is the canonical published reference. Native capabilities and
  * measured installation conversion remain local authority, not this forecast.
  */
-import type { OptimisationPlan } from "./energy-optimisation.ts";
-import type { BatteryProjectionRow } from "./battery-dispatch-projection.ts";
+import type { OptimisationPlan } from "./planning-contracts.ts";
+import type { BatteryProjectionRow } from "./planning-contracts.ts";
 
 export interface ExecutionFeedback {
   scope_revision?: string;

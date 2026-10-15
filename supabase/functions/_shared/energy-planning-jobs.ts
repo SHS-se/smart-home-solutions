@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
-import type { OptimisationPlan } from "./planner/energy-optimisation.ts";
+import type { OptimisationPlan } from "./planner/planning-contracts.ts";
 import { RULES_MODEL_VERSION, type PreparedRulesInput } from "./rules-planner.ts";
 import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, EnergyPlanningError } from "./rules-planning-client.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
@@ -170,6 +170,8 @@ export class PlanningJobs {
         // savings track record counts only months under control; nothing else records it.
         summary: { ...compactPlanSummary(generated), operating_modes: snapshot.operating_scope?.modes ?? null },
         validation_errors: generated.validation_errors };
+      for(const warning of generated.planning_warnings??[]) console.warn("[ENERGY-PLANNING-JOB] planning continues with limited evidence",
+        {job_id:job.id,plan_id:generated.plan_id,...warning});
       publication = { current, run };
     } catch (error) {
       return deliver(await this.computeFailure(owner, error));

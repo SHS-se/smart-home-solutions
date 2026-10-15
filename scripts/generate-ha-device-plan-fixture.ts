@@ -1,8 +1,7 @@
+import { generateRulesPlan } from "../supabase/functions/_shared/rules-planner.ts";
+import { rulesFixtureInput } from "./generate-ha-plan-fixture.ts";
 import { dispatchedEvSnapshot } from "./generate-ha-plan-fixture.ts";
-import {
-  generateOptimisationPlan,
-  type OptimisationSnapshot,
-} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+import { type OptimisationSnapshot } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 export function commandSnapshot(): OptimisationSnapshot {
   const snapshot: OptimisationSnapshot = {
     ...dispatchedEvSnapshot(),
@@ -12,6 +11,7 @@ export function commandSnapshot(): OptimisationSnapshot {
   snapshot.capabilities.ev = false;
   snapshot.ev_battery = null;
   snapshot.services = [];
+  snapshot.captured_at = snapshot.slots[0].start;
   const n = snapshot.slots.length;
   const series = (v: number) => Array(n).fill(v);
   snapshot.device_models = [
@@ -62,7 +62,7 @@ export function devicePlanFixture() {
   return {
     validation_time: snapshot.slots[0].start,
     plan: {
-      ...generateOptimisationPlan(snapshot, new Date(snapshot.captured_at)),
+      ...generateRulesPlan(rulesFixtureInput(snapshot)).plan,
       plan_id: "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     },
   };

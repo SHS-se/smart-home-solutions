@@ -1,4 +1,4 @@
-import type { OptimisationSnapshot, ServiceInput } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+import type { OptimisationSnapshot, ServiceInput } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
 import { parseDeviceModels, parseHeaterResponse, publishHeater, WATER_KWH_PER_M3_K, type PublishedHeater, type ThermalStoreModel } from '../../../supabase/functions/_shared/planner/device-models.ts';
 import { poolHeaters } from '../../../supabase/functions/_shared/planner/pool-devices.ts';
 import type { PoolSeed } from './pool-carry.ts';

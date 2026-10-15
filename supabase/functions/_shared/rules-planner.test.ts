@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import type { OptimisationSnapshot, PlannedSlot } from "./planner/energy-optimisation.ts";
+import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import { generateRulesPlan, prepareRulesPlanningInput } from "./rules-planner.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 
@@ -44,7 +44,9 @@ Deno.test("rules preparation requires supplied price outlook and explicit EV mod
   const s = snapshot();
   assertThrows(() => prepareRulesPlanningInput({ snapshot: s, now: s.captured_at, price_archive: [] }, null, resolveRulePolicy()), Error, "already resolved");
   s.ev_battery!.kwh_per_km = null;
-  assertThrows(() => prepare(s), Error, "native charger model");
+  const prepared=prepare(s);
+  assertEquals(prepared.problem.car,null);
+  assert(prepared.snapshot.planning_warnings!.some(w=>w.code==="ev_service_evidence"));
 });
 Deno.test("rules native solve materializes missing devices and exact physical balance", () => {
   const result = generateRulesPlan(prepare(snapshot()));
@@ -89,7 +91,9 @@ Deno.test("rules partial-quarter commitment locks five exact intervals without a
     assertEquals(replanned.plans.priority.slots[i].ev_target_current_a, first.plans.priority.slots[i].ev_target_current_a);
     assertEquals(replanned.plans.priority.slots[i].device_commands, first.plans.priority.slots[i].device_commands);
   }
-  assertThrows(() => prepare(s, { plan_id: first.plan_id, slots: first.plans.priority.slots.slice(0, 4) }, now), Error, "unavailable");
+  const partial=prepare(s,{plan_id:first.plan_id,slots:first.plans.priority.slots.slice(0,4)},now);
+  assertEquals(partial.problem.accepted?.length,4);
+  assertEquals(generateRulesPlan(partial).plan.status,"ready");
 });
 // User requirement, 23 September 2026: a device's mode decides who writes its
 // requests, never what the household is planned to do. Home Assistant refuses a
@@ -149,7 +153,13 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   assertEquals(ready.problem.pool_store!.loss, { kind: "measured", points: [{at_c:28,c_per_h:-.1},{at_c:30,c_per_h:-.2}] });
   assertEquals(ready.problem.slots[0].base_w, s.slots[0].base_load_forecast_w);
   s.pool_model.hardware = undefined;
-  assertThrows(() => prepare(s), Error, "independently configured");
+  const empirical = prepare(s);
+  assertEquals(empirical.pool_service.empirical, true);
+  const result = generateRulesPlan(empirical).plan;
+  assertEquals(result.status, "ready");
+  assertEquals(result.pool?.planning_basis, "empirical");
+  assertEquals(result.plans.priority.slots[0].pool_permitted, true);
+  assertEquals(result.plans.priority.slots[0].device_loads_w.heater, 3000);
 });
 Deno.test("rules commitment keeps charger commands while fresh above-target state changes physical draw", () => {
   const s = snapshot();
@@ -172,10 +182,13 @@ Deno.test("rules immutable capture anchors duration and commitment despite later
   assertEquals(ready.snapshot.captured_at, s.captured_at);
   assertEquals(ready.now, new Date(Date.parse(s.captured_at) + 7 * 60_000).toISOString());
 });
-Deno.test("rules rejects configured hard battery target rather than claiming it was enforced", () => {
+Deno.test("an unguaranteed battery target warns while household planning continues", () => {
   const s = snapshot();
   s.policy.battery_target_is_hard = true;
-  assertThrows(() => prepare(s), Error, "Unsupported configured hard battery target");
+  const plan = generateRulesPlan(prepare(s)).plan;
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.policy.battery_target_is_hard, false);
+  assertEquals(plan.planning_warnings?.some(w => w.code === "battery_target_not_guaranteed"), true);
 });
 Deno.test("rules prepares household without unlocked water before allocating daily opportunities", () => {
   const s = snapshot();

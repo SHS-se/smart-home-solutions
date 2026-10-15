@@ -51,3 +51,33 @@ from other sources. Source provenance belongs in diagnostics, not configuration
 errors or planning admission. Validate actual values and required forecast-slot
 data; do not impose reporting cadences or source-age expiry. Plan expiry and
 local snapshot/transport validity retain their existing purposes.
+
+User requirement, 15 October 2026: imperfect observations and statistical model
+quality must not stop household planning. Ignore unusable upload rows individually
+and log counts; retain every usable row. The eight-day actuals window is a storage
+window, not an exchange rejection. Sparse quarter profiles retain individual
+observations and estimate empty quarters from observed neighbours, or the current
+measured residual when no history exists. Label estimates explicitly. Five empty
+profile quarters or five ignored items elevate the diagnostic to error severity;
+neither severity prevents a best-effort plan.
+
+A failed room or pool refit records its latest attempt independently of the last
+usable parameters. Low confidence is a warning. Without identifiable thermal
+parameters, retain known comfort intent using empirical electrical demand and
+explicit device permissions; do not publish invented temperatures or remove the
+household schedule. New room requests share the configured household headroom.
+Meter disagreement is logged and displayed while measured battery-eligible demand
+is reconciled within the existing supply permissions. No timestamp confirmation
+gate or retired battery executor may take over from the durable native owner.
+
+The planner home's installation address is the location authority. Coordinates
+are a derived cache invalidated by an address edit. Server weather and irradiance
+use that site; provider PV coordinates remain diagnostic source provenance and
+cannot override it or reject a plan. An unavailable geocoder is a warning.
+
+The native rules planner is the sole executable planner, including demos, replay,
+fixtures and benchmark execution. Retained commands cover only real remaining
+intervals; an expired or incomplete old horizon cannot prevent recovery. Current
+inventory and control types govern regenerated device commands. Explicit reviewed
+bookings use native command constraints throughout their absolute-time interval.
+Configured hardware bounds and user permissions still apply.

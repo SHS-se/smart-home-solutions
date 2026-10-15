@@ -6,7 +6,7 @@ import { REPLAY_ENGINE, REPLAY_PROTOCOL } from './scheduler-replay';
 import { seriesService } from './model-comparison';
 import { snapshot } from '../energy-shift/optimisation-snapshot.fixture.ts';
 import { HOUSEHOLD } from '../planner-bench/household.ts';
-import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
 import type { HistoricalRows } from './model.ts';
 
 export function baselineFixture(range?: { start: string; end: string }): HistoricalRows & { snapshot: OptimisationSnapshot } {

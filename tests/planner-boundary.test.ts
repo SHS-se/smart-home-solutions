@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { diskTree, resolve, specifiers, type SourceTree } from "../scripts/module-graph.ts";
 import { PLANNER_DIR, plannerDir, plannerVersion } from "../bench/planner-version.ts";
 import { REFEREE_VERSION } from "../src/lib/planner-bench/referee.ts";
@@ -28,36 +28,15 @@ function memoryTree(dir: string, files: Record<string, string>): SourceTree {
   return { read: path => all.get(path) ?? null, isFile: path => all.has(path) };
 }
 
-Deno.test("commits before the planner existed have no planner directory or code version", async () => {
-  const empty = memoryTree(PLANNER_DIR, {});
-  assertEquals(plannerDir(empty), null);
-  await assertRejects(() => plannerVersion(empty), Error, "does not contain a planner entry point");
-  const partial = memoryTree(PLANNER_DIR, { "dispatch-plan.ts": "export {};" });
-  assertEquals(plannerDir(partial), null);
+Deno.test("pre-native commits cannot execute a retired planner",async()=>{
+  const old=memoryTree(PLANNER_DIR,{"energy-optimisation.ts":"export const old=true;"});
+  assertEquals(plannerDir(old),null);
+  await assertRejects(()=>plannerVersion(old),Error,"no supported native rules planner artifact");
 });
-
-const PLANNER = {
-  "energy-optimisation.ts": `import { plan } from "./dispatch-plan.ts";\nexport const run = (x: number) => plan(x) + 1;\n`,
-  "dispatch-plan.ts": `export function plan(x: number): number {\n  return x * 2;\n}\n`,
-};
-
-Deno.test("comments, types, formatting and the folder do not change the planner version", async () => {
-  const base = await plannerVersion(memoryTree(PLANNER_DIR, PLANNER));
-  const annotated = await plannerVersion(memoryTree(PLANNER_DIR, {
-    ...PLANNER,
-    "energy-optimisation.ts": `// Plans.\nimport type { Unused } from "../elsewhere.ts";\nimport { plan } from "./dispatch-plan.ts";\n\n/** Runs. */\nexport const run = (x: number): number => plan(x) + 1;\nexport interface Unused { a: string }\n`,
-  }));
-  // Before the planner had a folder it lived in _shared.
-  const legacy = await plannerVersion(memoryTree("supabase/functions/_shared", PLANNER));
-  assertEquals(annotated, base);
-  assertEquals(legacy, base);
-});
-
-Deno.test("a code change is a new planner version", async () => {
-  const base = await plannerVersion(memoryTree(PLANNER_DIR, PLANNER));
-  const changed = await plannerVersion(memoryTree(PLANNER_DIR, { ...PLANNER, "dispatch-plan.ts": `export function plan(x: number): number {\n  return x * 3;\n}\n` }));
-  assertNotEquals(changed, base);
-  assert(changed.startsWith("v2-esbuild"));
+Deno.test("the current native artifact has a stable planner identity",async()=>{
+  const first=await plannerVersion(tree);
+  assert(first.startsWith("v8-rule-wasm:"));
+  assertEquals(await plannerVersion(tree),first);
 });
 
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;

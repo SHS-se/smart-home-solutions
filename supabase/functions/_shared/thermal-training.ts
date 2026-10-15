@@ -21,6 +21,23 @@ export const REFIT_INTERVAL_HOURS = 24;
  */
 export const TRAINING_WINDOW_DAYS = 21;
 
+/** Nullable statistical evidence never removes the room's comfort service. */
+export function readThermalModel(row: Record<string, unknown> | undefined): ThermalZoneModel | null {
+  if (!row) return null;
+  const number = (key: string) => row[key] == null ? NaN : Number(row[key]);
+  const optional = (key: string) => row[key] == null ? null : Number(row[key]);
+  const model: ThermalZoneModel = {
+    gain_c_per_wh: number("gain_c_per_wh"), cooling_constant_per_h: number("cooling_constant_per_h"),
+    background_gain_c_per_h: number("background_gain_c_per_h"),
+    thermal_capacity_wh_per_c: number("thermal_capacity_wh_per_c"), heat_loss_w_per_c: number("heat_loss_w_per_c"),
+    time_constant_h: number("time_constant_h"), heating_rate_c_per_h: optional("heating_rate_c_per_h"),
+    solar_gain_c_per_h_per_wm2: optional("solar_gain_c_per_h_per_wm2"), solar_mean_w_per_m2: optional("solar_mean_w_per_m2"),
+    r2: number("r2"), sample_count: number("sample_count"), residual_std_c: number("residual_std_c"),
+  };
+  return Object.values(model).every(v => v === null || Number.isFinite(v)) && model.gain_c_per_wh > 0
+    && model.cooling_constant_per_h >= 0 ? model : null;
+}
+
 /** One row of `get_energy_thermal_training_moments`. */
 export interface ThermalMomentRow extends ThermalMoments {
   room_key: string;
@@ -64,6 +81,8 @@ export const zoneModelRows = (
         sample_count: result.sample_count,
         trained: false,
         rejection_reason: result.reason,
+        last_attempted_at: new Date().toISOString(),
+        last_fit_attempt: { status: "unidentified", issues: [result.reason] },
         gain_c_per_wh: null,
         cooling_constant_per_h: null,
         background_gain_c_per_h: null,
@@ -88,6 +107,8 @@ export const zoneModelRows = (
       sample_count: result.model.sample_count,
       trained: true,
       rejection_reason: null,
+      last_attempted_at: new Date().toISOString(),
+      last_fit_attempt: { status: result.warnings?.length ? "limited" : "fitted", issues: result.warnings ?? [] },
       gain_c_per_wh: result.model.gain_c_per_wh,
       cooling_constant_per_h: result.model.cooling_constant_per_h,
       background_gain_c_per_h: result.model.background_gain_c_per_h,
@@ -104,6 +125,26 @@ export const zoneModelRows = (
       residual_std_c: result.model.residual_std_c,
     };
   });
+
+/** Failed fits may add a cold-start record, but can never overwrite a model. */
+export async function storeZoneModelRows(
+  // deno-lint-ignore no-explicit-any
+  db: any, rows: Record<string, unknown>[],
+): Promise<void> {
+  const fitted = rows.filter(row => row.trained), failed = rows.filter(row => !row.trained);
+  for (const [group, ignoreDuplicates] of [[fitted, false], [failed, true]] as const) {
+    if (!group.length) continue;
+    const { error } = await db.from("energy_optimisation_zone_models")
+      .upsert(group, { onConflict: "home_id,room_key", ignoreDuplicates });
+    if (error) throw new Error(error.message);
+  }
+  for (const row of failed) {
+    const { error } = await db.from("energy_optimisation_zone_models")
+      .update({ last_attempted_at: row.last_attempted_at, last_fit_attempt: row.last_fit_attempt })
+      .eq("home_id", row.home_id).eq("room_key", row.room_key);
+    if (error) throw new Error(error.message);
+  }
+}
 
 export interface ProjectionZoneInput {
   key: string;

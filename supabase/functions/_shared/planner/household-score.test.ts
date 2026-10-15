@@ -13,7 +13,6 @@ import type {
   HouseholdCandidate,
   HouseholdProblem,
 } from "./household-case.ts";
-import { scoreDispatch } from "./dispatch-plan.ts";
 
 const stamp = (minutes: number) =>
   new Date(Date.parse("2026-09-14T08:00:00Z") + minutes * 60000).toISOString();
@@ -235,23 +234,8 @@ Deno.test("whole-household grid money agrees with existing scorer on the support
   const p = problem();
   p.plant.pv_w = [0, 2000, 4000, 0];
   const r = scored(createHouseholdScorer(p).score(idle(p)));
-  const old = scoreDispatch(
-    p.intervals.map((_, i) => ({
-      pv_w: p.plant.pv_w[i],
-      fixed_load_w: 1000,
-      import_price_sek_per_kwh: 2,
-      export_price_sek_per_kwh: 1,
-    })),
-    [],
-    {
-      grid_import_limit_w: 20000,
-      grid_export_limit_w: 20000,
-      grid_import_shaping_w: 0,
-      peak_shaping_sek_per_kwh_per_kw: 0,
-    },
-    { power_w: {}, discharge_w: {} },
-  );
-  assertAlmostEquals(r.objective.billable_sek, old.billable_sek);
+  // Two 1 kW import quarters at 2 SEK/kWh, then 1 + 3 kW export at 1 SEK/kWh.
+  assertAlmostEquals(r.objective.billable_sek, 2 * .25 * 2 - (1 + 3) * .25);
 });
 
 Deno.test("physical violations retain unclamped state and never become an economic score", () => {

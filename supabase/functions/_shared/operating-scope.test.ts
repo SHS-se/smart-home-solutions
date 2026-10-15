@@ -1,9 +1,8 @@
+import { runRulesPlanner } from "./run-rules-planner.ts";
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { generateOptimisationPlan, type OptimisationSnapshot } from "./planner/energy-optimisation.ts";
+import { type OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { validateOperatingScope } from "./planner/operating-scope.ts";
-import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
-import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 
 Deno.test("Verification and Controlling never change the plan", () => {
   // User requirement, 23 September 2026: switching a device between
@@ -16,7 +15,7 @@ Deno.test("Verification and Controlling never change the plan", () => {
     if (pool === "controlling") delete s.operating_scope.external_demands.pool_heater;
     s.battery_execution_feedback = { generation: 1, source_receipt: 0, previous_contract_id: null,
       objectives: [], scope_revision: "fixture-whole-house" };
-    const plan = generateOptimisationPlan(s, new Date(s.captured_at));
+    const plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
     assert(plan.battery_execution, "both modes carry the battery reference");
     return plan;
   };
@@ -35,7 +34,7 @@ Deno.test("Verification and Controlling never change the plan", () => {
 
 Deno.test("both charts and execution publish one authoritative device schedule", () => {
   const s = mixedModeSnapshot();
-  const p = generateOptimisationPlan(s, new Date(s.captured_at));
+  const p = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   assertEquals(p.schema_version, 9);
   assert(p.execution_plan);
   assertEquals(p.plans, p.execution_plan.plans);
@@ -49,8 +48,8 @@ Deno.test("all controlling preserves the unscoped electrical plan", () => {
   s.operating_scope.modes.pool_pump = 'controlling';
   s.operating_scope.external_demands = {};
   const input = {...s, schema_version: 8 as const}; delete (input as OptimisationSnapshot).operating_scope;
-  const p = generateOptimisationPlan(s, new Date(s.captured_at));
-  const original = generateOptimisationPlan(input, new Date(s.captured_at));
+  const p = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
+  const original = runRulesPlanner({ snapshot: input, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   assertEquals(p.execution_plan?.plans.priority.slots, original.plans.priority.slots);
 });
 
@@ -63,46 +62,20 @@ Deno.test("scope requires complete nonnegative evidence and accepts observed zer
   assertThrows(() => validateOperatingScope(s), Error, 'exactly once');
 });
 
-Deno.test("both scope solves survive staged planning reconstruction", () => {
-  const s = mixedModeSnapshot(); const now = s.captured_at;
-  const input = {snapshot: s, now, price_archive: []};
-  const continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
-  for (let i = 0; i < 100; i++) {
-    const step = energyPlanningStep(input, continuation);
-    continuation.completed.push(...step.completed);
-    continuation.rankings.push(...step.rankings);
-    continuation.checkpoint = step.checkpoint;
-    if (step.done) {
-      assertEquals(assembleOptimisationPlan(input, continuation.completed, continuation.rankings).plan, generateOptimisationPlan(s, new Date(now)));
-      return;
-    }
-  }
-  throw new Error('scoped planner did not finish');
-});
-
 Deno.test("scope trimming keeps resolved prices and future empirical demand aligned", () => {
   const s = mixedModeSnapshot();
-  const initial = generateOptimisationPlan(s, new Date(s.captured_at));
+  const initial = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   const now = new Date(Date.parse(s.slots[1].start) + 1000);
-  s.captured_at = new Date(Date.parse(s.slots[0].start) + 14 * 60_000).toISOString();
+  s.captured_at = now.toISOString();
   s.sources.battery!.issued_at = s.captured_at;
-  const p = generateOptimisationPlan(s, now, [], initial.price_outlook);
+  const p = runRulesPlanner({ snapshot: s, now: (now).toISOString(), price_archive: [], resolved_price_outlook: initial.price_outlook }).plan;
   assertEquals(p.price_outlook.shadow_import_sek_per_kwh, initial.price_outlook.shadow_import_sek_per_kwh.slice(1));
   assertEquals(p.execution_plan!.plans.priority.slots[0].base_w, s.slots[1].base_load_forecast_w);
   assertEquals(p.operating_scope!.external_demands.pool_heater.recent_observation, null);
 });
 
-Deno.test("current curve evidence is frozen from the selected solver inputs", () => {
-  const s = mixedModeSnapshot();
-  const p = generateOptimisationPlan(s, new Date(s.captured_at));
-  assert(p.resolved_value_stores?.length);
-  assertEquals(p.resolved_value_stores, p.execution_plan!.resolved_value_stores);
-  const pool = p.resolved_value_stores.find(store => store.key === 'pool')!;
-  assert(pool.units_per_kwh > 0);
-  assert(pool.reference_sek_per_kwh > 0);
-  assertEquals(pool.initial_state, s.pool!.water_temperature_c);
-  const curve = structuredClone(pool.curve);
-  s.pool!.water_temperature_c += 1;
-  s.value_curves = {};
-  assertEquals(pool.curve, curve, 'editing inputs cannot mutate recorded current-plan evidence');
+Deno.test("native plans publish the selected rules without retired curve valuation",()=>{
+ const s=mixedModeSnapshot(); const p=runRulesPlanner({snapshot:s,now:s.captured_at,price_archive:[]}).plan;
+ assertEquals(p.resolved_value_stores,[]);assertEquals(p.battery_value_curve,null);
+ assertEquals(p.execution_plan!.plans,p.plans);
 });

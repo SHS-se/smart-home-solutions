@@ -1,3 +1,4 @@
+import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-planner.ts";
 // The chart must draw the numbers the planner actually reasoned with.
 //
 // This is the acceptance criterion for the whole shadow-price rewrite, stated
@@ -13,8 +14,8 @@
 // tail look like missing data rather than a broken objective.
 
 import { assert, assertEquals } from 'jsr:@std/assert@1';
-import { generateOptimisationPlan } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
-import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
 import { buildEnergyTimeline } from './energy-timeline.ts';
 
 const CAPTURED_AT = '2026-08-18T20:45:00.000Z';
@@ -70,6 +71,7 @@ const snapshot = (): OptimisationSnapshot => {
   return {
     schema_version: 6,
     mode: 'live',
+    value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     capabilities: { pv: true, battery: true, pool: false, boiler: false, ev: false },
     snapshot_id: '00000000-0000-4000-8000-000000000001',
     captured_at: CAPTURED_AT,
@@ -126,7 +128,7 @@ let solved: ReturnType<typeof build> | undefined;
 const planned = () => solved ??= build();
 
 const build = () => {
-  const plan = generateOptimisationPlan(snapshot(), new Date(START + 60_000), archive);
+  const plan = runRulesPlanner({ snapshot: snapshot(), now: (new Date(START + 60_000)).toISOString(), price_archive: archive }).plan;
   const timeline = buildEnergyTimeline({
     actuals: [],
     deviceActuals: [],

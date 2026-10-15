@@ -3,7 +3,7 @@ import {
   type OptimisationSnapshotV6,
   type OptimisationSnapshotV8,
   type OptimisationSnapshot,
-} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+} from "../supabase/functions/_shared/planner/planning-contracts.ts";
 
 import { generateRulesPlan, prepareRulesPlanningInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
@@ -39,7 +39,9 @@ export function dispatchedEvSnapshot(): OptimisationSnapshotV6 {
       ev: true,
     },
     snapshot_id: "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
-    captured_at: NOW.toISOString(),
+    captured_at: slots[0].start,
+    comfort: { ev: { target_km: 300 }, pool: { target_c: 30 } },
+    value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     timezone: "Europe/Stockholm",
     slot_minutes: 15,
     slots,
@@ -140,7 +142,7 @@ export function rulesFixtureInput(source: OptimisationSnapshot) {
       selected_setting: 1, control: "switch", auxiliary_w: 700, response: {kind: "steady"},
     } } };
   }
-  if (snapshot.schema_version === 9 && snapshot.capabilities.battery) snapshot.battery_execution_feedback = {
+  if (snapshot.schema_version === 9 && snapshot.capabilities.battery && !snapshot.battery_execution_feedback) snapshot.battery_execution_feedback = {
     generation: 1, source_receipt: 0, previous_contract_id: null, scope_revision: "fixture-whole-house", objectives: [],
   };
   return prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
@@ -249,7 +251,25 @@ export function hotWaterPlanFixture() {
     validation_time: snapshot.slots[0].start, plan: rulesFixturePlan(snapshot) };
 }
 
+export function unobservedHotWaterPlanFixture() {
+  const snapshot = hotWaterSnapshot();
+  snapshot.device_models[0].active_power_w = null;
+  snapshot.device_models[0].profile_sample_count = 0;
+  snapshot.device_models[0].forecast_w_by_slot.fill(0);
+  for (const service of snapshot.services) {
+    service.required_kwh = 0;
+    if (service.control.type === "duty_cycle") {
+      service.control.rated_power_w = null;
+      service.control.expected_power_w_by_slot.fill(0);
+    }
+  }
+  return {contract_fixture: "schema-8-unobserved-hot-water", generated_by: "generateRulesPlan",
+    validation_time: snapshot.slots[0].start, plan: rulesFixturePlan(snapshot)};
+}
+
 if (import.meta.main) {
+  await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-unobserved-hot-water-plan.json", import.meta.url),
+    `${JSON.stringify(unobservedHotWaterPlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-hot-water-demand-plan.json", import.meta.url),
     `${JSON.stringify(hotWaterPlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url),

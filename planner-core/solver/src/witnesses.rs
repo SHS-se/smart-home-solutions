@@ -846,6 +846,7 @@ pub(crate) mod tests {
             },
             slots: (0..n)
                 .map(|i| Slot {
+                    battery_export_allowed: None,
                     local_month: 7,
                     start_seconds: i as f64 * 900.0,
                     hours: 0.25,
@@ -920,6 +921,7 @@ pub(crate) mod tests {
                 ev: [50.0, 100.0],
             },
             accepted: None,
+            fixed_commands: None,
             locked_through_seconds: 0.0,
         }
     }

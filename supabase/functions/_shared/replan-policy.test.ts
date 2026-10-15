@@ -1,6 +1,7 @@
+import { runRulesPlanner } from "./run-rules-planner.ts";
 import { assertEquals } from 'jsr:@std/assert@1';
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
-import { generateOptimisationPlan } from './planner/energy-optimisation.ts';
+
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations } from './replan-policy.ts';
 import { isolateMeasurements } from './planner/measurement-isolation.ts';
 
@@ -24,7 +25,7 @@ Deno.test('quarter exchange and changed measurements preserve plan until a price
 });
 
 Deno.test('recommendations use four complete contiguous quarters and rolling signed energy difference', () => {
-  const s = mixedModeSnapshot(), plan = generateOptimisationPlan(s, new Date(s.captured_at));
+  const s = mixedModeSnapshot(), plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   const slots = plan.plans.priority.slots.slice(1, 5);
   slots.forEach(s => s.load_w = 4000); // one kWh in each quarter
   const now = new Date(Date.parse(slots[3].start) + 900000);
@@ -39,7 +40,7 @@ Deno.test('recommendations use four complete contiguous quarters and rolling sig
 });
 
 Deno.test('pack warning compares energy at the captured time, independent of mode', () => {
-  const s = mixedModeSnapshot(), plan = generateOptimisationPlan(s, new Date(s.captured_at));
+  const s = mixedModeSnapshot(), plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   const index = 4;
   s.captured_at = plan.plans.priority.slots[index].start;
   s.battery.soc = plan.plans.priority.slots[index - 1].battery_soc - 4.1 / s.battery.capacity_kwh;
@@ -49,7 +50,7 @@ Deno.test('pack warning compares energy at the captured time, independent of mod
 Deno.test('a device left out for its readings recommends a replan once they are valid again', () => {
   const broken = mixedModeSnapshot();
   broken.pool = { ...broken.pool!, water_temperature_c: 500 };
-  const plan = generateOptimisationPlan(broken, new Date(broken.captured_at));
+  const plan = runRulesPlanner({ snapshot: broken, now: (new Date(broken.captured_at)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.capabilities.pool, false);
   // Still impossible: nothing to recommend, and no deviation warning either.
   assertEquals(recoveredMeasurementRecommendations(plan, isolateMeasurements(broken)), []);
@@ -62,12 +63,12 @@ Deno.test('a device left out for its readings recommends a replan once they are 
     occurred_at: later.captured_at,
   }]);
   // A plan that already includes the device has nothing to recover.
-  const whole = generateOptimisationPlan(mixedModeSnapshot(), new Date(later.captured_at));
+  const whole = runRulesPlanner({ snapshot: mixedModeSnapshot(), now: (new Date(later.captured_at)).toISOString(), price_archive: [] }).plan;
   assertEquals(recoveredMeasurementRecommendations(whole, isolateMeasurements(later)), []);
 });
 
 Deno.test('an impossible pack reading raises no stored-energy warning', () => {
-  const s = mixedModeSnapshot(), plan = generateOptimisationPlan(s, new Date(s.captured_at));
+  const s = mixedModeSnapshot(), plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   const impossible = structuredClone(s);
   impossible.battery!.soc = 1.4;
   const now = new Date(s.captured_at);

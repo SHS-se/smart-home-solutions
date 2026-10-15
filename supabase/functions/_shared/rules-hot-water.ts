@@ -18,6 +18,7 @@ export function hotWaterSurplusPermissions(input: PreparedRulesInput, baseline: 
     ? Math.max(0, -q.net_w) * p.slots[i].hours * battery.charge_efficiency * battery.discharge_efficiency : 0 })).filter(r => r.wh > 0);
   const spent = baseline.map(() => 0);
   for (let i = input.locked_slots.length; i < water.length; i++) {
+    if (input.fixed_slots[i]) continue;
     if (water[i] <= 0) continue;
     const hours = p.slots[i].hours + Math.min(0, p.slots[i].start_seconds) / 3600;
     const wh = Math.max(0, water[i] - Math.max(0, p.slots[i].solar_w - (p.slots[i].base_w + baseline[i].pool_w + baseline[i].ev_w))) * hours;
@@ -38,7 +39,7 @@ export function hotWaterSurplusPermissions(input: PreparedRulesInput, baseline: 
 export function waterBatteryCommands(input: PreparedRulesInput, commands: NativeCommand[], quarters: NativeQuarter[]): NativeCommand[] {
   const p = input.problem;
   return commands.map((command, i) => {
-    if (i < input.locked_slots.length || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
+    if (input.fixed_slots[i] || i < input.locked_slots.length || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
     const gross = p.slots[i].base_w + quarters[i].pool_w + quarters[i].ev_w;
     const excluded = (p.ev_battery_supply_allowed ? 0 : quarters[i].ev_w + p.slots[i].base_ev_w) + (input.boiler_battery_allowed[i] ? 0 : input.boiler_w[i]);
     const bound = proportionalSupply(gross, p.slots[i].solar_w, Math.max(0, gross - excluded)).houseSupplyBoundW;
@@ -61,9 +62,10 @@ export function addHotWater(core: ReturnType<typeof createWasmPlanner>, input: P
     other_house_w: other, import_price: p.slots.map(s => s.import_price), export_price: p.slots.map(s => s.export_price),
     solar_w: p.slots.map(s => s.solar_w), large_load_w: native.quarters.map(q => q.pool_w + q.ev_w + q.charge_w),
     available_w: native.quarters.map((q, i) => p.limits.import_w - q.net_w + q.charge_w + input.boiler_w[i]),
-    locked: input.locked_slots, previous_permissions: input.boiler_permission_starts });
+    locked: input.snapshot.slots.map((_s,i) => input.fixed_slots[i] ?? input.locked_slots[i]), previous_permissions: input.boiler_permission_starts });
   const batteryAllowed = hotWaterSurplusPermissions(input, native.quarters, water.rated_w.map((w, i) => water.permitted[i] ? w : 0));
   for (let i = 0; i < input.locked_slots.length; i++) batteryAllowed[i] = input.boiler_battery_allowed[i];
+  for (const key of Object.keys(input.fixed_slots)) { const i=Number(key); batteryAllowed[i]=input.boiler_battery_allowed[i]; }
   const problem = { ...p, slots: p.slots.map((s, i) => ({ ...s, base_w: s.base_w - input.boiler_w[i] + water.expected_w[i] })) };
   const updated = { ...input, problem, boiler_w: water.expected_w, boiler_rated_w: water.rated_w, boiler_permitted: water.permitted,
     boiler_battery_allowed: batteryAllowed, boiler_permission_starts: water.permission_starts,

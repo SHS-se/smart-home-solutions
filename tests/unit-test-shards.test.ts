@@ -11,9 +11,9 @@ Deno.test("CI shards run every repository test file exactly once, including new 
   assertEquals(shardFiles([...files].reverse(), 4), shards);
   // The three slowest modules must not serialize behind one another.
   const slowest = [
-    "supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts",
-    "supabase/functions/_shared/replan-continuity.test.ts",
-    "supabase/functions/_shared/replan-continuity-authority.test.ts",
+    "supabase/functions/_shared/rules-planner.test.ts",
+    "tests/bench-adapter.test.ts",
+    "supabase/functions/_shared/rules-hot-water.test.ts",
   ];
   assertEquals(shards.filter(shard => slowest.some(file => shard.includes(file))).length, 3);
 });

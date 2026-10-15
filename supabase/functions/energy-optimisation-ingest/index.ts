@@ -1,3 +1,6 @@
+import { readPlannerLocation, withPlannerLocation } from "../_shared/home-planning-location.ts";
+import { prepareActualUpload } from "../_shared/actual-upload.ts";
+import { mergePlanningWarnings, planningWarning } from "../_shared/planner/planning-warnings.ts";
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
@@ -7,7 +10,7 @@ import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDa
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
 import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
-import type { FixedEnergyPlan } from "../_shared/planner/fixed-energy-plan.ts";
+import type { OptimisationPlan, FixedEnergyPlan } from "../_shared/planner/planning-contracts.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
 //
@@ -33,7 +36,7 @@ import {
   type DeviceLoadType,
   type DevicePlanningRole,
   type OptimisationSnapshot,
-} from "../_shared/planner/energy-optimisation.ts";
+} from "../_shared/planner/planning-contracts.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
@@ -46,6 +49,8 @@ import {
   type ThermalMomentRow,
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
+  storeZoneModelRows,
+  readThermalModel,
 } from "../_shared/thermal-training.ts";
 import { MIN_TRAINING_SAMPLES } from "../_shared/planner/thermal-model.ts";
 import {
@@ -63,6 +68,8 @@ import {
 import { readPagedRows } from "../_shared/read-paged-rows.ts";
 import {
   buildComfortForecast,
+  comfortModesForStarts,
+  temperatureForMode,
   isZoneComfortSchedule,
   summerHeatingLockoutForStarts,
   type ZoneComfortSchedule,
@@ -97,7 +104,6 @@ const MAX_THERMAL_SLOTS_PER_PUSH = 288;
 // MAX_REQUEST_BYTES, not a statement about how much history is reasonable.
 const MAX_PRICE_SLOTS_PER_PUSH = 2_880;
 const MAX_DEVICES_PER_PUSH = 100;
-const MAX_QUARTER_KWH = 100;
 // No published Swedish tariff reaches this. The bound rejects a unit error —
 // öre sent as SEK, say — while leaving the negative spot prices that genuinely
 // occur alone.
@@ -108,7 +114,6 @@ const MAX_PRICE_SEK_PER_KWH = 100;
 const PRICE_SHAPE_WINDOW_DAYS = 60;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
-const ACTUAL_AGGREGATION = "sum_of_recorder_5minute_changes";
 // Physically possible room and outdoor extremes. These reject a sensor
 // reporting in Fahrenheit or a unit-less counter, not merely odd weather.
 const MIN_ROOM_C = -50;
@@ -208,23 +213,6 @@ const storedDeviceFromRow = (row: Record<string, unknown>): StoredDevice => ({
   mapping_error: row.mapping_error as string | null,
   mapping_summary: row.mapping_summary as Record<string, unknown>,
 });
-
-const ENERGY_FIELDS = [
-  "total_load_kwh",
-  "solar_production_kwh",
-  "grid_import_kwh",
-  "grid_export_kwh",
-  "pool_heating_kwh",
-  "hot_water_kwh",
-  "ev_charging_kwh",
-  "battery_charge_kwh",
-  "battery_discharge_kwh",
-] as const;
-
-// Measured state of charge, sent as fractions. Kept apart from the energy
-// fields because they are levels rather than quantities: they are bounded 0..1
-// and a slot carrying only a battery level has measured no energy at all.
-const FRACTION_FIELDS = ["battery_soc", "ev_soc"] as const;
 
 const round = (value: number, decimals = 6) => {
   const multiplier = 10 ** decimals;
@@ -358,10 +346,10 @@ async function refitPoolModel(
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_pool_model")
-    .select("fitted_at, heat_pump_epoch_start")
+    .select("*")
     .eq("home_id", homeId)
     .maybeSingle();
-  const lastFit = existing?.fitted_at ? Date.parse(existing.fitted_at) : 0;
+  const lastFit = existing?.last_attempted_at ? Date.parse(existing.last_attempted_at) : 0;
   // Samples from before the current heat pump was commissioned describe a
   // different machine, so the window is clamped to it and a newly recorded
   // epoch invalidates the standing fit at once rather than a day later.
@@ -476,10 +464,10 @@ async function refitPoolModel(
       idle_loss_rejection: null,
     }
     : {
-      idle_loss_kw_per_k: null,
-      idle_loss_hours: idle.hours,
-      idle_loss_run_count: idle.run_count,
-      idle_loss_rejection: idle.rejected,
+      ...(existing?.idle_loss_kw_per_k != null ? {} : {
+        idle_loss_kw_per_k: null, idle_loss_hours: idle.hours,
+        idle_loss_run_count: idle.run_count, idle_loss_rejection: idle.rejected,
+      }),
     };
   const row = "fitted" in result
     ? {
@@ -489,26 +477,28 @@ async function refitPoolModel(
       ...result.fitted,
       rejection: null,
       ...idleRow,
-      response,
+      ...(response.length ? { response } : {}),
     }
     : {
       home_id: homeId,
       customer_id: customerId,
       ...idleRow,
-      response,
-      fitted_at: new Date(now).toISOString(),
-      loss_kw_per_k: null,
-      rated_cop: null,
-      cop_per_air_c: null,
-      background_kw: null,
-      r2: null,
-      sample_count: result.sample_count,
-      heated_sample_count: result.heated_sample_count,
-      rejection: result.rejected,
+      ...(response.length ? { response } : {}),
+      ...(existing?.rated_cop != null ? {} : {
+        fitted_at: new Date(now).toISOString(),
+        loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null, background_kw: null, r2: null,
+        sample_count: result.sample_count, heated_sample_count: result.heated_sample_count,
+      }),
+      rejection: existing?.rated_cop != null ? null : result.rejected,
     };
+  const attempt = { issues: [
+    ...("fitted" in result ? result.warnings ?? [] : [result.rejected]),
+    ...("fitted" in idle ? idle.warnings ?? [] : [idle.rejected]),
+    ...(response.some(bin => (bin.idle_hours > 0 && bin.idle_hours < 3) || (bin.heated_kwh > 0 && bin.heated_kwh < 3)) ? ["limited_response_observations"] : []),
+  ] };
   const { error } = await supabase
     .from("energy_optimisation_pool_model")
-    .upsert(row, { onConflict: "home_id" });
+    .upsert({ ...row, last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt }, { onConflict: "home_id" });
   if (error) console.error("[ENERGY-OPTIMISATION] pool refit failed", error);
 }
 
@@ -591,15 +581,10 @@ async function prepareThermalPlanning(
     snapshot.outdoor_temperature_c,
     snapshot.slots.length,
   );
-  if (classified.status === "holed") {
-    throw new Error(
-      "room comfort forecasting needs outdoor temperature for every slot",
-    );
-  }
-  // The series is the server's own SMHI forecast
-  // (`withServerOutdoorTemperature`); without it the rooms go unforecast.
-  if (classified.status !== "complete") return withoutComfortForecast(snapshot);
-  const outdoor = classified.series;
+  const outdoor = classified.status === "complete" ? classified.series : null;
+  if (!outdoor) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+    "outdoor_estimate", "rooms", "Outdoor forecast coverage is incomplete.",
+    "Room comfort commands remain active; electrical demand uses observed history where thermal projection is unavailable.")]);
 
   // What the sun is expected to do over the horizon. A zone fitted with a
   // solar term projects far better with this than without, but it is never
@@ -631,12 +616,12 @@ async function prepareThermalPlanning(
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_zone_models")
-    .select("room_key, fitted_at")
+    .select("room_key, fitted_at, last_attempted_at")
     .eq("home_id", homeId)
-    .order("fitted_at", { ascending: false })
+    .order("last_attempted_at", { ascending: false })
     .limit(1);
-  const lastFit = existing?.[0]?.fitted_at
-    ? Date.parse(existing[0].fitted_at)
+  const lastFit = existing?.[0]?.last_attempted_at
+    ? Date.parse(existing[0].last_attempted_at)
     : 0;
 
   if (now - lastFit > REFIT_INTERVAL_HOURS * 3_600_000) {
@@ -675,22 +660,12 @@ async function prepareThermalPlanning(
     } else {
       const fits = fitZones((moments ?? []) as ThermalMomentRow[]);
       if (fits.length > 0) {
-        const { error: upsertError } = await supabase
-          .from("energy_optimisation_zone_models")
-          .upsert(
-            zoneModelRows(fits, {
-              customerId,
-              homeId,
-              trainingFrom,
-              trainingTo,
-            }),
-            { onConflict: "home_id,room_key" },
-          );
-        if (upsertError) {
-          console.error(
-            "[ENERGY-OPTIMISATION] zone models not stored",
-            upsertError,
-          );
+        try {
+          await storeZoneModelRows(supabase, zoneModelRows(fits, {
+            customerId, homeId, trainingFrom, trainingTo,
+          }));
+        } catch (error) {
+          console.error("[ENERGY-OPTIMISATION] zone model attempt not stored", error);
         }
       }
     }
@@ -700,16 +675,15 @@ async function prepareThermalPlanning(
     supabase
       .from("energy_optimisation_zone_models")
       .select(
-        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, solar_gain_c_per_h_per_wm2, solar_mean_w_per_m2, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count",
+        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, solar_gain_c_per_h_per_wm2, solar_mean_w_per_m2, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count, last_fit_attempt",
       )
       .eq("home_id", homeId)
       .eq("trained", true),
-    // The trajectory starts from a real room reading no more than six hours
-    // old. A guessed midpoint would describe a different house.
+    // Available observations remain evidence independently of their report age.
     supabase.rpc("get_energy_latest_room_temperatures", {
       p_customer_id: customerId,
       p_home_id: homeId,
-      p_from: new Date(now - 6 * 3_600_000).toISOString(),
+      p_from: "1970-01-01T00:00:00.000Z",
     }),
     supabase
       .from("energy_optimisation_comfort_schedules")
@@ -718,22 +692,12 @@ async function prepareThermalPlanning(
       )
       .eq("home_id", homeId),
   ]);
-  // Room comfort needs all three of these. Losing them is the same situation
-  // as having no weather: the rooms cannot be forecast, and every other load
-  // still plans on prices and its own recent history.
-  for (
-    const result of [
-      trainedResult,
-      latestResult,
-      scheduleResult,
-    ]
-  ) {
+  for (const result of [trainedResult, latestResult, scheduleResult]) {
     if (result.error) {
-      console.error(
-        "[ENERGY-OPTIMISATION] comfort inputs unreadable",
-        result.error,
-      );
-      return withoutComfortForecast(snapshot);
+      console.error("[ENERGY-OPTIMISATION] room evidence unavailable", result.error);
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        "room_evidence_unavailable", "rooms", "Some room evidence could not be read.",
+        "Planning continues using the available room evidence and measured demand profiles.")]);
     }
   }
 
@@ -768,121 +732,61 @@ async function prepareThermalPlanning(
   // car being planned at all. A skipped room keeps its recent-history profile,
   // exactly as it had before comfort forecasting existed, while its neighbours
   // are still planned properly.
-  const skipped: string[] = [];
+  const skipped: { key: string; message: string }[] = [];
   for (const room of rooms.values()) {
     const fitted = trainedByRoom.get(room.key);
-    if (!fitted) {
-      skipped.push(`${room.name}: no trained thermal model`);
-      continue;
-    }
     const observation = latestByRoom.get(room.key);
-    if (
-      !observation || !Number.isFinite(Number(observation.room_temperature_c))
-    ) {
-      skipped.push(`${room.name}: no recent room temperature`);
-      continue;
-    }
     const rawSchedule = scheduleByRoom.get(room.key);
-    const schedule: ZoneComfortSchedule | null = rawSchedule
-      ? {
-        weekday_modes: rawSchedule
-          .weekday_modes as ZoneComfortSchedule["weekday_modes"],
-        weekend_modes: rawSchedule
-          .weekend_modes as ZoneComfortSchedule["weekend_modes"],
-        off_temperature_c: Number(rawSchedule.off_temperature_c),
-        low_temperature_c: Number(rawSchedule.low_temperature_c),
-        high_temperature_c: Number(rawSchedule.high_temperature_c),
-      }
-      : null;
+    const schedule: ZoneComfortSchedule | null = rawSchedule ? {
+      weekday_modes: rawSchedule.weekday_modes as ZoneComfortSchedule["weekday_modes"],
+      weekend_modes: rawSchedule.weekend_modes as ZoneComfortSchedule["weekend_modes"],
+      off_temperature_c: Number(rawSchedule.off_temperature_c), low_temperature_c: Number(rawSchedule.low_temperature_c),
+      high_temperature_c: Number(rawSchedule.high_temperature_c),
+    } : null;
     if (!isZoneComfortSchedule(schedule)) {
-      skipped.push(`${room.name}: comfort schedule missing or invalid`);
+      skipped.push({ key: room.key, message: `${room.name}: no complete comfort schedule; existing settings are retained` });
       continue;
     }
-    const ratedPowerW = room.models.reduce(
-      (sum, model) => sum + Number(model.active_power_w ?? 0),
-      0,
-    );
-    if (!Number.isFinite(ratedPowerW) || ratedPowerW <= 0) {
-      skipped.push(`${room.name}: rated power unavailable`);
-      continue;
+    const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
+    const startTemperature = observation && Number.isFinite(Number(observation.room_temperature_c))
+      ? Number(observation.room_temperature_c) : null;
+    const model = readThermalModel(fitted);
+    const targets = comfortModesForStarts(starts, snapshot.timezone, schedule).map(mode => temperatureForMode(schedule, mode));
+    const historical = starts.map((_start, i) => room.models.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
+    let forecast = { comfort_min_c: targets, target_c: targets,
+      comfort_max_c: targets.map(() => schedule.high_temperature_c + .5), power_w: historical };
+    let usableModel = model;
+    if (model && startTemperature !== null && outdoor && ratedPowerW > 0) {
+      try {
+        forecast = buildComfortForecast(starts, snapshot.timezone, schedule, model, startTemperature,
+          outdoor, ratedPowerW, summerLockout, solar);
+      } catch (error) {
+        usableModel = null;
+        skipped.push({ key: room.key, message: `${room.name}: thermal estimate unavailable (${describeThrown(error)}); using measured demand` });
+      }
+    } else {
+      usableModel = null;
+      skipped.push({ key: room.key, message: `${room.name}: incomplete thermal evidence; comfort commands use measured demand` });
     }
-    const thermalModel = {
-      gain_c_per_wh: Number(fitted.gain_c_per_wh),
-      cooling_constant_per_h: Number(fitted.cooling_constant_per_h),
-      background_gain_c_per_h: Number(fitted.background_gain_c_per_h),
-      thermal_capacity_wh_per_c: Number(fitted.thermal_capacity_wh_per_c),
-      heat_loss_w_per_c: Number(fitted.heat_loss_w_per_c),
-      time_constant_h: Number(fitted.time_constant_h),
-      heating_rate_c_per_h: fitted.heating_rate_c_per_h === null
-        ? null
-        : Number(fitted.heating_rate_c_per_h),
-      // Null here is the whole signal: a zone fitted before irradiance existed
-      // keeps its flat background and is projected exactly as it always was.
-      solar_gain_c_per_h_per_wm2: fitted.solar_gain_c_per_h_per_wm2 === null ||
-          fitted.solar_gain_c_per_h_per_wm2 === undefined
-        ? null
-        : Number(fitted.solar_gain_c_per_h_per_wm2),
-      solar_mean_w_per_m2: fitted.solar_mean_w_per_m2 === null ||
-          fitted.solar_mean_w_per_m2 === undefined
-        ? null
-        : Number(fitted.solar_mean_w_per_m2),
-      r2: Number(fitted.r2),
-      sample_count: Number(fitted.sample_count),
-      residual_std_c: Number(fitted.residual_std_c),
-    };
-    if (
-      Object.entries(thermalModel).some(([key, value]) =>
-        key !== "heating_rate_c_per_h" &&
-        key !== "solar_gain_c_per_h_per_wm2" &&
-        key !== "solar_mean_w_per_m2" &&
-        !Number.isFinite(value)
-      )
-    ) {
-      skipped.push(`${room.name}: fitted thermal model incomplete`);
-      continue;
+    const attempt = fitted?.last_fit_attempt as { issues?: string[] } | undefined;
+    if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
+      "The latest usable thermal parameters remain available; comfort service continues.")]);
+    for (const member of room.models) {
+      forecasts.set(member.key, usableModel && ratedPowerW > 0
+        ? forecast.power_w.map(watts => watts * Number(member.active_power_w ?? 0) / ratedPowerW)
+        : member.forecast_w_by_slot);
     }
-    const forecast = buildComfortForecast(
-      starts,
-      snapshot.timezone,
-      schedule,
-      thermalModel,
-      Number(observation.room_temperature_c),
-      outdoor as number[],
-      ratedPowerW,
-      summerLockout,
-      solar,
-    );
-    for (const model of room.models) {
-      const share = (model.active_power_w ?? 0) / ratedPowerW;
-      forecasts.set(model.key, forecast.power_w.map((watts) => watts * share));
-    }
-    zones.push({
-      key: room.key,
-      name: room.name,
-      model: thermalModel,
-      start_temperature_c: Number(observation.room_temperature_c),
-      rated_power_w: ratedPowerW,
-      comfort_min_c: forecast.comfort_min_c,
-      target_c: forecast.target_c,
-      comfort_max_c: forecast.comfort_max_c,
-      planned_power_w: forecast.power_w,
-      unplanned_power_w: forecast.power_w,
+    if (usableModel && startTemperature !== null) zones.push({
+      key: room.key, name: room.name, model: usableModel, start_temperature_c: startTemperature,
+      rated_power_w: ratedPowerW, comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c,
+      comfort_max_c: forecast.comfort_max_c, planned_power_w: forecast.power_w, unplanned_power_w: forecast.power_w,
     });
-    planningZones.push({
-      key: room.key,
-      name: room.name,
-      device_keys: room.models.map((model) => model.key),
-      model: thermalModel,
-      start_temperature_c: Number(observation.room_temperature_c),
-      rated_power_w: ratedPowerW,
-      comfort_min_c: forecast.comfort_min_c,
-      target_c: forecast.target_c,
-      comfort_max_c: forecast.comfort_max_c,
-      maximum_power_w_by_slot: summerLockout.map((locked) =>
-        locked ? 0 : ratedPowerW
-      ),
-      unplanned_power_w: forecast.power_w,
-    });
+    planningZones.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
+      model: usableModel, start_temperature_c: startTemperature, rated_power_w: ratedPowerW,
+      comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c, comfort_max_c: forecast.comfort_max_c,
+      maximum_power_w_by_slot: summerLockout.map(locked => locked ? 0 : Math.max(ratedPowerW, ...historical)),
+      unplanned_power_w: forecast.power_w });
   }
 
   // Silent degradation is worse than none, so what was skipped is said out
@@ -891,13 +795,15 @@ async function prepareThermalPlanning(
   if (skipped.length > 0) {
     console.error(
       `[ENERGY-OPTIMISATION] ${skipped.length} of ${rooms.size} rooms not ` +
-        `comfort-forecast: ${skipped.join("; ")}`,
+        `comfort-forecast: ${skipped.map(item => item.message).join("; ")}`,
     );
   }
 
   return {
     snapshot: {
       ...snapshot,
+      planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, skipped.map(item => planningWarning(
+        "room_forecast_estimate", item.key, item.message, "Household planning and available room comfort commands continue."))),
       device_models: snapshot.device_models.map((model) => ({
         ...model,
         forecast_method: forecasts.has(model.key)
@@ -919,7 +825,7 @@ async function refreshPreparedForecasts(
   // deno-lint-ignore no-explicit-any
   supabase: any, customerId: string, homeId: string,
   source: OptimisationSnapshot, devices: StoredDevice[],
-): Promise<void> {
+): Promise<{snapshot:OptimisationSnapshot;price_outlook:OptimisationPlan["price_outlook"];issued_at:string}> {
   // Price/weather products cover an extra day so a new capture can read its
   // complete horizon between source refreshes. This is not a device forecast.
   const forecastSlots = [...source.slots];
@@ -934,8 +840,12 @@ async function refreshPreparedForecasts(
     withServerOutdoorTemperature(supabase, forecastSource),
     withWindOutlook(supabase, forecastSource),
   ]);
-  if (archiveResult.error) throw new Error(archiveResult.error.message);
-  const outlook = buildPriceOutlook(forecastSlots, archiveResult.data as StoredPriceRow[], {
+  if (archiveResult.error) {
+    console.warn("[ENERGY-OPTIMISATION] price history unavailable; current published prices remain in use",{home_id:homeId});
+    source.planning_warnings=mergePlanningWarnings(source.planning_warnings,[planningWarning("price_history_read","prices",
+      "Historical prices could not be read.","Price estimates use the currently published horizon.")]);
+  }
+  const outlook = buildPriceOutlook(forecastSlots, (archiveResult.data ?? []) as StoredPriceRow[], {
     timeZone: source.timezone, asOf: Date.parse(source.captured_at), wind: wind.wind_outlook?.days });
   if (source.pool) await refitPoolModel(supabase, customerId, homeId, source.pool.volume_m3,
     poolHeaters(source.device_models).map(device => device.key));
@@ -945,12 +855,23 @@ async function refreshPreparedForecasts(
   const product = thermal.snapshot.thermal_zones?.length || thermal.snapshot.solar_irradiance_w_per_m2
     ? { ...weather, slots: source.slots, outdoor_temperature_c: weather.outdoor_temperature_c?.slice(0, source.slots.length) }
     : weather;
-  await storePreparedForecasts(supabase, homeId, { ...product,
+  const preparedSnapshot={ ...product,
+    planning_warnings: mergePlanningWarnings(source.planning_warnings,product.planning_warnings, thermal.snapshot.planning_warnings),
     thermal_zones: thermal.snapshot.thermal_zones,
-    solar_irradiance_w_per_m2: thermal.snapshot.solar_irradiance_w_per_m2 }, {
-    shaped: outlook.shaped, observed_days: outlook.observedDays, effective_days: outlook.effectiveDays,
-    level_sek_per_kwh: outlook.levelSekPerKwh, shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh.slice(0, product.slots.length),
-    ...(outlook.levelBasis ? { level_basis: outlook.levelBasis } : {}) });
+    solar_irradiance_w_per_m2: thermal.snapshot.solar_irradiance_w_per_m2 };
+  const priceOutlook={shaped:outlook.shaped,observed_days:outlook.observedDays,effective_days:outlook.effectiveDays,
+    level_sek_per_kwh:outlook.levelSekPerKwh,shadow_import_sek_per_kwh:outlook.shadowImportSekPerKwh.slice(0,product.slots.length),
+    ...(outlook.levelBasis?{level_basis:outlook.levelBasis}:{})};
+  try { await storePreparedForecasts(supabase,homeId,preparedSnapshot,priceOutlook); }
+  catch(error) {
+    console.warn("[ENERGY-OPTIMISATION] forecast cache publication failed; using fresh preparation",{home_id:homeId,error:describeThrown(error)});
+    preparedSnapshot.planning_warnings=mergePlanningWarnings(preparedSnapshot.planning_warnings,[planningWarning("forecast_cache_write","forecasts",
+      "The fresh forecast could not be cached.","This plan uses the freshly prepared forecast and planning continues.")]);
+  }
+  return {snapshot:{...source,...preparedSnapshot,slots:source.slots,
+    outdoor_temperature_c:preparedSnapshot.outdoor_temperature_c?.slice(0,source.slots.length)},
+    price_outlook:{...priceOutlook,shadow_import_sek_per_kwh:priceOutlook.shadow_import_sek_per_kwh.slice(0,source.slots.length)},
+    issued_at:new Date().toISOString()};
 }
 
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
@@ -1244,6 +1165,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       .eq("home_id", auth.homeId).single();
     if (homePlanningError) return json({ error: "home_planning_unavailable" }, 500);
     if (snapshot) snapshot = applyBatteryChoice(snapshot, homePlanning.battery_included);
+    const plannerLocation = snapshot || thermals.length ? await readPlannerLocation(supabase, auth.homeId, {
+      endpoint: Deno.env.get("SHS_GEOCODER_URL") || undefined,
+    }) : { coordinates: null, warnings: [] };
+    if (snapshot) snapshot = withPlannerLocation(snapshot, plannerLocation);
+    if (plannerLocation.warnings.length) console.warn("[ENERGY-LOCATION] planning continues without resolved address coordinates", { home_id: auth.homeId });
     const storedDevices = (storedRows ?? []).map(storedDeviceFromRow);
     const storedDeviceByKey = new Map(
       storedDevices.map((device) => [device.key, device]),
@@ -1265,127 +1191,17 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     const now = Date.now();
     const latestCompleteStart = Math.floor(now / SLOT_MS) * SLOT_MS - SLOT_MS;
     const earliestAcceptedStart = latestCompleteStart - 8 * 24 * 60 * 60_000;
-    const actualRows: Record<string, unknown>[] = [];
-    const deviceSlotRows: Record<string, unknown>[] = [];
-    const starts = new Set<number>();
-    for (const [index, actual] of actuals.entries()) {
-      const start = Date.parse(String(actual?.start ?? ""));
-      if (
-        !Number.isFinite(start) || start % SLOT_MS !== 0 ||
-        start < earliestAcceptedStart || start > latestCompleteStart
-      ) {
-        return json({
-          error: "invalid_actual_start",
-          detail: `actual_slots[${index}]`,
-        }, 400);
-      }
-      if (starts.has(start)) {
-        return json(
-          { error: "duplicate_actual_start", detail: actual.start },
-          400,
-        );
-      }
-      starts.add(start);
-      if (
-        actual.quality?.aggregation !== ACTUAL_AGGREGATION ||
-        actual.quality?.duration_seconds !== 900
-      ) {
-        return json({
-          error: "invalid_actual_quality",
-          detail: `actual_slots[${index}]`,
-        }, 400);
-      }
-      const row: Record<string, unknown> = {
-        customer_id: auth.customerId,
-        home_id: auth.homeId,
-        start_ts: new Date(start).toISOString(),
-        device_token_id: auth.tokenId,
-        quality: {
-          aggregation: ACTUAL_AGGREGATION,
-          duration_seconds: 900,
-        },
-      };
-      let populated = 0;
-      for (const field of ENERGY_FIELDS) {
-        const value = actual[field];
-        if (value === undefined || value === null) {
-          row[field] = null;
-          continue;
-        }
-        if (
-          typeof value !== "number" || !Number.isFinite(value) || value < 0 ||
-          value > MAX_QUARTER_KWH
-        ) {
-          return json({
-            error: "invalid_actual_energy",
-            detail: `actual_slots[${index}].${field}`,
-          }, 400);
-        }
-        row[field] = round(value);
-        populated += 1;
-      }
-      for (const field of FRACTION_FIELDS) {
-        const value = actual[field];
-        if (value === undefined || value === null) {
-          row[field] = null;
-          continue;
-        }
-        if (
-          typeof value !== "number" || !Number.isFinite(value) || value < 0 ||
-          value > 1
-        ) {
-          return json({
-            error: "invalid_actual_soc",
-            detail: `actual_slots[${index}].${field}`,
-          }, 400);
-        }
-        row[field] = round(value);
-      }
-      if (populated === 0) {
-        return json({
-          error: "empty_actual_slot",
-          detail: `actual_slots[${index}]`,
-        }, 400);
-      }
-      actualRows.push(row);
-      const deviceEnergy = actual.device_energy_kwh ?? {};
-      if (
-        !deviceEnergy || typeof deviceEnergy !== "object" ||
-        Array.isArray(deviceEnergy)
-      ) {
-        return json({
-          error: "invalid_device_energy",
-          detail: `actual_slots[${index}].device_energy_kwh`,
-        }, 400);
-      }
-      for (const [deviceKey, value] of Object.entries(deviceEnergy)) {
-        const storedDevice = storedDeviceByKey.get(deviceKey);
-        if (
-          !storedDevice || typeof value !== "number" ||
-          !Number.isFinite(value) || value < 0 || value > MAX_QUARTER_KWH
-        ) {
-          return json({
-            error: "invalid_device_energy",
-            detail: `actual_slots[${index}].device_energy_kwh.${deviceKey}`,
-          }, 400);
-        }
-        deviceSlotRows.push({
-          customer_id: auth.customerId,
-          home_id: auth.homeId,
-          device_id: storedDevice.id,
-          start_ts: new Date(start).toISOString(),
-          energy_kwh: round(value),
-          quality: {
-            aggregation: ACTUAL_AGGREGATION,
-            duration_seconds: 900,
-          },
-          device_token_id: auth.tokenId,
-        });
-      }
+    const uploadedActuals = prepareActualUpload(actuals, storedDeviceByKey, {
+      customer_id: auth.customerId, home_id: auth.homeId, device_token_id: auth.tokenId,
+    }, now);
+    const { actualRows, deviceSlotRows } = uploadedActuals;
+    if (Object.keys(uploadedActuals.ignored).length) {
+      console.warn("[ENERGY-OPTIMISATION] history items ignored; planning continues", {
+        home_id: auth.homeId, request_id: requestId, counts: uploadedActuals.ignored,
+      });
     }
-    actualRows.sort((a, b) =>
-      Date.parse(String(a.start_ts)) - Date.parse(String(b.start_ts))
-    );
+    if (snapshot) snapshot = { ...snapshot,
+      planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, uploadedActuals.warnings) };
 
     if (actualRows.length > 0) {
       const { error } = await supabase
@@ -1406,6 +1222,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       }
     }
 
+    const ignoredUploads: Record<string,number> = {};
+    const ignoreUpload = (code:string) => { ignoredUploads[code]=(ignoredUploads[code]??0)+1; };
     // Prices carry no watermark and no recorder dependency: they are published
     // figures the integration looked up, so a backfill may reach back to the
     // retention horizon and forward across the whole plan horizon.
@@ -1419,16 +1237,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         !Number.isFinite(start) || start % SLOT_MS !== 0 ||
         start < earliestPriceStart || start > latestPriceStart
       ) {
-        return json({
-          error: "invalid_price_start",
-          detail: `price_slots[${index}]`,
-        }, 400);
+        ignoreUpload("invalid_price_start"); continue;
       }
       if (pricedStarts.has(start)) {
-        return json(
-          { error: "duplicate_price_start", detail: price.start },
-          400,
-        );
+        ignoreUpload("duplicate_price_start"); continue;
       }
       pricedStarts.add(start);
       const values = [
@@ -1441,10 +1253,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           Math.abs(value) > MAX_PRICE_SEK_PER_KWH
         )
       ) {
-        return json({
-          error: "invalid_price",
-          detail: `price_slots[${index}]`,
-        }, 400);
+        ignoreUpload("invalid_price"); continue;
       }
       priceRows.push({
         customer_id: auth.customerId,
@@ -1519,25 +1328,16 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         !Number.isFinite(start) || start % SLOT_MS !== 0 ||
         start < earliestAcceptedStart || start > latestCompleteStart
       ) {
-        return json({
-          error: "invalid_thermal_start",
-          detail: `thermal_slots[${index}]`,
-        }, 400);
+        ignoreUpload("invalid_thermal_start"); continue;
       }
       if (thermalStarts.has(start)) {
-        return json(
-          { error: "duplicate_thermal_start", detail: thermal.start },
-          400,
-        );
+        ignoreUpload("duplicate_thermal_start"); continue;
       }
       thermalStarts.add(start);
 
       const outdoor = temperature(thermal.outdoor_temperature_c);
       if (Number.isNaN(outdoor)) {
-        return json({
-          error: "invalid_outdoor_temperature",
-          detail: `thermal_slots[${index}].outdoor_temperature_c`,
-        }, 400);
+        ignoreUpload("invalid_outdoor_temperature"); continue;
       }
       if (outdoor !== null) {
         outdoorRows.push({
@@ -1557,26 +1357,20 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         !observations || typeof observations !== "object" ||
         Array.isArray(observations)
       ) {
-        return json({
-          error: "invalid_zone_observations",
-          detail: `thermal_slots[${index}].zone_observations`,
-        }, 400);
+        ignoreUpload("invalid_zone_observations"); continue;
       }
       // Outdoor temperature belongs to the home, not to a zone, and the pool's
       // fit is a consumer of it that needs no zone at all. A quarter carrying
       // only the outdoor reading is therefore a complete observation rather
       // than a malformed one; a quarter carrying neither is still rejected.
       if (Object.keys(observations).length === 0 && outdoor === null) {
-        return json({
-          error: "invalid_zone_observations",
-          detail: `thermal_slots[${index}].zone_observations`,
-        }, 400);
+        ignoreUpload("invalid_zone_observations"); continue;
       }
       for (const [roomKey, observation] of Object.entries(observations)) {
         const storedRoom = storedRoomByKey.get(roomKey);
         const detail = `thermal_slots[${index}].zone_observations.${roomKey}`;
         if (!storedRoom || !observation || typeof observation !== "object") {
-          return json({ error: "invalid_zone_observations", detail }, 400);
+          ignoreUpload("invalid_zone_observations"); continue;
         }
         const room = temperature(observation.room_temperature_c);
         const duty = observation.actuator_duty;
@@ -1584,7 +1378,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           room === null || Number.isNaN(room) || typeof duty !== "number" ||
           !Number.isFinite(duty) || duty < 0 || duty > 1
         ) {
-          return json({ error: "invalid_zone_observations", detail }, 400);
+          ignoreUpload("invalid_zone_observations"); continue;
         }
         // Absent means no cooling, which is the case in almost every home.
         const cooling = observation.cooling_duty ?? 0;
@@ -1592,7 +1386,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           typeof cooling !== "number" || !Number.isFinite(cooling) ||
           cooling < 0 || cooling > 1
         ) {
-          return json({ error: "invalid_zone_observations", detail }, 400);
+          ignoreUpload("invalid_zone_observations"); continue;
         }
         const comfortMin = temperature(observation.comfort_min_c);
         const comfortMax = temperature(observation.comfort_max_c);
@@ -1601,14 +1395,14 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           Number.isNaN(comfortMin) || Number.isNaN(comfortMax) ||
           Number.isNaN(setpoint)
         ) {
-          return json({ error: "invalid_zone_observations", detail }, 400);
+          ignoreUpload("invalid_zone_observations"); continue;
         }
         // A band whose floor sits above its ceiling is a mapping error, not a
         // reading. Storing it would make every later constraint infeasible.
         if (
           comfortMin !== null && comfortMax !== null && comfortMin > comfortMax
         ) {
-          return json({ error: "invalid_comfort_band", detail }, 400);
+          ignoreUpload("invalid_comfort_band"); continue;
         }
         thermalRows.push({
           customer_id: auth.customerId,
@@ -1633,7 +1427,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     // three months, so a quarter left unrecorded past that is unrecoverable,
     // and a zone can only ever learn from sunshine it has a record of.
     if (outdoorRows.length > 0) {
-      const location = homeLocation(snapshot);
+      const location = plannerLocation.coordinates;
       const irradiance = location
         ? await irradianceForQuarters({
           supabase,
@@ -1675,17 +1469,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       for (const row of pools) {
         const start = Date.parse(String(row?.start));
         const water = Number(row?.water_temperature_c);
-        if (!Number.isFinite(start) || start % SLOT_MS !== 0) {
-          return json(
-            { error: "invalid_pool_slot", detail: `${row?.start}` },
-            400,
-          );
+        if (!Number.isFinite(start) || start % SLOT_MS !== 0 || start < earliestAcceptedStart || start > latestCompleteStart) {
+          ignoreUpload("invalid_pool_slot"); continue;
         }
         if (!Number.isFinite(water) || water < -5 || water > 60) {
-          return json({
-            error: "invalid_pool_temperature",
-            detail: `${row?.water_temperature_c}`,
-          }, 400);
+          ignoreUpload("invalid_pool_temperature"); continue;
         }
         poolRows.push({
           customer_id: auth.customerId,
@@ -1696,6 +1484,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           device_token_id: auth.tokenId,
         });
       }
+    }
+    if (Object.keys(ignoredUploads).length) {
+      console.warn("[ENERGY-OPTIMISATION] history observations ignored; planning continues", {home_id:auth.homeId,counts:ignoredUploads});
+      uploadedActuals.warnings = mergePlanningWarnings(uploadedActuals.warnings, Object.entries(ignoredUploads).map(([code,count]) =>
+        planningWarning(code,"history",count+" invalid or out-of-window observations were ignored.",
+          "Usable observations and household planning continue.",{count},count>=5?"error":"warning")));
+      if (snapshot) snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,uploadedActuals.warnings);
     }
     if (poolRows.length > 0) {
       const { error } = await supabase
@@ -1805,17 +1600,22 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       if (snapshot.pool) {
         const { data: poolModel, error: poolModelError } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response, hardware")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response, hardware, last_fit_attempt")
           .eq("home_id", auth.homeId)
           .maybeSingle();
-        if (poolModelError) throw new Error(poolModelError.message);
+        if (poolModelError) {
+          console.warn("[ENERGY-OPTIMISATION] optional pool model unavailable",{home_id:auth.homeId});
+          snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("pool_model_read","pool",
+            "The stored pool model could not be read.","Pool service continues using available measured demand.")]);
+        }
         // The home reads the heat pump's own start and stop settings with every
         // snapshot. The stored copy serves only a home that does not send them.
-        let reportedHardware: PoolHardware | null;
+        let reportedHardware: PoolHardware | null = null;
         try {
           reportedHardware = reportedPoolHardware(snapshot.pool);
         } catch (error) {
-          return json({ error: "invalid_snapshot", detail: describeThrown(error) }, 400);
+          snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("pool_hardware_evidence","pool",
+            describeThrown(error),"Pool service uses known comfort intent and measured demand while hardware evidence is unavailable.")]);
         }
         if (reportedHardware && poolModel && !samePoolHardware(poolModel.hardware, reportedHardware)) {
           const { error } = await supabase.from("energy_optimisation_pool_model")
@@ -1824,6 +1624,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           if (error) console.error("[ENERGY-OPTIMISATION] pool hardware not stored", error.message);
         }
         const poolHardware = reportedHardware ?? poolModel?.hardware;
+        if (poolModel?.last_fit_attempt?.issues?.length) {
+          snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("pool_model_quality", "pool",
+            "Pool model evidence needs attention: " + poolModel.last_fit_attempt.issues.join(", ") + ".",
+            "Planning continues with the latest usable parameters and measured response.")]);
+        }
         // The idle loss stands on its own; the joint fit adds the COP when it
         // has one. Either is enough to stop planning on the seeded loss.
         const copFitted = Boolean(poolModel?.loss_kw_per_k && poolModel?.rated_cop);
@@ -1834,12 +1639,16 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         const poolResponse = Array.isArray(poolModel?.response) && poolModel.response.length > 0
           ? poolModel.response
           : null;
-        if (lossKwPerK || poolResponse || poolModel?.heater_response) {
+        let heaterResponse;
+        try { if(poolModel?.heater_response) heaterResponse=parseHeaterResponse(poolModel.heater_response); }
+        catch(error) { snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("pool_response_evidence","pool",
+          describeThrown(error),"Pool thermostat permission remains active using empirical demand.")]); }
+        if (lossKwPerK || poolResponse || heaterResponse || poolHardware) {
           snapshot = {
             ...snapshot,
             pool_model: {
               ...(poolHardware ? { hardware: poolHardware } : {}),
-              ...(poolModel?.heater_response ? { heater_response: parseHeaterResponse(poolModel.heater_response) } : {}),
+              ...(heaterResponse ? { heater_response: heaterResponse } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
               rated_cop: copFitted ? Number(poolModel!.rated_cop) : null,
@@ -1884,6 +1693,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             replan_request_id: portalReplanId,
             completion_basis: planningCompletionBasis(Deno.env.get("SUPABASE_URL") ?? ""),
             exchange: {
+              planning_warnings: uploadedActuals.warnings,
+              actual_slots_ignored: uploadedActuals.ignored,
               actual_slots_accepted: actualRows.length,
               actuals_accepted_until: actualRows.at(-1)?.start_ts ?? null,
               thermal_slots_accepted: thermalRows.length,
@@ -1930,6 +1741,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     if (recommendationError) throw new Error(recommendationError.message);
     return json({
       replan_recommendations: recommendationState?.replan_recommendations ?? [],
+      planning_warnings: uploadedActuals.warnings,
+      actual_slots_ignored: uploadedActuals.ignored,
       actual_slots_accepted: actualRows.length,
       actuals_accepted_until: actualRows.length > 0
         ? actualRows[actualRows.length - 1].start_ts

@@ -45,40 +45,11 @@ export function classifyOutdoorSeries(
   return { status: "complete", series };
 }
 
-/**
- * Where the home is, from wherever this snapshot happens to carry it.
- *
- * Integrations before 0.8.0-beta.7 published coordinates only under
- * `sources.pv`, which tied weather to owning panels. A house without panels
- * sits in the same weather and its rooms gain heat from the same sun, so the
- * top-level field is preferred and the PV one is only a fallback for homes
- * that have not updated yet.
- */
-export function homeLocation(
-  snapshot:
-    | {
-      location?: { latitude?: number; longitude?: number } | null;
-      sources?: {
-        pv?: { location?: { latitude?: number; longitude?: number } } | null;
-      };
-    }
-    | null
-    | undefined,
-): { latitude: number; longitude: number } | null {
-  // A push may carry completed quarters with no snapshot at all, so an absent
-  // snapshot is an ordinary answer here rather than a caller's mistake.
-  if (!snapshot) return null;
-  for (const candidate of [snapshot.location, snapshot.sources?.pv?.location]) {
-    const { latitude, longitude } = candidate ?? {};
-    if (
-      typeof latitude === "number" && typeof longitude === "number" &&
-      Number.isFinite(latitude) && Number.isFinite(longitude) &&
-      Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180
-    ) {
-      return { latitude, longitude };
-    }
-  }
-  return null;
+/** Server-owned coordinates derived from the planner installation address. */
+export function homeLocation(snapshot: { location?: { latitude?: number; longitude?: number } | null } | null | undefined): { latitude: number; longitude: number } | null {
+  const { latitude, longitude } = snapshot?.location ?? {};
+  return typeof latitude === "number" && typeof longitude === "number" && Number.isFinite(latitude) && Number.isFinite(longitude)
+    && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 ? { latitude, longitude } : null;
 }
 
 /**

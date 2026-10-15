@@ -1,6 +1,7 @@
 import ReplanControls from './ReplanControls';
 import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
+import PlanningWarningsAlert from './PlanningWarningsAlert';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
@@ -420,6 +421,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         </AlertDescription>
       </Alert>}
       {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
+      <PlanningWarningsAlert warnings={current?.plan.planning_warnings ?? []} />
       {!current && section === 'plan' && replanControls}
       {content}
       {(

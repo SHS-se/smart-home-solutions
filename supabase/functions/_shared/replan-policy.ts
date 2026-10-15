@@ -1,4 +1,4 @@
-import type { OptimisationPlan, OptimisationSnapshot } from './planner/energy-optimisation.ts';
+import type { OptimisationPlan, OptimisationSnapshot } from './planner/planning-contracts.ts';
 import type { IsolatedDevice } from './planner/measurement-isolation.ts';
 
 export interface ReplanRecommendation { key: string; reason: string; occurred_at: string }

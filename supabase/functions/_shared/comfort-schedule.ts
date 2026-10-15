@@ -161,7 +161,7 @@ export function comfortModesForStarts(
   });
 }
 
-const temperatureForMode = (
+export const temperatureForMode = (
   schedule: ZoneComfortSchedule,
   mode: ComfortMode,
 ): number => {

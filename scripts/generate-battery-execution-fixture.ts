@@ -1,5 +1,7 @@
+import { generateRulesPlan } from "../supabase/functions/_shared/rules-planner.ts";
+import { rulesFixtureInput } from "./generate-ha-plan-fixture.ts";
 import { batterySnapshot } from "./generate-ha-plan-fixture.ts";
-import { generateOptimisationPlanWithBatteryProjection } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+
 
 
 export function batteryExecutionFixture() {
@@ -11,11 +13,11 @@ export function batteryExecutionFixture() {
   };
   const now = new Date(Date.parse(snapshot.slots[0].start) + 8 * 60_000);
   snapshot.captured_at = now.toISOString();
-  const result = generateOptimisationPlanWithBatteryProjection(snapshot, now);
+  const result = generateRulesPlan(rulesFixtureInput(snapshot));
   const contract = result.plan.battery_execution;
   if (!contract) throw new Error("planner did not publish execution instructions");
   return {
-    fixture: "battery-plan-execution-v1", generated_by: "generateOptimisationPlanWithBatteryProjection",
+    fixture: "battery-plan-execution-v1", generated_by: "generateRulesPlan",
     captured_at: now.toISOString(), contract,
   };
 }

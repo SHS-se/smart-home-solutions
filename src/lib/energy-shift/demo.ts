@@ -1,7 +1,5 @@
-import {
-  generateOptimisationPlan,
-  type OptimisationSnapshot,
-} from '../../../supabase/functions/_shared/planner/energy-optimisation';
+import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-planner.ts";
+import { type OptimisationSnapshot } from "../../../supabase/functions/_shared/planner/planning-contracts";
 import type {
   ActualEnergySlot,
   OptimisationPlan,
@@ -273,7 +271,10 @@ export function createWebsiteDemoPlan(
       ev_charging: 8,
     },
   };
-  const generated = generateOptimisationPlan(snapshot, captured);
+  snapshot.comfort = { pool: { target_c: 30 }, ev: { target_km: 300 } };
+  snapshot.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
+  if (snapshot.ev_battery) snapshot.ev_battery.kwh_per_km = .16;
+  const generated = runRulesPlanner({ snapshot: snapshot, now: (captured).toISOString(), price_archive: [] }).plan;
   const sources = Object.fromEntries(
     Object.entries(generated.sources).map(([key, value]) => [
       key,

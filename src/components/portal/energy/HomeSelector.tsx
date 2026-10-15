@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Home, Plus, Loader2 } from 'lucide-react';
+import { Home, Plus, Pencil, Loader2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,6 +31,7 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editingHomeId, setEditingHomeId] = useState<string | null>(null);
 
   const fetchHomes = useCallback(async () => {
     setLoading(true);
@@ -55,20 +56,20 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
     if (!newName.trim()) return;
     setCreating(true);
     try {
-      const { data, error } = await supabase
-        .from('homes')
-        .insert({ customer_id: customerId, name: newName.trim(), address_text: newAddress.trim() || null })
-        .select('id, name, address_text')
-        .single();
+      const values = { name: newName.trim(), address_text: newAddress.trim() || null };
+      const query = editingHomeId
+        ? supabase.from('homes').update(values).eq('id', editingHomeId)
+        : supabase.from('homes').insert({ customer_id: customerId, ...values });
+      const { data, error } = await query.select('id, name, address_text').single();
       if (error) throw error;
       if (data) {
         setHomes(prev => {
-          const next = [...prev, data];
+          const next = editingHomeId ? prev.map(home => home.id === data.id ? data : home) : [...prev, data];
           onHomeCountChange?.(next.length);
           return next;
         });
         onHomeChange(data.id);
-        toast({ title: t('Hem skapat!', 'Home created!') });
+        toast({ title: editingHomeId ? t('Hem uppdaterat', 'Home updated') : t('Hem skapat!', 'Home created!') });
       }
       setCreateOpen(false);
       setNewName('');
@@ -99,10 +100,19 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
           ))}
         </SelectContent>
       </Select>
-      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setCreateOpen(true)}>
+      {selectedHomeId && <Button size="icon" variant="ghost" className="h-11 w-11 shrink-0"
+        aria-label={t('Redigera installationsadress', 'Edit installation address')} onClick={() => {
+          const home = homes.find(home => home.id === selectedHomeId);
+          if (!home) return;
+          setEditingHomeId(home.id); setNewName(home.name); setNewAddress(home.address_text ?? ''); setCreateOpen(true);
+        }}><Pencil className="h-4 w-4" /></Button>}
+      <Button size="icon" variant="ghost" className="h-11 w-11 shrink-0" aria-label={t('Skapa hem', 'Create home')} onClick={() => {
+        setEditingHomeId(null); setNewName(''); setNewAddress(''); setCreateOpen(true);
+      }}>
         <Plus className="w-4 h-4" />
       </Button>
-      <CreateHomeDialog
+      <HomeDialog
+        editing={editingHomeId !== null}
         open={createOpen}
         onOpenChange={setCreateOpen}
         newName={newName}
@@ -117,7 +127,8 @@ const HomeSelector: React.FC<HomeSelectorProps> = ({ customerId, selectedHomeId,
   );
 };
 
-interface CreateHomeDialogProps {
+interface HomeDialogProps {
+  editing: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   newName: string;
@@ -129,29 +140,31 @@ interface CreateHomeDialogProps {
   t: (sv: string, en: string) => string;
 }
 
-const CreateHomeDialog: React.FC<CreateHomeDialogProps> = ({
-  open, onOpenChange, newName, setNewName, newAddress, setNewAddress, creating, onSave, t
+const HomeDialog: React.FC<HomeDialogProps> = ({
+  editing, open, onOpenChange, newName, setNewName, newAddress, setNewAddress, creating, onSave, t
 }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-sm">
       <DialogHeader>
-        <DialogTitle>{t('Skapa nytt hem', 'Create New Home')}</DialogTitle>
+        <DialogTitle>{editing ? t('Redigera hem', 'Edit home') : t('Skapa nytt hem', 'Create New Home')}</DialogTitle>
       </DialogHeader>
       <div className="space-y-3">
         <div>
-          <Label>{t('Namn', 'Name')}</Label>
-          <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('t.ex. Sommarhus', 'e.g. Summer House')} />
+          <Label htmlFor="planner-home-name">{t('Namn', 'Name')}</Label>
+          <Input id="planner-home-name" value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('t.ex. Sommarhus', 'e.g. Summer House')} />
         </div>
         <div>
-          <Label>{t('Adress (valfritt)', 'Address (optional)')}</Label>
-          <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder={t('Gatuadress, stad', 'Street, city')} />
+          <Label htmlFor="planner-installation-address">{t('Installationsadress', 'Installation address')}</Label>
+          <Input id="planner-installation-address" value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder={t('Gatuadress, postnummer, stad', 'Street, postcode, city')} />
+          <p className="mt-2 text-sm text-muted-foreground">{t('Planeringens väder och plats utgår från denna adress.', 'Planning weather and location use this address.')}</p>
+          <a href="https://www.openstreetmap.org/copyright" className="text-xs text-muted-foreground underline" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a>
         </div>
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={() => onOpenChange(false)}>{t('Avbryt', 'Cancel')}</Button>
         <Button onClick={onSave} disabled={creating || !newName.trim()}>
           {creating && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-          {t('Skapa', 'Create')}
+          {editing ? t('Spara', 'Save') : t('Skapa', 'Create')}
         </Button>
       </DialogFooter>
     </DialogContent>

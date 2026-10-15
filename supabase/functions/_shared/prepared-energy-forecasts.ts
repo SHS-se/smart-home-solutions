@@ -1,9 +1,10 @@
 /** Published server forecasts. Admission only aligns this product; it never fits or fetches. */
 import { z } from "zod";
+import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
 import type {
   OptimisationPlan,
   OptimisationSnapshot,
-} from "./planner/energy-optimisation.ts";
+} from "./planner/planning-contracts.ts";
 
 export const PREPARED_FORECAST_TABLE = "energy_prepared_forecasts";
 const finite = z.number().finite();
@@ -28,8 +29,8 @@ const zone = z.object({
     r2: finite,
     sample_count: finite,
     residual_std_c: finite,
-  }),
-  start_temperature_c: finite,
+  }).nullable(),
+  start_temperature_c: finite.nullable(),
   rated_power_w: finite,
   comfort_min_c: finite.array(),
   target_c: finite.array(),
@@ -38,6 +39,10 @@ const zone = z.object({
   unplanned_power_w: finite.array(),
 });
 const forecastSchema = z.object({
+  planner_location: z.object({latitude:finite,longitude:finite}).nullable(),
+  planning_warnings: z.object({ code: z.string(), scope: z.string(), severity: z.enum(["warning", "error"]),
+    message: z.string(), consequence: z.string(), evidence: z.record(z.union([z.string(), finite, z.null()])).optional(),
+    entity_id: z.string().optional() }).array(),
   slot_starts: timestamp.array().nonempty(),
   /** Published inputs, distinct from estimates that happen to have the same value. */
   published_import_sek_per_kwh: finite.nullable().array(),
@@ -134,6 +139,8 @@ export async function storePreparedForecasts(
   resolvedOutlook: OptimisationPlan["price_outlook"],
 ): Promise<void> {
   const forecast = parseForecast({
+    planning_warnings: preparedSnapshot.planning_warnings ?? [],
+    planner_location: preparedSnapshot.location ?? null,
     slot_starts: preparedSnapshot.slots.map((slot) => slot.start),
     published_import_sek_per_kwh: preparedSnapshot.slots.map((slot) => slot.import_price_sek_per_kwh),
     price_outlook: resolvedOutlook,
@@ -167,18 +174,23 @@ export async function readOrPrepareForecasts(
   db: PreparedForecastDatabase,
   homeId: string,
   snapshot: OptimisationSnapshot,
-  prepare: () => Promise<void>,
+  prepare: () => Promise<void | { snapshot: OptimisationSnapshot; price_outlook: OptimisationPlan["price_outlook"]; issued_at: string }>,
 ): ReturnType<typeof readPreparedForecasts> {
   try {
     return await readPreparedForecasts(db, homeId, snapshot);
   } catch (error) {
     const needsPreparation = error instanceof PreparedForecastError &&
-      (error.code === "prepared_forecast_unavailable" ||
+      (error.code === "prepared_forecast_location_changed" ||
+        error.code === "prepared_forecast_read_failed" ||
+        error.code === "prepared_forecast_unavailable" ||
+        error.code === "prepared_forecast_invalid" ||
         error.code === "prepared_forecast_coverage_missing" ||
         error.code === "prepared_forecast_prices_changed");
     if (!needsPreparation) throw error;
   }
-  await prepare();
+  const fresh = await prepare();
+  // A successful fresh preparation is usable even if publication storage is down.
+  if (fresh) return fresh;
   return await readPreparedForecasts(db, homeId, snapshot);
 }
 
@@ -211,6 +223,9 @@ export async function readPreparedForecasts(
     .safeParse(data);
   if (!row.success) invalid("Prepared forecast publication is malformed");
   const forecast = parseForecast(row.data.forecast);
+  if(JSON.stringify(forecast.planner_location)!==JSON.stringify(snapshot.location??null)) {
+    throw new PreparedForecastError("prepared_forecast_location_changed","The planner address location changed; refresh the forecast for its new site");
+  }
   const byTime = new Map(
     forecast.slot_starts.map((start, i) => [Date.parse(start), i]),
   );
@@ -256,6 +271,7 @@ export async function readPreparedForecasts(
     },
     snapshot: {
       ...snapshot,
+      planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, forecast.planning_warnings),
       outdoor_temperature_c: forecast.outdoor_temperature_c === null
         ? undefined
         : align(forecast.outdoor_temperature_c),

@@ -17,7 +17,7 @@ import {
 } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 import { buildPriceOutlook } from "../supabase/functions/_shared/planner/energy-price-shape.ts";
 import { publishHeater } from "../supabase/functions/_shared/planner/device-models.ts";
-import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 import { addHotWater } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import type { HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
@@ -263,7 +263,7 @@ export async function loadWasmCandidate(root: string) {
       if (water) {
         const prepared = {
           snapshot: { slots: water.starts.map((start) => ({ start })), timezone: water.timezone },
-          problem, locked_slots: [], base_w: water.input.other_house_w, passive_w: {},
+          problem, locked_slots: [], fixed_slots: {}, base_w: water.input.other_house_w, passive_w: {},
           boiler_services: water.input.services,
           boiler_w: water.starts.map(() => 0), boiler_rated_w: water.starts.map(() => 0), boiler_permitted: water.starts.map(() => false),
           boiler_battery_allowed: water.starts.map(() => false), boiler_permission_starts: [], boiler_shortfall_minutes: {},

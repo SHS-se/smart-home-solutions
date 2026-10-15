@@ -1,15 +1,20 @@
+import { runRulesPlanner } from "./run-rules-planner.ts";
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
 import { batteryExecutionFixture } from "../../../scripts/generate-battery-execution-fixture.ts";
-import { batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { generateOptimisationPlanWithBatteryProjection } from "./planner/energy-optimisation.ts";
+import { rulesFixtureInput, batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+
 import { buildBatteryExecutionContract } from "./planner/battery-plan-execution.ts";
 
 function source() {
   const snapshot = batterySnapshot();
-  const result = generateOptimisationPlanWithBatteryProjection(snapshot, new Date(snapshot.captured_at));
-  if (result.battery_projection.status !== "ready") throw new Error("fixture projection unavailable");
-  return { plan: result.plan, rows: result.battery_projection.provenance.final_demand,
-    pv_w: result.battery_projection.problem.plant.pv_w,
+  const prepared = rulesFixtureInput(snapshot);
+  const result = runRulesPlanner({ snapshot: prepared.snapshot, now: prepared.now, price_archive: [], resolved_price_outlook: prepared.price_outlook });
+  return { plan: result.plan, rows: result.plan.plans.priority.slots.map(s => ({
+    start: s.start, end: new Date(Date.parse(s.start) + s.duration_hours * 3_600_000).toISOString(),
+    house_w: s.load_w, residual_w: s.load_w, device_loads_w: s.device_loads_w,
+    charge_w: s.battery_charge_w, discharge_w: s.battery_discharge_w, export_w: s.grid_export_w,
+    curtailed_w: s.curtailed_w, unserved_w: s.unserved_w,
+  })), pv_w: result.plan.plans.priority.slots.map(s => s.pv_w),
     mode: "controlling" as const, scope_revision: "whole-house",
     feedback: { generation: 0, source_receipt: 0, previous_contract_id: null, objectives: [] } };
 }
@@ -71,8 +76,6 @@ Deno.test("stored execution consumer fixture comes from the real planner", async
 });
 
 import { mixedModeSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { assembleOptimisationPlan, energyPlanningStep } from "./energy-planning-step.ts";
-import type { EnergyPlanningContinuation } from "./energy-planning-protocol.ts";
 
 function captured(mode: "controlling" | "control_verification") {
   const s = mixedModeSnapshot();
@@ -85,7 +88,7 @@ function captured(mode: "controlling" | "control_verification") {
 
 Deno.test("production contract binds the physical branch and acknowledges captured evidence", () => {
   const s = captured("controlling");
-  const { plan, battery_projection } = generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
+  const { plan, battery_projection } = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] });
   const contract = plan.battery_execution!;
   assert(contract);
   assertEquals(contract.generation, 4); assertEquals(contract.source_receipt, 17);
@@ -96,7 +99,7 @@ Deno.test("production contract binds the physical branch and acknowledges captur
 
 Deno.test("Verification uses the same displayed household schedule", () => {
   const s = captured("control_verification");
-  const { plan } = generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at));
+  const { plan } = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] });
   const contract = plan.battery_execution!;
   assertEquals(contract.mode, "control_verification");
   assertEquals(plan.execution_plan!.battery, plan.battery);
@@ -113,25 +116,7 @@ Deno.test("excluded battery cannot be resurrected by retained feedback", () => {
   s.policy = {battery_target_is_hard:false,battery_end_of_solar_target_soc:0,
     terminal_soc_min:0,terminal_energy_value_sek_per_kwh:0,battery_export_enabled:false,
     battery_export_reserve_soc:0,battery_export_min_price_sek_per_kwh:0};
-  assertEquals(generateOptimisationPlanWithBatteryProjection(s, new Date(s.captured_at)).plan.battery_execution, undefined);
-});
-
-Deno.test("execution feedback survives staged worker planning and repeats deterministically", () => {
-  const s = captured("control_verification");
-  const input = { snapshot:s, now:s.captured_at, price_archive:[] };
-  const continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
-  for (let i=0;i<100;i++) {
-    const step = energyPlanningStep(input, continuation);
-    continuation.completed.push(...step.completed);
-    continuation.rankings.push(...step.rankings);
-    continuation.checkpoint = step.checkpoint;
-    if (step.done) {
-      assertEquals(assembleOptimisationPlan(input, continuation.completed, continuation.rankings).plan.battery_execution,
-        generateOptimisationPlanWithBatteryProjection(s,new Date(s.captured_at)).plan.battery_execution);
-      return;
-    }
-  }
-  throw new Error("worker did not finish");
+  assertEquals(runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan.battery_execution, undefined);
 });
 
 Deno.test("live responsibilities retain identity and explicitly amend changed targets", () => {

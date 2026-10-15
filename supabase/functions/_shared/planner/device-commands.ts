@@ -1,5 +1,5 @@
 /** Executable schema-7 decisions. Watt forecasts alone never grant authority. */
-import type { OptimisationSnapshot } from "./energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./planning-contracts.ts";
 import { projectZoneTemperature } from "./thermal-model.ts";
 
 export type DeviceCommand =
@@ -26,7 +26,7 @@ export function deviceCommands(snapshot: OptimisationSnapshot, dispatch: {
       type: "unavailable",
       reason: "No executable planning model for this device",
     };
-    if (zone && model.control_type === "setpoint") {
+    if (zone?.model && zone.start_temperature_c !== null && model.control_type === "setpoint") {
       const trajectory = projectZoneTemperature(
         zone.model,
         zone.start_temperature_c,

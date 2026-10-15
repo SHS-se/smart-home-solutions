@@ -13,7 +13,7 @@ const migration = await Deno.readTextFile(
   "supabase/migrations/20260815113000_include_on_off_room_heaters.sql",
 );
 const optimiser = await Deno.readTextFile(
-  "supabase/functions/_shared/planner/energy-optimisation.ts",
+  "supabase/functions/_shared/rules-room-services.ts",
 );
 
 Deno.test("every Ready room control is visible regardless of actuator style", () => {
@@ -33,7 +33,7 @@ Deno.test("every Ready room control is visible regardless of actuator style", ()
   );
   assertStringIncludes(
     optimiser,
-    '!["setpoint", "switch_schedule"].includes(',
+    'm.control_type === "switch_schedule"',
   );
   assertStringIncludes(
     migration,

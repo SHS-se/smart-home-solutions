@@ -1,6 +1,6 @@
 import { assertEquals, assertNotEquals, assertRejects, assertThrows } from "@std/assert";
 import { homeComfortTargets } from "../bench/comfort.ts";
-import { snapshotFor } from "../bench/adapter.ts";
+import { readyProblem } from "../bench/wasm-planner.ts";
 import { canonicalJson, caseTargets, CaseFormatError, sha256 } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
@@ -27,12 +27,8 @@ Deno.test("bench reads the history home's current preferences on each planning r
     // The dataset is part of the runner's input hash: changed targets require replanning.
     assertNotEquals(await sha256(canonicalJson(before)), await sha256(canonicalJson(after)));
     assertEquals(after.start_state, before.start_state, "a preference is separate from measured starting state");
-    const snapshot = snapshotFor(after, HOUSEHOLD, 1, true, false, false, true);
-    assertEquals(snapshot.comfort, { pool: { target_c: 30.5 }, ev: { target_km: 350 } });
-    // Older planner generations receive the same targets through their curve adapter.
-    const legacy = snapshotFor(after, HOUSEHOLD, 1, false, false, false, false);
-    const curves = legacy.value_curves as { pool: { points: { at: number }[] }; ev: { points: { at: number }[] } };
-    assertEquals([curves.pool.points[1].at, curves.ev.points[1].at], [30.5, 350]);
+    const prepared=readyProblem(after,HOUSEHOLD,{});
+    assertEquals(prepared.targets.pool_c,30.5);assertEquals(prepared.targets.ev_km,350);
     const record: PlanRecord = {
       status: "ready", generation: "test", valuation: { scale: 1, pool: "none", ev: "none", battery: "none" },
       decisions: plan(), beliefs: { import_sek_per_kwh: quarters(() => 1), grid_cost_sek: null }, curves: [],
@@ -51,7 +47,7 @@ Deno.test("missing comfort settings and failed reads never silently use bench de
     await assertRejects(() => homeComfortTargets(source), CaseFormatError, "Comfort targets are missing");
     globalThis.fetch = async () => new Response("denied", { status: 403 });
     await assertRejects(() => homeComfortTargets(source), Error, "403 denied");
-    assertThrows(() => snapshotFor({ ...world(), comfort: null }, HOUSEHOLD, 1, true, false, false, true), CaseFormatError);
+    assertThrows(() => readyProblem({ ...world(), comfort: null },HOUSEHOLD,{}), CaseFormatError);
     assertThrows(() => caseTargets({ comfort: { pool_c: 30.5 } }), CaseFormatError);
   } finally { globalThis.fetch = original; }
 });

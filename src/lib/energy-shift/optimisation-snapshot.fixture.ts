@@ -10,7 +10,7 @@
 
 
 
-import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
 
 export const CAPTURED_AT = '2026-08-17T20:45:00.000Z';
 export const START = Date.parse(CAPTURED_AT);
@@ -47,6 +47,8 @@ export const snapshot = (): OptimisationSnapshot => {
   return {
     schema_version: 6,
     mode: 'live',
+    comfort: { pool: { target_c: 30 }, ev: { target_km: 300 } },
+    value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     capabilities: { pv: true, battery: true, pool: true, boiler: false, ev: false },
     snapshot_id: '00000000-0000-4000-8000-000000000001',
     captured_at: CAPTURED_AT,

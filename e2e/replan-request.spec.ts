@@ -1,3 +1,4 @@
+import { runRulesPlanner } from "../supabase/functions/_shared/run-rules-planner.ts";
 /**
  * "Planera om nu", fully local — no real backend.
  *
@@ -15,7 +16,7 @@
  */
 import { test, expect, type BrowserContext, type Page } from '../playwright-fixture';
 import { CAPTURED_AT, snapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture';
-import { generateOptimisationPlan } from '../supabase/functions/_shared/planner/energy-optimisation';
+
 import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
@@ -30,7 +31,13 @@ const REQUEST_ID = '2f1c0c74-9d31-4f0e-9a45-9c6f2f5f0a11';
 
 // Solved at the snapshot's own capture time, which is also the clock the browser
 // is pinned to below: a plan the page considers current, as in service.
-const PLAN = generateOptimisationPlan(snapshot(), new Date(CAPTURED_AT));
+const PLAN = runRulesPlanner({ snapshot: snapshot(), now: (new Date(CAPTURED_AT)).toISOString(), price_archive: [] }).plan;
+
+function withoutRulePoints(plan:typeof PLAN):typeof PLAN {
+ const copy=structuredClone(plan);
+ for(const scenario of Object.values(copy.plans)) for(const slot of scenario.slots) delete slot.rule_points;
+ return copy;
+}
 
 async function isTestWebsite(page: Page): Promise<boolean> {
   return page.getByText(/TESTMILJÖ -|TEST ENVIRONMENT -/).isVisible();
@@ -676,10 +683,10 @@ test.describe('requesting a replan', () => {
   });
 
   test('boiler slot control appears without an economic audit or rule score', async ({ page }, testInfo) => {
-    replan.publishedPlan = { ...PLAN, capabilities: { ...PLAN.capabilities, boiler: true },
+    replan.publishedPlan = withoutRulePoints({ ...PLAN, capabilities: { ...PLAN.capabilities, boiler: true },
       plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map((slot, i) => ({
         ...slot, boiler_permitted: i < 10, boiler_expected_w: i < 10 ? 300 : 0,
-      })) } } };
+      })) } } });
     await page.goto('/portal/energy-modeling?tab=plan');
     const control = page.locator('#plan-slot-control');
     await expect(control).toContainText(/Slot control|Kvartsstyrning/);
@@ -693,6 +700,7 @@ test.describe('requesting a replan', () => {
   });
 
   test('a plan made by rules shows its score under the chart and explains the picked quarter', async ({ page }, testInfo) => {
+    replan.publishedPlan=withoutRulePoints(PLAN);
     // A plan from a planner without rules has no score to show.
     await page.goto('/portal/energy-modeling?tab=plan');
     await expect(page.getByRole('img', { name: /effektflöden|power flows/i }).first()).toBeVisible();
@@ -944,6 +952,35 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('button', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
   });
 
+  test('data quality warnings explain the estimate without blocking replan and clear after recovery', async ({page})=>{
+    replan.publishedPlan={...PLAN,planning_warnings:[{code:'profile_estimated',scope:'base',severity:'error',
+      message:'Five historical quarters lack observations.',consequence:'Planning continues using observed neighbouring quarters.'}]};
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const banner=page.getByTestId('planning-warnings');
+    await expect(banner).toContainText('Five historical quarters');
+    await expect(banner).toContainText('Planning continues using observed neighbouring quarters.');
+    await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
+    replan.publishedPlan={...PLAN,planning_warnings:[]};await page.reload();
+    await expect(banner).toHaveCount(0);
+  });
+
+  test('the planner installation address can be edited in its existing home',async({context,page})=>{
+    const home={id:HOME_ID,name:'My home',address_text:'Old installation address'};
+    let saved:Record<string,string>|null=null;
+    await context.route('**/rest/v1/homes*',async route=>{
+      if(route.request().method()==='PATCH') {saved=route.request().postDataJSON();Object.assign(home,saved);}
+      const single=(route.request().headers().accept??'').includes('vnd.pgrst.object');
+      await route.fulfill({json:single?home:[home]});
+    });
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button',{name:/Redigera installationsadress|Edit installation address/}).click();
+    await expect(page.getByLabel(/Installationsadress|Installation address/)).toHaveValue('Old installation address');
+    await page.getByLabel(/Installationsadress|Installation address/).fill('New installation address');
+    await page.getByRole('button',{name:/^Spara$|^Save$/}).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(saved).toEqual({name:'My home',address_text:'New installation address'});
+  });
+
   test('recommendations are shared, expandable, and clear when the published row clears them', async ({ page }) => {
     replan.row = {...replan.row, replan_recommendations: [{key: 'household_energy', reason: 'Rolling four-quarter difference exceeded 6 kWh.', occurred_at: CAPTURED_AT}]};
     await page.goto('/portal/energy-modeling?tab=plan');
@@ -961,7 +998,7 @@ test.describe('requesting a replan', () => {
   test('a device left out for an impossible reading is named while the rest stays planned', async ({ page }) => {
     const input = snapshot();
     input.pool = { ...input.pool!, water_temperature_c: 500, source_entity_ids: { water_temperature: 'sensor.pool_water' } };
-    const isolated = generateOptimisationPlan(input, new Date(CAPTURED_AT));
+    const isolated = runRulesPlanner({ snapshot: input, now: (new Date(CAPTURED_AT)).toISOString(), price_archive: [] }).plan;
     expect(isolated.status).toBe('ready');
     expect(isolated.plans.priority.dispatched_devices).toContain('battery');
     replan.publishedPlan = { ...isolated, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };

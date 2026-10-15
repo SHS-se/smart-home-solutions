@@ -169,7 +169,7 @@ export type ThermalFitRejection =
   | "sensor_tracks_outdoor";
 
 export type ThermalFitResult =
-  | { ok: true; model: ThermalZoneModel }
+  | { ok: true; model: ThermalZoneModel; warnings?: ThermalFitRejection[] }
   | { ok: false; reason: ThermalFitRejection; sample_count: number };
 
 const mean = (values: number[]) =>
@@ -360,28 +360,22 @@ export function fitThermalZoneFromMoments(
   ratedPowerW: number | null = null,
 ): ThermalFitResult {
   const sampleCount = moments.n;
-  if (sampleCount < MIN_TRAINING_SAMPLES) {
+  const warnings: ThermalFitRejection[] = [];
+  if (sampleCount <= 0) {
     return {
       ok: false,
       reason: "insufficient_samples",
       sample_count: sampleCount,
     };
   }
+  if (sampleCount < MIN_TRAINING_SAMPLES) warnings.push("insufficient_samples");
 
   if (Math.abs(correlationFromMoments(moments)) > MAX_OUTDOOR_CORRELATION) {
-    return {
-      ok: false,
-      reason: "sensor_tracks_outdoor",
-      sample_count: sampleCount,
-    };
+    warnings.push("sensor_tracks_outdoor");
   }
 
   if ((moments.n_heated ?? 0) < MIN_HEATED_SAMPLES) {
-    return {
-      ok: false,
-      reason: "insufficient_heating",
-      sample_count: sampleCount,
-    };
+    warnings.push("insufficient_heating");
   }
 
   const withoutSolar = () => {
@@ -470,7 +464,7 @@ export function fitThermalZoneFromMoments(
   const totalSum = moments.s_yy - (moments.s_y * moments.s_y) / sampleCount;
   const r2 = totalSum > 0 ? 1 - residualSum / totalSum : 0;
   if (!(r2 >= MIN_FIT_R2)) {
-    return { ok: false, reason: "poor_fit", sample_count: sampleCount };
+    warnings.push("poor_fit");
   }
 
   // a = 1/C gives the lumped capacity directly, and UA follows from the time
@@ -479,6 +473,7 @@ export function fitThermalZoneFromMoments(
   const capacity = 1 / gain;
   return {
     ok: true,
+    ...(warnings.length ? { warnings } : {}),
     model: {
       gain_c_per_wh: gain,
       cooling_constant_per_h: cooling,

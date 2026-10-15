@@ -1,4 +1,5 @@
 import { assert, assertEquals } from '@std/assert';
+import { plannerSourceFiles } from '../scripts/build-planner-wasm.ts';
 import { LocalStore } from '../bench/store.ts';
 
 const root = new URL('..', import.meta.url).pathname;
@@ -16,6 +17,11 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     await Deno.mkdir(cases);
     // Use the current harness in an isolated repository with real commits.
     await command('cp', ['-R', ...['bench', 'src', 'scripts', 'supabase'].map(path => `${root}/${path}`), repo]);
+    for(const file of plannerSourceFiles(root).filter(path=>path.startsWith('planner-core/')||path==='rust-toolchain.toml')) {
+      if(file.includes('/')) await Deno.mkdir(`${repo}/${file.slice(0,file.lastIndexOf('/'))}`,{recursive:true});
+      await Deno.copyFile(`${root}/${file}`,`${repo}/${file}`);
+    }
+    await Deno.copyFile(`${root}/.gitignore`,`${repo}/.gitignore`);
     await Deno.copyFile(`${root}/deno.json`, `${repo}/deno.json`);
     // The referee shares npm-backed supply accounting with production. Keep the
     // real dependency manifest beside the symlinked installation in this harness.
@@ -32,7 +38,7 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
       return await command('git', ['rev-parse', 'HEAD']);
     };
     const beforePlanner = await commit('Before the planner existed', '2026-10-07T17:00:00Z');
-    await command('git', ['add', `${planner}/energy-optimisation.ts`, `${planner}/dispatch-plan.ts`]);
+    await command('git', ['add', 'bench','src','scripts','supabase','package.json','deno.json','planner-core','rust-toolchain.toml','.gitignore']);
     const older = await commit('Original planner', '2026-10-07T18:00:00Z');
     const main = await commit('Main head, same planner', '2026-10-07T19:00:00Z');
     await command('git', ['switch', '-c', 'dev']);
@@ -84,15 +90,15 @@ Deno.test('the real bench runner preserves branch heads, marks pre-planner commi
     assertEquals((await store.runs()).filter(r => r.is_current).map(r => [r.sha, r.status]), [[beforePlanner, 'unavailable']]);
     assertEquals((await store.runs()).filter(r => r.is_test).map(r => r.sha), [dev]);
 
-    await Deno.writeTextFile(`${repo}/${planner}/energy-optimisation.ts`, "import './missing.ts';\nexport const PLANNER_INPUTS = [];\n");
-    await command('git', ['add', `${planner}/energy-optimisation.ts`]);
+    await Deno.writeTextFile(`${repo}/supabase/functions/_shared/planner-wasm/artifact.json`, "{}");
+    await command('git', ['add', 'supabase/functions/_shared/planner-wasm/artifact.json']);
     const broken = await commit('Broken planner dependency', '2026-10-07T21:00:00Z');
     const failure = await new Deno.Command(Deno.execPath(), { cwd: repo, args: [
       'run', '-A', '--no-check', '--sloppy-imports', '--config', `${repo}/deno.json`, `${repo}/bench/run.ts`,
       '--shas', broken, '--current', main, '--test', broken, '--local', cases, '--out', out,
     ], stdout: 'piped', stderr: 'piped' }).output();
     assert(!failure.success, 'an existing planner with a missing import must still fail the workflow');
-    assert(new TextDecoder().decode(failure.stderr).includes('Module not found'));
+    assert(new TextDecoder().decode(failure.stderr).includes('Selected rule planner artifact is invalid'));
     assertEquals((await store.runs()).find(r => r.sha === broken)!.status, 'failed');
     // The failure cannot leave the UI marked with an old environment identity.
     assertEquals((await store.runs()).filter(r => r.is_current).map(r => r.sha), [main]);

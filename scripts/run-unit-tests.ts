@@ -13,18 +13,11 @@ const TEST_OPTIONS = [
 // approaches the others' combined share. These are scheduling weights, never
 // a filter on which tests run.
 const COSTS: Record<string, number> = {
-  "supabase/functions/_shared/planner/energy-optimisation-allocation.test.ts": 149,
-  "supabase/functions/_shared/replan-continuity.test.ts": 118,
-  "supabase/functions/_shared/replan-continuity-authority.test.ts": 100,
-  "supabase/functions/_shared/energy-planning-step-sunny.test.ts": 91,
-  "supabase/functions/_shared/energy-planning-step-dark.test.ts": 89,
+  "supabase/functions/_shared/rules-planner.test.ts": 149,
   "tests/bench-adapter.test.ts": 75,
-  "supabase/functions/_shared/planner/energy-optimisation.test.ts": 73,
-  "supabase/functions/_shared/energy-planning-step.test.ts": 69,
-  "src/lib/energy-shift/planner-value-stores.test.ts": 65,
+  "supabase/functions/_shared/rules-hot-water.test.ts": 73,
   "supabase/functions/_shared/energy-optimisation-ev.test.ts": 58,
   "tests/bench-rule-engine.test.ts": 46,
-  "supabase/functions/_shared/battery-curve-override.test.ts": 28,
   "tests/energy-planning-jobs.test.ts": 27,
   "src/lib/home-baseline/model.test.ts": 25,
   "src/lib/home-baseline/pool-carry.test.ts": 18,

@@ -17,11 +17,16 @@ pub(crate) fn initial(p: &Problem) -> State {
         heater: p.initial.heater_state.unwrap_or(HeaterState::OffUnobserved),
     }
 }
+pub(crate) fn locked_command(p: &Problem, i: usize) -> Option<&Command> {
+    p.fixed_commands.as_ref().and_then(|cs| cs.get(i)).and_then(|c| c.as_ref())
+        .or_else(|| if p.slots[i].start_seconds < p.locked_through_seconds {
+            p.accepted.as_ref().and_then(|cs| cs.get(i))
+        } else { None })
+}
 pub(crate) fn locked(p: &Problem, i: usize) -> bool {
-    p.accepted.is_some() && p.slots[i].start_seconds < p.locked_through_seconds
+    locked_command(p, i).is_some()
 }
 
-// Keep interval identity for locking; fresh state starts at capture, never before it.
 pub(crate) fn projected_hours(s: &Slot) -> f64 {
     s.hours + s.start_seconds.min(0.0) / 3600.0
 }
@@ -34,7 +39,7 @@ fn transition(
     external: bool,
     pool_step: impl FnOnce(&Heater, &ThermalStore, HeaterState, bool, PoolConditions) -> PoolTransition,
 ) -> Result<Quarter, String> {
-    if !external && locked(p, i) && command != &p.accepted.as_ref().unwrap()[i] {
+    if !external && locked(p, i) && command != locked_command(p, i).unwrap() {
         return Err("commitment_changed".into());
     }
     let s = &p.slots[i];
@@ -100,14 +105,17 @@ fn transition(
     let demand = load.net_w();
     if command.battery == Operation::Export
         && p.battery.is_some()
-        && (!p.limits.battery_export_enabled
+        && (s.battery_export_allowed == Some(false) || !p.limits.battery_export_enabled
             || (!external && !locked(p, i) && s.export_price < p.limits.battery_export_min_price))
     {
         return Err("export_without_permission".into());
     }
     let (charge, discharge) = battery_flows(p, command, load, state.battery, hours);
     let (net, curtailed_w) = grid_flow(p, demand, s.solar_w, charge, discharge);
-    if !within_grid(p, net) {
+    // An imperfect uncontrollable-load forecast cannot make the home
+    // unplannable. Keep the excess visible; no added command may worsen it.
+    let unavoidable_import = (s.base_w - s.solar_w).max(0.0);
+    if !within_grid(p, net) && !(net >= 0.0 && net <= unavoidable_import + 1e-7) {
         return Err("shared_grid_limit".into());
     }
     let cost = grid_cost(s, net, hours);

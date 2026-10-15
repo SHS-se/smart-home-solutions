@@ -1,8 +1,8 @@
 /** Shared snapshots and helpers for the planner behaviour tests. */
-import { generateOptimisationPlan, type OptimisationSnapshot } from "./energy-optimisation.ts";
+import { type OptimisationPlan, type OptimisationSnapshot } from "./planning-contracts.ts";
 
 /** The captured_at the shared fixture uses, so a plan is always fresh. */
-export const NOW = "2026-08-10T07:55:00Z";
+export const NOW = "2026-08-10T08:00:00Z";
 
 export const assert: (condition: boolean, message: string) => asserts condition = (
   condition,
@@ -25,6 +25,8 @@ export const input = (
   return {
     schema_version: 5,
     mode: "live",
+    comfort: { pool: { target_c: 30 }, ev: { target_km: 300 } },
+    value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     capabilities: {
       pv: true,
       battery: true,
@@ -33,7 +35,7 @@ export const input = (
       ev: false,
     },
     snapshot_id: "00000000-0000-4000-8000-000000000001",
-    captured_at: "2026-08-10T07:55:00.000Z",
+    captured_at: "2026-08-10T08:00:00.000Z",
     timezone: "Europe/Stockholm",
     slot_minutes: 15,
     slots,
@@ -50,7 +52,7 @@ export const input = (
       base_load: {
         provider: "recorder",
         entity_ids: ["sensor.load"],
-        issued_at: "2026-08-10T07:55:00Z",
+        issued_at: "2026-08-10T08:00:00Z",
         valid_until: "2026-08-10T10:00:00Z",
         quality: "measured",
         sample_count: 960,
@@ -184,6 +186,7 @@ export const horizon = (
   });
   return input({
     schema_version: 6,
+    capabilities:{pv:true,battery:true,pool:false,boiler:false,ev:false},
     slots,
     outdoor_temperature_c: slots.map(() => 22),
     battery: base.battery,
@@ -213,65 +216,3 @@ export const routedEvService = (snapshot: OptimisationSnapshot) => ({
 
   priority: 3,
 });
-
-/**
- * A dear, sunless first day followed by two cheap sunny ones, with the pool
- * carrying the reference home's *stored* curve — the one the editor anchored at
- * 2.51 SEK/kWh, whose urgent threshold is 7.52 and whose comfortable threshold
- * is 2.51, both above every price in this horizon.
- *
- * That curve is the point. Left as stored it outbids the whole board and the
- * pool heats through the dearest quarters available; re-anchored to what cheap
- * energy actually costs here, the same three thresholds and the same
- * `URGENT_MULTIPLE` put urgent at 3.0 and the dear day stops clearing.
- */
-export const splitHorizon = (
-  dearFirstDaySekPerKwh: number,
-  overrides: Partial<OptimisationSnapshot> = {},
-  exportSekPerKwh = 0.5,
-): OptimisationSnapshot => {
-  const start = Date.parse("2026-08-10T08:00:00.000Z");
-  const slots = Array.from({ length: 288 }, (_value, index) => {
-    const hour = ((index / 4) + 10) % 24;
-    const firstDay = index < 96;
-    const pv = !firstDay && hour >= 6 && hour <= 18
-      ? Math.round(9_000 * Math.sin(((hour - 6) / 12) * Math.PI))
-      : 0;
-    return {
-      start: new Date(start + index * 15 * 60_000).toISOString(),
-      pv_forecast_w: pv,
-      base_load_forecast_w: 1_000,
-      import_price_sek_per_kwh: firstDay ? dearFirstDaySekPerKwh : 1.0,
-      export_price_sek_per_kwh: exportSekPerKwh,
-    };
-  });
-  return input({
-    schema_version: 6,
-    slots,
-    outdoor_temperature_c: slots.map(() => 20),
-    services: [],
-    service_requirement_sample_days: {},
-    pool: { water_temperature_c: 27, volume_m3: 55 },
-    value_curves: {
-      pool: {
-        unit: "celsius",
-        points: [
-          { at: 28, sek_per_unit: 104.56 },
-          { at: 30, sek_per_unit: 34.85 },
-          { at: 32, sek_per_unit: 0 },
-        ],
-      },
-    },
-    ...overrides,
-  });
-};
-
-export const poolKwhBetween = (
-  plan: ReturnType<typeof generateOptimisationPlan>,
-  from: number,
-  to: number,
-) =>
-  plan.plans.priority.slots.slice(from, to).reduce(
-    (total, slot) => total + slot.pool_w / 1_000 * 0.25,
-    0,
-  );

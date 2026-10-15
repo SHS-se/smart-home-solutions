@@ -1,5 +1,5 @@
 import fixture from "./planner-handler-cpu.fixture.json" with { type: "json" };
-import type { OptimisationSnapshot } from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+import type { OptimisationSnapshot } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 import { prepareRulesPlanningInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 

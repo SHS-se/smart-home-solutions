@@ -1,8 +1,8 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
-import { replanReference, type ReplanPreviousPlan } from '../supabase/functions/_shared/planner/replan-continuity.ts';
+type ReplanPreviousPlan = import('../supabase/functions/_shared/planner/planning-contracts.ts').OptimisationPlan;
 import { snapshot as exampleSnapshot } from '../src/lib/energy-shift/optimisation-snapshot.fixture.ts';
-import type { OptimisationPlan, OptimisationSnapshot } from '../supabase/functions/_shared/planner/energy-optimisation.ts';
+import type { OptimisationPlan, OptimisationSnapshot } from '../supabase/functions/_shared/planner/planning-contracts.ts';
 
 const home = '11111111-1111-4111-8111-111111111111';
 const other = '22222222-2222-4222-8222-222222222222';
@@ -74,12 +74,9 @@ Deno.test('replan read preserves decisions and atomic fixed state with a smaller
         await db.exec('RESET ROLE');
         assertEquals(state.fixed_plan, fixed);
         assertEquals(state.fixed_plan_revision, 7);
-        for (const time of [now, new Date(now.getTime() + 900_000), new Date(plan.valid_until)]) {
-          assertEquals(replanReference(state.previous_plan, snapshot, time), replanReference(candidate, snapshot, time));
-        }
         assertEquals(state.previous_plan!.plans.priority.slots.map(s => s.start), candidate.plans.priority.slots.map(s => s.start));
         if (candidate === plan) {
-          assert(replanReference(plan, snapshot, now), 'fixture must exercise a usable reference');
+          assert(state.previous_plan!.plans.priority.slots.length > 0);
           const before = JSON.stringify({ plan, fixed_plan: fixed, fixed_plan_revision: 7 }).length;
           const after = JSON.stringify(state).length;
           assert(after < before / 10, `expected >90% reduction: ${before} -> ${after}`);

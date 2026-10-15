@@ -16,7 +16,7 @@
  * pool and vehicle ranges were already enforced for the whole snapshot; only
  * their consequence changed.
  */
-import type { OptimisationSnapshot } from "./energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./planning-contracts.ts";
 
 export const ISOLATED_DEVICES = ["battery", "ev", "pool"] as const;
 export type IsolatedDevice = typeof ISOLATED_DEVICES[number];

@@ -1,4 +1,4 @@
-import type { OptimisationResult } from "./planner/energy-optimisation.ts";
+import type { OptimisationResult } from "./planner/planning-contracts.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner.ts";
 import { describeThrown } from "./ha-api-contract.ts";

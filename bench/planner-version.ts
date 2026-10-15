@@ -6,7 +6,7 @@
 // The planner is every module reached through code imports from the entry
 // points the bench calls (bench/adapter.ts).
 
-import { reach, type SourceTree } from "../scripts/module-graph.ts";
+import { type SourceTree } from "../scripts/module-graph.ts";
 
 /** The planner's own folder; nothing in it imports from outside it. */
 export const PLANNER_DIR = "supabase/functions/_shared/planner";
@@ -28,32 +28,8 @@ export function usesRulePlanner(tree: SourceTree): boolean {
   ) throw new Error("Unsupported committed bench engine selection.");
   return true;
 }
-/** Where the planner lived, loose among other shared modules, before it had a folder. */
-const LEGACY_DIR = "supabase/functions/_shared";
-/** `planning-basis.ts` exists only in planners that build a basis from history; the adapter calls it for those. */
-const ENTRIES = [
-  "energy-optimisation.ts",
-  "dispatch-plan.ts",
-  "planning-basis.ts",
-];
+export const plannerDir = (tree: SourceTree): string | null => usesRulePlanner(tree) ? WASM_PLANNER_DIR : null;
 
-/** The folder holding a tree's planner; null for commits with no planner. */
-export const typeScriptPlannerDir = (tree: SourceTree): string | null =>
-  [PLANNER_DIR, LEGACY_DIR].find((dir) =>
-    tree.isFile(`${dir}/${ENTRIES[0]}`)
-  ) ?? null;
-export const plannerDir = (tree: SourceTree): string | null =>
-  usesRulePlanner(tree) ? WASM_PLANNER_DIR : typeScriptPlannerDir(tree);
-
-// Resolved from node_modules at run time, so a script that only needs
-// PLANNER_DIR runs without them.
-const ESBUILD = "npm:esbuild";
-
-/**
- * The planner version of a source tree: `<method>:<sha-256>`. The method names
- * the minifier, so versions are compared only when computed the same way; the
- * runner records the current method when a commit is benched.
- */
 export async function plannerVersion(tree: SourceTree): Promise<string> {
   if (usesRulePlanner(tree)) {
     const manifest = tree.read(`${WASM_PLANNER_DIR}/artifact.json`);
@@ -83,42 +59,8 @@ export async function plannerVersion(tree: SourceTree): Promise<string> {
         .join("")
     }`;
   }
-  const dir = typeScriptPlannerDir(tree);
-  if (dir === null) {
-    throw new Error("This commit does not contain a planner entry point.");
-  }
-  const { transform, stop, version } = await import(ESBUILD);
-  const parts: string[] = [];
-  try {
-    for (const file of reach(tree, ENTRIES.map((entry) => `${dir}/${entry}`))) {
-      // Keyed inside the planner folder, so moving the folder is not a new version.
-      const key = file.startsWith(`${dir}/`)
-        ? `planner/${file.slice(dir.length + 1)}`
-        : file;
-      // Not minifyIdentifiers: its short names depend on the whole text, types included.
-      const { code } = await transform(tree.read(file)!, {
-        loader: file.endsWith("x") ? "tsx" : "ts",
-        minifyWhitespace: true,
-        minifySyntax: true,
-        format: "esm",
-      });
-      parts.push(`${key}\n${code}`);
-    }
-  } finally {
-    stop(); // its service process would otherwise keep Deno running
-  }
-  parts.sort();
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(parts.join("\n\0\n")),
-  );
-  return `${versionMethod(version)}:${
-    [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0"))
-      .join("")
-  }`;
+  throw new Error("This commit has no supported native rules planner artifact.");
 }
-
-const versionMethod = (esbuild: string) => `v2-esbuild${esbuild}`;
 
 /** A commit's files, read from git without checking it out. */
 export function commitTree(sha: string, cwd: string): SourceTree {

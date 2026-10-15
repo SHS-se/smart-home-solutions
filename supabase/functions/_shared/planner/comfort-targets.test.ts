@@ -1,8 +1,7 @@
+import { runRulesPlanner } from "../run-rules-planner.ts";
 import { assert, assertEquals } from "@std/assert";
-import { dispatchWorkbenchInputs, generateOptimisationPlan, type OptimisationSnapshot } from "./energy-optimisation.ts";
-import { scoreDispatch } from "./dispatch-plan.ts";
-import { assembleOptimisationPlan, energyPlanningStep } from "../energy-planning-step.ts";
-import type { EnergyPlanningContinuation } from "../energy-planning-protocol.ts";
+import { type OptimisationSnapshot } from "./planning-contracts.ts";
+import { RULE_DEFAULTS } from "../planner-wasm/rule-policy.ts";
 import { horizon, NOW, routedEvService } from "./energy-optimisation.fixture.ts";
 
 /** Sanitized home-scale case: real physical quantities, synthetic prices and identifiers. */
@@ -31,6 +30,11 @@ function comfortHome(): OptimisationSnapshot {
       ] },
     },
   }, { peakPvW: 0, baseLoadW: 800, pricedSlots: 288 });
+  input.device_models=[{key:"pool_heater",name:"Pool heater",statistic_id:"pool_heater",category:"pool_heating",planning_service:"pool",
+    control_type:"setpoint",planning_role:"controllable",load_type:"fixed_full_load",suggested_load_type:"fixed_full_load",
+    active_power_w:3736,profile_sample_count:1000,forecast_w_by_slot:input.slots.map(()=>1000)}];
+  input.pool_model!.response=input.pool_model!.response!.map(bin=>({...bin,heated_kwh:10,idle_hours:10}));
+  input.pool_model!.hardware={start_c:28,stop_c:34,control:"external_enable",source_entity_ids:{start:"number.start",stop:"number.stop"}};
   input.policy = { ...input.policy, battery_target_is_hard: false, terminal_soc_min: 0,
     terminal_energy_value_sek_per_kwh: 0, battery_end_of_solar_target_soc: 0,
     battery_export_enabled: false, battery_export_reserve_soc: 0,
@@ -47,8 +51,8 @@ function comfortHome(): OptimisationSnapshot {
   return input;
 }
 
-Deno.test("ordinary cheap windows restore pool comfort and car readiness on the first day", () => {
-  const plan = generateOptimisationPlan(comfortHome(), new Date(NOW));
+Deno.test("ordinary cheap windows restore pool comfort and meet the native car readiness rule", () => {
+  const plan = runRulesPlanner({ snapshot: comfortHome(), now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.status, "ready");
   const slots = plan.plans.priority.slots;
   const firstDay = slots.slice(0, 96);
@@ -56,7 +60,7 @@ Deno.test("ordinary cheap windows restore pool comfort and car readiness on the 
   assert(Math.max(...firstDay.map(slot => slot.pool_temperature_c!)) >= 30.4,
     "pool failed to restore its target in the affordable first day");
   const range = firstDay.at(-1)!.ev_soc! * 76.119 / .16;
-  assert(range >= 360 && range <= .8 * 76.119 / .16,
+  assert(range >= 360-RULE_DEFAULTS.ev_low.threshold && range <= .8 * 76.119 / .16,
     `car ended the first day at ${range} km instead of its reachable preference`);
 });
 
@@ -66,7 +70,7 @@ Deno.test("free forecast solar does not erase the value of unmet car readiness",
   input.pool = null;
   input.services = [routedEvService(input)];
   input.slots = input.slots.map(slot => ({ ...slot, pv_forecast_w: 12_000 }));
-  const plan = generateOptimisationPlan(input, new Date(NOW));
+  const plan = runRulesPlanner({ snapshot: input, now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.status, "ready");
   const slots = plan.plans.priority.slots;
   assert(slots.some(slot => slot.ev_w > 0), "free PV turned readiness willingness into zero");
@@ -76,45 +80,8 @@ Deno.test("free forecast solar does not erase the value of unmet car readiness",
 Deno.test("an unreachable car preference respects the hardware charge ceiling", () => {
   const input = comfortHome();
   input.comfort!.ev!.target_km = 450;
-  const plan = generateOptimisationPlan(input, new Date(NOW));
+  const plan = runRulesPlanner({ snapshot: input, now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.status, "ready");
   const range = plan.plans.priority.slots.at(-1)!.ev_soc! * 76.119 / .16;
   assert(range > 370 && range <= .8 * 76.119 / .16, `hardware ceiling was lost: ${range}`);
-});
-
-Deno.test("target selection preserves the measured passive cooling stall exactly", () => {
-  const input = comfortHome();
-  const cold = dispatchWorkbenchInputs(input, [], undefined, new Date(NOW))!;
-  const warmer = dispatchWorkbenchInputs({ ...input, comfort: { pool: { target_c: 31 }, ev: { target_km: 300 } } },
-    [], undefined, new Date(NOW))!;
-  const off = (bench: typeof cold) => scoreDispatch(bench.slots, bench.stores, bench.limits, {
-    power_w: Object.fromEntries(bench.stores.map(store => [store.key, bench.slots.map(() => 0)])),
-    discharge_w: Object.fromEntries(bench.stores.map(store => [store.key, bench.slots.map(() => 0)])),
-  }).state.pool;
-  assertEquals(off(cold), off(warmer));
-  const pool = cold.stores.find(store => store.key === "pool")!;
-  assert(Math.abs(pool.drift(28.625, 0) - (28.625 - .006 * .25)) < 1e-9);
-  assert(Math.abs(pool.drift(30.625, 0) - (30.625 - .04 * .25)) < 1e-9);
-});
-
-Deno.test("pool and car target economics survive JSON worker continuations", () => {
-  const input = comfortHome();
-  input.slots = input.slots.slice(0, 4);
-  input.outdoor_temperature_c = input.outdoor_temperature_c!.slice(0, 4);
-  input.services = input.services.map(service => ({ ...service,
-    deadline: new Date(Date.parse(input.slots.at(-1)!.start) + 900000).toISOString() }));
-  const expected = generateOptimisationPlan(input, new Date(NOW));
-  assertEquals(expected.status, "ready");
-  const request = { snapshot: input, now: NOW, price_archive: [] };
-  let continuation: EnergyPlanningContinuation = { completed: [], rankings: [] };
-  for (let calls = 0; calls < 128; calls++) {
-    const step = energyPlanningStep(request, continuation);
-    continuation = JSON.parse(JSON.stringify({ completed: [...continuation.completed, ...step.completed],
-      checkpoint: step.checkpoint, rankings: [...continuation.rankings, ...step.rankings] }));
-    if (step.done) {
-      assertEquals(assembleOptimisationPlan(request, continuation.completed, continuation.rankings).plan, expected);
-      return;
-    }
-  }
-  throw new Error("Target service continuation did not finish");
 });

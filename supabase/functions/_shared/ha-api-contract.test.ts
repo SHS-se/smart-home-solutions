@@ -9,7 +9,7 @@ import {
   pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
-import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture, hotWaterPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture, hotWaterPlanFixture, unobservedHotWaterPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
@@ -289,4 +289,13 @@ Deno.test("hot-water demand consumer fixture matches the real planner and its el
     assertEquals(slot.device_loads_w.water, slot.boiler_expected_w);
     assertEquals(slot.grid_import_w, slot.load_w);
   }
+});
+
+Deno.test("unobserved boiler remains permitted with explicitly unknown power in the consumer contract", async () => {
+  const stored = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-8-unobserved-hot-water-plan.json", import.meta.url)));
+  assertEquals(stored, unobservedHotWaterPlanFixture());
+  assertEquals(stored.plan.status, "ready");
+  assert(stored.plan.plans.priority.slots.some(s => s.boiler_permitted));
+  assert(stored.plan.planning_warnings.some(w => w.code === "boiler_power_estimated"));
+  assertEquals(stored.plan.services[0].control.rated_power_w, null);
 });

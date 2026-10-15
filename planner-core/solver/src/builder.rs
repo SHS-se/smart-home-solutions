@@ -52,7 +52,7 @@ fn command(
 }
 fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> {
     if physics::locked(p, i) {
-        return vec![p.accepted.as_ref().unwrap()[i].clone()];
+        return vec![physics::locked_command(p, i).unwrap().clone()];
     }
     let s = &p.slots[i];
     let h = physics::projected_hours(s);
@@ -891,7 +891,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         return Err("account_parity".into());
     }
     for (i, c) in best.commands.iter().enumerate() {
-        if physics::locked(p, i) && c != &p.accepted.as_ref().unwrap()[i] {
+        if physics::locked(p, i) && c != physics::locked_command(p, i).unwrap() {
             return Err("commitment_changed".into());
         }
     }

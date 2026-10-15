@@ -275,6 +275,7 @@ async function orchestrate() {
   const refs = refreshTargets(args.shas ?? "HEAD", args, history);
   const known = new Set(history);
   const existing = new Map((await bench.runs()).map(r => [r.sha, r]));
+  const invalidPlanners=new Map<string,string>();
   const commits = new Map<string, { sha: string; short_sha: string; committed_at: string; subject: string; branch: string | null; planner_version: string | null }>();
   const resolve = async (ref: string) => {
     const shown = await git("show", "-s", "--format=%H%x09%h%x09%cI%x09%s", ref).catch(error => {
@@ -291,12 +292,14 @@ async function orchestrate() {
     }
     if (commits.has(sha)) return sha;
     const tree = commitTree(sha, harness);
-    const version = plannerDir(tree) === null ? null : await plannerVersion(tree);
+    let version:string|null=null;
+    try { if(plannerDir(tree)!==null) version=await plannerVersion(tree); }
+    catch(error) { invalidPlanners.set(sha,error instanceof Error?error.message:String(error)); }
     const run = { sha, short_sha, committed_at, subject, branch: args.branch ?? null, planner_version: version };
     commits.set(sha, run);
     const old = existing.get(sha);
-    await bench.saveRun({ ...run, status: version === null ? "unavailable" : old?.status ?? "pending",
-      error: version === null ? "This commit does not contain a planner entry point." : old?.error ?? null });
+    await bench.saveRun({ ...run, status: invalidPlanners.has(sha)?"failed":version === null ? "unavailable" : old?.status ?? "pending",
+      error: invalidPlanners.get(sha)??(version === null ? "This commit does not contain a planner entry point." : old?.error ?? null) });
     return sha;
   };
   // Register both environment identities before any preparation or slow solve.
@@ -319,6 +322,7 @@ async function orchestrate() {
     for (const sha of shas) {
       const run = commits.get(sha)!;
       console.log(`${run.short_sha} ${run.subject}`);
+      if(invalidPlanners.has(sha)){console.error(invalidPlanners.get(sha));failed++;continue;}
       if (run.planner_version === null) {
         console.log(`  UNAVAILABLE: This commit does not contain a planner entry point.`);
         continue;

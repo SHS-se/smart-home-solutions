@@ -27,6 +27,7 @@ export interface NativeCommand {
 export const RULE_KEYS = ["pool_low", "pool_cold", "pool_hot", "ev_low", "ev_short"] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];
 export interface ReadySlot {
+  battery_export_allowed?: boolean | null;
   local_month: number;
   start_seconds: number;
   hours: number;
@@ -96,6 +97,7 @@ export interface ReadyProblem {
   }[];
   service_guard: { pool: [number, number]; ev: [number, number] };
   accepted: NativeCommand[] | null;
+  fixed_commands?: Array<NativeCommand | null> | null;
   locked_through_seconds: number;
 }
 

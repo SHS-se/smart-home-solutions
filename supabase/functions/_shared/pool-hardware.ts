@@ -6,7 +6,7 @@
  * into the pool model by hand: production had none and refused every plan, and
  * the test copy went stale the day the heat pump was adjusted.
  */
-import type { OptimisationSnapshot } from "./planner/energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 
 export type PoolHardware = NonNullable<NonNullable<OptimisationSnapshot["pool_model"]>["hardware"]>;
 

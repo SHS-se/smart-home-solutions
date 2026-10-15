@@ -1,26 +1,21 @@
-# Planner
+# Planner domain contracts
 
-Everything the energy planner runs, and nothing else. Edge functions, the
-portal and the bench all import it from here.
+This folder holds the shared planning contracts, device models, household scoring,
+and physical domain functions. `tests/planner-boundary.test.ts` keeps their runtime
+dependencies inside this folder; callers import these types and functions directly.
 
-- **Closed:** nothing in this folder imports from outside it, types included;
-  `zod` is the only package. `tests/planner-boundary.test.ts` enforces it.
-  A type the planner reads belongs here, and callers import it from here.
-- **Entry points:** `energy-optimisation.ts` (`generateOptimisationPlan`,
-  `dispatchWorkbench`) and `dispatch-plan.ts` (`dispatchAuctionSteps`,
-  `scoreDispatch`). The planner bench calls only these
-  (`bench/planner-adapter.ts`).
-- **Versions:** the planner bench identifies a planner by the code these entry
-  points reach, not by commit (`bench/planner-version.ts`). Changing a comment
-  or a type here is not a new version; changing code is.
-- **Device models:** `device-models.ts` says what a device can be told to do and
-  what it then does. It is a leaf (it imports nothing) and states no number:
-  the numbers come in `snapshot.device_physics`. The planner plans a device
-  that has a model there with it; the bench referee and its audit import the
-  same file, so a plan is judged by the models it was made with
-  (`docs/planner-bench/device-models-design.md`). A home without models yet is
-  planned from the older snapshot fields.
+The production planning entry point is `../run-rules-planner.ts`. It prepares the
+input for `../rules-planner.ts`, whose native WebAssembly kernel lives in
+`../planner-wasm/` and is built from `planner-core/solver`. The portal demos, replay
+scripts and benchmark use that same engine. The superseded TypeScript auction
+planner and its continuation protocol have been removed.
 
-Tests (`*.test.ts`) and fixtures (`*.fixture.ts`) that exercise only the
-planner live here too. Tests that also need other shared modules stay in
-`_shared/`.
+`planning-contracts.ts` owns snapshot and plan transport types.
+`planning-warnings.ts` carries evidence quality and estimation consequences without
+turning them into planning admission gates. `device-models.ts` defines physical
+models shared by the planner and benchmark referee; parameters arrive in
+`snapshot.device_physics`.
+
+The benchmark identifies native builds through the verified artifact manifest and
+its source digest (`bench/planner-version.ts`). Generated HA consumer fixtures must
+come from the real planner, never manual edits.

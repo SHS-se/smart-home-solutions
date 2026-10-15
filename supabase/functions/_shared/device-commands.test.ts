@@ -1,23 +1,18 @@
+import { runRulesPlanner } from "./run-rules-planner.ts";
 import {
   assert,
   assertEquals,
   assertThrows,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {
-  generateOptimisationPlan,
-  type OptimisationSnapshot,
-} from "./planner/energy-optimisation.ts";
-import { discreteRoomPlan } from "./planner/discrete-room-plan.ts";
+import { type OptimisationSnapshot } from "./planner/planning-contracts.ts";
+import { prepareRoomServices } from "./rules-room-services.ts";
 import { deviceCommands } from "./planner/device-commands.ts";
 
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 
 Deno.test("schema 7 plans carry finite per-device commands in every scenario and final quarter", () => {
   const snapshot = commandSnapshot();
-  const plan = generateOptimisationPlan(
-    snapshot,
-    new Date(snapshot.captured_at),
-  );
+  const plan = runRulesPlanner({ snapshot: snapshot, now: (new Date(snapshot.captured_at)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.schema_version, 7);
   for (const scenario of Object.values(plan.plans)) {
     assertEquals(scenario.status, "ready");
@@ -38,17 +33,16 @@ Deno.test("schema 7 plans carry finite per-device commands in every scenario and
     }
   }
 });
-Deno.test("discrete relays remain full-quarter runs and impossible comfort fails explicitly", () => {
+Deno.test("discrete relays remain full-quarter runs and impossible comfort warns without stopping service", () => {
   const snapshot = commandSnapshot();
   const zone = snapshot.thermal_zones![0];
-  const result = discreteRoomPlan(snapshot, zone, zone.unplanned_power_w)!;
-  assert(result.devicePower.relay.every((w) => w === 0 || w === 1000));
+  const result = prepareRoomServices(snapshot);
+  assert(result.power.relay.every((w) => w === 0 || w === 1000));
   zone.start_temperature_c = 10;
-  assertThrows(
-    () => discreteRoomPlan(snapshot, zone, zone.unplanned_power_w),
-    Error,
-    "no feasible",
-  );
+  const limited = prepareRoomServices(snapshot);
+  assert(limited.warnings.some(w => w.code === "comfort_shortfall"));
+  assertEquals(limited.commands.thermostat.length, snapshot.slots.length);
+
 });
 Deno.test("unmodelled controls get a reason, never a command guessed from a forecast", () => {
   const snapshot = commandSnapshot();

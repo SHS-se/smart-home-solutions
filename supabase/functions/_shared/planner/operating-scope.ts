@@ -1,5 +1,5 @@
 /** Physical execution scope, independent of hypothetical scheduling preferences. */
-import type { OptimisationSnapshot } from "./energy-optimisation.ts";
+import type { OptimisationSnapshot } from "./planning-contracts.ts";
 
 export type OperatingMode = "monitoring" | "planning" | "control_verification" | "controlling";
 export interface OperatingScope {

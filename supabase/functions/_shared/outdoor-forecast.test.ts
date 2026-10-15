@@ -220,12 +220,12 @@ Deno.test("the home's own location is preferred over the PV forecast's", () => {
   );
 });
 
-Deno.test("an older integration is still located through its PV forecast", () => {
+Deno.test("PV provider provenance cannot choose the planner location", () => {
   assertEquals(
     homeLocation({
       sources: { pv: { location: { latitude: 59, longitude: 18 } } },
     }),
-    { latitude: 59, longitude: 18 },
+    null,
   );
 });
 

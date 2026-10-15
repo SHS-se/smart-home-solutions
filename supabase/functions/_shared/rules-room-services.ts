@@ -1,0 +1,110 @@
+import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
+import type { DeviceCommand } from "./planner/device-commands.ts";
+import { backgroundRateForSlot } from "./planner/thermal-model.ts";
+import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
+
+export interface RoomServices {
+  commands: Record<string, DeviceCommand[]>;
+  power: Record<string, number[]>;
+  room_power: Record<string, number[]>;
+  temperature: Record<string, Array<number | null>>;
+  unplanned_temperature: Record<string,Array<number|null>>;
+  warnings: PlanningWarning[];
+}
+
+/** Comfort service is authoritative even when its statistical model is weak. */
+export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Array<{
+  device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number>;
+}> = [], sharedHeadroom?: number[]): RoomServices {
+  const result: RoomServices = { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, warnings: [] };
+  const n = snapshot.slots.length;
+  const remaining=sharedHeadroom?.slice() ?? snapshot.slots.map(()=>Infinity);
+  for (const zone of snapshot.thermal_zones ?? []) {
+    const members = snapshot.device_models.filter(m => zone.device_keys.includes(m.key));
+    const relays = members.filter(m => m.control_type === "switch_schedule");
+    const thermostats = members.filter(m => m.control_type === "setpoint");
+    let temperature: number | null = zone.start_temperature_c;
+    let unplannedTemperature=temperature;
+    const cumulative = new Map<string, number>();
+    let comfortMisses = 0;
+    result.room_power[zone.key] = [];
+    result.temperature[zone.key] = [];
+    result.unplanned_temperature[zone.key]=[];
+    for (const member of [...relays, ...thermostats]) {
+      result.commands[member.key] = [];
+      result.power[member.key] = [];
+    }
+    let estimated = !zone.model || temperature === null;
+    for (let i = 0; i < n; i++) {
+      const target = zone.target_c[i], minimum = zone.comfort_min_c[i], maximum = zone.comfort_max_c[i];
+      const outdoor = snapshot.outdoor_temperature_c?.[i];
+      const model = zone.model;
+      const hours = Math.min(.25, Math.max(0, (Date.parse(snapshot.slots[i].start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
+      const modelled = model && temperature !== null && typeof outdoor === "number" && Number.isFinite(outdoor)
+        && model.gain_c_per_wh > 0 && model.cooling_constant_per_h >= 0;
+      // Exact constant-input first-order transition, stable at any decay rate.
+      const decay = modelled ? Math.exp(-model.cooling_constant_per_h * hours) : 1;
+      const effect = modelled ? (model.cooling_constant_per_h > 0
+        ? -Math.expm1(-model.cooling_constant_per_h * hours) / model.cooling_constant_per_h : hours) : 0;
+      const passive = modelled ? temperature! * decay +
+        (model.cooling_constant_per_h * outdoor! + backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2)) * effect : null;
+      const budget=Math.max(0,Math.min(zone.maximum_power_w_by_slot[i],remaining[i]));
+      const preferred = passive !== null && model ? Math.max(0, (target - passive) / (model.gain_c_per_wh * effect))
+        : zone.unplanned_power_w[i];
+      estimated ||= !modelled;
+      const rating = (key: string) => {
+        const m = members.find(m => m.key === key)!;
+        return m.active_power_w && m.active_power_w > 0 ? m.active_power_w : Math.max(0, ...m.forecast_w_by_slot);
+      };
+      let total = 0;
+      const continuous = thermostats.reduce((sum, m) => sum + rating(m.key), 0);
+      for (const m of relays) {
+        const watts = rating(m.key), expected = Math.max(0, m.forecast_w_by_slot[i]);
+        const debt = (cumulative.get(m.key) ?? 0) + (watts ? expected / watts : 0);
+        const remaining = preferred - total;
+        const offMiss = Math.max(0, remaining - continuous, -remaining);
+        const onMiss = Math.max(0, remaining - watts - continuous, watts - remaining);
+        let on = modelled ? onMiss < offMiss : i === 0 && temperature !== null
+          ? temperature < target : debt >= 1;
+        if (watts > budget-total || budget <= 0) on = false;
+        const locked = retained[i]?.device_commands?.[m.key];
+        if (locked?.type === "switch_schedule") on = locked.on_seconds > 0;
+        cumulative.set(m.key, debt - (on ? 1 : 0));
+        const power = retained[i]?.device_loads_w?.[m.key] ?? (on ? watts : 0);
+        result.commands[m.key].push({ type: "switch_schedule", on_seconds: on ? 900 : 0 });
+        result.power[m.key].push(power);
+        total += power;
+      }
+      const continuousDemand = Math.max(0, Math.min(preferred - total,budget-total));
+      for (const m of thermostats) {
+        const command = retained[i]?.device_commands?.[m.key];
+        result.commands[m.key].push(command?.type === "setpoint" ? command : {
+          type: "setpoint", target_c: target, minimum_c: minimum, maximum_c: maximum,
+        });
+        const watts = modelled ? continuousDemand * (continuous ? rating(m.key) / continuous : 0)
+          : Math.min(Math.max(0,m.forecast_w_by_slot[i]), Math.max(0,budget-total));
+        const power = retained[i]?.device_loads_w?.[m.key] ?? Math.min(rating(m.key), watts);
+        result.power[m.key].push(power);
+        total += power;
+      }
+      if(modelled && model && unplannedTemperature!==null) unplannedTemperature=unplannedTemperature*decay+
+        (model.cooling_constant_per_h*outdoor!+backgroundRateForSlot(model,i,snapshot.solar_irradiance_w_per_m2)+
+          model.gain_c_per_wh*zone.unplanned_power_w[i])*effect;
+      else unplannedTemperature=null;
+      result.unplanned_temperature[zone.key].push(unplannedTemperature);
+      if (passive !== null && model) temperature = passive + model.gain_c_per_wh * total * effect;
+      else temperature = null;
+      if (temperature !== null && (temperature < minimum || temperature > maximum)) comfortMisses++;
+      remaining[i]=Math.max(0,remaining[i]-total);
+      result.room_power[zone.key].push(total);
+      result.temperature[zone.key].push(temperature);
+    }
+    if (estimated) result.warnings.push(planningWarning("room_estimate", zone.key,
+      `${zone.name}: the thermal forecast has incomplete evidence.`,
+      "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
+    if (comfortMisses) result.warnings.push(planningWarning("comfort_shortfall", zone.key,
+      `${zone.name}: ${comfortMisses} quarters may be outside the requested comfort band.`,
+      "The best attainable room schedule is included and household planning continues.", { quarters: comfortMisses }));
+  }
+  return result;
+}

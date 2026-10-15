@@ -1,18 +1,19 @@
+import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-planner.ts";
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import { replayHistory, replayPlanSelection } from './plan-replay.ts';
 import { buildEnergyTimeline, SLOT_MS } from './energy-timeline.ts';
-import { generateOptimisationPlan } from '../../../supabase/functions/_shared/planner/energy-optimisation.ts';
+
 import { mixedModeSnapshot } from '../../../scripts/generate-ha-plan-fixture.ts';
 
 Deno.test('replay retains both branches of a scoped solve and bookmarks the displayed scenario', () => {
   const snapshot = mixedModeSnapshot();
   const now = new Date(snapshot.captured_at);
-  const plan = generateOptimisationPlan(snapshot, now);
+  const plan = runRulesPlanner({ snapshot: snapshot, now: (now).toISOString(), price_archive: [] }).plan;
   for (const scenario of ['priority', 'baseline'] as const) {
     const slot = plan.plans[scenario].slots[1];
     const replay = replayPlanSelection(plan, scenario, slot.start);
     assertEquals(replay.selection, { scenario, quarter_index: 1, quarter_start: slot.start });
-    assertEquals(replay.expected.planner_output, generateOptimisationPlan(snapshot, now, [], plan.price_outlook));
+    assertEquals(replay.expected.planner_output, runRulesPlanner({ snapshot: snapshot, now: (now).toISOString(), price_archive: [], resolved_price_outlook: plan.price_outlook }).plan);
     assertEquals(replay.expected.selected_quarter, slot);
     assertEquals(replay.expected.planner_output.device_models.length, 2);
     assertEquals(replay.expected.planner_output.execution_plan!.plans, replay.expected.planner_output.plans);

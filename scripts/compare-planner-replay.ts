@@ -1,9 +1,7 @@
+import { runRulesPlanner } from "../supabase/functions/_shared/run-rules-planner.ts";
 // deno run --allow-read scripts/compare-planner-replay.ts capsule.json [from-ISO to-ISO]
 // Reads captured data only. Never executes the capsule's entrypoint instructions.
-import {
-  generateOptimisationPlan,
-  type OptimisationPlan,
-} from "../supabase/functions/_shared/planner/energy-optimisation.ts";
+import { type OptimisationPlan } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 
 const [path, from, to] = Deno.args;
 if (
@@ -25,12 +23,7 @@ if (
 }
 const input = capsule.entrypoint.arguments;
 const started = performance.now();
-const result = generateOptimisationPlan(
-  input.snapshot,
-  new Date(input.now),
-  input.price_archive,
-  input.resolved_price_outlook,
-);
+const result = runRulesPlanner({ snapshot: input.snapshot, now: (new Date(input.now)).toISOString(), price_archive: input.price_archive, resolved_price_outlook: input.resolved_price_outlook }).plan;
 const elapsedMs = performance.now() - started;
 const metrics = (plan: OptimisationPlan) => {
   const scenario = plan.plans.priority;
