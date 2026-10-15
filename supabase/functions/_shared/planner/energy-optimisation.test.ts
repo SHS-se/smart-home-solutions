@@ -4,6 +4,21 @@ import { projectZoneTemperature } from "./thermal-model.ts";
 import { assertAlmostEquals, assertEquals } from "jsr:@std/assert@1";
 import { NOW, assert, input, horizon, routedEvService, splitHorizon, poolKwhBetween } from "./energy-optimisation.fixture.ts";
 
+Deno.test("source report timestamps are provenance and never reject usable planning inputs", () => {
+  for (const issuedAt of ["2020-01-01T00:00:00Z", "2030-01-01T00:00:00Z"]) {
+    const snapshot = input();
+    for (const source of Object.values(snapshot.sources)) {
+      if (source) {
+        source.issued_at = issuedAt;
+        source.valid_until = "2020-01-02T00:00:00Z";
+      }
+    }
+    assertEquals(validateSnapshot(snapshot), []);
+    assertEquals(generateOptimisationPlan(snapshot, new Date(NOW)).status, "ready");
+    assertEquals(snapshot.sources.battery?.issued_at, issuedAt);
+  }
+});
+
 Deno.test("hot-water forecasts above running power remain usable demand", () => {
   const snapshot = input({
     capabilities: { pv: true, battery: true, pool: false, boiler: true, ev: false },

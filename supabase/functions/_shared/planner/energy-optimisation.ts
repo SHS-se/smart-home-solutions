@@ -171,13 +171,6 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_SNAPSHOT_AGE_MS = 15 * 60_000;
 const MAX_SOURCE_FUTURE_SKEW_MS = 5 * 60_000;
-const SOURCE_MAX_AGE_MS = {
-  pv: 12 * 60 * 60_000,
-  base_load: 3 * 60 * 60_000,
-  import_price: 48 * 60 * 60_000,
-  export_price: 48 * 60 * 60_000,
-  battery: 15 * 60_000,
-} as const;
 
 export type PlanKey = "baseline" | "priority" | "cost";
 export type DeviceKey = "pool" | "boiler" | "ev";
@@ -1678,17 +1671,7 @@ export function validateSnapshot(snapshot: OptimisationSnapshot): string[] {
       errors.push(`sources.${key} is incomplete`);
       continue;
     }
-    const issuedAt = isoMs(source.issued_at);
-    const validUntil = isoMs(source.valid_until);
-    if (
-      issuedAt > capturedAt + MAX_SOURCE_FUTURE_SKEW_MS ||
-      capturedAt - issuedAt > SOURCE_MAX_AGE_MS[key]
-    ) {
-      errors.push(`sources.${key} is stale or future-dated`);
-    }
-    if (validUntil <= firstStart) {
-      errors.push(`sources.${key} does not cover the first forecast slot`);
-    }
+
   }
   const pvLocation = snapshot?.sources?.pv?.location;
   if (

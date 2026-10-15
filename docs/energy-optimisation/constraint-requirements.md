@@ -44,3 +44,10 @@ command checks retain their stated purpose. Do not turn them into a general
 exception permitting invented checks, or confuse physical capability with
 statistical prediction. Prefer removing unnecessary validation and state over
 adding compensating mechanisms around it.
+
+User requirement, 15 October 2026: available readings and forecasts are not
+invalid merely because their source timestamps are old, future-dated, or differ
+from other sources. Source provenance belongs in diagnostics, not configuration
+errors or planning admission. Validate actual values and required forecast-slot
+data; do not impose reporting cadences or source-age expiry. Plan expiry and
+local snapshot/transport validity retain their existing purposes.
