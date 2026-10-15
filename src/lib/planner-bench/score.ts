@@ -84,7 +84,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
   // Heating held off is owed to the tank; past this much the taps run cold. Scored by the referee only (rule-policy.ts).
   {
     key: 'water_cold', about: 'water', label: 'Hot water ran cold', describe: t => `the tank owed more than ${t} kWh of heating`,
-    fires: (q, t) => (q.s.hotWater?.owedKwh[q.i] ?? 0) > t, eligibleFrom: s => s.hotWater ? 0 : Infinity,
+    fires: (q, t) => !!q.s.hotWater?.demandKnown && (q.s.hotWater.owedKwh[q.i] ?? 0) > t, eligibleFrom: s => s.hotWater?.demandKnown ? 0 : Infinity,
   },
 ];
 
@@ -218,7 +218,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const applicability: Record<string, ServiceApplicability> = Object.fromEntries(resolved.map(rule => {
     const eligibleQuarters = Math.max(0, n - Math.min(n, rule.eligibleFrom(s, rule.threshold)));
     const reason = !rule.enabled ? 'Switched off for this case.'
-      : rule.about === 'water' && !s.hotWater ? 'The case has no measured hot water.'
+      : rule.about === 'water' && !s.hotWater?.demandKnown ? 'The case has no separate boiler consumption measurements.'
       : !s.comfort ? 'The plan carries no targets.'
         : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;

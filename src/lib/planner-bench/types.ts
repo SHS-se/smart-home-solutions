@@ -33,6 +33,8 @@ export interface BenchSeries {
    * otherwise, and on results from before it was modelled.
    */
   hotWater?: {
+    /** False when only permission is known; no electrical or comfort assessment. */
+    demandKnown: boolean;
     /** Heating the tank is owed at the end of each quarter, kWh. */
     owedKwh: number[];
     /** 1 where the heater was allowed to run. */

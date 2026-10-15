@@ -53,7 +53,7 @@ const quoted = (value: number | null) => value !== null && Number.isFinite(value
 export interface ChartHotWater {
   name: string;
   colour: string;
-  /** Meters in the hot-water category; drawn in the hot-water band, never on their own. */
+  /** Meters owned by the controlled boiler only; preheat remains separate. */
   keys: readonly string[];
   /** The plan's decision for each planned quarter, by start. */
   byStart: ReadonlyMap<number, HotWaterQuarter>;

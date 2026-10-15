@@ -1,3 +1,4 @@
+import { boilerDemand } from "../src/lib/planner-bench/household.ts";
 import { POOL_START_COST_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
@@ -35,7 +36,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v10";
+export const READY_PRODUCER_VERSION = "bench-ready-v11";
 
 /**
  * The water heater as production plans it, around the kernel rather than in
@@ -48,10 +49,10 @@ export interface HotWaterInput {
   other_house_w: number[];
 }
 
-/** Null where the case carries no forecast of the household's water heater. */
+/** Permissions exist independently of whether the case measured boiler demand. */
 export function hotWaterInput(c: BenchCase, h: Household): HotWaterInput | null {
-  const water = c.other_devices_w[h.hot_water.key];
-  if (!water) return null;
+  const demand = boilerDemand(c.other_devices_w, h.hot_water);
+  const water = demand ?? c.base_load_forecast_w.map(() => 0);
   const starts = quarterStarts(c.start);
   const level = demandLevel(c.recorded.history.demand_days, localDay(c.start, c.timezone));
   const days = new Map<string, number[]>();

@@ -57,6 +57,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     const actual = planner.plan(toldCase(c, lane), HOUSEHOLD, scale, criteria);
     const expected = candidate.plan(
       readyProblem(toldCase(c, lane), HOUSEHOLD, criteria),
+      hotWaterContext(toldCase(c, lane), HOUSEHOLD),
     );
     assertEquals(actual.record, {
       ...expected.record,
@@ -212,8 +213,9 @@ Deno.test("real bench worker stores all rule-engine lanes and replans when saved
 Deno.test("a case with a water heater forecast is planned with production's hot-water stage around the kernel", async () => {
   const planner = await loadPlanner(root);
   const c = causalCase();
-  const key = HOUSEHOLD.hot_water.key;
-  c.other_devices_w = { ...c.other_devices_w, [key]: c.base_load_forecast_w.map((w, i) => Math.min(w, i % 96 < 28 ? 0 : 300)) };
+  const keys = HOUSEHOLD.hot_water.meter_keys;
+  const key = keys[0];
+  c.other_devices_w = { ...c.other_devices_w, ...Object.fromEntries(keys.map(key => [key, c.base_load_forecast_w.map(() => 0)])), [key]: c.base_load_forecast_w.map((w, i) => Math.min(w, i % 96 < 28 ? 0 : 300)) };
   const context = hotWaterContext(c, HOUSEHOLD)!;
   // One window per local day, as the home sends them, covering the case and nothing else.
   assertEquals(Date.parse(context.input.services[0].earliest_start), Date.parse(c.start));
@@ -227,6 +229,6 @@ Deno.test("a case with a water heater forecast is planned with production's hot-
   const { record } = planner.plan(toldCase(c, BASE_LANE), HOUSEHOLD);
   assertEquals(record.decisions.hot_water?.length, 288);
   assertEquals(record.decisions.hot_water_expected_w?.length, 288);
-  // Without a forecast the heater is not planned at all.
-  assertEquals(planner.plan(toldCase(causalCase(), BASE_LANE), HOUSEHOLD).record.decisions.hot_water, undefined);
+  // Missing boiler measurements do not remove the daily permission opportunity.
+  assertEquals(planner.plan(toldCase(causalCase(), BASE_LANE), HOUSEHOLD).record.decisions.hot_water?.length, 288);
 });

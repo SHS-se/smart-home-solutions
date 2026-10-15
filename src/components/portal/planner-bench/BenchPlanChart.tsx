@@ -60,7 +60,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     // The water heater as the referee carried the plan out, drawn as the live plan draws it.
     const water = series.hotWater;
     const hotWater: ChartHotWater | undefined = water && {
-      name: t('Varmvatten', 'Hot water'), colour: PLAN_COLOURS.water, keys: [],
+      name: t('Varmvattenberedare', 'Water boiler'), colour: PLAN_COLOURS.water, keys: [],
       byStart: new Map(series.start.map((start, i) => [Date.parse(start), refereedHotWaterQuarter(water, i, series.hotWaterW[i])])),
     };
     return projectPlanChart({ ...data, range: { from: range.from, to: range.to }, timeZone, devices: series.devices, hotWater });
@@ -88,7 +88,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
   }, [current, series, range.from, range.to, currentName]);
 
   const quarterAudit: EnergyQuarterAudit = {
-    title: t('Ekonomiska fynd', 'Economic findings'),
+    title: t('Kvartsstyrning', 'Slot control'),
     description: t('övre: källa · nedre: destination · kontur: efterklokhet', 'upper: source · lower: destination · outline: hindsight'),
     lanes: (['pool', 'ev', 'battery'] as const).map(device => ({
       key: device,

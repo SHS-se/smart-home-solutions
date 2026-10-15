@@ -1,5 +1,5 @@
 import { assertEquals } from '@std/assert';
-import { completeCase } from '../bench/history.ts';
+import { completeCase, recordedActual } from '../bench/history.ts';
 import { hasMeasuredOutcome, QUARTERS, QUARTER_MS } from '../src/lib/planner-bench/case.ts';
 import { world } from '../src/lib/planner-bench/world.fixture.ts';
 
@@ -44,5 +44,46 @@ Deno.test('complete price and temperature data do not substitute forecasts for m
     assertEquals(hasMeasuredOutcome(done.recorded), true);
     assertEquals(hasMeasuredOutcome({ ...done.recorded!, synthetic_quarters: { prices: [1] } } as typeof done.recorded), false);
     assertEquals(hasMeasuredOutcome(c.recorded), false);
+  } finally { globalThis.fetch = original; }
+});
+
+Deno.test('recorded boiler demand comes from identified device meters, never category totals', async () => {
+  const original = globalThis.fetch;
+  const keys = ['sensor.water_boiler_p1_energy', 'sensor.water_boiler_p2_energy', 'sensor.water_boiler_p3_energy'];
+  globalThis.fetch = (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('device_slots')) {
+      assertEquals(url.searchParams.get('select')?.includes('!energy_optimisation_device_slots_device_home_consistent!inner'), true);
+    }
+    if (new Headers(init?.headers).get('Range') !== '0-999') return Promise.resolve(Response.json([]));
+    const rows = Array.from({ length: QUARTERS }, (_, i) => ({ start_ts: new Date(Date.parse(c.start) + i * QUARTER_MS).toISOString() }));
+    return Promise.resolve(Response.json(url.pathname.endsWith('device_slots')
+      ? rows.flatMap(row => keys.map((key, i) => ({ ...row, energy_kwh: i < 2 ? .1 : 0, device: { device_key: key } })))
+      : rows.map(row => ({ ...row, total_load_kwh: 1, solar_production_kwh: 0, pool_heating_kwh: 0,
+        ev_charging_kwh: 0, hot_water_kwh: .8 }))));
+  };
+  try {
+    const actual = await recordedActual(source, c.start);
+    assertEquals(actual?.other_devices_w?.['sensor.water_boiler_energy'], Array(QUARTERS).fill(800));
+    assertEquals(actual?.other_devices_w?.[keys[0]], undefined);
+    assertEquals(actual?.other_devices_w?.['sensor.hot_water_energy'], undefined);
+  } finally { globalThis.fetch = original; }
+});
+
+Deno.test('recorded boiler total is not counted again with its phase components', async () => {
+  const original = globalThis.fetch;
+  const keys = ['sensor.water_boiler_energy', 'sensor.water_boiler_p1_energy', 'sensor.water_boiler_p2_energy', 'sensor.water_boiler_p3_energy'];
+  globalThis.fetch = (input, init) => {
+    const devices = String(input).includes('device_slots');
+    const rows = Array.from({ length: QUARTERS }, (_, i) => ({ start_ts: new Date(Date.parse(c.start) + i * QUARTER_MS).toISOString() }));
+    const data = devices ? rows.flatMap(row => keys.map((key, i) => ({ ...row, energy_kwh: i === 0 ? .2 : i < 3 ? .1 : 0,
+      device: { device_key: key } }))) : rows.map(row => ({ ...row,
+        total_load_kwh: 1, solar_production_kwh: 0, pool_heating_kwh: 0, ev_charging_kwh: 0 }));
+    const [from, to] = new Headers(init?.headers).get('Range')!.split('-').map(Number);
+    return Promise.resolve(Response.json(data.slice(from, to + 1)));
+  };
+  try {
+    const actual = await recordedActual(source, c.start);
+    assertEquals(actual?.other_devices_w?.['sensor.water_boiler_energy'], Array(QUARTERS).fill(800));
   } finally { globalThis.fetch = original; }
 });

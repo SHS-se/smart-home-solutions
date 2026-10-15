@@ -59,3 +59,22 @@ commitments, headroom shortfalls, source permission and finite surplus budgets;
 controller 501/500/499 W, same-quarter events, restart, unavailable readings,
 Verification and configuration correction; generated real-producer fixtures,
 full Deno/HA suites, lint, frontend build, local E2E and complete-handler CPU.
+
+## Separate preheat and final boiler (15 October 2026)
+
+At the reference house the NIBE heat pump preheats water autonomously; only
+`switch.water_boiler` controls the separate 3 kW resistive boiler. Use its
+own phase energy meters for demand and `sensor.water_boiler_power` for live
+completion. The mixed `sensor.hot_water_energy` includes both stages and must
+not be used as the controllable boiler's demand. A running compressor cannot
+extend boiler permission. No verified usable NIBE permission control exists.
+
+Installation mappings require a separate reviewed `running_power_w` field for
+the boiler. An instantaneous power sensor is completion evidence, never the
+rating. Missing rating names its editor and holds existing control settings.
+Other homes provide their own equipment rating; 3 kW is not a global default.
+
+The allowance strip sits in the bottom **Slot control** section, alongside
+economic findings, with its status in the tooltip's information block above
+power readings. Cases without identifiable boiler consumption still show the
+permission schedule, but mark consumption and heating assessment unavailable.

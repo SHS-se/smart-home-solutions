@@ -675,6 +675,21 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('partial-consumption.png') });
   });
 
+  test('boiler slot control appears without an economic audit or rule score', async ({ page }, testInfo) => {
+    replan.publishedPlan = { ...PLAN, capabilities: { ...PLAN.capabilities, boiler: true },
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map((slot, i) => ({
+        ...slot, boiler_permitted: i < 10, boiler_expected_w: i < 10 ? 300 : 0,
+      })) } } };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const control = page.locator('#plan-slot-control');
+    await expect(control).toContainText(/Slot control|Kvartsstyrning/);
+    await expect(control.locator('#plan-water-lane')).toBeVisible();
+    await expect(page.locator('#plan-audit, #plan-score')).toHaveCount(0);
+    await control.locator('[data-water=allowed]').first().hover();
+    await expect(page.getByRole('tooltip').locator('[data-slot-information]')).toContainText(/Water boiler|Varmvattenberedare/);
+    await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: testInfo.outputPath('boiler-slot-control.png') });
+  });
+
   test('a plan made by rules shows its score under the chart and explains the picked quarter', async ({ page }, testInfo) => {
     // A plan from a planner without rules has no score to show.
     await page.goto('/portal/energy-modeling?tab=plan');

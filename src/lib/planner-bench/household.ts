@@ -30,14 +30,10 @@ export interface Household extends DeviceModels {
     /** State of charge the battery should not end the horizon below. */
     battery_terminal_soc_min: number;
   };
-  /**
-   * The water heater: a meter a case may carry a forecast and a measurement
-   * of. How far its tank may fall behind is a rule (water_cold, score.ts).
-   */
+  /** The separate resistive boiler; preheating is uncontrolled house demand. */
   hot_water: {
-    /** The meter's key in a case's `other_devices_w`. */
-    key: string;
-    /** What the heater draws while it heats. */
+    /** Disjoint energy meters belonging only to the switched boiler. */
+    meter_keys: readonly string[];
     rated_w: number;
   };
 }
@@ -49,8 +45,9 @@ export const HOUSEHOLD: Household = {
     battery_export_enabled: true, battery_export_reserve_soc: 0.8, battery_export_min_price_sek_per_kwh: 2.5,
     battery_degradation_sek_per_kwh: 0.05, battery_terminal_soc_min: 0.2,
   },
-  // The home's water heater, at its measured running power.
-  hot_water: { key: 'sensor.hot_water_energy', rated_w: 1_274 },
+  // Two active 1.5 kW elements; P3 is metered but idle. The combined
+  // sensor.hot_water_energy also includes heat-pump preheat and is not owned.
+  hot_water: { meter_keys: ['sensor.water_boiler_energy'], rated_w: 3_000 },
   ...parseDeviceModels({
     battery: {
       capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1,
@@ -83,3 +80,13 @@ export const HOUSEHOLD: Household = {
     },
   }),
 };
+
+/** No category totals or aliases: only a complete set of the boiler's own meters. */
+export function boilerDemand(series: Record<string, number[]> | undefined, boiler: Pick<Household['hot_water'], 'meter_keys'>): number[] | null {
+  const meters = boiler.meter_keys.map(key => series?.[key]);
+  if (!meters.length || meters.some(values => !values)) return null;
+  return meters[0]!.map((_, i) => meters.reduce((sum, values) => sum + values![i], 0));
+}
+
+/** Recorded phase counters from before the boiler-only total was created. */
+export const BOILER_PHASE_METERS = ['sensor.water_boiler_p1_energy', 'sensor.water_boiler_p2_energy', 'sensor.water_boiler_p3_energy'] as const;

@@ -1,3 +1,4 @@
+import { HOUSEHOLD, BOILER_PHASE_METERS, boilerDemand } from "../src/lib/planner-bench/household.ts";
 // What the home recorded, for filling in a test case (docs/planner-bench/test-cases.md).
 //
 // A case made from a replay knows what was forecast at its start. What really
@@ -10,7 +11,6 @@ import {
   QUARTERS, QUARTER_MS, quarterStarts,
   type BenchRecorded, type BenchScenarioData,
 } from "../src/lib/planner-bench/case.ts";
-import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 
 /** The live planner reads this much price history; a case stores what exists of it. */
 export const PRICE_HISTORY_DAYS = 60;
@@ -26,11 +26,12 @@ export interface HistorySource {
 type Row = Record<string, unknown> & { start_ts: string };
 
 /** Every row of a quarter table between two instants, oldest first, however many pages it takes. */
-async function quarterRows(source: HistorySource, table: string, columns: string, from: number, to: number): Promise<Row[]> {
+async function quarterRows(source: HistorySource, table: string, columns: string, from: number, to: number, deviceKeys?: readonly string[]): Promise<Row[]> {
   const out: Row[] = [];
   for (let offset = 0;; offset += PAGE) {
     const query = `${table}?select=start_ts,${columns}&home_id=eq.${source.homeId}`
-      + `&start_ts=gte.${new Date(from).toISOString()}&start_ts=lt.${new Date(to).toISOString()}&order=start_ts`;
+      + `&start_ts=gte.${new Date(from).toISOString()}&start_ts=lt.${new Date(to).toISOString()}&order=${table === "energy_optimisation_device_slots" ? "start_ts,device_id" : "start_ts"}`
+      + (deviceKeys ? `&device.device_key=in.(${deviceKeys.join(",")})` : "");
     const response = await fetch(`${source.url}/rest/v1/${query}`, {
       headers: { apikey: source.key, Authorization: `Bearer ${source.key}`, Range: `${offset}-${offset + PAGE - 1}` },
     });
@@ -101,7 +102,7 @@ const MAX_MISCOUNTED_SHARE = 0.02;
 export async function recordedActual(source: HistorySource, caseStart: string): Promise<NonNullable<BenchRecorded["actual"]> | null> {
   const start = Date.parse(caseStart);
   const rows = await quarterRows(source, "energy_optimisation_actual_slots",
-    "total_load_kwh,solar_production_kwh,pool_heating_kwh,ev_charging_kwh,hot_water_kwh", start, start + QUARTERS * QUARTER_MS);
+    "total_load_kwh,solar_production_kwh,pool_heating_kwh,ev_charging_kwh", start, start + QUARTERS * QUARTER_MS);
   const total = onto(rows, "total_load_kwh", start, QUARTERS), solar = onto(rows, "solar_production_kwh", start, QUARTERS);
   const pool = onto(rows, "pool_heating_kwh", start, QUARTERS), car = onto(rows, "ev_charging_kwh", start, QUARTERS);
   if (total.some(v => v === null) || solar.some(v => v === null)) return null;
@@ -109,10 +110,28 @@ export async function recordedActual(source: HistorySource, caseStart: string): 
   const base = total.map((kwh, i) => (kwh! - (pool[i] ?? 0) - (car[i] ?? 0)) * perHour);
   // Meters that disagree in more than the odd quarter do not describe the house.
   if (base.filter(w => w < -200).length > MAX_MISCOUNTED_SHARE * QUARTERS) return null;
-  const water = onto(rows, "hot_water_kwh", start, QUARTERS);
+  // Category totals can include both preheat and the switched boiler. Retain
+  // meter identities and only complete series; never relabel a category total.
+  const measured = await quarterRows(source, "energy_optimisation_device_slots",
+    "device_id,energy_kwh,device:energy_optimisation_devices!energy_optimisation_device_slots_device_home_consistent!inner(device_key)", start, start + QUARTERS * QUARTER_MS,
+    [...HOUSEHOLD.hot_water.meter_keys, ...BOILER_PHASE_METERS]);
+  const devices = new Map<string, Row[]>();
+  for (const row of measured) {
+    const key = (row.device as { device_key?: string } | undefined)?.device_key;
+    if (key && [...HOUSEHOLD.hot_water.meter_keys, ...BOILER_PHASE_METERS].includes(key)) devices.set(key, [...devices.get(key) ?? [], row]);
+  }
+  const other = Object.fromEntries([...devices].flatMap(([key, samples]) => {
+    const energy = onto(samples, "energy_kwh", start, QUARTERS);
+    return energy.every(value => value !== null) ? [[key, energy.map(value => Math.round(value! * perHour))]] : [];
+  }));
+  // The commissioned total is authoritative. Older sample periods have only
+  // the physical phase counters: combine a complete set once, never add them
+  // to their own total or borrow the mixed preheat/boiler category meter.
+  const boiler = other[HOUSEHOLD.hot_water.meter_keys[0]]
+    ?? boilerDemand(other, { meter_keys: BOILER_PHASE_METERS });
   return {
     base_load_w: base.map(w => Math.round(Math.max(0, w))), solar_w: solar.map(kwh => Math.round(Math.max(0, kwh! * perHour))),
-    ...(water.every(v => v !== null) ? { other_devices_w: { [HOUSEHOLD.hot_water.key]: water.map(kwh => Math.round(kwh! * perHour)) } } : {}),
+    ...(boiler ? { other_devices_w: { [HOUSEHOLD.hot_water.meter_keys[0]]: boiler } } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { boilerDemand } from "./household";
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
@@ -44,7 +45,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 19;
+export const REFEREE_VERSION = 20;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -166,7 +167,7 @@ export function householdSeries(c: BenchCase, world: World = 'recorded'): { base
  */
 export function hotWaterNeed(c: BenchCase, h: Household, world: World = 'recorded'): Series | null {
   const actual = world === 'recorded' ? c.recorded.actual : undefined;
-  return (actual ? actual.other_devices_w?.[h.hot_water.key] : c.other_devices_w[h.hot_water.key]) ?? null;
+  return boilerDemand(actual ? actual.other_devices_w : c.other_devices_w, h.hot_water);
 }
 
 /**
@@ -453,10 +454,12 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.costSek.push(r4(sim.costSek[i]));
     series.wearSek!.push(r4(sim.dischargeW[i] * HOURS / 1_000 * h.site.battery_degradation_sek_per_kwh));
   }
-  if (sim.water) {
+  if (sim.water || d.hot_water) {
     const commands = Array.from({ length: QUARTERS }, (_, i) => d.hot_water?.[i] ?? FREE);
     series.hotWater = {
-      owedKwh: Array.from(sim.water.owedKwh, r4), permitted: Array.from(sim.water.permitted),
+      demandKnown: sim.water !== null,
+      owedKwh: sim.water ? Array.from(sim.water.owedKwh, r4) : [],
+      permitted: sim.water ? Array.from(sim.water.permitted) : commands.map(command => command.kind !== 'inhibit' ? 1 : 0),
       command: commands.map(command => command.kind),
     };
   }

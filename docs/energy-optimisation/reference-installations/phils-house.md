@@ -195,3 +195,16 @@ quality, and thermal/electrical relationships for the scope being enabled. The
 provided setup is sufficient to proceed with the controller's scope specification
 and offline work; it is not evidence that commissioning or the controller itself
 has been completed. More sensors should follow demonstrated implementation needs.
+
+## Meter separation verified 15 October 2026
+
+`water_boiler_power` now sums only boiler phases P1–P3, as corrected by Phil.
+`sensor.heat_pump_hot_water_energy` already integrates
+`sensor.heat_pump_hot_water_power` using the left method, kWh, and a one-minute
+maximum interval. A UI sensor-group helper `sensor.water_boiler_energy` sums
+only the three boiler energy counters and requires all three to be numeric.
+Both totals are separate Energy dashboard devices; preheating is included in
+`sensor.bergvarmepump_energy`. The old mixed `sensor.hot_water_energy` remains
+available for existing consumers but is not a boiler meter or dashboard device.
+The new total starts its own statistics; earlier boiler demand can be derived
+from the three historical phase counters, never from the mixed total.

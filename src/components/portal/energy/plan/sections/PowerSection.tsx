@@ -84,9 +84,9 @@ const PowerSection: React.FC<{
   const { plan } = model;
   const hotWater = useMemo((): ChartHotWater | undefined => {
     if (!plan.capabilities.boiler) return undefined;
-    const keys = plan.device_models.filter(device => device.category === 'hot_water').map(device => device.key);
+    const keys = plan.device_models.filter(device => device.category === 'hot_water' && device.control_type === 'permit_inhibit').map(device => device.key);
     return {
-      name: t('Varmvatten', 'Hot water'), colour: PLAN_COLOURS.water, keys,
+      name: t('Varmvattenberedare', 'Water boiler'), colour: PLAN_COLOURS.water, keys,
       byStart: new Map(model.active.slots.map(slot => [Date.parse(slot.start), hotWaterQuarter(slot, keys)])),
     };
   }, [model.active.slots, plan.capabilities.boiler, plan.device_models, t]);

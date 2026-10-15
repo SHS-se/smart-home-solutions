@@ -238,11 +238,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
     const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
-    // When hot water may run, as a strip of its own straight under the panel
-    // whose stack shows the expected electricity.
     const showWater = rows.some(row => row.hotWater);
-    const water: Panel = { top: load.top + load.height + 6, height: showWater ? 10 : 0 };
-    const soc: Panel = { top: load.top + load.height + GAP + (showWater ? 18 : 0), height: showSoc ? 62 : 0 };
+    const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
     const poolC = rows.map(row => row.poolTemperatureC ?? null);
     const knownPoolC = poolC.filter((value): value is number => value !== null);
     const showPool = knownPoolC.length > 0;
@@ -254,10 +251,12 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const showCost = knownCost.length > 0;
     const cost: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showCost ? 90 : 0 };
     const axisY = showCost ? cost.top + cost.height
-      : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : water.top + water.height);
+      : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
     // The score is a section of its own, below the axis labels of the panels above.
-    const scoreStrip: Panel | null = quarterAudit || quarterScores
-      ? { top: axisY + 42 + GAP, height: quarterAudit ? quarterAudit.lanes.length * 28 : 16 } : null;
+    const auditHeight = quarterAudit ? quarterAudit.lanes.length * 28 : quarterScores ? 16 : 0;
+    const scoreStrip: Panel | null = quarterAudit || quarterScores || showWater
+      ? { top: axisY + 42 + GAP, height: auditHeight + (showWater ? 28 : 0) } : null;
+    const water: Panel = { top: (scoreStrip?.top ?? 0) + auditHeight + 7, height: 10 };
 
     // --- Price ------------------------------------------------------------
     const buy = rows.map(row => row.importPriceSekPerKwh);
@@ -612,27 +611,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             strokeDasharray="1 3" strokeLinecap="round"
           />
 
-          {showWater && (
-            <g id="plan-water-lane">
-              <text x={RIGHT + 7} y={water.top + 8.5} className={AXIS_TEXT}>
-                {t('varmvatten', 'hot water')}
-              </text>
-              {rows.map((row, index) => {
-                const state = row.hotWater?.state;
-                if (!state || state === 'uncontrolled') return null;
-                return (
-                  <rect
-                    key={index} data-water={state}
-                    x={x(index)} y={water.top} width={Math.max(0.5, x(index + 1) - x(index))} height={water.height}
-                    fill={state === 'allowed' ? PLAN_COLOURS.water : undefined}
-                    className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
-                    fillOpacity={state === 'blocked' ? 0.45 : 1}
-                  />
-                );
-              })}
-            </g>
-          )}
-
           {/* -------------------------------------------------- Storage --- */}
           {showSoc && (
             <g id="plan-storage">
@@ -834,15 +812,15 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             </g>
           ))}
           {/* ---------------------------------------------------- Score --- */}
-          {scoreStrip && (quarterAudit || quarterScores) && (
-            <g id={quarterAudit ? "plan-audit" : "plan-score"}>
+          {scoreStrip && (
+            <g id="plan-slot-control"><g id={quarterAudit ? "plan-audit" : quarterScores ? "plan-score" : undefined}>
               <line
                 x1={MARGIN_LEFT} x2={RIGHT} y1={scoreStrip.top - 22} y2={scoreStrip.top - 22}
                 className="stroke-border" strokeWidth={1}
               />
               <PanelHeading
-                title={quarterAudit?.title ?? t('Poäng', 'Score')}
-                unit={quarterAudit?.description ?? t('regelpoäng per kvart', 'rule points per quarter')}
+                title={t('Kvartsstyrning', 'Slot control')}
+                unit={quarterAudit?.description ?? (quarterScores ? t('regelpoäng per kvart', 'rule points per quarter') : t('blå: tillåten · grå: spärrad', 'blue: allowed · grey: blocked'))}
                 y={scoreStrip.top - 6}
               />
               {quarterAudit?.lanes.map((lane, laneIndex) => <g key={lane.key}>
@@ -887,6 +865,28 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   />
                 );
               })}
+          {showWater && (
+            <g id="plan-water-lane">
+              <rect x={MARGIN_LEFT} y={water.top - 7} width={PLOT_W} height={24} className="fill-muted" />
+              <text x={MARGIN_LEFT - 7} y={water.top + 8.5} textAnchor="end" className={AXIS_TEXT}>
+                {t('Beredare', 'Boiler')}
+              </text>
+              {rows.map((row, index) => {
+                const state = row.hotWater?.state;
+                if (!state || state === 'uncontrolled') return null;
+                return (
+                  <rect
+                    key={index} data-water={state}
+                    x={x(index)} y={water.top} width={Math.max(0.5, x(index + 1) - x(index))} height={water.height}
+                    fill={state === 'allowed' ? PLAN_COLOURS.water : undefined}
+                    className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
+                    fillOpacity={state === 'blocked' ? 0.45 : 1}
+                  ><title>{WATER_STATE(t)[state]}</title></rect>
+                );
+              })}
+            </g>
+          )}
+
               {selectedIndex >= 0 && selectedIndex < n && (
                 <rect
                   x={x(selectedIndex)} y={scoreStrip.top}
@@ -901,7 +901,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   className="fill-foreground" fillOpacity={0.07} pointerEvents="none"
                 />
               )}
-            </g>
+            </g></g>
           )}
         </svg>
         </div>
@@ -1009,8 +1009,9 @@ const PlanTooltip: React.FC<{
         </span>
       </div>
       {row.estimatedEnergy && <p className="mb-1 text-muted-foreground">{t('Fördröjda mätvärden: energin är jämnt fördelad över rapporteringsintervallet.', 'Delayed meter readings: energy is spread evenly over the reporting interval.')}</p>}
-      {auditDescriptions && <div className="mb-1 border-b pb-1 space-y-1">
-        {auditDescriptions.length ? auditDescriptions.map(description => <p key={description}>{description}</p>) : <p>{t('Inga ekonomiska fynd här', 'No economic findings here')}</p>}
+      {(auditDescriptions || row.hotWater) && <div data-slot-information className="mb-1 border-b pb-1 space-y-1">
+        {auditDescriptions?.length ? auditDescriptions.map(description => <p key={description}>{description}</p>) : auditDescriptions && <p>{t('Inga ekonomiska fynd här', 'No economic findings here')}</p>}
+        {row.hotWater && <HotWaterReading quarter={row.hotWater} />}
       </div>}
       {gap ? (
         <p className="text-muted-foreground">{gap.detail}</p>
@@ -1036,7 +1037,6 @@ const PlanTooltip: React.FC<{
         {consumptionIssue && <p className="mt-1 text-muted-foreground">
           {consumptionGapDescription(consumptionIssue, t)}
         </p>}
-        {row.hotWater && <HotWaterReading quarter={row.hotWater} />}
       </div>
       <div className="mt-1 border-t pt-1">
         {hasBattery && row.homeSoc !== null && (
@@ -1117,8 +1117,9 @@ const HotWaterReading: React.FC<{ quarter: HotWaterQuarter }> = ({ quarter }) =>
   const { t } = useLanguage();
   return (
     <div className="mt-1 border-t pt-1">
-      <Reading name={t('Varmvatten', 'Hot water')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
+      <Reading name={t('Varmvattenberedare', 'Water boiler')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
       <p className="text-muted-foreground">{t('Termostaten styr. Pågående uppvärmning får avslutas.', 'Thermostat controlled. Active heating may finish.')}</p>
+      {quarter.expectedW === null && <p className="text-muted-foreground">{t('Separat förbrukning för beredaren saknas.', 'Separate boiler consumption is unavailable.')}</p>}
     </div>
   );
 };

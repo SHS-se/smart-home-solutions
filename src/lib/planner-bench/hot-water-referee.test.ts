@@ -5,13 +5,14 @@ import { referee, simulate, type Decisions, type HotWaterCommand } from './refer
 import { scoreQuarters } from './score.ts';
 import { TARGETS, plan, quarters, world } from './world.fixture.ts';
 
-const KEY = HOUSEHOLD.hot_water.key;
+const KEYS = HOUSEHOLD.hot_water.meter_keys;
+const boiler = (watts: number) => Object.fromEntries(KEYS.map((key, i) => [key, quarters(() => i === 0 ? watts : 0)]));
 const NEED_W = 400;
 /** A measured window whose 1 kW base load includes a water heater drawing 400 W, forecast alike. */
 const measured = () => {
   const c = world({ load: () => 1_000 });
-  c.other_devices_w = { [KEY]: quarters(() => NEED_W) };
-  c.recorded.actual = { base_load_w: quarters(() => 1_000), solar_w: quarters(() => 0), other_devices_w: { [KEY]: quarters(() => NEED_W) } };
+  c.other_devices_w = boiler(NEED_W);
+  c.recorded.actual = { base_load_w: quarters(() => 1_000), solar_w: quarters(() => 0), other_devices_w: boiler(NEED_W) };
   return c;
 };
 const commanding = (command: (i: number) => HotWaterCommand): Decisions => ({ ...plan(), hot_water: quarters(command) });
@@ -53,4 +54,28 @@ Deno.test('in the world the planner was told the heater runs as the plan expecte
   const told = simulate(measured(), HOUSEHOLD, { ...commanding(() => ({ kind: 'permit' })),
     hot_water_expected_w: quarters(() => NEED_W) }, 'told');
   assertEquals(Array.from(told.water!.w), quarters(() => NEED_W));
+});
+
+Deno.test('boiler permission never shifts heat-pump preheating or mixed hot-water totals', () => {
+  const c = measured();
+  c.base_load_forecast_w = quarters(() => 2274);
+  c.recorded.actual!.base_load_w = quarters(() => 2274);
+  c.other_devices_w['sensor.hot_water_energy'] = quarters(() => 1674);
+  c.recorded.actual!.other_devices_w!['sensor.hot_water_energy'] = quarters(() => 1674);
+  const blocked = simulate(c, HOUSEHOLD, commanding(() => ({ kind: 'inhibit' })));
+  assertEquals(Array.from(blocked.water!.w), quarters(() => 0));
+  // 600 W other appliances plus 1274 W autonomous compressor remain.
+  assertEquals(Array.from(blocked.baseW), quarters(() => 1874));
+  assertEquals(HOUSEHOLD.hot_water.rated_w, 3000);
+});
+
+Deno.test('permission without boiler meters leaves load intact and water assessment unavailable', () => {
+  const c = measured();
+  c.other_devices_w = { 'sensor.hot_water_energy': quarters(() => 400) };
+  c.recorded.actual!.other_devices_w = c.other_devices_w;
+  const result = referee(c, HOUSEHOLD, TARGETS, commanding(() => ({ kind: 'inhibit' })));
+  assertEquals(result.series.hotWater!.demandKnown, false);
+  assertEquals(result.series.loadW, quarters(() => 1000));
+  assertEquals(result.series.bill!.hot_water, undefined);
+  assertEquals(scoreQuarters(result.series, {}).applicability.water_cold.applicable, false);
 });

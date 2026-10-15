@@ -116,7 +116,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     s.poolC.push(temp);
     s.costSek.push((Math.max(0, load - solar) * price - Math.max(0, solar - load) * price * 0.5) * 0.25 / 1000);
   }
-  s.hotWater = { owedKwh: new Array(n).fill(0),
+  s.hotWater = { demandKnown: true, owedKwh: new Array(n).fill(0),
     permitted: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 1 : 0),
     command: s.start.map((_s, i) => i % 96 >= 16 && i % 96 < 26 ? 'permit' : 'inhibit') };
   s.deviceW = { pool: s.poolW, car: s.carW };
@@ -351,7 +351,7 @@ test.describe('planner bench', () => {
     await login(page);
     await page.goto('/portal/planner-bench');
     const strip = page.locator('#plan-audit');
-    await expect(strip).toContainText(/Economic findings|Ekonomiska fynd/);
+    await expect(strip).toContainText(/Slot control|Kvartsstyrning/);
     await expect(page.locator('#plan-score')).toHaveCount(0);
     await expect(strip.locator('[data-audit-marker="sourceKnown"]')).toHaveCount(1);
     await expect(strip.locator('[data-audit-marker="destinationKnown"]')).toHaveCount(1);
@@ -703,7 +703,7 @@ test.describe('planner bench', () => {
     await expect(page.locator('#bench-day-all')).toHaveAttribute('aria-pressed', 'true');
 
     // Economic findings sit below the time axis with selected-quarter details underneath.
-    await expect(page.locator('#plan-audit')).toContainText(/Economic findings|Ekonomiska fynd/);
+    await expect(page.locator('#plan-audit')).toContainText(/Slot control|Kvartsstyrning/);
     const strip = (await page.locator('#plan-audit').boundingBox())!, axis = (await page.locator('#plan-cost').boundingBox())!;
     const why = (await page.locator('#bench-quarter-explanation').boundingBox())!;
     expect(strip.y).toBeGreaterThan(axis.y + axis.height);
@@ -721,6 +721,17 @@ test.describe('planner bench', () => {
     await expect(page.locator('#plan-water-lane [data-water=allowed]')).toHaveCount(30);
     await expect(page.locator('#plan-water-lane [data-water=blocked]')).toHaveCount(258);
     await expect(page.locator('#plan-water-gate')).toHaveCount(0);
+    await expect(page.locator('#plan-slot-control #plan-water-lane')).toBeVisible();
+    const waterLane = (await page.locator('#plan-water-lane').boundingBox())!;
+    const costPanel = (await page.locator('#plan-cost').boundingBox())!;
+    expect(waterLane.y).toBeGreaterThan(costPanel.y + costPanel.height);
+    const waterCell = page.locator('#plan-water-lane [data-water=allowed]').first();
+    await waterCell.hover();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip.locator('[data-slot-information]')).toContainText(/Water boiler|Varmvattenberedare/);
+    await expect(tooltip.locator('[data-slot-information]')).toContainText(/Active heating may finish|Pågående uppvärmning får avslutas/);
+    await expect(tooltip.getByText(/Active heating may finish|Pågående uppvärmning får avslutas/)).toHaveCount(1);
+
     await expect(page.locator('#plan-cost')).toContainText(/What it costs|Kostnad/);
     await expect(page.locator('#plan-cost path')).toHaveCount(2);
     // It follows the period shown, like every other panel.
