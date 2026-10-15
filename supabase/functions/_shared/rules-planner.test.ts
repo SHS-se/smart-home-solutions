@@ -372,6 +372,40 @@ Deno.test("hot water chooses daily opportunities and preserves committed permiss
   }
 });
 
+Deno.test("replanning a separated boiler meter keeps current commands without retaining the removed meter", () => {
+  const s = waterSnapshot();
+  s.capabilities.ev = true;
+  s.ev_battery = snapshot().ev_battery;
+  s.comfort = snapshot().comfort;
+  s.services.push(...snapshot().services);
+  const evModel = { ...s.device_models[0], key: "car", statistic_id: "car", category: "ev_charging" as const,
+    control_type: "variable_power" as const, active_power_w: 11040 };
+  s.device_models.push(evModel);
+  const previous = generateRulesPlan(prepare(s)).plan;
+  const reference = { plan_id: previous.plan_id, slots: previous.plans.priority.slots };
+  const before = JSON.stringify(reference);
+  s.device_models[0] = { ...s.device_models[0], key: "boiler-only", statistic_id: "boiler-only" };
+  // HA leaves unplanned heat-pump preheating inside base load; only the
+  // separately configured boiler and the car have command-bearing models.
+  s.slots = s.slots.map(slot => ({ ...slot, base_load_forecast_w: slot.base_load_forecast_w + 100 }));
+  const prepared = prepare(s, reference);
+  const revised = generateRulesPlan(prepared).plan;
+  assertEquals(JSON.stringify(reference), before);
+  for (const [i, slot] of revised.plans.priority.slots.entries()) {
+    assertEquals(Object.keys(slot.device_commands!).sort(), ["boiler-only", "car"]);
+    assertEquals(slot.device_commands!["boiler-only"], { type: "permit_inhibit", permitted: slot.boiler_permitted });
+    assertEquals(slot.base_w, s.slots[i].base_load_forecast_w);
+    assertEquals(slot.device_loads_w!["boiler-only"], slot.boiler_expected_w);
+    if (i < prepared.locked_slots.length) {
+      assertEquals(slot.device_commands!.car, reference.slots[i].device_commands!.car);
+      assertEquals(slot.ev_target_current_a, reference.slots[i].ev_target_current_a);
+      assertEquals(slot.boiler_permitted, reference.slots[i].boiler_permitted);
+    }
+    assertAlmostEquals(slot.pv_w + slot.grid_import_w + slot.battery_discharge_w,
+      slot.load_w + slot.battery_charge_w + slot.grid_export_w + slot.curtailed_w, 1e-8);
+  }
+});
+
 Deno.test("hot-water policy uses selected pool and EV loads rather than their historical forecasts", () => {
   const s = waterSnapshot();
   s.capabilities.pool = true;

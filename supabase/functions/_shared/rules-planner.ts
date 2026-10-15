@@ -25,7 +25,7 @@ import type { BatteryProjectionRow } from "./planner/battery-dispatch-projection
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v7:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
+export const RULES_MODEL_VERSION = `rules-planner-v8:${createHash("sha256").update(JSON.stringify({ artifact, recipe, policyManifest })).digest("hex")}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -203,7 +203,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   }
   for (let i = 0; i < locked.length; i++) {
     if (!locked[i].device_commands && snapshot.device_models.length && snapshot.schema_version >= 7) return fail("Committed device command map missing");
-    for (const key of Object.keys(locked[i].device_commands ?? {})) if (!snapshot.device_models.some(m => m.key === key)) return fail(`Committed owner removed: ${key}`);
     if (snapshot.capabilities.boiler && typeof locked[i].boiler_permitted !== "boolean") return fail("Committed boiler permission missing");
     if (snapshot.capabilities.boiler && !finite(locked[i].boiler_expected_w)) return fail(`Committed hot-water power missing or non-finite at ${snapshot.slots[i].start}`);
   }
@@ -282,13 +281,16 @@ function allocate(members: DeviceMember[], watts: number, into: Record<string, n
 }
 function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number): Record<string, DeviceCommand> {
   const locked = input.locked_slots[i];
-  if (locked?.device_commands) return structuredClone(locked.device_commands);
   const result: Record<string, DeviceCommand> = {};
   const pool = new Set([...input.members.heater, ...input.members.auxiliary].map(m => m.key));
   const ev = new Set(input.members.ev.map(m => m.key));
   const boiler = new Set(input.members.boiler.map(m => m.key));
   for (const model of input.snapshot.device_models) {
-    result[model.key] = pool.has(model.key) ? model.control_type === "switch_schedule"
+    // Commitments retain requests for current owners, not a frozen inventory.
+    // A separated/replaced meter gets its command from the current service;
+    // removed meters cannot remain in the replacement plan's command map.
+    const committed = locked?.device_commands?.[model.key];
+    result[model.key] = committed ? structuredClone(committed) : pool.has(model.key) ? model.control_type === "switch_schedule"
       ? { type: "switch_schedule", on_seconds: command.pool_on ? 900 : 0 }
       : { type: "unavailable", reason: "Dedicated pool owner supplies the native enable command" }
       : ev.has(model.key) ? { type: "variable_power", value: command.ev_amps, unit: "A" }
