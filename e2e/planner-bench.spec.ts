@@ -726,11 +726,13 @@ test.describe('planner bench', () => {
     const costPanel = (await page.locator('#plan-cost').boundingBox())!;
     expect(waterLane.y).toBeGreaterThan(costPanel.y + costPanel.height);
     const waterCell = page.locator('#plan-water-lane [data-water=allowed]').first();
-    await waterCell.hover();
-    const tooltip = page.getByRole('tooltip');
-    await expect(tooltip.locator('[data-slot-information]')).toContainText(/Water boiler|Varmvattenberedare/);
-    await expect(tooltip.locator('[data-slot-information]')).toContainText(/Active heating may finish|Pågående uppvärmning får avslutas/);
-    await expect(tooltip.getByText(/Active heating may finish|Pågående uppvärmning får avslutas/)).toHaveCount(1);
+    await waterCell.click();
+    const boilerDetail = page.locator('#bench-quarter-explanation [data-boiler-control]');
+    await expect(boilerDetail).toContainText(/Water boiler|Varmvattenberedare/);
+    await expect(boilerDetail).toContainText(/Active heating may finish|Pågående uppvärmning får avslutas/);
+    await expect(boilerDetail).toContainText(/Modeled consumption|Modellerad förbrukning/);
+    await expect(page.getByRole('tooltip')).not.toContainText(/Thermostat controlled|Termostaten styr/);
+    await boilerDetail.screenshot({ path: test.info().outputPath('boiler-selected-detail.png') });
 
     await expect(page.locator('#plan-cost')).toContainText(/What it costs|Kostnad/);
     await expect(page.locator('#plan-cost path')).toHaveCount(2);

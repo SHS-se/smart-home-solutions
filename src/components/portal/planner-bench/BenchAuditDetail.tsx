@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { OPPORTUNITY_RULES } from '@/lib/planner-bench/opportunities';
 import type { CaseScore, ResolvedRule } from '@/lib/planner-bench/score';
+import BoilerSlotDetail from '@/components/portal/energy/plan/BoilerSlotDetail';
+import { refereedHotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
 import type { BenchSeries } from '@/lib/planner-bench/types';
 
 interface Props {
@@ -29,6 +31,7 @@ export default function BenchAuditDetail({ selected, series, score, rules, timeZ
       <span className="font-medium">{selected === null ? t('Välj en kvart för att granska fynd', 'Select a quarter to inspect findings') : stamp(selected)}</span>
       {action}
     </div>
+    {selected !== null && series.hotWater && <BoilerSlotDetail quarter={refereedHotWaterQuarter(series.hotWater, selected, series.hotWaterW[selected])} />}
     <p className="text-xs text-muted-foreground">{t('Övre rad = källa, nedre = destination. Fylld = känt pris, kontur = efterklokhet. Piltangenter väljer tid; Enter öppnar detaljer.', 'Upper row = source, lower = destination. Filled = known price, outline = hindsight. Arrow keys browse time; Enter opens details.')}</p>
     {!audit ? <p>{t('Granskning saknas · räkna om', 'Audit missing · recompute')}</p>
       : audit.status !== 'complete' ? <p>{audit.reason}</p>

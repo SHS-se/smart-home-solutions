@@ -40,7 +40,7 @@ import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time
 import { energyChartTicks } from '@/lib/energy-shift/energy-chart-axis';
 
 import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
-import type { HotWaterQuarter, HotWaterState } from '@/lib/energy-shift/hot-water-gate';
+import { hotWaterStateLabel } from '@/lib/energy-shift/hot-water-gate';
 export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 
 const VIEW_W = 1160;
@@ -881,7 +881,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                     fill={state === 'allowed' ? PLAN_COLOURS.water : undefined}
                     className={state === 'blocked' ? 'fill-muted-foreground' : undefined}
                     fillOpacity={state === 'blocked' ? 0.45 : 1}
-                  ><title>{WATER_STATE(t)[state]}</title></rect>
+                  ><title>{hotWaterStateLabel(state, t)}</title></rect>
                 );
               })}
             </g>
@@ -991,7 +991,7 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (row.hotWater ? 36 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
+  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1009,9 +1009,8 @@ const PlanTooltip: React.FC<{
         </span>
       </div>
       {row.estimatedEnergy && <p className="mb-1 text-muted-foreground">{t('Fördröjda mätvärden: energin är jämnt fördelad över rapporteringsintervallet.', 'Delayed meter readings: energy is spread evenly over the reporting interval.')}</p>}
-      {(auditDescriptions || row.hotWater) && <div data-slot-information className="mb-1 border-b pb-1 space-y-1">
+      {auditDescriptions && <div data-slot-information className="mb-1 border-b pb-1 space-y-1">
         {auditDescriptions?.length ? auditDescriptions.map(description => <p key={description}>{description}</p>) : auditDescriptions && <p>{t('Inga ekonomiska fynd här', 'No economic findings here')}</p>}
-        {row.hotWater && <HotWaterReading quarter={row.hotWater} />}
       </div>}
       {gap ? (
         <p className="text-muted-foreground">{gap.detail}</p>
@@ -1102,24 +1101,6 @@ const PlanTooltip: React.FC<{
           )}
       </div>
       </>}
-    </div>
-  );
-};
-
-const WATER_STATE = (t: (sv: string, en: string) => string): Record<HotWaterState, string> => ({
-  allowed: t('tillåtet', 'allowed'),
-  blocked: t('spärrat av plan', 'blocked by plan'),
-  uncontrolled: t('ej styrt', 'not controlled'),
-});
-
-/** Planned permission; the thermostat and controller determine actual heating. */
-const HotWaterReading: React.FC<{ quarter: HotWaterQuarter }> = ({ quarter }) => {
-  const { t } = useLanguage();
-  return (
-    <div className="mt-1 border-t pt-1">
-      <Reading name={t('Varmvattenberedare', 'Water boiler')} colour={PLAN_COLOURS.water} value={WATER_STATE(t)[quarter.state]} />
-      <p className="text-muted-foreground">{t('Termostaten styr. Pågående uppvärmning får avslutas.', 'Thermostat controlled. Active heating may finish.')}</p>
-      {quarter.expectedW === null && <p className="text-muted-foreground">{t('Separat förbrukning för beredaren saknas.', 'Separate boiler consumption is unavailable.')}</p>}
     </div>
   );
 };

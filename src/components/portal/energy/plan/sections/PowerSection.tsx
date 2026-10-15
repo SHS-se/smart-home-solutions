@@ -1,3 +1,4 @@
+import BoilerSlotDetail from '../BoilerSlotDetail';
 // One continuous chart: measured history to the left of now, plan to the right.
 //
 // History and the plan were separate tabs with separate windows, so "today"
@@ -186,6 +187,8 @@ const PowerSection: React.FC<{
         scoreDetail={(quarterScores || model.active.slots.length > 0) && (
           <QuarterScoreDetail
             id="plan-quarter-explanation" quarter={explained}
+            selectedLabel={panelRows[selectedIndex]?.label}
+            slotDetail={panelRows[selectedIndex]?.hotWater && <BoilerSlotDetail quarter={panelRows[selectedIndex].hotWater} />}
             empty={quarterScores ? undefined : replayDescription(t)}
             action={<PlanReplayDownload model={model} rows={rows} range={range} selectedStart={selectedQuarterStart} />}
           />

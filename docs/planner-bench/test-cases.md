@@ -345,3 +345,24 @@ status.
   Assistant integration).
 - Giving cases the wind forecast as it was issued instead of the observed wind
   (the forecasts are being kept; no case uses them yet).
+
+## Correcting old combined hot-water cases
+
+Cases captured before the boiler-only meter existed retain the mixed
+`sensor.hot_water_energy`. `bench/repair-boiler.ts <statistics-directory>`
+previews a correction from exported HA hourly `change` statistics for that
+mixed meter and all three boiler phase meters. Files are named by case UUID.
+`--apply` saves a backup and replaces both case halves together, guarded by the
+case revision. It only writes TEST. Rerun the compared planners after applying.
+
+The measured hourly boiler/preheat shares partition the captured aggregate
+forecast and measured series. Both original house-load series and aggregate
+hot-water energy stay unchanged; only electrical ownership is reconstructed.
+This is retrospective component attribution using sample-period measurements,
+not a separately captured boiler forecast or exact quarter-level thermostat
+history. The original aggregate remains as source evidence. Missing phase
+statistics stop the correction instead of becoming zero consumption.
+
+Permission and modeled consumption are explained in the selected-quarter
+information beneath **Slot control**, alongside economic findings. The hover
+card contains the electrical readings, without repeating the boiler policy.

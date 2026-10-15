@@ -685,8 +685,10 @@ test.describe('requesting a replan', () => {
     await expect(control).toContainText(/Slot control|Kvartsstyrning/);
     await expect(control.locator('#plan-water-lane')).toBeVisible();
     await expect(page.locator('#plan-audit, #plan-score')).toHaveCount(0);
-    await control.locator('[data-water=allowed]').first().hover();
-    await expect(page.getByRole('tooltip').locator('[data-slot-information]')).toContainText(/Water boiler|Varmvattenberedare/);
+    await control.locator('[data-water=allowed]').first().click();
+    await expect(page.locator('#plan-quarter-explanation [data-boiler-control]')).toContainText(/Water boiler|Varmvattenberedare/);
+    await expect(page.locator('#plan-quarter-explanation [data-boiler-control]')).toContainText(/Modeled consumption|Modellerad förbrukning/);
+    await expect(page.getByRole('tooltip')).not.toContainText(/Thermostat controlled|Termostaten styr/);
     await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: testInfo.outputPath('boiler-slot-control.png') });
   });
 

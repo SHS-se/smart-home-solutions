@@ -31,13 +31,15 @@ const QuarterScoreDetail: React.FC<{
   empty?: React.ReactNode;
   /** The download of what the chart shows, at the end of the section. */
   action?: React.ReactNode;
-}> = ({ id, quarter, empty, action }) => {
+  selectedLabel?: string;
+  slotDetail?: React.ReactNode;
+}> = ({ id, quarter, empty, action, selectedLabel, slotDetail }) => {
   const { t } = useLanguage();
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-      <div id={id} className="min-h-[2.5rem] min-w-0 flex-1 basis-64" aria-live="polite">
+      <div id={id} className="min-h-[2.5rem] min-w-0 flex-1 basis-64 space-y-2" aria-live="polite">
         {!quarter
-          ? <span className="text-muted-foreground">{empty ?? t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
+          ? <span className="text-muted-foreground">{(slotDetail ? selectedLabel : empty) ?? t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
           : (
             <div className="space-y-1">
               <div>
@@ -51,6 +53,7 @@ const QuarterScoreDetail: React.FC<{
                 : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
             </div>
           )}
+        {slotDetail}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

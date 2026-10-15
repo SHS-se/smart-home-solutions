@@ -14,3 +14,7 @@ export function hotWaterQuarter(slot: Pick<PlannedSlot, 'boiler_expected_w' | 'b
   const permitted = permits.length ? permits.every(Boolean) : commands.length ? null : slot.boiler_permitted;
   return { state: permitted === null ? 'uncontrolled' : permitted ? 'allowed' : 'blocked', expectedW: slot.boiler_expected_w };
 }
+
+export function hotWaterStateLabel(state: HotWaterState, t: (sv: string, en: string) => string): string {
+  return { allowed: t('tillåtet', 'allowed'), blocked: t('spärrat av plan', 'blocked by plan'), uncontrolled: t('ej styrt', 'not controlled') }[state];
+}
