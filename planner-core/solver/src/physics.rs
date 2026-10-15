@@ -18,10 +18,17 @@ pub(crate) fn initial(p: &Problem) -> State {
     }
 }
 pub(crate) fn locked_command(p: &Problem, i: usize) -> Option<&Command> {
-    p.fixed_commands.as_ref().and_then(|cs| cs.get(i)).and_then(|c| c.as_ref())
-        .or_else(|| if p.slots[i].start_seconds < p.locked_through_seconds {
-            p.accepted.as_ref().and_then(|cs| cs.get(i))
-        } else { None })
+    p.fixed_commands
+        .as_ref()
+        .and_then(|cs| cs.get(i))
+        .and_then(|c| c.as_ref())
+        .or_else(|| {
+            if p.slots[i].start_seconds < p.locked_through_seconds {
+                p.accepted.as_ref().and_then(|cs| cs.get(i))
+            } else {
+                None
+            }
+        })
 }
 pub(crate) fn locked(p: &Problem, i: usize) -> bool {
     locked_command(p, i).is_some()
@@ -105,7 +112,8 @@ fn transition(
     let demand = load.net_w();
     if command.battery == Operation::Export
         && p.battery.is_some()
-        && (s.battery_export_allowed == Some(false) || !p.limits.battery_export_enabled
+        && (s.battery_export_allowed == Some(false)
+            || !p.limits.battery_export_enabled
             || (!external && !locked(p, i) && s.export_price < p.limits.battery_export_min_price))
     {
         return Err("export_without_permission".into());

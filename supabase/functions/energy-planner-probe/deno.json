@@ -1,3 +1,6 @@
 {
-  "imports": { "zod": "npm:zod@3.25.76" }
+  "imports": {
+    "zod": "npm:zod@3.25.76",
+    "@noble/hashes/sha2.js": "npm:@noble/hashes@2.4.0/sha2.js"
+  }
 }

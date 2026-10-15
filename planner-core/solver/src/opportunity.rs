@@ -161,7 +161,11 @@ impl Table {
             .accepted
             .as_ref()
             .map(|cs| cs.iter().map(|c| self.mask_command(c)).collect());
-        m.fixed_commands = p.fixed_commands.as_ref().map(|cs| cs.iter().map(|c| c.as_ref().map(|c| self.mask_command(c))).collect());
+        m.fixed_commands = p.fixed_commands.as_ref().map(|cs| {
+            cs.iter()
+                .map(|c| c.as_ref().map(|c| self.mask_command(c)))
+                .collect()
+        });
         // Device tables intentionally relax shared power/solar competition. They
         // are optimistic guidance, never an admissibility check or earned score.
         let own = match self.device {

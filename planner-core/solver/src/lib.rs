@@ -318,7 +318,10 @@ fn validate(p: &Problem) -> Result<(), String> {
     {
         return bad("missing_capture_interval");
     }
-    if p.fixed_commands.as_ref().is_some_and(|cs| cs.len() != p.slots.len()) {
+    if p.fixed_commands
+        .as_ref()
+        .is_some_and(|cs| cs.len() != p.slots.len())
+    {
         return bad("invalid_fixed_commands");
     }
     if p.locked_through_seconds != 0.0 && p.accepted.is_none() {
@@ -330,7 +333,8 @@ fn validate(p: &Problem) -> Result<(), String> {
                 .iter()
                 .take_while(|s| s.start_seconds < p.locked_through_seconds)
                 .count()
-            || p.locked_through_seconds <= 0.0 || p.locked_through_seconds > 3600.0
+            || p.locked_through_seconds <= 0.0
+            || p.locked_through_seconds > 3600.0
             || p.slots.last().unwrap().start_seconds + p.slots.last().unwrap().hours * 3600.0
                 < p.locked_through_seconds
         {
