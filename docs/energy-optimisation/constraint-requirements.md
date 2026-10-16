@@ -81,3 +81,10 @@ intervals; an expired or incomplete old horizon cannot prevent recovery. Current
 inventory and control types govern regenerated device commands. Explicit reviewed
 bookings use native command constraints throughout their absolute-time interval.
 Configured hardware bounds and user permissions still apply.
+
+User requirement, 16 October 2026: a comparison baseline must never block a
+valid executable plan. Keep all native equipment and permission checks on the
+selected commands. If baseline projection fails, publish that comparison as
+infeasible with its reason, no forecast slots and no cost summary. Report the
+unavailable comparison without fabricating savings or withholding the selected
+schedule and its battery execution contract.

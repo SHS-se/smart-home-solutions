@@ -300,3 +300,16 @@ Deno.test("capture audit reconciles PV curtailment, export revenue and priced ex
   plan.slots[0].export_revenue_sek = 0.0315;
   assert(checks(input).includes("export_revenue_sek"));
 });
+
+Deno.test("capture audit retains the executable accounting when its comparison is unavailable", () => {
+  const input = capture();
+  const result = auditQuarterReplay({...input, expected: {planner_output: {
+    ...input.expected.planner_output, plans: {...input.expected.planner_output.plans,
+      baseline: {key: "baseline", status: "infeasible", validation_errors: ["shared_grid_limit"], slots: [], summary: null}},
+  }}});
+  assertEquals(result.status, "passed");
+  assert(result.status !== "invalid_capture");
+  assertEquals(result.scenarios.map(s => [s.name, s.status, s.intervals]), [
+    ["cost", "passed", 2], ["baseline", "unavailable", 0],
+  ]);
+});

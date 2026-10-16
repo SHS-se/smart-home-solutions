@@ -20,7 +20,7 @@ import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/planning-contracts.ts";
-import type { DutyCycleServiceInput, GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/planning-contracts.ts";
+import type { BaselinePlan, DutyCycleServiceInput, GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/planning-contracts.ts";
 import { isolateMeasurements } from "./planner/measurement-isolation.ts";
 import { parseDeviceModels } from "./planner/device-models.ts";
 import { poolHeaters } from "./planner/pool-devices.ts";
@@ -30,7 +30,7 @@ import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v9:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v10:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -474,8 +474,17 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,
   }), selected.quarters);
   const baselineProjection = core.project(p, baselineCommands).outcome;
-  if (baselineProjection.kind === "failed") return fail(`Baseline projection: ${baselineProjection.issue}`);
-  const baseline = scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery");
+  const baseline: BaselinePlan = baselineProjection.kind === "projected"
+    ? scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery").generated
+    : { key: "baseline", label: "Selected loads with self-consumption battery", status: "infeasible",
+      validation_errors: [baselineProjection.issue], slots: [], summary: null,
+      service_slots: {}, service_currents_a: {}, service_inhibited_slots: {}, dispatched_devices: [], store_diagnostics: [] };
+  if (baselineProjection.kind === "failed") {
+    input.snapshot.planning_warnings = mergePlanningWarnings(input.snapshot.planning_warnings, [planningWarning(
+      "baseline_unavailable", "comparison", `The comparison baseline could not be projected: ${baselineProjection.issue}.`,
+      "The selected control plan remains available. Baseline forecasts and cost comparisons are unavailable.",
+      { reason: baselineProjection.issue })]);
+  }
   const cost = { ...priority.generated, key: "cost" as const, label: "Rule-based plan (same selected schedule)" };
   const snapshot = input.snapshot;
   const bindingUntil = priority.generated.slots.filter(s => s.binding).at(-1);
@@ -514,7 +523,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       ...(p.heater ? { heater_response: p.heater.response } : {}) } : null,
     grid: snapshot.grid, peak_shaping: { threshold_w: 0, sek_per_kwh_per_kw: 0, grid_ramp_sek_per_kw: 0, load_start_preference_sek: 0 },
     device_models: snapshot.device_models, services: snapshot.services, service_requirement_sample_days: snapshot.service_requirement_sample_days,
-    plans: { baseline: baseline.generated, priority: priority.generated, cost },
+    plans: { baseline, priority: priority.generated, cost },
   };
   if (snapshot.schema_version === 9) {
     // One selected schedule owns both charts, the device requests and the

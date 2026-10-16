@@ -180,9 +180,11 @@ export function usePlanModel(
     .map(row => row.i);
   const evConnectedStart = connectedIndices.at(0);
   const evConnectedEnd = connectedIndices.at(-1);
-  const costDelta = comparison.terminalAdjustedCostSekDelta;
-  const costTone: 'good' | 'bad' | undefined = costDelta < -0.005 ? 'good' : costDelta > 0.005 ? 'bad' : undefined;
-  const costMeaning = costDelta < -0.005
+  const costDelta = comparison?.terminalAdjustedCostSekDelta ?? null;
+  const costTone: 'good' | 'bad' | undefined = costDelta === null ? undefined : costDelta < -0.005 ? 'good' : costDelta > 0.005 ? 'bad' : undefined;
+  const costMeaning = costDelta === null
+    ? t('jämförelse otillgänglig', 'comparison unavailable')
+    : costDelta < -0.005
     ? t('uppskattad besparing', 'estimated saving')
     : costDelta > 0.005
       ? t('uppskattad merkostnad', 'estimated added cost')

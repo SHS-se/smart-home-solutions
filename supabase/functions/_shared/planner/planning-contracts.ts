@@ -609,6 +609,12 @@ export interface GeneratedPlan {
   store_diagnostics: StoreDiagnostic[];
 }
 
+/** A comparison that could not be projected has no forecast or cost to report. */
+export type BaselinePlan = GeneratedPlan | (Omit<GeneratedPlan, "summary"> & {
+  status: "infeasible";
+  summary: null;
+});
+
 export interface OptimisationPlan {
   thermal_projection?: ThermalPlanningProjection;
   planning_warnings?: PlanningWarning[];
@@ -708,7 +714,7 @@ export interface OptimisationPlan {
   device_models: EmpiricalDeviceModelInput[];
   services: ServiceInput[];
   service_requirement_sample_days: Record<string, number>;
-  plans: Record<PlanKey, GeneratedPlan>;
+  plans: Record<Exclude<PlanKey, "baseline">, GeneratedPlan> & { baseline: BaselinePlan };
 }
 
 export type OptimisationPlanV5 = Omit<OptimisationPlan, "schema_version"> & {

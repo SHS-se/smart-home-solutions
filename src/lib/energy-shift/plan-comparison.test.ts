@@ -70,3 +70,12 @@ Deno.test('signed values make cost direction explicit without negative zero', ()
   assertEquals(formatSigned(2.345, 2), '+2.35', 'positive value');
   assertEquals(formatSigned(-0.0001, 2), '0.00', 'rounded negative zero');
 });
+
+Deno.test('an unavailable baseline produces no invented savings or energy deltas', () => {
+  const selected = generatedPlan(summary({net_cost_sek: 20}));
+  const unavailable = {...selected, key: 'baseline' as const, status: 'infeasible' as const,
+    validation_errors: ['shared_grid_limit'], slots: [], summary: null};
+  assertEquals(comparePlans(selected, unavailable), null, 'no comparison without a projected baseline');
+  assertEquals(comparePlans(selected, {...unavailable, summary: summary({})}), null,
+    'an infeasible scenario cannot be compared even if a stored summary exists');
+});

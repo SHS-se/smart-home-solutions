@@ -964,6 +964,25 @@ test.describe('requesting a replan', () => {
     await expect(banner).toHaveCount(0);
   });
 
+  test('an unavailable comparison leaves the executable plan visible and replanning enabled', async ({page}) => {
+    replan.publishedPlan = {...PLAN, plans: {...PLAN.plans,
+      baseline: {...PLAN.plans.baseline, status: 'infeasible', validation_errors: ['shared_grid_limit'], slots: [], summary: null}},
+      planning_warnings: [{code: 'baseline_unavailable', scope: 'comparison', severity: 'warning',
+        message: 'The comparison baseline could not be projected: shared_grid_limit.',
+        consequence: 'The selected control plan remains available. Baseline forecasts and cost comparisons are unavailable.'}]};
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByTestId('planning-warnings')).toContainText('The selected control plan remains available.');
+    await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
+    await expect(page.getByRole('button', {name: replanButton})).toBeEnabled();
+    expect(pageErrors).toEqual([]);
+    replan.publishedPlan = PLAN;
+    await page.reload();
+    await expect(page.getByTestId('planning-warnings')).toHaveCount(0);
+    await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
+  });
+
   test('the planner installation address can be edited in its existing home',async({context,page})=>{
     const home={id:HOME_ID,name:'My home',address_text:'Old installation address'};
     let saved:Record<string,string>|null=null;

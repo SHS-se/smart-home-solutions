@@ -86,7 +86,13 @@ const capsule = z.object({
       issued_at: timestamp,
       battery,
       grid,
-      plans: z.record(z.object({ slots: z.array(slot).min(1), summary }))
+      plans: z.record(z.union([
+        z.object({ slots: z.array(slot).min(1), summary }),
+        z.object({ key: z.literal("baseline"), status: z.literal("infeasible"),
+          validation_errors: z.array(z.string()).min(1), slots: z.array(slot).length(0), summary: z.null() }),
+      ]))
+        .refine(plans => Object.entries(plans).every(([name, scenario]) => scenario.summary !== null || name === "baseline"),
+          "Only the comparison baseline may be unavailable")
         .refine(
           (plans) => Object.keys(plans).length > 0,
           "At least one scenario is required",
@@ -155,6 +161,10 @@ export function auditQuarterReplay(input: unknown) {
   const hasEv = devices.some((d) => d.category === "ev_charging");
 
   const scenarios = Object.entries(plan.plans).map(([name, scenario]) => {
+    if (scenario.summary === null) return {
+      name, status: "unavailable" as const, intervals: 0,
+      reasons: scenario.validation_errors, issues: [] as AuditIssue[],
+    };
     const failures: AuditIssue[] = [];
     const add = (check: string, detail: string, interval?: number) =>
       failures.push({

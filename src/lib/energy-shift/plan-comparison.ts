@@ -1,4 +1,5 @@
 import type { GeneratedPlan } from './contracts';
+import type { BaselinePlan } from '../../../supabase/functions/_shared/planner/planning-contracts';
 
 export interface PlanComparison {
   loadKwhDelta: number;
@@ -14,8 +15,9 @@ export interface PlanComparison {
  */
 export function comparePlans(
   withPlan: GeneratedPlan,
-  withoutPlan: GeneratedPlan,
-): PlanComparison {
+  withoutPlan: BaselinePlan,
+): PlanComparison | null {
+  if (withPlan.status !== 'ready' || withoutPlan.status !== 'ready' || withoutPlan.summary === null) return null;
   return {
     loadKwhDelta: withPlan.summary.load_kwh - withoutPlan.summary.load_kwh,
     gridImportKwhDelta:

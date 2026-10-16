@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 import { mixedModeSnapshot, rulesFixtureInput, batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { generateRulesPlan } from "./rules-planner.ts";
 import { runRulesPlanner } from "./run-rules-planner.ts";
 import { prepareRoomServices } from "./rules-room-services.ts";
 import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
@@ -102,4 +103,56 @@ Deno.test("missing economic wear metadata cannot abort household or battery plan
   assertEquals(plan.status, "ready");
   assertEquals(plan.capabilities.battery, true);
   assert(plan.planning_warnings!.some(w => w.code === "battery_wear_estimated"));
+});
+
+/** The selected trajectory preserves storage for the booked heater quarter;
+ * self-consumption would spend it earlier and exceed the same grid limit. */
+function baselineLimitedHouse(soc: number) {
+  const source = mixedModeSnapshot();
+  source.captured_at = source.slots[0].start;
+  source.slots = source.slots.map(slot => ({...slot, pv_forecast_w: 0,
+    base_load_forecast_w: 700, import_price_sek_per_kwh: 1}));
+  source.battery = {...source.battery!, capacity_kwh: 2, soc};
+  source.grid.import_limit_w = 1000;
+  const prepared = rulesFixtureInput(source);
+  prepared.problem.fixed_commands = source.slots.map((_slot, i) => i === 6
+    ? {pool_on: true, ev_amps: 0, battery: "supply_house", charge_limit_w: 8800, discharge_limit_w: 9600}
+    : null);
+  return prepared;
+}
+
+Deno.test("a failed comparison baseline cannot block a physically valid executable plan", () => {
+  const prepared = baselineLimitedHouse(.8);
+  const before = structuredClone(prepared.problem);
+  const plan = generateRulesPlan(prepared).plan;
+  assertEquals(plan.status, "ready");
+  assertEquals(plan.validation_errors, []);
+  assertEquals(plan.plans.priority.status, "ready");
+  assertEquals(plan.plans.priority.slots.length, prepared.snapshot.slots.length);
+  assertEquals(plan.plans.baseline.status, "infeasible");
+  assertEquals(plan.plans.baseline.validation_errors, ["shared_grid_limit"]);
+  assertEquals(plan.plans.baseline.slots, []);
+  assertEquals(plan.plans.baseline.summary, null);
+  assert(plan.planning_warnings!.some(w => w.code === "baseline_unavailable" && w.scope === "comparison"));
+  assertEquals(prepared.problem, before, "comparison failure must not relax any equipment limit");
+  assertEquals(plan.grid.import_limit_w, 1000);
+  assert(plan.plans.priority.slots[6].pool_w > 0, "the booked command still executes");
+  for (const slot of plan.plans.priority.slots) {
+    assert(slot.grid_import_w <= 1000 + 1e-7);
+    assert(slot.grid_export_w <= plan.grid.export_limit_w + 1e-7);
+    assert(slot.battery_charge_w <= plan.battery!.charge_max_w + 1e-7);
+    assert(slot.battery_discharge_w <= plan.battery!.discharge_max_w + 1e-7);
+    assert(slot.battery_soc >= plan.battery!.min_soc - 1e-7);
+    assert(slot.battery_soc <= plan.battery!.max_soc + 1e-7);
+    assert(Math.abs(slot.pv_w + slot.grid_import_w + slot.battery_discharge_w
+      - slot.load_w - slot.battery_charge_w - slot.grid_export_w - slot.curtailed_w) < 1e-7);
+  }
+  assert(plan.battery_execution, "comparison failure must not suppress the battery contract");
+  assertEquals(plan.battery_execution.intervals.length, plan.plans.priority.slots.length);
+  assertEquals(plan.execution_plan!.plans, plan.plans);
+  assertEquals(plan.plans.cost.slots, plan.plans.priority.slots);
+});
+
+Deno.test("an executable command exceeding the real equipment limit still fails", () => {
+  assertThrows(() => generateRulesPlan(baselineLimitedHouse(.5)), Error, "exceed the configured grid limit");
 });
