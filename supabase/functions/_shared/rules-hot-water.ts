@@ -37,18 +37,21 @@ export function hotWaterSurplusPermissions(input: PreparedRulesInput, baseline: 
 /** Match the runtime's measured eligibility partition; these are equipment
  * ceilings, not a substitute for HA measuring the selected load components. */
 export function waterBatteryCommands(input: PreparedRulesInput, commands: NativeCommand[], quarters: NativeQuarter[]): NativeCommand[] {
+  return commands.map((command, i) => waterBatteryCommand(input, command, quarters[i], i));
+}
+
+export function waterBatteryCommand(input: PreparedRulesInput, command: NativeCommand,
+  quarter: Pick<NativeQuarter, "pool_w" | "ev_w">, i: number): NativeCommand {
   const p = input.problem;
-  return commands.map((command, i) => {
-    if (input.fixed_slots[i] || i < input.locked_slots.length || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
-    const gross = p.slots[i].base_w + quarters[i].pool_w + quarters[i].ev_w;
-    const excluded = (p.ev_battery_supply_allowed ? 0 : quarters[i].ev_w + p.slots[i].base_ev_w) + (input.boiler_battery_allowed[i] ? 0 : input.boiler_w[i]);
-    const bound = proportionalSupply(gross, p.slots[i].solar_w, Math.max(0, gross - excluded)).houseSupplyBoundW;
-    const reserved = input.boiler_permitted[i] ? Math.max(0, input.boiler_rated_w[i] - input.boiler_w[i]) : 0;
-    return { ...command,
-      ...(input.boiler_battery_allowed[i] ? {} : { discharge_limit_w: Math.min(command.discharge_limit_w, bound) }),
-      ...(command.battery === "grid_charge" ? { charge_limit_w: Math.min(command.charge_limit_w, Math.max(0, p.limits.import_w - gross - reserved + p.slots[i].solar_w)) } : {}),
-    };
-  });
+  if (input.fixed_slots[i] || i < input.locked_slots.length || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
+  const gross = p.slots[i].base_w + quarter.pool_w + quarter.ev_w;
+  const excluded = (p.ev_battery_supply_allowed ? 0 : quarter.ev_w + p.slots[i].base_ev_w) + (input.boiler_battery_allowed[i] ? 0 : input.boiler_w[i]);
+  const bound = proportionalSupply(gross, p.slots[i].solar_w, Math.max(0, gross - excluded)).houseSupplyBoundW;
+  const reserved = input.boiler_permitted[i] ? Math.max(0, input.boiler_rated_w[i] - input.boiler_w[i]) : 0;
+  return { ...command,
+    ...(input.boiler_battery_allowed[i] ? {} : { discharge_limit_w: Math.min(command.discharge_limit_w, bound) }),
+    ...(command.battery === "grid_charge" ? { charge_limit_w: Math.min(command.charge_limit_w, Math.max(0, p.limits.import_w - gross - reserved + p.slots[i].solar_w)) } : {}),
+  };
 }
 
 /** One household solve followed by one water projection. Pool/EV choices stay

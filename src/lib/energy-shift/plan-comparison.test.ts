@@ -60,6 +60,7 @@ Deno.test('plan comparison uses with-plan minus without-plan consistently', () =
     loadKwhDelta: 0,
     gridImportKwhDelta: -2.5,
     gridExportKwhDelta: 2,
+    evChargeKwhDelta: 0,
     netCostSekDelta: -1.5,
     terminalAdjustedCostSekDelta: -2,
   }, 'comparison deltas');
@@ -78,4 +79,15 @@ Deno.test('an unavailable baseline produces no invented savings or energy deltas
   assertEquals(comparePlans(selected, unavailable), null, 'no comparison without a projected baseline');
   assertEquals(comparePlans(selected, {...unavailable, summary: summary({})}), null,
     'an infeasible scenario cannot be compared even if a stored summary exists');
+});
+
+Deno.test('load-balanced charging is reported honestly without pricing undelivered EV energy', () => {
+  const withPlan = {...generatedPlan(summary({net_cost_sek: 10, terminal_adjusted_cost_sek: 10})),
+    slots: [{ev_w: 11040, duration_hours: .25}] as GeneratedPlan['slots']};
+  const withoutPlan = {...generatedPlan(summary({net_cost_sek: 9, terminal_adjusted_cost_sek: 9})),
+    slots: [{ev_w: 10350, duration_hours: .25}] as GeneratedPlan['slots']};
+  const result = comparePlans(withPlan, withoutPlan)!;
+  assertEquals(result.evChargeKwhDelta, .17249999999999988, 'actual difference in delivered energy');
+  assertEquals(result.netCostSekDelta, null, 'different charging is not an equal-service cash comparison');
+  assertEquals(result.terminalAdjustedCostSekDelta, null, 'no invented replacement energy price');
 });

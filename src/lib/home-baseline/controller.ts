@@ -3,6 +3,7 @@ import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_s
 import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from './ledger.ts';
 import { withdrawTrip } from './trip-ledger.ts';
 import { chargerLevels } from '../../../supabase/functions/_shared/planner/device-models.ts';
+import { projectLoadBalancedEv } from '../../../supabase/functions/_shared/planner-wasm/load-balanced-ev.ts';
 export type { ElectricityLedger } from './ledger.ts';
 
 export interface DefaultSettings { poolStartC: number; poolStopC: number; idlePumpW: number; batterySuppliesEv: boolean }
@@ -44,12 +45,10 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
     // Reactive charger load balancing: highest supported current that fits the
     // home's supply. Prices and forecasts never select this default command.
     const levels = charging && problem.slots[i].ev_available ? chargingLevels : [0];
-    let out = engine.project(quarter, [{ ...command, ev_amps: levels[0] }]).outcome;
     command.ev_amps = levels[0];
-    for (let level = 1; out.kind === 'failed' && out.issue === 'shared_grid_limit' && level < levels.length; level++) {
-      command.ev_amps = levels[level];
-      out = engine.project(quarter, [command]).outcome;
-    }
+    const balanced = projectLoadBalancedEv(engine, quarter, command);
+    Object.assign(command, balanced.command);
+    let out = balanced.outcome;
     // With the car paused and still no room, what is left is the house and its pool
     // thermostat, and a thermostat does not know the main fuse: it runs, as it would
     // in the real house. The quarter is recorded above the limit rather than

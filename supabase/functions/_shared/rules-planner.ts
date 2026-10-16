@@ -1,5 +1,6 @@
 import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
-import { addHotWater, waterBatteryCommands } from "./rules-hot-water.ts";
+import { addHotWater } from "./rules-hot-water.ts";
+import { projectRulesBaseline } from "./rules-baseline.ts";
 import { POOL_START_COST_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
 import { preparePoolService, type PoolService } from "./rules-pool-service.ts";
@@ -30,7 +31,7 @@ import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v10:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v11:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -469,14 +470,10 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       return points ? [[rule.key, points]] : [];
     }));
   });
-  const baselineCommands = waterBatteryCommands(input, selected.commands.map((c, i) => input.problem.fixed_commands?.[i] ?? input.problem.accepted?.[i] ?? {
-    ...c, battery: p.battery ? "self_consumption" as const : "idle" as const,
-    charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,
-  }), selected.quarters);
-  const baselineProjection = core.project(p, baselineCommands).outcome;
+  const { commands: baselineCommands, outcome: baselineProjection } = projectRulesBaseline(core, input, selected.commands, selected.quarters);
   const baseline: BaselinePlan = baselineProjection.kind === "projected"
-    ? scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery").generated
-    : { key: "baseline", label: "Selected loads with self-consumption battery", status: "infeasible",
+    ? scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery and EV load balancing").generated
+    : { key: "baseline", label: "Selected loads with self-consumption battery and EV load balancing", status: "infeasible",
       validation_errors: [baselineProjection.issue], slots: [], summary: null,
       service_slots: {}, service_currents_a: {}, service_inhibited_slots: {}, dispatched_devices: [], store_diagnostics: [] };
   if (baselineProjection.kind === "failed") {
@@ -484,6 +481,16 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       "baseline_unavailable", "comparison", `The comparison baseline could not be projected: ${baselineProjection.issue}.`,
       "The selected control plan remains available. Baseline forecasts and cost comparisons are unavailable.",
       { reason: baselineProjection.issue })]);
+  } else {
+    const reduced = baselineCommands.filter((command, i) => command.ev_amps < selected.commands[i].ev_amps).length;
+    if (reduced) {
+      const evEnergy = (quarters: NativeQuarter[]) => sum(quarters.map((q, i) => q.ev_w *
+        (p.slots[i].hours + Math.min(0, p.slots[i].start_seconds) / 3600) / 1000));
+      input.snapshot.planning_warnings = mergePlanningWarnings(input.snapshot.planning_warnings, [planningWarning(
+        "baseline_ev_load_balanced", "comparison", "The comparison reduced EV charging to stay within the grid limit.",
+        "Its forecast and costs use the load-balanced charging actually projected. Cost comparisons are withheld if delivered EV energy differs.",
+        { quarters: reduced, selected_ev_kwh: evEnergy(selected.quarters), baseline_ev_kwh: evEnergy(baselineProjection.quarters) })]);
+    }
   }
   const cost = { ...priority.generated, key: "cost" as const, label: "Rule-based plan (same selected schedule)" };
   const snapshot = input.snapshot;

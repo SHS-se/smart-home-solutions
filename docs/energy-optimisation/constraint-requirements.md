@@ -88,3 +88,11 @@ selected commands. If baseline projection fails, publish that comparison as
 infeasible with its reason, no forecast slots and no cost summary. Report the
 unavailable comparison without fabricating savings or withholding the selected
 schedule and its battery execution contract.
+
+The comparison carries its own battery and EV states. It must load-balance EV
+requests through supported charger settings under the same grid limit, rather
+than relying on storage that only the selected strategy charged. Booked and
+retained commands remain exact. Native projection certifies every resulting
+flow; no grid limit is raised and no result is clipped or fabricated. A baseline
+that still cannot run is unavailable. Disclose reduced charging and withhold
+cost deltas when delivered EV energy differs instead of pricing missing energy.

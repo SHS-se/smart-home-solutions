@@ -5,8 +5,9 @@ export interface PlanComparison {
   loadKwhDelta: number;
   gridImportKwhDelta: number;
   gridExportKwhDelta: number;
-  netCostSekDelta: number;
-  terminalAdjustedCostSekDelta: number;
+  evChargeKwhDelta: number | null;
+  netCostSekDelta: number | null;
+  terminalAdjustedCostSekDelta: number | null;
 }
 
 /**
@@ -18,17 +19,23 @@ export function comparePlans(
   withoutPlan: BaselinePlan,
 ): PlanComparison | null {
   if (withPlan.status !== 'ready' || withoutPlan.status !== 'ready' || withoutPlan.summary === null) return null;
+  const evEnergy = (plan: Pick<GeneratedPlan, 'slots'>) => plan.slots.reduce((sum, slot) => sum + slot.ev_w * slot.duration_hours! / 1000, 0);
+  const evDelta = evEnergy(withPlan) - evEnergy(withoutPlan);
+  // Different delivered charging is a real forecast difference, not a saving.
+  // Keep energy deltas, but do not impute the missing energy's price or delivery.
+  const equalEvEnergy = Number.isFinite(evDelta) && Math.abs(evDelta) <= 1e-7;
   return {
     loadKwhDelta: withPlan.summary.load_kwh - withoutPlan.summary.load_kwh,
     gridImportKwhDelta:
       withPlan.summary.grid_import_kwh - withoutPlan.summary.grid_import_kwh,
     gridExportKwhDelta:
       withPlan.summary.grid_export_kwh - withoutPlan.summary.grid_export_kwh,
-    netCostSekDelta:
-      withPlan.summary.net_cost_sek - withoutPlan.summary.net_cost_sek,
-    terminalAdjustedCostSekDelta:
+    evChargeKwhDelta: Number.isFinite(evDelta) ? evDelta : null,
+    netCostSekDelta: equalEvEnergy ?
+      withPlan.summary.net_cost_sek - withoutPlan.summary.net_cost_sek : null,
+    terminalAdjustedCostSekDelta: equalEvEnergy ?
       withPlan.summary.terminal_adjusted_cost_sek -
-      withoutPlan.summary.terminal_adjusted_cost_sek,
+      withoutPlan.summary.terminal_adjusted_cost_sek : null,
   };
 }
 
