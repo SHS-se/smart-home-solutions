@@ -1,4 +1,4 @@
-import { POOL_START_COST_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
+import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Entirely invented diagnostic household. No HA readings, case export or customer IDs.
 import type { ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
@@ -13,7 +13,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 8,
+    abi: 9,
     ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -72,7 +72,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       battery_export_reserve_kwh: 2,
       battery_export_min_price: 4,
       wear_per_kwh: .05,
-      pool_start_cost_sek: POOL_START_COST_SEK,
+      ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
     rules: resolveRules({}).flatMap((r) =>
       r.enabled

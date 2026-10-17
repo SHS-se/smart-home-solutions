@@ -8,6 +8,7 @@ pub(crate) struct State {
     pub ev: f64,
     pub pool: f64,
     pub heater: HeaterState,
+    pub charging: crate::charging::Activity,
 }
 pub(crate) fn initial(p: &Problem) -> State {
     State {
@@ -15,6 +16,7 @@ pub(crate) fn initial(p: &Problem) -> State {
         ev: p.initial.ev_kwh.unwrap_or(0.0),
         pool: p.initial.pool_c.unwrap_or(0.0),
         heater: p.initial.heater_state.unwrap_or(HeaterState::OffUnobserved),
+        charging: Default::default(),
     }
 }
 pub(crate) fn locked_command(p: &Problem, i: usize) -> Option<&Command> {
@@ -134,6 +136,9 @@ fn transition(
         } else {
             0.0
         };
+    let charging = crate::charging::Activity::observed(command, ev_w, charge);
+    let continuity = charging.cost_from(state.charging, &p.limits);
+    state.charging = charging;
     if let Some(h) = &pool {
         state.pool = h.water_c;
         state.heater = h.next;
@@ -168,6 +173,7 @@ fn transition(
         pool_start: pool.and_then(|h| h.start),
         cost,
         wear,
+        continuity,
     })
 }
 /// Reconciled AC household consumption and its EV member. Source permissions
@@ -320,6 +326,11 @@ fn projection_prefix(
             ev: q.ev_kwh.unwrap_or(0.0),
             pool: q.pool_c.unwrap_or(0.0),
             heater: q.heater_state.unwrap_or(HeaterState::OffUnobserved),
+            charging: crate::charging::Activity::observed(
+                &commands[prefix.len() - 1],
+                q.ev_w,
+                q.charge_w,
+            ),
         },
     );
     let mut quarters = Vec::with_capacity(commands.len());

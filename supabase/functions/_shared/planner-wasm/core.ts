@@ -48,6 +48,7 @@ const quarter = z.object({
   }).nullable(),
   cost: z.number().finite(),
   wear: z.number().finite(),
+  continuity: z.number().finite(),
 });
 export const solveOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
@@ -61,6 +62,7 @@ export const solveOutcome = z.discriminatedUnion("kind", [
         points: z.number().int(),
         cash_sek: z.number().finite(),
         wear_sek: z.number().finite(),
+        continuity_sek: z.number().finite(),
         credit_sek: z.number().finite(),
         contributions: z.number().int().array().array(),
       }),

@@ -154,5 +154,9 @@ Deno.test("a failed comparison baseline cannot block a physically valid executab
 });
 
 Deno.test("an executable command exceeding the real equipment limit still fails", () => {
-  assertThrows(() => generateRulesPlan(baselineLimitedHouse(.5)), Error, "exceed the configured grid limit");
+  const prepared = baselineLimitedHouse(.5);
+  // Stored energy can be preserved for the booking. A discharge ceiling below
+  // its 1.8 kW deficit is physically impossible regardless of that trajectory.
+  prepared.problem.fixed_commands![6]!.discharge_limit_w = 1000;
+  assertThrows(() => generateRulesPlan(prepared), Error, "exceed the configured grid limit");
 });

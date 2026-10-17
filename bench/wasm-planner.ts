@@ -1,5 +1,5 @@
 import { boilerDemand } from "../src/lib/planner-bench/household.ts";
-import { POOL_START_COST_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
+import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 8,
+    abi: 9,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -184,7 +184,7 @@ export function readyProblem(
         h.battery.capacity_kwh,
       battery_export_min_price: h.site.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: h.site.battery_degradation_sek_per_kwh,
-      pool_start_cost_sek: POOL_START_COST_SEK,
+      ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
     // The planner optimises the score: only the rules that take points go to it.
     rules: resolveRules(criteria).flatMap((r) => {
@@ -219,7 +219,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 8 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 9 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -233,7 +233,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v8:${identity}`,
+    version: `wasm-v9:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -281,7 +281,7 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v8",
+          generation: "ready-wasm-v9",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>

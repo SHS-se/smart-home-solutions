@@ -48,6 +48,33 @@ pub(crate) struct Edit {
     end: usize,
 }
 impl Edit {
+    fn continuity_gain(self, p: &Problem, commands: &[Command]) -> f64 {
+        if self.device != Device::Ev {
+            return 0.0;
+        }
+        let active = |i: usize, edited: bool| {
+            if edited && self.start <= i && i < self.end {
+                true
+            } else if edited && self.from <= i && i < self.to {
+                false
+            } else {
+                commands[i].ev_amps > 0
+            }
+        };
+        // Only these four boundaries change the count, including neighbours
+        // at different amperages that remain part of one uninterrupted run.
+        let starts = |edited| {
+            [self.from, self.to, self.start, self.end]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter(|&i| {
+                    i < commands.len() && active(i, edited) && (i == 0 || !active(i - 1, edited))
+                })
+                .count() as f64
+        };
+        (starts(false) - starts(true)) * p.limits.ev_start_preference_sek
+    }
     pub fn destination(self) -> Destination {
         Destination {
             device: self.device,
@@ -225,7 +252,7 @@ pub(crate) fn proposals(
                     start,
                     end,
                 };
-                let gain = estimate.gain(&edit);
+                let gain = estimate.gain(&edit) + edit.continuity_gain(p, commands);
                 if gain > 0.0 {
                     ranked.push((0, gain, edit));
                 }
@@ -335,7 +362,7 @@ pub(crate) fn proposals(
         let mut edits: Vec<(f64, Edit)> = edits
             .into_iter()
             .filter(|e| e.start != from || e.end != to)
-            .map(|e| (estimate.gain(&e), e))
+            .map(|e| (estimate.gain(&e) + e.continuity_gain(p, commands), e))
             .collect();
         edits.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         // Distinct durations and days come before near-duplicate starts: after

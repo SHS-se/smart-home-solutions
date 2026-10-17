@@ -46,7 +46,7 @@ Deno.test("forecast opportunities defer safe expensive opening loads and beat th
   // One number ranks the plan, a point a krona: what the rules took, less the net bill.
   assertAlmostEquals(
     s.account.score_sek,
-    s.account.points - (s.account.cash_sek + s.account.wear_sek - s.account.credit_sek),
+    s.account.points - (s.account.cash_sek + s.account.wear_sek + s.account.continuity_sek - s.account.credit_sek),
     1e-9,
   );
   // Starting the heat pump in the dear opening instead scores worse.
@@ -116,7 +116,7 @@ Deno.test("joint loads compete for one solar surplus and grid connection", () =>
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v8:"));
+  assert(planner.version.startsWith("wasm-v9:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -478,7 +478,7 @@ Deno.test("every selected result reports bounded witnesses and exact work accoun
   );
   assertAlmostEquals(
     s.account.score_sek,
-    s.account.points - (s.account.cash_sek + s.account.wear_sek - s.account.credit_sek),
+    s.account.points - (s.account.cash_sek + s.account.wear_sek + s.account.continuity_sek - s.account.credit_sek),
     1e-9,
   );
 });

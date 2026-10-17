@@ -79,6 +79,7 @@ export function addHotWater(core: ReturnType<typeof createWasmPlanner>, input: P
   const quarters = projected.quarters;
   const cash = quarters.reduce((sum, q) => sum + q.cost, 0), wear = quarters.reduce((sum, q) => sum + q.wear, 0);
   const credit = endCredit(problem.end_credit, problem.initial, quarters.at(-1)!).credit_sek;
+  const continuity = quarters.reduce((sum, q) => sum + q.continuity, 0);
   return { input: updated, selection: { ...native, commands, quarters,
-      account: { ...native.account, cash_sek: cash, wear_sek: wear, credit_sek: credit, score_sek: native.account.points - (cash + wear - credit) } } };
+      account: { ...native.account, cash_sek: cash, wear_sek: wear, credit_sek: credit, continuity_sek: continuity, score_sek: native.account.points - (cash + wear + continuity - credit) } } };
 }

@@ -1,7 +1,7 @@
 {
-  "abi": 8,
-  "wasm_sha256": "3bf01baeee27f5e8c862d6374bee736aeaaacca8943cc8cdb97d79c2bb32bdd3",
-  "source_sha256": "60d382b77f0ada2ab786ec60bb813e8b83800757ea3f6928b4d1cfe925e687b5",
+  "abi": 9,
+  "wasm_sha256": "6c1f29c91c60529e5c301929d39093807f9fb72106f145f7ae36ae8df6849477",
+  "source_sha256": "76d16bbcb5ad2dfda6c59950f5d82131a87266d60bc276f1d82f87c1b17782d2",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -20,6 +20,7 @@
     "planner-core/solver/Cargo.toml",
     "planner-core/solver/src/battery_schedule.rs",
     "planner-core/solver/src/builder.rs",
+    "planner-core/solver/src/charging.rs",
     "planner-core/solver/src/lib.rs",
     "planner-core/solver/src/main.rs",
     "planner-core/solver/src/move_resize.rs",

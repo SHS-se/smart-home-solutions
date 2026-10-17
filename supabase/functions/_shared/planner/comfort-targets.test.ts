@@ -83,5 +83,9 @@ Deno.test("an unreachable car preference respects the hardware charge ceiling", 
   const plan = runRulesPlanner({ snapshot: input, now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.status, "ready");
   const range = plan.plans.priority.slots.at(-1)!.ev_soc! * 76.119 / .16;
-  assert(range > 370 && range <= .8 * 76.119 / .16, `hardware ceiling was lost: ${range}`);
+  // The unattainable 450 km preference cannot earn the 400 km low-range
+  // threshold. Its reachable required rule is 350 km; the old 370 km check
+  // was an incidental trajectory, not a service or hardware requirement.
+  assert(range >= 450 - RULE_DEFAULTS.ev_short.threshold && range <= .8 * 76.119 / .16,
+    `readiness or hardware ceiling was lost: ${range}`);
 });

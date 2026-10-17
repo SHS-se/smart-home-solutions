@@ -43,7 +43,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 8;
+  abi: 9;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;
@@ -85,6 +85,8 @@ export interface ReadyProblem {
     battery_export_min_price: number;
     wear_per_kwh: number;
     pool_start_cost_sek: number;
+    ev_start_preference_sek: number;
+    battery_start_preference_sek: number;
   };
   /** What the energy left in the stores is worth to the plan's score (end-credit.ts). */
   end_credit: EndCreditTerms;

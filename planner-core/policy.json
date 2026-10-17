@@ -1,10 +1,10 @@
 {
-  "version": "kronor-score-v11",
+  "version": "kronor-score-v12",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"
   ],
-  "score": "rule_points_minus_cash_minus_discharge_and_pool_start_wear_plus_capped_end_store_credit",
+  "score": "rule_points_minus_cash_minus_wear_minus_charging_start_preference_plus_capped_end_store_credit",
   "direct_rules": [
     "pool_low",
     "pool_cold",

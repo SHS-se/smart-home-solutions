@@ -10,6 +10,7 @@ struct Label {
     points: i32,
     cash: f64,
     wear: f64,
+    continuity: f64,
     rank: (f64, f64),
 }
 #[derive(Clone)]
@@ -215,7 +216,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
 fn rank(opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
     // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
-    let cost = l.cash + l.wear + future.cost;
+    let cost = l.cash + l.wear + l.continuity + future.cost;
     (f64::from(l.points) + future.points - cost, cost)
 }
 
@@ -226,6 +227,7 @@ fn initial_label(p: &Problem) -> Label {
         points: 0,
         cash: 0.0,
         wear: 0.0,
+        continuity: 0.0,
         rank: (0.0, 0.0),
     }
 }
@@ -241,6 +243,7 @@ fn construct(
     for i in 0..p.slots.len() {
         let arena_base = arena.len();
         let mut expanded = Vec::new();
+        let mut committed_issue = None;
         for l in &labels {
             if !work.spend(work.unit_cost * 56) {
                 return Err("work_grant_cannot_complete_construction".into());
@@ -254,7 +257,8 @@ fn construct(
                 let q = match physics::step(p, i, &c, &mut next.state) {
                     Ok(q) => q,
                     Err(issue) if physics::locked(p, i) => {
-                        return Err(format!("committed_command_infeasible:{i}:{issue}"));
+                        committed_issue = Some(format!("committed_command_infeasible:{i}:{issue}"));
+                        continue;
                     }
                     Err(_) => continue,
                 };
@@ -267,13 +271,15 @@ fn construct(
                         || (c.battery == Operation::Export
                             && (q.discharge_w - c.discharge_limit_w).abs() > 0.01))
                 {
-                    return Err(format!(
+                    committed_issue = Some(format!(
                         "committed_command_infeasible:{i}:native_battery_power_limit"
                     ));
+                    continue;
                 }
                 next.points += policy::guidance_quarter(p, index, i, &q, l.state.pool);
                 next.cash += q.cost;
                 next.wear += q.wear;
+                next.continuity += q.continuity;
                 next.rank = rank(opportunity, i, &next);
                 let parent = arena.len();
                 arena.push(Node {
@@ -285,7 +291,7 @@ fn construct(
             }
         }
         if expanded.is_empty() {
-            return Err("no_complete_native_trajectory".into());
+            return Err(committed_issue.unwrap_or_else(|| "no_complete_native_trajectory".into()));
         }
         if !work.spend(expanded.len() as u64 * (work.unit_cost + expanded.len().ilog2() as u64 * 4))
         {
@@ -335,7 +341,7 @@ fn construct(
             .collect();
     }
     let finished = |l: &Label| {
-        f64::from(l.points) - (l.cash + l.wear)
+        f64::from(l.points) - (l.cash + l.wear + l.continuity)
             + policy::end_credit(p, l.state.battery, l.state.pool, l.state.ev)
     };
     labels.sort_by(|a, b| finished(b).total_cmp(&finished(a)));

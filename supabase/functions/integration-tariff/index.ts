@@ -12,8 +12,7 @@ import {
 } from "../_shared/ha-api-contract.ts";
 
 import { homeFusePeriods } from "../_shared/home-fuse-timeline.ts";
-
-const VALID_FUSES = new Set([16, 20, 25, 35, 50, 63]);
+import { gridImportLimitW, GRID_IMPORT_LIMIT_KEY, mainFuseA as parseMainFuseA } from "../_shared/home-grid-limit.ts";
 
 const answerValue = (
   answer: { answer_value: unknown; answer_text: string | null } | undefined,
@@ -56,49 +55,8 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
       return json({ error: "tariff_lookup_failed" }, 500);
     }
 
-    if (!settings) {
-      return json({
-        schema_version: 3,
-        calculation_version: 3,
-        timezone: "Europe/Stockholm",
-        configuration: null,
-        missing_inputs: ["central_tariff_settings"],
-        missing_input_details: [
-          {
-            key: "central_tariff_settings",
-            question_sv: null,
-            question_en: null,
-          },
-        ],
-        profiles: [],
-      });
-    }
-
-    const [
-      { data: profiles, error: profileError },
-      { data: versions, error: versionError },
-    ] = await Promise.all([
-      supabase.from("energy_tariff_profiles")
-        .select(
-          "id, provider_key, tariff_key, provider_name, display_name, currency",
-        )
-        .eq("id", settings.profile_id),
-      supabase.from("energy_tariff_versions")
-        .select(
-          "id, profile_id, revision, valid_from, valid_to, calculation_model, definition, source_url, published_at",
-        )
-        .eq("profile_id", settings.profile_id)
-        .order("valid_from", { ascending: true }),
-    ]);
-    if (profileError || versionError) {
-      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", {
-        profileError,
-        versionError,
-      });
-      return json({ error: "tariff_lookup_failed" }, 500);
-    }
-
     let mainFuseA: number | null = null;
+    let chosenImportKw: unknown = null;
     let productionEnabled: boolean | null = null;
     // Keyed by semantic key so an unanswered input can be reported by its real
     // question text instead of an opaque key the customer has never seen.
@@ -107,7 +65,7 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
       const { data: questions, error: questionError } = await supabase
         .from("home_questions")
         .select("id, semantic_key, question_text, question_text_en")
-        .in("semantic_key", ["main_fuse_a", "has_solar"]);
+        .in("semantic_key", ["main_fuse_a", GRID_IMPORT_LIMIT_KEY, "has_solar"]);
       if (questionError) {
         console.error(
           "[INTEGRATION-TARIFF] question lookup failed",
@@ -140,14 +98,57 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
         question.semantic_key,
         answerValue(answersByQuestion.get(question.id)),
       ]));
-      const fuse = Number(values.main_fuse_a);
-      if (VALID_FUSES.has(fuse)) mainFuseA = fuse;
+      mainFuseA = parseMainFuseA(values.main_fuse_a);
+      chosenImportKw = values[GRID_IMPORT_LIMIT_KEY];
       if (values.has_solar === true || values.has_solar === "true") {
         productionEnabled = true;
       }
       if (values.has_solar === false || values.has_solar === "false") {
         productionEnabled = false;
       }
+    }
+
+    if (!settings) {
+      return json({
+        schema_version: 3,
+        calculation_version: 3,
+        timezone: "Europe/Stockholm",
+        configuration: null,
+        missing_inputs: ["central_tariff_settings"],
+        missing_input_details: [
+          {
+            key: "central_tariff_settings",
+            question_sv: null,
+            question_en: null,
+          },
+        ],
+        profiles: [],
+        grid_import_limit_w: mainFuseA === null ? null : gridImportLimitW(mainFuseA, chosenImportKw),
+      });
+    }
+
+    const [
+      { data: profiles, error: profileError },
+      { data: versions, error: versionError },
+    ] = await Promise.all([
+      supabase.from("energy_tariff_profiles")
+        .select(
+          "id, provider_key, tariff_key, provider_name, display_name, currency",
+        )
+        .eq("id", settings.profile_id),
+      supabase.from("energy_tariff_versions")
+        .select(
+          "id, profile_id, revision, valid_from, valid_to, calculation_model, definition, source_url, published_at",
+        )
+        .eq("profile_id", settings.profile_id)
+        .order("valid_from", { ascending: true }),
+    ]);
+    if (profileError || versionError) {
+      console.error("[INTEGRATION-TARIFF] catalogue lookup failed", {
+        profileError,
+        versionError,
+      });
+      return json({ error: "tariff_lookup_failed" }, 500);
     }
 
     const { data: fuseChanges, error: fuseError } = await supabase
@@ -173,6 +174,7 @@ serve(withTrafficMetrics("integration-tariff", async (req, traffic) => {
       schema_version: 3,
       calculation_version: 3,
       timezone: "Europe/Stockholm",
+      grid_import_limit_w: mainFuseA === null ? null : gridImportLimitW(mainFuseA, chosenImportKw),
       configuration: missingInputs.length === 0
         ? {
           profile_id: settings.profile_id,

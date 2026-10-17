@@ -1,6 +1,7 @@
 //! One complete causal rule-led solve. No persistence, history or external I/O.
 mod battery_schedule;
 mod builder;
+mod charging;
 mod move_resize;
 mod opportunity;
 mod physics;
@@ -68,6 +69,8 @@ pub struct Limits {
     pub battery_export_min_price: f64,
     pub wear_per_kwh: f64,
     pub pool_start_cost_sek: f64,
+    pub ev_start_preference_sek: f64,
+    pub battery_start_preference_sek: f64,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -160,6 +163,7 @@ pub struct Quarter {
     pub pool_start: Option<HeaterStart>,
     pub cost: f64,
     pub wear: f64,
+    pub continuity: f64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
@@ -169,6 +173,8 @@ pub struct Account {
     pub points: i32,
     pub cash_sek: f64,
     pub wear_sek: f64,
+    /// Scheduling preference; never a bill item or physical equipment wear.
+    pub continuity_sek: f64,
     /// The energy left in the stores, each up to its cap.
     pub credit_sek: f64,
     /// Contributions retain individual signs, including net-zero quarters.
@@ -197,8 +203,17 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 8 || p.slots.is_empty() {
+    if p.abi != 9 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
+    }
+    if [
+        p.limits.ev_start_preference_sek,
+        p.limits.battery_start_preference_sek,
+    ]
+    .iter()
+    .any(|v| !v.is_finite() || *v < 0.0)
+    {
+        return bad("invalid_charging_preference");
     }
     // A store without a term is simply not credited; a term never changes what a device can do.
     let terms = [&p.end_credit.battery, &p.end_credit.pool, &p.end_credit.ev];

@@ -182,15 +182,16 @@ impl Context<'_> {
                 .checked_add(actions * (CARRY_COST + points + 24))?;
         }
         // One full score and complete witness audit can still be paid after us.
-        cost.checked_add(n * unit * 4 + witnesses::bound(p, unit))
+        cost.checked_mul(2)?
+            .checked_add(n * unit * 4 + witnesses::bound(p, unit))
     }
 }
 struct Values {
-    rows: Vec<Vec<f64>>,
+    rows: Vec<[Vec<f64>; 2]>,
 }
 impl Values {
-    fn at(&self, ctx: &Context, i: usize, kwh: f64) -> f64 {
-        let row = &self.rows[i];
+    fn at(&self, ctx: &Context, i: usize, kwh: f64, charging: bool) -> f64 {
+        let row = &self.rows[i][usize::from(charging)];
         let axis = &ctx.axes[i];
         let upper = axis.partition_point(|v| *v < kwh);
         if upper == 0 {
@@ -215,13 +216,17 @@ impl Values {
         i: usize,
         kwh: f64,
         service_points: i32,
+        previous_charging: bool,
     ) -> Option<(Command, f64, f64)> {
         let mut best: Option<(Command, f64, f64)> = None;
         for mut c in ctx.options(i, kwh) {
             let Some(q) = ctx.carry(i, kwh, &c) else {
                 continue;
             };
-            let value = (f64::from(service_points) - q.cost) + self.at(ctx, i + 1, q.battery_kwh);
+            let charging = c.battery == Operation::GridCharge && q.charge > 0.0;
+            let value = (f64::from(service_points) - q.cost)
+                - crate::charging::battery_start_cost(previous_charging, charging, &ctx.p.limits)
+                + self.at(ctx, i + 1, q.battery_kwh, charging);
             if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
                 if !physics::locked(ctx.p, i)
                     && matches!(c.battery, Operation::GridCharge | Operation::Export)
@@ -336,7 +341,10 @@ impl Allocation {
                     let value = f64::from(policy::guidance_quarter(p, index, i, &q, state.pool))
                         - q.cost
                         - q.wear
-                        + self.values.at(&ctx, i + 1, next.battery);
+                        - q.continuity
+                        + self
+                            .values
+                            .at(&ctx, i + 1, next.battery, next.charging.battery_grid);
                     if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
                         if !physics::locked(p, i) {
                             if c.battery == Operation::GridCharge {
@@ -390,24 +398,36 @@ pub(crate) fn allocate(
         rows: ctx
             .axes
             .iter()
-            .map(|row| vec![f64::NEG_INFINITY; row.len()])
+            .map(|row| {
+                [
+                    vec![f64::NEG_INFINITY; row.len()],
+                    vec![f64::NEG_INFINITY; row.len()],
+                ]
+            })
             .collect(),
     };
     for (g, &e) in ctx.axes[n].iter().enumerate() {
-        values.rows[n][g] = policy::battery_credit(p, e);
+        for charging in 0..2 {
+            values.rows[n][charging][g] = policy::battery_credit(p, e);
+        }
     }
     for i in (0..n).rev() {
         let points = ctx.service_points(i);
         for (g, &e) in ctx.axes[i].iter().enumerate() {
-            if let Some((_, _, value)) = values.best(&ctx, i, e, points) {
-                values.rows[i][g] = value;
+            for charging in [false, true] {
+                if let Some((_, _, value)) = values.best(&ctx, i, e, points, charging) {
+                    values.rows[i][usize::from(charging)][g] = value;
+                }
             }
         }
     }
     let mut kwh = p.initial.battery_kwh.unwrap();
     let mut proposal = Vec::with_capacity(n);
+    let mut previous_charging = false;
     for i in 0..n {
-        let (c, end, _) = values.best(&ctx, i, kwh, ctx.service_points(i))?;
+        let (c, end, _) = values.best(&ctx, i, kwh, ctx.service_points(i), previous_charging)?;
+        previous_charging =
+            c.battery == Operation::GridCharge && ctx.carry(i, kwh, &c)?.charge > 0.0;
         proposal.push(c);
         kwh = end;
     }

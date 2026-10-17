@@ -126,7 +126,8 @@ pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
 impl Account {
     /// The score from its parts, after any of them changed.
     pub(crate) fn rescore(&mut self) {
-        self.score_sek = f64::from(self.points) - (self.cash_sek + self.wear_sek - self.credit_sek);
+        self.score_sek = f64::from(self.points)
+            - (self.cash_sek + self.wear_sek + self.continuity_sek - self.credit_sek);
     }
 }
 /// What the battery is credited for ending where it does.
@@ -275,6 +276,7 @@ fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
         points: total,
         cash_sek: q.iter().map(|v| v.cost).sum(),
         wear_sek: q.iter().map(|v| v.wear).sum(),
+        continuity_sek: q.iter().map(|v| v.continuity).sum(),
         credit_sek: last.map_or(0.0, |v| {
             end_credit(
                 p,
