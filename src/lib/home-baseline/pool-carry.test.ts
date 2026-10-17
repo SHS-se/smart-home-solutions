@@ -5,14 +5,14 @@ import { compareModels } from './model-comparison.ts';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import { createCaptureSource } from './source.ts';
 import { monthPeriod } from './period.ts';
-import { seedPool } from './pool-carry.ts';
+import { seedPool, quarterPool, withPoolState } from './pool-carry.ts';
 
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
 
 Deno.test('independent pool temperatures and native heater memory carry from October into November, and frames slice the same models', async () => {
   const fixture = baselineFixture({ start: '2025-09-30T22:00:00.000Z', end: '2025-11-30T23:00:00.000Z' });
   fixture.snapshot.roi_pool_seed = { month: '2025-10', temperatureC: 28.9, hash: 'a'.repeat(64) };
-  fixture.snapshot.device_physics!.pool!.store = { capacity_kwh_per_c: 1, loss: { kind: 'linear', kw_per_c: 0, surroundings_c: 20 } };
+  fixture.snapshot.device_physics!.pool!.store = { response_time_constant_h: 0, capacity_kwh_per_c: 1, loss: { kind: 'linear', kw_per_c: 0, surroundings_c: 20 } };
   fixture.snapshot.device_physics!.battery!.capacity_kwh = .1;
   fixture.snapshot.comfort!.pool!.target_c = 29.5;
   const anchor = { snapshot: fixture.snapshot, earliestStart: fixture.start, latestEnd: fixture.end };
@@ -52,4 +52,15 @@ Deno.test('a requested October seed cannot silently move to November when prereq
   const source = createCaptureSource({ homeId: 'home', customerId: 'customer' }, { resolveAnchor: () => Promise.resolve(anchor), generate: () => { throw new Error('Unexpected model'); } });
   try { await assertRejects(() => source.capture(monthPeriod(anchor, '2025-11')!, new AbortController().signal), Error, 'needs history for 2025-10'); }
   finally { source.dispose(); }
+});
+
+Deno.test('pool continuation preserves pending response independently for each operator', () => {
+  const input = prepareHomeBaseline(baselineFixture());
+  const state = { poolC: 29.2, pendingHeatKwh: 6.4, heaterState: { kind: 'off' as const, seconds: 900 } };
+  const problem = withPoolState(input.problem, state);
+  assertEquals(problem.initial.pool_pending_heat_kwh, 6.4);
+  assertEquals(problem.initial.heater_state, state.heaterState);
+  const quarter = { pool_c: state.poolC, pool_pending_heat_kwh: state.pendingHeatKwh, heater_state: state.heaterState } as Parameters<typeof quarterPool>[0];
+  assertEquals(quarterPool(quarter), state);
+  assertEquals(seedPool({ month: '2026-10', temperatureC: 29, hash: 'a'.repeat(64) }).initial.baseline.pendingHeatKwh, 0);
 });

@@ -10,7 +10,7 @@ Deno.test('shared model charts retain a complete calendar month and restart cost
     devices: [{ key: 'ev', name: 'Car', schedulable: true }], deviceW: { ev: values(400) },
     solarW: values(0), loadW: values(1000), gridImportW: values(1000), gridExportW: values(0),
     batteryChargeW: values(0), batteryDischargeW: values(0), homeSoc: values(50), carSoc: values(80),
-    poolC: values(30), costSek: values(0.5), importPrice: values(2), exportPrice: values(0.5),
+    poolC: values(30), poolPendingHeatKwh: values(0), costSek: values(0.5), importPrice: values(2), exportPrice: values(0.5),
   };
   const data = modelChartData(series);
   const project = (from: number, to: number) => projectPlanChart({ ...data, devices: series.devices,

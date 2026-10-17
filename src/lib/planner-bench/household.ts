@@ -60,7 +60,7 @@ export const HOUSEHOLD: Household = {
     pool: {
       // 55 m³ of water. It loses its heat to the room and the ground around it, not to the weather: the
       // home's pool lost 2 to 3 kW at 30 °C on days of 13 °C and of 25 °C alike.
-      store: { capacity_kwh_per_c: 63.965, loss: { kind: 'linear', kw_per_c: 0.13, surroundings_c: 13.5 } },
+      store: { response_time_constant_h: 0, capacity_kwh_per_c: 63.965, loss: { kind: 'linear', kw_per_c: 0.13, surroundings_c: 13.5 } },
       heater: {
         // The home's ground-source heat pump heating the pool, as measured in September 2026 at the four
         // settings it has run at: compressor electricity in, heat out. Rounded figures from two weeks of

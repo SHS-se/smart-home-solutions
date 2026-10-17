@@ -22,7 +22,12 @@ committed.heater.response = {
     { elapsed_seconds: 1200, electric_fraction: 1, heat_fraction: 1 },
   ],
 };
-for (const input of [base, committed, forecastProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
+const reservoir = structuredClone(committed);
+reservoir.pool_store.response_time_constant_h = .675;
+reservoir.initial.pool_pending_heat_kwh = 1.5;
+reservoir.initial.pool_c = 29.7;
+reservoir.accepted = reservoir.slots.filter(s => s.start_seconds < 3600).map((_, i) => command(i === 0 || i === 3));
+for (const input of [base, committed, reservoir, forecastProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
   input.work_grant = recipe.work_grant;
   input.recipe = builderRecipe(recipe);
   const process = new Deno.Command(

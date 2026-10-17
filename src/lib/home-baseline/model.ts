@@ -115,12 +115,12 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 9, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: 10, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
     initial: { battery_kwh: batterySoc === null ? null : batterySoc * facts.battery!.capacity_kwh,
-      ev_kwh: evSoc === null ? null : evSoc * facts.car!.capacity_kwh, pool_c: poolC,
+      ev_kwh: evSoc === null ? null : evSoc * facts.car!.capacity_kwh, pool_c: poolC, pool_pending_heat_kwh: facts.poolStore ? 0 : null,
       heater_state: facts.poolStore ? { kind: 'off_unobserved' } : null },
     slots: starts.map((at, i) => {
       const ms = Date.parse(at), observed = actual.get(ms), price = prices.get(ms), meter = meters.get(ms);
@@ -221,7 +221,7 @@ export function projectionSeries(input: BaselineInput, problem: ReadyProblem, qu
     homeSoc: quarters.map(q => problem.battery ? q.battery_kwh! / problem.battery.capacity_kwh * 100 : null),
     carSoc: quarters.map(q => problem.car ? q.ev_kwh! / problem.car.capacity_kwh * 100 : null),
     carKm: field(q => problem.car ? q.ev_kwh! / problem.car.kwh_per_km : 0), carConnected: field(() => problem.car ? 1 : 0),
-    poolC: quarters.map(q => q.pool_c), poolStart: quarters.map(q => q.pool_start) as BenchSeries['poolStart'],
+    poolC: quarters.map(q => q.pool_c), poolPendingHeatKwh: quarters.map(q => q.pool_pending_heat_kwh), poolStart: quarters.map(q => q.pool_start) as BenchSeries['poolStart'],
     costSek: field(q => q.cost), wearSek: field(q => q.wear),
   };
   return series;

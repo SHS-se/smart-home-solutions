@@ -1,0 +1,783 @@
+[
+  {
+    "name": "cold startup",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 2000
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 0,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 2441.4814814814813,
+      "compressor_w": 2361.4814814814813,
+      "auxiliary_w": 80,
+      "heat_w": 9915.076061061925,
+      "water_c": 29.646473940399886,
+      "pending_heat_kwh": 5.058966879492793,
+      "next": {
+        "kind": "running",
+        "seconds": 2700
+      },
+      "start": {
+        "off_seconds": 2000
+      }
+    }
+  },
+  {
+    "name": "warm restart",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 120
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 5,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 2441.4814814814813,
+      "compressor_w": 2361.4814814814813,
+      "auxiliary_w": 80,
+      "heat_w": 9915.076061061925,
+      "water_c": 29.69890941387695,
+      "pending_heat_kwh": 6.704931818532322,
+      "next": {
+        "kind": "running",
+        "seconds": 2700
+      },
+      "start": {
+        "off_seconds": 120
+      }
+    }
+  },
+  {
+    "name": "running partial startup",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "running",
+      "seconds": 600
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 2,
+      "outdoor_c": 12,
+      "seconds": 1800,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 3005.1006711409395,
+      "compressor_w": 2925.1006711409395,
+      "auxiliary_w": 80,
+      "heat_w": 12281.525757479518,
+      "water_c": 29.662313536625383,
+      "pending_heat_kwh": 5.404654462747196,
+      "next": {
+        "kind": "running",
+        "seconds": 2400
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "off with residual heat",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 120
+    },
+    "on": false,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 8.1,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 0,
+      "compressor_w": 0,
+      "auxiliary_w": 0,
+      "heat_w": 0,
+      "next": {
+        "kind": "off",
+        "seconds": 2820
+      },
+      "start": null,
+      "water_c": 29.694253142032846,
+      "pending_heat_kwh": 2.6664632012440346
+    }
+  },
+  {
+    "name": "hardware already off retains residual",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "steady"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 8.1,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": 29.5
+    },
+    "expected": {
+      "electric_w": 0,
+      "compressor_w": 0,
+      "auxiliary_w": 0,
+      "heat_w": 0,
+      "next": {
+        "kind": "off",
+        "seconds": 2700
+      },
+      "start": null,
+      "water_c": 29.694253142032846,
+      "pending_heat_kwh": 2.6664632012440346
+    }
+  },
+  {
+    "name": "crossing with startup and pending",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.675,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off_unobserved"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 8.1,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": 29.67
+    },
+    "expected": {
+      "electric_w": 284.40719641373533,
+      "compressor_w": 257.61903220261746,
+      "auxiliary_w": 26.788164211117863,
+      "heat_w": 1081.6567138454373,
+      "water_c": 29.701325357658938,
+      "pending_heat_kwh": 3.025331464105323,
+      "next": {
+        "kind": "off",
+        "seconds": 1795.8994578747722
+      },
+      "start": {
+        "off_seconds": null
+      }
+    }
+  },
+  {
+    "name": "interior peak before declining endpoint",
+    "store": {
+      "capacity_kwh_per_c": 1,
+      "response_time_constant_h": 0.25,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.4
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 5,
+      "auxiliary_w": 0,
+      "heat_w": 20,
+      "response": {
+        "kind": "steady"
+      }
+    },
+    "state": {
+      "kind": "steady"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 1,
+      "outdoor_c": 12,
+      "seconds": 10800,
+      "stop_c": 29.4
+    },
+    "expected": {
+      "electric_w": 0.2575342696881955,
+      "compressor_w": 0.2575342696881955,
+      "auxiliary_w": 0,
+      "heat_w": 1.030137078752782,
+      "water_c": 28.80308424074614,
+      "pending_heat_kwh": 0.000006170490120200223,
+      "next": {
+        "kind": "off",
+        "seconds": 10243.725977473498
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "direct transfer clipped",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 20
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 0,
+      "outdoor_c": 12,
+      "seconds": 2700,
+      "stop_c": 29.67
+    },
+    "expected": {
+      "electric_w": 1004.6879779146886,
+      "compressor_w": 959.7317219041227,
+      "auxiliary_w": 44.95625601056603,
+      "heat_w": 4029.594597931608,
+      "water_c": 29.656555325253244,
+      "pending_heat_kwh": 0,
+      "next": {
+        "kind": "off",
+        "seconds": 1182.7263596433966
+      },
+      "start": {
+        "off_seconds": 20
+      }
+    }
+  },
+  {
+    "name": "direct transfer releases carried heat before stop",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 60
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 6.3965000000000005,
+      "outdoor_c": 12,
+      "seconds": 900,
+      "stop_c": 29.7
+    },
+    "expected": {
+      "electric_w": 0,
+      "compressor_w": 0,
+      "auxiliary_w": 0,
+      "heat_w": 0,
+      "next": {
+        "kind": "off",
+        "seconds": 960
+      },
+      "start": null,
+      "water_c": 29.729769225000002,
+      "pending_heat_kwh": 0
+    }
+  },
+  {
+    "name": "awkward learned time constant with running ramp",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.6731512863,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "running",
+      "seconds": 518.123
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 2.381572,
+      "outdoor_c": 12,
+      "seconds": 1271.271,
+      "stop_c": 29.69271
+    },
+    "expected": {
+      "electric_w": 2746.6551820905293,
+      "compressor_w": 2666.6551820905293,
+      "auxiliary_w": 80,
+      "heat_w": 11196.399025947592,
+      "water_c": 29.652757316167573,
+      "pending_heat_kwh": 4.594972444043162,
+      "next": {
+        "kind": "running",
+        "seconds": 1789.394
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "short response time after stop",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 0.001237,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 71.637
+    },
+    "on": false,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 0.372737,
+      "outdoor_c": 12,
+      "seconds": 137.127,
+      "stop_c": 29.71
+    },
+    "expected": {
+      "electric_w": 0,
+      "compressor_w": 0,
+      "auxiliary_w": 0,
+      "heat_w": 0,
+      "next": {
+        "kind": "off",
+        "seconds": 208.764
+      },
+      "start": null,
+      "water_c": 29.644268407394716,
+      "pending_heat_kwh": 1.5807969822034807e-14
+    }
+  },
+  {
+    "name": "slow response with residual before peak",
+    "store": {
+      "capacity_kwh_per_c": 63.965,
+      "response_time_constant_h": 61.237,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.0409231
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3200,
+      "auxiliary_w": 80,
+      "heat_w": 13435.736695040001,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      }
+    },
+    "state": {
+      "kind": "off_unobserved"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29.64,
+      "pending_heat_kwh": 76.72871,
+      "outdoor_c": 12,
+      "seconds": 1836.373,
+      "stop_c": 29.641738
+    },
+    "expected": {
+      "electric_w": 2047.1349992621326,
+      "compressor_w": 1967.1349992621326,
+      "auxiliary_w": 80,
+      "heat_w": 8259.346216776163,
+      "water_c": 29.629250092645833,
+      "pending_heat_kwh": 80.29417943061874,
+      "next": {
+        "kind": "running",
+        "seconds": 1836.373
+      },
+      "start": {
+        "off_seconds": null
+      }
+    }
+  }
+]

@@ -13,6 +13,7 @@ import { causalCase, command, forecastProblem, problem } from "./planner-wasm.fi
 import {
   projectHeatPumpResponse,
   stepThermalStore,
+  stepPool,
 } from "../supabase/functions/_shared/planner/device-models.ts";
 import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
 import { scoreQuarters, resolveRules } from "../src/lib/planner-bench/score.ts";
@@ -274,6 +275,7 @@ Deno.test("physical startup and measured thermal loss match the independent exis
   p.slots = p.slots.slice(0, 4);
   p.pool_store = {
     capacity_kwh_per_c: 63.965,
+    response_time_constant_h: 0,
     loss: {
       kind: "measured",
       points: [
@@ -317,6 +319,43 @@ Deno.test("physical startup and measured thermal loss match the independent exis
     assertEquals(q.pool_command_w, 3764);
     assertEquals(q.charge_w, 0);
     assertEquals(q.discharge_w, 0);
+  }
+});
+
+Deno.test("delayed pool response carries startup heat through stops and matches the shared kernel", () => {
+  for (const stop of [null, 30]) {
+    const p = problem();
+    p.pool_store = { capacity_kwh_per_c: 5, response_time_constant_h: .675,
+      loss: { kind: "measured", points: [{ at_c: 30, c_per_h: -.02 }] } };
+    p.pool_stop_c = stop;
+    p.initial.pool_c = 29.7;
+    p.initial.pool_pending_heat_kwh = 1.5;
+    p.heater.response = { kind: "bergvarme", startup: [
+      { elapsed_seconds: 0, electric_fraction: .5, heat_fraction: 0 },
+      { elapsed_seconds: 1200, electric_fraction: 1, heat_fraction: 1 },
+    ] };
+    const commands = p.slots.map((_, i) => command(i === 0 || i === 3));
+    const native = core.project(p, commands).outcome;
+    assert(native.kind === "projected");
+    let water = p.initial.pool_c;
+    let pending = p.initial.pool_pending_heat_kwh;
+    let state = p.initial.heater_state;
+    for (const [i, slot] of p.slots.entries()) {
+      const expected = stepPool(p.pool_store, p.heater, state, commands[i].pool_on,
+        { water_c: water, pending_heat_kwh: pending, outdoor_c: slot.outdoor_c,
+          seconds: slot.hours * 3600, stop_c: stop });
+      const q = native.quarters[i];
+      assertAlmostEquals(q.pool_c!, expected.water_c, 1e-10);
+      assertAlmostEquals(q.pool_pending_heat_kwh!, expected.pending_heat_kwh, 1e-10);
+      assertAlmostEquals(q.pool_w, expected.electric_w, 1e-7);
+      assertAlmostEquals(q.pool_heat_w, expected.heat_w, 1e-7);
+      water = expected.water_c;
+      pending = expected.pending_heat_kwh;
+      state = expected.next;
+    }
+    assertEquals(native.quarters[1].pool_w, 0);
+    assert(native.quarters[1].pool_c! > native.quarters[0].pool_c!);
+    assert(native.quarters[1].pool_pending_heat_kwh! < native.quarters[0].pool_pending_heat_kwh!);
   }
 });
 
@@ -494,6 +533,7 @@ Deno.test("public native projection keeps absent devices null and models PV curt
     battery_kwh: null,
     ev_kwh: null,
     pool_c: null,
+    pool_pending_heat_kwh: null,
     heater_state: null,
   };
   p.targets = { pool_c: null, ev_km: null, ev_limit_kwh: null };

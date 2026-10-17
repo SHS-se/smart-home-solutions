@@ -9,7 +9,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from 
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 35;
+export const SCORER_VERSION = 36;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */

@@ -27,6 +27,7 @@ enum Device {
 }
 struct Table {
     device: Device,
+    pool_capacity_kwh_per_c: f64,
     axis: Vec<f64>,
     phases: Vec<HeaterState>,
     options: Vec<Command>,
@@ -70,7 +71,7 @@ fn idle() -> Command {
 impl Table {
     fn inventory(&self, state: &physics::State) -> f64 {
         match self.device {
-            Device::Pool => state.pool,
+            Device::Pool => state.pool + state.pool_pending_heat_kwh / self.pool_capacity_kwh_per_c,
             Device::Ev => state.ev,
             Device::Battery => state.battery,
         }
@@ -140,6 +141,7 @@ impl Table {
             m.pool_store = None;
             m.pool_stop_c = None;
             m.initial.pool_c = None;
+            m.initial.pool_pending_heat_kwh = None;
             m.initial.heater_state = None;
             m.targets.pool_c = None;
             m.end_credit.pool = None;
@@ -193,6 +195,7 @@ fn tables(p: &Problem) -> Vec<Table> {
     let mut out = Vec::new();
     let make = |device, axis, phases, options| Table {
         device,
+        pool_capacity_kwh_per_c: p.pool_store.as_ref().map_or(1.0, |s| s.capacity_kwh_per_c),
         axis,
         phases,
         options,
@@ -200,7 +203,7 @@ fn tables(p: &Problem) -> Vec<Table> {
     };
     if let Some((store, heater)) = p.pool_store.as_ref().zip(p.heater.as_ref()) {
         let target = p.targets.pool_c.unwrap();
-        let initial = p.initial.pool_c.unwrap();
+        let initial = policy::initial_pool_inventory(p).unwrap();
         let mut water = initial;
         let mut low = initial;
         for s in &p.slots {
@@ -369,9 +372,12 @@ impl Opportunity {
                 for node in 0..t.axis.len() {
                     let level = t.axis[node];
                     let credit = match t.device {
-                        Device::Pool => {
-                            policy::store_credit(p, &p.end_credit.pool, p.initial.pool_c, level)
-                        }
+                        Device::Pool => policy::store_credit(
+                            p,
+                            &p.end_credit.pool,
+                            policy::initial_pool_inventory(p),
+                            level,
+                        ),
                         Device::Ev => {
                             policy::store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, level)
                         }
@@ -390,7 +396,15 @@ impl Opportunity {
                     for node in 0..t.axis.len() {
                         let mut state = physics::initial(&m);
                         match t.device {
-                            Device::Pool => state.pool = t.axis[node],
+                            Device::Pool => {
+                                // Relax the reservoir into immediately available water in this
+                                // one-dimensional proposal guide. Lookup uses the complete
+                                // energy inventory, so latent heat is never discarded or counted
+                                // twice. Exact candidate projections retain both states, and only
+                                // their observed water can earn comfort points.
+                                state.pool = t.axis[node];
+                                state.pool_pending_heat_kwh = 0.0;
+                            }
                             Device::Ev => state.ev = t.axis[node],
                             Device::Battery => state.battery = t.axis[node],
                         }

@@ -43,7 +43,7 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   return {
-    abi: 9,
+    abi: 10,
     // No end credit unless a test asks for one.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     ev_battery_supply_allowed: false,
@@ -86,6 +86,7 @@ export function problem(): EquippedProblem {
       battery_kwh: 10,
       ev_kwh: 60,
       pool_c: 32,
+      pool_pending_heat_kwh: 0,
       heater_state: { kind: "off_unobserved" },
     },
     targets: { pool_c: 30, ev_km: 300, ev_limit_kwh: 70 },

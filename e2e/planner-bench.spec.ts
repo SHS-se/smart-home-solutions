@@ -80,7 +80,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],
     poolStart: [],
     poolThermal: {
-      store: { capacity_kwh_per_c: 1, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -.048 }] } },
+      store: { capacity_kwh_per_c: 1, response_time_constant_h: 0, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -.048 }] } },
       outdoorC: new Array(n).fill(20), localMonth: new Array(n).fill(9),
     },
     homeSoc: [], homeStartSoc: 50, carSoc: [], carConnected: [], poolC: [], costSek: [], believedImportPrice: [],

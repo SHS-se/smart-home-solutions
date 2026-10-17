@@ -52,6 +52,7 @@ pub struct Initial {
     pub battery_kwh: Option<f64>,
     pub ev_kwh: Option<f64>,
     pub pool_c: Option<f64>,
+    pub pool_pending_heat_kwh: Option<f64>,
     pub heater_state: Option<HeaterState>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -159,6 +160,7 @@ pub struct Quarter {
     pub battery_kwh: Option<f64>,
     pub ev_kwh: Option<f64>,
     pub pool_c: Option<f64>,
+    pub pool_pending_heat_kwh: Option<f64>,
     pub heater_state: Option<HeaterState>,
     pub pool_start: Option<HeaterStart>,
     pub cost: f64,
@@ -203,7 +205,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 9 || p.slots.is_empty() {
+    if p.abi != 10 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -237,6 +239,7 @@ fn validate(p: &Problem) -> Result<(), String> {
         || p.car.is_some() != p.targets.ev_limit_kwh.is_some()
         || p.heater.is_some() != p.pool_store.is_some()
         || p.heater.is_some() != p.initial.pool_c.is_some()
+        || p.heater.is_some() != p.initial.pool_pending_heat_kwh.is_some()
         || p.heater.is_some() != p.initial.heater_state.is_some()
         || p.heater.is_some() != p.targets.pool_c.is_some()
         || p.heater.is_none() && p.pool_stop_c.is_some()
@@ -284,6 +287,12 @@ fn validate(p: &Problem) -> Result<(), String> {
         }
         h.validate_response().map_err(str::to_owned)?;
     }
+    if p.initial
+        .pool_pending_heat_kwh
+        .is_some_and(|energy| !energy.is_finite() || energy < 0.0)
+    {
+        return bad("invalid_initial_pool_pending_heat");
+    }
     if matches!(p.initial.heater_state, Some(HeaterState::Running{seconds} | HeaterState::Off{seconds}) if seconds<0.0)
     {
         return bad("invalid_initial_heater_state");
@@ -310,7 +319,10 @@ fn validate(p: &Problem) -> Result<(), String> {
         }
     }
     if let Some(store) = &p.pool_store {
-        if store.capacity_kwh_per_c <= 0.0 {
+        if store.capacity_kwh_per_c <= 0.0
+            || !store.response_time_constant_h.is_finite()
+            || store.response_time_constant_h < 0.0
+        {
             return bad("invalid_model_parameters");
         }
         match &store.loss {
@@ -574,6 +586,7 @@ mod live_tests {
                 p.heater = None;
                 p.pool_store = None;
                 p.initial.pool_c = None;
+                p.initial.pool_pending_heat_kwh = None;
                 p.initial.heater_state = None;
                 p.targets.pool_c = None;
             }

@@ -9,7 +9,7 @@ function competition(): ReadyProblem {
   const p: ReadyProblem = problem();
   p.work_grant = 100_000_000;
   p.heater = p.pool_store = null;
-  p.initial.pool_c = p.initial.heater_state = p.targets.pool_c = null;
+  p.initial.pool_c = p.initial.pool_pending_heat_kwh = p.initial.heater_state = p.targets.pool_c = null;
   p.battery = { capacity_kwh: 6, min_soc: 0, max_soc: 1, charge_max_w: 4000, discharge_max_w: 4000, charge_efficiency: 1, discharge_efficiency: 1 };
   p.car = { capacity_kwh: 10, kwh_per_km: .2, charge_efficiency: 1 };
   p.charger = { voltage_v: 230, phase_count: 3, min_current_a: 5, max_current_a: 6, current_step_a: 1 };

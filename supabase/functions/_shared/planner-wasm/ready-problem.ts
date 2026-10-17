@@ -43,7 +43,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 9;
+  abi: 10;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;
@@ -70,6 +70,7 @@ export interface ReadyProblem {
     battery_kwh: number | null;
     ev_kwh: number | null;
     pool_c: number | null;
+    pool_pending_heat_kwh: number | null;
     heater_state: HeaterState | null;
   };
   targets: {

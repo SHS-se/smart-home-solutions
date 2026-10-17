@@ -3,9 +3,9 @@ import { assertEquals, assertRejects } from '@std/assert';
 import { homeMonthBounds } from '../src/lib/energy-shift/home-time.ts';
 
 Deno.test('pool checkpoints enforce own-home seed, independent predecessor states, generations and descendant invalidation beyond twelve summaries', async () => {
-  const db = new PGlite(), id = '11111111-1111-4111-8111-111111111111', version = `roi-month-v5:${'a'.repeat(64)}`;
+  const db = new PGlite(), id = '11111111-1111-4111-8111-111111111111', version = `roi-month-v6:${'a'.repeat(64)}`;
   const model = { captured_at:'2026-10-12T00:00:00Z',timezone:'Europe/Stockholm',capabilities:{},device_models:[],services:[],grid:{},comfort:{},policy:{},criteria:{},roi_solar_profile:null,roi_pool_seed:null };
-  const state = (poolC: number) => ({ poolC, heaterState: { kind: 'off', seconds: 900 } });
+  const state = (poolC: number) => ({ poolC, pendingHeatKwh: poolC - 30, heaterState: { kind: 'off', seconds: 900 } });
   try {
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE SCHEMA auth;
       CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT NULLIF(current_setting('test.role',true),'') $$;
@@ -13,7 +13,7 @@ Deno.test('pool checkpoints enforce own-home seed, independent predecessor state
       CREATE TABLE customers(id uuid PRIMARY KEY); CREATE TABLE homes(id uuid PRIMARY KEY,customer_id uuid);
       CREATE FUNCTION energy_home_matches_customer(home uuid,customer uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT EXISTS(SELECT 1 FROM homes WHERE id=home AND customer_id=customer) $$;
       INSERT INTO customers VALUES('${id}'); INSERT INTO homes VALUES('${id}','${id}');`);
-    for (const migration of ['20261011175100_roi_saved_reports.sql','20261012110000_roi_solar_history.sql','20261012140000_roi_pool_continuity.sql']) await db.exec(await Deno.readTextFile(`supabase/migrations/${migration}`));
+    for (const migration of ['20261011175100_roi_saved_reports.sql','20261012110000_roi_solar_history.sql','20261012140000_roi_pool_continuity.sql','20261017133200_pool_response_roi_state.sql']) await db.exec(await Deno.readTextFile(`supabase/migrations/${migration}`));
     await db.exec(`SET test.role='authenticated'; SET test.uid='${id}'; SET ROLE authenticated;`);
     await assertRejects(() => db.query('SELECT publish_energy_roi_pool_seed($1,$1,$2,30)',[id,'2025-10']), Error, 'permission denied');
     await db.exec("RESET ROLE; SET test.role='service_role'; SET ROLE service_role;");
@@ -22,7 +22,7 @@ Deno.test('pool checkpoints enforce own-home seed, independent predecessor state
     const pinned = (await db.query<{report:{generation:number;checkpoints:object}}>('SELECT pin_energy_roi_report($1,$1,$2,$3::jsonb,NULL) AS report',[id,version,{...model,roi_pool_seed:seed}])).rows[0].report;
     const save = async (month: string, start: string, end: string, parentHash: string, initial: object, hash: string, expected: string|null = null) => (await db.query<{report:{months:object;checkpoints:Record<string,{final:object;inputHash:string}>}}>(
       'SELECT save_energy_roi_month($1,$1,$2,$3,$4::jsonb,$5,$6) AS report',[id,pinned.generation,version,{month,start,end,coverage:1,baseline:{},recorded:{},scheduler:{},modeled:{},replay:{},quality:{},gaps:{},solar:{profileHash:null},pool:{parentHash,initial,final:{baseline:state(30.5),scheduler:state(30)}}},hash,expected])).rows[0].report;
-    let initial = { baseline: {poolC:30,heaterState:{kind:'off_unobserved'}},scheduler:{poolC:30,heaterState:{kind:'off_unobserved'}} }, parentHash = seed.hash;
+    let initial = { baseline: {poolC:30,pendingHeatKwh:0,heaterState:{kind:'off_unobserved'}},scheduler:{poolC:30,pendingHeatKwh:0,heaterState:{kind:'off_unobserved'}} }, parentHash = seed.hash;
     let result: Awaited<ReturnType<typeof save>>;
     for (let index = 0; index < 13; index++) {
       const at = new Date(Date.UTC(2025,9+index,15));
@@ -33,9 +33,14 @@ Deno.test('pool checkpoints enforce own-home seed, independent predecessor state
     }
     assertEquals(Object.keys(result!.months).length,12); assertEquals(Object.keys(result!.checkpoints).length,13);
     assertEquals('2025-10' in result!.checkpoints,true);
+    assertEquals((result!.checkpoints['2025-10'].final as {baseline:{pendingHeatKwh:number}}).baseline.pendingHeatKwh,.5);
     await assertRejects(() => save('2026-11','2026-10-31T23:00:00.000Z','2026-11-30T23:00:00.000Z','f'.repeat(64),initial,'e'.repeat(64)), Error, 'predecessor changed');
+    const invalidPending = { ...initial, baseline: { ...initial.baseline, pendingHeatKwh: -1 } };
+    await assertRejects(() => save('2026-11','2026-10-31T23:00:00.000Z','2026-11-30T23:00:00.000Z',parentHash,invalidPending,'e'.repeat(64)), Error, 'Invalid pool continuation');
+    const missingPending = { ...initial, baseline: { poolC: initial.baseline.poolC, heaterState: initial.baseline.heaterState } };
+    await assertRejects(() => save('2026-11','2026-10-31T23:00:00.000Z','2026-11-30T23:00:00.000Z',parentHash,missingPending,'e'.repeat(64)), Error, 'Invalid pool continuation');
     // The first summary was evicted; its checkpoint still guards children.
-    const changed = await save('2025-10','2025-09-30T22:00:00.000Z','2025-10-31T23:00:00.000Z',seed.hash,{baseline:{poolC:30,heaterState:{kind:'off_unobserved'}},scheduler:{poolC:30,heaterState:{kind:'off_unobserved'}}},'f'.repeat(64));
+    const changed = await save('2025-10','2025-09-30T22:00:00.000Z','2025-10-31T23:00:00.000Z',seed.hash,{baseline:{poolC:30,pendingHeatKwh:0,heaterState:{kind:'off_unobserved'}},scheduler:{poolC:30,pendingHeatKwh:0,heaterState:{kind:'off_unobserved'}}},'f'.repeat(64));
     assertEquals(Object.keys(changed.checkpoints),['2025-10']);
     assertEquals(Object.keys(changed.months),['2025-10']);
     await assertRejects(() => db.query('SELECT pin_energy_roi_report($1,$1,$2,$3::jsonb,NULL)',[id,`roi-month-v4:${'a'.repeat(64)}`,model]), Error, 'Invalid compact');

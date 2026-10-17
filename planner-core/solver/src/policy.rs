@@ -149,14 +149,37 @@ pub(crate) fn store_credit(
         p.end_credit.reference_sek_per_kwh * t.grid_kwh_per_unit * counted(start, end, t.cap)
     })
 }
+/// Total pool energy expressed in degrees; comfort continues to use water alone.
+pub(crate) fn pool_inventory(p: &Problem, water_c: f64, pending_heat_kwh: f64) -> f64 {
+    p.pool_store
+        .as_ref()
+        .map_or(water_c, |s| s.inventory_c(water_c, pending_heat_kwh))
+}
+pub(crate) fn initial_pool_inventory(p: &Problem) -> Option<f64> {
+    p.initial
+        .pool_c
+        .map(|water| pool_inventory(p, water, p.initial.pool_pending_heat_kwh.unwrap_or(0.0)))
+}
 /// What the stores are credited for ending where they do (end-credit.ts).
-pub(crate) fn end_credit(p: &Problem, battery_kwh: f64, pool_c: f64, ev_kwh: f64) -> f64 {
+pub(crate) fn end_credit(
+    p: &Problem,
+    battery_kwh: f64,
+    pool_c: f64,
+    pending_heat_kwh: f64,
+    ev_kwh: f64,
+) -> f64 {
     store_credit(p, &p.end_credit.battery, p.initial.battery_kwh, battery_kwh)
-        + store_credit(p, &p.end_credit.pool, p.initial.pool_c, pool_c)
+        + store_credit(
+            p,
+            &p.end_credit.pool,
+            initial_pool_inventory(p),
+            pool_inventory(p, pool_c, pending_heat_kwh),
+        )
         + store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, ev_kwh)
 }
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
+    let mut pending = p.initial.pool_pending_heat_kwh.unwrap_or(0.0);
     let mut reach_ev = p.initial.ev_kwh.unwrap_or(0.0);
     let mut age = p
         .initial
@@ -202,6 +225,7 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
                 true,
                 shs_planner_models::PoolConditions {
                     water_c: reach_pool,
+                    pending_heat_kwh: pending,
                     outdoor_c: s.outdoor_c,
                     seconds: hours * 3600.0,
                     stop_c: p.pool_stop_c,
@@ -209,6 +233,7 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             );
             age = step.next.age();
             reach_pool = step.water_c;
+            pending = step.pending_heat_kwh;
         }
         if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
             if s.ev_available {
@@ -282,6 +307,7 @@ fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
                 p,
                 v.battery_kwh.unwrap_or(0.0),
                 v.pool_c.unwrap_or(0.0),
+                v.pool_pending_heat_kwh.unwrap_or(0.0),
                 v.ev_kwh.unwrap_or(0.0),
             )
         }),
@@ -391,6 +417,49 @@ mod service_tests {
         })
         .collect()
     }
+    #[test]
+    fn terminal_pool_credit_counts_initial_and_final_latent_energy_once() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.pool_store.as_mut().unwrap().capacity_kwh_per_c = 5.0;
+        p.initial.pool_c = Some(29.0);
+        p.initial.pool_pending_heat_kwh = Some(5.0);
+        p.end_credit.reference_sek_per_kwh = 2.0;
+        p.end_credit.battery = None;
+        p.end_credit.ev = None;
+        p.end_credit.pool = Some(StoreTerm {
+            cap: 40.0,
+            grid_kwh_per_unit: 2.0,
+        });
+        // The same energy appears progressively in water after shutdown.
+        assert_eq!(end_credit(&p, 0.0, 29.5, 2.5, 0.0), 0.0);
+        assert_eq!(end_credit(&p, 0.0, 30.0, 0.0, 0.0), 0.0);
+        assert_eq!(end_credit(&p, 0.0, 30.0, 5.0, 0.0), 4.0);
+        assert_eq!(end_credit(&p, 0.0, 31.0, 0.0, 0.0), 4.0);
+    }
+
+    #[test]
+    fn pending_heat_does_not_earn_water_comfort_points() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.initial.pool_c = Some(27.0);
+        p.initial.pool_pending_heat_kwh = Some(100.0);
+        p.pool_store.as_mut().unwrap().response_time_constant_h = 1000.0;
+        p.rules = rules();
+        let index = index(&p, &mut work(&p)).unwrap();
+        let commands = vec![Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::Idle,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 0.0,
+        }];
+        let mut q = physics::projection(&p, &commands).unwrap();
+        q[0].pool_c = Some(27.0);
+        q[0].pool_pending_heat_kwh = Some(100.0);
+        let a = guidance_quarter(&p, &index, 0, &q[0], 27.0);
+        q[0].pool_pending_heat_kwh = Some(0.0);
+        assert_eq!(a, guidance_quarter(&p, &index, 0, &q[0], 27.0));
+    }
+
     #[test]
     fn all_five_service_checks_keep_distinct_contributions() {
         let mut p = crate::witnesses::tests::problem(1);

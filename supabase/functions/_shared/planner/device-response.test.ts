@@ -100,7 +100,7 @@ Deno.test("response projector rejects unexecutable commands, invalid runtime and
 
 Deno.test("device-model parsing validates configured startup response without changing static models", () => {
   const pool = {
-    store: { capacity_kwh_per_c: 60, loss: { kind: "linear" as const, kw_per_c: 0.1, surroundings_c: 15 } },
+    store: { capacity_kwh_per_c: 60, response_time_constant_h: 0, loss: { kind: "linear" as const, kw_per_c: 0.1, surroundings_c: 15 } },
     heater: {
       setting_unit: "kw_thermal", operating_points: [{ setting: 12, electric_w: 3000, heat_w: 12000 }],
       selected_setting: 12, control: "switch" as const, auxiliary_w: 600, response,

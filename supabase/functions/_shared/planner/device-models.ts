@@ -102,7 +102,50 @@ export type StandingLoss =
 
 export interface ThermalStoreModel {
   capacity_kwh_per_c: number;
+  /** Learned heat-to-water response time; zero is direct transfer. */
+  response_time_constant_h: number;
   loss: StandingLoss;
+}
+
+/** Heat inferred to be in transit survives both shutdown and replanning. */
+export interface PoolThermalState { water_c: number; pending_heat_kwh: number }
+
+export const poolInventoryC = (store: ThermalStoreModel, waterC: number, pendingHeatKwh: number): number =>
+  waterC + pendingHeatKwh / store.capacity_kwh_per_c;
+
+/** 1-exp(-x), using identical IEEE arithmetic in TS, native Rust and Wasm.
+ * Platform transcendental libraries differ by ulps, which can change solver
+ * decisions. Reduce to x<=1/8, evaluate expm1's convergent series, then double. */
+function poolResponseRelease(x: number): number {
+  if (x >= 40) return 1;
+  let reduced = x, doublings = 0;
+  while (reduced > 0.125) { reduced /= 2; doublings++; }
+  let term = -reduced, sum = term;
+  for (let n = 2; n <= 16; n++) { term *= -reduced / n; sum += term; }
+  let released = -sum;
+  for (let n = 0; n < doublings; n++) released *= 2 - released;
+  return released;
+}
+
+/** Exact reservoir response to linear heat input with this interval's standing loss. */
+function transferPoolHeat(store: ThermalStoreModel, state: PoolThermalState, heatStartW: number, slopeWPerH: number, hours: number, coolingCPerH: number): PoolThermalState {
+  const tau = store.response_time_constant_h;
+  const supplied = (heatStartW * hours + slopeWPerH * hours * hours / 2) / 1_000;
+  const released = tau > 0 ? poolResponseRelease(hours / tau) : 1;
+  const x = tau > 0 ? hours / tau : 0;
+  // Endpoint weights stay nonnegative even for a descending heat ramp. The
+  // series evaluates 1-(1-exp(-x))/x without cancellation in tiny intervals.
+  const endWeight = x < 1e-4 ? x * (0.5 + x * (-1 / 6 + x * (1 / 24 - x / 120))) : 1 - released / x;
+  const pending = tau > 0 ? state.pending_heat_kwh * (1 - released) + tau / 1_000 *
+    (heatStartW * (released - endWeight) + (heatStartW + slopeWPerH * hours) * endWeight) : 0;
+  return { water_c: state.water_c + (state.pending_heat_kwh + supplied - pending) / store.capacity_kwh_per_c + coolingCPerH * hours,
+    pending_heat_kwh: pending };
+}
+
+/** The complete heat-transfer state after linearly changing input, including an off-tail. */
+export function stepPoolThermal(store: ThermalStoreModel, state: PoolThermalState, heatStartW: number, heatEndW: number, outdoorC: number, hours: number): PoolThermalState {
+  if (hours === 0) return { ...state };
+  return transferPoolHeat(store, state, heatStartW, (heatEndW - heatStartW) / hours, hours, idleCPerHour(store, state.water_c, outdoorC));
 }
 
 /** What an unheated store's temperature changes by in an hour, °C. Never a warming from a measured rate. */
@@ -231,6 +274,117 @@ export function stepHeater(heater: PublishedHeater, state: HeaterState, on: bool
   const auxiliary_w = on ? heater.auxiliary_w : 0;
   return { electric_w: projected.draw_w[0], compressor_w: projected.draw_w[0] - auxiliary_w,
     auxiliary_w, heat_w: heater.heat_w * projected.gain_fraction[0], next, start };
+}
+
+export interface PoolConditions extends PoolThermalState { outdoor_c: number; seconds: number; stop_c: number | null }
+export interface PoolTransition extends PoolThermalState {
+  electric_w: number; compressor_w: number; auxiliary_w: number; heat_w: number; next: HeaterState; start: HeaterStart | null;
+}
+
+/** First crossing on monotone temperature pieces, including an interior peak. */
+function firstPoolStop(store: ThermalStoreModel, state: PoolThermalState, heatStartW: number, slopeWPerH: number, hours: number, cooling: number, stopC: number): number | null {
+  if (state.water_c >= stopC) return 0;
+  const tau = store.response_time_constant_h;
+  const at = (h: number) => transferPoolHeat(store, state, heatStartW, slopeWPerH, h, cooling);
+  const derivative = (h: number) => tau > 0 ? at(h).pending_heat_kwh / tau / store.capacity_kwh_per_c + cooling
+    : (heatStartW + slopeWPerH * h) / 1_000 / store.capacity_kwh_per_c + cooling;
+  const bisect = (fn: (h: number) => number, from: number, to: number) => {
+    let low = from, high = to, value = fn(low);
+    for (let i = 0; i < 48; i++) {
+      const mid = (low + high) / 2, next = fn(mid);
+      if (next === 0) return mid;
+      if (Math.sign(next) === Math.sign(value)) { low = mid; value = next; } else high = mid;
+    }
+    return (low + high) / 2;
+  };
+  const pieces = [0, hours];
+  if (tau > 0) {
+    const pendingDerivative = (h: number) => (heatStartW + slopeWPerH * h) / 1_000 - at(h).pending_heat_kwh / tau;
+    if (pendingDerivative(0) * pendingDerivative(hours) < 0) pieces.push(bisect(pendingDerivative, 0, hours));
+  }
+  pieces.sort((a, b) => a - b);
+  const turning = [0, hours];
+  for (let i = 0; i + 1 < pieces.length; i++) {
+    const low = pieces[i], high = pieces[i + 1], a = derivative(low), b = derivative(high);
+    if (a === 0) turning.push(low);
+    if (a * b < 0) turning.push(bisect(derivative, low, high));
+    if (b === 0) turning.push(high);
+  }
+  turning.sort((a, b) => a - b);
+  for (let i = 0; i + 1 < turning.length; i++) {
+    const low = turning[i], high = turning[i + 1];
+    if (at(low).water_c >= stopC) return low;
+    if (at(high).water_c >= stopC) return bisect(h => at(h).water_c - stopC, low, high);
+  }
+  return null;
+}
+
+/** Hardware clips compressor time; heat already in transit keeps reaching water. */
+export function stepPool(store: ThermalStoreModel, heater: PublishedHeater, heaterState: HeaterState, on: boolean, conditions: PoolConditions): PoolTransition {
+  const { seconds, outdoor_c: outdoorC, stop_c: stopC } = conditions;
+  if (store.response_time_constant_h === 0) return stepDirectPool(store, heater, heaterState, on,
+    { ...conditions, water_c: poolInventoryC(store, conditions.water_c, conditions.pending_heat_kwh), pending_heat_kwh: 0 });
+  const permitted = on && (stopC === null || conditions.water_c < stopC);
+  if (!permitted) {
+    const next = stepHeater(heater, heaterState, false, seconds);
+    return { ...next, ...stepPoolThermal(store, conditions, 0, 0, outdoorC, seconds / 3600) };
+  }
+  const age = heaterState.kind === "steady" ? Infinity : heaterState.kind === "running" ? heaterState.seconds : 0;
+  const response = heater.response;
+  const knots = response.kind === "bergvarme" && age !== Infinity
+    ? [0, ...response.startup.map(point => point.elapsed_seconds - age).filter(t => t > 0 && t < seconds), seconds] : [0, seconds];
+  const fraction = (elapsed: number): number => {
+    if (response.kind === "steady" || age === Infinity) return 1;
+    const at = age + elapsed;
+    for (let i = 1; i < response.startup.length; i++) {
+      const low = response.startup[i - 1], high = response.startup[i];
+      if (at <= high.elapsed_seconds) return low.heat_fraction + (high.heat_fraction - low.heat_fraction) * (at - low.elapsed_seconds) / (high.elapsed_seconds - low.elapsed_seconds);
+    }
+    return 1;
+  };
+  const cooling = idleCPerHour(store, conditions.water_c, outdoorC);
+  let thermal: PoolThermalState = conditions, activeSeconds = seconds;
+  for (let i = 0; i + 1 < knots.length; i++) {
+    const from = knots[i], to = knots[i + 1], hours = (to - from) / 3600;
+    const heat = heater.heat_w * fraction(from), slope = heater.heat_w * (fraction(to) - fraction(from)) / hours;
+    const crossing = stopC === null ? null : firstPoolStop(store, thermal, heat, slope, hours, cooling, stopC);
+    thermal = transferPoolHeat(store, thermal, heat, slope, crossing ?? hours, cooling);
+    if (crossing !== null) { activeSeconds = from + crossing * 3600; break; }
+  }
+  const active = stepHeater(heater, heaterState, true, activeSeconds);
+  const share = activeSeconds / seconds;
+  let next = active.next;
+  if (activeSeconds < seconds) {
+    thermal = stepPoolThermal(store, thermal, 0, 0, outdoorC, (seconds - activeSeconds) / 3600);
+    next = stepHeater(heater, active.next, false, seconds - activeSeconds).next;
+  }
+  return { electric_w: active.electric_w * share, compressor_w: active.compressor_w * share,
+    auxiliary_w: active.auxiliary_w * share, heat_w: active.heat_w * share, ...thermal, next, start: active.start };
+}
+
+/** Direct-transfer stores keep their existing single-interval loss convention. */
+function stepDirectPool(store: ThermalStoreModel, heater: PublishedHeater, state: HeaterState, on: boolean, conditions: PoolConditions): PoolTransition {
+  const { water_c: waterC, outdoor_c: outdoorC, seconds, stop_c: stopC } = conditions;
+  const permitted = on && (stopC === null || waterC < stopC);
+  const full = stepHeater(heater, state, permitted, seconds);
+  const end = stepThermalStore(store, waterC, full.heat_w, outdoorC, seconds / 3600);
+  let activeSeconds = permitted ? seconds : 0;
+  if (permitted && stopC !== null && end > stopC) {
+    let low = 0, high = seconds;
+    for (let i = 0; i < 48; i++) {
+      const mid = (low + high) / 2, heat = stepHeater(heater, state, true, mid).heat_w;
+      if (stepThermalStore(store, waterC, heat, outdoorC, mid / 3600) < stopC) low = mid; else high = mid;
+    }
+    activeSeconds = (low + high) / 2;
+  }
+  if (activeSeconds === 0) return { ...full, water_c: end, pending_heat_kwh: 0, start: null };
+  const active = stepHeater(heater, state, true, activeSeconds), share = activeSeconds / seconds;
+  const clipped = activeSeconds < seconds;
+  const water = clipped ? stepThermalStore(store, stopC!, 0, outdoorC, (seconds - activeSeconds) / 3600)
+    : stepThermalStore(store, waterC, active.heat_w, outdoorC, activeSeconds / 3600);
+  return { electric_w: active.electric_w * share, compressor_w: active.compressor_w * share, auxiliary_w: active.auxiliary_w * share,
+    heat_w: active.heat_w * share, water_c: water, pending_heat_kwh: 0,
+    next: clipped ? stepHeater(heater, active.next, false, seconds - activeSeconds).next : active.next, start: active.start };
 }
 
 /** Parse stored response data once; malformed dynamics never become a steady model. */
@@ -394,6 +548,7 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
   if (pool) {
     const { store, heater } = pool;
     if (!store || !positive(store.capacity_kwh_per_c)) fail("A thermal store needs a heat capacity.");
+    if (!finite(store.response_time_constant_h) || store.response_time_constant_h < 0) fail("A thermal store needs an explicit nonnegative heat-transfer response time.");
     if (store.loss?.kind === "linear") {
       if (!finite(store.loss.kw_per_c) || store.loss.kw_per_c < 0 || !(store.loss.surroundings_c === null || finite(store.loss.surroundings_c))) fail("A linear loss needs a rate and its surroundings.");
     } else if (store.loss?.kind === "measured") {

@@ -136,7 +136,7 @@ export function rulesFixtureInput(source: OptimisationSnapshot) {
     snapshot.pool_model = { loss_kw_per_k: .1, rated_cop: null, cop_per_air_c: null,
       hardware: { start_c: 28, stop_c: 34, control: "external_enable", source_entity_ids: { start: "number.fixture_pool_start", stop: "number.fixture_pool_stop" } },
       heater_response: { kind: "steady" } };
-    snapshot.device_physics = { pool: { store: { capacity_kwh_per_c: 55 * 1.163,
+    snapshot.device_physics = { pool: { store: { capacity_kwh_per_c: 55 * 1.163, response_time_constant_h: 0,
       loss: { kind: "linear", kw_per_c: .1, surroundings_c: 15 } }, heater: {
       setting_unit: "fixture", operating_points: [{ setting: 1, electric_w: 1400, heat_w: 6000 }],
       selected_setting: 1, control: "switch", auxiliary_w: 700, response: {kind: "steady"},

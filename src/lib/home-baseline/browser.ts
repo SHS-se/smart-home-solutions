@@ -3,7 +3,7 @@ import type { BaselineAnchor, BaselinePeriod } from './period';
 import type { SchedulerReplay } from './scheduler-replay';
 import type { ModelComparison } from './model-comparison';
 import type { BaselineInput, BaselineResult } from './model';
-import type { PoolStart } from './pool-carry';
+import { withPoolState, type PoolStart } from './pool-carry';
 
 export interface BaselineResponse { result: BaselineResult; engineHash: string }
 export interface BaselineCapture extends BaselineResponse { input: BaselineInput }
@@ -12,7 +12,7 @@ export interface ComparisonCapture extends BaselineCapture { scheduler: Schedule
 export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal, pool: PoolStart | null): Promise<ComparisonCapture> {
   const input = await loadHomeBaseline(ref, anchor, period, signal);
   input.pool = pool;
-  if (pool) input.problem = { ...input.problem, initial: { ...input.problem.initial, pool_c: pool.initial.baseline.poolC, heater_state: pool.initial.baseline.heaterState } };
+  input.problem = withPoolState(input.problem, pool?.initial.baseline);
   const projected = await new Promise<Omit<ComparisonCapture, 'input'>>((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });

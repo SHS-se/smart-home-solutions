@@ -36,14 +36,14 @@
 // search or its guards change.
 
 import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './case';
-import { thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
+import { poolInventoryC, thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
 import { laneParts, type LaneId } from './lanes';
 import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, poolLevels, reachability, simulate, wearOf, type Decisions, type Simulation, type Violation } from './referee';
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 15;
+export const OPPORTUNITY_AUDIT_VERSION = 16;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -381,6 +381,7 @@ export function findOpportunities(
     poolReachableC: reach.poolC, carReachableKm: reach.carKm,
   };
   const carKmOf = (sim: Simulation) => Array.from(sim.evKwh, v => v / h.car.battery.kwh_per_km);
+  const poolEndInventory = (sim: Simulation) => poolInventoryC(h.pool.store, sim.poolC[last], sim.poolPendingHeatKwh[last]);
   const exposureOf = (sim: Simulation) => serviceExposure(comfort, sim.poolC, carKmOf(sim), guard);
   const planOf = (d: Decisions, sim: Simulation): Plan => ({ d, sim, exposure: exposureOf(sim), wearSek: wearOf(h, sim) });
 
@@ -508,6 +509,8 @@ export function findOpportunities(
     if (Math.abs(sim.evKwh[last] - original.evKwh[last]) > END_TOLERANCE_KWH) return null;
     const warmer = sim.poolC[last] - original.poolC[last];
     if (warmer < -1e-9 || warmer > POOL_END_TOLERANCE_C) return null;
+    const inventoryChange = poolEndInventory(sim) - poolEndInventory(original);
+    if (inventoryChange < -1e-9 || inventoryChange > POOL_END_TOLERANCE_C) return null;
     if (!serviceNotWorse(plan.exposure, exposureOf(sim))) return null;
     // Moving other loads moves the house's draw under the water heater's gate: never leave the tank further behind.
     const owed = plan.sim.water?.owedKwh;
@@ -588,7 +591,7 @@ export function findOpportunities(
       const { values, used } = fill(quarters);
       const d = { ...plan.d, pool_w: values };
       const sim = run(d);
-      const miss = sim.poolC[last] - original.poolC[last];
+      const miss = poolEndInventory(sim) - poolEndInventory(original);
       if (miss >= -1e-9 && miss <= POOL_END_TOLERANCE_C) {
         const verdict = judge(sim);
         if (!verdict) return { attempt: null, quarters: count };

@@ -360,3 +360,24 @@ Deno.test('unreachable recorded driving demand fails rather than clipping trips'
   input.evDemandKwh[0] = input.problem.car!.capacity_kwh;
   assertThrows(() => projectBaseline(input, engine), Error, 'unserved recorded EV trip');
 });
+
+Deno.test('quarter-by-quarter baseline preserves delayed response through thermostat shutdown and tail', () => {
+  const rows = baselineFixture();
+  rows.snapshot.device_physics!.pool!.store = { capacity_kwh_per_c: 10, response_time_constant_h: 2,
+    loss: { kind: 'linear', kw_per_c: 0, surroundings_c: 20 } };
+  rows.snapshot.device_physics!.pool!.heater.response = { kind: 'steady' };
+  const input = prepareHomeBaseline(rows);
+  const problem = { ...input.problem, slots: input.problem.slots.slice(0, 32), initial: { ...input.problem.initial,
+    pool_c: 29.8, pool_pending_heat_kwh: 2, heater_state: { kind: 'steady' as const } } };
+  const projected = projectDefaultProblem(problem, input.start, input.timeZone, DEFAULT_SETTINGS, engine, input.evDemandKwh.slice(0, 32));
+  const continuous = engine.project(projected.problem, projected.commands).outcome;
+  if (continuous.kind === 'failed') throw new Error(continuous.issue);
+  const stop = projected.quarters.findIndex(q => q.heater_state?.kind === 'off');
+  assert(stop >= 0 && stop + 1 < projected.quarters.length);
+  assert(projected.quarters[stop].pool_pending_heat_kwh! > 0);
+  assert(projected.quarters[stop + 1].pool_c! > projected.quarters[stop].pool_c!);
+  for (let i = 0; i < projected.quarters.length; i++) {
+    assertAlmostEquals(projected.quarters[i].pool_c!, continuous.quarters[i].pool_c!, 1e-9);
+    assertAlmostEquals(projected.quarters[i].pool_pending_heat_kwh!, continuous.quarters[i].pool_pending_heat_kwh!, 1e-9);
+  }
+});

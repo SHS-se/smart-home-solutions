@@ -35,13 +35,13 @@ Deno.test("pre-native commits cannot execute a retired planner",async()=>{
 });
 Deno.test("the current native artifact has a stable planner identity",async()=>{
   const first=await plannerVersion(tree);
-  assert(first.startsWith("v9-rule-wasm:"));
+  assert(first.startsWith("v10-rule-wasm:"));
   assertEquals(await plannerVersion(tree),first);
 });
 
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
 /** The referee version and the device models' code it judges with. */
-const DEVICE_MODELS_PIN = "22:7bce89cc79cd8816";
+const DEVICE_MODELS_PIN = "23:38a0dfa1247dc12c";
 
 Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);

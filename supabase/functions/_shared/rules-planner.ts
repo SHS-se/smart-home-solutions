@@ -31,7 +31,7 @@ import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v12:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v13:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -71,7 +71,7 @@ let compiled: ReturnType<typeof createWasmPlanner> | undefined;
 function planner(): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
   const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 9 || hash(bytes) !== artifact.wasm_sha256) {
+  if (artifact.abi !== 10 || hash(bytes) !== artifact.wasm_sha256) {
     return fail("Rules planner artifact is missing, obsolete or corrupt");
   }
   compiled = createWasmPlanner(bytes);
@@ -260,7 +260,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 9, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 10, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -280,6 +280,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     pool_stop_c: pool ? hardware?.stop_c ?? null : null,
     initial: { battery_kwh: battery && snapshot.battery ? snapshot.battery.soc * battery.capacity_kwh : null,
       ev_kwh: ev && car ? ev.soc * car.capacity_kwh : null, pool_c: pool ? snapshot.pool!.water_temperature_c : null,
+      pool_pending_heat_kwh: pool ? poolService.pending_heat_kwh : null,
       heater_state: pool ? snapshot.pool!.heating_running
         ? finite(snapshot.pool!.heating_elapsed_seconds) ? { kind: "running", seconds: snapshot.pool!.heating_elapsed_seconds! } : { kind: "running", seconds: 0 }
         : { kind: "off_unobserved" } : null },

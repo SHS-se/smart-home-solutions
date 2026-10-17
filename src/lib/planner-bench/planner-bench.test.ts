@@ -102,7 +102,7 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
   const series = planSeries(Array.from({ length: n }, (_, i) => slot(i)), null);
   series.poolStart = new Array(n).fill(null);
   series.poolThermal = {
-    store: { capacity_kwh_per_c: 1, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -1 / 24 }] } },
+    store: { capacity_kwh_per_c: 1, response_time_constant_h: 0, loss: { kind: 'measured', points: [{ at_c: 30, c_per_h: -1 / 24 }] } },
     outdoorC: new Array(n).fill(20), localMonth: new Array(n).fill(7),
   };
   series.poolC = Array.from({ length: n }, (_, i) => poolC(i));

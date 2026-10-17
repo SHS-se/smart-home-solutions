@@ -12,6 +12,7 @@ import type { ThermalZoneModel } from "./thermal-model.ts";
 import type { DeviceCommand } from "./device-commands.ts";
 import type { UtilityCurve } from "./store-value.ts";
 import type { ValueSettings, ValueStoreKey } from "./value-curves.ts";
+import type { PoolDynamics } from "./pool-response.ts";
 
 export type PlanKey = "baseline" | "priority" | "cost";
 
@@ -86,6 +87,15 @@ export interface PoolHardwareInput {
 }
 
 export interface PoolStateInput {
+  /** Observed actuator intervals in the unfinished quarter, including runs
+   * that already stopped. Incomplete observations remain useful evidence. */
+  heating_history?: {
+    start: string;
+    end: string;
+    complete: boolean;
+    intervals: { start: string; end: string; elapsed_seconds_at_start: number;
+      elapsed_basis: "confirmed_transition" | "observed_on_lower_bound" }[];
+  };
   hardware?: PoolHardwareInput;
   water_temperature_c: number;
   volume_m3: number;
@@ -364,6 +374,10 @@ export interface OptimisationSnapshot {
    * the seeded figures then, and says so through `forecast_method`.
    */
   pool_model?: {
+    /** Learned response to compressor electricity, including its shutdown tail. */
+    thermal_dynamics?: PoolDynamics;
+    /** Reconstructed at this capture, separate from the daily parameter fit. */
+    pending_heat_kwh?: number;
     hardware?: PoolHardwareInput;
     heater_response?: HeatPumpResponse;
     /** Null while only the measured response exists; the seeded loss stands in then. */

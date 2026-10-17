@@ -129,7 +129,16 @@ fn preserve(
     let (a, b) = (before.last().unwrap(), after.last().unwrap());
     b.battery_kwh.unwrap_or(0.0) + EPS >= a.battery_kwh.unwrap_or(0.0)
         && b.ev_kwh.unwrap_or(0.0) + EPS >= a.ev_kwh.unwrap_or(0.0)
-        && b.pool_c.unwrap_or(0.0) + EPS >= a.pool_c.unwrap_or(0.0)
+        && policy::pool_inventory(
+            p,
+            b.pool_c.unwrap_or(0.0),
+            b.pool_pending_heat_kwh.unwrap_or(0.0),
+        ) + EPS
+            >= policy::pool_inventory(
+                p,
+                a.pool_c.unwrap_or(0.0),
+                a.pool_pending_heat_kwh.unwrap_or(0.0),
+            )
         && (0..2).all(|d| not_worse(before_exposure[d], exposure(p, after, index, d)))
         && expected
             .iter()
@@ -827,7 +836,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 9,
+            abi: 10,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -882,6 +891,7 @@ pub(crate) mod tests {
                 current_step_a: 1,
             }),
             pool_store: Some(ThermalStore {
+                response_time_constant_h: 0.0,
                 capacity_kwh_per_c: 10.0,
                 loss: StandingLoss::Linear {
                     kw_per_c: 0.0,
@@ -899,6 +909,7 @@ pub(crate) mod tests {
                 battery_kwh: Some(5.0),
                 ev_kwh: Some(10.0),
                 pool_c: Some(30.0),
+                pool_pending_heat_kwh: Some(0.0),
                 heater_state: Some(HeaterState::OffUnobserved),
             },
             targets: Targets {

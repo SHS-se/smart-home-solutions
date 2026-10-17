@@ -41,7 +41,7 @@ const heater = {
     { setting: 12, electric_w: 3_000, heat_w: 12_450 },
   ],
 };
-const store = { capacity_kwh_per_c: 63.965, loss: { kind: "linear" as const, kw_per_c: 0.13, surroundings_c: 13.5 } };
+const store = { response_time_constant_h: 0, capacity_kwh_per_c: 63.965, loss: { kind: "linear" as const, kw_per_c: 0.13, surroundings_c: 13.5 } };
 const models = () => structuredClone({
   battery: { capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1, charge_max_w: 8_800, discharge_max_w: 9_600, charge_efficiency: 0.95, discharge_efficiency: 0.95 },
   car: { battery: { capacity_kwh: 75.6, kwh_per_km: 0.16, charge_efficiency: 0.92 }, charger },
@@ -74,7 +74,7 @@ Deno.test("a store loses its heat to its surroundings, and gains what is put int
   const outdoors = { ...store, loss: { kind: "linear" as const, kw_per_c: 0.13, surroundings_c: null } };
   assert(idleCPerHour(outdoors, 30, 0) < idleCPerHour(outdoors, 30, 25));
   // A measured rate: the line between its points, held beyond them, never a warming.
-  const measured = { capacity_kwh_per_c: 63.965, loss: { kind: "measured" as const, points: [{ at_c: 28, c_per_h: -0.02 }, { at_c: 30, c_per_h: -0.04 }, { at_c: 31, c_per_h: 0.01 }] } };
+  const measured = { response_time_constant_h: 0, capacity_kwh_per_c: 63.965, loss: { kind: "measured" as const, points: [{ at_c: 28, c_per_h: -0.02 }, { at_c: 30, c_per_h: -0.04 }, { at_c: 31, c_per_h: 0.01 }] } };
   assertEquals([28, 29, 30, 35, 20].map(c => idleCPerHour(measured, c, 0)), [-0.02, -0.03, -0.04, 0, -0.02]);
 });
 

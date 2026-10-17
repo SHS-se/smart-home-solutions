@@ -36,7 +36,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v11";
+export const READY_PRODUCER_VERSION = "bench-ready-v12";
 
 /**
  * The water heater as production plans it, around the kernel rather than in
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 9,
+    abi: 10,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -169,6 +169,7 @@ export function readyProblem(
       battery_kwh: c.start_state.battery_soc * h.battery.capacity_kwh,
       ev_kwh: c.start_state.ev.soc * h.car.battery.capacity_kwh,
       pool_c: c.start_state.pool_water_c,
+      pool_pending_heat_kwh: 0,
       heater_state: c.start_state.pool_heater,
     },
     targets: {
@@ -219,7 +220,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 9 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 10 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(

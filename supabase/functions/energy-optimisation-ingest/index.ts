@@ -38,7 +38,9 @@ import {
   type OptimisationSnapshot,
 } from "../_shared/planner/planning-contracts.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
-import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
+import { parseHeaterResponse, WATER_KWH_PER_M3_K } from "../_shared/planner/device-models.ts";
+import { poolPhysics } from "../_shared/planner/pool-physics.ts";
+import { fitPoolDynamics, poolDynamicsAnchor, poolPartialElectricity, poolPendingHeatAt, type PoolDynamics, type PoolElectricalInterval } from "../_shared/pool-dynamics.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
@@ -456,6 +458,7 @@ async function refitPoolModel(
   const result = fitPoolModel(samples, volumeM3);
   const idle = fitPoolLoss(samples, volumeM3);
   const response = fitPoolResponse(responseSamples);
+  const dynamics = fitPoolDynamics(responseSamples, volumeM3 * WATER_KWH_PER_M3_K);
   const idleRow = "fitted" in idle
     ? {
       idle_loss_kw_per_k: idle.fitted.loss_kw_per_k,
@@ -495,11 +498,53 @@ async function refitPoolModel(
     ...("fitted" in result ? result.warnings ?? [] : [result.rejected]),
     ...("fitted" in idle ? idle.warnings ?? [] : [idle.rejected]),
     ...(response.some(bin => (bin.idle_hours > 0 && bin.idle_hours < 3) || (bin.heated_kwh > 0 && bin.heated_kwh < 3)) ? ["limited_response_observations"] : []),
-  ] };
+    ...("rejected" in dynamics ? ["pool_dynamics_" + dynamics.rejected] : []),
+  ], ...( "fitted" in dynamics ? { thermal_response: {
+    response_time_constant_h: dynamics.fitted.response_time_constant_h,
+    rmse_c: dynamics.fitted.rmse_c,
+    instantaneous_rmse_c: dynamics.fitted.instantaneous_rmse_c,
+    sample_count: dynamics.fitted.sample_count,
+  } } : {}) };
   const { error } = await supabase
     .from("energy_optimisation_pool_model")
-    .upsert({ ...row, last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt }, { onConflict: "home_id" });
+    .upsert({ ...row, ...("fitted" in dynamics ? { thermal_dynamics: dynamics.fitted } : {}),
+      last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt }, { onConflict: "home_id" });
   if (error) console.error("[ENERGY-OPTIMISATION] pool refit failed", error);
+}
+
+/** Parameter learning is daily; response memory is reconstructed on EVERY
+ * capture from actual compressor energy. It is never reset just because the
+ * heater stopped or a new forecast was prepared. */
+async function capturedPoolPendingHeat(
+  // deno-lint-ignore no-explicit-any
+  supabase: any, homeId: string, snapshot: OptimisationSnapshot, model: PoolDynamics,
+): Promise<number> {
+  const keys = poolHeaters(snapshot.device_models).map(d => d.key);
+  const { data: devices, error } = await supabase.from("energy_optimisation_devices")
+    .select("id").eq("home_id", homeId).in("device_key", keys);
+  if (error) throw new Error("Pool response energy devices could not be read");
+  const at = Date.parse(snapshot.captured_at), boundary = Math.floor(at / SLOT_MS) * SLOT_MS;
+  const anchor = poolDynamicsAnchor(model, at);
+  const rows = devices?.length ? await readPagedRows<Record<string, unknown>>((from, to) => supabase.from("energy_optimisation_device_slots")
+    .select("start_ts, energy_kwh").eq("home_id", homeId).in("device_id", devices.map((d: { id: string }) => d.id))
+    .gte("start_ts", anchor.at).lt("start_ts", new Date(boundary).toISOString())
+    .order("start_ts").order("device_id").range(from, to)) : [];
+  const energy = new Map<number, number>();
+  let ignored = 0;
+  for (const row of rows) {
+    const start = Date.parse(String(row.start_ts)), kwh = Number(row.energy_kwh);
+    if (!Number.isFinite(start) || !Number.isFinite(kwh) || kwh < 0) { ignored++; continue; }
+    energy.set(start, (energy.get(start) ?? 0) + kwh);
+  }
+  const history: PoolElectricalInterval[] = [...energy].map(([start_ms, electrical_kwh]) => ({ start_ms, electrical_kwh, hours: .25 }));
+  const heater = poolPhysics(snapshot).heater;
+  const partial = poolPartialElectricity(snapshot.pool!, heater.response, heater.compressor_w, at);
+  history.push(...partial.intervals);
+  const expected = Math.max(0, Math.floor((boundary - Date.parse(anchor.at)) / SLOT_MS));
+  console.info("[ENERGY-OPTIMISATION] pool response state", { home_id: homeId, observed_quarters: energy.size,
+    missing_quarters: Math.max(0, expected - energy.size), ignored: ignored + partial.ignored,
+    partial_quarter_source: partial.source, partial_quarter_complete: partial.complete });
+  return poolPendingHeatAt(model, snapshot.pool!.volume_m3 * WATER_KWH_PER_M3_K, history, at);
 }
 
 async function prepareThermalPlanning(
@@ -1600,7 +1645,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       if (snapshot.pool) {
         const { data: poolModel, error: poolModelError } = await supabase
           .from("energy_optimisation_pool_model")
-          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response, hardware, last_fit_attempt")
+          .select("loss_kw_per_k, rated_cop, cop_per_air_c, cutout_air_c, idle_loss_kw_per_k, response, heater_response, hardware, last_fit_attempt, thermal_dynamics")
           .eq("home_id", auth.homeId)
           .maybeSingle();
         if (poolModelError) {
@@ -1649,6 +1694,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             pool_model: {
               ...(poolHardware ? { hardware: poolHardware } : {}),
               ...(heaterResponse ? { heater_response: heaterResponse } : {}),
+              ...(poolModel?.thermal_dynamics ? { thermal_dynamics: poolModel.thermal_dynamics } : {}),
               ...(poolResponse ? { response: poolResponse } : {}),
               loss_kw_per_k: lossKwPerK ? Number(lossKwPerK) : null,
               rated_cop: copFitted ? Number(poolModel!.rated_cop) : null,
@@ -1661,6 +1707,15 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
                 : Number(poolModel.cutout_air_c),
             },
           };
+          if (snapshot.pool_model?.thermal_dynamics) {
+            try {
+              snapshot.pool_model.pending_heat_kwh = await capturedPoolPendingHeat(supabase, auth.homeId, snapshot, snapshot.pool_model.thermal_dynamics);
+            } catch (error) {
+              console.error("[ENERGY-OPTIMISATION] pool response state unavailable", describeThrown(error));
+              snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("pool_response_evidence", "pool",
+                describeThrown(error), "Pool service retains known comfort intent and measured demand while response history is unavailable.")]);
+            }
+          }
         }
       }
 

@@ -69,7 +69,23 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 .max(1)
                 .min(p.slots.len() - i) as f64;
         policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && store.step(label.state.pool, 0.0, s.outdoor_c, h) < pool_goal + coast
+            && p.heater
+                .as_ref()
+                .unwrap()
+                .pool_transition(
+                    store,
+                    label.state.heater,
+                    false,
+                    shs_planner_models::PoolConditions {
+                        water_c: label.state.pool,
+                        pending_heat_kwh: label.state.pool_pending_heat_kwh,
+                        outdoor_c: s.outdoor_c,
+                        seconds: h * 3600.0,
+                        stop_c: p.pool_stop_c,
+                    },
+                )
+                .water_c
+                < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut ev_levels = vec![0];
@@ -119,6 +135,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                         on,
                         shs_planner_models::PoolConditions {
                             water_c: label.state.pool,
+                            pending_heat_kwh: label.state.pool_pending_heat_kwh,
                             outdoor_c: s.outdoor_c,
                             seconds: h * 3600.0,
                             stop_c: p.pool_stop_c,
@@ -342,7 +359,13 @@ fn construct(
     }
     let finished = |l: &Label| {
         f64::from(l.points) - (l.cash + l.wear + l.continuity)
-            + policy::end_credit(p, l.state.battery, l.state.pool, l.state.ev)
+            + policy::end_credit(
+                p,
+                l.state.battery,
+                l.state.pool,
+                l.state.pool_pending_heat_kwh,
+                l.state.ev,
+            )
     };
     labels.sort_by(|a, b| finished(b).total_cmp(&finished(a)));
     let mut out = Vec::new();

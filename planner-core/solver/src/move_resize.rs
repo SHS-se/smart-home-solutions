@@ -149,7 +149,14 @@ impl Estimate {
         // A store short of its cap at the end is credited for what it gains,
         // near enough the reference price per kWh bought for it.
         let (term, end) = match device {
-            Device::Pool => (&p.end_credit.pool, q.last().and_then(|v| v.pool_c)),
+            Device::Pool => (
+                &p.end_credit.pool,
+                q.last().and_then(|v| {
+                    v.pool_c.map(|water| {
+                        policy::pool_inventory(p, water, v.pool_pending_heat_kwh.unwrap_or(0.0))
+                    })
+                }),
+            ),
             Device::Ev => (&p.end_credit.ev, q.last().and_then(|v| v.ev_kwh)),
         };
         if let Some((term, end)) = term.as_ref().zip(end) {
