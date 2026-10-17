@@ -978,7 +978,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('dialog').getByRole('heading')).toContainText(/Historical accuracy %|Historisk noggrannhet %/);
     await expect(page.getByRole('dialog')).toHaveCSS('opacity','1');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
-    await page.screenshot({path:'/private/tmp/shs-forecast-accuracy/website-accuracy.png'});
+    await page.screenshot({path:test.info().outputPath('website-accuracy.png')});
   });
 
   test('routine learning does not create a banner or block replanning', async ({page})=>{
