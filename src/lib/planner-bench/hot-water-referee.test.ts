@@ -4,6 +4,9 @@ import { HOUSEHOLD } from './household.ts';
 import { referee, simulate, type Decisions, type HotWaterCommand } from './referee.ts';
 import { scoreQuarters } from './score.ts';
 import { TARGETS, plan, quarters, world } from './world.fixture.ts';
+import { hotWaterInput } from '../../../bench/wasm-planner.ts';
+import { scheduleHotWater } from '../../../supabase/functions/_shared/hot-water-opportunities.ts';
+import { quarterStarts } from './case.ts';
 
 const KEYS = HOUSEHOLD.hot_water.meter_keys;
 const boiler = (watts: number) => Object.fromEntries(KEYS.map((key, i) => [key, quarters(() => i === 0 ? watts : 0)]));
@@ -18,6 +21,28 @@ const measured = () => {
 const commanding = (command: (i: number) => HotWaterCommand): Decisions => ({ ...plan(), hot_water: quarters(command) });
 const kwh = (w: ArrayLike<number>) => Array.from(w).reduce((sum, v) => sum + v, 0) / 4000;
 
+Deno.test('live allocation and bench execution produce identical runs from identical daily evidence', () => {
+  const c = measured(); c.start = '2026-10-13T22:00:00Z';
+  const demand = quarters(i => [3, 5, 7][Math.floor(i / 96)] * 1000 / 24);
+  c.other_devices_w = { [KEYS[0]]: demand };
+  c.recorded.actual!.other_devices_w = c.other_devices_w;
+  c.base_load_forecast_w = c.recorded.actual!.base_load_w = demand.map(w => w + 600);
+  const input = hotWaterInput(c, HOUSEHOLD)!;
+  const starts = quarterStarts(c.start);
+  const allocation = scheduleHotWater({ services: input.services, starts, timezone: c.timezone,
+    hours: quarters(() => .25), other_house_w: input.other_house_w, import_price: quarters(() => 1),
+    export_price: quarters(() => .1), solar_w: quarters(() => 0), large_load_w: quarters(() => 0),
+    available_w: quarters(() => 10000), locked: [], previous_permissions: [] });
+  const decisions = commanding(i => ({ kind: allocation.permitted[i] ? 'permit' : 'inhibit' }));
+  const executed = simulate(c, HOUSEHOLD, decisions);
+  assertEquals(Array.from(executed.water!.w), allocation.expected_w);
+  for (let day = 0; day < 3; day++) {
+    assertAlmostEquals(kwh(executed.water!.w.slice(day * 96, (day + 1) * 96)), [3, 5, 7][day]);
+  }
+  c.recorded.actual!.other_devices_w = boiler(900);
+  assertEquals(hotWaterInput(c, HOUSEHOLD), input, 'recorded future consumption must never alter planner inputs');
+});
+
 Deno.test('a heater the plan leaves free runs as the house drew it, and costs what it did', () => {
   const c = measured();
   const free = simulate(c, HOUSEHOLD, plan());
@@ -28,9 +53,11 @@ Deno.test('a heater the plan leaves free runs as the house drew it, and costs wh
   assertEquals(without.water, null);
 });
 
-Deno.test('held-off heating is owed to the tank and made up at rated power, energy for energy', () => {
+Deno.test('daily electricity is heated at running power when a blocked boiler is permitted again', () => {
   const sim = simulate(measured(), HOUSEHOLD, commanding(i => i < 8 ? { kind: 'inhibit' } : { kind: 'free' }));
-  assertAlmostEquals(sim.water!.owedKwh[7], 8 * NEED_W / 4_000);
+  // The first local day starts at 02:00, so 88 quarters remain. This is a
+  // daily electrical requirement, not inferred tank debt at the eighth slot.
+  assertAlmostEquals(sim.water!.owedKwh[7], 88 * NEED_W / 4_000);
   // The first quarter allowed again heats at the heater's rated power.
   assertAlmostEquals(sim.water!.w[8], HOUSEHOLD.hot_water.rated_w);
   assertEquals(sim.water!.owedKwh[QUARTERS - 1], 0);

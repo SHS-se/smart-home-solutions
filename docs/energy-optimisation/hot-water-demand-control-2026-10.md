@@ -22,10 +22,12 @@ bounds or hard household-demand gates. Full declared running power must fit the
 configured grid headroom. Include any simultaneously operating heat-pump demand
 in the relevant physical load model; do not presume a shared meter isolates it.
 
-Distribute empirical forecast electricity over the selected capacity, capped at
-the declared running draw; preserve committed watts exactly. Ten quarters at
+Model each local day's remaining forecast electricity as heating runs at the
+measured boiler running power, preserving committed watts exactly. Full heating
+quarters draw that power; a final partial quarter integrates the shorter run
+duration. Permission quarters after completion may draw zero. Ten quarters at
 3 kW offer at most 7.5 kWh, not a promise of electricity or usable water. There
-is no planner tank queue, catch-up deadline, thermal state or moving threshold.
+is no inferred tank temperature or thermal state.
 
 Water is normally excluded from battery supply. Each quarter publishes
 `boiler_battery_allowed`. A stored-energy exception reserves the full permitted
@@ -69,12 +71,48 @@ completion. The mixed `sensor.hot_water_energy` includes both stages and must
 not be used as the controllable boiler's demand. A running compressor cannot
 extend boiler permission. No verified usable NIBE permission control exists.
 
-Installation mappings require a separate reviewed `running_power_w` field for
-the boiler. An instantaneous power sensor is completion evidence, never the
-rating. Missing rating names its editor and holds existing control settings.
-Other homes provide their own equipment rating; 3 kW is not a global default.
+Running power is learned from the boiler's own on-cycle recorder power maxima,
+using their median rather than diluted quarter-hour energy averages. Idle or
+transitional live readings do not overwrite an established measurement. The
+instantaneous sensor also provides completion evidence. Other homes learn their
+own equipment power; 3 kW is not a global default.
 
 The allowance strip sits in the bottom **Slot control** section, alongside
 economic findings, with its status in the tooltip's information block above
 power readings. Cases without identifiable boiler consumption still show the
 permission schedule, but mark consumption and heating assessment unavailable.
+
+## Shared electrical run model (17 October 2026)
+
+Live planning and bench execution use `boiler-consumption.ts`. Daily forecast
+energy is learned from complete local-day boiler meter totals with recency
+weighting and shrunk weekday differences. Sparse history retains the existing
+quarter-profile estimate until daily totals can calibrate it. Fitting daily
+totals prevents trimming intermittent quarter-hour bursts out of the energy
+requirement. Only the boiler's owned meters contribute; heat-pump preheat stays
+in household demand. No global daily 3–7 kWh clamp is imposed.
+
+The current day's requirement subtracts already delivered measured boiler
+energy in completed quarters and elapsed current-quarter delivery measured by
+the live energy counter relative to its Recorder boundary state. Committed
+future energy is subtracted exactly once by the run model. Replanning therefore
+does not schedule the full day again after an early heating run. Partial current
+quarters use their actual remaining duration. Missing counter boundary readings
+leave that partial measurement unknown; they do not discard household planning.
+
+Select a contiguous feasible permission window long enough for the expected
+heating run, then add later opportunities to meet the remaining 150-minute
+daily allowance. Unused permission need not be contiguous. Preserve
+the existing price, peak-hour and other-load preferences and all exact locked
+commands. Do not begin a forecast run that would have to finish through a known
+headroom obstruction. A truncated horizon or insufficient headroom reports
+missing minutes, including missing heating duration. This models electrical
+consumption and permission, without asserting observed tank temperature or
+usable-water availability.
+
+Bench forecast preparation receives only forecast boiler energy. Recorded-world
+evaluation uses the same daily run arithmetic with recorded daily boiler energy
+and the chosen permissions, including completion of an active run. Recorded
+future energy never enters planner inputs. Fully uncontrolled days retain their
+recorded consumption. Bench remaining-energy diagnostics are electrical model
+quantities, not measured tank debt.

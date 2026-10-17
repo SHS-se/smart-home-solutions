@@ -40,8 +40,9 @@ Deno.test("the current native artifact has a stable planner identity",async()=>{
 });
 
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
-/** The referee version and the device models' code it judges with. */
-const DEVICE_MODELS_PIN = "23:38a0dfa1247dc12c";
+const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
+/** The referee version and both shared physical consumption models. */
+const DEVICE_MODELS_PIN = "24:be4f6d528eb78425";
 
 Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);
@@ -61,11 +62,14 @@ Deno.test("the bench judges with one planner file, the device models, and that f
 Deno.test("a change to the device models is a change to how every plan is judged", async () => {
   const { transform, stop } = await import("npm:esbuild");
   try {
-    const { code } = await transform(tree.read(DEVICE_MODELS)!, { loader: "ts", minifyWhitespace: true, minifySyntax: true, format: "esm" });
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code));
+    const models = await Promise.all([DEVICE_MODELS, BOILER_CONSUMPTION].map(async path => {
+      const { code } = await transform(tree.read(path)!, { loader: "ts", minifyWhitespace: true, minifySyntax: true, format: "esm" });
+      return code;
+    }));
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(models)));
     const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
     assertEquals(`${REFEREE_VERSION}:${hash}`, DEVICE_MODELS_PIN,
-      "device-models.ts no longer does what the referee version was pinned to: bump REFEREE_VERSION in src/lib/planner-bench/referee.ts so stored results are judged again, then pin the new pair here.");
+      "Device or shared boiler consumption models changed: bump REFEREE_VERSION in src/lib/planner-bench/referee.ts so stored results are judged again, then pin the new pair here.");
   } finally {
     stop();
   }

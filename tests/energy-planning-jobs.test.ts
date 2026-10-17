@@ -599,7 +599,8 @@ Deno.test('database command references support real replanning with and without 
         resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
           shadow_import_sek_per_kwh: s.slots.map(() => 1.5) } }, reference, resolveRulePolicy());
       const first = generateRulesPlan(prepare(null)).plan;
-      assertEquals(first.plans.priority.slots.map(slot => slot.boiler_expected_w), s.slots.map(() => boiler ? 500 : 0));
+      assertEquals(first.plans.priority.slots.map(slot => slot.boiler_expected_w),
+        s.slots.map((_slot, i) => boiler && i < 2 ? 2000 : 0));
       await db.query('UPDATE energy_optimisation_current SET plan=$1', [first]);
       const state = (await db.query<{ value: { published_commands: PublishedCommandReference } }>(
         'SELECT get_energy_replan_state($1) value', [home])).rows[0].value;

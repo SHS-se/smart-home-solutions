@@ -1,7 +1,7 @@
 {
   "abi": 10,
   "wasm_sha256": "d3540c6ddf00499ef685229c7747cc88d926015fb8a0ebf32bd0ee958b9aec6d",
-  "source_sha256": "d5ed5adb469cd1a717c3661a33b9618c760e35a76246036e069ab0210a7a13f2",
+  "source_sha256": "477a64fac96a94e0db936e19092c41caa1f4eb509d2b69667149863e1bbcb14e",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -45,6 +45,7 @@
     "src/lib/planner-bench/service.ts",
     "src/lib/planner-bench/step-moves.ts",
     "supabase/functions/_shared/battery-supply.ts",
+    "supabase/functions/_shared/boiler-consumption.ts",
     "supabase/functions/_shared/hot-water-opportunities.ts",
     "supabase/functions/_shared/planner-wasm/calendar.ts",
     "supabase/functions/_shared/planner-wasm/core.ts",

@@ -36,7 +36,7 @@ import type {
 
 const supported = (key: string): key is PlannerRuleKey =>
   RULE_KEYS.some((k) => k === key);
-export const READY_PRODUCER_VERSION = "bench-ready-v12";
+export const READY_PRODUCER_VERSION = "bench-ready-v13";
 
 /**
  * The water heater as production plans it, around the kernel rather than in

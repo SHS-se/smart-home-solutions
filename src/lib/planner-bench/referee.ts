@@ -1,6 +1,8 @@
 import { boilerDemand } from "./household";
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
+import { projectBoilerDay } from '../../../supabase/functions/_shared/boiler-consumption';
+import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
 // A planner hands back decisions: how much power the pool, the car and the
@@ -45,7 +47,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 23;
+export const REFEREE_VERSION = 24;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -178,12 +180,27 @@ export function hotWaterNeed(c: BenchCase, h: Household, world: World = 'recorde
 export function simulate(c: BenchCase, h: Household, d: Decisions, world: World = 'recorded'): Simulation {
   const violations: Violation[] = [];
   const { baseW, solarW } = householdSeries(c, world);
-  // The water heater is taken out of the base load and heated as the plan
-  // permits. What it is not allowed to heat the tank is owed, and made up at
-  // up to its rated power once it is allowed again.
+  // Adapt each world's evidence to the same daily electrical run model used
+  // by production. Recorded future demand belongs only in this evaluation.
   const needW = hotWaterNeed(c, h, world);
   const ratedW = h.hot_water.rated_w;
-  let owedKwh = 0, waterPermitted = true;
+  const waterW = new Float64Array(QUARTERS), waterRemaining = new Float64Array(QUARTERS);
+  const starts = quarterStarts(c.start), days = new Map<string, number[]>();
+  starts.forEach((start, i) => { const day = localDay(start, c.timezone); days.set(day, [...days.get(day) ?? [], i]); });
+  let unservedKwh = 0;
+  if (needW) for (const indices of days.values()) {
+    const need = indices.map(i => Math.min(needW[i], Math.max(0, baseW[i])));
+    const controlled = indices.some(i => d.hot_water?.[i]?.kind !== undefined && d.hot_water[i].kind !== 'free');
+    const expected = world === 'told' ? d.hot_water_expected_w : undefined;
+    const projected = projectBoilerDay({ required_wh: need.reduce((s, w) => s + w * HOURS, 0),
+      running_w: indices.map(() => ratedW), hours: indices.map(() => HOURS),
+      permitted: indices.map(i => d.hot_water?.[i]?.kind !== 'inhibit') });
+    indices.forEach((i, j) => {
+      waterW[i] = expected ? expected[i] : controlled ? projected.expected_w[j] : need[j];
+      waterRemaining[i] = controlled && !expected ? unservedKwh + projected.remaining_wh[j] / 1000 : unservedKwh;
+    });
+    if (controlled && !expected) unservedKwh += projected.unserved_wh / 1000;
+  }
   // Only a measured window differs from what the planner was told.
   const measured = world === 'recorded' && c.recorded.actual !== undefined;
   const clip = (quarter: number, kind: ViolationKind, wanted: number, allowed: number, report = true) => {
@@ -239,27 +256,12 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     // Binary allowance with completion of an active heating run.
     let fixedW = baseW[i];
     if (needW && out.water) {
-      const command = d.hot_water?.[i] ?? FREE;
       // A heater meter reading more than the house drew in all is a mismatch between meters: the house's own reading holds.
       const need = Math.min(needW[i], Math.max(0, baseW[i]));
       const otherW = baseW[i] - need;
-      // The recorded world's controller lets an active run finish at 500 W.
-      const finishing = world !== 'told' && waterPermitted && (out.water.w[i - 1] ?? 0) >= 500 && owedKwh > 0;
-      waterPermitted = command.kind !== 'inhibit' || finishing;
-      let waterW = 0;
-      const expected = world === 'told' ? d.hot_water_expected_w?.[i] : undefined;
-      if (expected !== undefined) {
-        waterW = expected;
-        owedKwh = Math.max(0, owedKwh + (need - expected) * HOURS / 1_000);
-      } else if (waterPermitted) {
-        const catchUpW = Math.min(Math.max(0, ratedW - need), owedKwh * 1_000 / HOURS);
-        waterW = need + catchUpW;
-        owedKwh = Math.max(0, owedKwh - catchUpW * HOURS / 1_000);
-      } else {
-        owedKwh += need * HOURS / 1_000;
-      }
-      fixedW = otherW + waterW;
-      out.water.w[i] = waterW; out.water.owedKwh[i] = owedKwh; out.water.permitted[i] = waterPermitted ? 1 : 0;
+      fixedW = otherW + waterW[i];
+      out.water.w[i] = waterW[i]; out.water.owedKwh[i] = waterRemaining[i];
+      out.water.permitted[i] = d.hot_water?.[i]?.kind !== 'inhibit' || waterW[i] > 0 ? 1 : 0;
     }
     let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
     let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);

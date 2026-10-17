@@ -31,7 +31,7 @@ import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v14:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v15:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -214,7 +214,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   }
   if(boilerService.some(s=>s.control.rated_power_w===null)) snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning(
     "boiler_power_estimated","boiler","Boiler running power has not been observed yet.",
-    "Daily heating permissions remain active. Consumption and power headroom use available demand evidence until a heating run is measured.")]);
+    "Daily heating permissions remain active. Electrical consumption is unknown until the boiler's running power is measured.")]);
   const locked: PublishedCommandSlot[] = [];
   if (reference) {
     for (const slot of snapshot.slots) {

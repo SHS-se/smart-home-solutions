@@ -223,6 +223,14 @@ Boiler energy is simulated consumption, not permission time multiplied by its
 the simulated draw is added, so preheating remains in base load and the boiler
 is counted once.
 
+The live planner and recorded-world referee share `boiler-consumption.ts`:
+each local day's electrical requirement becomes heating at the measured running
+power, followed by one partial completion quarter when needed. The planner uses
+forecast daily energy; the referee uses recorded daily energy without passing
+it back into planning. A controlled run may finish beyond scheduled permission.
+Uncontrolled days preserve recorded consumption. Remaining energy is an
+electrical diagnostic, not an observed tank state.
+
 The referee checks daily permission coverage, not water temperature. Its
 `water_opportunities` rule deducts one point per missing quarter below ten
 allowed quarters in each of the sample’s three consecutive 24-hour periods,
