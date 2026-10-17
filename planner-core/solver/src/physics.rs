@@ -243,11 +243,17 @@ pub(crate) fn battery_flows(
         // the limit, and peak shaving that supplies only the excess.
         Operation::SupplyHouse => {
             let need = (demand - p.limits.import_w).max(0.0).min(stored);
-            (solar, load.house_supply_bound(p).min(discharge_cap.max(need)))
+            (
+                solar,
+                load.house_supply_bound(p).min(discharge_cap.max(need)),
+            )
         }
         Operation::ShaveImport => {
             let need = (demand - p.limits.import_w).max(0.0);
-            (solar, load.house_supply_bound(p).min(discharge_cap).min(need))
+            (
+                solar,
+                load.house_supply_bound(p).min(discharge_cap).min(need),
+            )
         }
         Operation::GridCharge => (charge_cap.min((p.limits.import_w - demand).max(0.0)), 0.0),
         Operation::Export => {
@@ -747,10 +753,17 @@ mod supply_permission_tests {
         };
         let limit = p.limits.import_w;
         // Peak shaving supplies only demand above the limit.
-        assert!((discharge(&p, Operation::ShaveImport, 4000.0, limit + 1500.0) - 1500.0).abs() < 1e-8);
-        assert_eq!(discharge(&p, Operation::ShaveImport, 4000.0, limit - 500.0), 0.0);
+        assert!(
+            (discharge(&p, Operation::ShaveImport, 4000.0, limit + 1500.0) - 1500.0).abs() < 1e-8
+        );
+        assert_eq!(
+            discharge(&p, Operation::ShaveImport, 4000.0, limit - 500.0),
+            0.0
+        );
         // A fixed figure stands, and rises to keep import at the limit.
-        assert!((discharge(&p, Operation::SupplyHouse, 500.0, limit + 1500.0) - 1500.0).abs() < 1e-8);
+        assert!(
+            (discharge(&p, Operation::SupplyHouse, 500.0, limit + 1500.0) - 1500.0).abs() < 1e-8
+        );
         assert!((discharge(&p, Operation::SupplyHouse, 500.0, limit + 200.0) - 500.0).abs() < 1e-8);
         // Following demand supplies all of it.
         assert!((discharge(&p, Operation::SelfConsumption, 4000.0, 3000.0) - 3000.0).abs() < 1e-8);

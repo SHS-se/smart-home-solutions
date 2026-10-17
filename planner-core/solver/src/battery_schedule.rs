@@ -568,15 +568,29 @@ mod tests {
         let mut w = work(&p);
         let index = policy::index(&p, &mut w).unwrap();
         let axes = axes(&p, &planned);
-        let ctx = Context { p: &p, index: &index, commands: &commands, planned: &planned, axes: &axes };
+        let ctx = Context {
+            p: &p,
+            index: &index,
+            commands: &commands,
+            planned: &planned,
+            axes: &axes,
+        };
         let kwh = p.initial.battery_kwh.unwrap();
         let options = ctx.options(0, kwh);
-        let shave = options.iter().find(|c| c.battery == Operation::ShaveImport).expect("peak shaving offered");
+        let shave = options
+            .iter()
+            .find(|c| c.battery == Operation::ShaveImport)
+            .expect("peak shaving offered");
         assert!(ctx.carry(0, kwh, shave).is_some());
-        assert!(ctx.carry(0, kwh, &idle()).is_none(), "holding breaches the limit");
+        assert!(
+            ctx.carry(0, kwh, &idle()).is_none(),
+            "holding breaches the limit"
+        );
         // Sized inventory moves are fixed figures, never demand following.
-        assert!(options.iter().all(|c| c.battery != Operation::SelfConsumption
-            || c.discharge_limit_w == p.battery.as_ref().unwrap().discharge_max_w));
+        assert!(options
+            .iter()
+            .all(|c| c.battery != Operation::SelfConsumption
+                || c.discharge_limit_w == p.battery.as_ref().unwrap().discharge_max_w));
     }
 
     #[test]
