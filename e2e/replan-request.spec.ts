@@ -965,6 +965,9 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=plan');
     const forecast = page.getByRole('button',{name:/Forecast accuracy %|Prognosnoggrannhet %/});
     await expect(forecast).toContainText('94');
+    const status = page.getByTestId('plan-status-row').getByLabel(/Home Assistant connection|Home Assistant-anslutning/);
+    await expect(status).toHaveText(/^(Connected|Disconnected|Ansluten|Frånkopplad)$/);
+    await expect(status).not.toContainText(/connecting|disconnecting|\d+s/i);
     await forecast.click();
     const popup = page.getByRole('dialog');
     await expect(popup.getByText('Baseline',{exact:true})).toBeVisible();

@@ -430,7 +430,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       </Alert>}
       {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
       <PlanningWarningsAlert warnings={current?.plan.planning_warnings ?? []} />
-      {section === 'plan' && <ForecastAccuracyButtons report={accuracy} error={accuracyError} />}
+      {section === 'plan' && <div className="flex flex-wrap items-center justify-between gap-2" data-testid="plan-status-row">
+        <ForecastAccuracyButtons report={accuracy} error={accuracyError} />
+        <span className="inline-flex items-center gap-2 text-xs text-muted-foreground" aria-label={t('Home Assistant-anslutning', 'Home Assistant connection')}>
+          <span aria-hidden="true" className={`h-2 w-2 rounded-full ${activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? 'bg-emerald-600' : 'bg-red-600'}`} />
+          {activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? t('Ansluten', 'Connected') : t('Frånkopplad', 'Disconnected')}
+        </span>
+      </div>}
       {!current && section === 'plan' && replanControls}
       {content}
       {(

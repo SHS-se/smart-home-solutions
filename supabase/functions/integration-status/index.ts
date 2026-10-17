@@ -1,4 +1,4 @@
-import { waitForReplan } from "../_shared/replan-wait.ts";
+import { NotificationUnavailable, waitForReplan } from "../_shared/replan-wait.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 // Lightweight status endpoint for the SHS Home Assistant integration.
 // Device-token authenticated. The integration polls this to know whether the
@@ -42,10 +42,13 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
     return json({ error: "method_not_allowed" }, 405);
   }
 
+  const deadline = AbortSignal.any([req.signal, AbortSignal.timeout(110_000)]);
+  const started = performance.now();
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-    { auth: { persistSession: false }, global: { fetch: traffic.fetch } },
+    { auth: { persistSession: false }, global: { fetch: (input, init) => traffic.fetch(input, {...init,
+      signal: AbortSignal.any([deadline, ...(init?.signal ? [init.signal] : [])])}) } },
   );
 
   try {
@@ -136,7 +139,7 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       if (after && !HA_UUID.test(after)) return json({ error: "invalid_replan_request_id" }, 400);
       await supabase.realtime.setAuth(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       pending = await waitForReplan({
-        after, signal: req.signal,
+        after, signal: deadline, holdMs: Math.min(90_000, Math.max(0, 100_000-(performance.now()-started))),
         read: async () => {
           const { data, error } = await supabase.from("energy_optimisation_current")
             .select("replan_request_id, replan_completed_request_id, replan_error")
@@ -146,14 +149,24 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         },
         subscribe: changed => {
           const channel = supabase.channel(`shs-replan:${auth.homeId}`, { config: { private: true } });
-          const ready = new Promise<void>((resolve, reject) => {
-            channel.on("broadcast", { event: "requested" }, changed).subscribe(status => {
-              if (status === "SUBSCRIBED") resolve();
-              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED")
-                reject(new Error(`Replan notification connection: ${status}`));
-            });
+          let joined!: () => void;
+          let disconnected!: () => void;
+          const ready = new Promise<void>(resolve => { joined = resolve; });
+          const lost = new Promise<void>(resolve => { disconnected = resolve; });
+          channel.on("broadcast", { event: "requested" }, changed).subscribe(status => {
+            if (status === "SUBSCRIBED") joined();
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") disconnected();
           });
-          return { ready, close: () => supabase.removeChannel(channel) };
+          return { ready, lost, close: async () => {
+            // Never let an unresponsive unsubscribe exceed the overall request budget.
+            let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([supabase.removeChannel(channel), new Promise<void>(resolve => { cleanupTimer = setTimeout(resolve, 1_000); })]);
+            } finally {
+              clearTimeout(cleanupTimer);
+              supabase.realtime.disconnect();
+            }
+          } };
         },
       });
     }
@@ -178,6 +191,10 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       server_time: new Date().toISOString(),
     });
   } catch (error) {
+    if (error instanceof NotificationUnavailable || deadline.aborted) {
+      console.warn("[INTEGRATION-STATUS] notification unavailable", {requestId, reason: String(error)});
+      return json({error: "notification_unavailable"}, 503);
+    }
     console.error("[INTEGRATION-STATUS] unexpected", error);
     return json({ error: "internal_error" }, 500);
   }

@@ -98,6 +98,7 @@ const errorMessage = (code: string): string => ({
   unauthorized: "The device credential was not accepted.",
   invalid_body: "The request body does not match the API contract.",
   internal_error: "The server could not complete the request.",
+  notification_unavailable: "The plan notification connection is temporarily unavailable.",
   method_not_allowed: "The HTTP method is not supported for this operation.",
   stale_plan_ack:
     "The acknowledgement does not name the current generated plan.",
@@ -106,6 +107,7 @@ const errorMessage = (code: string): string => ({
 const retryableCode = (code: string): boolean =>
   [
     "internal_error",
+    "notification_unavailable",
     "storage_failed",
     "token_lookup_failed",
     "customer_lookup_failed",
