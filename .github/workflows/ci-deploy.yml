@@ -304,6 +304,10 @@ jobs:
             "UPDATE private.energy_weather_sync_credentials
              SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/sync-weather-history'
              WHERE singleton"
+          supabase db query --linked \
+            "UPDATE private.energy_accuracy_credentials
+             SET function_url = 'https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/energy-forecast-accuracy'
+             WHERE singleton"
 
 
   functions:

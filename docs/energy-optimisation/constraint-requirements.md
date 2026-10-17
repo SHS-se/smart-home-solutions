@@ -96,3 +96,9 @@ retained commands remain exact. Native projection certifies every resulting
 flow; no grid limit is raised and no result is clipped or fabricated. A baseline
 that still cannot run is unavailable. Disclose reduced charging and withhold
 cost deltas when delivered EV energy differs instead of pricing missing energy.
+
+User requirement, 17 October 2026: normal collection of history, model learning
+and limited fit observations do not create warning banners. Keep their evidence
+in diagnostics and informational logs. Operational failures, including an
+unavailable savings comparison, remain visible. Forecast quality is separate
+from device permissions and plan admission.

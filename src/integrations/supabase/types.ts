@@ -5135,6 +5135,10 @@ export type Database = {
           start_ts: string
         }[]
       }
+      get_energy_forecast_accuracy: {
+        Args: { p_home_id: string }
+        Returns: Json
+      }
       get_energy_portal_delta: {
         Args: { p_customer_id: string; p_home_id: string; p_known?: Json }
         Returns: Json

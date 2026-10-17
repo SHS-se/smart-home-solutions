@@ -9,6 +9,17 @@ export interface PlanningWarning {
   entity_id?: string;
 }
 
+const ROUTINE_LEARNING_CODES = new Set([
+  "profile_estimated", "device_history_estimated", "running_power_unknown",
+  "pool_model_quality", "room_model_quality", "room_estimate", "room_forecast_estimate",
+  "limited_idle_observations", "limited_response_observations",
+  "pool_empirical_service", "boiler_power_estimated", "baseline_ev_load_balanced",
+]);
+
+export function actionablePlanningWarnings(warnings: readonly PlanningWarning[]): PlanningWarning[] {
+  return warnings.filter(warning => !ROUTINE_LEARNING_CODES.has(warning.code));
+}
+
 export function mergePlanningWarnings(...groups: Array<readonly PlanningWarning[] | null | undefined>): PlanningWarning[] {
   const warnings = new Map<string, PlanningWarning>();
   for (const group of groups) for (const warning of Array.isArray(group) ? group : []) {

@@ -111,6 +111,9 @@ verify_jwt = false
 [functions.energy-optimisation-plan-step]
 verify_jwt = false
 
+[functions.energy-forecast-accuracy]
+verify_jwt = false
+
 [functions.energy-optimisation-plan-ack]
 verify_jwt = false
 

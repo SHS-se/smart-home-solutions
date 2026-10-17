@@ -2,6 +2,8 @@ import ReplanControls from './ReplanControls';
 import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
 import PlanningWarningsAlert from './PlanningWarningsAlert';
+import ForecastAccuracyButtons from './ForecastAccuracyButtons';
+import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
 import { downloadTrafficReport, recordPortalSync } from '@/lib/network-traffic';
@@ -81,6 +83,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const [current, setCurrent] = useState<CurrentRow | null>(null);
+  const [accuracy, setAccuracy] = useState<AccuracyReport | null>(null);
+  const [accuracyError, setAccuracyError] = useState<string | null>(null);
   const [latestRuntime, setLatestRuntime] = useState<HaRuntimeRow | null>(null);
   const [actuals, setActuals] = useState<ActualEnergySlot[]>([]);
   const [prices, setPrices] = useState<PriceSlotRow[]>([]);
@@ -125,6 +129,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     if (cache.scope !== `${customerId ?? ''}:${homeId ?? ''}` || cache.busy) return;
     if (!cache.initialized) {
       setCurrent(null);
+      setAccuracy(null);
+      setAccuracyError(null);
       setLatestRuntime(null);
       setActuals([]);
       setPrices([]);
@@ -139,12 +145,14 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     cache.busy = true;
     if (!background) setLoading(true);
     try {
-      const { data, error: syncError } = await supabase.rpc('get_energy_portal_delta', {
+      const [{ data, error: syncError }, accuracyResult] = await Promise.all([supabase.rpc('get_energy_portal_delta', {
         p_customer_id: customerId, p_home_id: homeId,
         p_known: { ...cache.known, actuals: cache.actuals.hashes(),
           prices: cache.prices.hashes(), device_actuals: cache.deviceActuals.hashes() },
-      });
+      }), supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId})]);
       if (syncRef.current !== cache) return;
+      setAccuracyError(accuracyResult.error ? t('Noggrannhet är inte tillgänglig', 'Accuracy unavailable') : null);
+      setAccuracy(accuracyResult.data as unknown as AccuracyReport | null);
       if (syncError) throw syncError;
       const delta = data as unknown as {
         current: Omit<CurrentRow, 'plan'> | null;
@@ -422,6 +430,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       </Alert>}
       {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
       <PlanningWarningsAlert warnings={current?.plan.planning_warnings ?? []} />
+      {section === 'plan' && <ForecastAccuracyButtons report={accuracy} error={accuracyError} />}
       {!current && section === 'plan' && replanControls}
       {content}
       {(

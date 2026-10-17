@@ -81,6 +81,7 @@ const idle: ReplanColumns = {
  * next read returns, which is the whole behaviour being checked.
  */
 interface MockPlanState {
+  accuracy?: Record<string, unknown>;
   row: ReplanColumns;
   reportedPlanId?: string;
   reportedValidUntil?: string;
@@ -156,6 +157,10 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
   await context.route('**/rest/v1/**', async route => {
     const shown = replan.publishedPlan ?? plan;
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/rpc/get_energy_forecast_accuracy')) {
+      await route.fulfill({json: replan.accuracy ?? null});
+      return;
+    }
     if (url.pathname.endsWith('/rpc/get_energy_portal_delta')) {
       if (replan.readError) {
         await route.fulfill({ status: 503, json: { message: 'Database temporarily unavailable' } });
@@ -952,13 +957,35 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('button', { name: /^(Ekonomi|Economics)$/ })).toHaveCount(0);
   });
 
-  test('data quality warnings explain the estimate without blocking replan and clear after recovery', async ({page})=>{
+  test('accuracy buttons open compact device lists with all five grades', async ({page}) => {
+    const devices = [['baseline','Baseline',94,'green'],['ev','Car',84,'lime'],['pool','Pool',74,'yellow'],
+      ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red']].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
+    replan.accuracy = {version:1,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',forecast_plan_id:PLAN.plan_id,
+      forecast:{percentage:94,grade:'green',devices},historical:{percentage:64,grade:'orange',devices}};
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const forecast = page.getByRole('button',{name:/Forecast accuracy %|Prognosnoggrannhet %/});
+    await expect(forecast).toContainText('94');
+    await forecast.click();
+    const popup = page.getByRole('dialog');
+    await expect(popup.getByText('Baseline',{exact:true})).toBeVisible();
+    for (const n of [94,84,74,64,54]) await expect(popup.getByText(`${n}%`,{exact:true})).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(forecast).toBeFocused();
+    await page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/}).click();
+    await expect(page.getByRole('dialog').getByRole('heading')).toContainText(/Historical accuracy %|Historisk noggrannhet %/);
+    await expect(page.getByRole('dialog')).toHaveCSS('opacity','1');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
+    await page.screenshot({path:'/private/tmp/shs-forecast-accuracy/website-accuracy.png'});
+  });
+
+  test('routine learning does not create a banner or block replanning', async ({page})=>{
     replan.publishedPlan={...PLAN,planning_warnings:[{code:'profile_estimated',scope:'base',severity:'error',
-      message:'Five historical quarters lack observations.',consequence:'Planning continues using observed neighbouring quarters.'}]};
+      message:'Five historical quarters lack observations.',consequence:'Planning continues using observed neighbouring quarters.'},
+      {code:'pool_model_quality',scope:'pool',severity:'warning',message:'limited_idle_observations, limited_response_observations',
+        consequence:'Learning continues.'}]};
     await page.goto('/portal/energy-modeling?tab=plan');
     const banner=page.getByTestId('planning-warnings');
-    await expect(banner).toContainText('Five historical quarters');
-    await expect(banner).toContainText('Planning continues using observed neighbouring quarters.');
+    await expect(banner).toHaveCount(0);
     await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
     replan.publishedPlan={...PLAN,planning_warnings:[]};await page.reload();
     await expect(banner).toHaveCount(0);

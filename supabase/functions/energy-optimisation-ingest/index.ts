@@ -793,7 +793,7 @@ async function prepareThermalPlanning(
   // loud. With no room left the result is exactly `withoutComfortForecast`:
   // no zones, and every model back on its own recent history.
   if (skipped.length > 0) {
-    console.error(
+    console.info(
       `[ENERGY-OPTIMISATION] ${skipped.length} of ${rooms.size} rooms not ` +
         `comfort-forecast: ${skipped.map(item => item.message).join("; ")}`,
     );

@@ -6,6 +6,8 @@ import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 import { priceEstimateRows } from "./price-estimate-record.ts";
+import { actionablePlanningWarnings } from "./planner/planning-warnings.ts";
+import { archiveAccuracyForecast } from "./forecast-accuracy-store.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
@@ -170,8 +172,11 @@ export class PlanningJobs {
         // savings track record counts only months under control; nothing else records it.
         summary: { ...compactPlanSummary(generated), operating_modes: snapshot.operating_scope?.modes ?? null },
         validation_errors: generated.validation_errors };
-      for(const warning of generated.planning_warnings??[]) console.warn("[ENERGY-PLANNING-JOB] planning continues with limited evidence",
-        {job_id:job.id,plan_id:generated.plan_id,...warning});
+      for (const warning of generated.planning_warnings ?? []) {
+        const evidence = {job_id:job.id,plan_id:generated.plan_id,...warning};
+        if (actionablePlanningWarnings([warning]).length) console.warn("[ENERGY-PLANNING-JOB] planning needs attention", evidence);
+        else console.info("[ENERGY-PLANNING-JOB] learning evidence", evidence);
+      }
       publication = { current, run };
     } catch (error) {
       return deliver(await this.computeFailure(owner, error));
@@ -216,6 +221,9 @@ export class PlanningJobs {
   }
 
   private async archive(job: ClaimedJob & LoadedJob, plan: OptimisationPlan): Promise<void> {
+    await archiveAccuracyForecast(this.db, job.home_id, job.customer_id, plan).catch(error => {
+      console.error('[FORECAST-ACCURACY] forecast archive failed', {home_id: job.home_id, plan_id: plan.plan_id, detail: describeThrown(error)});
+    });
     const snapshot = job.input.snapshot;
     const estimates = priceEstimateRows({ homeId: job.home_id, timezone: snapshot.timezone,
       issuedAt: plan.issued_at, slots: snapshot.slots,

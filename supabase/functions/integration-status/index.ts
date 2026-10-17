@@ -157,8 +157,12 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         },
       });
     }
+    const {data: forecastAccuracy, error: accuracyError} = await supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId});
+    if (accuracyError) console.error('[FORECAST-ACCURACY] report read failed', {home_id: auth.homeId, code: accuracyError.code});
     return json({
       api_version: HA_API_VERSION,
+      forecast_accuracy: forecastAccuracy,
+      forecast_accuracy_error: accuracyError ? 'Accuracy unavailable' : null,
       runtime_received: runtimeReceived,
       supported_snapshot_schema_versions: HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
       supported_plan_schema_versions: HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,
