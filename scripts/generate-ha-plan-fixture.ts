@@ -142,7 +142,7 @@ export function rulesFixtureInput(source: OptimisationSnapshot) {
       selected_setting: 1, control: "switch", auxiliary_w: 700, response: {kind: "steady"},
     } } };
   }
-  if (snapshot.schema_version === 9 && snapshot.capabilities.battery && !snapshot.battery_execution_feedback) snapshot.battery_execution_feedback = {
+  if (snapshot.schema_version >= 9 && snapshot.capabilities.battery && !snapshot.battery_execution_feedback) snapshot.battery_execution_feedback = {
     generation: 1, source_receipt: 0, previous_contract_id: null, scope_revision: "fixture-whole-house", objectives: [],
   };
   return prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [],
@@ -230,6 +230,13 @@ export function mixedModePlanFixture() {
     plan: rulesFixturePlan(snapshot)};
 }
 
+/** Schema 10: the same household, with the battery's stated instructions and demand. */
+export function mixedModeV10PlanFixture() {
+  const snapshot = {...mixedModeSnapshot(), schema_version: 10 as const};
+  return {contract_fixture: "schema-10-mixed-mode", generated_by: "generateRulesPlan",
+    validation_time: snapshot.captured_at, plan: rulesFixturePlan(snapshot)};
+}
+
 export function hotWaterSnapshot(): OptimisationSnapshotV8 {
   const original = dispatchedEvSnapshot();
   const slots = original.slots.slice(0, 16).map((slot, i) => ({ ...slot, pv_forecast_w: 0, base_load_forecast_w: i < 8 ? 4500 : 500, import_price_sek_per_kwh: i < 12 ? 3 : .2 }));
@@ -272,6 +279,8 @@ if (import.meta.main) {
     `${JSON.stringify(unobservedHotWaterPlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-hot-water-demand-plan.json", import.meta.url),
     `${JSON.stringify(hotWaterPlanFixture(), null, 2)}\n`);
+  await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-10-mixed-mode-plan.json", import.meta.url),
+    `${JSON.stringify(mixedModeV10PlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url),
     `${JSON.stringify(mixedModePlanFixture(), null, 2)}\n`);
   await Deno.writeTextFile(new URL("../contracts/ha-api/fixtures/schema-8-battery-plan.json", import.meta.url),

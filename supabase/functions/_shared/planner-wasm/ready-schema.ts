@@ -20,12 +20,13 @@ const command = z.object({
     "grid_charge",
     "supply_house",
     "export",
+    "shave_import",
   ]),
   charge_limit_w: number,
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(10),
+  abi: z.literal(11),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({

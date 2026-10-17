@@ -176,6 +176,7 @@ const PowerSection: React.FC<{
       </div>
       <EnergyChart
         rows={panelRows}
+        batteryDemand={plan.battery_demand}
         series={consumption.series}
         baseValues={consumption.baseValues}
         consumptionIssues={consumption.issues}

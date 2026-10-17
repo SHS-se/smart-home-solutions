@@ -157,6 +157,8 @@ Deno.test("an executable command exceeding the real equipment limit still fails"
   const prepared = baselineLimitedHouse(.5);
   // Stored energy can be preserved for the booking. A discharge ceiling below
   // its 1.8 kW deficit is physically impossible regardless of that trajectory.
-  prepared.problem.fixed_commands![6]!.discharge_limit_w = 1000;
+  // (A fixed `supply_house` figure would rise to defend the limit; a ceiling cannot.)
+  prepared.problem.fixed_commands![6] = {...prepared.problem.fixed_commands![6]!,
+    battery: "self_consumption", discharge_limit_w: 1000};
   assertThrows(() => generateRulesPlan(prepared), Error, "exceed the configured grid limit");
 });

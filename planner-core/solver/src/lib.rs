@@ -37,8 +37,11 @@ pub enum Operation {
     Hold,
     SelfConsumption,
     GridCharge,
+    /// A sized house-supply figure that also defends the house import limit.
     SupplyHouse,
     Export,
+    /// Supply eligible demand only above the house import limit.
+    ShaveImport,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Command {
@@ -206,7 +209,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 10 || p.slots.is_empty() {
+    if p.abi != 11 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [

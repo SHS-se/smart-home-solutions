@@ -5,6 +5,7 @@
  */
 import type { OptimisationPlan } from "./planning-contracts.ts";
 import type { BatteryProjectionRow } from "./planning-contracts.ts";
+import type { BatteryDemand, BatteryInstruction } from "./battery-instruction.ts";
 
 export interface ExecutionFeedback {
   scope_revision?: string;
@@ -72,7 +73,34 @@ export interface RecoveryInstruction {
   reason: string;
 }
 
-export interface BatteryExecutionContract {
+/** Contract v2 interval: the stated instruction plus its accounting reference. */
+export interface ReferenceIntervalV2 {
+  start_ms: number;
+  end_ms: number;
+  stored_start_mwh: number;
+  stored_end_mwh: number;
+  target_kind: ReferenceInterval["target_kind"];
+  instruction: BatteryInstruction;
+  charge_ac_mwh: number;
+  discharge_ac_mwh: number;
+  pv_mwh: number;
+  load_mwh: number;
+  import_mwh: number;
+  export_mwh: number;
+  curtailed_mwh: number;
+  unserved_mwh: number;
+  rounding_mwh: number;
+}
+
+export type BatteryExecutionContract = BatteryExecutionContractV1 | BatteryExecutionContractV2;
+
+export interface BatteryExecutionContractV2 extends Omit<BatteryExecutionContractV1, "schema" | "intervals"> {
+  schema: "battery-plan-execution-v2";
+  intervals: ReferenceIntervalV2[];
+  demand: BatteryDemand;
+}
+
+export interface BatteryExecutionContractV1 {
   schema: "battery-plan-execution-v1";
   id: string;
   plan_id: string;
@@ -114,8 +142,10 @@ export function buildBatteryExecutionContract(input: {
   mode: BatteryExecutionContract["mode"];
   scope_revision: string;
   feedback: ExecutionFeedback;
+  /** Schema 10: state each slot's instruction over this demand (contract v2). */
+  demand?: BatteryDemand;
 }): BatteryExecutionContract {
-  const { plan, rows, pv_w, mode, scope_revision, feedback } = input;
+  const { plan, rows, pv_w, mode, scope_revision, feedback, demand } = input;
   const battery = plan.battery;
   if (!battery || plan.status !== "ready" || !scope_revision || !rows.length) {
     throw new Error("ready battery plan and explicit execution scope required");
@@ -148,7 +178,11 @@ export function buildBatteryExecutionContract(input: {
       (row.charge_w * battery.charge_efficiency - row.discharge_w / battery.discharge_efficiency) * hours * 1000));
     const command = slot.battery_command;
     if (!command) throw new Error("nominal native role missing");
-    const operation = command.operation === "self_consumption"
+    const instruction = slot.battery_instruction;
+    if (demand && !instruction) throw new Error("stated battery instruction missing");
+    const operation = instruction ? ({ idle: "idle", hold: "hold", solar_charge: "solar_charge", grid_charge: "grid_charge",
+        supply: "supply_house", export: "export" } as const)[instruction.kind]
+      : command.operation === "self_consumption"
       ? row.charge_w > 0 ? "solar_charge" : row.discharge_w > 0 ? "supply_house" : "hold"
       : command.operation;
     const result: ReferenceInterval = {
@@ -158,7 +192,10 @@ export function buildBatteryExecutionContract(input: {
       export_allowed: command.allow_battery_export,
       charge_ac_limit_w: Math.floor(command.charge_limit_w),
       discharge_ac_limit_w: Math.floor(command.discharge_limit_w),
-      follows_demand: operation === "supply_house",
+      // A ceiling below the served residual is a deliberate partial allocation:
+      // the planner bought the rest from the grid, so execution stays capped.
+      follows_demand: operation === "supply_house" &&
+        command.discharge_limit_w + 0.01 >= Math.max(0, row.house_w - row.unserved_w - pv),
       charge_ac_mwh: energy(row.charge_w), discharge_ac_mwh: energy(row.discharge_w),
       pv_mwh: energy(pv), load_mwh: energy(row.house_w), import_mwh: energy(Math.max(0, net)),
       export_mwh: energy(Math.max(0, -net)), curtailed_mwh: energy(row.curtailed_w),
@@ -215,7 +252,7 @@ export function buildBatteryExecutionContract(input: {
       });
     }
   }
-  return {
+  const contract: BatteryExecutionContractV1 = {
     schema: "battery-plan-execution-v1", id: `${plan.plan_id}:battery:${feedback.generation}`,
     plan_id: plan.plan_id, generation: feedback.generation, mode, scope_revision,
     model_revision: `${plan.model_version}:ac-constant-efficiency:${battery.charge_efficiency}:${battery.discharge_efficiency}`,
@@ -234,6 +271,14 @@ export function buildBatteryExecutionContract(input: {
           reason: "Revised strategy no longer requests this objective; this is not measured fulfilment" };
     }),
   };
+  if (!demand) return contract;
+  // The slot's instruction is copied verbatim: HA executes what the plan view shows.
+  return { ...contract, schema: "battery-plan-execution-v2", demand,
+    intervals: intervals.map((row, i) => ({ start_ms: row.start_ms, end_ms: row.end_ms,
+      stored_start_mwh: row.stored_start_mwh, stored_end_mwh: row.stored_end_mwh, target_kind: row.target_kind,
+      instruction: slots[i].battery_instruction!, charge_ac_mwh: row.charge_ac_mwh, discharge_ac_mwh: row.discharge_ac_mwh,
+      pv_mwh: row.pv_mwh, load_mwh: row.load_mwh, import_mwh: row.import_mwh, export_mwh: row.export_mwh,
+      curtailed_mwh: row.curtailed_mwh, unserved_mwh: row.unserved_mwh, rounding_mwh: row.rounding_mwh })) };
 }
 
 /** Validate the external capture before solving; receipt ordering is local only. */

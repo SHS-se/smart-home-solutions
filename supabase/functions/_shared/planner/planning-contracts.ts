@@ -6,6 +6,7 @@ import type { ExecutionFeedback, BatteryExecutionContract } from "./battery-plan
 import type { OperatingScope } from "./operating-scope.ts";
 import type { MeasurementIssue } from "./measurement-isolation.ts";
 import type { BatteryCommand, BatteryOperation } from "./battery-command.ts";
+import type { BatteryDemand, BatteryInstruction } from "./battery-instruction.ts";
 import type { LevelBasis, WindDay, StoredPriceRow } from "./energy-price-shape.ts";
 import type { DemandDay } from "./demand-outlook.ts";
 import type { ThermalZoneModel } from "./thermal-model.ts";
@@ -266,7 +267,7 @@ export interface OptimisationSnapshot {
    * devices (see `isolateMeasurements`).
    */
   measurement_issues?: MeasurementIssue[];
-  schema_version: 5 | 6 | 7 | 8 | 9;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -559,6 +560,8 @@ export interface PlannedSlot {
   battery_discharge_w: number;
   battery_export_w: number;
   battery_command?: BatteryCommand | null;
+  /** Schema 10: the instruction HA executes for this quarter (contract v2). */
+  battery_instruction?: BatteryInstruction;
   battery_soc: number;
   grid_import_w: number;
   grid_export_w: number;
@@ -645,13 +648,15 @@ export interface OptimisationPlan {
   battery_execution?: BatteryExecutionContract;
   /** Explicit default planning intent: all household consumption is eligible. */
   battery_supply_scope?: {kind:"whole_house"} | {kind:"none"} | {kind:"selected";include_base:boolean;planned_device_keys:string[]};
+  /** Schema 10: the loads separated from base load and the battery's demand profiles. */
+  battery_demand?: BatteryDemand;
   /** Required by schema 9. Top-level priority is the authoritative execution schedule. */
   operating_scope?: OperatingScope;
   execution_plan?: OptimisationPlan;
   /** Daily curve evidence for the conditional battery verification branch. */
   battery_verification_value_curve?: BatteryValueCurveDiagnostic | null;
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
-  schema_version: 5 | 6 | 7 | 8 | 9;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;

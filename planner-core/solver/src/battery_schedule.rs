@@ -83,6 +83,10 @@ impl Context<'_> {
             b.discharge_max_w,
         );
         add(Operation::SelfConsumption, 0.0, b.discharge_max_w);
+        // Holding would breach the house import limit: supply only the excess.
+        if demand > p.limits.import_w + 1e-7 {
+            add(Operation::ShaveImport, b.charge_max_w, b.discharge_max_w);
+        }
         add(Operation::Hold, b.charge_max_w, 0.0);
         add(Operation::Idle, 0.0, 0.0);
         add(
@@ -120,11 +124,8 @@ impl Context<'_> {
             }
             let power = (kwh - target) * 1000.0 / hours * b.discharge_efficiency;
             if power <= supply + 1e-7 {
-                add(
-                    Operation::SelfConsumption,
-                    b.charge_max_w,
-                    power.min(supply),
-                );
+                // A sized inventory move is a fixed figure, not demand following.
+                add(Operation::SupplyHouse, b.charge_max_w, power.min(supply));
             }
             if power <= export + 1e-7 {
                 add(Operation::Export, 0.0, power.min(export));
@@ -549,6 +550,33 @@ mod tests {
         let options = ctx.options(0, p.initial.battery_kwh.unwrap());
         assert!(options.iter().any(|c| c.battery == Operation::GridCharge
             && (c.charge_limit_w - (5000.0 - 500.0 - ev_w)).abs() < 1e-7));
+    }
+
+    #[test]
+    fn a_car_that_would_breach_the_house_limit_offers_stated_supply_modes() {
+        // Capture, 17 October 2026: the car at 16 A plus the house exceeded the
+        // import limit, so holding was infeasible and a partial discharge kept
+        // import under it. The candidates now state why they discharge.
+        let mut p = problem(1);
+        let ev_w = p.charger.as_ref().unwrap().watts(16).unwrap();
+        p.limits.import_w = 500.0 + ev_w - 300.0;
+        p.slots[0].base_w = 500.0;
+        let old_commands = vec![idle()];
+        let planned = physics::projection(&p, &old_commands).unwrap();
+        let mut commands = old_commands;
+        commands[0].ev_amps = 16;
+        let mut w = work(&p);
+        let index = policy::index(&p, &mut w).unwrap();
+        let axes = axes(&p, &planned);
+        let ctx = Context { p: &p, index: &index, commands: &commands, planned: &planned, axes: &axes };
+        let kwh = p.initial.battery_kwh.unwrap();
+        let options = ctx.options(0, kwh);
+        let shave = options.iter().find(|c| c.battery == Operation::ShaveImport).expect("peak shaving offered");
+        assert!(ctx.carry(0, kwh, shave).is_some());
+        assert!(ctx.carry(0, kwh, &idle()).is_none(), "holding breaches the limit");
+        // Sized inventory moves are fixed figures, never demand following.
+        assert!(options.iter().all(|c| c.battery != Operation::SelfConsumption
+            || c.discharge_limit_w == p.battery.as_ref().unwrap().discharge_max_w));
     }
 
     #[test]

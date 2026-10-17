@@ -1,7 +1,7 @@
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
 
 /**
- * Keys a schema 9 plan carries beside the schedule it shares with
+ * Keys a schema 9 or 10 plan carries beside the schedule it shares with
  * `execution_plan`. Everything else at the top level is the execution plan.
  * `thermal_projection` is descriptive and added by ingest after planning.
  */
@@ -24,7 +24,7 @@ export function derivedExecutionPlan(plan: OptimisationPlan): OptimisationPlan {
  * Assistant receives the generated plan from ingest, never this stored form.
  */
 export function storedPlan<T extends OptimisationPlan>(plan: T): T {
-  if (plan.schema_version !== 9 || !plan.execution_plan ||
+  if (plan.schema_version < 9 || !plan.execution_plan ||
       !sameJson(plan.execution_plan, derivedExecutionPlan(plan))) return plan;
   const { execution_plan: _derived, ...stored } = plan;
   return stored as T;
@@ -32,7 +32,7 @@ export function storedPlan<T extends OptimisationPlan>(plan: T): T {
 
 /** Restores the `execution_plan` that `storedPlan` left out. */
 export function expandStoredPlan<T extends OptimisationPlan>(plan: T): T {
-  if (plan.schema_version !== 9 || plan.execution_plan) return plan;
+  if (plan.schema_version < 9 || plan.execution_plan) return plan;
   return { ...plan, execution_plan: derivedExecutionPlan(plan) };
 }
 

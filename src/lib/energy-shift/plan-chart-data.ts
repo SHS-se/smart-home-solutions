@@ -4,6 +4,7 @@ import { activeDeviceKeys, type TimelineRow, type TimelineRange } from './energy
 import { splitConsumption } from './consumption-series';
 import { formatHomeDayMonthTime } from './home-time';
 import type { HotWaterQuarter } from './hot-water-gate';
+import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 
 export interface PlanPanelRow {
   startMs: number;
@@ -23,6 +24,8 @@ export interface PlanPanelRow {
   gridExportW: number | null;
   batteryChargeW: number | null;
   batteryDischargeW: number | null;
+  /** The plan's instruction for the battery in this quarter, when stated. */
+  batteryInstruction?: BatteryInstruction;
   /** Percentages, not fractions. */
   homeSoc: number | null;
   evSoc: number | null;
@@ -76,6 +79,7 @@ export function projectPlanChart(input: {
       measured: row.measured, missing: row.missing, estimatedEnergy: row.estimatedEnergy,
       solarW: row.solarW, loadW: row.loadW, gridImportW: row.gridImportW, gridExportW: row.gridExportW,
       batteryChargeW: row.batteryChargeW, batteryDischargeW: row.batteryDischargeW,
+      ...(row.batteryInstruction ? { batteryInstruction: row.batteryInstruction } : {}),
       homeSoc: row.batterySoc === null ? null : row.batterySoc * 100,
       evSoc: row.evSoc === null ? null : row.evSoc * 100,
       importPriceSekPerKwh: prices.kind !== 'live' ? row.importPriceSekPerKwh : priced(row.importPriceSekPerKwh, row.shadowImportSekPerKwh),

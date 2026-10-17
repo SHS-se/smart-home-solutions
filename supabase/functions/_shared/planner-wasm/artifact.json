@@ -1,7 +1,7 @@
 {
-  "abi": 10,
-  "wasm_sha256": "d3540c6ddf00499ef685229c7747cc88d926015fb8a0ebf32bd0ee958b9aec6d",
-  "source_sha256": "477a64fac96a94e0db936e19092c41caa1f4eb509d2b69667149863e1bbcb14e",
+  "abi": 11,
+  "wasm_sha256": "7bbe35a486c25ff37d1faa7ff6e8d56e4cae61991334843368bd8fb52a2e9925",
+  "source_sha256": "3b15af4339ed9d12023f51823e1330a5216212422472aa8c832350973dc0e832",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -56,6 +56,7 @@
     "supabase/functions/_shared/planner-wasm/ready-problem.ts",
     "supabase/functions/_shared/planner-wasm/ready-schema.ts",
     "supabase/functions/_shared/planner-wasm/rule-policy.ts",
+    "supabase/functions/_shared/planner/battery-instruction.ts",
     "supabase/functions/_shared/planner/battery-plan-execution.ts",
     "supabase/functions/_shared/planner/demand-outlook.ts",
     "supabase/functions/_shared/planner/device-models.ts",

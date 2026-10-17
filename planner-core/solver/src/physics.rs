@@ -238,8 +238,16 @@ pub(crate) fn battery_flows(
     match command.battery {
         Operation::Idle => (0.0, 0.0),
         Operation::Hold | Operation::SolarCharge => (solar, 0.0),
-        Operation::SelfConsumption | Operation::SupplyHouse => {
-            (solar, load.house_supply_bound(p).min(discharge_cap))
+        Operation::SelfConsumption => (solar, load.house_supply_bound(p).min(discharge_cap)),
+        // The same law HA applies: a fixed figure, raised to keep import at
+        // the limit, and peak shaving that supplies only the excess.
+        Operation::SupplyHouse => {
+            let need = (demand - p.limits.import_w).max(0.0).min(stored);
+            (solar, load.house_supply_bound(p).min(discharge_cap.max(need)))
+        }
+        Operation::ShaveImport => {
+            let need = (demand - p.limits.import_w).max(0.0);
+            (solar, load.house_supply_bound(p).min(discharge_cap).min(need))
         }
         Operation::GridCharge => (charge_cap.min((p.limits.import_w - demand).max(0.0)), 0.0),
         Operation::Export => {
@@ -726,6 +734,29 @@ mod supply_permission_tests {
     }
 
     #[test]
+    fn stated_supply_laws_defend_the_house_import_limit() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.initial.battery_kwh = Some(10.0);
+        let discharge = |p: &Problem, operation, limit: f64, base: f64| {
+            let mut p = p.clone();
+            p.slots[0].base_w = base;
+            let mut c = command(operation);
+            c.ev_amps = 0;
+            c.discharge_limit_w = limit;
+            projection(&p, &[c]).unwrap()[0].discharge_w
+        };
+        let limit = p.limits.import_w;
+        // Peak shaving supplies only demand above the limit.
+        assert!((discharge(&p, Operation::ShaveImport, 4000.0, limit + 1500.0) - 1500.0).abs() < 1e-8);
+        assert_eq!(discharge(&p, Operation::ShaveImport, 4000.0, limit - 500.0), 0.0);
+        // A fixed figure stands, and rises to keep import at the limit.
+        assert!((discharge(&p, Operation::SupplyHouse, 500.0, limit + 1500.0) - 1500.0).abs() < 1e-8);
+        assert!((discharge(&p, Operation::SupplyHouse, 500.0, limit + 200.0) - 500.0).abs() < 1e-8);
+        // Following demand supplies all of it.
+        assert!((discharge(&p, Operation::SelfConsumption, 4000.0, 3000.0) - 3000.0).abs() < 1e-8);
+    }
+
+    #[test]
     fn passive_ev_is_excluded_even_without_a_controllable_car() {
         let mut p = crate::witnesses::tests::problem(1);
         p.car = None;
@@ -773,7 +804,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 10;
+        p.abi = 11;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

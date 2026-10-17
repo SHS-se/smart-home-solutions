@@ -12,14 +12,16 @@
       6,
       7,
       8,
-      9
+      9,
+      10
     ],
     "supported_plan_schema_versions": [
       5,
       6,
       7,
       8,
-      9
+      9,
+      10
     ],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5,
@@ -996,7 +998,8 @@
               6,
               7,
               8,
-              9
+              9,
+              10
             ]
           },
           "supported_plan_schema_versions": {
@@ -1005,7 +1008,8 @@
               6,
               7,
               8,
-              9
+              9,
+              10
             ]
           },
           "minimum_snapshot_schema_version": {
@@ -1336,7 +1340,8 @@
                 6,
                 7,
                 8,
-                9
+                9,
+                10
               ]
             }
           },
@@ -1404,6 +1409,9 @@
               },
               {
                 "$ref": "#/components/schemas/SnapshotV9"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV10"
               }
             ]
           },
@@ -2358,6 +2366,9 @@
               },
               {
                 "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV10"
               }
             ]
           },
@@ -2540,7 +2551,8 @@
               6,
               7,
               8,
-              9
+              9,
+              10
             ]
           },
           "integration_version": {
@@ -3534,6 +3546,9 @@
               },
               {
                 "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV10"
               }
             ]
           },
@@ -3559,6 +3574,482 @@
             }
           }
         ]
+      },
+      "SnapshotV10": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 10
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "battery_execution_feedback": {
+                "$ref": "#/components/schemas/BatteryExecutionFeedbackV1"
+              }
+            }
+          }
+        ]
+      },
+      "PlanV10": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope",
+              "execution_plan"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 10
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "execution_plan": {
+                "$ref": "#/components/schemas/PlanV8"
+              },
+              "battery_execution": {
+                "$ref": "#/components/schemas/BatteryExecutionContractV2"
+              },
+              "battery_demand": {
+                "$ref": "#/components/schemas/BatteryDemandV1"
+              }
+            }
+          }
+        ]
+      },
+      "BatteryDemandV1": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "loads",
+          "profiles"
+        ],
+        "description": "Base load is house consumption minus every listed load. A profile supplies base (when included) plus its eligible loads.",
+        "properties": {
+          "loads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "name",
+                "category"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "category": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "include_base",
+                "eligible_keys"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "include_base": {
+                  "type": "boolean"
+                },
+                "eligible_keys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "BatteryInstructionV1": {
+        "description": "The planner-stated battery instruction; integer AC watts.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "idle"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "charge_ac_limit_w"
+            ],
+            "properties": {
+              "kind": {
+                "const": "hold"
+              },
+              "charge_ac_limit_w": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "charge_ac_limit_w"
+            ],
+            "properties": {
+              "kind": {
+                "const": "solar_charge"
+              },
+              "charge_ac_limit_w": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "charge_ac_w"
+            ],
+            "properties": {
+              "kind": {
+                "const": "grid_charge"
+              },
+              "charge_ac_w": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "profile_id",
+              "charge_ac_limit_w",
+              "discharge_ac_limit_w",
+              "response"
+            ],
+            "properties": {
+              "kind": {
+                "const": "supply"
+              },
+              "profile_id": {
+                "type": "string"
+              },
+              "charge_ac_limit_w": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "discharge_ac_limit_w": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "response": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mode"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "follow_demand"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mode",
+                      "import_target_w"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "import_target"
+                      },
+                      "import_target_w": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mode",
+                      "discharge_ac_w",
+                      "import_target_w"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "const": "fixed"
+                      },
+                      "discharge_ac_w": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "import_target_w": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "profile_id",
+              "discharge_ac_w"
+            ],
+            "properties": {
+              "kind": {
+                "const": "export"
+              },
+              "profile_id": {
+                "type": "string"
+              },
+              "discharge_ac_w": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "BatteryExecutionReferenceIntervalV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_ms",
+          "end_ms",
+          "stored_start_mwh",
+          "stored_end_mwh",
+          "target_kind",
+          "charge_ac_mwh",
+          "discharge_ac_mwh",
+          "pv_mwh",
+          "load_mwh",
+          "import_mwh",
+          "export_mwh",
+          "curtailed_mwh",
+          "unserved_mwh",
+          "rounding_mwh",
+          "instruction"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": "integer"
+          },
+          "end_ms": {
+            "type": "integer"
+          },
+          "stored_start_mwh": {
+            "type": "integer"
+          },
+          "stored_end_mwh": {
+            "type": "integer"
+          },
+          "target_kind": {
+            "type": "string"
+          },
+          "charge_ac_mwh": {
+            "type": "integer"
+          },
+          "discharge_ac_mwh": {
+            "type": "integer"
+          },
+          "pv_mwh": {
+            "type": "integer"
+          },
+          "load_mwh": {
+            "type": "integer"
+          },
+          "import_mwh": {
+            "type": "integer"
+          },
+          "export_mwh": {
+            "type": "integer"
+          },
+          "curtailed_mwh": {
+            "type": "integer"
+          },
+          "unserved_mwh": {
+            "type": "integer"
+          },
+          "rounding_mwh": {
+            "type": "integer"
+          },
+          "instruction": {
+            "$ref": "#/components/schemas/BatteryInstructionV1"
+          }
+        }
+      },
+      "BatteryExecutionContractV2": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "plan_id",
+          "generation",
+          "mode",
+          "scope_revision",
+          "model_revision",
+          "energy_basis",
+          "capacity_mwh",
+          "minimum_mwh",
+          "maximum_mwh",
+          "export_reserve_mwh",
+          "valid_until_ms",
+          "source_receipt",
+          "previous_contract_id",
+          "intervals",
+          "objectives",
+          "recovery",
+          "dispositions",
+          "demand"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "controlling",
+              "control_verification"
+            ]
+          },
+          "scope_revision": {
+            "type": "string"
+          },
+          "model_revision": {
+            "type": "string"
+          },
+          "energy_basis": {
+            "const": "stored_energy_mwh"
+          },
+          "capacity_mwh": {
+            "type": "integer"
+          },
+          "minimum_mwh": {
+            "type": "integer"
+          },
+          "maximum_mwh": {
+            "type": "integer"
+          },
+          "export_reserve_mwh": {
+            "type": "integer"
+          },
+          "valid_until_ms": {
+            "type": "integer"
+          },
+          "source_receipt": {
+            "type": "integer"
+          },
+          "previous_contract_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionReferenceIntervalV2"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionObjective"
+            }
+          },
+          "recovery": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionRecovery"
+            }
+          },
+          "dispositions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionDisposition"
+            }
+          },
+          "schema": {
+            "const": "battery-plan-execution-v2"
+          },
+          "demand": {
+            "$ref": "#/components/schemas/BatteryDemandV1"
+          }
+        }
       }
     }
   }

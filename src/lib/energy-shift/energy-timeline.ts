@@ -12,6 +12,7 @@
 // the same fault for anyone reading from another timezone.
 
 import type { ActualEnergySlot, PlannedSlot } from './contracts';
+import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 import { homeDayBounds } from './home-time';
 
 /** Days either side of today, or the whole span. */
@@ -52,6 +53,8 @@ export interface TimelineRow {
   gridExportW: number | null;
   batteryChargeW: number | null;
   batteryDischargeW: number | null;
+  /** Plan side, schema 10: the instruction the battery is given for this quarter. */
+  batteryInstruction?: BatteryInstruction;
   /** Fractions, measured on the past side and planned on the future side. */
   batterySoc: number | null;
   evSoc: number | null;
@@ -211,6 +214,7 @@ export const buildEnergyTimeline = ({
       gridExportW: -slot.grid_export_w,
       batteryChargeW: -slot.battery_charge_w,
       batteryDischargeW: slot.battery_discharge_w,
+      ...(slot.battery_instruction ? { batteryInstruction: slot.battery_instruction } : {}),
       batterySoc: slot.battery_soc,
       evSoc: slot.ev_soc,
       deviceW: { ...slot.device_loads_w },

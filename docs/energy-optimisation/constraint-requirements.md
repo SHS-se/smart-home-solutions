@@ -102,3 +102,11 @@ and limited fit observations do not create warning banners. Keep their evidence
 in diagnostics and informational logs. Operational failures, including an
 unavailable savings comparison, remain visible. Forecast quality is separate
 from device permissions and plan admission.
+
+User requirement, 17 October 2026 (evening): the planner states each quarter's
+battery mode — follow demand, cover demand above an import target, or a fixed
+figure that also defends the house limit — from the candidate the optimiser
+chose, never reconstructed from forecast flows. The plan lists every load it
+separated from base load and which of them the battery may supply; HA executes
+that law and the plan view describes the same instruction. See
+[battery execution contract v2](battery-execution-contract-v2.md).

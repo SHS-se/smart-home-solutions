@@ -178,3 +178,17 @@ Deno.test("incorporated windows that return get a new lifetime identity", () => 
     assertEquals(withHistory, revived);
   }
 });
+
+Deno.test("only an uncapped supply ceiling follows house demand", () => {
+  const input = source();
+  const i = input.rows.findIndex((row) => row.charge_w === 0);
+  Object.assign(input.rows[i], { house_w: 16000, residual_w: 16000, discharge_w: 864, unserved_w: 0 });
+  input.pv_w[i] = 0;
+  const command = input.plan.plans.priority.slots[i].battery_command!;
+  Object.assign(command, { operation: "self_consumption", discharge_limit_w: 864 });
+  // Capture, 17 October 2026: an 864 W allocation against 16 kW of demand.
+  const capped = buildBatteryExecutionContract(input).intervals[i];
+  assertEquals([capped.operation, capped.follows_demand, capped.discharge_ac_limit_w], ["supply_house", false, 864]);
+  command.discharge_limit_w = 16000;
+  assertEquals(buildBatteryExecutionContract(input).intervals[i].follows_demand, true);
+});

@@ -29,6 +29,7 @@ import { validateOperatingScope } from "./planner/operating-scope.ts";
 import { buildBatteryExecutionContract, validateExecutionFeedback } from "./planner/battery-plan-execution.ts";
 import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
+import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
 export const RULES_MODEL_VERSION = `rules-planner-v15:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
@@ -37,7 +38,7 @@ const finite = (v: unknown): v is number => typeof v === "number" && Number.isFi
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const fail = (message: string): never => { throw new Error(message); };
 
-export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "pool_permitted" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "boiler_battery_allowed" | "battery_command" | "device_commands"> & Partial<Pick<PlannedSlot, "device_loads_w" | "room_heating_w">>;
+export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "pool_permitted" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "boiler_battery_allowed" | "battery_command" | "device_commands"> & Partial<Pick<PlannedSlot, "battery_instruction">> & Partial<Pick<PlannedSlot, "device_loads_w" | "room_heating_w">>;
 export interface PublishedCommandReference {
   plan_id: string;
   hot_water_permissions?: string[];
@@ -71,7 +72,7 @@ let compiled: ReturnType<typeof createWasmPlanner> | undefined;
 function planner(): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
   const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 10 || hash(bytes) !== artifact.wasm_sha256) {
+  if (artifact.abi !== 11 || hash(bytes) !== artifact.wasm_sha256) {
     return fail("Rules planner artifact is missing, obsolete or corrupt");
   }
   compiled = createWasmPlanner(bytes);
@@ -104,9 +105,11 @@ function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapsho
   if (snapshot.capabilities.battery && !battery) return fail(`Committed battery command missing at ${slot.start}`);
   if (snapshot.capabilities.pool && !finite(slot.pool_command_w)) return fail(`Committed native pool command missing at ${slot.start}`);
   if (snapshot.capabilities.ev && !finite(slot.ev_target_current_a)) return fail(`Committed native EV command missing at ${slot.start}`);
+  // A schema 10 quarter keeps the exact candidate it was chosen as.
+  const stated = slot.battery_instruction ? nativeBattery(slot.battery_instruction) : null;
   return { pool_on: nativePool && (slot.pool_command_w ?? 0) > 0, ev_amps: slot.ev_target_current_a,
-    battery: battery?.operation ?? "idle", charge_limit_w: battery?.charge_limit_w ?? 0,
-    discharge_limit_w: battery?.discharge_limit_w ?? 0 };
+    battery: stated?.battery ?? battery?.operation ?? "idle", charge_limit_w: stated?.charge_limit_w ?? battery?.charge_limit_w ?? 0,
+    discharge_limit_w: stated?.discharge_limit_w ?? battery?.discharge_limit_w ?? 0 };
 }
 
 /** Freeze supplied forecasts/models and current published commands before admission. */
@@ -127,7 +130,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       "pool_physics_evidence","pool",String(error),"Pool service continues using empirical demand and known comfort targets.")]); }
   }
   const { snapshot, offset } = alignedSnapshot(isolated, effective);
-  if (snapshot.schema_version === 9) validateOperatingScope(snapshot);
+  if (snapshot.schema_version >= 9) validateOperatingScope(snapshot);
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   const count = snapshot.slots.length;
   if (Date.parse(snapshot.slots[0].start) > effective) return fail("Planning input must cover its capture interval");
@@ -260,7 +263,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 10, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 11, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -343,7 +346,9 @@ function batteryCommand(command: NativeCommand, quarter: NativeQuarter): Battery
   const forced = command.battery === "grid_charge" || command.battery === "export";
   const charge = forced ? quarter.charge_w : command.charge_limit_w;
   const discharge = forced ? quarter.discharge_w : command.discharge_limit_w;
-  const operation = forced && charge === 0 && discharge === 0 ? "idle" : command.battery;
+  // Schema 3 has no import-target response; its nearest meaning follows demand.
+  const native = command.battery === "shave_import" ? "self_consumption" : command.battery;
+  const operation = forced && charge === 0 && discharge === 0 ? "idle" : native;
   return { schema_version: 3, operation, charge_limit_w: charge,
     discharge_limit_w: discharge, allow_grid_charge: operation === "grid_charge",
     allow_battery_export: operation === "export" };
@@ -391,6 +396,9 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: f.ev_available,
       load_w: load, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
       battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command, q) : null,
+      ...(p.battery && snapshot.schema_version >= 10 ? { battery_instruction: locked?.battery_instruction ??
+        instructionFor(command, q, profileFor(input.boiler_services.length ? input.boiler_battery_allowed[i] : undefined),
+          { import_w: p.limits.import_w, discharge_max_w: p.battery.discharge_max_w }) } : {}),
       battery_soc: p.battery && q.battery_kwh !== null ? q.battery_kwh / p.battery.capacity_kwh : 0,
       grid_import_w: imports, grid_export_w: exports, curtailed_w: q.curtailed_w, unserved_w: 0,
       import_cost_sek: source.import_price_sek_per_kwh === null ? null : imports * hours / 1000 * source.import_price_sek_per_kwh,
@@ -533,7 +541,13 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     device_models: snapshot.device_models, services: snapshot.services, service_requirement_sample_days: snapshot.service_requirement_sample_days,
     plans: { baseline, priority: priority.generated, cost },
   };
-  if (snapshot.schema_version === 9) {
+  if (snapshot.schema_version >= 10) {
+    // The contract states the demand; the plan view reads the same partition.
+    const { battery_supply_scope: _superseded, ...stated } = plan;
+    plan = { ...stated, battery_demand: batteryDemand(snapshot.device_models,
+      p.slots.map((_s, i) => input.boiler_services.length ? input.boiler_battery_allowed[i] : undefined)) };
+  }
+  if (snapshot.schema_version >= 9) {
     // One selected schedule owns both charts, the device requests and the
     // battery contract. A device's mode decides who writes its requests, never
     // what the household is planned to do, so no second projection is made.
@@ -542,7 +556,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     const feedback = snapshot.battery_execution_feedback;
     const contract = p.battery && feedback && (mode === "controlling" || mode === "control_verification")
       ? buildBatteryExecutionContract({ plan: executionPlan, rows: priority.rows, pv_w: p.slots.map(s => s.solar_w),
-        mode, scope_revision: feedback.scope_revision!, feedback }) : undefined;
+        mode, scope_revision: feedback.scope_revision!, feedback, demand: plan.battery_demand }) : undefined;
     plan = { ...plan, operating_scope: snapshot.operating_scope, execution_plan: executionPlan,
       ...(contract ? { battery_execution: contract } : {}) };
   }

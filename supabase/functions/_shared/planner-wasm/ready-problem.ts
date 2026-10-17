@@ -16,7 +16,8 @@ export type BatteryOperation =
   | "self_consumption"
   | "grid_charge"
   | "supply_house"
-  | "export";
+  | "export"
+  | "shave_import";
 export interface NativeCommand {
   pool_on: boolean;
   ev_amps: number;
@@ -43,7 +44,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 10;
+  abi: 11;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;

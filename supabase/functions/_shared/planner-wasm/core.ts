@@ -24,6 +24,7 @@ const command = z.object({
     "grid_charge",
     "supply_house",
     "export",
+    "shave_import",
   ]),
   charge_limit_w: z.number().finite(),
   discharge_limit_w: z.number().finite(),

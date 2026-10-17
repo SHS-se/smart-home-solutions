@@ -9,7 +9,7 @@ import {
   pendingReplanRequestId,
   validatePlanningNegotiation,
 } from "./ha-api-contract.ts";
-import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture, hotWaterPlanFixture, unobservedHotWaterPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { batteryPlanFixture, dispatchedEvPlanFixture, mixedModePlanFixture, mixedModeV10PlanFixture, hotWaterPlanFixture, unobservedHotWaterPlanFixture } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 const contractUrl = new URL(
   "../../../contracts/ha-api/openapi.json",
@@ -275,6 +275,23 @@ Deno.test("the schema-8 battery fixture is emitted by the real planner", async (
 Deno.test("schema 9 mixed-mode consumer fixture matches real planner output", async () => {
   const saved = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json", import.meta.url)));
   assertEquals(saved, mixedModePlanFixture());
+});
+
+Deno.test("schema 10 consumer fixture states each quarter's battery instruction and demand", async () => {
+  const saved = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-10-mixed-mode-plan.json", import.meta.url)));
+  assertEquals(saved, mixedModeV10PlanFixture());
+  const plan = saved.plan, contract = plan.battery_execution;
+  assertEquals([plan.schema_version, contract.schema], [10, "battery-plan-execution-v2"]);
+  assertEquals("battery_supply_scope" in plan, false);
+  // HA executes exactly what the plan view shows: one demand, one instruction per quarter.
+  assertEquals(contract.demand, plan.battery_demand);
+  assertEquals(plan.battery_demand.loads.map((l: {key: string}) => l.key),
+    plan.device_models.map((m: {key: string}) => m.key).sort());
+  plan.plans.priority.slots.forEach((slot: {battery_instruction: unknown}, i: number) =>
+    assertEquals(contract.intervals[i].instruction, slot.battery_instruction));
+  for (const row of contract.intervals) {
+    for (const key of ["operation", "follows_demand", "discharge_ac_limit_w"]) assertEquals(key in row, false);
+  }
 });
 
 Deno.test("hot-water demand consumer fixture matches the real planner and its electrical balance", async () => {
