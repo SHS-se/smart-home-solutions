@@ -1,7 +1,7 @@
 {
   "abi": 10,
-  "wasm_sha256": "40883427d64e06dc5c852f66fca8ee6ed887326f29f72098fec3af316f46503e",
-  "source_sha256": "48c3e8ede2bbca30dd88f94a93519c5b0b580f9313aca25d8904f1275b4d9038",
+  "wasm_sha256": "d3540c6ddf00499ef685229c7747cc88d926015fb8a0ebf32bd0ee958b9aec6d",
+  "source_sha256": "d5ed5adb469cd1a717c3661a33b9618c760e35a76246036e069ab0210a7a13f2",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -21,6 +21,7 @@
     "planner-core/solver/src/battery_schedule.rs",
     "planner-core/solver/src/builder.rs",
     "planner-core/solver/src/charging.rs",
+    "planner-core/solver/src/ev_packing.rs",
     "planner-core/solver/src/lib.rs",
     "planner-core/solver/src/main.rs",
     "planner-core/solver/src/move_resize.rs",

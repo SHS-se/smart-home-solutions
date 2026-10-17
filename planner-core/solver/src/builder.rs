@@ -801,6 +801,41 @@ fn runs(p: &Problem, commands: &[Command]) -> Vec<RunPurpose> {
     }
     out
 }
+/// Evaluate complete EV permutations with a fresh battery allocation. Pool
+/// commands are unchanged, so the incumbent pool trajectory remains exact.
+fn pack_ev(scorer: &mut CandidateScorer, best: Candidate, work: &mut Work) -> Candidate {
+    let p = scorer.problem;
+    if p.battery.is_none() || p.charger.is_none() || p.recipe.repair_trials == 0 {
+        return best;
+    }
+    let Some(proposals) = ev_packing::proposals(p, &best.commands, work) else {
+        return best;
+    };
+    let mut packed: Option<Candidate> = None;
+    for proposal in proposals {
+        let commands = proposal.apply(&best.commands);
+        let Some(allocation) =
+            battery_schedule::allocate(p, scorer.index, &commands, &best.quarters, work)
+        else {
+            continue;
+        };
+        work.move_resize_trials += 1;
+        match scorer.score(allocation.commands, work, None) {
+            Ok(candidate) if candidate.better(packed.as_ref().unwrap_or(&best)) => {
+                packed = Some(candidate)
+            }
+            Ok(_) | Err(EvaluationIssue::Infeasible) => {}
+            Err(EvaluationIssue::GrantUnavailable) => break,
+        }
+    }
+    if let Some(packed) = packed {
+        work.move_resize_improvements += 1;
+        packed
+    } else {
+        best
+    }
+}
+
 pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     validate(p)?;
     let n = p.slots.len() as u64;
@@ -891,7 +926,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             best = Some(candidate);
         }
     }
-    let best = best.unwrap();
+    // Give whole-block moves the global budget before span refinement.
+    let best = pack_ev(&mut scorer, best.unwrap(), &mut work);
     let (best, report) = improve(&mut scorer, best, &mut work, &mut budget_declined);
     work.reserved -= held;
     let report = report.unwrap_or_else(|| {
@@ -1021,6 +1057,43 @@ mod move_resize_tests {
             discharge_limit_w: 4000.0,
         }
     }
+    #[test]
+    fn packing_preserves_energy_and_partitions_at_commitments_and_partial_quarters() {
+        let mut p = witnesses::tests::problem(8);
+        p.slots[0].start_seconds = -450.0;
+        let mut commands = vec![idle(); 8];
+        for (c, amps) in commands.iter_mut().zip([5, 16, 5, 8, 16, 5, 16, 8]) {
+            c.ev_amps = amps;
+        }
+        let mut fixed = vec![None; 8];
+        fixed[3] = Some(commands[3].clone());
+        p.fixed_commands = Some(fixed);
+        p.slots[5].ev_available = false;
+        let mut w = work(&p);
+        let proposals = ev_packing::proposals(&p, &commands, &mut w).unwrap();
+        assert!(!proposals.is_empty());
+        let energy = |cs: &[Command]| {
+            cs.iter()
+                .zip(&p.slots)
+                .map(|(c, s)| c.ev_amps as f64 * physics::projected_hours(s))
+                .sum::<f64>()
+        };
+        for proposal in proposals {
+            let packed = proposal.apply(&commands);
+            assert_eq!(energy(&packed), energy(&commands));
+            for at in [0, 3, 5] {
+                assert_eq!(packed[at], commands[at]);
+            }
+            assert_eq!(
+                packed.iter().map(|c| c.ev_amps).collect::<Vec<_>>(),
+                [5, 5, 16, 8, 16, 5, 16, 8]
+            );
+        }
+        w.limit = w.used + w.reserved;
+        assert!(ev_packing::proposals(&p, &commands, &mut w).is_none());
+        assert!(w.used + w.reserved <= w.limit);
+    }
+
     #[test]
     fn one_pass_adopts_the_best_proposal_and_carries_an_independent_one_onto_it() {
         let mut p = witnesses::tests::problem(24);

@@ -1,6 +1,7 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { NativeCommand, ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
+import { activeCurrentCompetition } from "./charging-continuity.fixture.ts";
 import { problem } from "./planner-wasm.fixture.ts";
 
 const core = createWasmPlanner(await Deno.readFile(new URL("../supabase/functions/_shared/planner-wasm/solver.wasm", import.meta.url)));
@@ -65,4 +66,22 @@ Deno.test("a worthwhile price gap can still interrupt charging", () => {
   const result = selected(p);
   assertEquals(result.quarters.map(q => q.ev_w > 0), [true, false, true]);
   assertEquals(result.account.continuity_sek, .5);
+});
+
+Deno.test("active EV currents group into blocks instead of alternating with battery headroom", () => {
+  const p = activeCurrentCompetition();
+  const result = selected(p);
+  const evening = result.commands.slice(25, 44).map(c => c.ev_amps);
+  assert(evening.every(amps => amps > 0));
+  assert(evening.some(amps => amps === p.charger!.max_current_a));
+  assert(evening.some(amps => amps === p.charger!.min_current_a));
+  assert(evening.every((amps, i) => i === 0 || amps <= evening[i - 1]), JSON.stringify(evening));
+  assert(result.quarters.at(-1)!.ev_kwh! >= p.targets.ev_km! * p.car!.kwh_per_km);
+  assert(result.quarters.at(-1)!.battery_kwh! > 17.5);
+  assert(result.quarters.every(q => q.net_w <= p.limits.import_w + 1e-7));
+  assert(result.work_used <= p.work_grant);
+  const projection = core.project(p, result.commands).outcome;
+  assert(projection.kind === "projected");
+  assertEquals(result.quarters, projection.quarters);
+  assertAlmostEquals(result.account.continuity_sek, projection.quarters.reduce((sum, q) => sum + q.continuity, 0), 1e-9);
 });

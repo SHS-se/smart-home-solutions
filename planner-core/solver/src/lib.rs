@@ -2,6 +2,7 @@
 mod battery_schedule;
 mod builder;
 mod charging;
+mod ev_packing;
 mod move_resize;
 mod opportunity;
 mod physics;

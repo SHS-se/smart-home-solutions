@@ -487,7 +487,7 @@ impl Heater {
             let heat = self.heat_w * fraction(pair[0]);
             let slope = self.heat_w * (fraction(pair[1]) - fraction(pair[0])) / hours;
             let crossing = stop_c.and_then(|stop| {
-                first_pool_stop(store, water, pending, heat, slope, hours, cooling, stop)
+                first_pool_stop(store, (water, pending), heat, slope, hours, cooling, stop)
             });
             (water, pending) = store.transfer(
                 water,
@@ -636,8 +636,7 @@ fn bisect_root(f: impl Fn(f64) -> f64, mut low: f64, mut high: f64) -> f64 {
 /// Partition there to find all water extrema before searching the first crossing.
 fn first_pool_stop(
     store: &ThermalStore,
-    water: f64,
-    pending: f64,
+    (water, pending): (f64, f64),
     heat: f64,
     slope: f64,
     hours: f64,

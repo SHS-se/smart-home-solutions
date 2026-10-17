@@ -17,10 +17,19 @@ struct Context<'a> {
 impl Context<'_> {
     fn demand(&self, i: usize) -> physics::BatteryLoad {
         let s = &self.p.slots[i];
+        // Candidate current owns EV headroom; accepted commands retain their exact clipped draw.
+        let ev_w = if physics::locked(self.p, i) {
+            self.planned[i].ev_w
+        } else {
+            self.p
+                .charger
+                .as_ref()
+                .map_or(0.0, |c| c.watts(self.commands[i].ev_amps).unwrap())
+        };
         physics::BatteryLoad {
-            gross_w: s.base_w + self.planned[i].pool_w + self.planned[i].ev_w,
+            gross_w: s.base_w + self.planned[i].pool_w + ev_w,
             solar_w: s.solar_w,
-            ev_w: self.planned[i].ev_w + s.base_ev_w,
+            ev_w: ev_w + s.base_ev_w,
         }
     }
     /// A linear continuation segment is maximised at an inventory knot or a
@@ -205,7 +214,9 @@ impl Values {
         }
         let lower = upper - 1;
         if !row[lower].is_finite() || !row[upper].is_finite() {
-            return row[lower].max(row[upper]);
+            // A finite neighbour cannot supply a continuation through a cell
+            // whose other endpoint has no path. Exact knots remain usable.
+            return f64::NEG_INFINITY;
         }
         let share = (kwh - axis[lower]) / (axis[upper] - axis[lower]);
         row[lower] + share * (row[upper] - row[lower])
@@ -227,6 +238,9 @@ impl Values {
             let value = (f64::from(service_points) - q.cost)
                 - crate::charging::battery_start_cost(previous_charging, charging, &ctx.p.limits)
                 + self.at(ctx, i + 1, q.battery_kwh, charging);
+            if !value.is_finite() {
+                continue;
+            }
             if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
                 if !physics::locked(ctx.p, i)
                     && matches!(c.battery, Operation::GridCharge | Operation::Export)
@@ -345,6 +359,9 @@ impl Allocation {
                         + self
                             .values
                             .at(&ctx, i + 1, next.battery, next.charging.battery_grid);
+                    if !value.is_finite() {
+                        continue;
+                    }
                     if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
                         if !physics::locked(p, i) {
                             if c.battery == Operation::GridCharge {
@@ -482,6 +499,58 @@ mod tests {
         physics::projection(p, &out).unwrap();
         out
     }
+    #[test]
+    fn infeasible_continuation_endpoints_do_not_leak_into_an_interpolated_cell() {
+        let p = problem(1);
+        let commands = vec![idle()];
+        let planned = physics::projection(&p, &commands).unwrap();
+        let mut w = work(&p);
+        let index = policy::index(&p, &mut w).unwrap();
+        let axes = vec![vec![0.0, 1.0], vec![0.0, 1.0]];
+        let ctx = Context {
+            p: &p,
+            index: &index,
+            commands: &commands,
+            planned: &planned,
+            axes: &axes,
+        };
+        let values = Values {
+            rows: vec![[vec![f64::NEG_INFINITY, 10.0], vec![f64::NEG_INFINITY, 10.0]]; 2],
+        };
+        assert_eq!(values.at(&ctx, 0, 0.5, false), f64::NEG_INFINITY);
+        assert_eq!(values.at(&ctx, 0, 1.0, false), 10.0);
+        let unsupported = Values {
+            rows: vec![[vec![f64::NEG_INFINITY; 2], vec![f64::NEG_INFINITY; 2]]; 2],
+        };
+        assert!(unsupported.best(&ctx, 0, 0.5, 0, false).is_none());
+    }
+
+    #[test]
+    fn candidate_ev_current_supplies_battery_option_headroom() {
+        let mut p = problem(1);
+        p.limits.import_w = 5000.0;
+        p.slots[0].base_w = 500.0;
+        let old_commands = vec![idle()];
+        let planned = physics::projection(&p, &old_commands).unwrap();
+        let mut commands = old_commands;
+        commands[0].ev_amps = 16;
+        let mut w = work(&p);
+        let index = policy::index(&p, &mut w).unwrap();
+        let axes = axes(&p, &planned);
+        let ctx = Context {
+            p: &p,
+            index: &index,
+            commands: &commands,
+            planned: &planned,
+            axes: &axes,
+        };
+        let ev_w = p.charger.as_ref().unwrap().watts(16).unwrap();
+        assert_eq!(ctx.demand(0).gross_w, 500.0 + ev_w);
+        let options = ctx.options(0, p.initial.battery_kwh.unwrap());
+        assert!(options.iter().any(|c| c.battery == Operation::GridCharge
+            && (c.charge_limit_w - (5000.0 - 500.0 - ev_w)).abs() < 1e-7));
+    }
+
     #[test]
     fn cheap_charge_is_preserved_for_the_dearer_house_load() {
         let mut p = problem(3);
