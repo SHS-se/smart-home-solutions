@@ -5,14 +5,16 @@ import { solveLinearSystem } from "./planner/thermal-model.ts";
 import type { PoolResponseSample } from "./pool-training.ts";
 import { projectHeatPumpResponse, type HeatPumpResponse } from "./planner/device-models.ts";
 import type { PoolStateInput } from "./planner/planning-contracts.ts";
-import type { PoolDynamics } from "./planner/pool-response.ts";
+import { poolHeatGain, type PoolDynamics } from "./planner/pool-response.ts";
 export type { PoolDynamics } from "./planner/pool-response.ts";
 
 const HOURS = 0.25, SLOT_MS = HOURS * 3_600_000;
 export type PoolDynamicsFit = { fitted: PoolDynamics } | { rejected: "unidentifiable"; sample_count: number };
-interface Row { x: [number, number]; z: number; y: number }
-interface Segment { samples: PoolResponseSample[]; rows: Row[]; pending: number; decay: number; initial: number }
-interface Candidate { tau: number; gain: number; cooling: number; mse: number; segments: Segment[] }
+/** Shared coefficients: heat gain, standing cooling, and gain lost per hour of running. */
+const GLOBALS = 3;
+interface Row { x: number[]; z: number; y: number }
+interface Segment { samples: PoolResponseSample[]; rows: Row[]; pending: number; fadePending: number; runHours: number; decay: number; initial: number }
+interface Candidate { tau: number; gain: number; cooling: number; fade: number; fadeUntilH: number; mse: number; segments: Segment[] }
 
 /** Each contiguous observation sequence has its own unknown starting memory. */
 function segments(samples: readonly PoolResponseSample[]): PoolResponseSample[][] {
@@ -27,53 +29,55 @@ function segments(samples: readonly PoolResponseSample[]): PoolResponseSample[][
   return result;
 }
 
-/** Lawson–Hanson NNLS on an arrowhead normal matrix. Gain and cooling are
- * shared; each sequence's initial memory touches only its own observations.
- * Every passive solve therefore needs at most a 2x2 Schur complement, even
- * for fragmented history. Boundary variables can re-enter on a KKT violation. */
+/** Lawson–Hanson NNLS on an arrowhead normal matrix. Gain, cooling and fade
+ * are shared; each sequence's initial memory touches only its own
+ * observations. Every passive solve therefore needs at most a 3x3 Schur
+ * complement, even for fragmented history. Boundary variables can re-enter on
+ * a KKT violation. A shared column with no observations stays at zero. */
 function nonnegativeResponseFit(series: Segment[]): number[] | null {
-  const global = [[0, 0], [0, 0]], target = [0, 0];
+  const shared = Array.from({ length: GLOBALS }, (_, i) => i);
+  const global = shared.map(() => shared.map(() => 0)), target = shared.map(() => 0);
   let rowCount = 0;
   const nuisance = series.map(s => {
     let zz = 0, zy = 0;
-    const zx = [0, 0];
+    const zx = shared.map(() => 0);
     for (const r of s.rows) {
       rowCount++;
       zz += r.z * r.z; zy += r.z * r.y;
-      for (let i = 0; i < 2; i++) {
+      for (const i of shared) {
         target[i] += r.x[i] * r.y; zx[i] += r.z * r.x[i];
-        for (let j = 0; j < 2; j++) global[i][j] += r.x[i] * r.x[j];
+        for (const j of shared) global[i][j] += r.x[i] * r.x[j];
       }
     }
     return { zz, zy, zx };
   });
-  const norms = [Math.sqrt(global[0][0]), Math.sqrt(global[1][1]), ...nuisance.map(n => Math.sqrt(n.zz))];
+  const norms = [...shared.map(i => Math.sqrt(global[i][i])), ...nuisance.map(n => Math.sqrt(n.zz))];
   if (!(norms[0] > 0) || !(norms[1] > 0)) return null;
-  const correlation = global[0][1] / norms[0] / norms[1];
-  const gram = [[1, correlation], [correlation, 1]];
+  const gram = shared.map(i => shared.map(j => norms[i] > 0 && norms[j] > 0 ? global[i][j] / norms[i] / norms[j] : 0));
   // Constant power cannot identify both heat gain and standing loss.
-  if (!solveLinearSystem(gram, [0, 0])) return null;
-  const links = nuisance.map((n, i) => n.zz > 0 ? n.zx.map((v, j) => v / norms[j] / norms[i + 2]) : [0, 0]);
-  const rhs = [...target.map((v, i) => v / norms[i]), ...nuisance.map((n, i) => n.zz > 0 ? n.zy / norms[i + 2] : 0)];
+  if (!solveLinearSystem([[1, gram[0][1]], [gram[1][0], 1]], [0, 0])) return null;
+  const links = nuisance.map((n, k) => n.zz > 0 ? n.zx.map((v, j) => norms[j] > 0 ? v / norms[j] / norms[k + GLOBALS] : 0) : shared.map(() => 0));
+  const rhs = [...target.map((v, i) => norms[i] > 0 ? v / norms[i] : 0), ...nuisance.map((n, k) => n.zz > 0 ? n.zy / norms[k + GLOBALS] : 0)];
   const size = rhs.length, passive = rhs.map(() => false);
   let x = rhs.map(() => 0);
   const tolerance = Number.EPSILON * Math.max(1, ...rhs.map(Math.abs)) * Math.max(rowCount, size) * 8;
+  const linked = (link: number[], values: number[]) => shared.reduce((sum, j) => sum + link[j] * values[j], 0);
   const gradient = () => {
     const w = rhs.slice();
-    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) w[i] -= gram[i][j] * x[j];
-    links.forEach((link, i) => {
-      w[0] -= link[0] * x[i + 2]; w[1] -= link[1] * x[i + 2];
-      w[i + 2] -= link[0] * x[0] + link[1] * x[1] + x[i + 2];
+    for (const i of shared) for (const j of shared) w[i] -= gram[i][j] * x[j];
+    links.forEach((link, k) => {
+      for (const j of shared) w[j] -= link[j] * x[k + GLOBALS];
+      w[k + GLOBALS] -= linked(link, x) + x[k + GLOBALS];
     });
     return w;
   };
   const solvePassive = (): number[] | null => {
-    const active = [0, 1].filter(i => passive[i]);
+    const active = shared.filter(i => passive[i]);
     const matrix = active.map(i => active.map(j => gram[i][j])), vector = active.map(i => rhs[i]);
     links.forEach((link, index) => {
-      if (!passive[index + 2]) return;
+      if (!passive[index + GLOBALS]) return;
       active.forEach((i, row) => {
-        vector[row] -= link[i] * rhs[index + 2];
+        vector[row] -= link[i] * rhs[index + GLOBALS];
         active.forEach((j, col) => { matrix[row][col] -= link[i] * link[j]; });
       });
     });
@@ -82,7 +86,7 @@ function nonnegativeResponseFit(series: Segment[]): number[] | null {
     const result = rhs.map(() => 0);
     active.forEach((i, j) => { result[i] = solution[j]; });
     links.forEach((link, index) => {
-      if (passive[index + 2]) result[index + 2] = rhs[index + 2] - link[0] * result[0] - link[1] * result[1];
+      if (passive[index + GLOBALS]) result[index + GLOBALS] = rhs[index + GLOBALS] - linked(link, result);
     });
     return result;
   };
@@ -111,45 +115,72 @@ function nonnegativeResponseFit(series: Segment[]): number[] | null {
   return null;
 }
 
-function candidate(groups: PoolResponseSample[][], tau: number): Candidate | null {
+/** Hours the compressor had already run when each quarter began. A sequence
+ * that opens mid-run starts its count at zero: its earlier hours are unseen. */
+function runHours(samples: readonly PoolResponseSample[]): number[] {
+  let hours = 0;
+  return samples.map(s => {
+    const age = s.electrical_kwh > 0 ? hours : 0;
+    hours = s.electrical_kwh > 0 ? hours + HOURS : 0;
+    return age;
+  });
+}
+
+function fadingCandidate(groups: PoolResponseSample[][], tau: number, fade: boolean): Candidate | null {
   const series: Segment[] = groups.map(samples => {
-    let pending = 0;
-    const releases = [0], decays = [tau ? 1 : 0];
+    const ages = runHours(samples);
+    let pending = 0, fadePending = 0;
+    const releases = [0], fadeReleases = [0], decays = [tau ? 1 : 0];
     const a = tau ? Math.exp(-HOURS / tau) : 0;
-    for (const s of samples) {
-      const next = tau ? pending * a + s.electrical_kwh / HOURS * tau * -Math.expm1(-HOURS / tau) : 0;
+    // Electricity weighted by run age has the same lag as the electricity itself.
+    const lag = (memory: number, kwh: number) => tau ? memory * a + kwh / HOURS * tau * -Math.expm1(-HOURS / tau) : 0;
+    samples.forEach((s, i) => {
+      const aged = fade ? s.electrical_kwh * ages[i] : 0;
+      const next = lag(pending, s.electrical_kwh), fadeNext = lag(fadePending, aged);
       releases.push(releases.at(-1)! + pending + s.electrical_kwh - next);
+      fadeReleases.push(fadeReleases.at(-1)! + fadePending + aged - fadeNext);
       decays.push(decays.at(-1)! * a);
-      pending = next;
-    }
+      pending = next; fadePending = fadeNext;
+    });
     const rows: Row[] = [];
     // Quarter changes retain every usable observation. Hour changes make a
     // quantised/filtered thermometer's complete movement visible to the fit.
     for (const width of [1, 4]) for (let i = 0; i + width <= samples.length; i++) {
-      rows.push({ x: [releases[i + width] - releases[i], -width * HOURS],
+      rows.push({ x: [releases[i + width] - releases[i], -width * HOURS, -(fadeReleases[i + width] - fadeReleases[i])],
         z: decays[i] - decays[i + width],
         y: samples[i + width - 1].next_water_temperature_c - samples[i].water_temperature_c });
     }
-    return { samples, rows, pending, decay: decays.at(-1)!, initial: 0 };
+    const last = samples.at(-1)!;
+    return { samples, rows, pending, fadePending, runHours: last.electrical_kwh > 0 ? ages.at(-1)! + HOURS : 0,
+      decay: decays.at(-1)!, initial: 0 };
   });
   const coefficients = nonnegativeResponseFit(series);
   if (!coefficients || !(coefficients[0] > 0)) return null;
-  series.forEach((s, i) => { s.initial = coefficients[i + 2]; });
+  // The fade is only known over the run lengths actually observed; beyond the
+  // longest one the gain is held where the evidence ends, never extrapolated.
+  const fadeUntilH = Math.max(0, ...series.flatMap(s => runHours(s.samples)));
+  if (!(coefficients[0] - coefficients[2] * fadeUntilH > 0)) return null;
+  series.forEach((s, i) => { s.initial = coefficients[i + GLOBALS]; });
   let squared = 0, count = 0;
   for (const s of series) for (const r of s.rows) {
-    squared += (r.x[0] * coefficients[0] + r.x[1] * coefficients[1] + r.z * s.initial - r.y) ** 2;
+    squared += (r.x[0] * coefficients[0] + r.x[1] * coefficients[1] + r.x[2] * coefficients[2] + r.z * s.initial - r.y) ** 2;
     count++;
   }
-  return count ? { tau, gain: coefficients[0], cooling: coefficients[1], mse: squared / count, segments: series } : null;
+  return count ? { tau, gain: coefficients[0], cooling: coefficients[1], fade: coefficients[2], fadeUntilH, mse: squared / count, segments: series } : null;
 }
 
 /** Fit one nonlinear time constant, including the direct-response model at 0.
  * Search resolution is relative to the observation cadence and record length;
- * there is no configured heating duration, zero-heat interval or quality gate. */
+ * there is no configured heating duration, zero-heat interval or quality gate.
+ * The gain may fall with hours of continuous running (a ground loop cools as
+ * a long run draws on it); the fit learns how much from the history and
+ * leaves it at zero when the history shows none. */
 export function fitPoolDynamics(samples: readonly PoolResponseSample[], capacityKwhPerC: number): PoolDynamicsFit {
   const groups = segments(samples), count = groups.reduce((n, g) => n + g.length, 0);
   const rejected = (): PoolDynamicsFit => ({ rejected: "unidentifiable", sample_count: count });
   if (!count || !Number.isFinite(capacityKwhPerC) || !(capacityKwhPerC > 0)) return rejected();
+  // A fade the history cannot support falls back to the constant-gain model.
+  const candidate = (g: PoolResponseSample[][], tau: number) => fadingCandidate(g, tau, true) ?? fadingCandidate(g, tau, false);
   const direct = candidate(groups, 0);
   let best = direct;
   const maximum = Math.max(...groups.map(g => g.length * HOURS));
@@ -177,11 +208,12 @@ export function fitPoolDynamics(samples: readonly PoolResponseSample[], capacity
   const fit = best as Candidate, last = fit.segments.at(-1)!;
   const all = groups.flat();
   return { fitted: { version: 1, response_time_constant_h: fit.tau, heat_c_per_kwh: fit.gain,
+    heat_fade_c_per_kwh_per_h: fit.fade, heat_fade_until_h: fit.fadeUntilH,
     idle_c_per_h: -fit.cooling, reference_c: all.reduce((sum, s) => sum + s.water_temperature_c, 0) / count,
     sample_count: count, rmse_c: Math.sqrt(fit.mse), instantaneous_rmse_c: direct ? Math.sqrt(direct.mse) : null,
     initial_state: { at: new Date(fit.segments[0].samples[0].start_ms).toISOString(), pending_heat_kwh: fit.segments[0].initial * capacityKwhPerC },
-    state: { at: new Date(last.samples.at(-1)!.start_ms + SLOT_MS).toISOString(),
-      pending_heat_kwh: capacityKwhPerC * (last.pending * fit.gain + last.initial * last.decay) } } };
+    state: { at: new Date(last.samples.at(-1)!.start_ms + SLOT_MS).toISOString(), run_hours: last.runHours,
+      pending_heat_kwh: capacityKwhPerC * (last.pending * fit.gain - last.fadePending * fit.fade + last.initial * last.decay) } } };
 }
 
 export interface PoolElectricalInterval { start_ms: number; hours: number; electrical_kwh: number }
@@ -242,12 +274,16 @@ export function poolPendingHeatAt(model: PoolDynamics, capacityKwhPerC: number,
   const anchor = poolDynamicsAnchor(model, atMs);
   if (tau === 0) return 0;
   let at = Date.parse(anchor.at), pending = anchor.pending_heat_kwh;
+  // A run that spans the checkpoint keeps its age; any gap or idle interval ends it.
+  let runHours = anchor === model.state ? model.state.run_hours ?? 0 : 0;
   for (const s of history.slice().sort((a, b) => a.start_ms - b.start_ms)) {
     const end = Math.min(atMs, s.start_ms + s.hours * 3_600_000), begin = Math.max(at, s.start_ms);
     if (!(s.hours > 0) || ![s.start_ms, s.hours, s.electrical_kwh].every(Number.isFinite) || s.electrical_kwh < 0 || end <= begin) continue;
+    if (!(s.electrical_kwh > 0) || begin - at > 60_000) runHours = 0;
     pending *= Math.exp(-Math.max(0, begin - at) / 3_600_000 / tau);
     const hours = (end - begin) / 3_600_000;
-    pending = pending * Math.exp(-hours / tau) + s.electrical_kwh / s.hours * model.heat_c_per_kwh * capacityKwhPerC * tau * -Math.expm1(-hours / tau);
+    pending = pending * Math.exp(-hours / tau) + s.electrical_kwh / s.hours * poolHeatGain(model, runHours) * capacityKwhPerC * tau * -Math.expm1(-hours / tau);
+    if (s.electrical_kwh > 0) runHours += hours;
     at = end;
   }
   return pending * Math.exp(-Math.max(0, atMs - at) / 3_600_000 / tau);

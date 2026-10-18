@@ -4,6 +4,7 @@ import startup from "../../../src/lib/planner-bench/pool-heater-response.json" w
 import { fitPoolDynamics, poolPartialElectricity, poolPendingHeatAt, type PoolDynamics } from "./pool-dynamics.ts";
 import { stepPool, stepPoolThermal, parseHeaterResponse, type HeaterState } from "./planner/device-models.ts";
 import { poolPhysics } from "./planner/pool-physics.ts";
+import { poolHeatGain } from "./planner/pool-response.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import type { PoolResponseSample } from "./pool-training.ts";
 
@@ -32,10 +33,34 @@ function synthetic(tau: number) {
 Deno.test("pool dynamics jointly identifies lag, gain, cooling and unknown starting response", () => {
   const model = fitted(synthetic(.7));
   assertAlmostEquals(model.response_time_constant_h, .7, 1e-5);
-  assertAlmostEquals(model.heat_c_per_kwh * CAPACITY, 4.2, 1e-5);
+  // A constant gain leaves the run-age fade at (numerically) nothing.
+  assertAlmostEquals(model.heat_c_per_kwh * CAPACITY, 4.2, 1e-4);
+  assert(model.heat_fade_c_per_kwh_per_h! * model.heat_fade_until_h! < model.heat_c_per_kwh * 1e-5);
   assertAlmostEquals(model.idle_c_per_h, -.04, 1e-6);
   assert(model.rmse_c < 1e-7);
   assert(model.instantaneous_rmse_c !== null && model.rmse_c < model.instantaneous_rmse_c / 100);
+});
+
+Deno.test("a gain that falls through long runs is learned and held beyond the longest observed run", () => {
+  const store = { capacity_kwh_per_c: CAPACITY, response_time_constant_h: .5,
+    loss: { kind: "measured" as const, points: [{ at_c: 30, c_per_h: -.04 }] } };
+  let state = { water_c: 30, pending_heat_kwh: 0 }, age = 0;
+  const samples = Array.from({ length: 480 }, (_, i) => {
+    const on = i % 96 < 40, before = state.water_c;
+    const heatW = on ? 3000 * (.07 - .002 * age) * CAPACITY : 0;
+    state = stepPoolThermal(store, state, heatW, heatW, 0, .25);
+    age = on ? age + .25 : 0;
+    return { start_ms: i * 900_000, water_temperature_c: before, next_water_temperature_c: state.water_c, electrical_kwh: on ? .75 : 0 };
+  });
+  const model = fitted(samples);
+  assertAlmostEquals(model.response_time_constant_h, .5, 1e-4);
+  assertAlmostEquals(model.heat_c_per_kwh, .07, 1e-6);
+  assertAlmostEquals(model.heat_fade_c_per_kwh_per_h!, .002, 1e-7);
+  assertEquals(model.heat_fade_until_h, 9.75);
+  assertEquals(poolHeatGain(model, 30), poolHeatGain(model, 9.75), "no extrapolation past the evidence");
+  // The checkpoint keeps the age of a run still going when the window closes.
+  const open = fitted(samples.slice(0, 96 * 4 + 20));
+  assertEquals(open.state.run_hours, 5);
 });
 
 Deno.test("the instantaneous model remains a nested physical model when history has no lag", () => {
@@ -140,14 +165,13 @@ Deno.test("leaving each complete day out improves hourly changes over direct res
     const fitStore = modelForRun(model).store, direct = { ...fitStore, response_time_constant_h: 0 };
     let response = { water_c: recorded[0].water_temperature_c, pending_heat_kwh: 3 * model.heat_c_per_kwh * CAPACITY * model.response_time_constant_h };
     const release = [0], instant = [0];
+    let runHours = 0;
     for (const s of recorded) {
-      const before = response.water_c;
-      response = stepPoolThermal(fitStore, response, s.electrical_kwh * 4 * model.heat_c_per_kwh * CAPACITY * 1000,
-        s.electrical_kwh * 4 * model.heat_c_per_kwh * CAPACITY * 1000, 0, .25);
+      const before = response.water_c, heatW = s.electrical_kwh * 4 * poolHeatGain(model, runHours) * CAPACITY * 1000;
+      runHours = s.electrical_kwh > 0 ? runHours + .25 : 0;
+      response = stepPoolThermal(fitStore, response, heatW, heatW, 0, .25);
       release.push(release.at(-1)! + response.water_c - before);
-      const q = stepPoolThermal(direct, { water_c: 0, pending_heat_kwh: 0 },
-        s.electrical_kwh * 4 * model.heat_c_per_kwh * CAPACITY * 1000,
-        s.electrical_kwh * 4 * model.heat_c_per_kwh * CAPACITY * 1000, 0, .25);
+      const q = stepPoolThermal(direct, { water_c: 0, pending_heat_kwh: 0 }, heatW, heatW, 0, .25);
       instant.push(instant.at(-1)! + q.water_c);
     }
     let delayedError = 0, directError = 0;
@@ -180,9 +204,18 @@ Deno.test("shared publication uses the electric-trained response once and preser
   snapshot.pool_model = { thermal_dynamics: model, heater_response: parseHeaterResponse(startup), loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null };
   const physics = poolPhysics(snapshot);
   assertEquals(physics.store.response_time_constant_h, model.response_time_constant_h);
-  assertAlmostEquals(physics.heater.heat_w / physics.heater.compressor_w, model.heat_c_per_kwh * CAPACITY);
   assert(physics.heater.response.kind === "bergvarme");
-  assert(physics.heater.response.startup.every(p => p.heat_fraction === p.electric_fraction));
+  // Steady heat is the gain where the observed runs end; each younger age
+  // delivers its own learned gain on top of the electric startup, once.
+  const curve = physics.heater.response.startup, steady = curve.at(-1)!;
+  assertEquals([steady.electric_fraction, steady.heat_fraction], [1, 1]);
+  assertAlmostEquals(physics.heater.heat_w / physics.heater.compressor_w, poolHeatGain(model, steady.elapsed_seconds / 3600) * CAPACITY);
+  for (const p of curve) assertAlmostEquals(p.heat_fraction * physics.heater.heat_w / physics.heater.compressor_w,
+    p.electric_fraction * poolHeatGain(model, p.elapsed_seconds / 3600) * CAPACITY, 1e-9);
+  const original = parseHeaterResponse(startup);
+  assert(original.kind === "bergvarme");
+  assertEquals(curve.slice(0, original.startup.length).map(p => [p.elapsed_seconds, p.electric_fraction]),
+    original.startup.map(p => [p.elapsed_seconds, p.electric_fraction]), "startup draw is preserved");
   assertEquals(snapshot.pool_model.heater_response, parseHeaterResponse(startup), "publication never mutates captured calibration");
 });
 
