@@ -47,13 +47,6 @@ const QUARTER = 900_000, DAY = 86_400_000;
 const valid = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const volume = (values: number[]) => values.reduce((sum, value) => sum + Math.abs(value), 0);
 
-/** The next local 06:00 or 18:00 publication, as `private.energy_accuracy_due` schedules it. */
-export function nextAccuracyUpdate(now: number, timeZone: string): {day: 'today' | 'tomorrow'; time: '06:00' | '18:00'} {
-  const hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone, hour: '2-digit', hourCycle: 'h23'})
-    .formatToParts(now).find(part => part.type === 'hour')!.value);
-  return hour < 6 ? {day: 'today', time: '06:00'} : hour < 18 ? {day: 'today', time: '18:00'} : {day: 'tomorrow', time: '06:00'};
-}
-
 /**
  * The share of energy where forecast and measurement agree:
  * sum(min(predicted, actual)) / sum(max(predicted, actual)). Every component

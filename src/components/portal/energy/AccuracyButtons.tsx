@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
-import { nextAccuracyUpdate, type AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
+import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import type { InputAccuracy, InputCheck } from '../../../../supabase/functions/_shared/input-accuracy';
 
 const colours = {green: 'text-emerald-700 dark:text-emerald-400', lime: 'text-lime-700 dark:text-lime-400',
@@ -11,7 +11,7 @@ const colours = {green: 'text-emerald-700 dark:text-emerald-400', lime: 'text-li
 type Translate = (sv: string, en: string) => string;
 const value = (percentage: number | null | undefined) => percentage == null ? '—' : String(percentage);
 
-/** Live input health from Home Assistant beside the cloud's twice-daily historical accuracy. */
+/** Live input health from Home Assistant beside the cloud's historical accuracy. */
 export default function AccuracyButtons({report, error, input, inputUnavailable}: {
   report: AccuracyReport | null; error?: string | null; input: InputAccuracy | null; inputUnavailable?: boolean;
 }) {
@@ -42,7 +42,7 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
               <span>{row.name}</span><span className={`font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
                 {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
             </li>)}</ul>}
-          <AccuracyFooter report={report} timeZone={timeZone} stamp={stamp} />
+          <AccuracyFooter report={report} stamp={stamp} />
         </>}
       </DialogContent>
     </Dialog></>;
@@ -53,7 +53,7 @@ const CHECKS: Record<InputCheck['key'], [string, string]> = {prices: ['Priser', 
 
 /**
  * Live checks are healthy readings over the readings each expects. Prices is
- * the cloud's twice-daily comparison of the last estimate with the published price.
+ * the cloud's latest comparison of the last estimate with the published price.
  */
 function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | null; unavailable?: boolean; timeZone: string; t: Translate}) {
   if (!input?.checks.length) return <p role="status" className="text-sm text-muted-foreground">{unavailable
@@ -77,19 +77,18 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
     </li>)}</ul>
     <p className="text-xs text-muted-foreground" data-testid="input-accuracy-observed">
       {t('Kontrollerad', 'Checked')} <time dateTime={input.observed_at}>{new Date(input.observed_at).toLocaleString(undefined, {timeZone})}</time>.{' '}
-      {t('Rubriksiffran är medelvärdet av kontrollerna.', 'The headline averages these checks.')}
+      {t('Rubriksiffran är medelvärdet av kontrollerna. En ändrad kontroll skickas inom fem minuter.',
+        'The headline averages these checks. A changed check is sent within five minutes.')}
     </p>
   </>;
 }
 
-/** When this report was calculated and when the next twice-daily one is due. */
-function AccuracyFooter({report, timeZone, stamp}: {report: AccuracyReport | null; timeZone: string; stamp: string}) {
+/** When this report was calculated; the cloud recalculates on new data, in five-minute steps. */
+function AccuracyFooter({report, stamp}: {report: AccuracyReport | null; stamp: string}) {
   const {t} = useLanguage();
-  const next = nextAccuracyUpdate(Date.now(), timeZone);
-  const day = next.day === 'today' ? t('i dag', 'today') : t('i morgon', 'tomorrow');
   return <div className="space-y-0.5 text-xs text-muted-foreground" data-testid="accuracy-schedule">
     {report && <p>{t('Beräknad', 'Calculated')} <time dateTime={report.calculated_at}>{stamp}</time></p>}
-    <p>{t(`Nästa uppdatering ${day} ${next.time}. Uppdateras kl. 06:00 och 18:00.`,
-      `Next update ${day} at ${next.time}. Updates at 06:00 and 18:00.`)}</p>
+    <p>{t('Räknas om inom fem minuter efter en ny plan, mätning eller publicerat pris.',
+      'Recalculated within five minutes of a new plan, measurement or published price.')}</p>
   </div>;
 }
