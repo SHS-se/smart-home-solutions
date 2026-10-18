@@ -2,12 +2,14 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
-import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
+import { useHomeTimeZone } from './HomeTimeZoneContext';
+import { nextAccuracyUpdate, type AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 
 const colours = {green: 'text-emerald-700 dark:text-emerald-400', lime: 'text-lime-700 dark:text-lime-400',
   yellow: 'text-yellow-700 dark:text-yellow-400', orange: 'text-orange-700 dark:text-orange-400', red: 'text-red-700 dark:text-red-400'};
 export default function ForecastAccuracyButtons({report, error}: {report: AccuracyReport | null; error?: string | null}) {
   const {t} = useLanguage();
+  const homeTimeZone = useHomeTimeZone();
   const [open, setOpen] = useState<'forecast' | 'historical' | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const labels = {forecast: t('Prognosnoggrannhet %', 'Forecast accuracy %'), historical: t('Historisk noggrannhet %', 'Historical accuracy %')};
@@ -30,7 +32,19 @@ export default function ForecastAccuracyButtons({report, error}: {report: Accura
             <span>{row.name}</span><span className={`font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
               {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
           </li>)}</ul>}
-        {report && <time className="text-xs text-muted-foreground" dateTime={report.calculated_at}>{stamp}</time>}
+        <AccuracyFooter report={report} timeZone={report?.timezone ?? homeTimeZone} stamp={stamp} />
       </DialogContent>
     </Dialog></>;
+}
+
+/** When this report was calculated and when the next twice-daily one is due. */
+function AccuracyFooter({report, timeZone, stamp}: {report: AccuracyReport | null; timeZone: string; stamp: string}) {
+  const {t} = useLanguage();
+  const next = nextAccuracyUpdate(Date.now(), timeZone);
+  const day = next.day === 'today' ? t('i dag', 'today') : t('i morgon', 'tomorrow');
+  return <div className="space-y-0.5 text-xs text-muted-foreground" data-testid="accuracy-schedule">
+    {report && <p>{t('Beräknad', 'Calculated')} <time dateTime={report.calculated_at}>{stamp}</time></p>}
+    <p>{t(`Nästa uppdatering ${day} ${next.time}. Uppdateras kl. 06:00 och 18:00.`,
+      `Next update ${day} at ${next.time}. Updates at 06:00 and 18:00.`)}</p>
+  </div>;
 }

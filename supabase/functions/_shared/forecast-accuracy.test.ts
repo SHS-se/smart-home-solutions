@@ -1,5 +1,5 @@
 import {assertEquals, assert} from '@std/assert';
-import {calculateAccuracy, accuracyScore, type ForecastRecord, type AccuracySlot, type AccuracyActual} from './forecast-accuracy.ts';
+import {calculateAccuracy, accuracyScore, nextAccuracyUpdate, type ForecastRecord, type AccuracySlot, type AccuracyActual} from './forecast-accuracy.ts';
 
 const past = '2026-10-16T12:00:00Z', next = '2026-10-17T18:00:00Z';
 function slot(start: string): AccuracySlot {return {start, duration_hours: .25, load_w: 2000, pv_w: 0,
@@ -84,4 +84,13 @@ Deno.test('one missed stretch cannot outweigh agreement elsewhere; over- and und
   assertEquals(score(), 50);
   i.actuals[0].battery_charge_kwh = 1; // twice the planned .5
   assertEquals(score(), 50, 'missing by half and doubling are equally wrong');
+});
+
+Deno.test('the next update is the next local 06:00 or 18:00, across a DST change', () => {
+  const tz = 'Europe/Stockholm';
+  assertEquals(nextAccuracyUpdate(Date.parse('2026-10-18T03:59:00Z'), tz), {day: 'today', time: '06:00'});
+  assertEquals(nextAccuracyUpdate(Date.parse('2026-10-18T04:00:30Z'), tz), {day: 'today', time: '18:00'});
+  assertEquals(nextAccuracyUpdate(Date.parse('2026-10-18T16:00:00Z'), tz), {day: 'tomorrow', time: '06:00'});
+  // 25 Oct: clocks go back at 03:00 CEST; 04:30Z is 05:30 CET.
+  assertEquals(nextAccuracyUpdate(Date.parse('2026-10-25T04:30:00Z'), tz), {day: 'today', time: '06:00'});
 });

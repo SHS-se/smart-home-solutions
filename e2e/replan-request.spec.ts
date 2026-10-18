@@ -972,6 +972,7 @@ test.describe('requesting a replan', () => {
     const popup = page.getByRole('dialog');
     await expect(popup.getByText('Baseline',{exact:true})).toBeVisible();
     for (const n of [94,84,74,64,54]) await expect(popup.getByText(`${n}%`,{exact:true})).toBeVisible();
+    await expect(popup.getByTestId('accuracy-schedule')).toContainText(/(Next update (today|tomorrow) at|Nästa uppdatering (i dag|i morgon)) (06|18):00/);
     await page.keyboard.press('Escape');
     await expect(forecast).toBeFocused();
     await page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/}).click();
