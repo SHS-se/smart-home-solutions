@@ -3,8 +3,9 @@
 The server publishes one report per home at local 06:00 and 18:00. The minute
 cron creates durable jobs; leases and fencing prevent a late attempt from
 overwriting another attempt. Reads never calculate scores. Both planner pages
-read the same report. Its plan ID and calculation time identify the forecast
-evaluated at the latest scheduled boundary, even if another plan arrives later.
+read the same report (version 2). It has two scores: historical accuracy per
+component, and price estimate accuracy. There is no forward-looking forecast
+score.
 
 `energy_forecast_records` retains compact, immutable forecasts after successful
 publication. Failure to archive leaves a diagnostic gap and never rejects a
@@ -22,22 +23,24 @@ agreement. Missing half the energy and delivering twice the energy score alike.
 A false positive against zero measured energy scores zero; an entirely
 zero-energy comparison is unscored. Missing measurements remain gaps.
 
-The report's `forecast` side still estimates future performance from paired
-errors at comparable issue-to-target leads (below six hours, six to 24 hours,
-24 hours onward), weighting each bucket's matched share by the current
-forecast's energy. It needs measured history at every lead, so it stays
-unscored for days after a fresh start. Neither planner page shows it any more:
-the first button is Input accuracy.
+Price estimate accuracy uses the same ratio on import prices (SEK/kWh, floored
+at zero). Each archived slot keeps the planner's own import price where none was
+published yet. For every quarter with a published price in
+`energy_optimisation_price_slots`, the last archived estimate is compared with
+that published price, so the score measures how close the planner's guess came
+before the day-ahead prices arrived in the afternoon. Tomorrow's quarters count
+as soon as their prices are published. Archives made before estimates were kept
+cannot be backfilled.
 
 ## Input accuracy
 
 Input accuracy is system health, not forecast error. Home Assistant scores its
-own inputs whenever the app shows them and with every 15-minute runtime report,
-so a number exists from the first report. Each check is one share, healthy over
-expected, and the headline is the average of the checks that apply:
+own inputs whenever the app shows them and with every 15-minute runtime report.
+The live checks are one share each, healthy over expected. The headline is the
+average of the checks that have a score:
 
-- **Prices** — published supplier quarters from now to the end of today, and to
-  the end of tomorrow from 14:00 local, when day-ahead prices are due.
+- **Prices** — the latest report's price estimate accuracy, so it changes twice
+  a day and stays unscored until a published price has been compared.
 - **Solar forecast** — usable configured forecast sensors. Homes without solar
   skip it; solar without a forecast scores zero.
 - **Sensors** — usable configured meters and planning readings. The plant's
@@ -61,7 +64,7 @@ device demand, solar and battery throughput; household demand is not counted
 again. Battery charge and discharge errors are added separately, never netted.
 
 Reports retain the underlying error sums, signed bias, paired/missing counts,
-lead buckets, forecast weights, source plan IDs and battery SOC residuals.
+source plan IDs and battery SOC residuals, plus the price comparison's sums.
 Battery diagnostics also compare shifts of -30, -15, 0, 15, 30 and 60 minutes;
 these do not change the reported score. `[FORECAST-ACCURACY]` logs each completed
 device calculation. HA logs the shared report, including its calculations, once

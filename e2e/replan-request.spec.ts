@@ -962,11 +962,11 @@ test.describe('requesting a replan', () => {
   test('accuracy buttons open compact device lists with all five grades', async ({page}) => {
     const devices = [['baseline','Baseline',94,'green'],['ev','Car',84,'lime'],['pool','Pool',74,'yellow'],
       ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red']].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
-    replan.accuracy = {version:1,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',forecast_plan_id:PLAN.plan_id,
-      forecast:{percentage:94,grade:'green',devices},historical:{percentage:64,grade:'orange',devices}};
+    replan.accuracy = {version:2,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',historical_from:CAPTURED_AT,
+      historical:{percentage:64,grade:'orange',devices},prices:{percentage:80,grade:'lime',quarters:96}};
     replan.reportedPlanId = PLAN.plan_id;
     replan.inputAccuracy = {version:1,observed_at:CAPTURED_AT,percentage:88,grade:'lime',checks:[
-      {key:'prices',percentage:100,grade:'green',healthy:56,expected:56,issues:[],published_until:'2026-10-18T21:45:00+00:00',first_missing:null},
+      {key:'prices',percentage:80,grade:'lime',quarters:96,calculated_at:CAPTURED_AT,issues:[]},
       {key:'sensors',percentage:98,grade:'green',healthy:63,expected:64,issues:['sensor.kitchen_heater_power']},
       {key:'measurements',percentage:54,grade:'red',healthy:52,expected:96,issues:[]}]};
     await page.goto('/portal/energy-modeling?tab=plan');
@@ -977,6 +977,7 @@ test.describe('requesting a replan', () => {
     const checks = page.getByRole('dialog');
     await expect(checks.getByText(/sensor\.kitchen_heater_power/)).toBeVisible();
     await expect(checks.getByText(/52 (of|av) 96/)).toBeVisible();
+    await expect(checks.getByText(/(Estimates against published prices|Uppskattning mot publicerat pris), 96/)).toBeVisible();
     await page.screenshot({path:test.info().outputPath('website-input-accuracy.png')});
     await page.keyboard.press('Escape');
     await expect(input).toBeFocused();

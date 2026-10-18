@@ -1,18 +1,21 @@
-/** As-issued forecast evaluation. These diagnostics never authorize control. */
+/** As-issued accuracy evaluation. These diagnostics never authorize control. */
 export type AccuracyGrade = 'green' | 'lime' | 'yellow' | 'orange' | 'red';
 export interface AccuracyScore { percentage: number | null; grade: AccuracyGrade | null }
 export interface AccuracyDevice extends AccuracyScore { key: string; name: string }
 export interface AccuracySide extends AccuracyScore { devices: AccuracyDevice[] }
+/** How close the planner's last estimate came to each price once it was published. */
+export interface PriceAccuracy extends AccuracyScore { quarters: number }
 export interface AccuracyReport {
-  version: 1; scheduled_at: string; calculated_at: string; timezone: string;
-  forecast_plan_id: string | null; historical_from: string;
-  forecast: AccuracySide; historical: AccuracySide;
+  version: 2; scheduled_at: string; calculated_at: string; timezone: string; historical_from: string;
+  historical: AccuracySide; prices: PriceAccuracy;
   calculations?: unknown[];
 }
 export interface AccuracySlot {
   start: string; duration_hours: number; load_w: number | null; pv_w: number | null;
   device_loads_w: Record<string, number> | null;
   battery_charge_w: number | null; battery_discharge_w: number | null; battery_soc: number | null;
+  /** The planner's own import price where none was published yet; null once published. */
+  estimated_import_sek_per_kwh?: number | null;
 }
 export interface ForecastRecord {
   plan_id: string; published_at: string;
@@ -23,23 +26,26 @@ export interface AccuracyActual {
   battery_charge_kwh: number | null; battery_discharge_kwh: number | null; battery_soc: number | null;
 }
 export interface DeviceActual { start_ts: string; device_key: string; energy_kwh: number }
-interface Pair { at: number; plan_id: string; predicted: number[]; actual: number[]; lead: number }
+export interface PublishedPrice { start_ts: string; import_price_sek_per_kwh: number }
+interface Pair { at: number; plan_id: string; predicted: number[]; actual: number[] }
 /** matched_kwh sums min(predicted, actual) and larger_kwh sums max(predicted, actual), per value. */
 interface ErrorSums {
   pairs: number; predicted_kwh: number; actual_kwh: number; absolute_error_kwh: number; bias_kwh: number;
   matched_kwh: number; larger_kwh: number;
 }
 interface AccuracyCalculation {
-  key: string; name: string; historical: ErrorSums; gaps: number; bins: (ErrorSums & {bucket: number})[];
-  forecast_energy_kwh: number; forecast_expected_matched_kwh: number | null; plan_ids: string[];
-  forecast_bins: {bucket: number; energy_kwh: number; slots: number}[];
+  key: string; name: string; historical: ErrorSums; gaps: number; plan_ids: string[];
   lag?: (ErrorSums & {minutes: number})[];
   soc_percentage_points?: {samples: number; absolute_error: number; bias: number};
+}
+/** The same sums in SEK/kWh: estimated against published import prices. */
+interface PriceCalculation {
+  key: 'prices'; pairs: number; estimated_sek_per_kwh: number; published_sek_per_kwh: number;
+  absolute_error_sek_per_kwh: number; bias_sek_per_kwh: number; matched: number; larger: number; plan_ids: string[];
 }
 const QUARTER = 900_000, DAY = 86_400_000;
 const valid = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const volume = (values: number[]) => values.reduce((sum, value) => sum + Math.abs(value), 0);
-const bucket = (lead: number) => lead < 6 ? 0 : lead < 24 ? 1 : 2;
 
 /** The next local 06:00 or 18:00 publication, as `private.energy_accuracy_due` schedules it. */
 export function nextAccuracyUpdate(now: number, timeZone: string): {day: 'today' | 'tomorrow'; time: '06:00' | '18:00'} {
@@ -59,7 +65,7 @@ export function accuracyScore(matched: number, larger: number): AccuracyScore {
   return {percentage, grade: percentage === null ? null : percentage >= 90 ? 'green'
     : percentage >= 80 ? 'lime' : percentage >= 70 ? 'yellow' : percentage >= 60 ? 'orange' : 'red'};
 }
-// Energies are non-negative; the floor keeps the score's bounds exact.
+// Energies, and import prices in practice, are non-negative; the floor keeps the score's bounds exact.
 const energyPair = (p: Pair, i: number) => [Math.max(0, p.predicted[i]), Math.max(0, p.actual[i])];
 function sums(pairs: Pair[]): ErrorSums {
   return pairs.reduce((s, p) => ({pairs: s.pairs + 1,
@@ -104,69 +110,43 @@ function measured(slot: AccuracySlot, key: string, actual: AccuracyActual | unde
 }
 
 export function calculateAccuracy(input: {scheduled_at: string; calculated_at: string; timezone: string;
-  forecasts: ForecastRecord[]; actuals: AccuracyActual[]; device_actuals: DeviceActual[]}) {
+  forecasts: ForecastRecord[]; actuals: AccuracyActual[]; device_actuals: DeviceActual[]; prices: PublishedPrice[]}) {
   const at = Date.parse(input.scheduled_at), from = at - 7 * DAY;
   const actuals = new Map(input.actuals.map(a => [Date.parse(a.start_ts), a]));
   const deviceActuals = new Map(input.device_actuals.map(a => [`${Date.parse(a.start_ts)}:${a.device_key}`, a.energy_kwh]));
   const records = input.forecasts.filter(r => Date.parse(r.published_at) <= at)
     .sort((a, b) => Date.parse(a.published_at) - Date.parse(b.published_at) || a.plan_id.localeCompare(b.plan_id));
-  const current = records.at(-1);
   const history = new Map<number, {record: ForecastRecord; slot: AccuracySlot}>();
-  const training = new Map<string, {record: ForecastRecord; slot: AccuracySlot}>();
+  // Later records overwrite earlier ones, so each quarter keeps the last estimate made before its price was published.
+  const estimates = new Map<number, {plan_id: string; value: number}>();
   const names = new Map<string, string>([['baseline', 'Baseline'], ['solar', 'Solar'], ['battery', 'House battery']]);
   for (const record of records) {
     record.forecast.devices.forEach(d => names.set('device:' + d.key, d.name));
     for (const slot of record.forecast.slots) {
       const start = Date.parse(slot.start);
+      if (start >= from && valid(slot.estimated_import_sek_per_kwh))
+        estimates.set(start, {plan_id: record.plan_id, value: slot.estimated_import_sek_per_kwh});
       // Only complete forecasts published before the quarter can be compared
       // with a full measured quarter. Partial/current-quarter captures are not hindcasts.
       if (start < from || start + QUARTER > at || start < Date.parse(record.published_at) || slot.duration_hours !== .25) continue;
       history.set(start, {record, slot});
-      training.set(`${start}:${bucket((start - Date.parse(record.published_at)) / 3_600_000)}`, {record, slot});
     }
   }
-  const allKeys = new Set(current ? keys(current) : []);
+  const allKeys = new Set(records.length ? keys(records.at(-1)!) : []);
   for (const {record} of history.values()) keys(record).forEach(k => allKeys.add(k));
-  const historicalPairs = new Map<string, Pair[]>(), trainingPairs = new Map<string, Pair[]>();
-  const gaps = new Map<string, number>();
-  const collect = (items: Iterable<{record: ForecastRecord; slot: AccuracySlot}>, target: Map<string, Pair[]>, countGaps: boolean) => {
-    for (const {record, slot} of items) for (const key of keys(record)) {
-      const start = Date.parse(slot.start), prediction = predicted(slot, key);
-      const actual = measured(slot, key, actuals.get(start), deviceActuals, start);
-      if (!prediction || !actual) { if (countGaps) gaps.set(key, (gaps.get(key) ?? 0) + 1); continue; }
-      const pairs = target.get(key) ?? [];
-      pairs.push({at: start, predicted: prediction, actual, plan_id: record.plan_id,
-        lead: (start - Date.parse(record.published_at)) / 3_600_000});
-      target.set(key, pairs);
-    }
-  };
-  collect(history.values(), historicalPairs, true);
-  collect(training.values(), trainingPairs, false);
-  const forecastRows: AccuracyDevice[] = [], historyRows: AccuracyDevice[] = [];
-  const diagnostics: AccuracyCalculation[] = [];
-  let estimatedMatched = 0, estimatedVolume = 0, forecastComplete = true;
+  const historicalPairs = new Map<string, Pair[]>(), gaps = new Map<string, number>();
+  for (const {record, slot} of history.values()) for (const key of keys(record)) {
+    const start = Date.parse(slot.start), prediction = predicted(slot, key);
+    const actual = measured(slot, key, actuals.get(start), deviceActuals, start);
+    if (!prediction || !actual) { gaps.set(key, (gaps.get(key) ?? 0) + 1); continue; }
+    historicalPairs.set(key, [...historicalPairs.get(key) ?? [], {at: start, predicted: prediction, actual, plan_id: record.plan_id}]);
+  }
+  const historyRows: AccuracyDevice[] = [], diagnostics: (AccuracyCalculation | PriceCalculation)[] = [];
   const historicTotals: Pair[] = [];
   for (const key of allKeys) {
     const pairs = historicalPairs.get(key) ?? [], historical = sums(pairs);
-    const bins = [0, 1, 2].map(b => ({bucket: b, ...sums((trainingPairs.get(key) ?? []).filter(p => bucket(p.lead) === b))}));
-    const future = current && keys(current).includes(key) ? current.forecast.slots
-      .filter(s => Date.parse(s.start) >= at).map(s => ({slot: s, value: predicted(s, key)})) : [];
-    let matched = 0, energy = 0, complete = future.length > 0;
-    const forecastBins = [0,1,2].map(bucket => ({bucket, energy_kwh: 0, slots: 0}));
-    for (const item of future) {
-      if (!item.value) { complete = false; continue; }
-      const weight = volume(item.value), bin = bins[bucket((Date.parse(item.slot.start) - Date.parse(current!.published_at)) / 3_600_000)];
-      forecastBins[bin.bucket].energy_kwh += weight;
-      forecastBins[bin.bucket].slots++;
-      energy += weight;
-      if (weight === 0) continue;
-      if (!bin.pairs || bin.larger_kwh === 0) { complete = false; continue; }
-      matched += weight * bin.matched_kwh / bin.larger_kwh;
-    }
-    const forecast = complete && energy > 0 ? accuracyScore(matched, energy) : accuracyScore(0, 0);
     const name = names.get(key) ?? key.slice(7);
-    forecastRows.push({key, name, ...forecast}); historyRows.push({key, name, ...scoreSums(historical)});
-    if (future.length) { estimatedMatched += matched; estimatedVolume += energy; if (!complete) forecastComplete = false; }
+    historyRows.push({key, name, ...scoreSums(historical)});
     historicTotals.push(...pairs);
     // Positive shift means measured battery behaviour follows the forecast later.
     const lag = key === 'battery' ? [-30, -15, 0, 15, 30, 60].map(minutes => {
@@ -181,15 +161,22 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
       const forecast = history.get(p.at)?.slot.battery_soc, measured = actuals.get(p.at)?.battery_soc;
       return valid(forecast) && valid(measured) ? [(forecast - measured) * 100] : [];
     }) : null;
-    diagnostics.push({key, name, historical, gaps: gaps.get(key) ?? 0, bins,
-      forecast_energy_kwh: energy, forecast_expected_matched_kwh: complete ? matched : null, forecast_bins: forecastBins,
+    diagnostics.push({key, name, historical, gaps: gaps.get(key) ?? 0,
       plan_ids: [...new Set(pairs.map(p => p.plan_id))], ...(lag ? {lag} : {}),
       ...(soc ? {soc_percentage_points: {samples: soc.length, absolute_error: soc.reduce((a,b) => a + Math.abs(b),0), bias: soc.reduce((a,b) => a + b,0)}} : {})});
   }
-  const totals = sums(historicTotals);
-  const report: AccuracyReport = {version: 1, scheduled_at: input.scheduled_at, calculated_at: input.calculated_at,
-    timezone: input.timezone, forecast_plan_id: current?.plan_id ?? null, historical_from: new Date(from).toISOString(),
-    forecast: {...(forecastComplete ? accuracyScore(estimatedMatched, estimatedVolume) : accuracyScore(0, 0)), devices: forecastRows},
-    historical: {...scoreSums(totals), devices: historyRows}};
+  const pricePairs: Pair[] = input.prices.flatMap(p => {
+    const start = Date.parse(p.start_ts), estimate = estimates.get(start);
+    return estimate && valid(p.import_price_sek_per_kwh)
+      ? [{at: start, plan_id: estimate.plan_id, predicted: [estimate.value], actual: [p.import_price_sek_per_kwh]}] : [];
+  });
+  const price = sums(pricePairs);
+  diagnostics.push({key: 'prices', pairs: price.pairs, estimated_sek_per_kwh: price.predicted_kwh,
+    published_sek_per_kwh: price.actual_kwh, absolute_error_sek_per_kwh: price.absolute_error_kwh, bias_sek_per_kwh: price.bias_kwh,
+    matched: price.matched_kwh, larger: price.larger_kwh, plan_ids: [...new Set(pricePairs.map(p => p.plan_id))]});
+  const report: AccuracyReport = {version: 2, scheduled_at: input.scheduled_at, calculated_at: input.calculated_at,
+    timezone: input.timezone, historical_from: new Date(from).toISOString(),
+    historical: {...scoreSums(sums(historicTotals)), devices: historyRows},
+    prices: {...scoreSums(price), quarters: price.pairs}};
   return {report, diagnostics};
 }

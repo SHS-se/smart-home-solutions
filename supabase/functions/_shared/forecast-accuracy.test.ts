@@ -1,7 +1,10 @@
 import {assertEquals, assert} from '@std/assert';
-import {calculateAccuracy, accuracyScore, nextAccuracyUpdate, type ForecastRecord, type AccuracySlot, type AccuracyActual} from './forecast-accuracy.ts';
+import {calculateAccuracy, accuracyScore, nextAccuracyUpdate, type ForecastRecord, type AccuracySlot, type AccuracyActual, type PublishedPrice} from './forecast-accuracy.ts';
 
 const past = '2026-10-16T12:00:00Z', next = '2026-10-17T18:00:00Z';
+type Calculation = {historical: {bias_kwh: number; pairs: number; absolute_error_kwh: number}; gaps: number; plan_ids: string[];
+  lag?: {minutes: number; absolute_error_kwh: number}[]};
+const battery = (diagnostics: {key: string}[], key: string) => diagnostics.find(d => d.key === key) as unknown as Calculation;
 function slot(start: string): AccuracySlot {return {start, duration_hours: .25, load_w: 2000, pv_w: 0,
   device_loads_w: {heater: 1000}, battery_charge_w: 0, battery_discharge_w: 0, battery_soc: .5};}
 function record(plan_id: string, published_at: string, start: string): ForecastRecord {return {plan_id, published_at,
@@ -10,20 +13,33 @@ function input() {return {scheduled_at: '2026-10-17T16:00:00Z', calculated_at: '
   forecasts: [record('past', '2026-10-16T06:00:00Z', past), record('current', '2026-10-17T12:00:00Z', next)],
   actuals: [{start_ts: past, total_load_kwh: .5, solar_production_kwh: 0, battery_charge_kwh: 0,
     battery_discharge_kwh: 0, battery_soc: .5}] as AccuracyActual[],
-  device_actuals: [{start_ts: past, device_key: 'heater', energy_kwh: .25}]};}
+  device_actuals: [{start_ts: past, device_key: 'heater', energy_kwh: .25}], prices: [] as PublishedPrice[]};}
 
-Deno.test('current forecast is estimated from matching lead errors; historical uses measured pairs', () => {
+Deno.test('historical accuracy uses measured pairs; the report has no forecast side', () => {
   const i = input();
   i.actuals[0].total_load_kwh = .75; // baseline actually .5, forecast .25: 50%.
   const {report, diagnostics} = calculateAccuracy(i);
-  assertEquals(report.forecast_plan_id, 'current');
-  assertEquals(report.forecast.devices.find(d => d.key === 'baseline')!.percentage, 50);
+  assertEquals(report.version, 2);
+  assertEquals('forecast' in report, false);
   assertEquals(report.historical.devices.find(d => d.key === 'baseline')!.percentage, 50);
-  assertEquals(report.forecast.percentage, 75); // weights the current .25 + .25 forecast.
   assertEquals(report.historical.percentage, 67); // .5 matched / .75 larger.
-  assertEquals(diagnostics.find(d => d.key === 'baseline')!.historical.bias_kwh, -.25);
-  i.forecasts[1].forecast.slots[0].start = '2026-10-18T18:00:00Z';
-  assertEquals(calculateAccuracy(i).report.forecast.percentage, null, 'unobserved lead is unscored');
+  assertEquals(battery(diagnostics, 'baseline').historical.bias_kwh, -.25);
+});
+
+Deno.test('prices compare the last estimate before publication with the published price', () => {
+  const i = input(), tomorrow = '2026-10-18T10:00:00Z';
+  const estimate = (plan: string, at: string, value: number | null) => ({...record(plan, at, tomorrow),
+    forecast: {...record(plan, at, tomorrow).forecast, slots: [{...slot(tomorrow), estimated_import_sek_per_kwh: value}]}});
+  // An older estimate is superseded; a plan issued after publication carries no estimate.
+  i.forecasts.push(estimate('early', '2026-10-16T20:00:00Z', 1), estimate('last', '2026-10-17T09:00:00Z', 2),
+    estimate('published', '2026-10-17T13:00:00Z', null));
+  i.prices = [{start_ts: tomorrow, import_price_sek_per_kwh: 2.5}, {start_ts: past, import_price_sek_per_kwh: 1}];
+  const {report, diagnostics} = calculateAccuracy(i);
+  assertEquals(report.prices, {percentage: 80, grade: 'lime', quarters: 1}); // 2 of 2.5
+  const prices = diagnostics.find(d => d.key === 'prices') as unknown as {plan_ids: string[]; bias_sek_per_kwh: number};
+  assertEquals(prices.plan_ids, ['last']);
+  assertEquals(prices.bias_sek_per_kwh, -.5);
+  assertEquals(calculateAccuracy(input()).report.prices, {percentage: null, grade: null, quarters: 0});
 });
 
 Deno.test('as-issued history selects the last pre-quarter publication, never hindsight or overlapping duplicates', () => {
@@ -35,8 +51,8 @@ Deno.test('as-issued history selects the last pre-quarter publication, never hin
   i.forecasts.push(obsolete, hindsight);
   const result = calculateAccuracy(i);
   assertEquals(result.report.historical.percentage, 100);
-  assertEquals(result.diagnostics.find(d => d.key === 'baseline')!.historical.pairs, 1);
-  assertEquals(result.diagnostics.find(d => d.key === 'baseline')!.plan_ids, ['past']);
+  assertEquals(battery(result.diagnostics, 'baseline').historical.pairs, 1);
+  assertEquals(battery(result.diagnostics, 'baseline').plan_ids, ['past']);
 });
 
 Deno.test('missing device quarters cannot become zero or manufacture a residual baseline', () => {
@@ -44,7 +60,7 @@ Deno.test('missing device quarters cannot become zero or manufacture a residual 
   const result = calculateAccuracy(i);
   assertEquals(result.report.historical.percentage, null);
   assertEquals(result.report.historical.devices.find(d => d.key === 'baseline')!.percentage, null);
-  assertEquals(result.diagnostics.find(d => d.key === 'baseline')!.gaps, 1);
+  assertEquals(battery(result.diagnostics, 'baseline').gaps, 1);
 });
 
 Deno.test('battery directions cannot cancel and lag diagnostics identify a delayed charge', () => {
@@ -54,12 +70,12 @@ Deno.test('battery directions cannot cancel and lag diagnostics identify a delay
   i.forecasts[1].forecast.slots[0].battery_charge_w = 1000;
   i.actuals = [0,1,2,3].map(n => ({...i.actuals[0], start_ts: new Date(Date.parse(past)+n*900_000).toISOString(), battery_charge_kwh: n===1 ? .25 : 0}));
   i.device_actuals = i.actuals.map(a => ({start_ts:a.start_ts, device_key:'heater', energy_kwh:.25}));
-  const result = calculateAccuracy(i), battery = result.diagnostics.find(d => d.key === 'battery')!;
+  const result = calculateAccuracy(i), calculation = battery(result.diagnostics, 'battery');
   assertEquals(result.report.historical.devices.find(d => d.key === 'battery')!.percentage, 0);
-  assertEquals(battery.lag!.find(l => l.minutes === 15)!.absolute_error_kwh, 0);
-  assert(battery.lag!.find(l => l.minutes === 0)!.absolute_error_kwh > 0);
+  assertEquals(calculation.lag!.find(l => l.minutes === 15)!.absolute_error_kwh, 0);
+  assert(calculation.lag!.find(l => l.minutes === 0)!.absolute_error_kwh > 0);
   i.actuals[0].battery_discharge_kwh = .25;
-  assert(calculateAccuracy(i).diagnostics.find(d => d.key === 'battery')!.historical.absolute_error_kwh >= .5);
+  assert(battery(calculateAccuracy(i).diagnostics, 'battery').historical.absolute_error_kwh >= .5);
 });
 
 Deno.test('five grade boundaries and zero-volume evidence are explicit', () => {
@@ -67,7 +83,7 @@ Deno.test('five grade boundaries and zero-volume evidence are explicit', () => {
     assertEquals(accuracyScore(n,100).grade,grade);
   assertEquals(accuracyScore(0,0), {percentage:null,grade:null});
   assertEquals(accuracyScore(0,1), {percentage:0,grade:'red'});
-  assertEquals(calculateAccuracy({...input(), forecasts: []}).report.forecast.percentage, null);
+  assertEquals(calculateAccuracy({...input(), forecasts: []}).report.historical.percentage, null);
 });
 
 Deno.test('one missed stretch cannot outweigh agreement elsewhere; over- and under-delivery score alike', () => {
