@@ -2,7 +2,7 @@ import ReplanControls from './ReplanControls';
 import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
 import PlanningWarningsAlert from './PlanningWarningsAlert';
-import ForecastAccuracyButtons from './ForecastAccuracyButtons';
+import AccuracyButtons from './AccuracyButtons';
 import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
 import { REPLAN_OVERDUE_MS, replanState } from '@/lib/energy-shift/replan-request';
@@ -431,7 +431,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
       <PlanningWarningsAlert warnings={current?.plan.planning_warnings ?? []} />
       {section === 'plan' && <div className="flex flex-wrap items-center justify-between gap-2" data-testid="plan-status-row">
-        <ForecastAccuracyButtons report={accuracy} error={accuracyError} />
+        <AccuracyButtons report={accuracy} error={accuracyError} input={latestRuntime?.ha_runtime?.input_accuracy ?? null}
+          inputUnavailable={testEnvironment} />
         <span className="inline-flex items-center gap-2 text-xs text-muted-foreground" aria-label={t('Home Assistant-anslutning', 'Home Assistant connection')}>
           <span aria-hidden="true" className={`h-2 w-2 rounded-full ${activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? 'bg-emerald-600' : 'bg-red-600'}`} />
           {activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? t('Ansluten', 'Connected') : t('Frånkopplad', 'Disconnected')}

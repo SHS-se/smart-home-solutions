@@ -26,6 +26,7 @@ import {
 } from "../_shared/ha-api-contract.ts";
 
 import { validRuntime } from '../_shared/ha-runtime.ts';
+import { validInputAccuracy } from '../_shared/input-accuracy.ts';
 
 // Long enough for a Home Assistant exception with its remedy, short enough that
 // the column cannot be used as storage.
@@ -78,8 +79,15 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         if (body.api_version !== HA_API_VERSION || !validRuntime(body.runtime)) {
           return json({ error: "invalid_runtime" }, 400);
         }
+        // Input accuracy rides beside the runtime; a malformed one is dropped,
+        // never a reason to lose the runtime report itself.
+        const inputAccuracy = validInputAccuracy(body.input_accuracy) ? body.input_accuracy : undefined;
+        if (body.input_accuracy !== undefined && !inputAccuracy) {
+          console.warn("[INTEGRATION-STATUS] invalid input accuracy dropped", { home_id: auth.homeId });
+        }
         const { data: received, error } = await supabase.rpc("report_energy_runtime", {
-          p_home_id: auth.homeId, p_runtime: body.runtime,
+          p_home_id: auth.homeId,
+          p_runtime: inputAccuracy ? { ...(body.runtime as Record<string, unknown>), input_accuracy: inputAccuracy } : body.runtime,
         });
         if (error) {
           console.error("[INTEGRATION-STATUS] runtime write failed", error);

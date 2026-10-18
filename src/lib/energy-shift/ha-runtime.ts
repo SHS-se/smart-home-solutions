@@ -1,3 +1,4 @@
+import type { InputAccuracy } from '../../../supabase/functions/_shared/input-accuracy';
 /** Last reported local state; lack of contact does not stop a cached HA plan. */
 export interface HaRuntime {
   observed_at: string;
@@ -9,6 +10,8 @@ export interface HaRuntime {
   recovering: boolean;
   retry_at: string | null;
   last_error: string | null;
+  /** Home Assistant's live input health, reported beside the runtime. */
+  input_accuracy?: InputAccuracy | null;
 }
 export interface HaRuntimeRow {
   plan_id: string | null;

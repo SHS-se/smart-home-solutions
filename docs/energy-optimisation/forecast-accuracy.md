@@ -22,13 +22,36 @@ agreement. Missing half the energy and delivering twice the energy score alike.
 A false positive against zero measured energy scores zero; an entirely
 zero-energy comparison is unscored. Missing measurements remain gaps.
 
-Current forecast accuracy estimates future performance from paired errors at
-comparable issue-to-target leads: below six hours, six to 24 hours, and 24 hours
-onward. Each target contributes at most once per lead bucket. The current
-forecast's energy weights each bucket's matched share, the same ratio as above.
-Missing evidence for a positive forecast component or lead leaves that estimate
-unscored. No warning count or
-sample-count penalty invents an accuracy percentage.
+The report's `forecast` side still estimates future performance from paired
+errors at comparable issue-to-target leads (below six hours, six to 24 hours,
+24 hours onward), weighting each bucket's matched share by the current
+forecast's energy. It needs measured history at every lead, so it stays
+unscored for days after a fresh start. Neither planner page shows it any more:
+the first button is Input accuracy.
+
+## Input accuracy
+
+Input accuracy is system health, not forecast error. Home Assistant scores its
+own inputs whenever the app shows them and with every 15-minute runtime report,
+so a number exists from the first report. Each check is one share, healthy over
+expected, and the headline is the average of the checks that apply:
+
+- **Prices** — published supplier quarters from now to the end of today, and to
+  the end of tomorrow from 14:00 local, when day-ahead prices are due.
+- **Solar forecast** — usable configured forecast sensors. Homes without solar
+  skip it; solar without a forecast scores zero.
+- **Sensors** — usable configured meters and planning readings. The plant's
+  continuously polled readings (battery SOC and power, grid, house and solar
+  power) must also be under three minutes old. Meters that report on change are
+  not stale for being quiet.
+- **Measurements** — measured quarters with the full household balance among
+  those read in the last 24 hours. A quarter missing from the recorder is a gap.
+  Nothing read yet leaves it unscored.
+
+Home Assistant sends the result beside its runtime as `input_accuracy`; an older
+website ignores the field. The website validates it, stores it in `ha_runtime`,
+and drops a malformed one without losing the runtime. TEST receives no runtime,
+so its Input accuracy stays empty.
 
 Baseline is household demand minus the same separately forecast device members
 in that archived quarter. Missing members or inconsistent negative residuals

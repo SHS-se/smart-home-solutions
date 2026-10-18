@@ -82,6 +82,7 @@ const idle: ReplanColumns = {
  */
 interface MockPlanState {
   accuracy?: Record<string, unknown>;
+  inputAccuracy?: Record<string, unknown>;
   row: ReplanColumns;
   reportedPlanId?: string;
   reportedValidUntil?: string;
@@ -178,6 +179,7 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
             plan_id: replan.reportedPlanId, observed_at: CAPTURED_AT, state: 'ready',
             reason: 'A validated plan is available', binding_until: shown.binding_until,
             valid_until: replan.reportedValidUntil ?? shown.valid_until, recovering: replan.refreshing ?? false, retry_at: null, last_error: null,
+            ...(replan.inputAccuracy ? {input_accuracy: replan.inputAccuracy} : {}),
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: replan.acknowledgement?.status ?? 'accepted',
@@ -962,9 +964,24 @@ test.describe('requesting a replan', () => {
       ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red']].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
     replan.accuracy = {version:1,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',forecast_plan_id:PLAN.plan_id,
       forecast:{percentage:94,grade:'green',devices},historical:{percentage:64,grade:'orange',devices}};
+    replan.reportedPlanId = PLAN.plan_id;
+    replan.inputAccuracy = {version:1,observed_at:CAPTURED_AT,percentage:88,grade:'lime',checks:[
+      {key:'prices',percentage:100,grade:'green',healthy:56,expected:56,issues:[],published_until:'2026-10-18T21:45:00+00:00',first_missing:null},
+      {key:'sensors',percentage:98,grade:'green',healthy:63,expected:64,issues:['sensor.kitchen_heater_power']},
+      {key:'measurements',percentage:54,grade:'red',healthy:52,expected:96,issues:[]}]};
     await page.goto('/portal/energy-modeling?tab=plan');
-    const forecast = page.getByRole('button',{name:/Forecast accuracy %|Prognosnoggrannhet %/});
-    await expect(forecast).toContainText('94');
+    await expect(page.getByRole('button',{name:/Forecast accuracy %|Prognosnoggrannhet %/})).toHaveCount(0);
+    const input = page.getByRole('button',{name:/Input accuracy %|Indatanoggrannhet %/});
+    await expect(input).toContainText('88');
+    await input.click();
+    const checks = page.getByRole('dialog');
+    await expect(checks.getByText(/sensor\.kitchen_heater_power/)).toBeVisible();
+    await expect(checks.getByText(/52 (of|av) 96/)).toBeVisible();
+    await page.screenshot({path:test.info().outputPath('website-input-accuracy.png')});
+    await page.keyboard.press('Escape');
+    await expect(input).toBeFocused();
+    const forecast = page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/});
+    await expect(forecast).toContainText('64');
     const status = page.getByTestId('plan-status-row').getByLabel(/Home Assistant connection|Home Assistant-anslutning/);
     await expect(status).toHaveText(/^(Connected|Disconnected|Ansluten|Frånkopplad)$/);
     await expect(status).not.toContainText(/connecting|disconnecting|\d+s/i);
@@ -975,7 +992,7 @@ test.describe('requesting a replan', () => {
     await expect(popup.getByTestId('accuracy-schedule')).toContainText(/(Next update (today|tomorrow) at|Nästa uppdatering (i dag|i morgon)) (06|18):00/);
     await page.keyboard.press('Escape');
     await expect(forecast).toBeFocused();
-    await page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/}).click();
+    await forecast.click();
     await expect(page.getByRole('dialog').getByRole('heading')).toContainText(/Historical accuracy %|Historisk noggrannhet %/);
     await expect(page.getByRole('dialog')).toHaveCSS('opacity','1');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
