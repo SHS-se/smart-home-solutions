@@ -13,16 +13,21 @@ issued before the seven-day measurement window. Older input-only archives
 cannot reconstruct device or battery predictions and are not backfilled.
 
 Historical accuracy uses the latest archived publication before each complete
-quarter. For each component, accuracy is
-`100 * max(0, 1 - sum(abs(predicted - actual)) / sum(actual))`, rounded to an
-integer. A false positive against zero measured energy scores zero; an entirely
+quarter. Every component, and the aggregate, is scored the same way:
+`100 * sum(min(predicted, actual)) / sum(max(predicted, actual))`, rounded to an
+integer — the share of energy on which forecast and measurement agree. It is
+bounded to 0..100 without clamping, so a badly missed stretch lowers the score
+in proportion to its energy but cannot sink it below zero and hide later
+agreement. Missing half the energy and delivering twice the energy score alike.
+A false positive against zero measured energy scores zero; an entirely
 zero-energy comparison is unscored. Missing measurements remain gaps.
 
 Current forecast accuracy estimates future performance from paired errors at
 comparable issue-to-target leads: below six hours, six to 24 hours, and 24 hours
 onward. Each target contributes at most once per lead bucket. The current
-forecast's energy weights those error rates. Missing evidence for a positive
-forecast component or lead leaves that estimate unscored. No warning count or
+forecast's energy weights each bucket's matched share, the same ratio as above.
+Missing evidence for a positive forecast component or lead leaves that estimate
+unscored. No warning count or
 sample-count penalty invents an accuracy percentage.
 
 Baseline is household demand minus the same separately forecast device members

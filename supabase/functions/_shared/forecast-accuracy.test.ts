@@ -20,7 +20,7 @@ Deno.test('current forecast is estimated from matching lead errors; historical u
   assertEquals(report.forecast.devices.find(d => d.key === 'baseline')!.percentage, 50);
   assertEquals(report.historical.devices.find(d => d.key === 'baseline')!.percentage, 50);
   assertEquals(report.forecast.percentage, 75); // weights the current .25 + .25 forecast.
-  assertEquals(report.historical.percentage, 67); // .25 error / .75 actual.
+  assertEquals(report.historical.percentage, 67); // .5 matched / .75 larger.
   assertEquals(diagnostics.find(d => d.key === 'baseline')!.historical.bias_kwh, -.25);
   i.forecasts[1].forecast.slots[0].start = '2026-10-18T18:00:00Z';
   assertEquals(calculateAccuracy(i).report.forecast.percentage, null, 'unobserved lead is unscored');
@@ -64,8 +64,24 @@ Deno.test('battery directions cannot cancel and lag diagnostics identify a delay
 
 Deno.test('five grade boundaries and zero-volume evidence are explicit', () => {
   for (const [n, grade] of [[90,'green'],[89,'lime'],[80,'lime'],[79,'yellow'],[70,'yellow'],[69,'orange'],[60,'orange'],[59,'red']] as const)
-    assertEquals(accuracyScore(100-n,100,100).grade,grade);
-  assertEquals(accuracyScore(0,0,0), {percentage:null,grade:null});
-  assertEquals(accuracyScore(1,0,1), {percentage:0,grade:'red'});
+    assertEquals(accuracyScore(n,100).grade,grade);
+  assertEquals(accuracyScore(0,0), {percentage:null,grade:null});
+  assertEquals(accuracyScore(0,1), {percentage:0,grade:'red'});
   assertEquals(calculateAccuracy({...input(), forecasts: []}).report.forecast.percentage, null);
+});
+
+Deno.test('one missed stretch cannot outweigh agreement elsewhere; over- and under-delivery score alike', () => {
+  const i = input();
+  i.forecasts.forEach(r => {r.forecast.battery = true;});
+  // Two quarters: a planned charge that never happened, then one followed exactly.
+  i.forecasts[0].forecast.slots = [0,1].map(n => ({...slot(new Date(Date.parse(past) + n*900_000).toISOString()), battery_charge_w: 2000}));
+  i.actuals = [0,1].map(n => ({...i.actuals[0], start_ts: new Date(Date.parse(past)+n*900_000).toISOString(), battery_charge_kwh: n ? .5 : 0}));
+  i.device_actuals = i.actuals.map(a => ({start_ts:a.start_ts, device_key:'heater', energy_kwh:.25}));
+  const score = () => calculateAccuracy(i).report.historical.devices.find(d => d.key === 'battery')!.percentage;
+  assertEquals(score(), 50); // .5 matched / 1 larger; the old error/actual ratio gave 0.
+  i.forecasts[0].forecast.slots[1].battery_charge_w = 0; i.actuals[1].battery_charge_kwh = 0; // an idle quarter scores nothing
+  i.actuals[0].battery_charge_kwh = .25; // half of the planned .5
+  assertEquals(score(), 50);
+  i.actuals[0].battery_charge_kwh = 1; // twice the planned .5
+  assertEquals(score(), 50, 'missing by half and doubling are equally wrong');
 });

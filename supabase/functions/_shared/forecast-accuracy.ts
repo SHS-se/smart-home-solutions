@@ -24,10 +24,14 @@ export interface AccuracyActual {
 }
 export interface DeviceActual { start_ts: string; device_key: string; energy_kwh: number }
 interface Pair { at: number; plan_id: string; predicted: number[]; actual: number[]; lead: number }
-interface ErrorSums { pairs: number; predicted_kwh: number; actual_kwh: number; absolute_error_kwh: number; bias_kwh: number }
+/** matched_kwh sums min(predicted, actual) and larger_kwh sums max(predicted, actual), per value. */
+interface ErrorSums {
+  pairs: number; predicted_kwh: number; actual_kwh: number; absolute_error_kwh: number; bias_kwh: number;
+  matched_kwh: number; larger_kwh: number;
+}
 interface AccuracyCalculation {
   key: string; name: string; historical: ErrorSums; gaps: number; bins: (ErrorSums & {bucket: number})[];
-  forecast_energy_kwh: number; forecast_expected_error_kwh: number | null; plan_ids: string[];
+  forecast_energy_kwh: number; forecast_expected_matched_kwh: number | null; plan_ids: string[];
   forecast_bins: {bucket: number; energy_kwh: number; slots: number}[];
   lag?: (ErrorSums & {minutes: number})[];
   soc_percentage_points?: {samples: number; absolute_error: number; bias: number};
@@ -37,20 +41,29 @@ const valid = (x: unknown): x is number => typeof x === 'number' && Number.isFin
 const volume = (values: number[]) => values.reduce((sum, value) => sum + Math.abs(value), 0);
 const bucket = (lead: number) => lead < 6 ? 0 : lead < 24 ? 1 : 2;
 
-export function accuracyScore(error: number, actual: number, predicted: number): AccuracyScore {
-  const percentage = actual > 0 ? Math.round(100 * Math.max(0, 1 - error / actual))
-    : predicted > 0 ? 0 : null;
+/**
+ * The share of energy where forecast and measurement agree:
+ * sum(min(predicted, actual)) / sum(max(predicted, actual)). Every component
+ * uses it. It is bounded to 0..100 without clamping, so one bad stretch cannot
+ * drive the score below zero, and over- and under-delivery count alike.
+ */
+export function accuracyScore(matched: number, larger: number): AccuracyScore {
+  const percentage = larger > 0 ? Math.round(100 * matched / larger) : null;
   return {percentage, grade: percentage === null ? null : percentage >= 90 ? 'green'
     : percentage >= 80 ? 'lime' : percentage >= 70 ? 'yellow' : percentage >= 60 ? 'orange' : 'red'};
 }
+// Energies are non-negative; the floor keeps the score's bounds exact.
+const energyPair = (p: Pair, i: number) => [Math.max(0, p.predicted[i]), Math.max(0, p.actual[i])];
 function sums(pairs: Pair[]): ErrorSums {
   return pairs.reduce((s, p) => ({pairs: s.pairs + 1,
     predicted_kwh: s.predicted_kwh + volume(p.predicted), actual_kwh: s.actual_kwh + volume(p.actual),
     absolute_error_kwh: s.absolute_error_kwh + p.actual.reduce((n, a, i) => n + Math.abs(p.predicted[i] - a), 0),
-    bias_kwh: s.bias_kwh + p.actual.reduce((n, a, i) => n + p.predicted[i] - a, 0)}),
-  {pairs: 0, predicted_kwh: 0, actual_kwh: 0, absolute_error_kwh: 0, bias_kwh: 0});
+    bias_kwh: s.bias_kwh + p.actual.reduce((n, a, i) => n + p.predicted[i] - a, 0),
+    matched_kwh: s.matched_kwh + p.actual.reduce((n, _, i) => n + Math.min(...energyPair(p, i)), 0),
+    larger_kwh: s.larger_kwh + p.actual.reduce((n, _, i) => n + Math.max(...energyPair(p, i)), 0)}),
+  {pairs: 0, predicted_kwh: 0, actual_kwh: 0, absolute_error_kwh: 0, bias_kwh: 0, matched_kwh: 0, larger_kwh: 0});
 }
-const scoreSums = (s: ErrorSums) => accuracyScore(s.absolute_error_kwh, s.actual_kwh, s.predicted_kwh);
+const scoreSums = (s: ErrorSums) => accuracyScore(s.matched_kwh, s.larger_kwh);
 const keys = (r: ForecastRecord) => ['baseline', ...r.forecast.devices.map(d => 'device:' + d.key), 'solar', ...(r.forecast.battery ? ['battery'] : [])];
 function predicted(slot: AccuracySlot, key: string): number[] | null {
   const energy = (watts: unknown) => valid(watts) ? watts * slot.duration_hours / 1000 : null;
@@ -124,14 +137,14 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
   collect(training.values(), trainingPairs, false);
   const forecastRows: AccuracyDevice[] = [], historyRows: AccuracyDevice[] = [];
   const diagnostics: AccuracyCalculation[] = [];
-  let estimatedError = 0, estimatedVolume = 0, forecastComplete = true;
+  let estimatedMatched = 0, estimatedVolume = 0, forecastComplete = true;
   const historicTotals: Pair[] = [];
   for (const key of allKeys) {
     const pairs = historicalPairs.get(key) ?? [], historical = sums(pairs);
     const bins = [0, 1, 2].map(b => ({bucket: b, ...sums((trainingPairs.get(key) ?? []).filter(p => bucket(p.lead) === b))}));
     const future = current && keys(current).includes(key) ? current.forecast.slots
       .filter(s => Date.parse(s.start) >= at).map(s => ({slot: s, value: predicted(s, key)})) : [];
-    let error = 0, energy = 0, complete = future.length > 0;
+    let matched = 0, energy = 0, complete = future.length > 0;
     const forecastBins = [0,1,2].map(bucket => ({bucket, energy_kwh: 0, slots: 0}));
     for (const item of future) {
       if (!item.value) { complete = false; continue; }
@@ -140,13 +153,13 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
       forecastBins[bin.bucket].slots++;
       energy += weight;
       if (weight === 0) continue;
-      if (!bin.pairs || (bin.actual_kwh === 0 && bin.predicted_kwh === 0)) { complete = false; continue; }
-      error += weight * (bin.actual_kwh > 0 ? bin.absolute_error_kwh / bin.actual_kwh : 1);
+      if (!bin.pairs || bin.larger_kwh === 0) { complete = false; continue; }
+      matched += weight * bin.matched_kwh / bin.larger_kwh;
     }
-    const forecast = complete && energy > 0 ? accuracyScore(error, energy, energy) : accuracyScore(0, 0, 0);
+    const forecast = complete && energy > 0 ? accuracyScore(matched, energy) : accuracyScore(0, 0);
     const name = names.get(key) ?? key.slice(7);
     forecastRows.push({key, name, ...forecast}); historyRows.push({key, name, ...scoreSums(historical)});
-    if (future.length) { estimatedError += error; estimatedVolume += energy; if (!complete) forecastComplete = false; }
+    if (future.length) { estimatedMatched += matched; estimatedVolume += energy; if (!complete) forecastComplete = false; }
     historicTotals.push(...pairs);
     // Positive shift means measured battery behaviour follows the forecast later.
     const lag = key === 'battery' ? [-30, -15, 0, 15, 30, 60].map(minutes => {
@@ -162,14 +175,14 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
       return valid(forecast) && valid(measured) ? [(forecast - measured) * 100] : [];
     }) : null;
     diagnostics.push({key, name, historical, gaps: gaps.get(key) ?? 0, bins,
-      forecast_energy_kwh: energy, forecast_expected_error_kwh: complete ? error : null, forecast_bins: forecastBins,
+      forecast_energy_kwh: energy, forecast_expected_matched_kwh: complete ? matched : null, forecast_bins: forecastBins,
       plan_ids: [...new Set(pairs.map(p => p.plan_id))], ...(lag ? {lag} : {}),
       ...(soc ? {soc_percentage_points: {samples: soc.length, absolute_error: soc.reduce((a,b) => a + Math.abs(b),0), bias: soc.reduce((a,b) => a + b,0)}} : {})});
   }
   const totals = sums(historicTotals);
   const report: AccuracyReport = {version: 1, scheduled_at: input.scheduled_at, calculated_at: input.calculated_at,
     timezone: input.timezone, forecast_plan_id: current?.plan_id ?? null, historical_from: new Date(from).toISOString(),
-    forecast: {...(forecastComplete ? accuracyScore(estimatedError, estimatedVolume, estimatedVolume) : accuracyScore(0, 0, 0)), devices: forecastRows},
+    forecast: {...(forecastComplete ? accuracyScore(estimatedMatched, estimatedVolume) : accuracyScore(0, 0)), devices: forecastRows},
     historical: {...scoreSums(totals), devices: historyRows}};
   return {report, diagnostics};
 }
