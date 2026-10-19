@@ -26,6 +26,22 @@ import {
 } from "../_shared/ha-api-contract.ts";
 
 import { reportedClient, validRuntime } from '../_shared/ha-runtime.ts';
+import { plannedThermalRooms, roomModelStatus, type RoomModelStatus } from '../_shared/thermal-training.ts';
+
+// deno-lint-ignore no-explicit-any
+async function readRoomModels(supabase: any, homeId: string): Promise<RoomModelStatus[] | null> {
+  const [devices, models] = await Promise.all([
+    supabase.from('energy_optimisation_devices')
+      .select('mapping_summary, planning_role_override, control_type_override, mapping_status, mapped_control_type')
+      .eq('home_id', homeId).is('retired_at', null),
+    supabase.from('energy_optimisation_zone_models').select('room_key, trained, last_fit_attempt').eq('home_id', homeId),
+  ]);
+  if (devices.error || models.error) {
+    console.error('[ROOM-MODELS] status read failed', {home_id: homeId, code: devices.error?.code ?? models.error?.code});
+    return null;
+  }
+  return roomModelStatus(plannedThermalRooms(devices.data ?? []), models.data ?? []);
+}
 import { validInputAccuracy } from '../_shared/input-accuracy.ts';
 
 // Long enough for a Home Assistant exception with its remedy, short enough that
@@ -181,12 +197,16 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         },
       });
     }
-    const {data: forecastAccuracy, error: accuracyError} = await supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId});
+    const [{data: forecastAccuracy, error: accuracyError}, roomModels] = await Promise.all([
+      supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId}), readRoomModels(supabase, auth.homeId)]);
     if (accuracyError) console.error('[FORECAST-ACCURACY] report read failed', {home_id: auth.homeId, code: accuracyError.code});
     return json({
       api_version: HA_API_VERSION,
       forecast_accuracy: forecastAccuracy,
       forecast_accuracy_error: accuracyError ? 'Accuracy unavailable' : null,
+      // Each planned room's thermal model, so HA's input accuracy can show a
+      // missing or limited fit. Null when it could not be read.
+      room_models: roomModels,
       runtime_received: runtimeReceived,
       supported_snapshot_schema_versions: HA_SUPPORTED_SNAPSHOT_SCHEMA_VERSIONS,
       supported_plan_schema_versions: HA_SUPPORTED_PLAN_SCHEMA_VERSIONS,

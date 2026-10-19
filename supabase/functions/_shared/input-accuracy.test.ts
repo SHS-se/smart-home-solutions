@@ -16,3 +16,10 @@ Deno.test('input accuracy is a bounded share per known check and anything else i
     {...value, checks: [{...check, issues: Array(11).fill('sensor.x')}]}, {...value, observed_at: 'yesterday'}, null])
     assertEquals(validInputAccuracy(bad), false);
 });
+
+Deno.test('a planned room without a clean thermal model is an input accuracy check', () => {
+  const rooms = {key: 'room_models', percentage: 50, grade: 'red', healthy: 1, expected: 2,
+    issues: ['Master bathroom: insufficient_heating,poor_fit']};
+  assertEquals(validInputAccuracy({version: 1, observed_at: '2026-10-19T17:00:00Z', percentage: 50, grade: 'red',
+    checks: [rooms]}), true);
+});

@@ -49,7 +49,22 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
 }
 
 const CHECKS: Record<InputCheck['key'], [string, string]> = {prices: ['Priser', 'Prices'], solar_forecast: ['Solprognos', 'Solar forecast'],
-  sensors: ['Givare', 'Sensors'], measurements: ['Mätningar', 'Measurements'], battery: ['Batteri', 'Battery']};
+  sensors: ['Givare', 'Sensors'], measurements: ['Mätningar', 'Measurements'], battery: ['Batteri', 'Battery'],
+  room_models: ['Rummodeller', 'Room models']};
+
+/** Home Assistant names a room's fit issue by the fit's own reason code. */
+const ROOM_ISSUES: Record<string, [string, string]> = {
+  waiting: ['ingen anpassning ännu', 'no fit yet'], unidentified: ['ingen modell', 'no model'], insufficient_samples: ['för lite historik', 'too little history'],
+  insufficient_heating: ['för lite uppvärmning', 'too little heating'], singular: ['ingen användbar variation', 'no usable variation'],
+  poor_fit: ['dålig anpassning', 'poor fit'], non_physical: ['orimlig anpassning', 'implausible fit'],
+  sensor_tracks_outdoor: ['givaren följer utetemperaturen', 'sensor follows the outdoor temperature'],
+};
+const roomIssue = (issue: string, t: Translate) => {
+  const at = issue.lastIndexOf(': ');
+  if (at < 0) return issue;
+  const reasons = issue.slice(at + 2).split(',').map(code => code.trim());
+  return `${issue.slice(0, at)}: ${reasons.map(code => ROOM_ISSUES[code] ? t(...ROOM_ISSUES[code]) : code).join(', ')}`;
+};
 
 /**
  * Live checks are healthy readings over the readings each expects. Prices is
@@ -65,9 +80,11 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
       : t('Inget publicerat pris jämfört ännu', 'No published price compared yet')
     : check.key === 'measurements' ? t(`${check.healthy} av ${check.expected} kvartar kompletta`, `${check.healthy} of ${check.expected} quarters complete`)
     : check.key === 'battery' ? t(`${check.healthy} av ${check.expected} laddmål nådda`, `${check.healthy} of ${check.expected} charge targets reached`)
+    : check.key === 'room_models' ? t(`${check.healthy} av ${check.expected} rum med värmemodell`, `${check.healthy} of ${check.expected} rooms modelled`)
       : t(`${check.healthy} av ${check.expected} användbara`, `${check.healthy} of ${check.expected} usable`);
   const issues = (check: InputCheck) => check.quarters !== undefined
     ? check.calculated_at ? ` · ${time(check.calculated_at)}` : '' : !check.issues.length ? ''
+    : check.key === 'room_models' ? `: ${check.issues.map(issue => roomIssue(issue, t)).join('; ')}`
     : `: ${(check.key === 'measurements' || check.key === 'battery' ? check.issues.map(time) : check.issues).join(', ')}`;
   return <>
     <ul className="divide-y">{input.checks.map(check => <li key={check.key} className="flex justify-between gap-4 py-2 text-sm">

@@ -993,7 +993,8 @@ test.describe('requesting a replan', () => {
     replan.inputAccuracy = {version:1,observed_at:CAPTURED_AT,percentage:88,grade:'lime',checks:[
       {key:'prices',percentage:80,grade:'lime',quarters:96,calculated_at:CAPTURED_AT,issues:[]},
       {key:'sensors',percentage:98,grade:'green',healthy:63,expected:64,issues:['sensor.kitchen_heater_power']},
-      {key:'measurements',percentage:54,grade:'red',healthy:52,expected:96,issues:[]}]};
+      {key:'measurements',percentage:54,grade:'red',healthy:52,expected:96,issues:[]},
+      {key:'room_models',percentage:50,grade:'red',healthy:1,expected:2,issues:['Master bathroom: insufficient_heating,poor_fit']}]};
     await page.goto('/portal/energy-modeling?tab=plan');
     await expect(page.getByRole('button',{name:/Forecast accuracy %|Prognosnoggrannhet %/})).toHaveCount(0);
     const input = page.getByRole('button',{name:/Input accuracy %|Indatanoggrannhet %/});
@@ -1003,6 +1004,7 @@ test.describe('requesting a replan', () => {
     await expect(checks.getByText(/sensor\.kitchen_heater_power/)).toBeVisible();
     await expect(checks.getByText(/52 (of|av) 96/)).toBeVisible();
     await expect(checks.getByText(/(Estimates against published prices|Uppskattning mot publicerat pris), 96/)).toBeVisible();
+    await expect(checks.getByText(/(1 of 2 rooms modelled|1 av 2 rum med värmemodell): Master bathroom: (too little heating, poor fit|för lite uppvärmning, dålig anpassning)/)).toBeVisible();
     await page.screenshot({path:test.info().outputPath('website-input-accuracy.png')});
     await page.keyboard.press('Escape');
     await expect(input).toBeFocused();

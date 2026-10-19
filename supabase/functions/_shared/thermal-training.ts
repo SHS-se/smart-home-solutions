@@ -306,3 +306,55 @@ export function buildThermalProjection(
     zones: projectedZones,
   };
 }
+
+/** Why a planned room's model is missing or limited, as the fit itself names it. */
+export const ROOM_MODEL_ISSUES = ["waiting", "insufficient_samples", "insufficient_heating", "singular",
+  "poor_fit", "non_physical", "sensor_tracks_outdoor"] as const;
+export type RoomModelIssue = typeof ROOM_MODEL_ISSUES[number];
+
+export interface RoomModelStatus {
+  key: string;
+  name: string;
+  /** fitted: a clean model; limited: a model with warnings; unidentified: a fit failed; waiting: no fit yet. */
+  status: "fitted" | "limited" | "unidentified" | "waiting";
+  issues: RoomModelIssue[];
+}
+
+interface PlannedDeviceRow {
+  mapping_summary: { room_key?: unknown; room_name?: unknown } | null;
+  planning_role_override: string | null;
+  control_type_override: string | null;
+  mapping_status: string | null;
+  mapped_control_type: string | null;
+}
+
+/** The rooms the thermal fit trains: the same rule as its training query. */
+export function plannedThermalRooms(devices: PlannedDeviceRow[]): { key: string; name: string }[] {
+  const rooms = new Map<string, string>();
+  for (const device of devices) {
+    const key = device.mapping_summary?.room_key, name = device.mapping_summary?.room_name;
+    if (device.planning_role_override !== "controllable" || device.mapping_status !== "ready" ||
+      !["setpoint", "switch_schedule"].includes(device.control_type_override ?? "") ||
+      device.mapped_control_type !== device.control_type_override ||
+      typeof key !== "string" || typeof name !== "string") continue;
+    if (!rooms.has(key)) rooms.set(key, name);
+  }
+  return [...rooms].map(([key, name]) => ({ key, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Each planned room's model, for Home Assistant's input accuracy. */
+export function roomModelStatus(
+  rooms: { key: string; name: string }[],
+  rows: { room_key: string; trained: boolean | null; last_fit_attempt: { issues?: unknown } | null }[],
+): RoomModelStatus[] {
+  const byRoom = new Map(rows.map((row) => [row.room_key, row]));
+  return rooms.map(({ key, name }) => {
+    const row = byRoom.get(key);
+    if (!row) return { key, name, status: "waiting", issues: ["waiting"] };
+    const raw = Array.isArray(row.last_fit_attempt?.issues) ? row.last_fit_attempt!.issues as unknown[] : [];
+    const issues = [...new Set(raw.filter((issue): issue is RoomModelIssue =>
+      ROOM_MODEL_ISSUES.includes(issue as RoomModelIssue)))];
+    if (!row.trained) return { key, name, status: "unidentified", issues };
+    return { key, name, status: issues.length ? "limited" : "fitted", issues };
+  });
+}
