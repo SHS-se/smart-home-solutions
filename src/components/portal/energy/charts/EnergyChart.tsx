@@ -180,6 +180,7 @@ const EndLabel: React.FC<{
 );
 
 const NO_ROOMS: readonly EnergyRoomLine[] = [];
+const NONE_HIDDEN: ReadonlySet<string> = new Set();
 
 /**
  * Which colour is which room, on the heading line, right-aligned. A room's
@@ -280,12 +281,18 @@ export interface EnergyChartProps {
   batteryDemand?: BatteryDemand;
   /** Rooms in control verification or controlling, each with its own line. */
   rooms?: readonly EnergyRoomLine[];
+  /**
+   * Power series the reader has switched off: `solar`, `grid`, `battery`,
+   * `base` or a consumption series key. Hidden bands keep their place in the
+   * stack at zero height, so the rest close up and colours never move.
+   */
+  hidden?: ReadonlySet<string>;
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines, timeZone, maxTimeLabels = 16, batteryDemand, rooms = NO_ROOMS,
+  costLines, storeLines, timeZone, maxTimeLabels = 16, batteryDemand, rooms = NO_ROOMS, hidden = NONE_HIDDEN,
 }) => {
   const { t } = useLanguage();
   const contextTimeZone = useHomeTimeZone();
@@ -351,13 +358,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
     // --- Flows: into the house above zero, out of it below ----------------
     const flows = powerFlowMagnitudes(rows);
-    const toKw = (values: number[]) => values.map(watts => watts / 1_000);
-    const toNegativeKw = (values: number[]) => values.map(watts => -watts / 1_000);
+    const shown = (key: string, values: number[]) => hidden.has(key) ? values.map(() => 0) : values;
+    const toKw = (key: string, values: number[]) => shown(key, values.map(watts => watts / 1_000));
+    const toNegativeKw = (key: string, values: number[]) => shown(key, values.map(watts => -watts / 1_000));
     const supply = stackBands([
-      toKw(flows.solarDirect), toKw(flows.batteryOut), toKw(flows.gridIn),
+      toKw('solar', flows.solarDirect), toKw('battery', flows.batteryOut), toKw('grid', flows.gridIn),
     ]);
     const disposal = stackBands([
-      toNegativeKw(flows.batteryIn), toNegativeKw(flows.gridOut),
+      toNegativeKw('battery', flows.batteryIn), toNegativeKw('grid', flows.gridOut),
     ]);
     const flowMax = Math.max(0.5, ...supply[2].map(pair => pair[1])) * 1.12;
     const flowMin = Math.min(-0.5, ...disposal[1].map(pair => pair[0])) * 1.1;
@@ -365,13 +373,13 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
     // --- Consumption: base at the floor, movable loads riding on top -------
     const loadBands = stackBands([
-      baseValues.map(watts => watts / 1_000),
-      ...series.map(entry => entry.values.map(watts => watts / 1_000)),
+      shown('base', baseValues.map(watts => watts / 1_000)),
+      ...series.map(entry => shown(entry.key, entry.values.map(watts => watts / 1_000))),
     ]);
     const loadMax = Math.max(
       0.5,
       ...loadBands.flatMap(band => band.map(pair => pair[1])).filter(Number.isFinite),
-      ...rows.map(row => (row.solarW ?? 0) / 1_000),
+      ...(hidden.has('solar') ? [] : rows.map(row => (row.solarW ?? 0) / 1_000)),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
 
@@ -426,7 +434,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -634,12 +642,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           {[PLAN_COLOURS.solar, PLAN_COLOURS.battery, PLAN_COLOURS.grid].map((colour, index) => (
             <path
               key={`supply-${index}`} d={stepBandPath(supply[index], x, flowY)}
+              data-band={['solar', 'battery', 'grid'][index]}
               fill={colour} fillOpacity={0.9}
             />
           ))}
           {[PLAN_COLOURS.battery, PLAN_COLOURS.grid].map((colour, index) => (
             <path
               key={`disposal-${index}`} d={stepBandPath(disposal[index], x, flowY)}
+              data-band={['battery', 'grid'][index]}
               fill={colour} fillOpacity={0.42}
             />
           ))}
@@ -677,6 +687,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           {loadBands.map((band, index) => (
             <path
               key={index === 0 ? 'base' : series[index - 1].key}
+              data-band={index === 0 ? 'base' : series[index - 1].key}
               d={stepBandPath(band, x, loadY)}
               fill={index === 0 ? PLAN_COLOURS.base : seriesColour(series[index - 1])}
               fillOpacity={0.92}
@@ -696,11 +707,11 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           ))}
           {/* Solar as an outline over the stack, so "did the sun cover it?" is
               one comparison between two edges rather than a hunt through fills. */}
-          <path
+          {!hidden.has('solar') && <path
             d={stepLinePath(rows.map(row => kw(row.solarW)), x, loadY)}
             fill="none" stroke={PLAN_COLOURS.solar} strokeWidth={2}
             strokeDasharray="1 3" strokeLinecap="round"
-          />
+          />}
 
           {/* -------------------------------------------------- Storage --- */}
           {showSoc && (

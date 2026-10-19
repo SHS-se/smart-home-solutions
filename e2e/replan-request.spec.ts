@@ -820,6 +820,30 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('room-temperature.png'), fullPage: true });
   });
 
+  test('power series are switched off and on from the legend', async ({ page }, testInfo) => {
+    const start = Date.parse(CAPTURED_AT);
+    replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const legend = page.getByTestId('plan-legend');
+    const base = legend.getByRole('button', { name: /^(Base load|Baslast)$/ });
+    const band = page.locator('#plan-energy-chart path[data-band="base"], svg path[data-band="base"]').first();
+    await expect(base).toHaveAttribute('aria-pressed', 'true');
+    expect((await band.boundingBox())!.height).toBeGreaterThan(5);
+    await base.click();
+    await expect(base).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(async () => (await band.boundingBox())?.height ?? 0).toBeLessThan(1);
+    // Solar is a switch too, and switches its outline in the consumption panel with it.
+    const solar = legend.getByRole('button', { name: /^(Solar|Sol)$/ });
+    await solar.click();
+    await expect(solar).toHaveAttribute('aria-pressed', 'false');
+    await page.screenshot({ path: testInfo.outputPath('legend-hidden.png'), fullPage: true });
+    await base.click();
+    await expect(base).toHaveAttribute('aria-pressed', 'true');
+    expect((await band.boundingBox())!.height).toBeGreaterThan(5);
+    // The car battery is a storage line, not a power series.
+    await expect(legend.getByRole('button', { name: /Car battery|Bilbatteri/ })).toHaveCount(0);
+  });
+
   test('TEST ignores stale HA recovery and identity without locking replanning', async ({ page }) => {
     replan.reportedPlanId = REQUEST_ID;
     replan.refreshing = true;
