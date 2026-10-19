@@ -2,6 +2,7 @@ import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { backgroundRateForSlot } from "./planner/thermal-model.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
+import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 
 export interface RoomServices {
   commands: Record<string, DeviceCommand[]>;
@@ -12,13 +13,20 @@ export interface RoomServices {
   warnings: PlanningWarning[];
 }
 
+/** Marginal electricity prices before the household solve, per quarter. */
+export interface RoomPrices {
+  import_sek_per_kwh: number[];
+  export_sek_per_kwh: number[];
+  /** Forecast solar left after base, boiler and other fixed loads. */
+  surplus_w: number[];
+}
+
 /** Comfort service is authoritative even when its statistical model is weak. */
-export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Array<{
-  device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number>;
-}> = [], sharedHeadroom?: number[]): RoomServices {
+export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], sharedHeadroom?: number[], prices?: RoomPrices): RoomServices {
   const result: RoomServices = { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, warnings: [] };
   const n = snapshot.slots.length;
   const remaining=sharedHeadroom?.slice() ?? snapshot.slots.map(()=>Infinity);
+  const surplus=prices?.surplus_w.map(w=>Math.max(0,w)) ?? snapshot.slots.map(()=>0);
   for (const zone of snapshot.thermal_zones ?? []) {
     const members = snapshot.device_models.filter(m => zone.device_keys.includes(m.key));
     const relays = members.filter(m => m.control_type === "switch_schedule");
@@ -33,6 +41,14 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Ar
     for (const member of [...relays, ...thermostats]) {
       result.commands[member.key] = [];
       result.power[member.key] = [];
+    }
+    const outdoorKnown = snapshot.outdoor_temperature_c?.length === n &&
+      snapshot.outdoor_temperature_c.every(v => typeof v === "number" && Number.isFinite(v));
+    if (!relays.length && thermostats.length && zone.model && temperature !== null && outdoorKnown &&
+      zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
+      comfortMisses = scheduleThermostatRoom(snapshot, zone, thermostats, retained, remaining, surplus, prices, result);
+      if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
+      continue;
     }
     let estimated = !zone.model || temperature === null;
     for (let i = 0; i < n; i++) {
@@ -96,15 +112,76 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Ar
       else temperature = null;
       if (temperature !== null && (temperature < minimum || temperature > maximum)) comfortMisses++;
       remaining[i]=Math.max(0,remaining[i]-total);
+      surplus[i]=Math.max(0,surplus[i]-total);
       result.room_power[zone.key].push(total);
       result.temperature[zone.key].push(temperature);
     }
     if (estimated) result.warnings.push(planningWarning("room_estimate", zone.key,
       `${zone.name}: the thermal forecast has incomplete evidence.`,
       "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
-    if (comfortMisses) result.warnings.push(planningWarning("comfort_shortfall", zone.key,
-      `${zone.name}: ${comfortMisses} quarters may be outside the requested comfort band.`,
-      "The best attainable room schedule is included and household planning continues.", { quarters: comfortMisses }));
+    if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
   }
   return result;
+}
+
+type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];
+type Member = OptimisationSnapshot["device_models"][number];
+type Retained = Array<{ device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number> }>;
+
+const shortfall = (zone: Zone, quarters: number) => planningWarning("comfort_shortfall", zone.key,
+  `${zone.name}: ${quarters} quarters may be outside the requested comfort band.`,
+  "The best attainable room schedule is included and household planning continues.", { quarters });
+
+/**
+ * A thermostat room planned for price and deadline. Each quarter's setpoint is
+ * the planned temperature at its end: a thermostat cannot take watts, and the
+ * planned trajectory already reaches Comfort when the first Comfort quarter
+ * begins. Returns the number of quarters outside the comfort objective.
+ */
+function scheduleThermostatRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: Member[],
+  retained: Retained, remaining: number[], surplus: number[],
+  prices: RoomPrices | undefined, result: RoomServices): number {
+  const model = zone.model!, n = snapshot.slots.length;
+  const rating = (m: Member) => m.active_power_w && m.active_power_w > 0 ? m.active_power_w : Math.max(0, ...m.forecast_w_by_slot);
+  const continuous = thermostats.reduce((sum, m) => sum + rating(m), 0);
+  const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
+    const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
+    const decay = Math.exp(-model.cooling_constant_per_h * hours);
+    const effect = model.cooling_constant_per_h > 0 ? -Math.expm1(-model.cooling_constant_per_h * hours) / model.cooling_constant_per_h : hours;
+    const loads = thermostats.map(m => retained[i]?.device_loads_w?.[m.key]);
+    return { hours, decay,
+      offset_c: (model.cooling_constant_per_h * snapshot.outdoor_temperature_c![i]! +
+        backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2)) * effect,
+      gain_c_per_w: model.gain_c_per_wh * effect,
+      // A Comfort quarter is a deadline at its start, so the quarter before it
+      // must end at the next objective as well as its own.
+      required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
+      maximum_c: zone.comfort_max_c[i],
+      maximum_w: Math.max(0, Math.min(continuous, zone.maximum_power_w_by_slot[i], remaining[i])),
+      fixed_w: loads.every(w => typeof w === "number" && Number.isFinite(w)) ? loads.reduce((a, w) => a! + w!, 0)! : null,
+      import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
+      export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1,
+      surplus_w: surplus[i] };
+  });
+  const plan = planRoomHeating(zone.start_temperature_c!, quarters);
+  let misses = 0;
+  let unplanned: number | null = zone.start_temperature_c;
+  for (let i = 0; i < n; i++) {
+    const q = quarters[i], total = plan.power_w[i], next = plan.temperature_c[i];
+    const minimum = zone.comfort_min_c[i], maximum = zone.comfort_max_c[i];
+    for (const m of thermostats) {
+      const command = retained[i]?.device_commands?.[m.key];
+      result.commands[m.key].push(command?.type === "setpoint" ? command : { type: "setpoint",
+        target_c: Math.min(maximum, Math.max(minimum, Math.round(next * 100) / 100)), minimum_c: minimum, maximum_c: maximum });
+      result.power[m.key].push(retained[i]?.device_loads_w?.[m.key] ?? (continuous ? total * rating(m) / continuous : 0));
+    }
+    unplanned = unplanned! * q.decay + q.offset_c + q.gain_c_per_w * zone.unplanned_power_w[i];
+    result.unplanned_temperature[zone.key].push(unplanned);
+    result.room_power[zone.key].push(total);
+    result.temperature[zone.key].push(next);
+    if (plan.shortfall_c[i] > 1e-6 || next > maximum + 1e-6) misses++;
+    remaining[i] = Math.max(0, remaining[i] - total);
+    surplus[i] = Math.max(0, surplus[i] - total);
+  }
+  return misses;
 }

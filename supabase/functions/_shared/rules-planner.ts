@@ -32,7 +32,7 @@ import type { BatteryCommand } from "./planner/battery-command.ts";
 import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v15:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v16:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -253,11 +253,16 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
   const boilerW = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_expected_w ?? 0);
   const roomKeys=new Set(snapshot.thermal_zones?.flatMap(z=>z.device_keys)??[]);
-  const headroom=snapshot.slots.map((slot,i)=>Math.max(0,snapshot.grid.import_limit_w+slot.pv_forecast_w*
+  // Forecast solar left after every load fixed before the solve.
+  const spare=snapshot.slots.map((slot,i)=>slot.pv_forecast_w*
     snapshot.pv_calibration.correction_factor_by_lead_day[Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length-1,
       Math.max(0,Math.floor((Date.parse(slot.start)-effective)/86400000)))]-baseW[i]-boilerW[i]-
-      sum(Object.entries(passive).filter(([key])=>!roomKeys.has(key)).map(([,values])=>values[i]))));
-  const rooms = prepareRoomServices(snapshot, retainedServices, headroom);
+      sum(Object.entries(passive).filter(([key])=>!roomKeys.has(key)).map(([,values])=>values[i])));
+  const headroom=spare.map(w=>Math.max(0,snapshot.grid.import_limit_w+w));
+  const rooms = prepareRoomServices(snapshot, retainedServices, headroom, {
+    import_sek_per_kwh: outlook.shadow_import_sek_per_kwh,
+    export_sek_per_kwh: snapshot.slots.map((s, i) => s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread),
+    surplus_w: spare });
   Object.assign(passive, rooms.power, poolService.power);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);

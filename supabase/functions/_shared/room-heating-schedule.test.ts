@@ -1,0 +1,116 @@
+import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
+import { dispatchedEvSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { generateRulesPlan } from "./rules-planner.ts";
+import { prepareRoomServices, type RoomPrices } from "./rules-room-services.ts";
+import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
+
+const COMFORT_FROM = 24;
+const SETBACK = 18, COMFORT = 22;
+
+/** A floor-heated bathroom: Setback overnight, Comfort from quarter 24. */
+function bathroom(prices: number[] = Array(32).fill(1)): OptimisationSnapshot {
+  const s: OptimisationSnapshot = { ...dispatchedEvSnapshot(), schema_version: 7 };
+  s.slots = s.slots.slice(0, 32).map((slot, i) => ({ ...slot, pv_forecast_w: 0, base_load_forecast_w: 700,
+    import_price_sek_per_kwh: prices[i], export_price_sek_per_kwh: .1 }));
+  s.capabilities.ev = false;
+  s.ev_battery = null;
+  s.services = [];
+  s.captured_at = s.slots[0].start;
+  const n = s.slots.length, series = (f: (i: number) => number) => Array.from({ length: n }, (_v, i) => f(i));
+  s.device_models = [{ key: "floor", name: "Master bathroom floor", statistic_id: "sensor.floor", category: "heating",
+    suggested_load_type: "duty_cycle", load_type: "duty_cycle", planning_role: "controllable", control_type: "setpoint",
+    active_power_w: 2000, profile_sample_count: 1000, forecast_w_by_slot: series(() => 500) }];
+  s.outdoor_temperature_c = series(() => 0);
+  const objective = series(i => i >= COMFORT_FROM ? COMFORT : SETBACK);
+  s.thermal_zones = [{ key: "bathroom", name: "Master bathroom", device_keys: ["floor"],
+    model: { gain_c_per_wh: .001, cooling_constant_per_h: .02, background_gain_c_per_h: 0, thermal_capacity_wh_per_c: 1000,
+      heat_loss_w_per_c: 20, time_constant_h: 50, heating_rate_c_per_h: 2, r2: .95, sample_count: 1000, residual_std_c: .1 },
+    start_temperature_c: SETBACK, rated_power_w: 2000, comfort_min_c: objective, target_c: objective,
+    comfort_max_c: series(() => COMFORT + .5), maximum_power_w_by_slot: series(() => 2000), unplanned_power_w: series(() => 500) }];
+  return s;
+}
+
+const prices = (importPrice: number[]): RoomPrices => ({ import_sek_per_kwh: importPrice,
+  export_sek_per_kwh: importPrice.map(() => .1), surplus_w: importPrice.map(() => 0) });
+const cost = (power: number[], price: number[]) => power.reduce((sum, w, i) => sum + w / 1000 * .25 * price[i], 0);
+/** Cheap night hours, an expensive morning run-up, then the Comfort period. */
+const nightTariff = Array.from({ length: 32 }, (_v, i) => i < 12 ? .2 : i < COMFORT_FROM ? 3 : 1);
+
+Deno.test("flat prices recover as late as possible and reach Comfort when its first quarter begins", () => {
+  const s = bathroom();
+  const rooms = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1)));
+  const power = rooms.room_power.bathroom, temperature = rooms.temperature.bathroom as number[];
+  // temperature[i] is the end of quarter i, so i = 23 is the start of quarter 24.
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6);
+  assert(temperature.slice(COMFORT_FROM).every(t => t >= COMFORT - 1e-6));
+  // Without a price reason the floor only holds Setback before recovering.
+  assert(temperature.slice(0, 8).every(t => Math.abs(t - SETBACK) < .01), "no early preheat");
+  assert(power[COMFORT_FROM - 1] > 0, "recovery runs right up to the deadline");
+  assertEquals(rooms.warnings.filter(w => w.code === "comfort_shortfall"), []);
+});
+
+Deno.test("cheap night hours carry the recovery and the deadline still holds", () => {
+  const s = bathroom();
+  const flat = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1))).room_power.bathroom;
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  const power = rooms.room_power.bathroom, temperature = rooms.temperature.bathroom as number[];
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6);
+  assert(temperature.every(t => t <= COMFORT + .5 + 1e-6), "heat never lifts the floor above its ceiling");
+  const expensive = (p: number[]) => p.slice(12, COMFORT_FROM).reduce((a, w) => a + w, 0);
+  assert(power.slice(0, 12).some(w => w > 0), "the cheap hours are used");
+  assert(expensive(power) < expensive(flat) / 2, `expensive heat ${expensive(power)} vs ${expensive(flat)}`);
+  assert(cost(power, nightTariff) < cost(flat, nightTariff));
+});
+
+Deno.test("each setpoint is the planned temperature at the end of its quarter", () => {
+  const s = bathroom();
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  const temperature = rooms.temperature.bathroom as number[];
+  rooms.commands.floor.forEach((command, i) => {
+    assert(command.type === "setpoint");
+    assertEquals(command.minimum_c, s.thermal_zones![0].comfort_min_c[i]);
+    assertEquals(command.maximum_c, COMFORT + .5);
+    assert(command.minimum_c <= command.target_c && command.target_c <= command.maximum_c);
+    assertAlmostEquals(command.target_c, Math.max(command.minimum_c, temperature[i]), .006);
+  });
+  // The quarter before Comfort already asks for Comfort.
+  const before = rooms.commands.floor[COMFORT_FROM - 1];
+  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+});
+
+Deno.test("solar surplus is priced as foregone export", () => {
+  const s = bathroom();
+  const sunny = prices(Array(32).fill(2));
+  sunny.surplus_w = Array.from({ length: 32 }, (_v, i) => i >= 4 && i < 8 ? 3000 : 0);
+  const power = prepareRoomServices(s, [], undefined, sunny).room_power.bathroom;
+  assert(power.slice(4, 8).some(w => w > 0), "free surplus warms the floor early");
+});
+
+Deno.test("an unreachable deadline gets the closest recovery and a warning, never a refusal", () => {
+  const s = bathroom(nightTariff);
+  s.thermal_zones![0].start_temperature_c = 5;
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  assert(rooms.room_power.bathroom.slice(0, COMFORT_FROM).every(w => w === 2000));
+  assert(rooms.warnings.some(w => w.code === "comfort_shortfall"));
+  assertEquals(rooms.commands.floor.length, s.slots.length);
+});
+
+Deno.test("committed quarters and shared headroom bind the room plan", () => {
+  const s = bathroom();
+  const retained = [{ device_commands: { floor: { type: "setpoint" as const, target_c: 19, minimum_c: 18, maximum_c: 22.5 } },
+    device_loads_w: { floor: 1234 } }];
+  const rooms = prepareRoomServices(s, retained, Array(32).fill(900), prices(nightTariff));
+  assertEquals(rooms.room_power.bathroom[0], 1234);
+  assertEquals(rooms.commands.floor[0], retained[0].device_commands.floor);
+  assert(rooms.room_power.bathroom.slice(1).every(w => w <= 900 + 1e-9));
+});
+
+Deno.test("the household planner moves bathroom recovery into the cheap hours", () => {
+  const plan = generateRulesPlan(rulesFixtureInput(bathroom(nightTariff))).plan;
+  const slots = plan.plans.priority.slots;
+  const heat = slots.map(slot => slot.device_loads_w.floor);
+  assert(heat.slice(0, 12).some(w => w > 0));
+  const before = slots[COMFORT_FROM - 1].device_commands!.floor;
+  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+  assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
+});

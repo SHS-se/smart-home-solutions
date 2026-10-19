@@ -115,7 +115,7 @@ Optimise interacting resources together: grid import/export; battery charge, dis
 
 Constraints include state transitions, capacity, electrical power, simultaneous-flow permissions, supported device modes, starts, service deadlines, overrides, and coupled/shared equipment. Initial state, native availability and pending physical effects cross the horizon boundary without SHS-imposed run-duration commitments. A device that may only be permitted or influenced must not be represented as fully controllable power without a justified execution model.
 
-Room and tank thermal mass are stores physically, even when their current contracts only expose comfort constraints or duty-cycle inhibition. Those implementation boundaries do not remove their time-shifting economics. [Models and forecasts](models-and-forecasts.md) defines the evidence and capability limits.
+Room and tank thermal mass are stores physically, even when their current contracts only expose comfort constraints or duty-cycle inhibition. Those implementation boundaries do not remove their time-shifting economics. [Models and forecasts](models-and-forecasts.md) defines the evidence and capability limits. [Thermostat rooms](room-heating-schedule-2026-10.md) price their recovery against the Comfort deadline before the household solve.
 
 ## Storage value and uncertainty
 
