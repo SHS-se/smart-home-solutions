@@ -10,6 +10,35 @@ pub(crate) struct State {
     pub pool_pending_heat_kwh: f64,
     pub heater: HeaterState,
     pub charging: crate::charging::Activity,
+    /// Quarters of the pool run this plan started, while it is on; None for
+    /// one already running when the plan began, which has no run charge.
+    pub pool_run_quarters: Option<u32>,
+}
+/// A planned pool start costs 10 kr with its wear. The scheduling part falls by
+/// 1 kr for each quarter the run lasts beyond four, to nothing at eleven, and
+/// is charged when the run ends, so a run's length is known before it is paid.
+const POOL_RUN_START_SEK: f64 = 7.0;
+const POOL_RUN_FREE_QUARTERS: u32 = 4;
+const POOL_RUN_SEK_PER_QUARTER: f64 = 1.0;
+pub(crate) fn pool_run_charge(quarters: u32) -> f64 {
+    (POOL_RUN_START_SEK
+        - POOL_RUN_SEK_PER_QUARTER * f64::from(quarters.saturating_sub(POOL_RUN_FREE_QUARTERS)))
+    .max(0.0)
+}
+/// The run age a projection continues from: back through the quarters to the
+/// planned start of the run still on at the prefix's end.
+fn pool_run_age(prefix: &[Quarter]) -> Option<u32> {
+    let mut quarters = 0;
+    for q in prefix.iter().rev() {
+        if q.pool_command_w <= 0.0 {
+            return None;
+        }
+        quarters += 1;
+        if q.pool_start.is_some() {
+            return Some(quarters);
+        }
+    }
+    None
 }
 pub(crate) fn initial(p: &Problem) -> State {
     State {
@@ -19,6 +48,7 @@ pub(crate) fn initial(p: &Problem) -> State {
         pool_pending_heat_kwh: p.initial.pool_pending_heat_kwh.unwrap_or(0.0),
         heater: p.initial.heater_state.unwrap_or(HeaterState::OffUnobserved),
         charging: Default::default(),
+        pool_run_quarters: None,
     }
 }
 pub(crate) fn locked_command(p: &Problem, i: usize) -> Option<&Command> {
@@ -140,8 +170,31 @@ fn transition(
             0.0
         };
     let charging = crate::charging::Activity::observed(command, ev_w, charge);
-    let continuity = charging.cost_from(state.charging, &p.limits);
+    let started = pool.as_ref().is_some_and(|h| h.start.is_some());
+    let run_quarters = if !command.pool_on {
+        None
+    } else if started {
+        Some(1)
+    } else {
+        state.pool_run_quarters.map(|k| k + 1)
+    };
+    // A run ends when it is switched off or restarts; one still on at the
+    // horizon is charged for the length it has there. The charge is part of
+    // pricing starts: a problem that prices none has none.
+    let ended = if p.limits.pool_start_cost_sek <= 0.0 {
+        0.0
+    } else {
+        state
+            .pool_run_quarters
+            .filter(|_| run_quarters.is_none() || started)
+            .map_or(0.0, pool_run_charge)
+            + run_quarters
+                .filter(|_| i + 1 == p.slots.len())
+                .map_or(0.0, pool_run_charge)
+    };
+    let continuity = charging.cost_from(state.charging, &p.limits) + ended;
     state.charging = charging;
+    state.pool_run_quarters = run_quarters;
     if let Some(h) = &pool {
         state.pool = h.water_c;
         state.pool_pending_heat_kwh = h.pending_heat_kwh;
@@ -351,6 +404,7 @@ fn projection_prefix(
                 q.ev_w,
                 q.charge_w,
             ),
+            pool_run_quarters: pool_run_age(prefix),
         },
     );
     let mut quarters = Vec::with_capacity(commands.len());
@@ -628,6 +682,32 @@ mod startup_cost_tests {
             battery: Operation::Idle,
             charge_limit_w: 0.0,
             discharge_limit_w: 0.0,
+        }
+    }
+    #[test]
+    fn a_short_pool_run_pays_its_run_charge_when_it_ends() {
+        assert_eq!(
+            [1, 4, 5, 6, 7, 8, 11, 20].map(pool_run_charge),
+            [7.0, 7.0, 6.0, 5.0, 4.0, 3.0, 0.0, 0.0]
+        );
+        let mut p = crate::witnesses::tests::problem(16);
+        p.limits.pool_start_cost_sek = 3.0;
+        // A two-quarter run, then a six-quarter run still on at the horizon.
+        let on = [2, 3, 10, 11, 12, 13, 14, 15];
+        let commands: Vec<_> = (0..16).map(|i| command(on.contains(&i))).collect();
+        let q = projection(&p, &commands).unwrap();
+        let charged: Vec<_> = q.iter().map(|q| q.continuity).collect();
+        let mut expected = vec![0.0; 16];
+        expected[4] = 7.0;
+        expected[15] = 5.0;
+        assert_eq!(charged, expected);
+        // A projection continuing a prefix carries the run's age.
+        for cut in 1..16 {
+            let resumed = projection_prefix(&p, &commands, &q[..cut], |_, h, s, state, on, c| {
+                h.pool_transition(s, state, on, c)
+            })
+            .unwrap();
+            assert_eq!(resumed, q, "cut {cut}");
         }
     }
     #[test]
