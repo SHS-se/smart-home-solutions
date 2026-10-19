@@ -521,6 +521,11 @@ const PlanView: React.FC<{
   const retained = testEnvironment ? null : delivery.retained;
   const liveRuntimeUnavailable = !testEnvironment && !runtimeStatus.ready;
   const runtimeReady = ready && !liveRuntimeUnavailable;
+  // A banner asks for manual action. HA still reporting another plan is
+  // ordinary delivery lag, shown by colouring the plan identity line instead;
+  // a rejection still explains itself in a banner.
+  const differentPlan = !testEnvironment && runtimeStatus.state === 'different_plan';
+  const planBanner = validationMessages.length > 0 || (!runtimeReady && !(differentPlan && ready && !rejection));
   const runtimeLabel = runtimeStatus.state === 'unconfirmed' ? t('HA-status obekräftad', 'HA status unconfirmed')
     : runtimeStatus.state === 'different_plan' ? t('Annan plan i HA', 'Different plan in HA')
     : runtimeStatus.state === 'ready' ? t('Senast rapporterad redo i HA', 'Last reported ready in HA')
@@ -603,7 +608,7 @@ const PlanView: React.FC<{
           <AlertTitle>{t('Webbplatsen kunde inte uppdateras', 'The website could not refresh')}</AlertTitle>
           <AlertDescription>{refreshError} {t('Visade uppgifter kan vara inaktuella.', 'Displayed information may be out of date.')}</AlertDescription>
         </Alert>
-      ) : (!refreshing && (validationMessages.length > 0 || !runtimeReady)) && (() => {
+      ) : (!refreshing && planBanner) && (() => {
         // Explain expiry separately from the reason a replacement failed.
         const lastSeenMs = connectionLastSeenAt
           ? Date.parse(connectionLastSeenAt)
@@ -758,7 +763,8 @@ const PlanView: React.FC<{
                 {' · '}{t('Utfärdad', 'Issued')} {formatHomeStamp(plan.issued_at, homeTimeZone)}
               </p>
               {!testEnvironment && (
-                <p className="mt-1 text-sm text-muted-foreground" data-testid="ha-plan-identity">
+                <p className={`mt-1 text-sm ${differentPlan ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}
+                  data-testid="ha-plan-identity" data-different-plan={differentPlan || undefined}>
                   {t('Senast rapporterad plan i HA', 'Last reported plan in HA')}: {runtimeStatus.runtime?.plan_id
                     ? <><code title={runtimeStatus.runtime.plan_id}>{runtimeStatus.runtime.plan_id.slice(0, 8)}</code>{' · '}{runtimeStatus.runtime.plan_id === plan.plan_id
                       ? t('Samma plan', 'Same plan') : t('Annan plan', 'Different plan')}

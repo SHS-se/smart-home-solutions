@@ -804,6 +804,10 @@ test.describe('requesting a replan', () => {
       const identity = page.getByTestId('ha-plan-identity');
       await expect(identity).toContainText(replan.reportedPlanId.slice(0, 8));
       await expect(identity).toContainText(samePlan ? /Samma plan|Same plan/ : /Annan plan|Different plan/);
+      // A different plan is coloured, not a banner; it returns to normal once HA matches.
+      if (samePlan) await expect(identity).not.toHaveAttribute('data-different-plan');
+      else await expect(identity).toHaveAttribute('data-different-plan', 'true');
+      await expect(page.getByRole('alert').filter({ hasText: /Annan plan i HA|Different plan in HA/ })).toHaveCount(0);
       await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toHaveText(PLAN.plan_id.slice(0, 8));
       await page.getByText(/Statusdetaljer|Status details/, { exact: true }).click();
       await expect(page.getByText(/Visat plan-ID|Displayed plan ID/)).toContainText(PLAN.plan_id);
