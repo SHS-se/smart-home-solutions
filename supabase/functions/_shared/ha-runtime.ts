@@ -36,3 +36,23 @@ export function validRuntime(value: unknown, now = Date.now()): boolean {
     (r.last_error === null || (typeof r.last_error === 'string' && r.last_error.length <= 1000)) &&
     (r.state !== 'ready' || (r.plan_id !== null && timestamp(r.binding_until) && timestamp(r.valid_until)));
 }
+
+/** The HA software that sent a request, as its own headers name it. */
+export interface ReportedClient {
+  integration_version: string | null;
+  app_version: string | null;
+}
+
+const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/;
+
+/** Versions travel as headers on every HA request; anything else is not a version. */
+export function reportedClient(headers: Headers): ReportedClient {
+  const version = (name: string) => {
+    const value = headers.get(name)?.trim();
+    return value && VERSION.test(value) ? value : null;
+  };
+  return {
+    integration_version: version('x-shs-integration-version'),
+    app_version: version('x-shs-app-version'),
+  };
+}

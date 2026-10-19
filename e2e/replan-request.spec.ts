@@ -83,6 +83,7 @@ const idle: ReplanColumns = {
 interface MockPlanState {
   accuracy?: Record<string, unknown>;
   inputAccuracy?: Record<string, unknown>;
+  client?: { integration_version: string | null; app_version: string | null };
   row: ReplanColumns;
   reportedPlanId?: string;
   reportedValidUntil?: string;
@@ -180,6 +181,7 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
             reason: 'A validated plan is available', binding_until: shown.binding_until,
             valid_until: replan.reportedValidUntil ?? shown.valid_until, recovering: replan.refreshing ?? false, retry_at: null, last_error: null,
             ...(replan.inputAccuracy ? {input_accuracy: replan.inputAccuracy} : {}),
+            ...(replan.client ? {client: replan.client} : {}),
           } : null,
           ha_runtime_received_at: replan.reportedPlanId ? CAPTURED_AT : null,
           ha_ack_status: replan.acknowledgement?.status ?? 'accepted',
@@ -845,6 +847,25 @@ test.describe('requesting a replan', () => {
     replan.reportedValidUntil = CAPTURED_AT;
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await expect(rejection).not.toContainText(/tidigare planen fortfarande används|retained plan is still in use/);
+  });
+
+  test('the reported plan names the HA software that runs it', async ({ page }) => {
+    replan.reportedPlanId = PLAN.plan_id;
+    replan.client = { app_version: '0.1.0-beta.103', integration_version: '0.9.0-beta.146' };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    if (await isTestWebsite(page)) {
+      await expectTestPlanStatus(page);
+      await expect(page.getByTestId('ha-client-version')).toHaveCount(0);
+      return;
+    }
+    await expect(page.getByTestId('ha-client-version'))
+      .toHaveText(/(Rapporterad av SHS-app 0\.1\.0-beta\.103 · kärna|Reported by SHS app 0\.1\.0-beta\.103 · core) 0\.9\.0-beta\.146/);
+    // An older client sends no versions, and the line is left out.
+    replan.client = undefined;
+    await page.reload();
+    await expect(page.locator(`code[title="${PLAN.plan_id}"]`).first()).toBeVisible();
+    await expect(page.getByTestId('ha-client-version')).toHaveCount(0);
   });
 
   test('aged frozen battery provenance does not invalidate a matching ready plan', async ({ page }) => {

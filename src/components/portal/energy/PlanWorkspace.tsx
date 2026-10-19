@@ -517,6 +517,12 @@ const PlanView: React.FC<{
     displayedPlanId: plan.plan_id, acknowledgement: current, reported: latestRuntime ?? current, now,
   });
   const { runtimeStatus } = delivery;
+  // The HA software behind the reported plan, as its request headers named it.
+  const reportedVersions = runtimeStatus.runtime?.client;
+  const haClient = [
+    reportedVersions?.app_version ? `${t('SHS-app', 'SHS app')} ${reportedVersions.app_version}` : null,
+    reportedVersions?.integration_version ? `${t('kärna', 'core')} ${reportedVersions.integration_version}` : null,
+  ].filter(Boolean).join(' · ');
   const rejection = testEnvironment ? null : delivery.rejection;
   const retained = testEnvironment ? null : delivery.retained;
   const liveRuntimeUnavailable = !testEnvironment && !runtimeStatus.ready;
@@ -770,6 +776,11 @@ const PlanView: React.FC<{
                       ? t('Samma plan', 'Same plan') : t('Annan plan', 'Different plan')}
                     {' · '}{formatHomeStamp(runtimeStatus.runtime.observed_at, homeTimeZone)}</>
                     : t('Inte bekräftad', 'Unconfirmed')}
+                </p>
+              )}
+              {!testEnvironment && haClient && (
+                <p className="mt-1 text-sm text-muted-foreground" data-testid="ha-client-version">
+                  {t('Rapporterad av', 'Reported by')} {haClient}
                 </p>
               )}
               {(

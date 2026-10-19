@@ -1,5 +1,5 @@
 import { assertEquals } from 'jsr:@std/assert@1';
-import { validRuntime as validate } from './ha-runtime.ts';
+import { reportedClient, validRuntime as validate } from './ha-runtime.ts';
 const validRuntime = (value: unknown) => validate(value, Date.parse('2026-09-09T10:00:00Z'));
 const runtime = { observed_at: '2026-09-09T10:00:00Z', plan_id: null, state: 'unavailable',
   reason: 'Waiting for a plan', binding_until: null, valid_until: null, recovering: true,
@@ -41,4 +41,11 @@ Deno.test('the published status contract accepts runtime reports independently o
     '#/components/schemas/ManualReplanRequest',
   ]);
   assertEquals(spec.components.schemas.RuntimeStatusRequest.properties.runtime.required.sort(), Object.keys(runtime).sort());
+});
+Deno.test('the reporting client is named by its version headers', () => {
+  const headers = new Headers({ 'X-SHS-Integration-Version': '0.9.0-beta.146', 'X-SHS-App-Version': '0.1.0-beta.103' });
+  assertEquals(reportedClient(headers), { integration_version: '0.9.0-beta.146', app_version: '0.1.0-beta.103' });
+  // A core running without the app sends no app version; nonsense is not a version.
+  assertEquals(reportedClient(new Headers({ 'X-SHS-Integration-Version': '<b>' })),
+    { integration_version: null, app_version: null });
 });

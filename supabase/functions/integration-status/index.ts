@@ -25,7 +25,7 @@ import {
   pendingReplanRequestId,
 } from "../_shared/ha-api-contract.ts";
 
-import { validRuntime } from '../_shared/ha-runtime.ts';
+import { reportedClient, validRuntime } from '../_shared/ha-runtime.ts';
 import { validInputAccuracy } from '../_shared/input-accuracy.ts';
 
 // Long enough for a Home Assistant exception with its remedy, short enough that
@@ -85,9 +85,12 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         if (body.input_accuracy !== undefined && !inputAccuracy) {
           console.warn("[INTEGRATION-STATUS] invalid input accuracy dropped", { home_id: auth.homeId });
         }
+        // Which HA software reported this, from its request headers, so the
+        // portal can name it beside the plan HA says it is running.
         const { data: received, error } = await supabase.rpc("report_energy_runtime", {
           p_home_id: auth.homeId,
-          p_runtime: inputAccuracy ? { ...(body.runtime as Record<string, unknown>), input_accuracy: inputAccuracy } : body.runtime,
+          p_runtime: { ...(body.runtime as Record<string, unknown>),
+            ...(inputAccuracy ? { input_accuracy: inputAccuracy } : {}), client: reportedClient(req.headers) },
         });
         if (error) {
           console.error("[INTEGRATION-STATUS] runtime write failed", error);

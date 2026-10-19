@@ -12,6 +12,8 @@ export interface HaRuntime {
   last_error: string | null;
   /** Home Assistant's live input health, reported beside the runtime. */
   input_accuracy?: InputAccuracy | null;
+  /** The HA software that sent this report, from its request headers. */
+  client?: { integration_version: string | null; app_version: string | null } | null;
 }
 export interface HaRuntimeRow {
   plan_id: string | null;
