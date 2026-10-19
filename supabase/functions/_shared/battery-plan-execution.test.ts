@@ -192,3 +192,32 @@ Deno.test("only an uncapped supply ceiling follows house demand", () => {
   command.discharge_limit_w = 16000;
   assertEquals(buildBatteryExecutionContract(input).intervals[i].follows_demand, true);
 });
+
+Deno.test("a stated role carries no flow in the direction it forbids", () => {
+  // Capture, 19 October 2026: an idle quarter carried 0.004 W of solver charge,
+  // which the instruction floors away but the reference stated as 1 mWh, and HA
+  // rejected the whole contract as contradicting its own role.
+  const input = source();
+  const i = input.rows.findIndex((row) => row.charge_w === 0 && row.discharge_w === 0);
+  // Every other quarter may supply and store, so only quarter i's role is tested.
+  for (const s of input.plan.plans.priority.slots) {
+    s.battery_instruction = { kind: "supply", profile_id: "base+loads", charge_ac_limit_w: 5000,
+      discharge_ac_limit_w: 5000, response: { mode: "follow_demand" } };
+  }
+  const slot = input.plan.plans.priority.slots[i];
+  slot.battery_instruction = { kind: "idle" };
+  input.rows[i].charge_w = 0.004;
+  const demand = { loads: [], profiles: [{ id: "base+loads", include_base: true, eligible_keys: [] }] };
+  const row = buildBatteryExecutionContract({ ...input, demand }).intervals[i];
+  assertEquals([row.charge_ac_mwh, row.discharge_ac_mwh, row.target_kind, row.stored_end_mwh - row.stored_start_mwh],
+    [0, 0, "permission", 0]);
+  for (const [kind, forbidden] of [["hold", "discharge_ac_mwh"], ["export", "charge_ac_mwh"]] as const) {
+    slot.battery_instruction = kind === "hold" ? { kind, charge_ac_limit_w: 0 }
+      : { kind, profile_id: "base+loads", discharge_ac_w: 1000 };
+    Object.assign(input.rows[i], { charge_w: 0.004, discharge_w: 0.004 });
+    const stated = buildBatteryExecutionContract({ ...input, demand }).intervals[i];
+    assertEquals(stated[forbidden], 0);
+    assertEquals(stated.pv_mwh + stated.import_mwh + stated.discharge_ac_mwh, stated.load_mwh - stated.unserved_mwh
+      + stated.charge_ac_mwh + stated.export_mwh + stated.curtailed_mwh + stated.rounding_mwh);
+  }
+});

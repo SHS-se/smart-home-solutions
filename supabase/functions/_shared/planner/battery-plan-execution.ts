@@ -161,6 +161,7 @@ export function buildBatteryExecutionContract(input: {
   const minimum = Math.round(battery.min_soc * capacity);
   const maximum = Math.round(battery.max_soc * capacity);
   let stored = battery.soc * battery.capacity_kwh * 1e6;
+  const gross: Array<{ charge_w: number; discharge_w: number }> = [];
   const intervals: ReferenceInterval[] = rows.map((row, i) => {
     const start = Date.parse(row.start), end = Date.parse(row.end);
     integer(start, "interval start"); integer(end, "interval end");
@@ -168,14 +169,6 @@ export function buildBatteryExecutionContract(input: {
     const hours = (end - start) / 3_600_000;
     const slot = slots[i];
     const pv = pv_w[i];
-    const net = row.house_w - row.unserved_w + row.charge_w - row.discharge_w + row.curtailed_w - pv;
-    const energy = (w: number) => {
-      if (!Number.isFinite(w) || w < 0) throw new Error("invalid gross flow");
-      return integer(Math.round(w * hours * 1000), "reference energy");
-    };
-    const begin = Math.round(stored);
-    stored = Math.min(maximum, Math.max(minimum, stored +
-      (row.charge_w * battery.charge_efficiency - row.discharge_w / battery.discharge_efficiency) * hours * 1000));
     const command = slot.battery_command;
     if (!command) throw new Error("nominal native role missing");
     const instruction = slot.battery_instruction;
@@ -185,9 +178,23 @@ export function buildBatteryExecutionContract(input: {
       : command.operation === "self_consumption"
       ? row.charge_w > 0 ? "solar_charge" : row.discharge_w > 0 ? "supply_house" : "hold"
       : command.operation;
+    // The stated role is what HA executes. A direction it forbids is solver
+    // residue the instruction already floored away (an idle quarter can carry
+    // milliwatts of charge), so the reference must not state that energy.
+    const charge_w = operation === "idle" || operation === "export" ? 0 : row.charge_w;
+    const discharge_w = operation === "supply_house" || operation === "export" ? row.discharge_w : 0;
+    gross.push({ charge_w, discharge_w });
+    const net = row.house_w - row.unserved_w + charge_w - discharge_w + row.curtailed_w - pv;
+    const energy = (w: number) => {
+      if (!Number.isFinite(w) || w < 0) throw new Error("invalid gross flow");
+      return integer(Math.round(w * hours * 1000), "reference energy");
+    };
+    const begin = Math.round(stored);
+    stored = Math.min(maximum, Math.max(minimum, stored +
+      (charge_w * battery.charge_efficiency - discharge_w / battery.discharge_efficiency) * hours * 1000));
     const result: ReferenceInterval = {
       start_ms: start, end_ms: end, stored_start_mwh: begin, stored_end_mwh: Math.round(stored),
-      operation, target_kind: row.charge_w > 0 ? "stored_energy" : operation === "supply_house" ? "demand_following" : "permission",
+      operation, target_kind: charge_w > 0 ? "stored_energy" : operation === "supply_house" ? "demand_following" : "permission",
       grid_charge_allowed: command.allow_grid_charge,
       export_allowed: command.allow_battery_export,
       charge_ac_limit_w: Math.floor(command.charge_limit_w),
@@ -196,7 +203,7 @@ export function buildBatteryExecutionContract(input: {
       // the planner bought the rest from the grid, so execution stays capped.
       follows_demand: operation === "supply_house" &&
         command.discharge_limit_w + 0.01 >= Math.max(0, row.house_w - row.unserved_w - pv),
-      charge_ac_mwh: energy(row.charge_w), discharge_ac_mwh: energy(row.discharge_w),
+      charge_ac_mwh: energy(charge_w), discharge_ac_mwh: energy(discharge_w),
       pv_mwh: energy(pv), load_mwh: energy(row.house_w), import_mwh: energy(Math.max(0, net)),
       export_mwh: energy(Math.max(0, -net)), curtailed_mwh: energy(row.curtailed_w),
       unserved_mwh: energy(row.unserved_w), rounding_mwh: 0,
@@ -233,12 +240,12 @@ export function buildBatteryExecutionContract(input: {
     objectives.push(objective);
     if (kind !== "stored_energy") continue;
     for (let j = first; j <= last; j++) {
-      const row = rows[j];
+      const row = rows[j], { charge_w, discharge_w } = gross[j];
       // Nominal device loads own their forecast headroom first. This quantity is
       // a conditional forecast allocation; HA rechecks real loads/pending writes.
-      const nominalGrid = Math.max(0, row.house_w + row.charge_w - row.discharge_w - pv_w[j]);
+      const nominalGrid = Math.max(0, row.house_w + charge_w - discharge_w - pv_w[j]);
       const gridRoom = Math.max(0, plan.grid.import_limit_w - nominalGrid);
-      const extraAc = Math.min(Math.max(0, battery.charge_max_w - row.charge_w),
+      const extraAc = Math.min(Math.max(0, battery.charge_max_w - charge_w),
         intervals[j].grid_charge_allowed ? gridRoom : 0);
       const extraDc = Math.floor(extraAc * battery.charge_efficiency);
       if (!extraDc) continue;
