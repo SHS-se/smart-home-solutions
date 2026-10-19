@@ -53,6 +53,29 @@ Deno.test("spot intervals must be contiguous native quarters", () => {
   );
 });
 
+Deno.test('hourly quotes from before the 2025-10-01 quarter market hold their price for all four quarters', async () => {
+  const raw = JSON.parse(await Deno.readTextFile(new URL('./elprisetjustnu-2025-09-15-se3.fixture.json', import.meta.url)));
+  assertEquals(raw.length, 24);
+  const rows = parseSpotPriceIntervals(raw);
+  assertEquals(rows.length, 96);
+  assertEquals(rows[0].time_start, '2025-09-15T00:00:00+02:00');
+  assertEquals(rows.slice(28, 32).map(row => [row.time_start, row.time_end, row.SEK_per_kWh]), [
+    ['2025-09-15T07:00:00+02:00', '2025-09-15T07:15:00+02:00', .55118],
+    ['2025-09-15T07:15:00+02:00', '2025-09-15T07:30:00+02:00', .55118],
+    ['2025-09-15T07:30:00+02:00', '2025-09-15T07:45:00+02:00', .55118],
+    ['2025-09-15T07:45:00+02:00', '2025-09-15T08:00:00+02:00', .55118],
+  ]);
+  assertEquals(rows[95].time_end, '2025-09-16T00:00:00+02:00');
+  rows.forEach(row => assertEquals(Date.parse(row.time_end) - Date.parse(row.time_start), 900_000));
+  assertThrows(() =>
+    parseSpotPriceIntervals([{
+      SEK_per_kWh: 0.8,
+      time_start: '2025-10-01T00:00:00+02:00',
+      time_end: '2025-10-01T01:00:00+02:00',
+    }])
+  );
+});
+
 Deno.test('October DST price quotes retain all 100 quarters despite the feed’s wrong repeated-hour end label', async () => {
   const raw = JSON.parse(await Deno.readTextFile(new URL('./elprisetjustnu-2025-10-26-se3.fixture.json', import.meta.url)));
   const rows = parseSpotPriceIntervals(raw);

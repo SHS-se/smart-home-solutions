@@ -55,11 +55,27 @@ export function validateSupplierDefinition(
   }
 }
 
+const QUARTER_MS = 15 * 60_000;
+const HOUR_MS = 4 * QUARTER_MS;
+// Nord Pool moved the day-ahead market to quarter-hour quotes on 2025-10-01;
+// before that the feed publishes one quote per hour (00:00 Europe/Stockholm).
+const QUARTER_MARKET_FROM = Date.parse("2025-10-01T00:00:00+02:00");
+
+/** Render an instant on the same UTC offset as the feed label it came from. */
+const atOffsetOf = (label: string, instant: number) => {
+  const offset = /(Z|[+-]\d{2}:\d{2})$/.exec(label)?.[1];
+  if (!offset) throw new Error(`spot time has no UTC offset: ${label}`);
+  const minutes = offset === "Z" ? 0 : (offset[0] === "-" ? -1 : 1) *
+    (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(4, 6)));
+  return new Date(instant + minutes * 60_000).toISOString().slice(0, 19) +
+    offset;
+};
+
 export function parseSpotPriceIntervals(value: unknown): SpotPriceInterval[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error("spot source returned no intervals");
   }
-  const intervals = value.map((row, index) => {
+  const intervals = value.flatMap((row, index) => {
     const interval = row as SpotPriceInterval;
     const start = Date.parse(interval?.time_start);
     // The feed publishes one quote per quarter. Adjacent quote starts own the
@@ -68,13 +84,26 @@ export function parseSpotPriceIntervals(value: unknown): SpotPriceInterval[] {
     const next = value[index + 1] as SpotPriceInterval | undefined;
     const boundary = next?.time_start ?? interval?.time_end;
     const end = Date.parse(boundary);
+    const hourly = end - start === HOUR_MS && start < QUARTER_MARKET_FROM;
     if (
       !finite(interval?.SEK_per_kWh) || !Number.isFinite(start) ||
-      !Number.isFinite(end) || end <= start || end - start !== 15 * 60_000
+      !Number.isFinite(end) || end <= start ||
+      (end - start !== QUARTER_MS && !hourly)
     ) {
       throw new Error(`invalid spot interval at index ${index}`);
     }
-    return { ...interval, time_end: boundary };
+    if (!hourly) return [{ ...interval, time_end: boundary }];
+    // An hourly quote held for each of its quarters, so history before the
+    // market change prices on the same quarter grid as everything after it.
+    return [0, 1, 2, 3].map((quarter) => ({
+      ...interval,
+      time_start: quarter === 0
+        ? interval.time_start
+        : atOffsetOf(interval.time_start, start + quarter * QUARTER_MS),
+      time_end: quarter === 3
+        ? boundary
+        : atOffsetOf(interval.time_start, start + (quarter + 1) * QUARTER_MS),
+    }));
   });
   for (let index = 1; index < intervals.length; index += 1) {
     if (Date.parse(intervals[index - 1].time_end) !== Date.parse(intervals[index].time_start)) {
