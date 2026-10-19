@@ -14,6 +14,7 @@
 import type { ActualEnergySlot, PlannedSlot } from './contracts';
 import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 import { homeDayBounds } from './home-time';
+import type { RoomSlotRow, RoomTemperaturePlan } from './room-temperature';
 
 /** Days either side of today, or the whole span. */
 export type DayWindow = -2 | -1 | 0 | 1 | 2 | 'all';
@@ -78,6 +79,10 @@ export interface TimelineRow {
   shadowExportSekPerKwh: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolC?: number | null;
+  /** Driven rooms, °C by room key: measured on the past side, planned on the future side. */
+  roomC?: Record<string, number>;
+  /** Planned quarters: each driven room's comfort minimum, °C by room key. */
+  roomComfortMinC?: Record<string, number>;
 }
 
 export interface PriceRow {
@@ -111,6 +116,10 @@ export interface TimelineInput {
   poolActuals?: readonly PoolSlotRow[];
   /** The plan's pool temperature at the end of each of `planSlots` (pool-temperature.ts). */
   plannedPoolC?: readonly (number | null)[];
+  /** Measured temperatures of the rooms in `roomPlan`. */
+  roomActuals?: readonly RoomSlotRow[];
+  /** The plan's driven rooms (room-temperature.ts). */
+  roomPlan?: RoomTemperaturePlan;
   nowMs: number;
   estimatedEnergyStarts?: ReadonlySet<number>;
 }
@@ -139,6 +148,8 @@ export const buildEnergyTimeline = ({
   deviceKeyById,
   poolActuals = [],
   plannedPoolC = [],
+  roomActuals = [],
+  roomPlan,
   nowMs,
   estimatedEnergyStarts = new Set(),
 }: TimelineInput): TimelineRow[] => {
@@ -148,6 +159,16 @@ export const buildEnergyTimeline = ({
     deviceActuals.map(slot => [quarterFloor(Date.parse(slot.start_ts)), slot.device_energy_kwh]),
   );
   const poolByStart = new Map(poolActuals.map(slot => [quarterFloor(Date.parse(slot.start_ts)), Number(slot.water_temperature_c)]));
+  const roomByStart = new Map<number, Record<string, number>>();
+  for (const slot of roomActuals) {
+    const startMs = quarterFloor(Date.parse(slot.start_ts)), value = Number(slot.room_temperature_c);
+    if (Number.isFinite(startMs) && Number.isFinite(value)) roomByStart.set(startMs, { ...roomByStart.get(startMs), [slot.room_key]: value });
+  }
+  const rooms = (startMs: number) => {
+    const roomC = startMs < boundary ? roomByStart.get(startMs) : roomPlan?.temperatureByStart.get(startMs);
+    const roomComfortMinC = startMs < boundary ? undefined : roomPlan?.comfortMinByStart.get(startMs);
+    return { ...(roomC ? { roomC } : {}), ...(roomComfortMinC ? { roomComfortMinC } : {}) };
+  };
   const rows = new Map<number, TimelineRow>();
 
   for (const slot of actuals) {
@@ -197,6 +218,7 @@ export const buildEnergyTimeline = ({
       shadowImportSekPerKwh: null,
       shadowExportSekPerKwh: null,
       poolC: poolByStart.get(startMs) ?? null,
+      ...rooms(startMs),
     });
   }
 
@@ -230,6 +252,7 @@ export const buildEnergyTimeline = ({
         ? slot.shadow_export_sek_per_kwh ?? null
         : null,
       poolC: plannedPoolC[index] ?? null,
+      ...rooms(startMs),
     });
   }
 
@@ -264,6 +287,7 @@ export const buildEnergyTimeline = ({
       shadowExportSekPerKwh: null,
       // A reading is still a reading where the electrical quarter has not arrived.
       poolC: startMs < boundary ? poolByStart.get(startMs) ?? null : null,
+      ...rooms(startMs),
     });
   }
   return timeline;

@@ -41,6 +41,10 @@ export interface PlanPanelRow {
   cumulativeCostSek: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolTemperatureC?: number | null;
+  /** Driven rooms, °C by room key: measured on the past side, planned on the future side. */
+  roomTemperatureC?: Record<string, number>;
+  /** Planned quarters: each driven room's comfort minimum, °C by room key. */
+  roomComfortMinC?: Record<string, number>;
   /** The plan's hot-water decision, on planned quarters of a home that has one. */
   hotWater?: HotWaterQuarter | null;
 }
@@ -86,6 +90,8 @@ export function projectPlanChart(input: {
       exportPriceSekPerKwh: prices.kind !== 'live' ? row.exportPriceSekPerKwh : priced(row.exportPriceSekPerKwh, row.shadowExportSekPerKwh),
       importPriceQuoted: prices.kind === 'bench' || quoted(row.importPriceSekPerKwh),
       cumulativeCostSek: running, poolTemperatureC: row.poolC ?? null,
+      ...(row.roomC ? { roomTemperatureC: row.roomC } : {}),
+      ...(row.roomComfortMinC ? { roomComfortMinC: row.roomComfortMinC } : {}),
       ...(hotWater ? { hotWater: row.measured ? null : hotWater.byStart.get(row.startMs) ?? null } : {}),
     };
   });

@@ -5,9 +5,19 @@ export interface AccuracyDevice extends AccuracyScore { key: string; name: strin
 export interface AccuracySide extends AccuracyScore { devices: AccuracyDevice[] }
 /** How close the planner's last estimate came to each price once it was published. */
 export interface PriceAccuracy extends AccuracyScore { quarters: number }
+/**
+ * A driven room's planned temperature against its reading at the same
+ * instant. The percentage is the share of quarters within ROOM_TOLERANCE_C,
+ * kept apart from the energy figures: a degree is not a kilowatt-hour.
+ */
+export interface RoomTemperatureAccuracy extends AccuracyDevice {
+  quarters: number; mean_absolute_error_c: number | null; bias_c: number | null;
+}
 export interface AccuracyReport {
   version: 2; scheduled_at: string; calculated_at: string; timezone: string; historical_from: string;
   historical: AccuracySide; prices: PriceAccuracy;
+  /** Absent from reports calculated before rooms were compared. */
+  room_temperature?: { tolerance_c: number; rooms: RoomTemperatureAccuracy[] };
   calculations?: unknown[];
 }
 export interface AccuracySlot {
@@ -16,11 +26,17 @@ export interface AccuracySlot {
   battery_charge_w: number | null; battery_discharge_w: number | null; battery_soc: number | null;
   /** The planner's own import price where none was published yet; null once published. */
   estimated_import_sek_per_kwh?: number | null;
+  /** Driven rooms (controlled-rooms.ts), °C at the end of the quarter, by room key. */
+  room_temperature_c?: Record<string, number> | null;
 }
 export interface ForecastRecord {
   plan_id: string; published_at: string;
-  forecast: { timezone: string; battery: boolean; devices: {key: string; name: string}[]; slots: AccuracySlot[] };
+  forecast: { timezone: string; battery: boolean; devices: {key: string; name: string}[]; slots: AccuracySlot[];
+    rooms?: {key: string; name: string}[] };
 }
+/** A room reading: the temperature at the start of the quarter. */
+export interface RoomActual { start_ts: string; room_key: string; room_temperature_c: number }
+export const ROOM_TOLERANCE_C = 0.5;
 export interface AccuracyActual {
   start_ts: string; total_load_kwh: number | null; solar_production_kwh: number | null;
   battery_charge_kwh: number | null; battery_discharge_kwh: number | null; battery_soc: number | null;
@@ -39,6 +55,9 @@ interface AccuracyCalculation {
   soc_percentage_points?: {samples: number; absolute_error: number; bias: number};
 }
 /** The same sums in SEK/kWh: estimated against published import prices. */
+interface RoomCalculation {
+  key: string; name: string; quarters: number; within: number; absolute_error_c: number; bias_c: number; plan_ids: string[];
+}
 interface PriceCalculation {
   key: 'prices'; pairs: number; estimated_sek_per_kwh: number; published_sek_per_kwh: number;
   absolute_error_sek_per_kwh: number; bias_sek_per_kwh: number; matched: number; larger: number; plan_ids: string[];
@@ -103,7 +122,8 @@ function measured(slot: AccuracySlot, key: string, actual: AccuracyActual | unde
 }
 
 export function calculateAccuracy(input: {scheduled_at: string; calculated_at: string; timezone: string;
-  forecasts: ForecastRecord[]; actuals: AccuracyActual[]; device_actuals: DeviceActual[]; prices: PublishedPrice[]}) {
+  forecasts: ForecastRecord[]; actuals: AccuracyActual[]; device_actuals: DeviceActual[]; prices: PublishedPrice[];
+  room_actuals?: RoomActual[]}) {
   const at = Date.parse(input.scheduled_at), from = at - 7 * DAY;
   const actuals = new Map(input.actuals.map(a => [Date.parse(a.start_ts), a]));
   const deviceActuals = new Map(input.device_actuals.map(a => [`${Date.parse(a.start_ts)}:${a.device_key}`, a.energy_kwh]));
@@ -113,10 +133,16 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
   // Later records overwrite earlier ones, so each quarter keeps the last estimate made before its price was published.
   const estimates = new Map<number, {plan_id: string; value: number}>();
   const names = new Map<string, string>([['baseline', 'Baseline'], ['solar', 'Solar'], ['battery', 'House battery']]);
+  // By `${instant}:${room}`: the last planned temperature for that instant from a plan published before its quarter began.
+  const roomPlans = new Map<string, {plan_id: string; value: number}>(), roomNames = new Map<string, string>();
   for (const record of records) {
     record.forecast.devices.forEach(d => names.set('device:' + d.key, d.name));
+    record.forecast.rooms?.forEach(r => roomNames.set(r.key, r.name));
     for (const slot of record.forecast.slots) {
       const start = Date.parse(slot.start);
+      if (start >= from && start + QUARTER <= at && start >= Date.parse(record.published_at) && slot.duration_hours === .25)
+        for (const [room, value] of Object.entries(slot.room_temperature_c ?? {}))
+          if (valid(value)) roomPlans.set(`${start + QUARTER}:${room}`, {plan_id: record.plan_id, value});
       if (start >= from && valid(slot.estimated_import_sek_per_kwh))
         estimates.set(start, {plan_id: record.plan_id, value: slot.estimated_import_sek_per_kwh});
       // Only complete forecasts published before the quarter can be compared
@@ -134,7 +160,7 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
     if (!prediction || !actual) { gaps.set(key, (gaps.get(key) ?? 0) + 1); continue; }
     historicalPairs.set(key, [...historicalPairs.get(key) ?? [], {at: start, predicted: prediction, actual, plan_id: record.plan_id}]);
   }
-  const historyRows: AccuracyDevice[] = [], diagnostics: (AccuracyCalculation | PriceCalculation)[] = [];
+  const historyRows: AccuracyDevice[] = [], diagnostics: (AccuracyCalculation | PriceCalculation | RoomCalculation)[] = [];
   const historicTotals: Pair[] = [];
   for (const key of allKeys) {
     const pairs = historicalPairs.get(key) ?? [], historical = sums(pairs);
@@ -164,12 +190,34 @@ export function calculateAccuracy(input: {scheduled_at: string; calculated_at: s
       ? [{at: start, plan_id: estimate.plan_id, predicted: [estimate.value], actual: [p.import_price_sek_per_kwh]}] : [];
   });
   const price = sums(pricePairs);
+  const roomReadings = new Map((input.room_actuals ?? []).map(a => [`${Date.parse(a.start_ts)}:${a.room_key}`, Number(a.room_temperature_c)]));
+  const rooms = new Map<string, RoomCalculation>();
+  for (const [id, planned] of roomPlans) {
+    const reading = roomReadings.get(id);
+    if (!valid(reading)) continue;
+    const key = id.slice(id.indexOf(':') + 1), error = planned.value - reading;
+    const room = rooms.get(key) ?? {key, name: roomNames.get(key) ?? key, quarters: 0, within: 0, absolute_error_c: 0, bias_c: 0, plan_ids: []};
+    room.quarters++; room.absolute_error_c += Math.abs(error); room.bias_c += error;
+    if (Math.abs(error) <= ROOM_TOLERANCE_C + 1e-9) room.within++;
+    if (!room.plan_ids.includes(planned.plan_id)) room.plan_ids.push(planned.plan_id);
+    rooms.set(key, room);
+  }
+  // Every room the latest plan drives is listed, compared or not, as devices are.
+  for (const room of records.at(-1)?.forecast.rooms ?? []) if (!rooms.has(room.key))
+    rooms.set(room.key, {key: room.key, name: room.name, quarters: 0, within: 0, absolute_error_c: 0, bias_c: 0, plan_ids: []});
+  const roomRows: RoomTemperatureAccuracy[] = [...rooms.values()].sort((a, b) => a.name.localeCompare(b.name)).map(room => ({
+    key: room.key, name: room.name, ...accuracyScore(room.within, room.quarters), quarters: room.quarters,
+    mean_absolute_error_c: room.quarters ? Math.round(100 * room.absolute_error_c / room.quarters) / 100 : null,
+    bias_c: room.quarters ? Math.round(100 * room.bias_c / room.quarters) / 100 : null,
+  }));
+  diagnostics.push(...[...rooms.values()].map(room => ({...room, key: 'room:' + room.key})));
   diagnostics.push({key: 'prices', pairs: price.pairs, estimated_sek_per_kwh: price.predicted_kwh,
     published_sek_per_kwh: price.actual_kwh, absolute_error_sek_per_kwh: price.absolute_error_kwh, bias_sek_per_kwh: price.bias_kwh,
     matched: price.matched_kwh, larger: price.larger_kwh, plan_ids: [...new Set(pricePairs.map(p => p.plan_id))]});
   const report: AccuracyReport = {version: 2, scheduled_at: input.scheduled_at, calculated_at: input.calculated_at,
     timezone: input.timezone, historical_from: new Date(from).toISOString(),
     historical: {...scoreSums(sums(historicTotals)), devices: historyRows},
-    prices: {...scoreSums(price), quarters: price.pairs}};
+    prices: {...scoreSums(price), quarters: price.pairs},
+    ...(roomRows.length ? {room_temperature: {tolerance_c: ROOM_TOLERANCE_C, rooms: roomRows}} : {})};
   return {report, diagnostics};
 }

@@ -521,7 +521,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     outdoor_temperature_c:snapshot.outdoor_temperature_c as number[],
     planned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.room_power[z.key][i]))),
     unplanned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>z.unplanned_power_w[i]))),
-    zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,control_type:"setpoint",load_type:"duty_cycle",priority:i+1,
+    zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,device_keys:z.device_keys,control_type:"setpoint",load_type:"duty_cycle",priority:i+1,
       rated_power_w:z.rated_power_w,comfort_min_c:z.comfort_min_c,target_c:z.target_c,comfort_max_c:z.comfort_max_c,
       planned_temperature_c:input.rooms.temperature[z.key] as number[],unplanned_temperature_c:input.rooms.unplanned_temperature[z.key] as number[],
       planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:z.unplanned_power_w}))} : undefined;

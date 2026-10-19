@@ -86,6 +86,15 @@ export interface EnergyStoreLines {
   poolC: readonly (number | null)[];
 }
 
+/** A room the plan drives, drawn in the room temperature panel from `rows[].roomTemperatureC`. */
+export interface EnergyRoomLine {
+  key: string;
+  name: string;
+  colour: string;
+  /** What the plan says about the room's comfort, shown beside its name. */
+  note?: string | null;
+}
+
 /** Findings aligned with chart quarters; amounts belong to findings, never to these markers. */
 export interface EnergyQuarterAudit {
   title: string;
@@ -170,6 +179,28 @@ const EndLabel: React.FC<{
   </g>
 );
 
+const NO_ROOMS: readonly EnergyRoomLine[] = [];
+
+/**
+ * Which colour is which room, on the heading line, right-aligned. A room's
+ * note sits beside its name: the planner's word on its comfort belongs with
+ * the line it describes, not in a banner above the page.
+ */
+const RoomLegend: React.FC<{ rooms: readonly EnergyRoomLine[]; y: number }> = ({ rooms, y }) => {
+  let right = RIGHT;
+  return <>{[...rooms].reverse().map(room => {
+    const label = room.note ? `${room.name} · ${room.note}` : room.name;
+    const end = right;
+    right -= label.length * 6 + 24;
+    return (
+      <g key={room.key} data-room-legend={room.key}>
+        <rect x={end - label.length * 6 - 12} y={y - 7} width={8} height={8} rx={1.5} fill={room.colour} />
+        <text x={end} y={y} textAnchor="end" className={AXIS_TEXT}>{label}</text>
+      </g>
+    );
+  })}</>;
+};
+
 /** Band order in the flow panel, so a placement can be turned back into a name. */
 const FLOW_NAMES = (t: (sv: string, en: string) => string): string[] => [
   t('Sol', 'Solar'), t('Batteri ut', 'Battery out'), t('Nätimport', 'Grid in'),
@@ -247,12 +278,14 @@ export interface EnergyChartProps {
   storeLines?: EnergyStoreLines;
   /** The plan's demand partition, naming who each battery instruction may supply. */
   batteryDemand?: BatteryDemand;
+  /** Rooms in control verification or controlling, each with its own line. */
+  rooms?: readonly EnergyRoomLine[];
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines, timeZone, maxTimeLabels = 16, batteryDemand,
+  costLines, storeLines, timeZone, maxTimeLabels = 16, batteryDemand, rooms = NO_ROOMS,
 }) => {
   const { t } = useLanguage();
   const contextTimeZone = useHomeTimeZone();
@@ -281,11 +314,21 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const comparedPoolC = (storeLines?.poolC.slice(0, n) ?? [])
       .filter((value): value is number => value !== null && Number.isFinite(value));
     const pool: Panel = { top: soc.top + (showSoc ? soc.height + GAP : 0), height: showPool ? 96 : 0 };
+    // Rooms get their own axis: on the pool's a degree of room air is a few pixels.
+    const roomLines = rooms.map(room => ({
+      ...room,
+      values: rows.map(row => row.roomTemperatureC?.[room.key] ?? null),
+      comfortMin: rows.map(row => row.roomComfortMinC?.[room.key] ?? null),
+    })).filter(room => room.values.some(value => value !== null));
+    const knownRoomC = roomLines.flatMap(room => [...room.values, ...room.comfortMin])
+      .filter((value): value is number => value !== null);
+    const showRooms = knownRoomC.length > 0;
+    const room: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showRooms ? 96 : 0 };
     const knownCost = (costLines ?? []).flatMap(line => line.values.slice(0, n))
       .filter((value): value is number => value !== null && Number.isFinite(value));
     const showCost = knownCost.length > 0;
-    const cost: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showCost ? 90 : 0 };
-    const axisY = showCost ? cost.top + cost.height
+    const cost: Panel = { top: room.top + (showRooms ? room.height + GAP : 0), height: showCost ? 90 : 0 };
+    const axisY = showCost ? cost.top + cost.height : showRooms ? room.top + room.height
       : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
     // The score is a section of its own, below the axis labels of the panels above.
     const auditHeight = quarterAudit ? quarterAudit.lanes.length * 28 : quarterScores ? 16 : 0;
@@ -347,6 +390,17 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const poolMin = Math.floor((Math.min(...poolBounds) - 0.3) * 2) / 2;
     const poolMax = Math.ceil((Math.max(...poolBounds) + 0.3) * 2) / 2;
     const poolY = linearScale([poolMin, poolMax], [pool.top + pool.height, pool.top]);
+    const roomMin = Math.floor((Math.min(...knownRoomC) - 0.3) * 2) / 2;
+    const roomMax = Math.ceil((Math.max(...knownRoomC) + 0.3) * 2) / 2;
+    const roomY = linearScale([roomMin, roomMax], [room.top + room.height, room.top]);
+    // The latest reading or plan value of each room, spread so labels never overlap.
+    const roomEnds = roomLines.flatMap(line => {
+      const last = [...line.values].reverse().find((value): value is number => value !== null);
+      return last === undefined ? [] : [{ line, value: last, y: roomY(last), labelY: roomY(last) }];
+    }).sort((a, b) => a.y - b.y);
+    roomEnds.forEach((end, index) => {
+      if (index > 0) end.labelY = Math.max(end.labelY, roomEnds[index - 1].labelY + 11);
+    });
 
     // Zero is always on the axis, and a window that cost next to nothing keeps
     // a ten-krona span so its noise is not drawn as a cliff.
@@ -369,9 +423,10 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels, water, showWater,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
+      room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -379,6 +434,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels, water, showWater,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
+    room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
     cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
@@ -737,6 +793,36 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             </g>
           )}
 
+          {/* ----------------------------------------- Room temperature --- */}
+          {showRooms && (
+            <g id="plan-room-temperature">
+              <PanelHeading
+                title={t('Rumstemperatur', 'Room temperature')}
+                unit={t('°C · uppmätt före nu, planerad efter · streckat = komfort', '°C · measured before now, planned after · dashed = comfort')}
+                y={room.top - 14}
+              />
+              <RoomLegend rooms={roomLines} y={room.top - 14} />
+              <Gridlines ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
+              {roomLines.map(line => (
+                <g key={line.key} data-room={line.key}>
+                  <path
+                    d={stepLinePath(line.comfortMin, x, roomY)} fill="none"
+                    stroke={line.colour} strokeWidth={1} strokeOpacity={0.7} strokeDasharray="2 3"
+                  />
+                  <path
+                    d={midpointLinePath(line.values, x, roomY)} fill="none"
+                    stroke={line.colour} strokeWidth={2} strokeLinejoin="round"
+                  />
+                </g>
+              ))}
+              {roomEnds.map(end => (
+                <EndLabel key={end.line.key} y={end.y} labelY={end.labelY} colour={end.line.colour}>
+                  {`${end.value.toFixed(1)} °C`}
+                </EndLabel>
+              ))}
+            </g>
+          )}
+
           {/* ----------------------------------------------- Bench cost --- */}
           {showCost && costLines && (
             <g id="plan-cost">
@@ -951,6 +1037,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           realPrices={realPrices}
           costLines={showCost ? costLines : undefined}
           storeLines={storeLines}
+          rooms={rooms}
           batteryDemand={batteryDemand}
           auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
           left={pointer.left}
@@ -982,6 +1069,7 @@ const PlanTooltip: React.FC<{
   realPrices: boolean;
   costLines?: readonly EnergyCostLine[];
   storeLines?: EnergyStoreLines;
+  rooms: readonly EnergyRoomLine[];
   batteryDemand?: BatteryDemand;
   auditDescriptions?: readonly string[];
   left: number;
@@ -989,7 +1077,7 @@ const PlanTooltip: React.FC<{
   bounds: DOMRect | null;
 }> = ({
   row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
-  left, top, bounds, auditDescriptions, batteryDemand,
+  rooms, left, top, bounds, auditDescriptions, batteryDemand,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -1023,7 +1111,7 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0)) * 16;
+  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0) + rooms.length) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1120,6 +1208,16 @@ const PlanTooltip: React.FC<{
           />
         )}
         {compared(t('Pooltemperatur', 'Pool temperature'), undefined, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
+        {rooms.map(room => {
+          const value = row.roomTemperatureC?.[room.key], comfort = row.roomComfortMinC?.[room.key];
+          return value === undefined && comfort === undefined ? null : (
+            <Reading
+              key={room.key} name={room.name} colour={room.colour}
+              value={[value === undefined ? '—' : `${value.toFixed(1)} °C`,
+                ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`])].join(' · ')}
+            />
+          );
+        })}
         {costLines
           ? costLines.map(line => {
             const value = line.values[index];

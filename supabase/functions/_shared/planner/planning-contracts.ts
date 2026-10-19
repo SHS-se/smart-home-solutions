@@ -1005,7 +1005,9 @@ export type BatteryProjection = {
 export interface ThermalPlanningProjection {
  source:"comfort_schedule_model"|"synthetic_season_fixture";season:"winter"|"spring"|"summer"|"autumn"|"ev_only"|null;slot_minutes:15;starts:string[];outdoor_temperature_c:number[];
  planned_total_power_w:number[];unplanned_total_power_w:number[];
- zones:{key:string;name:string;control_type:"switch_schedule"|"setpoint";load_type:"duty_cycle"|"inverter";
+ zones:{key:string;name:string;
+ /** The room's device models, whose owners' operating modes say whether it is controlled. */
+ device_keys?:string[];control_type:"switch_schedule"|"setpoint";load_type:"duty_cycle"|"inverter";
  priority:number;rated_power_w:number;comfort_min_c:number[];target_c:number[];comfort_max_c:number[];
  planned_temperature_c:number[];unplanned_temperature_c:number[];planned_power_w:number[];unplanned_power_w:number[]}[];
 }

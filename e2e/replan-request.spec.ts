@@ -95,6 +95,7 @@ interface MockPlanState {
   history?: Array<{ start_ts: string; total_load_kwh: number }>;
   deviceHistory?: Array<{ start_ts: string; device_energy_kwh: Record<string, number> }>;
   poolHistory?: Array<{ start_ts: string; water_temperature_c: number }>;
+  roomHistory?: Array<{ start_ts: string; room_key: string; room_temperature_c: number }>;
   devices?: Array<Record<string, unknown>>;
 }
 
@@ -221,6 +222,8 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       ? [{ snapshot: planSnapshot, plan: shown }]
       : table === 'energy_optimisation_pool_slots'
       ? replan.poolHistory ?? []
+      : table === 'energy_optimisation_thermal_slots'
+      ? (replan.roomHistory ?? []).filter(row => (url.searchParams.get('room_key') ?? '').includes(row.room_key))
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -774,6 +777,49 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText('31.6 °C');
   });
 
+  test('rooms in verification or controlling are drawn measured before now and planned after, with their comfort note', async ({ page }, testInfo) => {
+    const start = Date.parse(CAPTURED_AT);
+    const starts = PLAN.plans.priority.slots.map(slot => slot.start);
+    const zone = (key: string, name: string, device: string, base: number) => ({
+      key, name, device_keys: [device], control_type: 'setpoint', load_type: 'duty_cycle', priority: 1, rated_power_w: 1000,
+      comfort_min_c: starts.map((_s, i) => i % 96 < 24 ? base + 1 : base), target_c: starts.map(() => base),
+      comfort_max_c: starts.map(() => base + 3), planned_temperature_c: starts.map((_s, i) => base + .5 + Math.sin(i / 12) / 2),
+      unplanned_temperature_c: starts.map(() => base), planned_power_w: starts.map(() => 0), unplanned_power_w: starts.map(() => 0),
+    });
+    replan.publishedPlan = { ...PLAN,
+      operating_scope: { ...PLAN.operating_scope, modes: { ...PLAN.operating_scope?.modes, floor: 'controlling', hall: 'monitoring' },
+        device_owners: { ...PLAN.operating_scope?.device_owners, floor: 'floor', hall: 'hall' }, external_demands: {} },
+      thermal_projection: { source: 'comfort_schedule_model', season: null, slot_minutes: 15, starts,
+        outdoor_temperature_c: starts.map(() => 8), planned_total_power_w: starts.map(() => 0), unplanned_total_power_w: starts.map(() => 0),
+        zones: [zone('bath', 'Master bathroom', 'floor', 22), zone('hall', 'Hall', 'hall', 19)] },
+      planning_warnings: [{ code: 'comfort_shortfall', scope: 'bath', severity: 'warning',
+        message: 'Master bathroom: 2 quarters may be outside the requested comfort band.',
+        consequence: 'The best attainable room schedule is included and household planning continues.', evidence: { quarters: 2 } }],
+    } as typeof PLAN;
+    replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
+    replan.roomHistory = replan.history.flatMap((row, i) => [
+      { start_ts: row.start_ts, room_key: 'bath', room_temperature_c: 21.2 + i / 10 },
+      { start_ts: row.start_ts, room_key: 'hall', room_temperature_c: 18 }]);
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const panel = page.locator('#plan-room-temperature');
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('[data-room="bath"]')).toHaveCount(1);
+    await expect(panel.locator('[data-room="hall"]')).toHaveCount(0);
+    await expect(panel.locator('[data-room-legend="bath"]')).toContainText(/Master bathroom · 2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
+    // The comfort note is on the chart, so nothing is left for a banner or the notes.
+    await expect(page.getByText(/Planning needs attention|Planeringen behöver uppmärksamhet/)).toHaveCount(0);
+    await expect(page.getByTestId('planning-notes')).toHaveCount(0);
+    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    await chart.focus();
+    await chart.press('ArrowLeft');
+    await chart.press('ArrowLeft');
+    await expect(page.getByRole('tooltip')).toContainText(/Master bathroom21\.3 °C/);
+    await expect(page.getByRole('tooltip')).not.toContainText('Hall');
+    await page.keyboard.press('Escape');
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath('room-temperature.png'), fullPage: true });
+  });
+
   test('TEST ignores stale HA recovery and identity without locking replanning', async ({ page }) => {
     replan.reportedPlanId = REQUEST_ID;
     replan.refreshing = true;
@@ -988,7 +1034,9 @@ test.describe('requesting a replan', () => {
     const devices = [['baseline','Baseline',94,'green'],['ev','Car',84,'lime'],['pool','Pool',74,'yellow'],
       ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red']].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
     replan.accuracy = {version:2,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',historical_from:CAPTURED_AT,
-      historical:{percentage:64,grade:'orange',devices},prices:{percentage:80,grade:'lime',quarters:96}};
+      historical:{percentage:64,grade:'orange',devices},prices:{percentage:80,grade:'lime',quarters:96},
+      room_temperature:{tolerance_c:.5,rooms:[{key:'bath',name:'Master bathroom',percentage:82,grade:'lime',quarters:180,
+        mean_absolute_error_c:.31,bias_c:-.1}]}};
     replan.reportedPlanId = PLAN.plan_id;
     replan.inputAccuracy = {version:1,observed_at:CAPTURED_AT,percentage:88,grade:'lime',checks:[
       {key:'prices',percentage:80,grade:'lime',quarters:96,calculated_at:CAPTURED_AT,issues:[]},
@@ -1017,11 +1065,17 @@ test.describe('requesting a replan', () => {
     const popup = page.getByRole('dialog');
     await expect(popup.getByText('Baseline',{exact:true})).toBeVisible();
     for (const n of [94,84,74,64,54]) await expect(popup.getByText(`${n}%`,{exact:true})).toBeVisible();
+    // Room temperature is its own section, never a row among the meters.
+    const rooms = popup.getByTestId('room-temperature-accuracy');
+    await expect(rooms).toContainText(/Room temperature|Rumstemperatur/);
+    await expect(rooms).toContainText('Master bathroom');
+    await expect(rooms).toContainText('82%');
+    await expect(rooms).toContainText(/±0\.3 °C/);
     await expect(popup.getByTestId('accuracy-schedule')).toContainText(/Recalculated within five minutes|Räknas om inom fem minuter/);
     await page.keyboard.press('Escape');
     await expect(forecast).toBeFocused();
     await forecast.click();
-    await expect(page.getByRole('dialog').getByRole('heading')).toContainText(/Historical accuracy %|Historisk noggrannhet %/);
+    await expect(page.getByRole('dialog').getByRole('heading',{name:/Historical accuracy %|Historisk noggrannhet %/})).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCSS('opacity','1');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
     await page.screenshot({path:test.info().outputPath('website-accuracy.png')});
@@ -1033,11 +1087,11 @@ test.describe('requesting a replan', () => {
       {code:'pool_model_quality',scope:'pool',severity:'warning',message:'limited_idle_observations, limited_response_observations',
         consequence:'Learning continues.'}]};
     await page.goto('/portal/energy-modeling?tab=plan');
-    const banner=page.getByTestId('planning-warnings');
-    await expect(banner).toHaveCount(0);
+    const notes=page.getByTestId('planning-notes');
+    await expect(notes).toHaveCount(0);
     await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
     replan.publishedPlan={...PLAN,planning_warnings:[]};await page.reload();
-    await expect(banner).toHaveCount(0);
+    await expect(notes).toHaveCount(0);
   });
 
   test('an unavailable comparison leaves the executable plan visible and replanning enabled', async ({page}) => {
@@ -1049,13 +1103,17 @@ test.describe('requesting a replan', () => {
     const pageErrors: string[] = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     await page.goto('/portal/energy-modeling?tab=plan');
+    // A note, not a banner: the page opens on the plan, the note on request.
+    await expect(page.getByTestId('planning-warnings')).toHaveCount(0);
+    await page.getByTestId('planning-notes').click();
     await expect(page.getByTestId('planning-warnings')).toContainText('The selected control plan remains available.');
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
     await expect(page.getByRole('button', {name: replanButton})).toBeEnabled();
     expect(pageErrors).toEqual([]);
     replan.publishedPlan = PLAN;
     await page.reload();
-    await expect(page.getByTestId('planning-warnings')).toHaveCount(0);
+    await expect(page.getByTestId('planning-notes')).toHaveCount(0);
     await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
   });
 

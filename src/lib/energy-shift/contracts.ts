@@ -44,6 +44,8 @@ export type ThermalFixtureSeason = 'winter' | 'spring' | 'summer' | 'autumn' | '
 export interface ThermalZoneProjection {
   key: string;
   name: string;
+  /** The room's device models; absent on plans made before rooms named them. */
+  device_keys?: string[];
   control_type: 'switch_schedule' | 'setpoint';
   load_type: 'duty_cycle' | 'inverter';
   priority: number;

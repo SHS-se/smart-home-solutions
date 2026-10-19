@@ -39,10 +39,11 @@ import type { PlanModel } from '../usePlanModel';
 import DeviceEnergyTable from '../DeviceEnergyTable';
 import PlanReplayDownload from '../PlanReplayDownload';
 import { replayDescription } from '@/lib/energy-shift/plan-replay';
-import EnergyChart from '../../charts/EnergyChart';
+import EnergyChart, { type EnergyRoomLine } from '../../charts/EnergyChart';
+import type { ChartRoom } from '@/lib/energy-shift/room-temperature';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
-import { PLAN_COLOURS, seriesColour } from '../../charts/palette';
+import { loadColour, PLAN_COLOURS, seriesColour } from '../../charts/palette';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
 const QUARTER_W_TO_KWH = 4_000;
@@ -63,6 +64,8 @@ const PowerSection: React.FC<{
   hasEvBattery: boolean;
   /** The owner's pool target, when the plan was made from one. */
   poolTargetC?: number | null;
+  /** Rooms the plan drives, drawn in the room temperature panel. */
+  rooms?: readonly ChartRoom[];
 }> = ({
   model,
   rows,
@@ -75,6 +78,7 @@ const PowerSection: React.FC<{
   hasBattery,
   hasEvBattery,
   poolTargetC = null,
+  rooms = [],
 }) => {
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
@@ -99,6 +103,19 @@ const PowerSection: React.FC<{
     hotWater,
   }), [rows, range, homeTimeZone, deviceNameByKey, schedulableKeys, hotWater]);
   const { rows: panelRows, consumption } = chart;
+  // A room is drawn in its heater's band colour, so the line and the energy
+  // that moved it read as one thing.
+  const roomLines = useMemo((): EnergyRoomLine[] => rooms.map((room, index) => {
+    const band = consumption.series.find(entry => room.deviceKeys.includes(entry.key));
+    const shortfall = plan.planning_warnings?.find(warning => warning.code === 'comfort_shortfall' && warning.scope === room.key);
+    const quarters = Number(shortfall?.evidence?.quarters);
+    return {
+      key: room.key, name: room.name, colour: band ? seriesColour(band) : loadColour((index + 5) % 9),
+      note: !shortfall ? null : Number.isFinite(quarters)
+        ? t(`${quarters} kvartar kan hamna utanför komfort`, `${quarters} quarters may be outside comfort`)
+        : t('kan hamna utanför komfort', 'may be outside comfort'),
+    };
+  }), [rooms, consumption.series, plan.planning_warnings, t]);
 
   const divider = nowDividerIndex(rows, range);
   const plannedStarts = useMemo(
@@ -184,6 +201,7 @@ const PowerSection: React.FC<{
         hasBattery={hasBattery}
         hasEvBattery={hasEvBattery}
         poolTargetC={poolTargetC}
+        rooms={roomLines}
         quarterScores={quarterScores}
         scoreDetail={(quarterScores || model.active.slots.length > 0) && (
           <QuarterScoreDetail

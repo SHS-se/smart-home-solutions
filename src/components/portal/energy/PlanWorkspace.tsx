@@ -1,7 +1,7 @@
 import ReplanControls from './ReplanControls';
 import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
-import PlanningWarningsAlert from './PlanningWarningsAlert';
+import PlanningNotesButton from './PlanningNotesButton';
 import AccuracyButtons from './AccuracyButtons';
 import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import { planMeasurementIssues } from '@/lib/energy-shift/measurement-issues';
@@ -52,6 +52,8 @@ import {
   type PoolSlotRow,
 } from '@/lib/energy-shift/energy-timeline';
 import { plannedPoolTarget, plannedPoolTemperature } from '@/lib/energy-shift/pool-temperature';
+import { plannedRoomTemperatures, type RoomSlotRow } from '@/lib/energy-shift/room-temperature';
+import { controlledRooms } from '../../../../supabase/functions/_shared/planner/controlled-rooms';
 export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
 import {
@@ -91,6 +93,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [empiricalDevices, setEmpiricalDevices] = useState<EmpiricalEnergyDevice[]>([]);
   const [deviceActuals, setDeviceActuals] = useState<EmpiricalDeviceSlotMatrix[]>([]);
   const [poolActuals, setPoolActuals] = useState<PoolSlotRow[]>([]);
+  const [roomActuals, setRoomActuals] = useState<RoomSlotRow[]>([]);
   const [thermalObservations, setThermalObservations] = useState<ThermalObservationSummary>(
     EMPTY_THERMAL_OBSERVATIONS,
   );
@@ -284,6 +287,41 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     };
   }, [homeId]);
 
+  // Measured temperatures of the rooms the plan drives, read like the pool's.
+  const roomKeys = useMemo(() => current?.plan ? controlledRooms(current.plan).map(room => room.key).sort().join('\n') : '',
+    [current?.plan]);
+  useEffect(() => {
+    setRoomActuals([]);
+    if (!homeId || !roomKeys) return;
+    let cancelled = false;
+    const read = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return;
+      const since = new Date(Date.now() - LOADED_HISTORY_DAYS * 86_400_000).toISOString();
+      const rows: RoomSlotRow[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error: roomError } = await (supabase as unknown as SupabaseClient)
+          .from('energy_optimisation_thermal_slots')
+          .select('start_ts, room_key, room_temperature_c')
+          .eq('home_id', homeId).in('room_key', roomKeys.split('\n')).gte('start_ts', since)
+          .order('start_ts').order('room_key').range(from, from + 999);
+        // Left silent: the chart draws the planned temperatures without them.
+        if (cancelled || roomError) return;
+        rows.push(...(data ?? []) as RoomSlotRow[]);
+        if ((data ?? []).length < 1000) break;
+      }
+      setRoomActuals(rows);
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), 15 * 60_000);
+    const resume = () => { void read(); };
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', resume);
+    };
+  }, [homeId, roomKeys]);
+
   const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at
     ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
     : undefined;
@@ -390,6 +428,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
           connectionLastSeenAt={activeConnection?.last_seen_at ?? null}
           deviceActuals={deviceActuals}
           poolActuals={poolActuals}
+          roomActuals={roomActuals}
           prices={prices}
           now={clock}
           dayWindow={dayWindow}
@@ -429,10 +468,13 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         </AlertDescription>
       </Alert>}
       {!pendingReplan && !requestingReplan && <MeasurementIssuesAlert issues={planMeasurementIssues(current?.plan)} />}
-      <PlanningWarningsAlert warnings={current?.plan.planning_warnings ?? []} />
       {section === 'plan' && <div className="flex flex-wrap items-center justify-between gap-2" data-testid="plan-status-row">
-        <AccuracyButtons report={accuracy} error={accuracyError} input={latestRuntime?.ha_runtime?.input_accuracy ?? null}
-          inputUnavailable={testEnvironment} />
+        <div className="flex flex-wrap items-center gap-2">
+          <AccuracyButtons report={accuracy} error={accuracyError} input={latestRuntime?.ha_runtime?.input_accuracy ?? null}
+            inputUnavailable={testEnvironment} />
+          <PlanningNotesButton warnings={current?.plan.planning_warnings ?? []}
+            charted={current?.plan ? controlledRooms(current.plan).map(room => room.key) : []} />
+        </div>
         <span className="inline-flex items-center gap-2 text-xs text-muted-foreground" aria-label={t('Home Assistant-anslutning', 'Home Assistant connection')}>
           <span aria-hidden="true" className={`h-2 w-2 rounded-full ${activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? 'bg-emerald-600' : 'bg-red-600'}`} />
           {activeConnection?.last_seen_at && clock-Date.parse(activeConnection.last_seen_at)<3_600_000 ? t('Ansluten', 'Connected') : t('Frånkopplad', 'Disconnected')}
@@ -477,6 +519,7 @@ const PlanView: React.FC<{
   connectionLastSeenAt?: string | null;
   deviceActuals: EmpiricalDeviceSlotMatrix[];
   poolActuals: PoolSlotRow[];
+  roomActuals: RoomSlotRow[];
   prices: PriceSlotRow[];
   now: number;
   dayWindow: DayWindow;
@@ -502,6 +545,7 @@ const PlanView: React.FC<{
   onDayWindowChange,
   deviceActuals,
   poolActuals,
+  roomActuals,
   prices,
   now,
 }) => {
@@ -574,6 +618,7 @@ const PlanView: React.FC<{
     plan.pool?.water_temperature_c,
     active.store_diagnostics?.find(store => store.key === 'pool')?.end_state,
   ), [active.slots, active.store_diagnostics, plan.pool?.water_temperature_c]);
+  const roomPlan = useMemo(() => plannedRoomTemperatures(plan), [plan]);
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
@@ -582,8 +627,10 @@ const PlanView: React.FC<{
     deviceKeyById,
     poolActuals,
     plannedPoolC,
+    roomActuals,
+    roomPlan,
     nowMs,
-  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, plannedPoolC, poolActuals, prices]);
+  }), [actuals, active.slots, deviceActuals, deviceKeyById, nowMs, plannedPoolC, poolActuals, prices, roomActuals, roomPlan]);
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);
@@ -862,6 +909,7 @@ const PlanView: React.FC<{
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
             poolTargetC={plannedPoolTarget(plan)}
+            rooms={roomPlan.rooms}
           />
           </>
           )}

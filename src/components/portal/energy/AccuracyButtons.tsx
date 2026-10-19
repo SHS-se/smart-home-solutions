@@ -36,16 +36,45 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
       <DialogContent className="max-w-sm" aria-describedby={undefined} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus();}}>
         <DialogHeader><DialogTitle>{open ? labels[open] : ''}</DialogTitle></DialogHeader>
         {open === 'input' ? <InputChecks input={input} unavailable={inputUnavailable} timeZone={timeZone} t={t} /> : <>
-          {error ? <p role="status" className="text-sm text-muted-foreground">{error}</p> :
-            !report?.historical.devices.length ? <p className="text-sm text-muted-foreground">{t('Lär sig', 'Learning')}</p> :
-            <ul className="divide-y">{report.historical.devices.map(row => <li key={row.key} className="flex justify-between gap-4 py-2 text-sm">
-              <span>{row.name}</span><span className={`font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
-                {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
-            </li>)}</ul>}
+          {error ? <p role="status" className="text-sm text-muted-foreground">{error}</p> : <>
+            <section aria-labelledby="accuracy-energy">
+              <h3 id="accuracy-energy" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Elförbrukning', 'Electricity')}</h3>
+              {!report?.historical.devices.length ? <p className="py-2 text-sm text-muted-foreground">{t('Lär sig', 'Learning')}</p> :
+                <ul className="divide-y">{report.historical.devices.map(row => <li key={row.key} className="flex justify-between gap-4 py-2 text-sm">
+                  <span>{row.name}</span><span className={`font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
+                    {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
+                </li>)}</ul>}
+            </section>
+            {report?.room_temperature && <RoomTemperatures accuracy={report.room_temperature} t={t} />}
+          </>}
           <AccuracyFooter report={report} stamp={stamp} />
         </>}
       </DialogContent>
     </Dialog></>;
+}
+
+/**
+ * Planned room temperatures against the readings, apart from electricity: a
+ * room can be warmed exactly as planned with a meter forecast that is off,
+ * and the other way round.
+ */
+function RoomTemperatures({accuracy, t}: {accuracy: NonNullable<AccuracyReport['room_temperature']>; t: Translate}) {
+  const degrees = (c: number) => `${c.toFixed(1)} °C`;
+  return <section aria-labelledby="accuracy-rooms" data-testid="room-temperature-accuracy">
+    <h3 id="accuracy-rooms" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Rumstemperatur', 'Room temperature')}</h3>
+    <ul className="divide-y">{accuracy.rooms.map(room => <li key={room.key} className="flex justify-between gap-4 py-2 text-sm">
+      <span className="flex min-w-0 flex-col"><span>{room.name}</span>
+        <span className="text-xs text-muted-foreground">{room.quarters === 0 || room.mean_absolute_error_c === null
+          ? t('Inga avläsningar jämförda ännu', 'No readings compared yet')
+          : t(`±${degrees(room.mean_absolute_error_c)} i snitt · ${room.quarters} kvartar`,
+            `±${degrees(room.mean_absolute_error_c)} on average · ${room.quarters} quarters`)}</span></span>
+      <span className={`font-medium tabular-nums ${room.grade ? colours[room.grade] : 'text-muted-foreground'}`}>
+        {value(room.percentage)}{room.percentage !== null ? '%' : ''}</span>
+    </li>)}</ul>
+    <p className="text-xs text-muted-foreground">{t(
+      `Andel kvartar där planerad temperatur låg inom ${accuracy.tolerance_c} °C från avläsningen, för rum i kontrollverifiering eller styrning.`,
+      `Share of quarters the planned temperature was within ${accuracy.tolerance_c} °C of the reading, for rooms in control verification or controlling.`)}</p>
+  </section>;
 }
 
 const CHECKS: Record<InputCheck['key'], [string, string]> = {prices: ['Priser', 'Prices'], solar_forecast: ['Solprognos', 'Solar forecast'],

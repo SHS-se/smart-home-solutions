@@ -101,3 +101,32 @@ Deno.test('one missed stretch cannot outweigh agreement elsewhere; over- and und
   i.actuals[0].battery_charge_kwh = 1; // twice the planned .5
   assertEquals(score(), 50, 'missing by half and doubling are equally wrong');
 });
+
+Deno.test('room temperature is scored apart from energy: the last plan before the quarter against the next reading', () => {
+  const i = input(), start = '2026-10-17T10:00:00Z', end = '2026-10-17T10:15:00Z';
+  const roomRecord = (plan: string, at: string, c: number): ForecastRecord => ({...record(plan, at, start),
+    forecast: {...record(plan, at, start).forecast, rooms: [{key: 'bath', name: 'Bathroom'}],
+      slots: [{...slot(start), room_temperature_c: {bath: c}}]}});
+  // The later plan supersedes; one issued after the quarter began is no forecast of it.
+  i.forecasts.push(roomRecord('early', '2026-10-17T08:00:00Z', 20), roomRecord('last', '2026-10-17T09:00:00Z', 22.3),
+    roomRecord('late', '2026-10-17T10:05:00Z', 30));
+  const {report, diagnostics} = calculateAccuracy({...i, room_actuals: [
+    {start_ts: start, room_key: 'bath', room_temperature_c: 99}, // the quarter's own start is not its end
+    {start_ts: end, room_key: 'bath', room_temperature_c: 22}]});
+  assertEquals(report.room_temperature, {tolerance_c: .5, rooms: [{key: 'bath', name: 'Bathroom', percentage: 100, grade: 'green',
+    quarters: 1, mean_absolute_error_c: .3, bias_c: .3}]});
+  assertEquals(report.historical.devices.some(d => d.key.includes('bath')), false);
+  assertEquals((diagnostics.find(d => d.key === 'room:bath') as unknown as {plan_ids: string[]}).plan_ids, ['last']);
+});
+
+Deno.test('a driven room without readings is listed as not yet compared; no driven rooms, no section', () => {
+  // The latest plan names the driven rooms.
+  const i = input(), start = '2026-10-17T14:00:00Z';
+  const base = record('rooms', '2026-10-17T13:00:00Z', start);
+  i.forecasts.push({...base, forecast: {...base.forecast, rooms: [{key: 'bath', name: 'Bathroom'}],
+    slots: [{...slot(start), room_temperature_c: {bath: 21}}]}});
+  const {report} = calculateAccuracy(i);
+  assertEquals(report.room_temperature?.rooms, [{key: 'bath', name: 'Bathroom', percentage: null, grade: null,
+    quarters: 0, mean_absolute_error_c: null, bias_c: null}]);
+  assertEquals('room_temperature' in calculateAccuracy(input()).report, false);
+});
