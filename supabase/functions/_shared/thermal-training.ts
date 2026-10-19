@@ -15,6 +15,27 @@ import {
 
 export const REFIT_INTERVAL_HOURS = 24;
 /**
+ * A planned room with no trained model yet is retried this often instead. Its
+ * history arrives a push at a time once it is mapped, and waiting a whole day
+ * after the last fit of another room leaves its plan on measured history.
+ */
+export const UNMODELLED_REFIT_INTERVAL_HOURS = 1;
+
+export interface ZoneFitAttempt {
+  room_key: string;
+  trained: boolean | null;
+  last_attempted_at: string | null;
+}
+
+/** Whether to refit the home's rooms now. */
+export function zoneRefitIsDue(nowMs: number, attempts: ZoneFitAttempt[], plannedRoomKeys: string[]): boolean {
+  const last = Math.max(0, ...attempts.map((attempt) => Date.parse(attempt.last_attempted_at ?? "") || 0));
+  if (nowMs - last > REFIT_INTERVAL_HOURS * 3_600_000) return true;
+  const trained = new Set(attempts.filter((attempt) => attempt.trained).map((attempt) => attempt.room_key));
+  return plannedRoomKeys.some((key) => !trained.has(key)) &&
+    nowMs - last > UNMODELLED_REFIT_INTERVAL_HOURS * 3_600_000;
+}
+/**
  * How far back a fit reads. Long enough to span several weather regimes so
  * the loss coefficient is identifiable, short enough that a change to the
  * building or its heaters works its way out within weeks.

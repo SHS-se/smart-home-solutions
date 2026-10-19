@@ -49,6 +49,8 @@ import {
   type ProjectionZoneInput,
   REFIT_INTERVAL_HOURS,
   type ThermalMomentRow,
+  type ZoneFitAttempt,
+  zoneRefitIsDue,
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
   storeZoneModelRows,
@@ -661,15 +663,10 @@ async function prepareThermalPlanning(
   const now = Date.now();
   const { data: existing } = await supabase
     .from("energy_optimisation_zone_models")
-    .select("room_key, fitted_at, last_attempted_at")
-    .eq("home_id", homeId)
-    .order("last_attempted_at", { ascending: false })
-    .limit(1);
-  const lastFit = existing?.[0]?.last_attempted_at
-    ? Date.parse(existing[0].last_attempted_at)
-    : 0;
+    .select("room_key, trained, last_attempted_at")
+    .eq("home_id", homeId);
 
-  if (now - lastFit > REFIT_INTERVAL_HOURS * 3_600_000) {
+  if (zoneRefitIsDue(now, (existing ?? []) as ZoneFitAttempt[], [...rooms.keys()])) {
     const trainingFrom = new Date(
       now - TRAINING_WINDOW_DAYS * 86_400_000,
     ).toISOString();
