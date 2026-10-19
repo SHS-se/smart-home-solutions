@@ -49,7 +49,7 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
 }
 
 const CHECKS: Record<InputCheck['key'], [string, string]> = {prices: ['Priser', 'Prices'], solar_forecast: ['Solprognos', 'Solar forecast'],
-  sensors: ['Givare', 'Sensors'], measurements: ['Mätningar', 'Measurements']};
+  sensors: ['Givare', 'Sensors'], measurements: ['Mätningar', 'Measurements'], battery: ['Batteri', 'Battery']};
 
 /**
  * Live checks are healthy readings over the readings each expects. Prices is
@@ -64,10 +64,11 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
     ? check.quarters ? t(`Uppskattning mot publicerat pris, ${check.quarters} kvartar`, `Estimates against published prices, ${check.quarters} quarters`)
       : t('Inget publicerat pris jämfört ännu', 'No published price compared yet')
     : check.key === 'measurements' ? t(`${check.healthy} av ${check.expected} kvartar kompletta`, `${check.healthy} of ${check.expected} quarters complete`)
+    : check.key === 'battery' ? t(`${check.healthy} av ${check.expected} laddmål nådda`, `${check.healthy} of ${check.expected} charge targets reached`)
       : t(`${check.healthy} av ${check.expected} användbara`, `${check.healthy} of ${check.expected} usable`);
   const issues = (check: InputCheck) => check.quarters !== undefined
     ? check.calculated_at ? ` · ${time(check.calculated_at)}` : '' : !check.issues.length ? ''
-    : `: ${(check.key === 'measurements' ? check.issues.map(time) : check.issues).join(', ')}`;
+    : `: ${(check.key === 'measurements' || check.key === 'battery' ? check.issues.map(time) : check.issues).join(', ')}`;
   return <>
     <ul className="divide-y">{input.checks.map(check => <li key={check.key} className="flex justify-between gap-4 py-2 text-sm">
       <span className="flex min-w-0 flex-col"><span>{t(...CHECKS[check.key])}</span>

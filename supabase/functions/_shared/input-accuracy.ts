@@ -1,9 +1,9 @@
 /** Home Assistant reports its input health beside its runtime; the cloud only validates and stores it. */
-export const INPUT_CHECKS = ['prices', 'solar_forecast', 'sensors', 'measurements'] as const;
+export const INPUT_CHECKS = ['prices', 'solar_forecast', 'sensors', 'measurements', 'battery'] as const;
 type InputGrade = 'green' | 'lime' | 'yellow' | 'orange' | 'red';
 export interface InputCheck {
   key: typeof INPUT_CHECKS[number]; percentage: number | null; grade: InputGrade | null; issues: string[];
-  /** Live checks: healthy readings over expected readings. */
+  /** Live checks: healthy readings over expected readings; battery: charge targets reached over measured. */
   healthy?: number; expected?: number;
   /** Prices: the cloud's latest comparison of estimates with published prices. */
   quarters?: number; calculated_at?: string | null;

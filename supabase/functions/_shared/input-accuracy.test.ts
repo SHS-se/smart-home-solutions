@@ -8,6 +8,9 @@ Deno.test('input accuracy is a bounded share per known check and anything else i
   assertEquals(validInputAccuracy(value), true);
   assertEquals(validInputAccuracy({...value, percentage: null, grade: null, checks: []}), true);
   assertEquals(validInputAccuracy({...value, checks: [{...prices, percentage: null, grade: null, quarters: 0, calculated_at: null}]}), true);
+  // Missed battery charge targets are reported here, not as a replan banner.
+  const battery = {key: 'battery', percentage: 50, grade: 'red', healthy: 1, expected: 2, issues: ['2026-10-18T22:00:00+00:00']};
+  assertEquals(validInputAccuracy({...value, checks: [prices, check, battery]}), true);
   for (const bad of [{...value, version: 2}, {...value, percentage: 101}, {...value, checks: [check, check]},
     {...value, checks: [{...check, key: 'forecast'}]}, {...value, checks: [{...check, healthy: 65}]}, {...value, checks: [{...prices, percentage: null}]}, {...value, checks: [{...check, expected: undefined}]},
     {...value, checks: [{...check, issues: Array(11).fill('sensor.x')}]}, {...value, observed_at: 'yesterday'}, null])
