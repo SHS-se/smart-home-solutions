@@ -40,7 +40,6 @@ import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time
 import { energyChartTicks } from '@/lib/energy-shift/energy-chart-axis';
 
 import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
-import { describeInstruction, type BatteryDemand } from '../../../../../supabase/functions/_shared/planner/battery-instruction';
 import { hotWaterStateLabel } from '@/lib/energy-shift/hot-water-gate';
 export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 
@@ -277,8 +276,6 @@ export interface EnergyChartProps {
    * Optional comparison stores, drawn as dashed lines.
    */
   storeLines?: EnergyStoreLines;
-  /** The plan's demand partition, naming who each battery instruction may supply. */
-  batteryDemand?: BatteryDemand;
   /** Rooms in control verification or controlling, each with its own line. */
   rooms?: readonly EnergyRoomLine[];
   /**
@@ -292,7 +289,7 @@ export interface EnergyChartProps {
 const EnergyChart: React.FC<EnergyChartProps> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines, timeZone, maxTimeLabels = 16, batteryDemand, rooms = NO_ROOMS, hidden = NONE_HIDDEN,
+  costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, hidden = NONE_HIDDEN,
 }) => {
   const { t } = useLanguage();
   const contextTimeZone = useHomeTimeZone();
@@ -1049,7 +1046,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           costLines={showCost ? costLines : undefined}
           storeLines={storeLines}
           rooms={rooms}
-          batteryDemand={batteryDemand}
           auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
           left={pointer.left}
           top={pointer.top}
@@ -1081,14 +1077,13 @@ const PlanTooltip: React.FC<{
   costLines?: readonly EnergyCostLine[];
   storeLines?: EnergyStoreLines;
   rooms: readonly EnergyRoomLine[];
-  batteryDemand?: BatteryDemand;
   auditDescriptions?: readonly string[];
   left: number;
   top: number;
   bounds: DOMRect | null;
 }> = ({
   row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
-  rooms, left, top, bounds, auditDescriptions, batteryDemand,
+  rooms, left, top, bounds, auditDescriptions,
 }) => {
   const { t } = useLanguage();
   const gap = row.missing ? timelineGapDescription(row.startMs, Date.now(), t) : null;
@@ -1149,11 +1144,6 @@ const PlanTooltip: React.FC<{
       {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
         <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
       ))}
-      {!measured && row.batteryInstruction && (
-        <p data-battery-instruction className="mt-1 text-muted-foreground">
-          {describeInstruction(row.batteryInstruction, batteryDemand, t)}
-        </p>
-      )}
       <div className="mt-1 border-t pt-1">
         <Reading
           name={t('Husets förbrukning', 'House demand')}

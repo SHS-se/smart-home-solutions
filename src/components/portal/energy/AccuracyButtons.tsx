@@ -71,9 +71,6 @@ function RoomTemperatures({accuracy, t}: {accuracy: NonNullable<AccuracyReport['
       <span className={`font-medium tabular-nums ${room.grade ? colours[room.grade] : 'text-muted-foreground'}`}>
         {value(room.percentage)}{room.percentage !== null ? '%' : ''}</span>
     </li>)}</ul>
-    <p className="text-xs text-muted-foreground">{t(
-      `Andel kvartar där planerad temperatur låg inom ${accuracy.tolerance_c} °C från avläsningen, för rum i kontrollverifiering eller styrning.`,
-      `Share of quarters the planned temperature was within ${accuracy.tolerance_c} °C of the reading, for rooms in control verification or controlling.`)}</p>
   </section>;
 }
 
@@ -123,19 +120,15 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
         {value(check.percentage)}{check.percentage !== null ? '%' : ''}</span>
     </li>)}</ul>
     <p className="text-xs text-muted-foreground" data-testid="input-accuracy-observed">
-      {t('Kontrollerad', 'Checked')} <time dateTime={input.observed_at}>{new Date(input.observed_at).toLocaleString(undefined, {timeZone})}</time>.{' '}
-      {t('Rubriksiffran är medelvärdet av kontrollerna. En ändrad kontroll skickas inom fem minuter.',
-        'The headline averages these checks. A changed check is sent within five minutes.')}
+      {t('Kontrollerad', 'Checked')} <time dateTime={input.observed_at}>{new Date(input.observed_at).toLocaleString(undefined, {timeZone})}</time>
     </p>
   </>;
 }
 
-/** When this report was calculated; the cloud recalculates on new data, in five-minute steps. */
+/** When this report was calculated. */
 function AccuracyFooter({report, stamp}: {report: AccuracyReport | null; stamp: string}) {
   const {t} = useLanguage();
   return <div className="space-y-0.5 text-xs text-muted-foreground" data-testid="accuracy-schedule">
     {report && <p>{t('Beräknad', 'Calculated')} <time dateTime={report.calculated_at}>{stamp}</time></p>}
-    <p>{t('Räknas om inom fem minuter efter en ny plan, mätning eller publicerat pris.',
-      'Recalculated within five minutes of a new plan, measurement or published price.')}</p>
   </div>;
 }

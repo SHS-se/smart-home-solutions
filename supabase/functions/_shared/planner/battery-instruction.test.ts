@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { batteryDemand, describeInstruction, instructionFor, nativeBattery, profileFor } from "./battery-instruction.ts";
+import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./battery-instruction.ts";
 
 const LIMITS = { import_w: 15000, discharge_max_w: 9600 };
 const MODELS = [
@@ -44,15 +44,4 @@ Deno.test("the demand lists every planned load and the battery never supplies th
     { id: profileFor(false), include_base: true, eligible_keys: ["sensor.pool_heater_energy"] },
   ]);
   assertEquals(batteryDemand(MODELS, [true]).profiles.length, 1);
-});
-
-Deno.test("the plan view describes the instruction and who it may supply", () => {
-  const demand = batteryDemand(MODELS, [false]);
-  const id = profileFor(false);
-  assertEquals(describeInstruction({ kind: "supply", profile_id: id, charge_ac_limit_w: 8800, discharge_ac_limit_w: 9600,
-    response: { mode: "import_target", import_target_w: 15000 } }, demand),
-    "Cover demand above 15.00 kW of grid import. May supply: home, Pool heater. Not: Car charging total, Water boiler.");
-  assertEquals(describeInstruction({ kind: "supply", profile_id: id, charge_ac_limit_w: 8800, discharge_ac_limit_w: 9600,
-    response: { mode: "fixed", discharge_ac_w: 864, import_target_w: 15000 } }, demand)
-    .startsWith("Supply 0.86 kW, more if needed to stay within 15.00 kW of grid import. May supply: home"), true);
 });

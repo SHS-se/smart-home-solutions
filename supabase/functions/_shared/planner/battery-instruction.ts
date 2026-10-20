@@ -2,7 +2,7 @@
  *
  * The native candidate the optimiser chose is the instruction; nothing is
  * reconstructed from forecast flows. HA applies the stated law to live
- * measurements, and the plan view describes the same object.
+ * measurements.
  */
 
 /** How household supply responds to live demand. */
@@ -99,37 +99,6 @@ export function nativeBattery(instruction: BatteryInstruction): NativeBattery {
         : r.mode === "import_target"
         ? { battery: "shave_import", charge_limit_w: instruction.charge_ac_limit_w, discharge_limit_w: instruction.discharge_ac_limit_w }
         : { battery: "supply_house", charge_limit_w: instruction.charge_ac_limit_w, discharge_limit_w: r.discharge_ac_w };
-    }
-  }
-}
-
-const kw = (watts: number) => `${(watts / 1000).toFixed(2)} kW`;
-type Translate = (sv: string, en: string) => string;
-
-/** One sentence for the plan view: the instruction, then who it may supply. */
-export function describeInstruction(instruction: BatteryInstruction, demand: BatteryDemand | undefined,
-  t: Translate = (_sv, en) => en): string {
-  const scope = (profileId: string) => {
-    const profile = demand?.profiles.find((p) => p.id === profileId);
-    if (!demand || !profile) return "";
-    const name = (key: string) => demand.loads.find((l) => l.key === key)?.name ?? key;
-    const may = [...(profile.include_base ? [t("hemmet", "home")] : []), ...profile.eligible_keys.map(name)];
-    const not = demand.loads.filter((l) => !profile.eligible_keys.includes(l.key)).map((l) => l.name);
-    return ` ${t("Får försörja", "May supply")}: ${may.join(", ")}.` + (not.length ? ` ${t("Inte", "Not")}: ${not.join(", ")}.` : "");
-  };
-  switch (instruction.kind) {
-    case "idle": return t("Batteriet vilar; överbliven sol går till nätet.", "Battery idle; spare solar goes to the grid.");
-    case "hold": return t("Behåll den lagrade energin; överbliven sol får ladda batteriet.", "Keep the stored energy; spare solar may charge the battery.");
-    case "solar_charge": return t("Lagra överbliven solenergi.", "Store spare solar energy.");
-    case "grid_charge": return t(`Ladda ${kw(instruction.charge_ac_w)} från nätet.`, `Charge ${kw(instruction.charge_ac_w)} from the grid.`);
-    case "export": return t(`Sälj ${kw(instruction.discharge_ac_w)} från batteriet.`, `Sell ${kw(instruction.discharge_ac_w)} from the battery.`) + scope(instruction.profile_id);
-    case "supply": {
-      const r = instruction.response;
-      const text = r.mode === "follow_demand" ? t("Täck hemmets förbrukning från batteriet.", "Cover the home's demand from the battery.")
-        : r.mode === "import_target" ? t(`Täck förbrukning över ${kw(r.import_target_w)} nätimport.`, `Cover demand above ${kw(r.import_target_w)} of grid import.`)
-        : t(`Leverera ${kw(r.discharge_ac_w)}`, `Supply ${kw(r.discharge_ac_w)}`) + (r.import_target_w === null ? "."
-          : t(`, mer vid behov för att hålla nätimporten inom ${kw(r.import_target_w)}.`, `, more if needed to stay within ${kw(r.import_target_w)} of grid import.`));
-      return text + scope(instruction.profile_id);
     }
   }
 }

@@ -1095,7 +1095,7 @@ test.describe('requesting a replan', () => {
     await expect(rooms).toContainText('Master bathroom');
     await expect(rooms).toContainText('82%');
     await expect(rooms).toContainText(/±0\.3 °C/);
-    await expect(popup.getByTestId('accuracy-schedule')).toContainText(/Recalculated within five minutes|Räknas om inom fem minuter/);
+    await expect(popup.getByTestId('accuracy-schedule')).toContainText(/Calculated|Beräknad/);
     await page.keyboard.press('Escape');
     await expect(forecast).toBeFocused();
     await forecast.click();
