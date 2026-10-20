@@ -80,14 +80,32 @@ Deno.test("the counts stay bigint and the rated power stays numeric", () => {
   assertStringIncludes(returnsTable, "uses_solar boolean");
 });
 
-Deno.test("the caller passes the sample threshold the fit will apply", () => {
-  // One rule, in one place: SQL chooses the sample set with the same minimum
-  // the TypeScript fit would have rejected it for missing.
+Deno.test("the training quarters cast every numeric column they return", () => {
+  // The fit now reads quarters rather than sums, through the same RETURN QUERY
+  // trap: every temperature, irradiance and energy column underneath is numeric.
+  const quarters = Deno.readTextFileSync(
+    "supabase/migrations/20261020120000_house_temperature_room_boundary.sql",
+  );
+  const body = quarters.slice(
+    quarters.indexOf("get_energy_thermal_training_quarters("),
+    quarters.indexOf("REVOKE ALL ON FUNCTION public.get_energy_thermal_training_quarters"),
+  );
+  for (
+    const column of [
+      "room.active_power_w::double precision",
+      "slot.room_temperature_c::double precision",
+      "outdoor.temperature_c::double precision",
+      "outdoor.solar_w_per_m2::double precision",
+      "house.temperature_c::double precision",
+      "(COALESCE(energy.energy_kwh, 0) * 4000.0)::double precision",
+    ]
+  ) assertStringIncludes(body, column);
   const ingest = Deno.readTextFileSync(
     "supabase/functions/energy-optimisation-ingest/index.ts",
   );
-  assertStringIncludes(ingest, "p_min_samples: MIN_TRAINING_SAMPLES");
-  assertStringIncludes(migration, "p_min_samples integer DEFAULT 480");
+  // Three weeks of quarters is more than one PostgREST page.
+  assertStringIncludes(ingest, '"get_energy_thermal_training_quarters"');
+  assertStringIncludes(ingest, "readPagedRows<ThermalQuarterRow>");
 });
 
 Deno.test("a failed refit is logged and stepped over, never thrown", () => {

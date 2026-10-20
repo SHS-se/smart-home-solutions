@@ -1,6 +1,9 @@
 import {
   backgroundRateForSlot,
   projectZoneTemperature,
+  type RoomState,
+  roomTransition,
+  stepRoom,
   type ThermalZoneModel,
 } from "./planner/thermal-model.ts";
 
@@ -96,7 +99,7 @@ export const comfortIntervals = (
   return intervals;
 };
 
-function localSlot(
+export function localSlot(
   start: string | Date,
   timezone: string,
 ): { day_type: ComfortDayType; quarter: number; month: number } {
@@ -186,6 +189,7 @@ export function buildComfortForecast(
   ratedPowerW: number,
   heatingLockout: boolean[],
   solarWPerM2?: (number | null)[] | null,
+  context: { house_c?: (number | null)[] | null; start_delivered_w?: number | null } = {},
 ): ComfortForecast {
   if (
     starts.length === 0 || starts.length !== outdoorTemperatureC.length ||
@@ -217,19 +221,21 @@ export function buildComfortForecast(
   const comfortMin = [...target];
   const comfortMax = target.map(() => schedule.high_temperature_c + 0.5);
 
+  const transitions = starts.map((_start, index) => roomTransition(model, {
+    hours: SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
+    background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2),
+  }));
+
   // Required temperature at the start of each quarter. Looking backwards
   // allows a high-mass floor to start recovery before the comfort period,
   // while never preheating above the configured comfort temperature.
   const required = [...target];
-  const alpha = 1 - model.cooling_constant_per_h * SLOT_HOURS;
-  if (!(alpha > 0)) throw new Error("thermal cooling constant is unstable");
   for (let index = required.length - 2; index >= 0; index -= 1) {
-    const maximumNextGain = SLOT_HOURS * (
-      model.gain_c_per_wh * ratedPowerW +
-      model.cooling_constant_per_h * outdoorTemperatureC[index] +
-      backgroundRateForSlot(model, index, solarWPerM2)
-    );
-    const neededNow = (required[index + 1] - maximumNextGain) / alpha;
+    const step = transitions[index];
+    if (!(step.decay > 0)) throw new Error("thermal cooling constant is unstable");
+    // The most a quarter can add is with the heater, and its delay, at full.
+    const maximumNextGain = step.offset_c + (step.delivered_gain_c_per_w + step.gain_c_per_w) * ratedPowerW;
+    const neededNow = (required[index + 1] - maximumNextGain) / step.decay;
     required[index] = Math.min(
       schedule.high_temperature_c,
       Math.max(target[index], neededNow),
@@ -237,22 +243,17 @@ export function buildComfortForecast(
   }
 
   const power: number[] = [];
-  let temperature = startTemperatureC;
+  let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
   for (let index = 0; index < starts.length; index += 1) {
+    const step = transitions[index];
     const desiredNext = required[Math.min(index + 1, required.length - 1)];
-    const passiveNext = temperature + SLOT_HOURS * (
-          model.cooling_constant_per_h *
-            (outdoorTemperatureC[index] - temperature) +
-          backgroundRateForSlot(model, index, solarWPerM2)
-        );
-    const desiredPower = (desiredNext - passiveNext) /
-      (SLOT_HOURS * model.gain_c_per_wh);
+    const passiveNext = stepRoom(step, state, 0).temperature_c;
+    const desiredPower = step.gain_c_per_w > 0 ? (desiredNext - passiveNext) / step.gain_c_per_w : ratedPowerW;
     const watts = heatingLockout[index]
       ? 0
       : Math.max(0, Math.min(ratedPowerW, desiredPower));
     power.push(Math.round(watts * 100) / 100);
-    temperature = passiveNext +
-      SLOT_HOURS * model.gain_c_per_wh * watts;
+    state = stepRoom(step, state, watts);
   }
 
   return {
@@ -267,6 +268,8 @@ export function buildComfortForecast(
       outdoorTemperatureC,
       power,
       solarWPerM2,
+      undefined,
+      context,
     ),
   };
 }

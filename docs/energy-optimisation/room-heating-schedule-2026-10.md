@@ -58,6 +58,19 @@ piecewise-linear objective (grid points, end of surplus, the objective, the
 power limit), so planned temperatures are exact model transitions. A 48-hour
 room takes about 15 ms.
 
+## Delayed rooms
+
+A room whose fitted model has a heat delay (see [models](models-and-forecasts.md#house-boundary-and-heat-delay-20-october-2026))
+is planned over two states, temperature and the heat already on its way, on a
+0.1 °C × 7-point grid; its forward pass is exact physics from the measured
+temperature and the delivered heat built up by the last day's metered power. Heat
+put into a floor now warms the room for hours, so the ceiling cannot cap this
+quarter's power: a delayed room pays 1,000 SEK per °C planned above
+`comfort_max_c`, below a comfort shortfall and above any price, and so never
+parks heat in the floor that later overshoots. A house-coupled room with no house
+forecast is not run on a guess; it falls back to measured demand with a warning.
+On the 19 October replay the delayed bathroom's room planning took 56 ms locally.
+
 ## Commands
 
 A relay is on or off for the quarter as planned. A thermostat takes

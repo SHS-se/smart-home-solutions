@@ -5,6 +5,7 @@
 // only when a plan is generated and the stored model has aged past
 // REFIT_INTERVAL_HOURS, so a home refits about once a day.
 
+import { fitRoom, type RoomTrainingQuarter } from "./planner/room-model-fit.ts";
 import {
   fitThermalZoneFromMoments,
   projectZoneTemperature,
@@ -54,6 +55,8 @@ export function readThermalModel(row: Record<string, unknown> | undefined): Ther
     time_constant_h: number("time_constant_h"), heating_rate_c_per_h: optional("heating_rate_c_per_h"),
     solar_gain_c_per_h_per_wm2: optional("solar_gain_c_per_h_per_wm2"), solar_mean_w_per_m2: optional("solar_mean_w_per_m2"),
     r2: number("r2"), sample_count: number("sample_count"), residual_std_c: number("residual_std_c"),
+    heat_lag_h: optional("heat_lag_h"), house_coupling_per_h: optional("house_coupling_per_h"),
+    prediction_error_c: optional("prediction_error_c"),
   };
   return Object.values(model).every(v => v === null || Number.isFinite(v)) && model.gain_c_per_wh > 0
     && model.cooling_constant_per_h >= 0 ? model : null;
@@ -78,6 +81,41 @@ export const fitZones = (rows: ThermalMomentRow[]): ZoneFit[] =>
     room_name: row.room_name,
     result: fitThermalZoneFromMoments(row, row.active_power_w),
   }));
+
+/** One row of `get_energy_thermal_training_quarters`. */
+export interface ThermalQuarterRow {
+  room_key: string;
+  room_name: string;
+  active_power_w: number | null;
+  start_ts: string;
+  room_temperature_c: number | null;
+  cooling: boolean;
+  outdoor_temperature_c: number | null;
+  solar_w_per_m2: number | null;
+  house_temperature_c: number | null;
+  heat_w: number | null;
+}
+
+const reading = (value: unknown): number | null =>
+  value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
+
+/** Fit every room from its quarters: the house shape where it predicts better. */
+export function fitRoomsFromQuarters(rows: ThermalQuarterRow[]): ZoneFit[] {
+  const rooms = new Map<string, { name: string; power: number | null; quarters: RoomTrainingQuarter[] }>();
+  for (const row of rows) {
+    const start = Date.parse(row.start_ts);
+    if (!Number.isFinite(start)) continue;
+    const room = rooms.get(row.room_key) ??
+      { name: row.room_name, power: reading(row.active_power_w), quarters: [] };
+    room.quarters.push({ start_ms: start, room_c: reading(row.room_temperature_c),
+      outdoor_c: reading(row.outdoor_temperature_c), house_c: reading(row.house_temperature_c),
+      solar_w_per_m2: reading(row.solar_w_per_m2), heat_w: Math.max(0, reading(row.heat_w) ?? 0),
+      cooling: row.cooling === true });
+    rooms.set(row.room_key, room);
+  }
+  return [...rooms].map(([key, room]) => ({ room_key: key, room_name: room.name,
+    result: fitRoom(room.quarters, room.power) }));
+}
 
 /** Rows ready for `energy_optimisation_zone_models`. */
 export const zoneModelRows = (
@@ -115,6 +153,9 @@ export const zoneModelRows = (
         solar_mean_w_per_m2: null,
         r2: null,
         residual_std_c: null,
+        heat_lag_h: null,
+        house_coupling_per_h: null,
+        prediction_error_c: null,
       };
     }
     return {
@@ -144,6 +185,9 @@ export const zoneModelRows = (
       solar_mean_w_per_m2: result.model.solar_mean_w_per_m2 ?? null,
       r2: result.model.r2,
       residual_std_c: result.model.residual_std_c,
+      heat_lag_h: result.model.heat_lag_h ?? null,
+      house_coupling_per_h: result.model.house_coupling_per_h ?? null,
+      prediction_error_c: result.model.prediction_error_c ?? null,
     };
   });
 
@@ -173,6 +217,8 @@ export interface ProjectionZoneInput {
   model: ThermalZoneModel;
   /** Latest observed room temperature, the trajectory's starting point. */
   start_temperature_c: number;
+  /** Heater heat already on its way through the room's delay, W. */
+  start_delivered_w?: number | null;
   rated_power_w: number;
   /** Slot-aligned comfort series from the portal-owned weekly routine. */
   comfort_min_c: number[];
@@ -224,6 +270,7 @@ export function buildThermalProjection(
   outdoorTemperatureC: (number | null)[],
   zones: ProjectionZoneInput[],
   solarWPerM2?: (number | null)[] | null,
+  houseC?: (number | null)[] | null,
 ): ThermalProjectionOutput | null {
   if (starts.length === 0 || zones.length === 0) return null;
   // A zone cannot be rolled forward through quarters with no outdoor
@@ -275,6 +322,8 @@ export function buildThermalProjection(
         outdoor,
         planned,
         solar,
+        undefined,
+        { house_c: houseC?.slice(0, length), start_delivered_w: zone.start_delivered_w },
       ),
       unplanned_temperature_c: projectZoneTemperature(
         zone.model,
@@ -282,6 +331,8 @@ export function buildThermalProjection(
         outdoor,
         unplanned,
         solar,
+        undefined,
+        { house_c: houseC?.slice(0, length), start_delivered_w: zone.start_delivered_w },
       ),
       planned_power_w: planned,
       unplanned_power_w: unplanned,

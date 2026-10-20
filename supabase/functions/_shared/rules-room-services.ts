@@ -1,6 +1,6 @@
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
-import { backgroundRateForSlot } from "./planner/thermal-model.ts";
+import { backgroundRateForSlot, roomTransition, type RoomState, stepRoom, usesHouse } from "./planner/thermal-model.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 
@@ -44,29 +44,31 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
     }
     const outdoorKnown = snapshot.outdoor_temperature_c?.length === n &&
       snapshot.outdoor_temperature_c.every(v => typeof v === "number" && Number.isFinite(v));
+    // A room coupled to the house cannot be run forward without it.
+    const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
+      snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     if (relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
-      outdoorKnown && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
+      outdoorKnown && houseKnown && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
       continue;
     }
     let estimated = !zone.model || temperature === null;
+    let delivered = zone.start_delivered_w ?? 0, unplannedDelivered = delivered;
     for (let i = 0; i < n; i++) {
       const target = zone.target_c[i], minimum = zone.comfort_min_c[i], maximum = zone.comfort_max_c[i];
       const outdoor = snapshot.outdoor_temperature_c?.[i];
       const model = zone.model;
       const hours = Math.min(.25, Math.max(0, (Date.parse(snapshot.slots[i].start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
       const modelled = model && temperature !== null && typeof outdoor === "number" && Number.isFinite(outdoor)
-        && model.gain_c_per_wh > 0 && model.cooling_constant_per_h >= 0;
-      // Exact constant-input first-order transition, stable at any decay rate.
-      const decay = modelled ? Math.exp(-model.cooling_constant_per_h * hours) : 1;
-      const effect = modelled ? (model.cooling_constant_per_h > 0
-        ? -Math.expm1(-model.cooling_constant_per_h * hours) / model.cooling_constant_per_h : hours) : 0;
-      const passive = modelled ? temperature! * decay +
-        (model.cooling_constant_per_h * outdoor! + backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2)) * effect : null;
+        && houseKnown && model.gain_c_per_wh > 0 && model.cooling_constant_per_h >= 0;
+      // Exact constant-input transition, stable at any decay rate.
+      const step = modelled ? roomTransition(model, { hours, outdoor_c: outdoor!, house_c: snapshot.house_temperature_c?.[i],
+        background_c_per_h: backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2) }) : null;
+      const passive = step ? stepRoom(step, { temperature_c: temperature!, delivered_w: delivered }, 0).temperature_c : null;
       const budget=Math.max(0,Math.min(zone.maximum_power_w_by_slot[i],remaining[i]));
-      const preferred = passive !== null && model ? Math.max(0, (target - passive) / (model.gain_c_per_wh * effect))
-        : zone.unplanned_power_w[i];
+      const preferred = passive !== null && step && step.gain_c_per_w > 0 ? Math.max(0, (target - passive) / step.gain_c_per_w)
+        : passive !== null ? (target > passive ? Infinity : 0) : zone.unplanned_power_w[i];
       estimated ||= !modelled;
       const rating = (key: string) => {
         const m = members.find(m => m.key === key)!;
@@ -103,13 +105,15 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
         result.power[m.key].push(power);
         total += power;
       }
-      if(modelled && model && unplannedTemperature!==null) unplannedTemperature=unplannedTemperature*decay+
-        (model.cooling_constant_per_h*outdoor!+backgroundRateForSlot(model,i,snapshot.solar_irradiance_w_per_m2)+
-          model.gain_c_per_wh*zone.unplanned_power_w[i])*effect;
-      else unplannedTemperature=null;
+      if (step && unplannedTemperature !== null) {
+        const next: RoomState = stepRoom(step, { temperature_c: unplannedTemperature, delivered_w: unplannedDelivered }, zone.unplanned_power_w[i]);
+        unplannedTemperature = next.temperature_c; unplannedDelivered = next.delivered_w;
+      } else unplannedTemperature = null;
       result.unplanned_temperature[zone.key].push(unplannedTemperature);
-      if (passive !== null && model) temperature = passive + model.gain_c_per_wh * total * effect;
-      else temperature = null;
+      if (step && temperature !== null) {
+        const next = stepRoom(step, { temperature_c: temperature, delivered_w: delivered }, total);
+        temperature = next.temperature_c; delivered = next.delivered_w;
+      } else temperature = null;
       if (temperature !== null && (temperature < minimum || temperature > maximum)) comfortMisses++;
       remaining[i]=Math.max(0,remaining[i]-total);
       surplus[i]=Math.max(0,surplus[i]-total);
@@ -148,17 +152,15 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: M
   const continuous = thermostats.reduce((sum, m) => sum + rating(m), 0);
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
-    const decay = Math.exp(-model.cooling_constant_per_h * hours);
-    const effect = model.cooling_constant_per_h > 0 ? -Math.expm1(-model.cooling_constant_per_h * hours) / model.cooling_constant_per_h : hours;
+    const step = roomTransition(model, { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!,
+      house_c: snapshot.house_temperature_c?.[i], background_c_per_h: backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2) });
     const loads = thermostats.map(m => retained[i]?.device_loads_w?.[m.key]);
     const locked = relays.map(m => {
       const command = retained[i]?.device_commands?.[m.key];
       return command?.type === "switch_schedule" ? command.on_seconds > 0 : null;
     });
-    return { hours, decay,
-      offset_c: (model.cooling_constant_per_h * snapshot.outdoor_temperature_c![i]! +
-        backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2)) * effect,
-      gain_c_per_w: model.gain_c_per_wh * effect,
+    return { hours, decay: step.decay, offset_c: step.offset_c, gain_c_per_w: step.gain_c_per_w,
+      delivered_gain_c_per_w: step.delivered_gain_c_per_w, carry: step.carry,
       // A Comfort quarter is a deadline at its start, so the quarter before it
       // must end at the next objective as well as its own.
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
@@ -174,9 +176,9 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: M
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1,
       surplus_w: surplus[i] };
   });
-  const plan = planRoomHeating(zone.start_temperature_c!, quarters);
+  const plan = planRoomHeating(zone.start_temperature_c!, quarters, zone.start_delivered_w ?? 0);
   let misses = 0;
-  let unplanned: number | null = zone.start_temperature_c;
+  let unplanned: RoomState = { temperature_c: zone.start_temperature_c!, delivered_w: zone.start_delivered_w ?? 0 };
   for (let i = 0; i < n; i++) {
     const q = quarters[i], total = plan.power_w[i], next = plan.temperature_c[i];
     const minimum = zone.comfort_min_c[i], maximum = zone.comfort_max_c[i];
@@ -194,8 +196,9 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: M
         target_c: Math.min(maximum, Math.max(minimum, Math.round(next * 100) / 100)), minimum_c: minimum, maximum_c: maximum });
       result.power[m.key].push(retained[i]?.device_loads_w?.[m.key] ?? (continuous ? (total - relayW) * rating(m) / continuous : 0));
     }
-    unplanned = unplanned! * q.decay + q.offset_c + q.gain_c_per_w * zone.unplanned_power_w[i];
-    result.unplanned_temperature[zone.key].push(unplanned);
+    unplanned = stepRoom({ decay: q.decay, offset_c: q.offset_c, gain_c_per_w: q.gain_c_per_w,
+      delivered_gain_c_per_w: q.delivered_gain_c_per_w ?? 0, carry: q.carry ?? 0 }, unplanned, zone.unplanned_power_w[i]);
+    result.unplanned_temperature[zone.key].push(unplanned.temperature_c);
     result.room_power[zone.key].push(total);
     result.temperature[zone.key].push(next);
     if (plan.shortfall_c[i] > 1e-6 || next > maximum + 1e-6) misses++;

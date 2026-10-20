@@ -29,8 +29,12 @@ const zone = z.object({
     r2: finite,
     sample_count: finite,
     residual_std_c: finite,
+    heat_lag_h: finite.nullable().optional(),
+    house_coupling_per_h: finite.nullable().optional(),
+    prediction_error_c: finite.nullable().optional(),
   }).nullable(),
   start_temperature_c: finite.nullable(),
+  start_delivered_w: finite.nullable().optional(),
   rated_power_w: finite,
   comfort_min_c: finite.array(),
   target_c: finite.array(),
@@ -56,6 +60,7 @@ const forecastSchema = z.object({
   }),
   outdoor_temperature_c: finite.nullable().array().nullable(),
   solar_irradiance_w_per_m2: finite.nullable().array().nullable(),
+  house_temperature_c: finite.nullable().array().nullable().optional(),
   thermal_zones: zone.array(),
 });
 export type PreparedEnergyForecast = z.infer<typeof forecastSchema>;
@@ -123,6 +128,7 @@ function parseForecast(raw: unknown): PreparedEnergyForecast {
   coverage(forecast.published_import_sek_per_kwh, "published price inputs");
   coverage(forecast.outdoor_temperature_c, "outdoor temperature");
   coverage(forecast.solar_irradiance_w_per_m2, "irradiance");
+  coverage(forecast.house_temperature_c ?? null, "house temperature");
   for (const zone of forecast.thermal_zones) {
     for (const field of ZONE_SERIES) {
       coverage(zone[field], `zone ${zone.key}.${field}`);
@@ -147,6 +153,7 @@ export async function storePreparedForecasts(
     outdoor_temperature_c: preparedSnapshot.outdoor_temperature_c ?? null,
     solar_irradiance_w_per_m2: preparedSnapshot.solar_irradiance_w_per_m2 ??
       null,
+    house_temperature_c: preparedSnapshot.house_temperature_c ?? null,
     thermal_zones: preparedSnapshot.thermal_zones ?? [],
   });
   const { error } = await db.from(PREPARED_FORECAST_TABLE).upsert({
@@ -199,6 +206,7 @@ export async function readOrPrepareForecasts(
       // or the website's resolved comfort, wear, grid and operating choices.
       outdoor_temperature_c: fresh.snapshot.outdoor_temperature_c,
       solar_irradiance_w_per_m2: fresh.snapshot.solar_irradiance_w_per_m2,
+      house_temperature_c: fresh.snapshot.house_temperature_c ?? null,
       thermal_zones: fresh.snapshot.thermal_zones,
       sources: {...snapshot.sources, outdoor_temperature: fresh.snapshot.sources.outdoor_temperature},
       planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, fresh.snapshot.planning_warnings),
@@ -291,6 +299,7 @@ export async function readPreparedForecasts(
       solar_irradiance_w_per_m2: forecast.solar_irradiance_w_per_m2 === null
         ? null
         : align(forecast.solar_irradiance_w_per_m2),
+      house_temperature_c: forecast.house_temperature_c ? align(forecast.house_temperature_c) : null,
       thermal_zones: forecast.thermal_zones.map((zone) => ({
         ...zone,
         comfort_min_c: align(zone.comfort_min_c),

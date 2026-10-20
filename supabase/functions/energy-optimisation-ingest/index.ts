@@ -45,10 +45,10 @@ import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
 import {
-  fitZones,
+  fitRoomsFromQuarters,
   type ProjectionZoneInput,
   REFIT_INTERVAL_HOURS,
-  type ThermalMomentRow,
+  type ThermalQuarterRow,
   type ZoneFitAttempt,
   zoneRefitIsDue,
   TRAINING_WINDOW_DAYS,
@@ -56,7 +56,8 @@ import {
   storeZoneModelRows,
   readThermalModel,
 } from "../_shared/thermal-training.ts";
-import { MIN_TRAINING_SAMPLES } from "../_shared/planner/thermal-model.ts";
+import { deliveredHeat, usesHouse } from "../_shared/planner/thermal-model.ts";
+import { houseTemperatureForecast, type HouseProfileRow } from "../_shared/house-temperature.ts";
 import {
   resolveValueSettings,
 } from "../_shared/planner/value-curves.ts";
@@ -118,6 +119,11 @@ const MAX_PRICE_SEK_PER_KWH = 100;
 const PRICE_SHAPE_WINDOW_DAYS = 60;
 const MAX_REQUEST_BYTES = 2_000_000;
 const SLOT_MS = 15 * 60_000;
+/**
+ * Heater history read for a room's delayed heat. Five hours is the longest
+ * delay the fit chooses, and a day leaves under a hundredth of its oldest heat.
+ */
+const RECENT_HEAT_HOURS = 24;
 // Physically possible room and outdoor extremes. These reject a sensor
 // reporting in Fahrenheit or a unit-less counter, not merely odd weather.
 const MIN_ROOM_C = -50;
@@ -135,6 +141,8 @@ interface IncomingZoneObservation {
 interface IncomingThermalSlot {
   start: string;
   outdoor_temperature_c?: number | null;
+  /** The house every room sits in: the app's median of indoor area medians. */
+  house_temperature_c?: number | null;
   zone_observations: Record<string, IncomingZoneObservation>;
   quality?: Record<string, unknown>;
 }
@@ -683,24 +691,21 @@ async function prepareThermalPlanning(
       trainingFrom,
       trainingTo,
     );
-    const { data: moments, error } = await supabase.rpc(
-      "get_energy_thermal_training_moments",
-      {
-        p_customer_id: customerId,
-        p_home_id: homeId,
-        p_from: trainingFrom,
-        p_to: trainingTo,
-        p_min_samples: MIN_TRAINING_SAMPLES,
-      },
-    );
     // A refit is maintenance, not a precondition. Whatever goes wrong while
     // re-learning a zone, the home still has the models it had a moment ago
     // and is still owed a plan — so this is logged and stepped over rather
     // than thrown, which would reject the snapshot and stop the house.
-    if (error) {
+    let quarters: ThermalQuarterRow[] | null = null;
+    try {
+      quarters = await readPagedRows<ThermalQuarterRow>((from, to) => supabase.rpc(
+        "get_energy_thermal_training_quarters",
+        { p_customer_id: customerId, p_home_id: homeId, p_from: trainingFrom, p_to: trainingTo },
+      ).range(from, to));
+    } catch (error) {
       console.error("[ENERGY-OPTIMISATION] zone refit skipped", error);
-    } else {
-      const fits = fitZones((moments ?? []) as ThermalMomentRow[]);
+    }
+    if (quarters) {
+      const fits = fitRoomsFromQuarters(quarters);
       if (fits.length > 0) {
         try {
           await storeZoneModelRows(supabase, zoneModelRows(fits, {
@@ -713,11 +718,11 @@ async function prepareThermalPlanning(
     }
   }
 
-  const [trainedResult, latestResult, scheduleResult] = await Promise.all([
+  const [trainedResult, latestResult, scheduleResult, houseResult, recentResult] = await Promise.all([
     supabase
       .from("energy_optimisation_zone_models")
       .select(
-        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, solar_gain_c_per_h_per_wm2, solar_mean_w_per_m2, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count, last_fit_attempt",
+        "room_key, room_name, gain_c_per_wh, cooling_constant_per_h, background_gain_c_per_h, solar_gain_c_per_h_per_wm2, solar_mean_w_per_m2, thermal_capacity_wh_per_c, heat_loss_w_per_c, time_constant_h, heating_rate_c_per_h, r2, residual_std_c, sample_count, heat_lag_h, house_coupling_per_h, prediction_error_c, last_fit_attempt",
       )
       .eq("home_id", homeId)
       .eq("trained", true),
@@ -733,8 +738,17 @@ async function prepareThermalPlanning(
         "room_key, room_name, weekday_modes, weekend_modes, off_temperature_c, low_temperature_c, high_temperature_c",
       )
       .eq("home_id", homeId),
+    supabase.rpc("get_energy_house_temperature_profile", {
+      p_customer_id: customerId, p_home_id: homeId, p_timezone: snapshot.timezone,
+      p_to: new Date(now).toISOString(),
+    }),
+    // A delayed room starts with the heat its last hours already put on the way.
+    supabase.rpc("get_energy_thermal_training_quarters", {
+      p_customer_id: customerId, p_home_id: homeId,
+      p_from: new Date(now - RECENT_HEAT_HOURS * 3_600_000).toISOString(), p_to: new Date(now).toISOString(),
+    }),
   ]);
-  for (const result of [trainedResult, latestResult, scheduleResult]) {
+  for (const result of [trainedResult, latestResult, scheduleResult, houseResult, recentResult]) {
     if (result.error) {
       console.error("[ENERGY-OPTIMISATION] room evidence unavailable", result.error);
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
@@ -764,6 +778,17 @@ async function prepareThermalPlanning(
     ),
   );
   const forecasts = new Map<string, number[]>();
+  const house = houseResult.error ? null
+    : houseTemperatureForecast(starts, snapshot.timezone, (houseResult.data ?? []) as HouseProfileRow[]);
+  if (house) snapshot = { ...snapshot, house_temperature_c: house };
+  const recentHeat = new Map<string, Map<number, number>>();
+  for (const row of (recentResult.data ?? []) as ThermalQuarterRow[]) {
+    const byStart = recentHeat.get(row.room_key) ?? new Map<number, number>();
+    byStart.set(Date.parse(row.start_ts), Number(row.heat_w ?? 0));
+    recentHeat.set(row.room_key, byStart);
+  }
+  const recentQuarters = Array.from({ length: RECENT_HEAT_HOURS * 4 }, (_v, i) =>
+    Math.floor(now / SLOT_MS) * SLOT_MS - (RECENT_HEAT_HOURS * 4 - i) * SLOT_MS);
 
   const zones: ProjectionZoneInput[] = [];
   const planningZones: NonNullable<OptimisationSnapshot["thermal_zones"]> = [];
@@ -792,7 +817,13 @@ async function prepareThermalPlanning(
     const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
     const startTemperature = observation && Number.isFinite(Number(observation.room_temperature_c))
       ? Number(observation.room_temperature_c) : null;
-    const model = readThermalModel(fitted);
+    let model = readThermalModel(fitted);
+    if (model && usesHouse(model) && !house) {
+      skipped.push({ key: room.key, message: `${room.name}: house temperature unavailable; comfort commands use measured demand` });
+      model = null;
+    }
+    const startDelivered = model ? deliveredHeat(model,
+      recentQuarters.map(start => recentHeat.get(room.key)?.get(start) ?? 0)) : null;
     const targets = comfortModesForStarts(starts, snapshot.timezone, schedule).map(mode => temperatureForMode(schedule, mode));
     const historical = starts.map((_start, i) => room.models.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
     let forecast = { comfort_min_c: targets, target_c: targets,
@@ -801,7 +832,7 @@ async function prepareThermalPlanning(
     if (model && startTemperature !== null && outdoor && ratedPowerW > 0) {
       try {
         forecast = buildComfortForecast(starts, snapshot.timezone, schedule, model, startTemperature,
-          outdoor, ratedPowerW, summerLockout, solar);
+          outdoor, ratedPowerW, summerLockout, solar, { house_c: house, start_delivered_w: startDelivered });
       } catch (error) {
         usableModel = null;
         skipped.push({ key: room.key, message: `${room.name}: thermal estimate unavailable (${describeThrown(error)}); using measured demand` });
@@ -821,11 +852,13 @@ async function prepareThermalPlanning(
     }
     if (usableModel && startTemperature !== null) zones.push({
       key: room.key, name: room.name, model: usableModel, start_temperature_c: startTemperature,
+      start_delivered_w: startDelivered,
       rated_power_w: ratedPowerW, comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c,
       comfort_max_c: forecast.comfort_max_c, planned_power_w: forecast.power_w, unplanned_power_w: forecast.power_w,
     });
     planningZones.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
-      model: usableModel, start_temperature_c: startTemperature, rated_power_w: ratedPowerW,
+      model: usableModel, start_temperature_c: startTemperature, start_delivered_w: usableModel ? startDelivered : null,
+      rated_power_w: ratedPowerW,
       comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c, comfort_max_c: forecast.comfort_max_c,
       maximum_power_w_by_slot: summerLockout.map(locked => locked ? 0 : Math.max(ratedPowerW, ...historical)),
       unplanned_power_w: forecast.power_w });
@@ -900,7 +933,8 @@ async function refreshPreparedForecasts(
   const preparedSnapshot={ ...product,
     planning_warnings: mergePlanningWarnings(source.planning_warnings,product.planning_warnings, thermal.snapshot.planning_warnings),
     thermal_zones: thermal.snapshot.thermal_zones,
-    solar_irradiance_w_per_m2: thermal.snapshot.solar_irradiance_w_per_m2 };
+    solar_irradiance_w_per_m2: thermal.snapshot.solar_irradiance_w_per_m2,
+    house_temperature_c: thermal.snapshot.house_temperature_c ?? null };
   const priceOutlook={shaped:outlook.shaped,observed_days:outlook.observedDays,effective_days:outlook.effectiveDays,
     level_sek_per_kwh:outlook.levelSekPerKwh,shadow_import_sek_per_kwh:outlook.shadowImportSekPerKwh.slice(0,product.slots.length),
     ...(outlook.levelBasis?{level_basis:outlook.levelBasis}:{})};
@@ -1355,6 +1389,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     // electrically may only now become describable thermally.
     const thermalRows: Record<string, unknown>[] = [];
     const outdoorRows: Record<string, unknown>[] = [];
+    const houseRows: Record<string, unknown>[] = [];
     const thermalStarts = new Set<number>();
     const temperature = (value: unknown): number | null => {
       if (value === undefined || value === null) return null;
@@ -1394,6 +1429,20 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         });
       }
 
+      const house = temperature(thermal.house_temperature_c);
+      if (Number.isNaN(house)) {
+        ignoreUpload("invalid_house_temperature"); continue;
+      }
+      if (house !== null) {
+        houseRows.push({
+          customer_id: auth.customerId,
+          home_id: auth.homeId,
+          start_ts: new Date(start).toISOString(),
+          temperature_c: house,
+          device_token_id: auth.tokenId,
+        });
+      }
+
       const observations = thermal.zone_observations;
       if (
         !observations || typeof observations !== "object" ||
@@ -1401,11 +1450,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       ) {
         ignoreUpload("invalid_zone_observations"); continue;
       }
-      // Outdoor temperature belongs to the home, not to a zone, and the pool's
-      // fit is a consumer of it that needs no zone at all. A quarter carrying
-      // only the outdoor reading is therefore a complete observation rather
-      // than a malformed one; a quarter carrying neither is still rejected.
-      if (Object.keys(observations).length === 0 && outdoor === null) {
+      // Outdoor and house temperatures belong to the home, not to a zone, and
+      // the pool's fit needs no zone at all. A quarter carrying only a home
+      // reading is therefore a complete observation rather than a malformed
+      // one; a quarter carrying none is still rejected.
+      if (Object.keys(observations).length === 0 && outdoor === null && house === null) {
         ignoreUpload("invalid_zone_observations"); continue;
       }
       for (const [roomKey, observation] of Object.entries(observations)) {
@@ -1493,6 +1542,14 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         console.error("[ENERGY-OPTIMISATION] outdoor upsert failed", error);
         return json({ error: "storage_failed" }, 500);
       }
+    }
+    if (houseRows.length > 0) {
+      // A room without its house boundary still fits on outdoor air, so a lost
+      // house reading never costs the push that carried the room's own data.
+      const { error } = await supabase
+        .from("energy_optimisation_house_slots")
+        .upsert(houseRows, { onConflict: "home_id,start_ts" });
+      if (error) console.error("[ENERGY-OPTIMISATION] house temperature upsert failed", error);
     }
     if (thermalRows.length > 0) {
       const { error } = await supabase

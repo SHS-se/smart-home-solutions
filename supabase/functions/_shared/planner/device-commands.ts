@@ -35,6 +35,9 @@ export function deviceCommands(snapshot: OptimisationSnapshot, dispatch: {
           (snapshot.outdoor_temperature_c as number[]).at(-1)!,
         ],
         dispatch.roomHeating[zone.key],
+        snapshot.solar_irradiance_w_per_m2,
+        undefined,
+        { house_c: snapshot.house_temperature_c, start_delivered_w: zone.start_delivered_w },
       );
       const i = Math.min(dispatch.index + 1, zone.target_c.length - 1);
       command = {

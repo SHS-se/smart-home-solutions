@@ -183,3 +183,52 @@ Deno.test("the household planner plans the towel rack with the floor", () => {
   assert(before.type === "setpoint" && before.target_c >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
+
+/** The bathroom fitted against its house, with its floor's heat arriving through a delay. */
+function delayedBathroom(lag: number, prices?: number[]): OptimisationSnapshot {
+  const s = bathroom(prices);
+  s.thermal_zones![0].model = { ...s.thermal_zones![0].model!, cooling_constant_per_h: 0, background_gain_c_per_h: -0.5,
+    house_coupling_per_h: 0.1, heat_lag_h: lag };
+  s.house_temperature_c = s.slots.map(() => 21);
+  // Heat reaches a delayed room late, so one exactly at Setback with a cold
+  // floor dips below it before anything can arrive.
+  s.thermal_zones![0].start_temperature_c = SETBACK + .3;
+  return s;
+}
+/** Where the recovery starts: more than holding Setback against the house. */
+const firstHeat = (power: number[]) => power.findIndex(w => w > 1000);
+
+Deno.test("a delayed floor starts its recovery earlier and still makes the deadline", () => {
+  const immediate = prepareRoomServices(delayedBathroom(0), [], undefined, prices(Array(32).fill(1)));
+  const delayed = prepareRoomServices(delayedBathroom(2), [], undefined, prices(Array(32).fill(1)));
+  const temperature = delayed.temperature.bathroom as number[];
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6, `reached ${temperature[COMFORT_FROM - 1]}`);
+  assert(firstHeat(delayed.room_power.bathroom) < firstHeat(immediate.room_power.bathroom),
+    "heat that arrives late has to start early");
+  assertEquals(delayed.warnings.filter(w => w.code === "comfort_shortfall"), []);
+});
+
+Deno.test("cheap hours never park heat in the floor above the ceiling", () => {
+  const cheapFirst = Array.from({ length: 32 }, (_v, i) => i < 16 ? .05 : 5);
+  const rooms = prepareRoomServices(delayedBathroom(2), [], undefined, prices(cheapFirst));
+  const temperature = rooms.temperature.bathroom as number[];
+  assert(temperature.every(t => t <= COMFORT + .5 + .05), `peak ${Math.max(...temperature)}`);
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6);
+});
+
+Deno.test("heat already in the floor at the start is counted", () => {
+  const s = delayedBathroom(2);
+  const cold = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1))).temperature.bathroom as number[];
+  s.thermal_zones![0].start_delivered_w = 2000;
+  const warm = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1))).temperature.bathroom as number[];
+  assert(warm[3] > cold[3] + .1, "a floor that was just heated keeps warming the room");
+});
+
+Deno.test("a house-coupled room without the house forecast is not run on a guess", () => {
+  const s = delayedBathroom(2);
+  delete s.house_temperature_c;
+  const rooms = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1)));
+  assert(rooms.temperature.bathroom.every(t => t === null));
+  assert(rooms.warnings.some(w => w.code === "room_estimate"));
+  assertEquals(rooms.commands.floor.length, s.slots.length);
+});

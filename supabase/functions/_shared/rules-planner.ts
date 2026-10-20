@@ -32,7 +32,7 @@ import type { BatteryCommand } from "./planner/battery-command.ts";
 import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v17:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v18:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -88,6 +88,7 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
     slots: original.slots.slice(offset),
     outdoor_temperature_c: original.outdoor_temperature_c?.slice(offset),
     solar_irradiance_w_per_m2: original.solar_irradiance_w_per_m2?.slice(offset),
+    house_temperature_c: original.house_temperature_c?.slice(offset),
     thermal_zones: original.thermal_zones?.map(z => ({ ...z,
       comfort_min_c: series(z.comfort_min_c), target_c: series(z.target_c), comfort_max_c: series(z.comfort_max_c),
       maximum_power_w_by_slot: series(z.maximum_power_w_by_slot), unplanned_power_w: series(z.unplanned_power_w) })),

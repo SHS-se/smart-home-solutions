@@ -246,6 +246,8 @@ export interface ThermalZonePlanningInput {
   device_keys: string[];
   model: ThermalZoneModel | null;
   start_temperature_c: number | null;
+  /** Heater heat still on its way through the room's delay at the start, W. */
+  start_delivered_w?: number | null;
   rated_power_w: number;
   comfort_min_c: number[];
   target_c: number[];
@@ -430,6 +432,8 @@ export interface OptimisationSnapshot {
    * solar term falls back to the mean sun it was fitted on, so its absence
    * costs accuracy rather than shortening the horizon.
    */
+  /** The house rooms sit in, per slot: their boundary when their model couples to it. */
+  house_temperature_c?: (number | null)[] | null;
   solar_irradiance_w_per_m2?: (number | null)[] | null;
   /** Injected and validated by the planning edge, never supplied by the app. */
   thermal_zones?: ThermalZonePlanningInput[];

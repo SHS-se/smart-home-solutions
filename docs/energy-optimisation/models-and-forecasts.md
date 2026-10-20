@@ -81,6 +81,19 @@ Do not label effective fitted coefficients as physical envelope properties witho
 
 Train on aligned temperature and electrical observations. Time-weight actuator states; use `hvac_action` to distinguish cooling from heating. Exclude unrepresentative equipment epochs and invalid sensing. Require sufficient excited/heated samples, rank, physical plausibility, and predictive quality; sample count or R² alone is not identification proof.
 
+### House boundary and heat delay (20 October 2026)
+
+A room inside a heated house loses its heat into the house, not straight into outdoor air. When the app sends a house temperature (the median across Home Assistant areas of each area's median indoor sensor), the fit also tries:
+
+```text
+T[k+1] = T[k] + a × D̄[k] × dt
+                 + k_house × (T_house[k] − T[k]) × dt
+                 + background_gain[k] × dt
+D[k+1] = carry × D[k] + (1 − carry) × P[k],   carry = exp(−dt / lag)
+```
+
+`D` is heater heat still on its way through a first-order delay (a floor slab) and `D̄` its quarter mean. The delay is chosen per room from a grid by 12-hour prediction error over the training window, not by regression; the house shape is published only when it predicts that window better than the outdoor shape, and the error is stored as `prediction_error_c`. The planner repeats the house's last-week routine by local quarter of day at its last day's level, and plans a delayed room over temperature and delivered heat ([thermostat rooms](room-heating-schedule-2026-10.md)). On the reference bathroom (12–20 October, each day fitted only on earlier days) this halved the 12-hour error, 0.66 → 0.36 °C: the room settled toward the house within hours, followed it down when the house's heating rested overnight, and kept warming for two to three hours after its floor stopped. The outdoor shape had fitted a 13-day time constant.
+
 Solar gains may use separately sourced irradiance rather than PV AC output. Record fitted solar coefficients, coverage, and the irradiance source. The documented fitted-mean evaluation when irradiance is missing is an approximation; it can worsen comfort prediction and must not be described as losing accuracy but never correctness. Forecast error remains relevant even when a trajectory satisfies the fitted model.
 
 An approved room schedule supplies versioned intent. The target design values ordinary temperature outcomes through editable curves, with a declared continuous utility rate; it does not convert every desired temperature into a hard boundary promise. Current hard-target/band scheduling remains an implementation limitation until the scorer migrates. Physical protections are separate. See [settled D1](../../ENERGY_OPTIMISATION_ARCHITECTURE_REVIEW.md#d1-comfort-and-service-promises) and [economic timing](controller-policy.md#one-objective-boundary-and-ownership).
