@@ -2,7 +2,7 @@ import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { backgroundRateForSlot } from "./planner/thermal-model.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
-import { planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
+import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
 
 export interface RoomServices {
   commands: Record<string, DeviceCommand[]>;
@@ -44,9 +44,9 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
     }
     const outdoorKnown = snapshot.outdoor_temperature_c?.length === n &&
       snapshot.outdoor_temperature_c.every(v => typeof v === "number" && Number.isFinite(v));
-    if (!relays.length && thermostats.length && zone.model && temperature !== null && outdoorKnown &&
-      zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
-      comfortMisses = scheduleThermostatRoom(snapshot, zone, thermostats, retained, remaining, surplus, prices, result);
+    if (relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
+      outdoorKnown && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
+      comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
       continue;
     }
@@ -133,12 +133,14 @@ const shortfall = (zone: Zone, quarters: number) => planningWarning("comfort_sho
   "The best attainable room schedule is included and household planning continues.", { quarters });
 
 /**
- * A thermostat room planned for price and deadline. Each quarter's setpoint is
+ * A modelled room planned for price and deadline. Each quarter's setpoint is
  * the planned temperature at its end: a thermostat cannot take watts, and the
  * planned trajectory already reaches Comfort when the first Comfort quarter
- * begins. Returns the number of quarters outside the comfort objective.
+ * begins. Relays run whole quarters as planned, and the thermostats top up
+ * whatever they leave. Returns the number of quarters outside the comfort
+ * objective.
  */
-function scheduleThermostatRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: Member[],
+function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, thermostats: Member[], relays: Member[],
   retained: Retained, remaining: number[], surplus: number[],
   prices: RoomPrices | undefined, result: RoomServices): number {
   const model = zone.model!, n = snapshot.slots.length;
@@ -149,6 +151,10 @@ function scheduleThermostatRoom(snapshot: OptimisationSnapshot, zone: Zone, ther
     const decay = Math.exp(-model.cooling_constant_per_h * hours);
     const effect = model.cooling_constant_per_h > 0 ? -Math.expm1(-model.cooling_constant_per_h * hours) / model.cooling_constant_per_h : hours;
     const loads = thermostats.map(m => retained[i]?.device_loads_w?.[m.key]);
+    const locked = relays.map(m => {
+      const command = retained[i]?.device_commands?.[m.key];
+      return command?.type === "switch_schedule" ? command.on_seconds > 0 : null;
+    });
     return { hours, decay,
       offset_c: (model.cooling_constant_per_h * snapshot.outdoor_temperature_c![i]! +
         backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2)) * effect,
@@ -157,8 +163,13 @@ function scheduleThermostatRoom(snapshot: OptimisationSnapshot, zone: Zone, ther
       // must end at the next objective as well as its own.
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
       maximum_c: zone.comfort_max_c[i],
-      maximum_w: Math.max(0, Math.min(continuous, zone.maximum_power_w_by_slot[i], remaining[i])),
-      fixed_w: loads.every(w => typeof w === "number" && Number.isFinite(w)) ? loads.reduce((a, w) => a! + w!, 0)! : null,
+      maximum_w: Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i])),
+      continuous_w: continuous,
+      relay_w: relays.map((m, r) => locked[r] ? retained[i]?.device_loads_w?.[m.key] ?? rating(m) : rating(m)),
+      // A room of relays alone has no thermostat power to fix.
+      fixed_w: thermostats.length > 0 && loads.every(w => typeof w === "number" && Number.isFinite(w))
+        ? loads.reduce((a, w) => a! + w!, 0)! : null,
+      fixed_relays: locked,
       import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1,
       surplus_w: surplus[i] };
@@ -169,11 +180,19 @@ function scheduleThermostatRoom(snapshot: OptimisationSnapshot, zone: Zone, ther
   for (let i = 0; i < n; i++) {
     const q = quarters[i], total = plan.power_w[i], next = plan.temperature_c[i];
     const minimum = zone.comfort_min_c[i], maximum = zone.comfort_max_c[i];
+    let relayW = 0;
+    relays.forEach((m, r) => {
+      const on = plan.relays_on[i][r], command = retained[i]?.device_commands?.[m.key];
+      result.commands[m.key].push(command?.type === "switch_schedule" ? command : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
+      const power = on ? q.relay_w[r] : 0;
+      result.power[m.key].push(power);
+      relayW += power;
+    });
     for (const m of thermostats) {
       const command = retained[i]?.device_commands?.[m.key];
       result.commands[m.key].push(command?.type === "setpoint" ? command : { type: "setpoint",
         target_c: Math.min(maximum, Math.max(minimum, Math.round(next * 100) / 100)), minimum_c: minimum, maximum_c: maximum });
-      result.power[m.key].push(retained[i]?.device_loads_w?.[m.key] ?? (continuous ? total * rating(m) / continuous : 0));
+      result.power[m.key].push(retained[i]?.device_loads_w?.[m.key] ?? (continuous ? (total - relayW) * rating(m) / continuous : 0));
     }
     unplanned = unplanned! * q.decay + q.offset_c + q.gain_c_per_w * zone.unplanned_power_w[i];
     result.unplanned_temperature[zone.key].push(unplanned);

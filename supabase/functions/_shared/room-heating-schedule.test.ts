@@ -114,3 +114,72 @@ Deno.test("the household planner moves bathroom recovery into the cheap hours", 
   assert(before.type === "setpoint" && before.target_c >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
+
+/** The same bathroom with a towel rack on a smart plug: whole quarters only. */
+function bathroomWithRack(prices?: number[], rackW = 150): OptimisationSnapshot {
+  const s = bathroom(prices);
+  s.device_models.push({ ...s.device_models[0], key: "rack", name: "Heated towel rack", statistic_id: "sensor.rack",
+    load_type: "fixed_full_load", suggested_load_type: "fixed_full_load", control_type: "switch_schedule",
+    active_power_w: rackW, forecast_w_by_slot: s.slots.map(() => 0) });
+  s.thermal_zones![0].device_keys.push("rack");
+  return s;
+}
+
+Deno.test("a relay in a thermostat room no longer drops the room out of deadline planning", () => {
+  const s = bathroomWithRack();
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  const temperature = rooms.temperature.bathroom as number[];
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6, "Comfort is reached when its first quarter begins");
+  assert(temperature.slice(COMFORT_FROM).every(t => t >= COMFORT - 1e-6));
+  assertEquals(rooms.warnings.filter(w => w.code === "comfort_shortfall"), []);
+  const before = rooms.commands.floor[COMFORT_FROM - 1];
+  assert(before.type === "setpoint" && before.target_c >= COMFORT, "the thermostat is asked for Comfort ahead of it");
+});
+
+Deno.test("relays run whole quarters and the room's power is the sum of its members", () => {
+  const rooms = prepareRoomServices(bathroomWithRack(), [], undefined, prices(nightTariff));
+  rooms.commands.rack.forEach((command, i) => {
+    assert(command.type === "switch_schedule");
+    assert(command.on_seconds === 0 || command.on_seconds === 900);
+    assertEquals(rooms.power.rack[i], command.on_seconds ? 150 : 0);
+    assertAlmostEquals(rooms.room_power.bathroom[i], rooms.power.rack[i] + rooms.power.floor[i], 1e-6);
+    assert(rooms.power.floor[i] >= -1e-9 && rooms.power.floor[i] <= 2000 + 1e-6);
+  });
+});
+
+Deno.test("the rack adds its heat when the floor alone cannot make the deadline", () => {
+  const s = bathroomWithRack();
+  s.device_models[0].active_power_w = 1000;
+  const rooms = prepareRoomServices(s, [], undefined, prices(Array(32).fill(1)));
+  assert(rooms.commands.rack.some(c => c.type === "switch_schedule" && c.on_seconds === 900));
+  assert((rooms.temperature.bathroom as number[])[COMFORT_FROM - 1] >= COMFORT - 1e-6);
+});
+
+Deno.test("a relay alone carries a modelled room to its deadline", () => {
+  const s = bathroomWithRack(undefined, 2000);
+  s.device_models = s.device_models.filter(m => m.key === "rack");
+  s.thermal_zones![0].device_keys = ["rack"];
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  const temperature = rooms.temperature.bathroom as number[];
+  assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6);
+  assert(rooms.power.rack.every(w => w === 0 || w === 2000));
+  assertEquals(rooms.commands.floor, undefined);
+});
+
+Deno.test("a committed relay quarter keeps its retained state and power", () => {
+  const s = bathroomWithRack();
+  const retained = [{ device_commands: { rack: { type: "switch_schedule" as const, on_seconds: 900 } },
+    device_loads_w: { rack: 140 } }];
+  const rooms = prepareRoomServices(s, retained, undefined, prices(Array(32).fill(5)));
+  assertEquals(rooms.commands.rack[0], retained[0].device_commands.rack);
+  assertEquals(rooms.power.rack[0], 140);
+});
+
+Deno.test("the household planner plans the towel rack with the floor", () => {
+  const plan = generateRulesPlan(rulesFixtureInput(bathroomWithRack(nightTariff))).plan;
+  const slots = plan.plans.priority.slots;
+  assert(slots.every(slot => slot.device_commands!.rack.type === "switch_schedule"));
+  const before = slots[COMFORT_FROM - 1].device_commands!.floor;
+  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+  assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
+});

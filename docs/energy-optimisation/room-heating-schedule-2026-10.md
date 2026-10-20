@@ -20,11 +20,21 @@ next quarter's. Heat may not lift the room above `comfort_max_c` (Comfort +
 ## Planning
 
 `room-heating-schedule.ts` runs a backward dynamic programme over room
-temperature for each modelled room whose controlled members are all setpoint
-thermostats. Each quarter chooses room power between zero and the smallest of
-the combined thermostat rating, the room's power ceiling (zero in the June–August
-lockout) and the household import headroom left by earlier rooms. Committed
-and booked quarters keep their retained power exactly.
+temperature for each modelled room whose controlled members are setpoint
+thermostats, relays (`switch_schedule`), or both, with at most four relays. Each
+quarter chooses an on/off state for every relay, which Home Assistant only
+switches for whole quarters, and continuous thermostat power on top, between
+zero and the combined thermostat rating. The room's total stays within its power
+ceiling (zero in the June–August lockout) and the household import headroom left
+by earlier rooms; a relay that would overrun either, or lift the room above
+`comfort_max_c`, stays off. Committed and booked quarters keep their retained
+relay states and power exactly.
+
+Added 20 October 2026: the Master bathroom gained its heated towel rack as a
+planned control, and the relay dropped the room back onto the per-quarter path,
+which only heats inside the Comfort quarter itself and drifted the room to
+Setback. Heat per watt is the room's whichever member gives it, so the rack
+mostly joins when the floor alone is short of power.
 
 The objective is lexicographic. Shortfall below the objective carries a weight
 far above any electricity price, so an attainable deadline is always met and an
@@ -50,7 +60,8 @@ room takes about 15 ms.
 
 ## Commands
 
-A thermostat takes temperatures, not watts. Each quarter's `target_c` is the
+A relay is on or off for the quarter as planned. A thermostat takes
+temperatures, not watts. Each quarter's `target_c` is the
 planned temperature at the end of that quarter, clamped into its
 `[minimum_c, maximum_c]` = `[comfort_min_c, comfort_max_c]`. The quarter before
 Comfort therefore already asks for Comfort, and a coasting quarter's setpoint
@@ -59,7 +70,7 @@ cools faster than modelled. Home Assistant rounds to the thermostat's step.
 
 ## Unchanged
 
-Rooms with relays (`switch_schedule`), rooms without a usable model, a measured
+Rooms with more than four relays, rooms without a usable model, a measured
 temperature or a complete outdoor forecast keep the previous quarter-by-quarter
 path. Ingest still publishes the backward-pass power forecast as each room's
 unplanned reference. No snapshot, plan or HA contract changed.
