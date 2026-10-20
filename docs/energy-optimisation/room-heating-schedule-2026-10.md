@@ -71,6 +71,16 @@ parks heat in the floor that later overshoots. A house-coupled room with no hous
 forecast is not run on a guess; it falls back to measured demand with a warning.
 On the 19 October replay the delayed bathroom's room planning took 56 ms locally.
 
+## Preferences are read when planning
+
+The prepared forecast caches only a room's slow evidence: its heating devices,
+fitted model, rated power and per-quarter power ceiling. Its Comfort routine, its
+latest temperature and the heat its floor still holds are read when a plan is made
+(`room-planning-zones.ts`). Until 20 October 2026 the product cached finished
+zones, so a plan made seconds after Comfort was lowered from 22 to 21 °C still
+planned toward 22 °C with a 22.5 °C ceiling; the cache is rebuilt every quarter
+but only read by the plans that follow it.
+
 ## Commands
 
 A relay is on or off for the quarter as planned. A thermostat takes

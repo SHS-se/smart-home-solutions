@@ -5,6 +5,7 @@ import {
   PREPARED_FORECAST_TABLE,
   type PreparedForecastDatabase,
   PreparedForecastError,
+  type PreparedRoom,
   readOrPrepareForecasts,
   readPreparedForecasts,
   storePreparedForecasts,
@@ -13,7 +14,6 @@ import { input } from "./planner/energy-optimisation.fixture.ts";
 import type {
   OptimisationPlan,
   OptimisationSnapshot,
-  ThermalZonePlanningInput,
 } from "./planner/planning-contracts.ts";
 
 type Publication = Parameters<
@@ -73,12 +73,11 @@ function prices(): OptimisationPlan["price_outlook"] {
     shadow_import_sek_per_kwh: [1.2, 2.3, 3.4, 4.5],
   };
 }
-function zone(): ThermalZonePlanningInput {
+function room(): PreparedRoom {
   return {
     key: "study",
     name: "Study",
     device_keys: ["study_heater"],
-    start_temperature_c: 20,
     rated_power_w: 1000,
     model: {
       gain_c_per_wh: .001,
@@ -94,21 +93,16 @@ function zone(): ThermalZonePlanningInput {
       sample_count: 600,
       residual_std_c: .1,
     },
-    comfort_min_c: [18, 19, 20, 21],
-    target_c: [19, 20, 21, 22],
-    comfort_max_c: [20, 21, 22, 23],
     maximum_power_w_by_slot: [1000, 900, 800, 700],
-    unplanned_power_w: [10, 20, 30, 40],
   };
 }
 
 Deno.test("prepared forecast read aligns by timestamp and unchanged published prices remain exact", async () => {
   const db = new Store(), prepared = source();
-  prepared.thermal_zones = [zone()];
   prepared.slots[1].import_price_sek_per_kwh = null;
   prepared.slots[2].import_price_sek_per_kwh = -0.0123456789;
   const original = structuredClone(prepared);
-  await storePreparedForecasts(db, "home-a", prepared, prices());
+  await storePreparedForecasts(db, "home-a", prepared, prices(), [room()]);
   assertEquals(prepared, original);
   assert(db.row);
   // Publication age is evidence, not a made-up expiration or event-order constraint.
@@ -130,14 +124,9 @@ Deno.test("prepared forecast read aligns by timestamp and unchanged published pr
   assertEquals(result.price_outlook.level_basis, "wind");
   assertEquals(result.snapshot.outdoor_temperature_c, [-4, -5]);
   assertEquals(result.snapshot.solar_irradiance_w_per_m2, [300, 200]);
-  assertEquals(result.snapshot.thermal_zones, [{
-    ...zone(),
-    comfort_min_c: [20, 19],
-    target_c: [21, 20],
-    comfort_max_c: [22, 21],
-    maximum_power_w_by_slot: [800, 900],
-    unplanned_power_w: [30, 20],
-  }]);
+  assertEquals(result.rooms, [{ ...room(), maximum_power_w_by_slot: [800, 900] }]);
+  // Planning zones are built from current preferences, never from the product.
+  assertEquals(result.snapshot.thermal_zones, request.thermal_zones);
   assertEquals(request, requestBefore);
   assert(result.snapshot.slots === request.slots);
   assert(result.snapshot.device_models === request.device_models);
@@ -265,14 +254,12 @@ Deno.test("a corrected published price refreshes its forecast even with an earli
 
 Deno.test("forecast publication refuses misaligned data and read rejects malformed stored products", async () => {
   const db = new Store(), prepared = source();
-  prepared.thermal_zones = [{ ...zone(), target_c: [20] }];
   const invalid = await assertRejects(
-    () => storePreparedForecasts(db, "home-a", prepared, prices()),
+    () => storePreparedForecasts(db, "home-a", prepared, prices(), [{ ...room(), maximum_power_w_by_slot: [20] }]),
     PreparedForecastError,
   );
   assertEquals(invalid.code, "prepared_forecast_invalid");
   assertEquals(db.writes.length, 0);
-  prepared.thermal_zones = [];
   await storePreparedForecasts(db, "home-a", prepared, prices());
   assert(db.row);
   db.row.forecast.slot_starts[1] = db.row.forecast.slot_starts[0].replace(
@@ -299,15 +286,13 @@ Deno.test("explicit absent server weather never adopts an incoming weather serie
   prepared.slots[0].import_price_sek_per_kwh = 0;
   delete prepared.outdoor_temperature_c;
   delete prepared.solar_irradiance_w_per_m2;
-  delete prepared.thermal_zones;
   await storePreparedForecasts(db, "home-a", prepared, prices());
   const request = source();
-  request.thermal_zones = [zone()];
   request.slots[0].import_price_sek_per_kwh = 0;
   const result = await readPreparedForecasts(db, "home-a", request);
   assertEquals(result.snapshot.outdoor_temperature_c, undefined);
   assertEquals(result.snapshot.solar_irradiance_w_per_m2, null);
-  assertEquals(result.snapshot.thermal_zones, []);
+  assertEquals(result.rooms, []);
   assertEquals(result.price_outlook.shadow_import_sek_per_kwh[0], 0);
 });
 
@@ -329,10 +314,10 @@ Deno.test("service forecast storage errors remain named failures", async () => {
 });
 
 Deno.test("a forecast cache read failure still uses fresh prepared service data",async()=>{
- const db=new Store();db.readError={message:"temporarily unavailable"};const snapshot=source();snapshot.thermal_zones=[zone()];
- const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at};let prepared=0;
+ const db=new Store();db.readError={message:"temporarily unavailable"};const snapshot=source();
+ const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at,rooms:[room()]};let prepared=0;
  const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;return ready;});
- assertEquals(prepared,1);assertEquals(result.issued_at,ready.issued_at);assertEquals(result.price_outlook,ready.price_outlook);assertEquals(result.snapshot.thermal_zones!.length,1);
+ assertEquals(prepared,1);assertEquals(result.issued_at,ready.issued_at);assertEquals(result.price_outlook,ready.price_outlook);assertEquals(result.rooms.length,1);
 });
 
 Deno.test("an installation address edit cannot reuse weather cached for a different site",async()=>{
@@ -353,12 +338,23 @@ Deno.test("fresh preparation cannot erase resolved website settings or newer mea
   request.captured_at = "2026-10-15T22:30:00Z";
   request.battery = {...request.battery!, soc: .7};
   delete older.value_settings;
-  older.thermal_zones = [zone()];
   const result = await readOrPrepareForecasts(db, "home-a", request, async () => ({
-    snapshot: older, price_outlook: prices(), issued_at: request.captured_at,
+    snapshot: older, price_outlook: prices(), issued_at: request.captured_at, rooms: [room()],
   }));
-  for (const key of ["value_settings", "comfort", "grid", "battery", "captured_at", "services", "device_models"] as const) {
+  for (const key of ["value_settings", "comfort", "grid", "battery", "captured_at", "services", "device_models", "thermal_zones"] as const) {
     assertEquals(result.snapshot[key], request[key], key);
   }
-  assertEquals(result.snapshot.thermal_zones, older.thermal_zones);
+  assertEquals(result.rooms, [room()]);
+});
+
+Deno.test("a product published with finished zones still yields their room evidence, never their comfort", async () => {
+  const db = new Store();
+  await storePreparedForecasts(db, "home-a", source(), prices());
+  assert(db.row);
+  // Before 20 October 2026 the product cached each room's Comfort routine and temperature.
+  db.row.forecast.thermal_zones = [{ ...room(), start_temperature_c: 20, comfort_min_c: [22, 22, 22, 22],
+    target_c: [22, 22, 22, 22], comfort_max_c: [22.5, 22.5, 22.5, 22.5], unplanned_power_w: [0, 0, 0, 0] }];
+  delete db.row.forecast.rooms;
+  const result = await readPreparedForecasts(db, "home-a", source());
+  assertEquals(result.rooms, [room()]);
 });
