@@ -2,7 +2,7 @@
 
 ## Planning ownership and honest graph partition — 15 September 2026
 
-The website owns Monitoring/Planned for Included equipment; it does not own HA inclusion or authority. Grey means gross base consumption. Planned devices omitted individually by size or palette limits remain in an Other planned devices band, not grey. Removing excluded metadata does not by itself remove the current small-series/eight-band folding rules. Show explicit battery supply scope and actual-versus-forecast evidence, with separate PV and storage flows. Historical proportional attribution is not automatically the new control-scope solar rule.
+The website owns Monitoring/Planned for Included equipment; it does not own HA inclusion or authority. Grey means gross base consumption. Every Planned device that drew power has its own band, however small; only those past the eight-band palette limit share an Other planned devices band, never grey. Show explicit battery supply scope and actual-versus-forecast evidence, with separate PV and storage flows. Historical proportional attribution is not automatically the new control-scope solar rule.
 
 See the [agreed participation and battery supply specification](device-participation-and-battery-supply.md).
 Documentation only; replacement implementation and coordinated rollout remain pending.

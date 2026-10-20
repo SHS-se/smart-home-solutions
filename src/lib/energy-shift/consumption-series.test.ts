@@ -21,26 +21,11 @@ const candidate = (
   ...overrides,
 });
 
-Deno.test('a load held for an hour earns a band', () => {
-  const values = [0, ...flat(forKwh(0.1), 4), 0];
-  assert(earnsOwnBand(values), 'four consecutive quarters at the threshold should qualify');
-});
-
-Deno.test('three quarters is not four', () => {
-  assertEquals(earnsOwnBand([0, ...flat(forKwh(0.1), 3), 0]), false);
-});
-
-Deno.test('the run has to be consecutive', () => {
-  // A pump that ticks on and off all day is background, however many quarters
-  // it adds up to; the band would be a comb rather than a shape.
-  const stuttering = [forKwh(0.1), 0, forKwh(0.1), 0, forKwh(0.1), 0, forKwh(0.1)];
-  assertEquals(earnsOwnBand(stuttering), false);
-});
-
-Deno.test('one big quarter earns a band on its own', () => {
-  // An oven takes a kilowatt-hour and stops. Requiring an hour of it would
-  // hide exactly the loads worth shifting.
-  assert(earnsOwnBand([0, forKwh(0.4), 0]));
+Deno.test('any use earns a band, however small', () => {
+  // A floor heater at a few hundred watts is what a room's temperature line
+  // answers to; folding it away left the room with nothing to point at.
+  assert(earnsOwnBand([0, 50, 0]));
+  assert(earnsOwnBand([forKwh(0.4)]));
 });
 
 Deno.test('a meter that never ran earns nothing', () => {
@@ -153,11 +138,11 @@ Deno.test('an empty window produces an empty stack rather than throwing', () => 
   assertEquals(split.baseKwh, 0);
 });
 
-Deno.test("small Planned consumption remains separate from gross base before solar", () => {
+Deno.test("small Planned consumption is its own band, separate from gross base before solar", () => {
   const split = splitConsumption([candidate({ key: "small", values: [50, 0] }),
     candidate({ key: "monitored", values: [100, 100], schedulable: false })], [1000, 1000]);
   assertEquals(split.baseValues, [950, 1000]);
-  assertEquals(split.series.map(s => s.key), ["$other_planned"]);
+  assertEquals(split.series.map(s => s.key), ["small"]);
   assertEquals(split.series[0].values, [50, 0]);
 });
 
@@ -186,7 +171,7 @@ Deno.test('inconsistent consumption is not described as a missing device', () =>
     'Household and device readings cannot be reconciled for this quarter.');
 });
 
-Deno.test('one missing device leaves other device readings intact, including grouped loads', () => {
+Deno.test('one missing device leaves other device readings intact, including small loads', () => {
   const split = splitConsumption([
     candidate({ key: 'pump', values: [800, NaN, 800, 800, 800] }),
     candidate({ key: 'heater', values: [1800, 1800, 1800, 1800, 1800] }),
@@ -195,9 +180,9 @@ Deno.test('one missing device leaves other device readings intact, including gro
   ], flat(3000, 5));
   assertEquals(split.series.find(s => s.key === 'heater')!.values, flat(1800, 5));
   assertEquals(split.baseValues[1], 1150);
-  const grouped = split.series.find(s => s.key === '$other_planned')!;
-  assertEquals(grouped.values[1], 50);
-  assertEquals(grouped.partial, [false, false, false, false, false]);
+  assertEquals(split.series.find(s => s.key === 'small-known')!.values[1], 50);
+  assertEquals(split.series.find(s => s.key === 'small-missing')!.values[1], 0);
+  assert(split.series.every(s => s.key !== '$other_planned'));
   assertEquals(split.invalidIndices, []);
   assertEquals(split.issues, flat(0, 5).map(() => null));
   split.baseValues.forEach((base, i) => assertEquals(base + split.series.reduce((sum, s) => sum + s.values[i], 0), 3000));

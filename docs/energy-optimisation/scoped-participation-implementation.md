@@ -20,8 +20,9 @@ and rollout](https://github.com/SHS-se/shs-ha-integration/blob/main/docs/battery
   starts in Verification. Existing issued-effect/release records are retained.
 - Missing setup for Planned equipment is a planning blocker, rather than silently
   treating that equipment as Monitoring.
-- Website grey consumption is gross base, before PV. Small/excess Planned bands
-  are grouped as Other planned devices. The executable chart restores Verification
+- Website grey consumption is gross base, before PV. Every Planned meter that drew
+  power has its own band; only those past the eight-band cap are grouped as Other
+  planned devices. The executable chart restores Verification
   demand from the captured external-demand projection without changing commands.
   Historical membership is explicitly labelled as reclassification using the plan.
   Invalid measurements propagate through stacking and SVG rendering as gaps.

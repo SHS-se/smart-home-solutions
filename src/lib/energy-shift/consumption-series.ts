@@ -1,15 +1,9 @@
 /** A quarter of average watts is that many watt-hours over four. */
 const QUARTER_W_TO_KWH = 4_000;
 
-/** Sustained: this much in a quarter, for this many quarters running. */
-export const SUSTAINED_KWH = 0.1;
-export const SUSTAINED_QUARTERS = 4;
-/** Or a single quarter this large, for loads that run in one short burst. */
-export const SPIKE_KWH = 0.4;
-
 /**
  * Eight is the ceiling on hues a reader can tell apart, so it is the ceiling
- * on individually named bands. Remaining Planned meters share one band.
+ * on individually named bands. Planned meters past it share one band.
  */
 export const MAX_SERIES = 8;
 
@@ -69,22 +63,12 @@ export interface ConsumptionSplit {
 }
 
 /**
- * Ran long enough, or hard enough, to be worth a band.
- *
- * Two tests rather than one because the two shapes of load that matter look
- * nothing alike: a pool pump holds a modest draw for hours, an oven takes a
- * kilowatt-hour in one quarter and stops.
+ * Drew anything at all in the window. Every Planned meter that did is its own
+ * band: a 300 W floor heater is exactly what someone reading a room's
+ * temperature wants to see, however small it is next to the car.
  */
-export const earnsOwnBand = (values: readonly number[]): boolean => {
-  let run = 0;
-  for (const watts of values) {
-    const kwh = (Number.isFinite(watts) ? watts : 0) / QUARTER_W_TO_KWH;
-    if (kwh >= SPIKE_KWH) return true;
-    run = kwh >= SUSTAINED_KWH ? run + 1 : 0;
-    if (run >= SUSTAINED_QUARTERS) return true;
-  }
-  return false;
-};
+export const earnsOwnBand = (values: readonly number[]): boolean =>
+  values.some(watts => Number.isFinite(watts) && watts > 0);
 
 const totalKwh = (values: readonly number[]): number =>
   values.reduce((sum, watts) => sum + (Number.isFinite(watts) ? watts : 0) / QUARTER_W_TO_KWH, 0);
