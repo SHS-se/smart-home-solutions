@@ -1,8 +1,7 @@
 import { boilerDemand } from "./household";
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
-import { projectBoilerDay } from '../../../supabase/functions/_shared/boiler-consumption';
-import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar';
+import { projectBoilerTank } from '../../../supabase/functions/_shared/boiler-consumption';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
 //
 // A planner hands back decisions: how much power the pool, the car and the
@@ -47,7 +46,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 25;
+export const REFEREE_VERSION = 26;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -180,26 +179,21 @@ export function hotWaterNeed(c: BenchCase, h: Household, world: World = 'recorde
 export function simulate(c: BenchCase, h: Household, d: Decisions, world: World = 'recorded'): Simulation {
   const violations: Violation[] = [];
   const { baseW, solarW } = householdSeries(c, world);
-  // Adapt each world's evidence to the same daily electrical run model used
-  // by production. Recorded future demand belongs only in this evaluation.
+  // Each world's evidence goes through the same tank model as production:
+  // the measured heater draw is the water used, heat only replaces it, and a
+  // block leaves it owed. Recorded future demand belongs only in this evaluation.
   const needW = hotWaterNeed(c, h, world);
-  const ratedW = h.hot_water.rated_w;
   const waterW = new Float64Array(QUARTERS), waterRemaining = new Float64Array(QUARTERS);
-  const starts = quarterStarts(c.start), days = new Map<string, number[]>();
-  starts.forEach((start, i) => { const day = localDay(start, c.timezone); days.set(day, [...days.get(day) ?? [], i]); });
-  let unservedKwh = 0;
-  if (needW) for (const indices of days.values()) {
-    const need = indices.map(i => Math.min(needW[i], Math.max(0, baseW[i])));
-    const controlled = indices.some(i => d.hot_water?.[i]?.kind !== undefined && d.hot_water[i].kind !== 'free');
+  if (needW) {
+    const need = Array.from({ length: QUARTERS }, (_, i) => Math.min(needW[i], Math.max(0, baseW[i])));
+    const controlled = d.hot_water?.some(command => command.kind !== 'free') ?? false;
     const expected = world === 'told' ? d.hot_water_expected_w : undefined;
-    const projected = projectBoilerDay({ required_wh: need.reduce((s, w) => s + w * HOURS, 0),
-      running_w: indices.map(() => ratedW), hours: indices.map(() => HOURS),
-      permitted: indices.map(i => d.hot_water?.[i]?.kind !== 'inhibit') });
-    indices.forEach((i, j) => {
-      waterW[i] = expected ? expected[i] : controlled ? projected.expected_w[j] : need[j];
-      waterRemaining[i] = controlled && !expected ? unservedKwh + projected.remaining_wh[j] / 1000 : unservedKwh;
-    });
-    if (controlled && !expected) unservedKwh += projected.unserved_wh / 1000;
+    const tank = projectBoilerTank({ draw_w: need, running_w: need.map(() => h.hot_water.rated_w), hours: need.map(() => HOURS),
+      permitted: need.map((_w, i) => d.hot_water?.[i]?.kind !== 'inhibit') });
+    for (let i = 0; i < QUARTERS; i++) {
+      waterW[i] = expected ? expected[i] : controlled ? tank.expected_w[i] : need[i];
+      waterRemaining[i] = controlled && !expected ? tank.deficit_wh[i] / 1000 : 0;
+    }
   }
   // Only a measured window differs from what the planner was told.
   const measured = world === 'recorded' && c.recorded.actual !== undefined;

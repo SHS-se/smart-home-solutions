@@ -42,7 +42,7 @@ Deno.test("the current native artifact has a stable planner identity",async()=>{
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
 const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
 /** The referee version and both shared physical consumption models. */
-const DEVICE_MODELS_PIN = "25:e9836b38e07ed88b";
+const DEVICE_MODELS_PIN = "26:e4e3de86797f2261";
 
 Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);

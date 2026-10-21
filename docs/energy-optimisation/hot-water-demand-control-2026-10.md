@@ -33,12 +33,21 @@ bounds or hard household-demand gates. Full declared running power must fit the
 configured grid headroom. Include any simultaneously operating heat-pump demand
 in the relevant physical load model; do not presume a shared meter isolates it.
 
-Model each local day's remaining forecast electricity as heating runs at the
-measured boiler running power, preserving committed watts exactly. Full heating
-quarters draw that power; a final partial quarter integrates the shorter run
-duration. Permission quarters after completion may draw zero. Ten quarters at
-3 kW offer at most 7.5 kWh, not a promise of electricity or usable water. There
-is no inferred tank temperature or thermal state.
+User requirement, 21 October 2026: model the tank as a heat deficit, Wh below
+a satisfied thermostat, instead of each day's electricity as one lump that
+permission may deliver at any time. The boiler's forecast consumption per
+quarter is the water drawn (a day the horizon covers in full is scaled to its
+daily requirement; a partial day keeps the forecast's shape, and the current
+day's requirement beyond the rest of its forecast is owed at the start). Heat
+only replaces what has been drawn: a permitted quarter heats at the measured
+running power until the deficit is zero, so the tank is never heated beyond
+full, and a block leaves the water it draws owed across midnight. Each day
+chooses one run, permitted for as long as the tank keeps it heating, and the
+quota's other quarters after it, preferring as above and then the lowest cost
+of the heat it delivers plus what the tank still owes at the day's end, valued
+at the horizon's median import price. The bench referee steps the same tank
+through the measured draw. There is still no measured tank temperature or
+capacity limit; the deficit is an electrical estimate.
 
 Water is normally excluded from battery supply. Each quarter publishes
 `boiler_battery_allowed`. A stored-energy exception reserves the full permitted

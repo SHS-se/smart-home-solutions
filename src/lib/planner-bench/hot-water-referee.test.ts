@@ -36,9 +36,10 @@ Deno.test('live allocation and bench execution produce identical runs from ident
   const decisions = commanding(i => ({ kind: allocation.permitted[i] ? 'permit' : 'inhibit' }));
   const executed = simulate(c, HOUSEHOLD, decisions);
   assertEquals(Array.from(executed.water!.w), allocation.expected_w);
-  for (let day = 0; day < 3; day++) {
-    assertAlmostEquals(kwh(executed.water!.w.slice(day * 96, (day + 1) * 96)), [3, 5, 7][day]);
-  }
+  // Heat replaces water already drawn; what the evening draws is owed at the end.
+  let heat = 0, drawn = 0;
+  executed.water!.w.forEach((watts, i) => { heat += watts / 4; drawn += demand[i] / 4; assert(heat <= drawn + 1e-6); });
+  assertAlmostEquals(kwh(executed.water!.w) + executed.water!.owedKwh[QUARTERS - 1], 15);
   c.recorded.actual!.other_devices_w = boiler(900);
   assertEquals(hotWaterInput(c, HOUSEHOLD), input, 'recorded future consumption must never alter planner inputs');
 });
@@ -53,11 +54,10 @@ Deno.test('a heater the plan leaves free runs as the house drew it, and costs wh
   assertEquals(without.water, null);
 });
 
-Deno.test('daily electricity is heated at running power when a blocked boiler is permitted again', () => {
+Deno.test('water drawn during a block is owed and heated at running power when the boiler is permitted again', () => {
   const sim = simulate(measured(), HOUSEHOLD, commanding(i => i < 8 ? { kind: 'inhibit' } : { kind: 'free' }));
-  // The first local day starts at 02:00, so 88 quarters remain. This is a
-  // daily electrical requirement, not inferred tank debt at the eighth slot.
-  assertAlmostEquals(sim.water!.owedKwh[7], 88 * NEED_W / 4_000);
+  // Only the eight blocked quarters' water is owed: the tank is not owed the rest of the day in advance.
+  assertAlmostEquals(sim.water!.owedKwh[7], 8 * NEED_W / 4_000);
   // The first quarter allowed again heats at the heater's rated power.
   assertAlmostEquals(sim.water!.w[8], HOUSEHOLD.hot_water.rated_w);
   assertEquals(sim.water!.owedKwh[QUARTERS - 1], 0);

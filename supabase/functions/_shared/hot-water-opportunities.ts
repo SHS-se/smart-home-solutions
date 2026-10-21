@@ -1,6 +1,6 @@
 import type { DutyCycleServiceInput } from "./planner/planning-contracts.ts";
 import { localDay } from "./planner-wasm/calendar.ts";
-import { FINISH_HEATING_W, projectBoilerDay } from "./boiler-consumption.ts";
+import { FINISH_HEATING_W, projectBoilerTank } from "./boiler-consumption.ts";
 
 export const WATER_MINUTES_PER_DAY = 150;
 /** The longest the boiler may go without a permitted quarter, measured from
@@ -16,8 +16,9 @@ export interface WaterOpportunities {
   shortfall_minutes: Record<string, number>;
 }
 
-/** Select a continuous measured-power run, then additional opportunities for
- * the daily permission quota. Electricity and permission remain separate. */
+/** Select one heating run a day against the tank's heat deficit, then
+ * additional opportunities for the daily permission quota. Electricity and
+ * permission remain separate. */
 export function scheduleHotWater(input: {
   services: DutyCycleServiceInput[];
   starts: string[];
@@ -70,11 +71,17 @@ export function scheduleHotWater(input: {
   const rank = (a: number, b: number) => Number(input.large_load_w[a] > 0) - Number(input.large_load_w[b] > 0) ||
     Number(peak[a]) - Number(peak[b]) || busy(a) - busy(b) ||
     price(a) - price(b) || input.other_house_w[a] - input.other_house_w[b] || a - b;
-  const daily: { day: string; indices: number[]; requiredWh: number; elapsed: number }[] = [];
+  const at = (i: number) => Date.parse(starts[i]);
+  const dayAt = (ms: number) => localDay(new Date(ms).toISOString(), input.timezone);
+  // Water use per quarter, as a free thermostat would draw to replace it. A
+  // day the horizon covers in full is scaled to its daily requirement; a
+  // partial day keeps the forecast's shape, and the current day's
+  // requirement beyond the rest of its forecast is heat already owed.
+  const raw = starts.map((_s, i) => active[i].reduce((sum, s) => sum + s.control.expected_power_w_by_slot[i], 0));
+  const draw = [...raw];
+  let owedAtStart = 0;
+  const daily: { day: string; indices: number[]; elapsed: number }[] = [];
   for (const [day, indices] of days) {
-    const elapsed = previous.filter(start => localDay(start, input.timezone) === day).length * 15;
-    const fixed = indices.reduce((sum, i) => sum + (locked[i]?.boiler_permitted ? hours[i] * 60 : 0), 0);
-    const remainingMinutes = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - fixed);
     // Services normally cover one local day. A service spanning multiple days
     // apportions its energy by its historical shape, not a fixed daily amount.
     const requiredWh = services.reduce((sum, service) => {
@@ -85,67 +92,83 @@ export function scheduleHotWater(input: {
       const numerator = indices.reduce((s, i) => s + (total ? weights[i] : eligible[i] ? hours[i] : 0), 0);
       return sum + (denominator > 0 ? service.required_kwh * 1000 * numerator / denominator : 0);
     }, 0);
-    const fixedWh = indices.reduce((sum, i) => sum + expected[i] * hours[i], 0);
-    const neededWh = Math.max(0, requiredWh - fixedWh);
+    const profileWh = indices.reduce((sum, i) => sum + raw[i] * hours[i], 0);
+    const first = indices[0], last = indices.at(-1)!;
+    const full = dayAt(at(first) - 1) !== day && hours[first] >= .25 - 1e-9 && dayAt(at(last) + QUARTER_MS) !== day;
+    if (full) {
+      const dayHours = indices.reduce((sum, i) => sum + hours[i], 0);
+      for (const i of indices) draw[i] = profileWh > 0 ? raw[i] * requiredWh / profileWh : requiredWh / dayHours;
+    } else if (first === 0) owedAtStart = Math.max(0, requiredWh - profileWh);
+    daily.push({ day, indices, elapsed: previous.filter(start => localDay(start, input.timezone) === day).length * 15 });
+  }
+  const committed = starts.map((_s, i) => locked[i]?.boiler_expected_w);
+  const project = () => projectBoilerTank({ draw_w: draw, initial_deficit_wh: owedAtStart, running_w: rated, hours,
+    permitted, committed_w: committed });
+  const withinHeadroom = (run: ReturnType<typeof project>) =>
+    !run.expected_w.some((w, i) => !locked[i] && w > input.available_w[i] + 1e-6);
+  const fits = () => withinHeadroom(project());
+  // Heat the tank still owes at a day's end is bought later; it is valued at
+  // the horizon's median import price so an early run is not free.
+  const reference = [...input.import_price].sort((a, b) => a - b)[Math.floor(input.import_price.length / 2)];
+  for (const { indices, elapsed } of daily) {
+    const fixed = indices.reduce((sum, i) => sum + (locked[i]?.boiler_permitted ? hours[i] * 60 : 0), 0);
+    const remainingMinutes = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - fixed);
     let prefix = 0;
     while (prefix < indices.length && locked[indices[prefix]]) prefix++;
-    const continuing = prefix > 0 && prefix < indices.length && neededWh > 1e-6
-      && locked[indices[prefix - 1]].boiler_expected_w >= FINISH_HEATING_W;
-    const candidates: { indices: number[]; score: number[] }[] = [];
-    for (let from = 0; from < indices.length && (remainingMinutes > 1e-6 || neededWh > 1e-6); from++) {
+    const continuing = prefix > 0 && prefix < indices.length && locked[indices[prefix - 1]].boiler_expected_w >= FINISH_HEATING_W
+      && project().deficit_wh[indices[prefix - 1]] > 1e-6;
+    // Each candidate is one run, permitted for as long as the tank keeps it
+    // heating, then the quota's other quarters after it. A run that would
+    // finish through a headroom obstruction is not started.
+    const evaluate = (block: number[]) => {
+      for (const i of block) permitted[i] = true;
+      const run = project();
+      for (const i of block) permitted[i] = false;
+      if (!withinHeadroom(run)) return null;
+      const heated = indices.filter(i => run.expected_w[i] > 0);
+      const minutes = block.reduce((sum, i) => sum + hours[i] * 60, 0);
+      const heatHours = (flag: (i: number) => number) => heated.reduce((sum, i) => sum + flag(i) * hours[i], 0);
+      return { indices: block, score: [
+        Math.max(0, remainingMinutes - minutes),
+        heatHours(i => Number(input.large_load_w[i] > 0)), heatHours(i => Number(peak[i])), heatHours(busy),
+        heated.reduce((sum, i) => sum + run.expected_w[i] * hours[i] * price(i), 0) / 1000 + run.deficit_wh[indices.at(-1)!] * reference / 1000,
+        block.length ? block.reduce((s, i) => s + input.other_house_w[i] * hours[i], 0) / (minutes / 60) : 0, block[0] ?? -1,
+      ] };
+    };
+    const candidates = [evaluate([])].filter(c => c !== null && !continuing);
+    for (let from = 0; from < indices.length; from++) {
       if (continuing && from !== prefix) continue;
-      const block: number[] = [];
-      let minutes = 0, capacity = 0;
-      for (let j = from; j < indices.length; j++) {
-        const i = indices[j];
-        if (!eligible(i) || block.length && i !== block.at(-1)! + 1) break;
-        block.push(i); minutes += hours[i] * 60; capacity += rated[i] * hours[i];
-        if (capacity + 1e-6 >= neededWh) break;
-      }
-      if (!block.length) continue;
-      // Do not start a run that would have to finish through a known physical
-      // obstruction. A horizon boundary may truncate a forecast explicitly.
-      if (capacity + 1e-6 < neededWh && block.at(-1) !== indices.at(-1)) continue;
-      const power = Math.max(...block.map(i => rated[i]));
-      // Once the forecast run is complete, extra permission need not be
-      // contiguous. It must not start earlier and move the run through a
-      // headroom obstruction that the selected start deliberately avoided.
+      const start = indices[from];
+      if (!eligible(start)) continue;
+      permitted[start] = true;
+      const run = project();
+      permitted[start] = false;
+      const block = [start];
+      while (block.at(-1)! + 1 < starts.length && eligible(block.at(-1)! + 1) && run.expected_w[block.at(-1)! + 1] >= FINISH_HEATING_W
+        && dayOf[block.at(-1)! + 1] === dayOf[start]) block.push(block.at(-1)! + 1);
+      let minutes = block.reduce((sum, i) => sum + hours[i] * 60, 0);
+      // Extra permission after the run need not be contiguous. It must not
+      // start earlier and move the run through an obstruction it avoided.
       const runEnd = block.at(-1)!;
       for (const i of indices.filter(i => i > runEnd && eligible(i)).sort(rank)) {
         if (minutes + 1e-6 >= remainingMinutes) break;
         block.push(i); minutes += hours[i] * 60;
       }
-      candidates.push({ indices: block, score: [
-        Math.max(0, remainingMinutes - minutes) + (power > 0 ? Math.max(0, neededWh - capacity) / power * 60 : 0),
-        block.reduce((s, i) => s + Number(input.large_load_w[i] > 0) * hours[i], 0),
-        block.reduce((s, i) => s + Number(peak[i]) * hours[i], 0),
-        block.reduce((s, i) => s + busy(i) * hours[i], 0),
-        block.reduce((s, i) => s + price(i) * hours[i], 0) / (minutes / 60),
-        block.reduce((s, i) => s + input.other_house_w[i] * hours[i], 0) / (minutes / 60), block[0],
-      ] });
+      const candidate = evaluate(block);
+      if (candidate) candidates.push(candidate);
     }
     candidates.sort((a, b) => {
-      for (let i = 0; i < a.score.length; i++) if (Math.abs(a.score[i] - b.score[i]) > 1e-6) return a.score[i] - b.score[i];
+      for (let i = 0; i < a!.score.length; i++) if (Math.abs(a!.score[i] - b!.score[i]) > 1e-6) return a!.score[i] - b!.score[i];
       return 0;
     });
     for (const i of candidates[0]?.indices ?? []) permitted[i] = true;
-    daily.push({ day, indices, requiredWh, elapsed });
   }
-  const project = ({ indices, requiredWh }: typeof daily[number]) => projectBoilerDay({ required_wh: requiredWh,
-    running_w: indices.map(i => rated[i]), hours: indices.map(i => hours[i]),
-    permitted: indices.map(i => permitted[i]), committed_w: indices.map(i => locked[i]?.boiler_expected_w) });
-  const fits = (plan: typeof daily[number]) => {
-    const run = project(plan);
-    return !plan.indices.some((i, j) => !locked[i] && run.expected_w[j] > input.available_w[i] + 1e-6);
-  };
   // No more than the maximum gap without a permitted quarter. A longer gap
   // gets the fewest extra quarters that close it, each the best-ranked one
   // in the span that still leaves the rest closable and whose run fits the
   // headroom. Failing that, the latest inside the gap, then the earliest after.
   // The horizon's end closes the last gap; the next replan continues it.
-  const at = (i: number) => Date.parse(starts[i]);
   const horizonEnd = at(starts.length - 1) + QUARTER_MS;
-  const planOf = (i: number) => daily.find(d => d.day === dayOf[i])!;
   // An overdue gap is closed at the first eligible quarter. Without any
   // record the gap is counted from the start of the horizon.
   let lastEnd = latest === null ? horizonStart : Date.parse(latest) + QUARTER_MS;
@@ -164,23 +187,26 @@ export function scheduleHotWater(input: {
     const inside = open.filter(i => at(i) < from && at(i) <= until).reverse();
     const pick = [...span, ...inside, ...open.filter(i => at(i) > until)].find(i => {
       permitted[i] = true;
-      if (fits(planOf(i))) return true;
+      if (fits()) return true;
       permitted[i] = false;
       return false;
     });
     if (pick === undefined) break;
     lastEnd = at(pick) + QUARTER_MS;
   }
+  const run = project();
+  if (!withinHeadroom(run)) throw new Error("Committed boiler completion exceeds electrical headroom");
+  run.expected_w.forEach((w, i) => { expected[i] = w; });
+  // A day falls short by missing permission minutes, and by heat it still
+  // owes at its end beyond the water used after its last heating.
   const shortfall: Record<string, number> = {};
-  for (const plan of daily) {
-    const { day, indices, elapsed } = plan;
-    const run = project(plan);
-    if (!fits(plan)) throw new Error(`Committed boiler completion exceeds electrical headroom on ${day}`);
-    indices.forEach((i, j) => { expected[i] = run.expected_w[j]; });
+  for (const { day, indices, elapsed } of daily) {
     const permissionMinutes = indices.reduce((sum, i) => sum + (permitted[i] ? hours[i] * 60 : 0), 0);
     const power = Math.max(...indices.map(i => rated[i]));
-    shortfall[day] = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - permissionMinutes,
-      power > 0 ? run.unserved_wh / power * 60 : 0);
+    const lastHeat = indices.findLast(i => run.expected_w[i] > 0 || permitted[i]);
+    const after = indices.filter(i => lastHeat === undefined || i > lastHeat).reduce((sum, i) => sum + draw[i] * hours[i], 0);
+    const unmetWh = Math.max(0, run.deficit_wh[indices.at(-1)!] - after);
+    shortfall[day] = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - permissionMinutes, power > 0 ? unmetWh / power * 60 : 0);
   }
   return { permitted, expected_w: expected, rated_w: rated, shortfall_minutes: shortfall,
     permission_starts: [...new Set([...previous, ...recent, ...starts.filter((_s, i) => permitted[i])])].sort() };

@@ -14,16 +14,30 @@ const longestGap = (w: { permitted: boolean[] }, from = 0) => {
   const at = [from - 1, ...permittedAt(w), w.permitted.length];
   return Math.max(...at.slice(1).map((i, j) => (i - at[j] - 1) * 15));
 };
-Deno.test('ten quarters per day, price ordered without peaks or chosen large loads', () => {
+/** Heat never runs ahead of the water drawn (flat forecast, one full day per service). */
+const heatsOnlyDrawn = (w: { expected_w: number[] }, drawW: number, owedAtStartWh = 0) => {
+  let heat = 0;
+  w.expected_w.forEach((watts, i) => { heat += watts / 4; assert(heat <= owedAtStartWh + drawW * (i + 1) / 4 + 1e-6, `quarter ${i}`); });
+  return heat / 1000;
+};
+Deno.test('one run a day heats only the water already drawn', () => {
   const p = input();
   p.large_load_w[0] = 3000;
   p.import_price[24] = -10;
   const w = scheduleHotWater(p);
-  // Ten quota quarters, then 11:45 so the night is no more than 12 hours unpermitted.
-  assertEquals(permittedAt(w), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 47]);
-  assert(!w.permitted[0] && !w.permitted[24]);
+  // Prices rise through the day: the run is early, outside the large load and the 06:00 peak,
+  // and heats what the night drew, not the day's 6 kWh. The evening's water stays owed.
+  assertEquals(permittedAt(w), [15, 16, 17, 18, 19, 20, 21, 22, 23, 36, 47]);
+  assertEquals(w.expected_w.slice(15, 17), [3000, 1250]);
+  assertAlmostEquals(heatsOnlyDrawn(w, 250), 3);
   assertEquals(w.shortfall_minutes, { '2026-10-14': 0 });
-  assertAlmostEquals(w.expected_w.reduce((s, w) => s + w / 4000, 0), 6);
+});
+Deno.test('when heat gets cheaper through the day the evening run heats the day', () => {
+  const p = input(); p.import_price = p.starts.map((_s, i) => (96 - i) / 100);
+  const w = scheduleHotWater(p);
+  assertEquals(w.expected_w.slice(87, 90), [3000, 3000, 3000]);
+  assert(w.permitted[49], 'the 12-hour rule still permits 12:15');
+  assertAlmostEquals(heatsOnlyDrawn(w, 250), 6);
 });
 Deno.test('thermostat idle changes no permission and does not create tank debt', () => {
   const p = input(); p.services[0].control.expected_power_w_by_slot.fill(0); p.services[0].required_kwh = 0;
@@ -31,45 +45,41 @@ Deno.test('thermostat idle changes no permission and does not create tank debt',
   assertEquals(w.permitted.filter(Boolean).length, 11);
   assertEquals(w.expected_w.reduce((s, w) => s + w, 0), 0);
 });
+Deno.test("today's requirement beyond the rest of its forecast is heat already owed", () => {
+  const p = input('2026-10-14T12:00:00Z', 48);
+  p.services[0].required_kwh = 4; // 3 kWh of forecast remains, so 1 kWh is owed now.
+  const w = scheduleHotWater(p);
+  assertEquals(w.expected_w.slice(0, 2), [3000, 1500]);
+  heatsOnlyDrawn(w, 250, 1000);
+});
 Deno.test('midday replans retain elapsed opportunities without duplicate credit', () => {
   const p = input('2026-10-14T12:00:00Z', 48);
   p.services[0].required_kwh = 1; // Five of today's six kWh have already been delivered.
   p.previous_permissions = Array.from({ length: 8 }, (_, i) => new Date(Date.parse('2026-10-14T00:00:00Z') + i * 900000).toISOString());
   p.previous_permissions.push(p.previous_permissions[0]);
   const w = scheduleHotWater(p);
-  assertEquals(w.permitted.filter(Boolean).length, 2);
-  assertEquals(w.permission_starts.length, 10);
+  // The last 30 quota minutes are a run at 14:45; 12:00 keeps 02:00 within 12 hours.
+  assertEquals(permittedAt(w), [0, 11, 12]);
+  assertEquals(w.permission_starts.length, 11);
 });
-
-Deno.test('daily requirements produce concentrated measured-power runs, independent of allowance length', () => {
+Deno.test('several days each heat what they draw, and the tank carries across midnight', () => {
   const p = input('2026-10-14T00:00:00Z', 288);
   p.services = [3, 5, 7].map((kwh, day) => ({ ...p.services[0], id: `day:${day}`, required_kwh: kwh,
     earliest_start: p.starts[day * 96], deadline: new Date(Date.parse(p.starts[day * 96]) + 86400000).toISOString() }));
-  const result = scheduleHotWater(p);
-  for (let day = 0; day < 3; day++) {
-    const watts = result.expected_w.slice(day * 96, (day + 1) * 96);
-    assertAlmostEquals(watts.reduce((sum, w) => sum + w / 4000, 0), [3, 5, 7][day]);
-    assertEquals(watts.filter(w => w === 3000).length, [4, 6, 9][day]);
-    assertEquals(result.permitted.slice(day * 96, (day + 1) * 96).filter(Boolean).length, 11);
-  }
+  const w = scheduleHotWater(p);
+  let heat = 0, drawn = 0;
+  w.expected_w.forEach((watts, i) => { heat += watts / 4; drawn += [3, 5, 7][Math.floor(i / 96)] * 1000 / 96; assert(heat <= drawn + 1e-6); });
+  for (let day = 0; day < 3; day++) assert(w.permitted.slice(day * 96, (day + 1) * 96).filter(Boolean).length >= 10);
+  assertEquals(longestGap(w) <= WATER_MAX_GAP_MINUTES, true);
 });
-
-Deno.test('a run never starts before a headroom obstruction it could not finish through', () => {
-  const p = input(); p.available_w[3] = 1000;
-  const result = scheduleHotWater(p);
-  assertEquals(result.expected_w.slice(0, 4), [0, 0, 0, 0]);
-  assertAlmostEquals(result.expected_w.reduce((sum, w) => sum + w / 4000, 0), 6);
-});
-
-Deno.test('unused permission opportunities may be scattered after the heating run completes', () => {
-  const p = input(); p.services[0].required_kwh = 3;
-  p.available_w.fill(0);
-  for (const i of [0, 1, 2, 3, 8, 9, 10, 11, 12, 13]) p.available_w[i] = 10000;
-  const result = scheduleHotWater(p);
-  assertEquals(result.expected_w.slice(0, 4), [3000, 3000, 3000, 3000]);
-  assertEquals(result.expected_w.slice(4).every(w => w === 0), true);
-  assertEquals(result.permitted.filter(Boolean).length, 10);
-  assertEquals(result.shortfall_minutes['2026-10-14'], 0);
+Deno.test('a run is not started where it would have to finish through a headroom obstruction', () => {
+  const p = input(); p.import_price = p.starts.map(() => 1); p.import_price[40] = .1;
+  assertEquals(scheduleHotWater(p).expected_w.slice(40, 42), [3000, 3000]);
+  p.available_w[41] = 0;
+  const w = scheduleHotWater(p);
+  // The run starts earlier so that it finishes inside the cheap quarter, before the obstruction.
+  assertEquals(w.expected_w.slice(37, 42), [3000, 3000, 3000, 1250, 0]);
+  assert(w.expected_w.every((watts, i) => watts <= p.available_w[i]));
 });
 Deno.test('equipment headroom shortfall is explicit, not fabricated permission', () => {
   const p = input(); p.available_w.fill(2000);
@@ -81,29 +91,37 @@ Deno.test('DST local days still get 150 permission minutes', () => {
   for (const [start, count] of [['2026-03-28T23:00:00Z', 92], ['2026-10-24T22:00:00Z', 100]] as const) {
     const p = { ...input(start, count), timezone: 'Europe/Stockholm' };
     const w = scheduleHotWater(p);
-    assertEquals(w.permitted.filter(Boolean).length, 11);
+    assert(w.permitted.filter(Boolean).length >= 10);
     assertEquals(Object.keys(w.shortfall_minutes).length, 1);
   }
 });
 
+/** Today's quota is already met and the thermostat idle, so only the 12-hour rule permits. */
+const gapOnly = (start: string, count: number) => {
+  const p = input(start, count);
+  p.services[0].required_kwh = 0; p.services[0].control.expected_power_w_by_slot.fill(0);
+  p.previous_permissions = Array.from({ length: 10 }, (_, i) => new Date(Date.parse('2026-10-14T00:00:00Z') + i * 900000).toISOString());
+  return p;
+};
 Deno.test('no more than 12 hours without a permitted quarter, at the cheapest quarter that closes the gap', () => {
-  const p = input(); p.services[0].required_kwh = 7.5; // The run fills the quota: 00:00 to 02:30.
-  p.import_price[50] = -1; p.import_price[60] = -2;
+  const p = gapOnly('2026-10-14T06:00:00Z', 72);
+  p.import_price[26] = -1; p.import_price[40] = -2;
   const w = scheduleHotWater(p);
-  // 15:00 is cheaper, but from there the 02:30 to 15:00 gap would be over 12 hours.
-  assertEquals(permittedAt(w), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 50]);
+  // 16:00 is cheaper, but from there the 02:30 to 16:00 gap would be over 12 hours.
+  assertEquals(permittedAt(w), [26]);
   assertEquals(longestGap(w) <= WATER_MAX_GAP_MINUTES, true);
 });
 
 Deno.test('a gap over a whole day gets the fewest extra quarters', () => {
   const p = input('2026-10-14T00:00:00Z', 192);
-  p.services = [7.5, 0].map((kwh, day) => ({ ...p.services[0], id: `day:${day}`, required_kwh: kwh,
+  p.services = [0, 1].map(day => ({ ...p.services[0], id: `day:${day}`, required_kwh: 0,
+    control: { ...p.services[0].control, expected_power_w_by_slot: p.starts.map(() => 0) },
     earliest_start: p.starts[day * 96], deadline: new Date(Date.parse(p.starts[day * 96]) + 86400000).toISOString() }));
   p.available_w.fill(0, 96);
   for (const i of [120, 132, ...Array.from({ length: 12 }, (_, j) => 180 + j)]) p.available_w[i] = 10000;
   const w = scheduleHotWater(p);
-  // 02:30 to 21:00 the next day takes three: 09:00 (06–09 is busy), 21:00 (18–21 is busy) and 09:00.
-  assertEquals(permittedAt(w).filter(i => i >= 10 && i < 180), [36, 84, 132]);
+  // 02:30 to 06:00 the next day takes two: 05:30 (06–09 is busy) and 17:45.
+  assertEquals(permittedAt(w).filter(i => i >= 10 && i < 120), [22, 71]);
   assertEquals(longestGap(w) <= WATER_MAX_GAP_MINUTES, true);
 });
 
@@ -131,11 +149,12 @@ Deno.test('an overdue gap is closed at the first eligible quarter', () => {
 });
 
 Deno.test('a gap quarter is skipped where the run it starts could not finish within headroom', () => {
-  const p = input();
-  p.import_price = p.starts.map((_s, i) => (96 - i) / 100); // Daily run late; the gap quarter is wanted at 12:00.
-  p.available_w[50] = 1000;
+  const p = gapOnly('2026-10-14T06:00:00Z', 72);
+  p.services[0].required_kwh = 4.5; p.services[0].control.expected_power_w_by_slot.fill(250);
+  p.import_price = p.starts.map((_s, i) => (72 - i) / 100); // The daily run is late; the gap quarter is wanted at 14:30.
+  assertEquals(permittedAt(scheduleHotWater(p)).filter(i => i < 60), [34]);
+  p.available_w[35] = 1000;
   const w = scheduleHotWater(p);
-  const extra = permittedAt(w).filter(i => i < 80);
-  assertEquals(extra, [42]);
-  assertEquals(w.expected_w[50], 0);
+  assertEquals(permittedAt(w).filter(i => i < 60), [32]);
+  assert(w.expected_w[35] <= 1000);
 });

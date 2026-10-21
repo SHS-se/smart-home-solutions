@@ -375,9 +375,9 @@ Deno.test("hot water chooses daily opportunities and preserves committed permiss
   assertAlmostEquals(plan.slots.reduce((sum, s) => sum + s.boiler_expected_w / 4000, 0), 1);
   assertAlmostEquals(plan.summary.duty_cycle_deferred_kwh!, 0);
   // This two-hour horizon cannot provide the full 150-minute allowance.
-  // Permission throughout means heating starts at the first (expensive)
-  // quarter: 1 kWh at 3 SEK plus the 1.6 SEK household load.
-  assertAlmostEquals(plan.summary.net_cost_sek!, 4.6);
+  // Permission throughout means the thermostat replaces the water as it is
+  // drawn: 0.5 kWh at 3 SEK, 0.5 kWh at 0.2 SEK, plus the 1.6 SEK household load.
+  assertAlmostEquals(plan.summary.net_cost_sek!, 3.2);
   assertEquals(JSON.stringify(input), before);
   const previous = { plan_id: "water-prior", slots: plan.slots };
   s.slots = s.slots.map(slot => ({ ...slot, import_price_sek_per_kwh: .1 }));
