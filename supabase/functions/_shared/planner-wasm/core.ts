@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { NativeCommand, ReadyProblem } from "./ready-problem.ts";
+import { planningStage, type PlanningTrace } from "../planning-trace.ts";
 
 const age = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("off_unobserved") }),
@@ -147,8 +148,9 @@ export function createWasmPlanner(bytes: Uint8Array) {
     inputValue: unknown,
     exportName: "planner_solve" | "planner_project",
     parse: (value: unknown) => T,
+    trace?: PlanningTrace,
   ) {
-    const instance = new WebAssembly.Instance(module);
+    const instance = planningStage(trace, "wasm_instantiate", () => new WebAssembly.Instance(module));
     const {
       memory,
       planner_alloc: alloc,
@@ -164,7 +166,8 @@ export function createWasmPlanner(bytes: Uint8Array) {
       ).join(",");
       throw new Error(`Invalid planner Wasm exports: ${exports}`);
     }
-    const input = new TextEncoder().encode(JSON.stringify(inputValue));
+    const input = planningStage(trace, "wasm_input_encode", () => new TextEncoder().encode(JSON.stringify(inputValue)));
+    const allocated = trace?.start("wasm_input_allocate", { input_bytes: input.length });
     const pointer: number = alloc(input.length);
     if (
       !Number.isSafeInteger(pointer) || pointer < 0 ||
@@ -173,7 +176,9 @@ export function createWasmPlanner(bytes: Uint8Array) {
     let outputPointer = 0, outputLength = 0;
     try {
       new Uint8Array(memory.buffer, pointer, input.length).set(input);
-      const result: bigint = run(pointer, input.length);
+      allocated?.();
+      const result: bigint = planningStage(trace, "wasm_execute", () => run(pointer, input.length), { export: exportName });
+      const decoded = trace?.start("wasm_output_decode");
       if (typeof result !== "bigint") {
         throw new Error("Invalid planner result ABI.");
       }
@@ -186,6 +191,7 @@ export function createWasmPlanner(bytes: Uint8Array) {
         new Uint8Array(memory.buffer, outputPointer, outputLength),
       );
       const outcome = parse(JSON.parse(text));
+      decoded?.({ input_bytes: input.length, output_bytes: outputLength, wasm_memory_bytes: memory.buffer.byteLength });
       // Wasm memory only grows, so its final size is its instance high-water
       // mark. This excludes JS/compiler memory and is not whole-handler RSS.
       return {
@@ -200,11 +206,12 @@ export function createWasmPlanner(bytes: Uint8Array) {
     }
   }
   return {
-    solve(problem: ReadyProblem) {
+    solve(problem: ReadyProblem, trace?: PlanningTrace) {
       const result = invoke(
         problem,
         "planner_solve",
         (value) => solveOutcome.parse(value) as SolveOutcome,
+        trace,
       );
       const { outcome } = result;
       if (outcome.kind === "selected") {

@@ -31,6 +31,7 @@ import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
+import { planningStage, type PlanningTrace } from "./planning-trace.ts";
 
 export const RULES_MODEL_VERSION = `rules-planner-v19:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
@@ -69,13 +70,16 @@ export interface PreparedRulesInput {
 }
 
 let compiled: ReturnType<typeof createWasmPlanner> | undefined;
-function planner(): ReturnType<typeof createWasmPlanner> {
+function planner(trace?: PlanningTrace): ReturnType<typeof createWasmPlanner> {
   if (compiled) return compiled;
-  const bytes = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-  if (artifact.abi !== 11 || hash(bytes) !== artifact.wasm_sha256) {
-    return fail("Rules planner artifact is missing, obsolete or corrupt");
-  }
-  compiled = createWasmPlanner(bytes);
+  const bytes = planningStage(trace, "wasm_artifact_decode", () => {
+    const decoded = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
+    if (artifact.abi !== 11 || hash(decoded) !== artifact.wasm_sha256) {
+      return fail("Rules planner artifact is missing, obsolete or corrupt");
+    }
+    return decoded;
+  });
+  compiled = planningStage(trace, "wasm_compile", () => createWasmPlanner(bytes));
   return compiled;
 }
 
@@ -438,11 +442,11 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 }
 
 /** Native physics also owns the baseline projection. */
-export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult {
+export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
-  const core = planner();
-  let solved = core.solve(input.problem).outcome;
+  const core = planningStage(trace, "wasm_initialise", () => planner(trace), { cold: !compiled });
+  let solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
   let released: GeneratedPlan["continuity"];
   if (solved.kind === "failed") {
     // The next hour remains exact unless its commands violate current
@@ -459,7 +463,7 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       input = { ...input, locked_slots: [], problem: { ...input.problem, accepted: null, locked_through_seconds: 0 } };
       input = { ...input, boiler_w: input.boiler_w.map(() => 0), boiler_permitted: input.boiler_permitted.map(() => false),
         problem: { ...input.problem, slots: input.problem.slots.map((s, i) => ({ ...s, base_w: s.base_w - input.boiler_w[i] })) } };
-      solved = core.solve(input.problem).outcome;
+      solved = planningStage(trace, "solve_released_commitments", () => core.solve(input.problem, trace)).outcome;
     }
   }
   if (solved.kind === "failed") {
@@ -472,10 +476,11 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     }
     return fail(solved.issue);
   }
-  const refined = addHotWater(core, input, solved.selection);
+  const refined = planningStage(trace, "hot_water_refinement", () => addHotWater(core, input, solved.selection));
   input = refined.input;
   const selected = refined.selection;
   const p = input.problem;
+  const materialized = trace?.start("selected_plan_materialize");
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
   if (released) priority.generated.continuity = released;
   // Only the selected schedule has a rule account; the baseline was never scored.
@@ -485,7 +490,10 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
       return points ? [[rule.key, points]] : [];
     }));
   });
-  const { commands: baselineCommands, outcome: baselineProjection } = projectRulesBaseline(core, input, selected.commands, selected.quarters);
+  materialized?.();
+  const { commands: baselineCommands, outcome: baselineProjection } = planningStage(trace, "baseline_projection",
+    () => projectRulesBaseline(core, input, selected.commands, selected.quarters));
+  const assembled = trace?.start("plan_assemble");
   const baseline: BaselinePlan = baselineProjection.kind === "projected"
     ? scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery and EV load balancing").generated
     : { key: "baseline", label: "Selected loads with self-consumption battery and EV load balancing", status: "infeasible",
@@ -569,8 +577,10 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
   // Native commands remain the existing authority when the integration does
   // not publish optional execution feedback. Do not invent a feedback receipt
   // or a utility-curve monetary projection for the rules objective.
-  return { plan, battery_projection: { status: "unsupported", reasons: [
+  const result: OptimisationResult = { plan, battery_projection: { status: "unsupported", reasons: [
     !p.battery ? "no_battery" : plan.battery_execution
       ? "replaced_by_plan_execution_contract" : "rules_objective_has_no_conditional_money_projection",
   ] } };
+  assembled?.();
+  return result;
 }
