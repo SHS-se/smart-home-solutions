@@ -2,19 +2,27 @@ import { baselineFixture } from '../src/lib/home-baseline/fixture.ts';
 import { prepareHomeBaseline } from '../src/lib/home-baseline/model.ts';
 import { localMoment } from '../supabase/functions/_shared/energy-grid-pricing.ts';
 
-export const ROI_SCENARIOS = ['flat', 'solar-prices', 'solar-prices-trips', 'delayed-pool'] as const;
+export const ROI_SCENARIOS = ['flat', 'solar-prices', 'solar-prices-trips', 'delayed-pool', 'delayed-pool-hourly-ev'] as const;
 export type RoiScenario = typeof ROI_SCENARIOS[number];
 
 /** Deterministic synthetic households, including changing weather/prices and observed trips. */
 export function roiBenchmarkInput(scenario: RoiScenario) {
   const rows = baselineFixture({ start: '2026-07-31T22:00:00Z', end: '2026-08-31T22:00:00Z' });
-  if (scenario === 'delayed-pool') {
+  if (scenario === 'delayed-pool' || scenario === 'delayed-pool-hourly-ev') {
     const pool = rows.snapshot.device_physics?.pool;
     if (!pool) throw new Error('The ROI benchmark requires pool equipment');
     pool.store.response_time_constant_h = .675;
     pool.heater.response = { kind: 'bergvarme', startup: Array.from({ length: 15 }, (_, i) => ({
       elapsed_seconds: i * 900, electric_fraction: .5 + i / 28, heat_fraction: i / 14,
     })) };
+    if (scenario === 'delayed-pool-hourly-ev') {
+      // Hourly recovered SOC repeats across four quarters. Each observed decline
+      // ends one quarter later under the current replay's event protocol.
+      for (const row of rows.actual) {
+        const { hour } = localMoment(new Date(row.start_ts), rows.snapshot.timezone);
+        row.ev_soc = .8 - Math.min(10, Math.max(0, hour - 7)) * .01;
+      }
+    }
     return prepareHomeBaseline(rows);
   }
   if (scenario === 'flat') return prepareHomeBaseline(rows);

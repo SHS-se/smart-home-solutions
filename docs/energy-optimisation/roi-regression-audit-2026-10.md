@@ -104,3 +104,32 @@ Run `deno task profile:roi --scenario delayed-pool` for stage timings and
 physics changes against both direct and delayed models, compare physical output
 and logical work separately from elapsed time, and investigate material runtime
 increases before deployment.
+
+## Why the first working ROI could feel much faster
+
+The first 11 October implementation projected the default controller and compared
+it with recorded consumption. `1de9075`, late that day, added repeated 72-hour
+optimizer solves to generate the SHS counterfactual. This is a substantial change
+in the calculation's scope, not merely another rendering of the same model.
+`80d4b24` then introduced continuous pool state across months, making earlier
+months prerequisites for later ones when checkpoints need regeneration.
+
+The daily/homecoming trigger itself has not changed since `1de9075`. In the
+captured November input, all 260 positive EV withdrawals occur at hour boundaries.
+Recovered hourly SOC is repeated across four quarters. A decline is followed by
+a quarter with no decline, which the current replay treats as a homecoming and
+replans. Together with 30 daily solves this produces 290 optimizer calls. This
+count describes protocol triggers; it does not establish 260 physical trips or
+measured charger reconnections. Changing this interpretation requires a separate
+modeling decision and evidence, rather than silently suppressing replans as a
+performance optimization.
+
+The earlier public benchmarks exercised only 31 or 62 solves per month and used
+direct pool response. They did not cover the combination of delayed pool physics
+and frequent hourly EV events. The synthetic `delayed-pool-hourly-ev` scenario now
+combines both and reproduces the high replan count without customer data:
+`deno task bench:roi-horizons delayed-pool-hourly-ev 72h`.
+
+There is no retained timing and pinned input for the user's original successful
+run. The 89.5-second result proves an exact improvement over the captured recent
+model; it does not establish restoration of the original perceived latency.
