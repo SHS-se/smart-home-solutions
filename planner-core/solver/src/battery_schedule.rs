@@ -222,7 +222,51 @@ impl Values {
         let share = (kwh - axis[lower]) / (axis[upper] - axis[lower]);
         row[lower] + share * (row[upper] - row[lower])
     }
-    fn best(
+    fn best_pair(
+        &self,
+        ctx: &Context,
+        i: usize,
+        kwh: f64,
+        service_points: i32,
+    ) -> [Option<(Command, f64, f64)>; 2] {
+        let mut best: [Option<(Command, f64, f64)>; 2] = [None, None];
+        for mut c in ctx.options(i, kwh) {
+            let Some(q) = ctx.carry(i, kwh, &c) else {
+                continue;
+            };
+            let charging = c.battery == Operation::GridCharge && q.charge > 0.0;
+            let continuation = self.at(ctx, i + 1, q.battery_kwh, charging);
+            // Both incoming charging states examine identical options and physics.
+            // Only their start charge differs; retain each state's arithmetic/ties.
+            if !physics::locked(ctx.p, i)
+                && matches!(c.battery, Operation::GridCharge | Operation::Export)
+            {
+                if q.charge == 0.0 && q.discharge == 0.0 {
+                    c.battery = Operation::Idle;
+                    c.charge_limit_w = 0.0;
+                    c.discharge_limit_w = 0.0;
+                } else if c.battery == Operation::GridCharge {
+                    c.charge_limit_w = q.charge;
+                } else {
+                    c.discharge_limit_w = q.discharge;
+                }
+            }
+            for previous in [false, true] {
+                let value = (f64::from(service_points) - q.cost)
+                    - crate::charging::battery_start_cost(previous, charging, &ctx.p.limits)
+                    + continuation;
+                let kept = &mut best[usize::from(previous)];
+                if value.is_finite() && kept.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9)
+                {
+                    *kept = Some((c.clone(), q.battery_kwh, value));
+                }
+            }
+        }
+        best
+    }
+    // Independent pre-optimization evaluator checks both channels in native tests.
+    #[cfg(test)]
+    fn best_reference(
         &self,
         ctx: &Context,
         i: usize,
@@ -433,9 +477,18 @@ pub(crate) fn allocate(
     for i in (0..n).rev() {
         let points = ctx.service_points(i);
         for (g, &e) in ctx.axes[i].iter().enumerate() {
-            for charging in [false, true] {
-                if let Some((_, _, value)) = values.best(&ctx, i, e, points, charging) {
-                    values.rows[i][usize::from(charging)][g] = value;
+            let choices = values.best_pair(&ctx, i, e, points);
+            #[cfg(test)]
+            for (charging, actual) in choices.iter().enumerate() {
+                let expected = values.best_reference(&ctx, i, e, points, charging != 0);
+                assert_eq!(
+                    serde_json::to_vec(actual).unwrap(),
+                    serde_json::to_vec(&expected).unwrap()
+                );
+            }
+            for (charging, choice) in choices.into_iter().enumerate() {
+                if let Some((_, _, value)) = choice {
+                    values.rows[i][charging][g] = value;
                 }
             }
         }
@@ -444,7 +497,10 @@ pub(crate) fn allocate(
     let mut proposal = Vec::with_capacity(n);
     let mut previous_charging = false;
     for i in 0..n {
-        let (c, end, _) = values.best(&ctx, i, kwh, ctx.service_points(i), previous_charging)?;
+        let (c, end, _) = values
+            .best_pair(&ctx, i, kwh, ctx.service_points(i))
+            .into_iter()
+            .nth(usize::from(previous_charging))??;
         previous_charging =
             c.battery == Operation::GridCharge && ctx.carry(i, kwh, &c)?.charge > 0.0;
         proposal.push(c);
@@ -524,7 +580,7 @@ mod tests {
         let unsupported = Values {
             rows: vec![[vec![f64::NEG_INFINITY; 2], vec![f64::NEG_INFINITY; 2]]; 2],
         };
-        assert!(unsupported.best(&ctx, 0, 0.5, 0, false).is_none());
+        assert!(unsupported.best_pair(&ctx, 0, 0.5, 0)[0].is_none());
     }
 
     #[test]

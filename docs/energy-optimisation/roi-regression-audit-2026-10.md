@@ -133,3 +133,46 @@ combines both and reproduces the high replan count without customer data:
 There is no retained timing and pinned input for the user's original successful
 run. The 89.5-second result proves an exact improvement over the captured recent
 model; it does not establish restoration of the original perceived latency.
+
+## Further exact compute reduction
+
+The delayed response's release coefficients depend only on duration and the
+immutable model's time constant. Profiling one captured solve found about
+1.23 million coefficient calculations but only 111,140 distinct duration bit
+patterns. Startup segments and thermostat root iterations repeatedly use the
+same durations; preparing only whole-quarter coefficients misses much of this
+reuse.
+
+A model-owned `PoolKernel` now keeps 4,096 exact coefficient entries. Every cell
+contains the canonical result for its complete duration key. The model borrow
+binds its time constant; signed zero remains distinct, and collisions recompute
+the same arithmetic. `Cell` enforces single-owner access without locks. Direct
+execution and independent certification use the shared canonical arithmetic
+without the coefficient cache. The 96 KiB coefficient allocation and the full
+transition table together remain within the existing two-MiB budget.
+
+Startup knots stream in their original order. Thermostat partitions use stack
+arrays sized from the algorithm's maximum of three partition points and six
+turning points. Root iterations, duplicates, comparisons and all floating-point
+expressions remain unchanged. Exact zero and full endpoints are reused.
+
+Battery continuation evaluation also enumerated identical options twice for its
+two incoming charging states. It now shares option generation, physical carry
+and continuation lookup, while preserving each state's separate start charge,
+arithmetic order and tie handling. Search grants and declared work are unchanged.
+An independent test-only copy of the previous single-state evaluator checks both
+channels during native allocation tests.
+
+Validation includes 6,144 cached/direct transition comparisons, 5,000 complete
+projections against the frozen previous Wasm, complete selected-output equality
+across thirty paired solves, collision/model-isolation/byte-bound tests, the full
+64-test Rust and 1,702-test Deno suites, and all 80 mocked browser tests (one
+existing skip). Full lint has no errors and 27 existing warnings. Thirty paired
+solves measured 337 ms before and 274 ms after this additional change.
+
+The complete captured November comparison retained all 290 solves and matched
+every physical, financial and service output: the previous optimized artifact
+took 89.3 s and the additional optimization took 72.4 s. The original broken
+artifact took 213.6 s on this same captured month, so the cumulative gain is about
+2.95 times. This remains above a one-minute month; the earlier calculation scope
+and the high hourly-EV trigger count still matter.

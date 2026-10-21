@@ -1,4 +1,6 @@
-use shs_planner_models::{Heater, HeaterState, PoolConditions, PoolTransition, ThermalStore};
+use shs_planner_models::{
+    Heater, HeaterState, PoolConditions, PoolKernel, PoolTransition, ThermalStore,
+};
 
 const SETS: usize = 2048;
 const WAYS: usize = 4;
@@ -69,9 +71,9 @@ struct Set {
 /// One projector borrows immutable physical models. Exact conditions, rather
 /// than slot identity, allow repeated intervals to share only the pure thermal
 /// calculation; pricing, grid checks and declared search work remain separate.
-/// Expanded keys retain the existing two-MiB allocation budget.
+/// Full transitions and duration coefficients share the two-MiB allocation budget.
 pub(super) struct PoolMemo<'p> {
-    heater: &'p Heater,
+    kernel: PoolKernel<'p>,
     store: &'p ThermalStore,
     sets: Option<Box<[Set]>>,
     #[cfg(test)]
@@ -80,7 +82,7 @@ pub(super) struct PoolMemo<'p> {
 impl<'p> PoolMemo<'p> {
     pub(super) fn new(heater: &'p Heater, store: &'p ThermalStore) -> Self {
         Self {
-            heater,
+            kernel: PoolKernel::new(heater, store),
             store,
             sets: None,
             #[cfg(test)]
@@ -105,9 +107,7 @@ impl<'p> PoolMemo<'p> {
                     .stop_c
                     .is_some_and(|stop| conditions.water_c >= stop))
         {
-            return self
-                .heater
-                .pool_transition(self.store, state, on, conditions);
+            return self.kernel.transition(state, on, conditions);
         }
         let key = Key::new(state, on, conditions);
         let sets = self
@@ -123,9 +123,7 @@ impl<'p> PoolMemo<'p> {
                 return entry.value;
             }
         }
-        let value = self
-            .heater
-            .pool_transition(self.store, state, on, conditions);
+        let value = self.kernel.transition(state, on, conditions);
         let position = set
             .entries
             .iter()
@@ -316,7 +314,9 @@ mod tests {
             );
         }
         assert_eq!(memo.hits, 1);
-        let bytes = memo.sets.as_ref().unwrap().len() * std::mem::size_of::<Set>();
+        let bytes = std::mem::size_of::<PoolMemo>()
+            + memo.sets.as_ref().unwrap().len() * std::mem::size_of::<Set>()
+            + PoolKernel::MAX_WEIGHT_MEMO_BYTES;
         assert!(bytes <= 2 * 1024 * 1024, "thermal memo bytes: {bytes}");
     }
     #[test]
