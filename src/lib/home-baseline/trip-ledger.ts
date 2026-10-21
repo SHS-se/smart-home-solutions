@@ -1,3 +1,17 @@
+/** Connection is initially assumed, as with historical starting energy. A decline
+ * infers absence until a fresh nondeclining SOC observation. Aliases of an hourly
+ * mean and telemetry gaps cannot establish a return. This is not charger telemetry.
+ * Keep demand separate: every existing debit retains its original quarter/amount. */
+export function inferredEvAvailability(demand: readonly number[], independentSoc: readonly boolean[]): boolean[] {
+  if (demand.length !== independentSoc.length) throw new Error('Invalid recorded EV observation coverage');
+  let available = true;
+  return demand.map((kwh, i) => {
+    if (kwh > 0) available = false;
+    else if (independentSoc[i]) available = true;
+    return available;
+  });
+}
+
 /** Recorded declines are external withdrawals, never previous charging commands. */
 export function recordedTrips(demand: readonly number[], count: number) {
   if (demand.length !== count || demand.some(v => !Number.isFinite(v) || v < 0)) throw new Error('Invalid recorded EV demand');

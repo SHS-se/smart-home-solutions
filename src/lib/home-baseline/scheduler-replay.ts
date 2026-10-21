@@ -12,7 +12,7 @@ import { projectionSeries, type BaselineInput } from './model.ts';
 import { quarterPool, withPoolState } from './pool-carry.ts';
 
 export type ReplayEngine = Pick<ReturnType<typeof createWasmPlanner>, 'solve' | 'project'>;
-export const REPLAY_PROTOCOL = 'perfect-forecast-72h-ev-departure-daily-homecoming-v3';
+export const REPLAY_PROTOCOL = 'perfect-forecast-72h-ev-observed-presence-v4';
 export const REPLAY_ENGINE = `${runtime.recipe.version}:${runtime.policy_manifest.version}:${artifact.wasm_sha256}`;
 
 /** Current optimizer, isolated from live planning/dispatch. Trips are external physical withdrawals. */
@@ -33,7 +33,11 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
   for (let i = 0; i < problem.slots.length; i++) {
     const at = new Date(Date.parse(input.start) + i * 900_000).toISOString(), currentDay = localDay(at, input.timeZone);
     if (problem.car) state = { ...state, ev_kwh: withdrawTrip(state.ev_kwh!, input.evDemandKwh[i], 'SHS Energy Scheduler', at) };
-    if (plannedAt < 0 || currentDay !== day || (i > 0 && input.evDemandKwh[i - 1] > 0 && input.evDemandKwh[i] === 0)) {
+    // Replan when an available car has withdrawals the selected plan could not
+    // simulate. A daily solve after the last withdrawal already knows its depleted
+    // state and future availability, so its eventual return needs no extra solve.
+    const staleEv = plannedAt >= 0 && problem.slots[i].ev_available && i >= trips.next[plannedAt];
+    if (plannedAt < 0 || currentDay !== day || staleEv) {
       const horizon: ReadyProblem = { ...problem, initial: state,
         slots: problem.slots.slice(i, i + 288).map((s, n) => ({ ...s, ev_available: s.ev_available && i + n < trips.next[i], start_seconds: n * 900 })),
         accepted: null, locked_through_seconds: 0 };

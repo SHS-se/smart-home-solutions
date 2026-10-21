@@ -84,6 +84,13 @@ These are approximate initial states.
   Overnight connection is assumed. Unobserved driving masked by simultaneous
   charging cannot be reconstructed. Demand exceeding modelled available car
   energy fails rather than clipping a trip.
+  Availability is inferred from SOC, not measured charger connection: a decline
+  makes the car unavailable until a fresh nondeclining observation. A recovered
+  hourly mean is fresh only at its original hour boundary; its three copied
+  quarters and missing readings cannot establish a return. Precise quarter
+  observations keep their resolution. Both models use this same timeline.
+  Independently initialized captures retain the assumed initial connection;
+  seeded graph frames slice the monthly trajectory, including its availability.
 - Pool: thermostat starts at30°C and stops at30.5°C. The native physical stop
   resets the latch. Initial heater state is `off_unobserved`; historical startup
   phase is unavailable.
@@ -94,7 +101,10 @@ These are approximate initial states.
 The isolated worker performs one reactive native `project` per baseline quarter,
 carrying battery/car/pool/heater state. Scheduler comparison also runs native
 `solve` over a rolling 72-hour forecast at each local day boundary and EV
-homecoming, then projects its chosen commands quarter by quarter. The Wasm
+inferred return when withdrawals have made its selected plan stale, then projects
+its chosen commands quarter by quarter. A daily solve after the last withdrawal
+already knows the depleted state and future availability, so that return does not
+need another solve. The Wasm
 artifact is verified by SHA256. These historical simulations do not dispatch
 commands or modify live planning.
 

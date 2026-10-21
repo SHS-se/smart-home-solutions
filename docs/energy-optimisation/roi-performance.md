@@ -6,6 +6,13 @@ households, not recordings from a customer's home. The benchmark includes all
 history requests, the default-control projection and chart rendering. Native
 diagnostic timers and production Wasm wall times are reported separately.
 
+The later 21 October [regression audit](roi-regression-audit-2026-10.md) covers
+delayed pool response and observation-aware EV replay. Current replay distinguishes
+hourly SOC aliases from fresh observations and replans at a return only when a
+withdrawal made the selected plan stale. This corrects the historical event model;
+it does not change horizon length or search grants. The experiments below retain
+their original date, event interpretation and measurements.
+
 ## Candidate refinement
 
 The first 72-hour solve in the flat scenario produces identical native selection

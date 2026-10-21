@@ -1,9 +1,10 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { baselineFixture } from './fixture';
-import { prepareHomeBaseline } from './model';
+import { prepareHomeBaseline, projectBaseline } from './model';
 import { replayScheduler, REPLAY_PROTOCOL } from './scheduler-replay';
 import { compareModels } from './model-comparison';
-import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
+import { createWasmPlanner, createWasmReplayPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
+import { roiBenchmarkInput } from '../../../scripts/roi-benchmark-scenarios.ts';
 import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem';
 const engine=createWasmPlanner(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm',import.meta.url)));
 for (const operation of ['grid_charge', 'export'] as const) for (const remaining of [0, .7]) Deno.test(`midnight retains the allocated ${operation} power with ${remaining} kWh remaining`,()=>{
@@ -82,8 +83,13 @@ Deno.test('EV departure masks only car availability, including midnight trips; p
  assertEquals(requests[0].slots[trip-1].ev_available,true);
  assert(requests[0].slots.slice(trip).every(s=>!s.ev_available));
  assertAlmostEquals(requests[0].slots[trip+1].import_price,input.problem.slots[trip+1].import_price);
- const homecoming=requests.find(p=>p.slots[0].ev_available && p.slots.length===288-trip-1)!;
- assert(homecoming);assertAlmostEquals(homecoming.initial.ev_kwh!,r.series.carSoc[trip]!/100*input.problem.car!.capacity_kwh);
+ const midnight=requests.find(p=>p.slots.length===288-trip)!;
+ assert(midnight);assertAlmostEquals(midnight.initial.ev_kwh!,r.series.carSoc[trip]!/100*input.problem.car!.capacity_kwh);
+ // Midnight already knows this withdrawal and the following availability.
+ assertEquals(requests.some(p=>p.slots.length===288-trip-1),false);
+ const second=input.evDemandKwh.findIndex((v,i)=>i>trip&&v>0);
+ const homecoming=requests.find(p=>p.slots[0].ev_available && p.slots.length===288-second-1)!;
+ assert(homecoming);assertAlmostEquals(homecoming.initial.ev_kwh!,r.series.carSoc[second]!/100*input.problem.car!.capacity_kwh);
  assertEquals(r.commands[trip].ev_amps,0);
  const impossible={...input,evDemandKwh:[input.problem.car!.capacity_kwh*2,...input.evDemandKwh.slice(1)]};
  assertThrows(()=>replayScheduler(impossible,engine),Error,'unserved recorded EV trip');
@@ -99,4 +105,57 @@ Deno.test('comparisons run only the selected physical model and retain no cross-
  const b=compareModels(input,counted);
  assertEquals(calls,a.scheduler.solves+b.scheduler.solves);
  assertAlmostEquals(a.modeled.schedulerBill.totalSek,b.modeled.schedulerBill.totalSek);
+});
+
+for (const midnight of [false, true]) Deno.test(`hourly EV absence preserves native conservation and ${midnight ? 'skips a return already covered by midnight' : 'replans from all withdrawals at return'}`, () => {
+ const start = midnight ? '2026-10-10T20:00:00Z' : '2026-10-10T12:00:00Z';
+ const end = midnight ? '2026-10-11T01:00:00Z' : '2026-10-10T17:00:00Z';
+ const rows = baselineFixture({start,end}), from=Date.parse(start);
+ rows.evInitial!.ev_soc=.8;
+ rows.actual.forEach(row=>{
+  const hours=(Date.parse(row.start_ts)-from)/3_600_000;
+  row.ev_soc=hours<1?.8:hours<2?.75:.7;
+ });
+ rows.hourlyFields=rows.actual.map(row=>({start_ts:row.start_ts,fields:['ev_soc']}));
+ const input=prepareHomeBaseline(rows), requests: ReadyProblem[]=[];
+ const scheduler=replayScheduler(input,{project:engine.project,solve:p=>{requests.push(p);return engine.solve(p);}});
+ const baseline=projectBaseline(input,engine,false);
+ assertEquals(scheduler.solves,2);
+ assertEquals(requests[1].slots.length,midnight?12:8);
+ assertEquals(requests[1].locked_through_seconds,3600);
+ assert(requests[0].slots.slice(4).every(s=>!s.ev_available));
+ assertEquals(requests[1].slots[0].ev_available,!midnight);
+ assertAlmostEquals(input.evDemandKwh[4],.05*input.problem.car!.capacity_kwh);
+ assertAlmostEquals(input.evDemandKwh[8],.05*input.problem.car!.capacity_kwh);
+ assertEquals(input.evDemandKwh.filter(v=>v>0).length,2);
+ for(const result of [baseline,scheduler]){
+  let ev=input.problem.initial.ev_kwh!;
+  for(let i=0;i<input.problem.slots.length;i++){
+   const s=result.series;
+   ev-=input.evDemandKwh[i];
+   ev+=s.carW[i]/4000*input.problem.car!.charge_efficiency;
+   assertAlmostEquals(s.carSoc[i]!/100*input.problem.car!.capacity_kwh,ev,1e-8);
+   assertAlmostEquals(s.gridImportW[i]-s.gridExportW[i],s.loadW[i]+s.batteryChargeW[i]-s.batteryDischargeW[i]-s.solarW[i],1e-7);
+   assertEquals(s.carConnected[i],input.problem.slots[i].ev_available?1:0);
+   if(!input.problem.slots[i].ev_available){
+    assertEquals(result.commands[i].ev_amps,0);
+    assertEquals(s.carW[i],0);
+   }
+  }
+  assertAlmostEquals(result.ledger.costSek,result.series.costSek.reduce((a,b)=>a+b,0),1e-8);
+ }
+});
+
+Deno.test('delayed-pool hourly EV benchmark solves once daily and once per inferred return, with all thirty withdrawals', () => {
+ const input=roiBenchmarkInput('delayed-pool-hourly-ev');
+ input.problem.slots=input.problem.slots.slice(0,288);
+ input.evDemandKwh=input.evDemandKwh.slice(0,288);
+ input.end=new Date(Date.parse(input.start)+288*900_000).toISOString();
+ const native=createWasmReplayPlanner(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm',import.meta.url)));
+ let projections=0;
+ const r=replayScheduler(input,{solve:native.solve,project:(p,c)=>{projections++;return native.project(p,c);}});
+ assertEquals(r.solves,6);
+ assertEquals(projections,288);
+ assertEquals(input.evDemandKwh.filter(v=>v>0).length,30);
+ assertAlmostEquals(input.evDemandKwh.reduce((a,b)=>a+b,0),.3*input.problem.car!.capacity_kwh);
 });

@@ -36,6 +36,7 @@ Deno.test('hourly energy and legacy device readings conserve totals under quarte
   assertEquals(input.recorded.ledger.importKwh, 4);
   assertEquals(input.recorded.ledger.importCostSek, 10);
   assertAlmostEquals(input.evDemandKwh.reduce((n, kwh) => n + kwh, 0), .1 * input.problem.car!.capacity_kwh);
+  assertEquals(input.problem.slots.map(slot => slot.ev_available), [false, false, false, false]);
   assertEquals(input.evInitialAssumed, false); assertEquals(input.poolInitialAssumed, false);
   assertEquals(input.problem.initial.pool_c, 29);
   assertEquals(input.recovery.hours, 1);

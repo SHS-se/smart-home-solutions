@@ -5,7 +5,7 @@ import { modeledBill, seriesService } from '../src/lib/home-baseline/model-compa
 
 // Experimental copies are temporary: production replay remains daily with 72h horizons.
 // Usage: deno run --no-check --sloppy-imports --allow-read --allow-write scripts/bench-roi-horizons.ts SCENARIO MODE [WASM]
-// MODE: 72h, month, month-daily, month-scaled. Trips always retain homecoming replans.
+// MODE: 72h, month, month-daily, month-scaled. Returns retain required post-withdrawal replans.
 const scenario = Deno.args[0] as RoiScenario, mode = Deno.args[1];
 if (!ROI_SCENARIOS.includes(scenario)
   || !['72h', 'month', 'month-daily', 'month-scaled'].includes(mode)) throw new Error('Choose a documented scenario and horizon mode');

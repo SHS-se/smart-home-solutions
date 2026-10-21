@@ -14,6 +14,7 @@ import { assessAssumptions, type InputEvidence } from './evidence.ts';
 import { modeledSolar, type SolarHour, type SolarProfile } from './solar.ts';
 import { quarterPool, withPoolState, type PoolStart } from './pool-carry.ts';
 import type { ActualPrice } from '../../../supabase/functions/_shared/actual-contract-prices.ts';
+import { inferredEvAvailability } from './trip-ledger.ts';
 
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
@@ -93,6 +94,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   if (facts.car && !evInitialAssumed && time(rows.evInitial!.start_ts) >= startMs) throw new Error('Initial EV SOC must be a historical reading before the frame');
   // Assumed starting energy is not an observed driving-demand reference.
   let lastEvSoc = evInitialAssumed ? null : evSoc, evMissingSocQuarters = 0;
+  const independentEvSoc = Array<boolean>(count).fill(false);
   const daily = new Map<string, number>();
   const evDemandKwh = Array.from({ length: count }, (_, i) => {
     if (!facts.car) return 0;
@@ -100,12 +102,16 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     const observed = actual.get(Date.parse(at))?.ev_soc;
     if (observed === null || observed === undefined) { evMissingSocQuarters++; return 0; }
     const current = soc(observed, 'EV SOC', at);
+    // Recovery copies one hourly mean into four quarters. Only its original
+    // hour boundary is an observation; measured quarters retain their resolution.
+    independentEvSoc[i] = !hourlyByTime.get(Date.parse(at))?.has('ev_soc') || Date.parse(at) % 3_600_000 === 0;
     const demand = lastEvSoc === null ? 0 : Math.max(0, lastEvSoc - current) * facts.car.capacity_kwh;
     lastEvSoc = current;
     const day = localDay(at, rows.snapshot.timezone);
     daily.set(day, (daily.get(day) ?? 0) + demand);
     return demand;
   });
+  const evAvailable = inferredEvAvailability(evDemandKwh, independentEvSoc);
   const poolInitialAssumed = facts.poolStore !== null && pool.get(startMs - QUARTER_MS)?.water_temperature_c == null;
   const settings = defaultSettings(rows.snapshot.comfort?.pool?.target_c);
   const poolC = facts.poolStore ? poolInitialAssumed ? settings.poolStartC : number(pool.get(startMs - QUARTER_MS)?.water_temperature_c, 'initial pool temperature', initialObservedAt) : null;
@@ -159,7 +165,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
         solar_w: (modeledKwh ?? energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters')) * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
-        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evDemandKwh[i] === 0 };
+        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i] };
     }),
     targets: { pool_c: facts.poolStore ? settings.poolStopC : null,
       ev_km: facts.car ? .8 * facts.car.capacity_kwh / facts.car.kwh_per_km : null,
@@ -220,7 +226,7 @@ export function projectionSeries(input: BaselineInput, problem: ReadyProblem, qu
     homeStartSoc: problem.battery ? problem.initial.battery_kwh! / problem.battery.capacity_kwh * 100 : null,
     homeSoc: quarters.map(q => problem.battery ? q.battery_kwh! / problem.battery.capacity_kwh * 100 : null),
     carSoc: quarters.map(q => problem.car ? q.ev_kwh! / problem.car.capacity_kwh * 100 : null),
-    carKm: field(q => problem.car ? q.ev_kwh! / problem.car.kwh_per_km : 0), carConnected: field(() => problem.car ? 1 : 0),
+    carKm: field(q => problem.car ? q.ev_kwh! / problem.car.kwh_per_km : 0), carConnected: field((_, i) => problem.slots[i].ev_available ? 1 : 0),
     poolC: quarters.map(q => q.pool_c), poolPendingHeatKwh: quarters.map(q => q.pool_pending_heat_kwh), poolStart: quarters.map(q => q.pool_start) as BenchSeries['poolStart'],
     costSek: field(q => q.cost), wearSek: field(q => q.wear),
   };

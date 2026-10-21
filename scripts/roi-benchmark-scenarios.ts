@@ -16,8 +16,8 @@ export function roiBenchmarkInput(scenario: RoiScenario) {
       elapsed_seconds: i * 900, electric_fraction: .5 + i / 28, heat_fraction: i / 14,
     })) };
     if (scenario === 'delayed-pool-hourly-ev') {
-      // Hourly recovered SOC repeats across four quarters. Each observed decline
-      // ends one quarter later under the current replay's event protocol.
+      // Preserve hourly provenance: copied quarters are not fresh observations.
+      rows.hourlyFields = rows.actual.map(row => ({ start_ts: row.start_ts, fields: ['ev_soc'] }));
       for (const row of rows.actual) {
         const { hour } = localMoment(new Date(row.start_ts), rows.snapshot.timezone);
         row.ev_soc = .8 - Math.min(10, Math.max(0, hour - 7)) * .01;

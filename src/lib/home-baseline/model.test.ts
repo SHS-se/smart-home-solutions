@@ -346,6 +346,48 @@ Deno.test('recorded SOC declines become daily driving demand; charging increases
   assertAlmostEquals(result.series.carSoc.at(-1)!, 80);
 });
 
+Deno.test('hourly SOC aliases preserve every withdrawal but cannot establish an inferred return', () => {
+  const rows = baselineFixture({ start: '2026-10-10T12:00:00Z', end: '2026-10-10T17:00:00Z' });
+  rows.evInitial!.ev_soc = .8;
+  rows.actual.forEach(row => {
+    const hour = new Date(row.start_ts).getUTCHours();
+    row.ev_soc = hour < 13 ? .8 : hour < 14 ? .75 : .7;
+  });
+  const quarter = prepareHomeBaseline(rows);
+  rows.hourlyFields = rows.actual.map(row => ({ start_ts: row.start_ts, fields: ['ev_soc'] }));
+  const hourly = prepareHomeBaseline(rows);
+  assertEquals(hourly.evDemandKwh, quarter.evDemandKwh);
+  assertEquals(hourly.evDailyDemand, quarter.evDailyDemand);
+  assertEquals(hourly.evMissingSocQuarters, quarter.evMissingSocQuarters);
+  assertEquals(hourly.problem.slots.map(s => s.ev_available), [
+    true, true, true, true, false, false, false, false,
+    false, false, false, false, true, true, true, true, true, true, true, true,
+  ]);
+});
+
+Deno.test('missing SOC and mixed hourly aliases cannot invent a return; a measured quarter can', () => {
+  const rows = baselineFixture({ start: '2026-10-10T12:00:00Z', end: '2026-10-10T14:00:00Z' });
+  rows.evInitial!.ev_soc = .8;
+  rows.actual.forEach(row => { row.ev_soc = .7; });
+  rows.actual[2].ev_soc = null;
+  // Quarter zero is measured; all later fills in that hour remain aliases.
+  rows.hourlyFields = rows.actual.slice(2).map(row => ({ start_ts: row.start_ts, fields: ['ev_soc'] }));
+  rows.hourlyFields = rows.hourlyFields.filter(row => row.start_ts !== rows.actual[4].start_ts);
+  const input = prepareHomeBaseline(rows);
+  assertEquals(input.problem.slots.slice(0, 4).map(s => s.ev_available), [false, false, false, true]);
+  assertEquals(input.evMissingSocQuarters, 1);
+  assertAlmostEquals(input.evDemandKwh.reduce((a, b) => a + b, 0), .1 * input.problem.car!.capacity_kwh);
+});
+
+Deno.test('a partial-hour capture retains assumed initial connection without treating aliases as observations', () => {
+  const rows = baselineFixture({ start: '2026-10-10T12:15:00Z', end: '2026-10-10T14:00:00Z' });
+  rows.evInitial!.ev_soc = .8;
+  rows.actual.forEach(row => { row.ev_soc = new Date(row.start_ts).getUTCHours() === 12 ? .8 : .7; });
+  rows.hourlyFields = rows.actual.map(row => ({ start_ts: row.start_ts, fields: ['ev_soc'] }));
+  const input = prepareHomeBaseline(rows);
+  assertEquals(input.problem.slots.map(s => s.ev_available), [true, true, true, false, false, false, false]);
+});
+
 Deno.test('SOC gaps retain observed declines across the gap and disclose missing quarters', () => {
   const rows = baselineFixture();
   rows.evInitial!.ev_soc = .8;

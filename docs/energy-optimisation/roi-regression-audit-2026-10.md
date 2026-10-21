@@ -176,3 +176,51 @@ took 89.3 s and the additional optimization took 72.4 s. The original broken
 artifact took 213.6 s on this same captured month, so the cumulative gain is about
 2.95 times. This remains above a one-minute month; the earlier calculation scope
 and the high hourly-EV trigger count still matter.
+
+## Observation-aware EV replay
+
+The replay now distinguishes fresh SOC observations from the three quarter-hour
+aliases of a recovered hourly mean. Every existing withdrawal keeps its exact
+amount and original quarter, including mixed-resolution inputs. A withdrawal
+infers absence; only a fresh nondeclining SOC observation ends that absence.
+Missing readings and hourly aliases retain the previous availability. Precise
+quarter observations retain their resolution. The baseline and scheduler share
+this one inferred availability timeline, so neither can charge in the artificial
+gaps between consecutive declining-hour observations.
+
+Replay retains daily solves, 72-hour horizons, search grants, native checks and
+the committed hour. It additionally solves when the car becomes available after
+withdrawals that its selected plan could not simulate. If a daily solve already
+knows the post-withdrawal state and subsequent availability, the return does not
+need another solve. The protocol changes to v4, invalidating old monthly totals
+and their dependent pool checkpoints through the existing calculation identity.
+
+This is an availability estimate, not measured charger connection or evidence of
+physical trip counts. Independent captures retain the existing assumed initial
+connection; seeded frames slice their monthly availability. Historical hourly
+means do not establish precise sub-hour driving times. The correction does not
+smooth SOC, invent trip durations, shift withdrawals or reconcile mixed-source
+demand. Corrected availability and planning times can legitimately change both
+models' costs and trajectories; exact old savings are not the correctness test.
+
+Pure regressions cover aliases, fine observations, missing data, mixed sources,
+partial-hour initialization and open-ended absence. Native integration checks
+every EV withdrawal, charging absence, electricity/EV conservation, daily/return
+coalescing and executed commitments. The public hourly-EV benchmark now includes
+the provenance metadata required to exercise this policy; its three-day native
+regression requires six solves for all thirty withdrawals.
+
+A paired full captured November run, using the same Wasm and pinned models,
+measured 69.4 s before and 21.1 s after this correction. Solves fell from 290 to
+87. Both baseline and scheduler executed every quarter, served the unchanged
+withdrawal vector and passed per-quarter electricity and EV energy conservation.
+These timings include both models; they do not assume linear scaling or an
+identical old schedule. The three-day public count regression protects the
+semantic reduction without making machine-dependent elapsed time a CI gate.
+The complete public `delayed-pool-hourly-ev 72h` month measured 14.2 s and 62
+solves, down from the previous protocol's 341 solves. This public harness times
+scheduler replay, whereas the captured comparison above includes both models.
+All 1,719 Deno tests and 80 browser tests passed (one existing browser skip),
+as did frontend type checking and the TEST build. Full lint has zero errors and
+27 existing warnings. Regenerating the HA fixtures produced no changes because
+the live native planner and Wasm artifact are unchanged.
