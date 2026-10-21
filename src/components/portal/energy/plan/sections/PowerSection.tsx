@@ -21,10 +21,7 @@ import BoilerSlotDetail from '../BoilerSlotDetail';
 
 import React, { useMemo, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import {
-  attributeEnergy,
-  type SupplySlotInput,
-} from '@/lib/energy-shift/energy-attribution';
+import { attributeEnergy, supplySlotsFromTimeline } from '@/lib/energy-shift/energy-attribution';
 import {
   nowDividerIndex,
   type DayWindow,
@@ -36,7 +33,9 @@ import { projectPlanChart, type ChartHotWater } from '@/lib/energy-shift/plan-ch
 import { hotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
 import { DayWindowToggle } from '../ui';
 import type { PlanModel } from '../usePlanModel';
-import DeviceEnergyTable from '../DeviceEnergyTable';
+import DeviceEnergyChart from '../DeviceEnergyChart';
+import DeviceEnergyTable, { DeviceEnergyNotes } from '../DeviceEnergyTable';
+import { Button } from '@/components/ui/button';
 import PlanReplayDownload from '../PlanReplayDownload';
 import { replayDescription } from '@/lib/energy-shift/plan-replay';
 import EnergyChart, { type EnergyRoomLine } from '../../charts/EnergyChart';
@@ -46,7 +45,6 @@ import { DEFAULT_RULES } from '@/lib/planner-bench/score';
 import { loadColour, PLAN_COLOURS, seriesColour } from '../../charts/palette';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
-const QUARTER_W_TO_KWH = 4_000;
 const RULE_LABEL = new Map(DEFAULT_RULES.map(rule => [rule.key, rule.label]));
 const total = (points: Record<string, number>) => Object.values(points).reduce((a, b) => a + b, 0);
 
@@ -150,26 +148,11 @@ const PowerSection: React.FC<{
     };
   })();
 
-  const attribution = useMemo(() => {
-    const slots: SupplySlotInput[] = view.map(row => ({
-      start: row.start,
-      loadKwh: (row.loadW ?? 0) / QUARTER_W_TO_KWH,
-      solarKwh: (row.solarW ?? 0) / QUARTER_W_TO_KWH,
-      gridImportKwh: (row.gridImportW ?? 0) / QUARTER_W_TO_KWH,
-      gridExportKwh: Math.abs(row.gridExportW ?? 0) / QUARTER_W_TO_KWH,
-      batteryChargeKwh: Math.abs(row.batteryChargeW ?? 0) / QUARTER_W_TO_KWH,
-      batteryDischargeKwh: 0,
-      deviceKwh: Object.fromEntries(
-        Object.entries(row.deviceW).map(([key, value]) => [key, value / QUARTER_W_TO_KWH]),
-      ),
-      importPriceSekPerKwh: null,
-      exportPriceSekPerKwh: null,
-    }));
-    return attributeEnergy(slots, new Map(deviceNameByKey), {
-      baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
-      batteryCharging: t('Batteriladdning', 'Battery charging'),
-    });
-  }, [deviceNameByKey, t, view]);
+  const attribution = useMemo(() => attributeEnergy(supplySlotsFromTimeline(view), new Map(deviceNameByKey), {
+    baseLoad: t('Baslast — allt övrigt', 'Base load — everything else'),
+    batteryCharging: t('Batteriladdning', 'Battery charging'),
+  }), [deviceNameByKey, t, view]);
+  const [deviceView, setDeviceView] = useState<'chart' | 'table'>('chart');
 
   if (view.length === 0) {
     return (
@@ -240,13 +223,24 @@ const PowerSection: React.FC<{
         onToggle={toggle}
       />
       <div className="mt-6">
-        <h3 className="text-sm font-medium">
-          {t('Förbrukning per enhet', 'Consumption by device')}
-        </h3>
-        <p className="mb-2 text-xs text-muted-foreground">
-          {t('Största förbrukaren först, för den valda perioden.', 'Largest consumer first, for the selected period.')}
-        </p>
-        <DeviceEnergyTable result={attribution} />
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-medium">
+              {t('Förbrukning per enhet', 'Consumption by device')}
+            </h3>
+            <p className="mb-2 text-xs text-muted-foreground">
+              {t('Största förbrukaren först, för den valda perioden.', 'Largest consumer first, for the selected period.')}
+            </p>
+          </div>
+          <div className="flex gap-1" role="group" aria-label={t('Visa som', 'Show as')}>
+            {([['chart', t('Diagram', 'Chart')], ['table', t('Tabell', 'Table')]] as const).map(([key, label]) => (
+              <Button key={key} size="sm" variant={deviceView === key ? 'secondary' : 'ghost'}
+                aria-pressed={deviceView === key} onClick={() => setDeviceView(key)}>{label}</Button>
+            ))}
+          </div>
+        </div>
+        {deviceView === 'chart' ? <DeviceEnergyChart result={attribution} /> : <DeviceEnergyTable result={attribution} />}
+        <DeviceEnergyNotes result={attribution} />
       </div>
     </>
   );

@@ -1,4 +1,5 @@
-// Per-device energy and cost for the selected window.
+// Per-device energy and cost for the selected window, as numbers: the table
+// view of DeviceEnergyChart.
 //
 // ENERGY_OPTIMISATION_ARCHITECTURE.md §1.3.7.4. Four energy columns because
 // only one of them costs anything: a device's SEK is its share of the grid
@@ -12,15 +13,9 @@ import { totalRow, type AttributionResult } from '@/lib/energy-shift/energy-attr
 
 const kwh = (value: number) => value.toFixed(value >= 100 ? 0 : 2);
 
-const DeviceEnergyTable: React.FC<{
-  result: AttributionResult;
-  /** Planned windows have no meter, so the balance note is measured-only. */
-  showBalance?: boolean;
-}> = ({ result, showBalance = false }) => {
+const DeviceEnergyTable: React.FC<{ result: AttributionResult }> = ({ result }) => {
   const { t } = useLanguage();
   const totals = totalRow(result.rows);
-  const unpriced = result.rows.some(row => !row.fullyPriced);
-  const { unexplainedLoadKwh, excessSupplyKwh } = result.summary;
 
   if (result.rows.length === 0) {
     return (
@@ -31,48 +26,62 @@ const DeviceEnergyTable: React.FC<{
   }
 
   return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>{t('Enhet', 'Device')}</TableHead>
+          <TableHead className="text-right">{t('Nät', 'Grid')}</TableHead>
+          <TableHead className="text-right">{t('Sol', 'Solar')}</TableHead>
+          <TableHead className="text-right">{t('Batteri', 'Battery')}</TableHead>
+          <TableHead className="text-right">{t('Totalt', 'Total')}</TableHead>
+          <TableHead className="text-right">{t('Kostnad', 'Cost')}</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {result.rows.map(row => (
+          <TableRow key={row.key} className={row.kind === 'device' ? '' : 'text-muted-foreground'}>
+            <TableCell className="font-medium">
+              {row.name}
+              {!row.fullyPriced && (
+                <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
+                  {t('· delvis prissatt', '· partly priced')}
+                </span>
+              )}
+            </TableCell>
+            <TableCell className="text-right tabular-nums">{kwh(row.gridKwh)}</TableCell>
+            <TableCell className="text-right tabular-nums">{kwh(row.solarKwh)}</TableCell>
+            <TableCell className="text-right tabular-nums">{kwh(row.batteryKwh)}</TableCell>
+            <TableCell className="text-right font-medium tabular-nums">{kwh(row.totalKwh)}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.costSek.toFixed(2)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+      <TableFooter>
+        <TableRow>
+          <TableCell>{t('Summa', 'Total')}</TableCell>
+          <TableCell className="text-right tabular-nums">{kwh(totals.gridKwh)}</TableCell>
+          <TableCell className="text-right tabular-nums">{kwh(totals.solarKwh)}</TableCell>
+          <TableCell className="text-right tabular-nums">{kwh(totals.batteryKwh)}</TableCell>
+          <TableCell className="text-right tabular-nums">{kwh(totals.totalKwh)}</TableCell>
+          <TableCell className="text-right tabular-nums">{totals.costSek.toFixed(2)}</TableCell>
+        </TableRow>
+      </TableFooter>
+    </Table>
+  );
+};
+
+/** How the figures were reached, shared by the chart and the table. */
+export const DeviceEnergyNotes: React.FC<{
+  result: AttributionResult;
+  /** Planned windows have no meter, so the balance note is measured-only. */
+  showBalance?: boolean;
+}> = ({ result, showBalance = false }) => {
+  const { t } = useLanguage();
+  const unpriced = result.rows.some(row => !row.fullyPriced);
+  const { unexplainedLoadKwh, excessSupplyKwh } = result.summary;
+  if (result.rows.length === 0) return null;
+  return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('Enhet', 'Device')}</TableHead>
-            <TableHead className="text-right">{t('Nät', 'Grid')}</TableHead>
-            <TableHead className="text-right">{t('Sol', 'Solar')}</TableHead>
-            <TableHead className="text-right">{t('Batteri', 'Battery')}</TableHead>
-            <TableHead className="text-right">{t('Totalt', 'Total')}</TableHead>
-            <TableHead className="text-right">{t('Kostnad', 'Cost')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {result.rows.map(row => (
-            <TableRow key={row.key} className={row.kind === 'device' ? '' : 'text-muted-foreground'}>
-              <TableCell className="font-medium">
-                {row.name}
-                {!row.fullyPriced && (
-                  <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
-                    {t('· delvis prissatt', '· partly priced')}
-                  </span>
-                )}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">{kwh(row.gridKwh)}</TableCell>
-              <TableCell className="text-right tabular-nums">{kwh(row.solarKwh)}</TableCell>
-              <TableCell className="text-right tabular-nums">{kwh(row.batteryKwh)}</TableCell>
-              <TableCell className="text-right font-medium tabular-nums">{kwh(row.totalKwh)}</TableCell>
-              <TableCell className="text-right tabular-nums">{row.costSek.toFixed(2)}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-        <TableFooter>
-          <TableRow>
-            <TableCell>{t('Summa', 'Total')}</TableCell>
-            <TableCell className="text-right tabular-nums">{kwh(totals.gridKwh)}</TableCell>
-            <TableCell className="text-right tabular-nums">{kwh(totals.solarKwh)}</TableCell>
-            <TableCell className="text-right tabular-nums">{kwh(totals.batteryKwh)}</TableCell>
-            <TableCell className="text-right tabular-nums">{kwh(totals.totalKwh)}</TableCell>
-            <TableCell className="text-right tabular-nums">{totals.costSek.toFixed(2)}</TableCell>
-          </TableRow>
-        </TableFooter>
-      </Table>
       <p className="mt-2 text-xs text-muted-foreground">
         {t(
           'Energi i kWh, kostnad i SEK. Bara nätenergi kostar pengar: varje enhet får sin andel av kvartens nätimport till kvartens marginalpris. Sol och batteri räknas som noll — slitage på paneler och celler ingår inte. Raden Batteriladdning bär den nätenergi som laddade batteriet, så nätkolumnen summerar till mätarens import.',
@@ -82,8 +91,8 @@ const DeviceEnergyTable: React.FC<{
       {unpriced && (
         <p className="mt-1 text-xs text-muted-foreground">
           {t(
-            `Priser saknas för delar av perioden: ${result.summary.pricedSlotCount} av ${result.summary.slotCount} kvartar är prissatta. Kostnaden gäller bara dessa.`,
-            `Prices are missing for part of the period: ${result.summary.pricedSlotCount} of ${result.summary.slotCount} quarters are priced. The cost covers only those.`,
+            `Priser saknas för delar av perioden: ${result.summary.pricedSlotCount} av ${result.summary.slotCount} kvartar är prissatta. Kostnaden gäller bara dessa; i diagrammet märks den med ≥.`,
+            `Prices are missing for part of the period: ${result.summary.pricedSlotCount} of ${result.summary.slotCount} quarters are priced. The cost covers only those, marked ≥ in the chart.`,
           )}
         </p>
       )}

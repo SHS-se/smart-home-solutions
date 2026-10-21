@@ -86,6 +86,52 @@ export interface AttributionResult {
   summary: WindowSummary;
 }
 
+/** The fields of a timeline row (energy-timeline.ts) the attribution reads. */
+export interface TimelineSupplyRow {
+  start: string;
+  loadW: number | null;
+  solarW: number | null;
+  gridImportW: number | null;
+  /** Negative on the timeline: export is drawn below the axis. */
+  gridExportW: number | null;
+  /** Negative on the timeline, for the same reason. */
+  batteryChargeW: number | null;
+  batteryDischargeW: number | null;
+  deviceW: Record<string, number>;
+  importPriceSekPerKwh: number | null;
+  exportPriceSekPerKwh: number | null;
+}
+
+const QUARTER_W_TO_KWH = 4_000;
+const quarterKwh = (watts: number | null) =>
+  watts === null ? null : Math.abs(watts) / QUARTER_W_TO_KWH;
+
+/**
+ * Timeline rows as attribution input, measured and planned alike.
+ *
+ * Every flow and the real import price pass through untouched. A battery
+ * discharge left at zero bills the battery's share of the load to nobody and
+ * shows it as unexplained; a price left null prices every device at zero. The
+ * planner's shadow price for an unpublished quarter is not a price anyone pays,
+ * so it stays out and the quarter counts as unpriced.
+ */
+export const supplySlotsFromTimeline = (
+  rows: readonly TimelineSupplyRow[],
+): SupplySlotInput[] => rows.map(row => ({
+  start: row.start,
+  loadKwh: quarterKwh(row.loadW),
+  solarKwh: quarterKwh(row.solarW),
+  gridImportKwh: quarterKwh(row.gridImportW),
+  gridExportKwh: quarterKwh(row.gridExportW),
+  batteryChargeKwh: quarterKwh(row.batteryChargeW),
+  batteryDischargeKwh: quarterKwh(row.batteryDischargeW),
+  deviceKwh: Object.fromEntries(
+    Object.entries(row.deviceW).map(([key, value]) => [key, value / QUARTER_W_TO_KWH]),
+  ),
+  importPriceSekPerKwh: row.importPriceSekPerKwh,
+  exportPriceSekPerKwh: row.exportPriceSekPerKwh,
+}));
+
 const positive = (value: number) => (value > 0 ? value : 0);
 const measured = (value: number | null | undefined) =>
   typeof value === 'number' && Number.isFinite(value) ? positive(value) : 0;

@@ -1,6 +1,7 @@
 import {
   attributeEnergy,
   decomposeSlotSupply,
+  supplySlotsFromTimeline,
   totalRow,
   type SupplySlotInput,
 } from './energy-attribution.ts';
@@ -371,4 +372,39 @@ Deno.test('rows are ordered by total consumption descending', () => {
     order.every((value, index) => index === 0 || order[index - 1] >= value),
     `rows must be sorted descending, got ${JSON.stringify(order)}`,
   );
+});
+
+Deno.test('timeline rows keep battery discharge and the real import price', () => {
+  // Both were once hard-coded to zero and null in the plan page's adapter, so
+  // every device showed no battery energy and no cost.
+  const [input] = supplySlotsFromTimeline([{
+    start: '2026-10-20T18:00:00.000Z',
+    loadW: 4_000,
+    solarW: 0,
+    gridImportW: 1_000,
+    gridExportW: -0,
+    batteryChargeW: -0,
+    batteryDischargeW: 3_000,
+    deviceW: { pool: 2_000 },
+    importPriceSekPerKwh: 2,
+    exportPriceSekPerKwh: 0.5,
+  }]);
+  assertClose(input.batteryDischargeKwh ?? 0, 0.75, 'discharge passes through as kWh');
+  const { rows } = attributeEnergy([input], names([['pool', 'Pool']]), labels);
+  const pool = rows.find(row => row.key === 'pool')!;
+  assertClose(pool.batteryKwh, 0.375, 'half the load takes half the battery');
+  assertClose(pool.gridKwh, 0.125, 'and half the grid');
+  assertClose(pool.costSek, 0.25, 'grid share priced at the quarter\'s import price');
+  assert(pool.fullyPriced, 'a published price makes the row priced');
+});
+
+Deno.test('a missing load stays unknown instead of becoming zero', () => {
+  const [input] = supplySlotsFromTimeline([{
+    start: '2026-10-20T18:00:00.000Z',
+    loadW: null, solarW: 2_000, gridImportW: null, gridExportW: null,
+    batteryChargeW: null, batteryDischargeW: null, deviceW: {},
+    importPriceSekPerKwh: null, exportPriceSekPerKwh: null,
+  }]);
+  assert(input.loadKwh === null, 'null load must not read as a zero-kWh quarter');
+  assertClose(decomposeSlotSupply(input).solarToLoad, 0.5, 'solar is not capped away');
 });
