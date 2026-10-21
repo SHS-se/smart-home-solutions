@@ -2,11 +2,21 @@ import { baselineFixture } from '../src/lib/home-baseline/fixture.ts';
 import { prepareHomeBaseline } from '../src/lib/home-baseline/model.ts';
 import { localMoment } from '../supabase/functions/_shared/energy-grid-pricing.ts';
 
-export type RoiScenario = 'flat' | 'solar-prices' | 'solar-prices-trips';
+export const ROI_SCENARIOS = ['flat', 'solar-prices', 'solar-prices-trips', 'delayed-pool'] as const;
+export type RoiScenario = typeof ROI_SCENARIOS[number];
 
 /** Deterministic synthetic households, including changing weather/prices and observed trips. */
 export function roiBenchmarkInput(scenario: RoiScenario) {
   const rows = baselineFixture({ start: '2026-07-31T22:00:00Z', end: '2026-08-31T22:00:00Z' });
+  if (scenario === 'delayed-pool') {
+    const pool = rows.snapshot.device_physics?.pool;
+    if (!pool) throw new Error('The ROI benchmark requires pool equipment');
+    pool.store.response_time_constant_h = .675;
+    pool.heater.response = { kind: 'bergvarme', startup: Array.from({ length: 15 }, (_, i) => ({
+      elapsed_seconds: i * 900, electric_fraction: .5 + i / 28, heat_fraction: i / 14,
+    })) };
+    return prepareHomeBaseline(rows);
+  }
   if (scenario === 'flat') return prepareHomeBaseline(rows);
   for (const row of rows.actual) {
     const at = new Date(row.start_ts), local = localMoment(at, rows.snapshot.timezone);

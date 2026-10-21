@@ -328,6 +328,7 @@ impl Allocation {
         }
         work.reserved += score;
         let response = (|| {
+            let mut projector = physics::Projector::new(p);
             let mut state = physics::initial(p);
             let mut out = Vec::with_capacity(commands.len());
             for (i, command) in commands.iter().enumerate() {
@@ -350,7 +351,7 @@ impl Allocation {
                 let mut best = None;
                 for mut c in options {
                     let mut next = state.clone();
-                    let Ok(q) = physics::step(p, i, &c, &mut next) else {
+                    let Ok(q) = projector.step(i, &c, &mut next) else {
                         continue;
                     };
                     let value = f64::from(policy::guidance_quarter(p, index, i, &q, state.pool))

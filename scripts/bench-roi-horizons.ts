@@ -1,16 +1,16 @@
-import { roiBenchmarkInput, type RoiScenario } from './roi-benchmark-scenarios.ts';
+import { ROI_SCENARIOS, roiBenchmarkInput, type RoiScenario } from './roi-benchmark-scenarios.ts';
 import { replayScheduler, type ReplayEngine } from '../src/lib/home-baseline/scheduler-replay.ts';
-import { createWasmPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
+import { createWasmReplayPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
 import { modeledBill, seriesService } from '../src/lib/home-baseline/model-comparison.ts';
 
 // Experimental copies are temporary: production replay remains daily with 72h horizons.
 // Usage: deno run --no-check --sloppy-imports --allow-read --allow-write scripts/bench-roi-horizons.ts SCENARIO MODE [WASM]
 // MODE: 72h, month, month-daily, month-scaled. Trips always retain homecoming replans.
 const scenario = Deno.args[0] as RoiScenario, mode = Deno.args[1];
-if (!['flat', 'solar-prices', 'solar-prices-trips'].includes(scenario)
+if (!ROI_SCENARIOS.includes(scenario)
   || !['72h', 'month', 'month-daily', 'month-scaled'].includes(mode)) throw new Error('Choose a documented scenario and horizon mode');
 const wasm = Deno.args[2] ?? new URL('../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url);
-const engine = createWasmPlanner(Deno.readFileSync(wasm));
+const engine = createWasmReplayPlanner(Deno.readFileSync(wasm));
 const original = new URL('../src/lib/home-baseline/scheduler-replay.ts', import.meta.url);
 let source = await Deno.readTextFile(original);
 const replace = (from: string, to: string) => {

@@ -57,3 +57,50 @@ production data was deleted. CI promotes code and migrations; it does not promot
 per-home imported history or modeling inputs. Before publishing a report in
 another environment, verify those inputs and their coverage there. Successful
 arithmetic alone does not establish that the modeled inputs are complete.
+
+## Compute regression and prevention
+
+Profiling the same captured horizon across historical Wasm artifacts isolated the
+large runtime increase to `e31621b`, which introduced delayed pool heat response.
+The earlier artifact's median was about 273 ms; that commit's median was about
+784 ms. The old artifact implements different physics, so this comparison
+identifies the cost of the feature rather than establishing numerical parity.
+The deployed artifact remained around 794 ms on that comparison.
+
+The expensive transition was repeatedly recomputed for equivalent physical
+conditions. The previous refinement memo included slot identity and was absent
+from opportunity preparation, beam construction and battery responses. The
+problem-bound projector now shares the same bounded, exact-condition thermal
+memo implementation in each of those callers. Each owner borrows immutable
+models, includes every physical condition in its key, and cannot share entries
+with another problem. Prices, grid limits, accounting and logical work are still
+evaluated independently. Direct execution and independent final certification
+continue to bypass the memo.
+
+Additional improvements reuse already computed thermal endpoints, count free
+proposal ranges with prefix sums, count changed run boundaries on the stack,
+stream the equivalent coordinated shortlist and sort only the original consumed
+proposal prefix. Full candidate enumeration, ordering charges, search grants,
+evaluations and replan triggers are unchanged.
+
+Thirty paired calculations of ten real horizons measured median times of
+829 ms before and 335 ms after these changes (about 2.47 times faster). Complete
+selected native output matched,
+including commands, physical trajectories, accounting, witnesses, work and
+termination. A complete captured November comparison also matched every baseline
+and scheduler output, including services and pool states: 290 solves took 213.6 s
+before and 89.5 s after (2.39 times faster). Timing is machine-dependent; compare
+identical inputs and run benchmarks without competing CPU work.
+
+Native regressions check complete memo keys, isolation, collisions, bounded
+memory and direct/cached parity. An operation-count regression requires at least
+90% thermal reuse for repeated opportunity intervals, avoiding a fragile
+wall-clock CI threshold. Proposal tests compare the streaming shortlist with the
+previous full sort and require bounded prefixes to preserve results and work.
+The public ROI benchmark now includes a synthetic delayed pool with a 15-point
+startup curve, so a steady-response benchmark cannot hide this class of cost.
+Run `deno task profile:roi --scenario delayed-pool` for stage timings and
+`deno task bench:roi-horizons delayed-pool 72h` for a complete month. Qualify future
+physics changes against both direct and delayed models, compare physical output
+and logical work separately from elapsed time, and investigate material runtime
+increases before deployment.

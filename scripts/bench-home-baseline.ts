@@ -1,12 +1,12 @@
 import { baselineFixture } from '../src/lib/home-baseline/fixture.ts';
 import { prepareHomeBaseline } from '../src/lib/home-baseline/model.ts';
 import { compareModels } from '../src/lib/home-baseline/model-comparison.ts';
-import { createWasmPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
+import { createWasmReplayPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
 
 // Synthetic 31-day household, using the real engine; no network or customer data.
 // Pass an older Wasm path to compare speed and complete calculation checksums.
 const path = Deno.args[0] ?? new URL('../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url);
-const engine = createWasmPlanner(Deno.readFileSync(path));
+const engine = createWasmReplayPlanner(Deno.readFileSync(path));
 for (let run = 1; run <= 3; run++) {
   const began = performance.now();
   const input = prepareHomeBaseline(baselineFixture({ start: '2026-08-01T00:00:00Z', end: '2026-09-01T00:00:00Z' }));

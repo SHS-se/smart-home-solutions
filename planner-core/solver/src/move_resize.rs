@@ -63,15 +63,19 @@ impl Edit {
         };
         // Only these four boundaries change the count, including neighbours
         // at different amperages that remain part of one uninterrupted run.
+        let mut boundaries = [self.from, self.to, self.start, self.end];
+        boundaries.sort_unstable();
         let starts = |edited| {
-            [self.from, self.to, self.start, self.end]
-                .into_iter()
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .filter(|&i| {
-                    i < commands.len() && active(i, edited) && (i == 0 || !active(i - 1, edited))
-                })
-                .count() as f64
+            let mut count = 0;
+            for (n, &i) in boundaries.iter().enumerate() {
+                if n > 0 && i == boundaries[n - 1] {
+                    continue;
+                }
+                if i < commands.len() && active(i, edited) && (i == 0 || !active(i - 1, edited)) {
+                    count += 1;
+                }
+            }
+            count as f64
         };
         (starts(false) - starts(true)) * p.limits.ev_start_preference_sek
     }
@@ -190,10 +194,61 @@ pub(crate) struct Proposals {
     pub coordinated: Vec<Edit>,
 }
 
+fn economic_order(a: &(f64, Edit), b: &(f64, Edit)) -> std::cmp::Ordering {
+    b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1))
+}
+
+fn proposal_order(a: &(usize, f64, Edit), b: &(usize, f64, Edit)) -> std::cmp::Ordering {
+    a.0.cmp(&b.0)
+        .then_with(|| b.1.total_cmp(&a.1))
+        .then_with(|| a.2.cmp(&b.2))
+}
+
+/// The global economic order admits two distinct destinations per device.
+/// Keep those representatives in one pass; sorting the entire proposal set
+/// cannot change the four edits this shortlist can return.
+fn coordinated(ranked: &[(usize, f64, Edit)]) -> Vec<Edit> {
+    let mut best = [Vec::<(f64, Edit)>::with_capacity(2), Vec::with_capacity(2)];
+    for &(_, gain, edit) in ranked {
+        let device = match edit.device {
+            Device::Pool => 0,
+            Device::Ev => 1,
+        };
+        let kept = &mut best[device];
+        let candidate = (gain, edit);
+        let same_group = kept.iter().position(|(_, old)| {
+            old.from == edit.from && old.to == edit.to && old.destination() == edit.destination()
+        });
+        let changed = if let Some(i) = same_group {
+            if economic_order(&candidate, &kept[i]).is_lt() {
+                kept[i] = candidate;
+                true
+            } else {
+                false
+            }
+        } else if kept.len() < 2 {
+            kept.push(candidate);
+            true
+        } else if economic_order(&candidate, &kept[1]).is_lt() {
+            kept[1] = candidate;
+            true
+        } else {
+            false
+        };
+        if changed {
+            kept.sort_unstable_by(economic_order);
+        }
+    }
+    let mut selected: Vec<_> = best.into_iter().flatten().collect();
+    selected.sort_unstable_by(economic_order);
+    selected.into_iter().map(|(_, edit)| edit).collect()
+}
+
 pub(crate) fn proposals(
     p: &Problem,
     commands: &[Command],
     quarters: &[Quarter],
+    limit: usize,
     work: &mut Work,
 ) -> Option<Proposals> {
     let n = commands.len();
@@ -243,13 +298,21 @@ pub(crate) fn proposals(
         let free = |i: usize| {
             !physics::locked(p, i) && (from <= i && i < to || !device.active(&commands[i]))
         };
+        // The same candidate ranges are checked repeatedly. Prefix counts keep
+        // the exact per-quarter eligibility without rescanning every range.
+        let mut blocked = Vec::with_capacity(n + 1);
+        blocked.push(0usize);
+        for i in 0..n {
+            blocked.push(blocked[i] + usize::from(!free(i)));
+        }
+        let free_range = |start: usize, end: usize| blocked[start] == blocked[end];
         let length = to - from;
         if partial {
             // Fixed-length transfers only. Resizing belongs to the whole
             // source, so nested subspans do not multiply the same proposals.
             for start in 0..=n - length {
                 let end = start + length;
-                if start == from || !(start..end).all(free) {
+                if start == from || !free_range(start, end) {
                     continue;
                 }
                 let edit = Edit {
@@ -308,7 +371,7 @@ pub(crate) fn proposals(
             for at in start..end {
                 for &len in &lengths {
                     let stop = at.saturating_add(len);
-                    if stop <= n && (at..stop).all(free) {
+                    if stop <= n && free_range(at, stop) {
                         edits.push(Edit {
                             device,
                             from,
@@ -319,7 +382,7 @@ pub(crate) fn proposals(
                     }
                     if at + 1 >= len {
                         let begin = at + 1 - len;
-                        if (begin..=at).all(free) {
+                        if free_range(begin, at + 1) {
                             edits.push(Edit {
                                 device,
                                 from,
@@ -351,7 +414,7 @@ pub(crate) fn proposals(
                 let Some((start, end)) = start.zip(end) else {
                     continue;
                 };
-                if start < end && end <= n && (start..end).all(free) {
+                if start < end && end <= n && free_range(start, end) {
                     steps.insert(Edit {
                         device,
                         from,
@@ -371,7 +434,7 @@ pub(crate) fn proposals(
             .filter(|e| e.start != from || e.end != to)
             .map(|e| (estimate.gain(&e) + e.continuity_gain(p, commands), e))
             .collect();
-        edits.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        edits.sort_unstable_by(economic_order);
         // Distinct durations and days come before near-duplicate starts: after
         // the steps, an edit's rank is its place among those of its source
         // and destination.
@@ -388,29 +451,20 @@ pub(crate) fn proposals(
     }
     // Every run's steps first, then the likeliest edit of every source and
     // destination, then the next of each: no run or device takes every trial.
-    ranked.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.total_cmp(&a.1)).then(a.2.cmp(&b.2)));
     // Charge the additional copy, economic ordering and shortlist traversal.
     let ordering = ranked.len() as u64 * (ranked.len().max(1).ilog2() as u64 + 2) * 2;
     if !work.spend(ordering) {
         return None;
     }
-    let mut joint = ranked.clone();
-    joint.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.2.cmp(&b.2)));
-    let mut seen = BTreeSet::new();
-    let mut per_device = [0; 2];
-    let coordinated = joint
-        .into_iter()
-        .filter_map(|(_, _, edit)| {
-            let k = if edit.device == Device::Pool { 0 } else { 1 };
-            if per_device[k] >= 2
-                || !seen.insert((edit.device, edit.from, edit.to, edit.destination()))
-            {
-                return None;
-            }
-            per_device[k] += 1;
-            Some(edit)
-        })
-        .collect();
+    let coordinated = coordinated(&ranked);
+    // The caller already limits evaluated edits. Select its identical ordered
+    // prefix without sorting candidates it will never consume. The complete
+    // enumeration and ordering work charge above remains unchanged.
+    if ranked.len() > limit {
+        ranked.select_nth_unstable_by(limit, proposal_order);
+        ranked.truncate(limit);
+    }
+    ranked.sort_unstable_by(proposal_order);
     Some(Proposals {
         singles: ranked.into_iter().map(|(_, _, edit)| edit).collect(),
         coordinated,
@@ -420,6 +474,113 @@ pub(crate) fn proposals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streaming_shortlist_matches_full_sort_with_repeated_groups_ties_and_permutations() {
+        let mut seed = 17_u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed
+        };
+        for _ in 0..1000 {
+            let mut ranked: Vec<(usize, f64, Edit)> = Vec::new();
+            for i in 0..64 {
+                let from = next() as usize % 128;
+                let start = next() as usize % 288;
+                let edit = if i > 0 && i % 4 == 0 {
+                    ranked[i / 2].2
+                } else {
+                    Edit {
+                        device: if next() & 1 == 0 {
+                            Device::Pool
+                        } else {
+                            Device::Ev
+                        },
+                        from,
+                        to: from + 1 + next() as usize % 32,
+                        start,
+                        end: start + 1 + next() as usize % 64,
+                    }
+                };
+                let gain = match next() % 8 {
+                    0 => -0.0,
+                    1 => 0.0,
+                    n => n as f64 - 4.0,
+                };
+                ranked.push((next() as usize % 16, gain, edit));
+            }
+            let mut ordered = ranked.clone();
+            ordered.sort_by(|a, b| economic_order(&(a.1, a.2), &(b.1, b.2)));
+            let mut seen = BTreeSet::new();
+            let mut counts = [0, 0];
+            let expected: Vec<_> = ordered
+                .into_iter()
+                .filter_map(|(_, _, edit)| {
+                    let device = if edit.device == Device::Pool { 0 } else { 1 };
+                    if counts[device] >= 2
+                        || !seen.insert((edit.device, edit.from, edit.to, edit.destination()))
+                    {
+                        return None;
+                    }
+                    counts[device] += 1;
+                    Some(edit)
+                })
+                .collect();
+            assert_eq!(coordinated(&ranked), expected);
+            ranked.reverse();
+            assert_eq!(coordinated(&ranked), expected);
+        }
+    }
+    #[test]
+    fn boundary_continuity_gain_matches_complete_run_counts_for_every_short_schedule() {
+        let p = crate::witnesses::tests::problem(6);
+        let starts = |commands: &[Command]| {
+            commands
+                .iter()
+                .enumerate()
+                .filter(|(i, c)| c.ev_amps > 0 && (*i == 0 || commands[*i - 1].ev_amps == 0))
+                .count() as f64
+        };
+        for mask in 0..64 {
+            let commands: Vec<_> = (0..6)
+                .map(|i| Command {
+                    pool_on: false,
+                    ev_amps: if mask & (1 << i) == 0 {
+                        0
+                    } else {
+                        6 + (i % 2) as u32
+                    },
+                    battery: Operation::Idle,
+                    charge_limit_w: 0.0,
+                    discharge_limit_w: 0.0,
+                })
+                .collect();
+            for from in 0..6 {
+                for to in from + 1..=6 {
+                    if commands[from].ev_amps == 0
+                        || commands[from..to]
+                            .iter()
+                            .any(|c| c.ev_amps != commands[from].ev_amps)
+                    {
+                        continue;
+                    }
+                    for start in 0..6 {
+                        for end in start + 1..=6 {
+                            let edit = Edit {
+                                device: Device::Ev,
+                                from,
+                                to,
+                                start,
+                                end,
+                            };
+                            let expected = (starts(&commands) - starts(&edit.apply(&commands)))
+                                * p.limits.ev_start_preference_sek;
+                            assert_eq!(edit.continuity_gain(&p, &commands), expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn the_estimate_counts_the_bill_of_what_moves_and_nothing_for_what_stays() {
         let mut p = crate::witnesses::tests::problem(12);
@@ -474,7 +635,19 @@ mod tests {
         assert!((gain(9, 11) + 1.5).abs() < 1e-9);
         // The steps come first, a shift of eight quarters onto cheap power
         // ahead of the others; then the rest by what they should gain.
-        let edits = proposals(&p, &commands, &q, &mut work).unwrap().singles;
+        let initial_work = work.clone();
+        let full = proposals(&p, &commands, &q, usize::MAX, &mut work).unwrap();
+        for limit in [0, 1, 4, full.singles.len() / 2, full.singles.len()] {
+            let mut bounded_work = initial_work.clone();
+            let bounded = proposals(&p, &commands, &q, limit, &mut bounded_work).unwrap();
+            assert_eq!(bounded.singles, full.singles[..limit]);
+            assert_eq!(bounded.coordinated, full.coordinated);
+            assert_eq!(
+                serde_json::to_vec(&bounded_work).unwrap(),
+                serde_json::to_vec(&work).unwrap()
+            );
+        }
+        let edits = full.singles;
         let at = |start, end| {
             edits
                 .iter()
@@ -588,7 +761,7 @@ mod tests {
             move_resize_passes: 0,
             move_resize_improvements: 0,
         };
-        let edit = proposals(&p, &commands, &q, &mut work)
+        let edit = proposals(&p, &commands, &q, usize::MAX, &mut work)
             .unwrap()
             .singles
             .into_iter()

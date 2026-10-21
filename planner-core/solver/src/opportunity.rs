@@ -350,6 +350,8 @@ pub(crate) fn work_bound(p: &Problem, unit: u64) -> Option<u64> {
 
 pub(crate) struct Opportunity {
     tables: Vec<Table>,
+    #[cfg(test)]
+    thermal_hits: usize,
 }
 impl Opportunity {
     pub(crate) fn prepare(
@@ -362,8 +364,11 @@ impl Opportunity {
         if !work.spend(allocation) {
             return Err("work_grant_cannot_prepare_opportunity".into());
         }
+        #[cfg(test)]
+        let mut thermal_hits = 0;
         for t in &mut specs {
             let m = t.mask(p);
+            let mut projector = physics::Projector::new(&m);
             let cells = t.axis.len() * t.phases.len();
             t.values = vec![Value::default(); (p.slots.len() + 1) * cells];
             // The horizon ends on what the device's own store is credited for.
@@ -417,7 +422,7 @@ impl Opportunity {
                         let mut best: Option<Value> = None;
                         for command in options {
                             let mut next = state.clone();
-                            let Ok(q) = physics::step(&m, i, command, &mut next) else {
+                            let Ok(q) = projector.step(i, command, &mut next) else {
                                 continue;
                             };
                             let future = t.at(i + 1, &next);
@@ -436,8 +441,16 @@ impl Opportunity {
                     }
                 }
             }
+            #[cfg(test)]
+            {
+                thermal_hits += projector.thermal_hits();
+            }
         }
-        Ok(Self { tables: specs })
+        Ok(Self {
+            tables: specs,
+            #[cfg(test)]
+            thermal_hits,
+        })
     }
     pub(crate) fn to_go(&self, i: usize, state: &physics::State) -> Value {
         self.tables.iter().fold(Value::default(), |mut sum, t| {
@@ -449,5 +462,43 @@ impl Opportunity {
     }
     pub(crate) fn cell(&self, state: &physics::State) -> Vec<(usize, usize)> {
         self.tables.iter().map(|t| t.cell(state)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opportunity_preparation_reuses_repeated_physical_intervals() {
+        let mut p = crate::witnesses::tests::problem(96);
+        p.work_grant = 1_520_000_000;
+        p.pool_store.as_mut().unwrap().response_time_constant_h = 0.675;
+        let mut work = Work {
+            used: 0,
+            limit: p.work_grant,
+            reserved: 0,
+            unit_cost: 128,
+            expansions: 0,
+            evaluations: 0,
+            witness_trials: 0,
+            repairs: 0,
+            move_resize_trials: 0,
+            move_resize_passes: 0,
+            move_resize_improvements: 0,
+        };
+        let index = policy::index(&p, &mut work).unwrap();
+        let prepared = Opportunity::prepare(&p, &index, &mut work).unwrap();
+        let pool = prepared
+            .tables
+            .iter()
+            .find(|t| matches!(t.device, Device::Pool))
+            .unwrap();
+        let queries = p.slots.len() * pool.phases.len() * pool.axis.len() * pool.options.len();
+        assert!(
+            prepared.thermal_hits >= queries * 9 / 10,
+            "{} thermal hits for {queries} queries",
+            prepared.thermal_hits
+        );
     }
 }

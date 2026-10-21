@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { roiBenchmarkInput, type RoiScenario } from './roi-benchmark-scenarios.ts';
+import { ROI_SCENARIOS, roiBenchmarkInput, type RoiScenario } from './roi-benchmark-scenarios.ts';
 import { replayScheduler } from '../src/lib/home-baseline/scheduler-replay.ts';
 import { createWasmPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
 
@@ -13,7 +13,7 @@ const option = (name: string, initial: string) => {
   return value;
 };
 const scenario = option('--scenario', 'flat') as RoiScenario;
-if (!['flat', 'solar-prices', 'solar-prices-trips'].includes(scenario)) throw new Error('Choose a documented ROI scenario');
+if (!ROI_SCENARIOS.includes(scenario)) throw new Error('Choose a documented ROI scenario');
 const revision = option('--revision', ''), scoreFunction = option('--score-function', 'score_projection');
 if (!/^\w+$/.test(scoreFunction)) throw new Error('Choose a Rust score function name');
 const root = fileURLToPath(new URL('..', import.meta.url));

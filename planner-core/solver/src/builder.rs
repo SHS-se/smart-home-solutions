@@ -255,6 +255,7 @@ fn construct(
     opportunity: &Opportunity,
     work: &mut Work,
 ) -> Result<Vec<Vec<Command>>, String> {
+    let mut projector = physics::Projector::new(p);
     let mut arena = Vec::new();
     let mut labels = vec![initial_label(p)];
     for i in 0..p.slots.len() {
@@ -271,7 +272,7 @@ fn construct(
                 }
                 work.expansions += 1;
                 let mut next = l.clone();
-                let q = match physics::step(p, i, &c, &mut next.state) {
+                let q = match projector.step(i, &c, &mut next.state) {
                     Ok(q) => q,
                     Err(issue) if physics::locked(p, i) => {
                         committed_issue = Some(format!("committed_command_infeasible:{i}:{issue}"));
@@ -432,14 +433,14 @@ enum EvaluationIssue {
 struct CandidateScorer<'p> {
     problem: &'p Problem,
     index: &'p Index,
-    projector: physics::RefinementProjector<'p>,
+    projector: physics::Projector<'p>,
 }
 impl<'p> CandidateScorer<'p> {
     fn new(problem: &'p Problem, index: &'p Index) -> Self {
         Self {
             problem,
             index,
-            projector: physics::RefinementProjector::new(problem),
+            projector: physics::Projector::new(problem),
         }
     }
     fn score(
@@ -663,8 +664,13 @@ fn improve(
                 .map(|c| (c.pool_on, c.ev_amps))
                 .collect();
             let epoch = best.commands.clone();
-            let Some(edits) = move_resize::proposals(p, &best.commands, &best.quarters, work)
-            else {
+            let Some(edits) = move_resize::proposals(
+                p,
+                &best.commands,
+                &best.quarters,
+                p.recipe.repair_trials.saturating_mul(32),
+                work,
+            ) else {
                 *declined = true;
                 break;
             };
@@ -695,7 +701,7 @@ fn improve(
                 }
             }
             let edits = edits.singles;
-            let count = edits.len().min(p.recipe.repair_trials.saturating_mul(32));
+            let count = edits.len();
             let (scored, adopted) = adopt(
                 scorer,
                 &mut best,

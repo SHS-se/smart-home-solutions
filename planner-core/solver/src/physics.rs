@@ -455,18 +455,47 @@ fn meter_projection(p: &Problem, work: &mut Work) -> bool {
     true
 }
 
-/// One search owns one exact thermal memo. It cannot be replayed on another
-/// problem; direct execution and final independent certification bypass it.
-pub(crate) struct RefinementProjector<'p> {
+/// One immutable full or masked problem owns an exact thermal memo. Candidate
+/// guidance and refinement share this implementation; independent certification
+/// and execution continue through the direct model.
+pub(crate) struct Projector<'p> {
     problem: &'p Problem,
-    pool: PoolMemo,
+    pool: Option<PoolMemo<'p>>,
 }
-impl<'p> RefinementProjector<'p> {
+impl<'p> Projector<'p> {
     pub(crate) fn new(problem: &'p Problem) -> Self {
         Self {
             problem,
-            pool: PoolMemo::default(),
+            pool: problem
+                .heater
+                .as_ref()
+                .zip(problem.pool_store.as_ref())
+                .map(|(heater, store)| PoolMemo::new(heater, store)),
         }
+    }
+    pub(crate) fn step(
+        &mut self,
+        i: usize,
+        command: &Command,
+        state: &mut State,
+    ) -> Result<Quarter, String> {
+        let pool = &mut self.pool;
+        transition(
+            self.problem,
+            i,
+            command,
+            state,
+            false,
+            |_, _, state, on, conditions| {
+                pool.as_mut()
+                    .expect("projector owns the pool model")
+                    .transition(state, on, conditions)
+            },
+        )
+    }
+    #[cfg(test)]
+    pub(crate) fn thermal_hits(&self) -> usize {
+        self.pool.as_ref().map_or(0, PoolMemo::hits)
     }
     pub(crate) fn project_metered_prefix(
         &mut self,
@@ -482,16 +511,17 @@ impl<'p> RefinementProjector<'p> {
             self.problem,
             commands,
             prefix,
-            |i, h, s, state, on, conditions| {
-                pool.transition(i, state, on, conditions, |conditions| {
-                    h.pool_transition(s, state, on, conditions)
-                })
+            |_, _, _, state, on, conditions| {
+                pool.as_mut()
+                    .expect("projector owns the pool model")
+                    .transition(state, on, conditions)
             },
         )
         .ok()
     }
 }
 
+#[cfg(test)]
 pub(crate) fn step(
     p: &Problem,
     i: usize,
@@ -531,6 +561,41 @@ mod refinement_tests {
             move_resize_passes: 0,
             move_resize_improvements: 0,
         }
+    }
+
+    #[test]
+    fn repeated_intervals_reuse_physics_while_prices_and_partial_quarters_stay_independent() {
+        let mut p = crate::witnesses::tests::problem(128);
+        p.pool_store.as_mut().unwrap().response_time_constant_h = 0.675;
+        p.initial.pool_pending_heat_kwh = Some(0.5);
+        p.slots[0].start_seconds = -300.0;
+        for (i, slot) in p.slots.iter_mut().enumerate() {
+            slot.outdoor_c = 10.0 + (i % 3) as f64;
+            slot.base_w = 500.0;
+            slot.import_price = 1.0 + i as f64 / 100.0;
+        }
+        let mut projector = Projector::new(&p);
+        let mut receipts = Vec::new();
+        for i in 0..p.slots.len() {
+            let command = Command {
+                pool_on: i % 2 == 0,
+                ev_amps: 0,
+                battery: Operation::Hold,
+                charge_limit_w: 1000.0,
+                discharge_limit_w: 0.0,
+            };
+            let mut direct = initial(&p);
+            let mut cached = direct.clone();
+            let expected = step(&p, i, &command, &mut direct).unwrap();
+            let actual = projector.step(i, &command, &mut cached).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&actual).unwrap(),
+                serde_json::to_vec(&expected).unwrap()
+            );
+            receipts.push(actual);
+        }
+        assert_eq!(projector.thermal_hits(), 121);
+        assert_ne!(receipts[1].cost, receipts[7].cost);
     }
 
     #[test]
@@ -629,7 +694,7 @@ mod refinement_tests {
                         .collect();
                     p.accepted = Some(commands[..4].to_vec());
                     p.locked_through_seconds = 3600.0;
-                    let mut projector = RefinementProjector::new(&p);
+                    let mut projector = Projector::new(&p);
                     let mut direct_work = work();
                     let mut memo_work = work();
                     for attempt in 0..3 {
@@ -651,7 +716,7 @@ mod refinement_tests {
                         assert_eq!(direct_work.used, memo_work.used);
                         assert_eq!(direct_work.evaluations, memo_work.evaluations);
                     }
-                    assert!(projector.pool.hits() > 0);
+                    assert!(projector.thermal_hits() > 0);
                     let mut invalid = commands;
                     invalid[0].pool_on = !invalid[0].pool_on;
                     assert!(project_metered_prefix(&p, &invalid, &mut direct_work, &[]).is_none());

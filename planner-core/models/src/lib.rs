@@ -484,19 +484,21 @@ impl Heater {
         let mut active_seconds = seconds;
         for pair in knots.windows(2) {
             let hours = (pair[1] - pair[0]) / 3600.0;
-            let heat = self.heat_w * fraction(pair[0]);
-            let slope = self.heat_w * (fraction(pair[1]) - fraction(pair[0])) / hours;
-            let crossing = stop_c.and_then(|stop| {
-                first_pool_stop(store, (water, pending), heat, slope, hours, cooling, stop)
-            });
-            (water, pending) = store.transfer(
-                water,
-                pending,
-                heat,
-                slope,
-                crossing.unwrap_or(hours),
-                cooling,
+            let start_fraction = fraction(pair[0]);
+            let heat = self.heat_w * start_fraction;
+            let slope = self.heat_w * (fraction(pair[1]) - start_fraction) / hours;
+            let (crossing, full) = stop_c.map_or_else(
+                || {
+                    (
+                        None,
+                        store.transfer(water, pending, heat, slope, hours, cooling),
+                    )
+                },
+                |stop| first_pool_stop(store, (water, pending), heat, slope, hours, cooling, stop),
             );
+            (water, pending) = crossing.map_or(full, |at| {
+                store.transfer(water, pending, heat, slope, at, cooling)
+            });
             if let Some(at) = crossing {
                 active_seconds = pair[0] + at * 3600.0;
                 break;
@@ -634,6 +636,8 @@ fn bisect_root(f: impl Fn(f64) -> f64, mut low: f64, mut high: f64) -> f64 {
 
 /// Reservoir input is linear, so its derivative has at most one turning point.
 /// Partition there to find all water extrema before searching the first crossing.
+/// Return the full interval transfer too: all endpoint queries and an uncut
+/// interval use that exact result without repeating the reservoir arithmetic.
 fn first_pool_stop(
     store: &ThermalStore,
     (water, pending): (f64, f64),
@@ -642,12 +646,19 @@ fn first_pool_stop(
     hours: f64,
     cooling: f64,
     stop: f64,
-) -> Option<f64> {
+) -> (Option<f64>, (f64, f64)) {
+    let full = store.transfer(water, pending, heat, slope, hours, cooling);
     if water >= stop {
-        return Some(0.0);
+        return (Some(0.0), full);
     }
     let tau = store.response_time_constant_h;
-    let at = |h| store.transfer(water, pending, heat, slope, h, cooling);
+    let at = |h: f64| {
+        if h.to_bits() == hours.to_bits() {
+            full
+        } else {
+            store.transfer(water, pending, heat, slope, h, cooling)
+        }
+    };
     let derivative = |h| {
         if tau > 0.0 {
             at(h).1 / tau / store.capacity_kwh_per_c + cooling
@@ -679,13 +690,16 @@ fn first_pool_stop(
     turning.sort_by(f64::total_cmp);
     for pair in turning.windows(2) {
         if at(pair[0]).0 >= stop {
-            return Some(pair[0]);
+            return (Some(pair[0]), full);
         }
         if at(pair[1]).0 >= stop {
-            return Some(bisect_root(|h| at(h).0 - stop, pair[0], pair[1]));
+            return (
+                Some(bisect_root(|h| at(h).0 - stop, pair[0], pair[1])),
+                full,
+            );
         }
     }
-    None
+    (None, full)
 }
 
 #[cfg(test)]

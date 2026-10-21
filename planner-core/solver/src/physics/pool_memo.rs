@@ -1,18 +1,28 @@
-use shs_planner_models::{HeaterState, PoolConditions, PoolTransition};
+use shs_planner_models::{Heater, HeaterState, PoolConditions, PoolTransition, ThermalStore};
 
-const SETS: usize = 4096;
+const SETS: usize = 2048;
 const WAYS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Key {
-    slot: usize,
     water: u64,
     pending: u64,
+    outdoor: u64,
+    seconds: u64,
+    stop: Option<u64>,
     age: u64,
     kind: u8,
+    on: bool,
 }
 impl Key {
-    fn new(slot: usize, water: f64, pending: f64, state: HeaterState) -> Self {
+    fn new(state: HeaterState, on: bool, conditions: PoolConditions) -> Self {
+        let PoolConditions {
+            water_c,
+            pending_heat_kwh,
+            outdoor_c,
+            seconds,
+            stop_c,
+        } = conditions;
         let (kind, age) = match state {
             HeaterState::OffUnobserved => (0, 0),
             HeaterState::Off { seconds } => (1, seconds.to_bits()),
@@ -20,19 +30,25 @@ impl Key {
             HeaterState::Steady => (3, 0),
         };
         Self {
-            slot,
-            water: water.to_bits(),
-            pending: pending.to_bits(),
+            water: water_c.to_bits(),
+            pending: pending_heat_kwh.to_bits(),
+            outdoor: outdoor_c.to_bits(),
+            seconds: seconds.to_bits(),
+            stop: stop_c.map(f64::to_bits),
             age,
             kind,
+            on,
         }
     }
     fn set(self) -> usize {
         let mut hash = self.water
             ^ self.pending.rotate_left(31)
             ^ self.age.rotate_left(17)
-            ^ (self.slot as u64).wrapping_mul(0x9e3779b97f4a7c15)
-            ^ u64::from(self.kind);
+            ^ self.outdoor.rotate_left(7)
+            ^ self.seconds.rotate_left(43)
+            ^ self.stop.unwrap_or(0).rotate_left(23)
+            ^ u64::from(self.kind)
+            ^ (u64::from(self.on) << 8);
         hash ^= hash >> 32;
         hash = hash.wrapping_mul(0xd6e8feb86659fd93);
         hash ^= hash >> 32;
@@ -50,37 +66,50 @@ struct Set {
     replace: usize,
 }
 
-/// Private to the projector bound to one immutable problem. Slot identity binds
-/// duration/outdoor temperature; that problem binds the heater/store/stop models.
-/// Capacity bounds memory, never candidate search or declared work.
-#[derive(Default)]
-pub(super) struct PoolMemo {
+/// One projector borrows immutable physical models. Exact conditions, rather
+/// than slot identity, allow repeated intervals to share only the pure thermal
+/// calculation; pricing, grid checks and declared search work remain separate.
+/// Expanded keys retain the existing two-MiB allocation budget.
+pub(super) struct PoolMemo<'p> {
+    heater: &'p Heater,
+    store: &'p ThermalStore,
     sets: Option<Box<[Set]>>,
     #[cfg(test)]
     hits: usize,
 }
-impl PoolMemo {
+impl<'p> PoolMemo<'p> {
+    pub(super) fn new(heater: &'p Heater, store: &'p ThermalStore) -> Self {
+        Self {
+            heater,
+            store,
+            sets: None,
+            #[cfg(test)]
+            hits: 0,
+        }
+    }
     #[cfg(test)]
     pub(super) fn hits(&self) -> usize {
         self.hits
     }
     pub(super) fn transition(
         &mut self,
-        slot: usize,
         state: HeaterState,
         on: bool,
         conditions: PoolConditions,
-        calculate: impl FnOnce(PoolConditions) -> PoolTransition,
     ) -> PoolTransition {
-        // Off/thermostat-disabled transitions are cheap and need no allocation.
-        if !on
-            || conditions
-                .stop_c
-                .is_some_and(|stop| conditions.water_c >= stop)
+        // Disabled direct-response transitions are cheap. Delayed off states
+        // still release reservoir heat, so they benefit from exact reuse too.
+        if self.store.response_time_constant_h == 0.0
+            && (!on
+                || conditions
+                    .stop_c
+                    .is_some_and(|stop| conditions.water_c >= stop))
         {
-            return calculate(conditions);
+            return self
+                .heater
+                .pool_transition(self.store, state, on, conditions);
         }
-        let key = Key::new(slot, conditions.water_c, conditions.pending_heat_kwh, state);
+        let key = Key::new(state, on, conditions);
         let sets = self
             .sets
             .get_or_insert_with(|| vec![Set::default(); SETS].into_boxed_slice());
@@ -94,7 +123,9 @@ impl PoolMemo {
                 return entry.value;
             }
         }
-        let value = calculate(conditions);
+        let value = self
+            .heater
+            .pool_transition(self.store, state, on, conditions);
         let position = set
             .entries
             .iter()
@@ -109,171 +140,196 @@ impl PoolMemo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shs_planner_models::{Heater, Response, StandingLoss, ThermalStore};
+    use shs_planner_models::{Response, StandingLoss};
 
-    #[test]
-    fn exact_keys_distinguish_signed_zero_heater_phase_and_slot() {
-        assert_ne!(
-            Key::new(0, 0.0, 0.0, HeaterState::Steady),
-            Key::new(0, -0.0, 0.0, HeaterState::Steady)
-        );
-        assert_ne!(
-            Key::new(0, 30.0, 0.0, HeaterState::Off { seconds: 0.0 }),
-            Key::new(0, 30.0, 0.0, HeaterState::Off { seconds: -0.0 })
-        );
-        assert_ne!(
-            Key::new(0, 30.0, 0.0, HeaterState::OffUnobserved),
-            Key::new(0, 30.0, 0.0, HeaterState::Off { seconds: 0.0 })
-        );
-        assert_ne!(
-            Key::new(0, 30.0, 0.0, HeaterState::Off { seconds: 1.0 }),
-            Key::new(0, 30.0, 0.0, HeaterState::Running { seconds: 1.0 })
-        );
-        assert_ne!(
-            Key::new(0, 30.0, 0.0, HeaterState::Steady),
-            Key::new(1, 30.0, 0.0, HeaterState::Steady)
-        );
-    }
-
-    #[test]
-    fn identical_water_with_different_pending_energy_cannot_share_a_cache_entry() {
-        let mut memo = PoolMemo::default();
-        let heater = Heater {
-            compressor_w: 3000.0,
-            auxiliary_w: 0.0,
-            heat_w: 12000.0,
-            response: Response::Steady,
-        };
-        let store = ThermalStore {
-            capacity_kwh_per_c: 5.0,
-            response_time_constant_h: 2.0,
-            loss: StandingLoss::Linear {
-                kw_per_c: 0.0,
-                surroundings_c: None,
+    fn models(tau: f64) -> (Heater, ThermalStore) {
+        (
+            Heater {
+                compressor_w: 3000.0,
+                auxiliary_w: 764.0,
+                heat_w: 12000.0,
+                response: Response::Steady,
             },
-        };
-        let mut results = Vec::new();
-        for pending in [0.0, 5.0, 0.0, 5.0] {
-            let conditions = PoolConditions {
-                water_c: 29.0,
-                pending_heat_kwh: pending,
-                outdoor_c: 20.0,
-                seconds: 900.0,
-                stop_c: None,
-            };
-            results.push(
-                memo.transition(0, HeaterState::Steady, true, conditions, |c| {
-                    heater.pool_transition(&store, HeaterState::Steady, true, c)
-                }),
-            );
+            ThermalStore {
+                capacity_kwh_per_c: 5.0,
+                response_time_constant_h: tau,
+                loss: StandingLoss::Linear {
+                    kw_per_c: 0.13,
+                    surroundings_c: None,
+                },
+            },
+        )
+    }
+    fn conditions() -> PoolConditions {
+        PoolConditions {
+            water_c: 30.0,
+            pending_heat_kwh: 0.0,
+            outdoor_c: 20.0,
+            seconds: 900.0,
+            stop_c: Some(30.1),
         }
-        assert!(results[1].water_c > results[0].water_c);
-        assert!(results[1].pending_heat_kwh > results[0].pending_heat_kwh);
-        assert_eq!(results[0].water_c, results[2].water_c);
-        assert_eq!(results[1].water_c, results[3].water_c);
-        assert_eq!(memo.hits(), 2);
     }
-
+    fn exact(a: PoolTransition, b: PoolTransition) {
+        for (a, b) in [
+            (a.electric_w, b.electric_w),
+            (a.compressor_w, b.compressor_w),
+            (a.auxiliary_w, b.auxiliary_w),
+            (a.heat_w, b.heat_w),
+            (a.water_c, b.water_c),
+            (a.pending_heat_kwh, b.pending_heat_kwh),
+        ] {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
+        assert_eq!(
+            serde_json::to_value(a.next).unwrap(),
+            serde_json::to_value(b.next).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(a.start).unwrap(),
+            serde_json::to_value(b.start).unwrap()
+        );
+    }
     #[test]
-    fn collisions_replacement_and_exact_hits_preserve_the_pure_transition() {
-        let heater = Heater {
-            compressor_w: 3000.0,
-            auxiliary_w: 764.0,
-            heat_w: 12000.0,
-            response: Response::Steady,
-        };
-        let store = ThermalStore {
-            response_time_constant_h: 0.0,
-            capacity_kwh_per_c: 5.0,
-            loss: StandingLoss::Linear {
-                kw_per_c: 0.13,
-                surroundings_c: Some(20.0),
+    fn exact_keys_distinguish_every_physical_condition_and_signed_zero() {
+        let c = conditions();
+        let base = Key::new(HeaterState::Steady, true, c);
+        for changed in [
+            PoolConditions {
+                water_c: f64::from_bits(c.water_c.to_bits() + 1),
+                ..c
             },
+            PoolConditions {
+                pending_heat_kwh: -0.0,
+                ..c
+            },
+            PoolConditions {
+                outdoor_c: f64::from_bits(c.outdoor_c.to_bits() + 1),
+                ..c
+            },
+            PoolConditions {
+                seconds: 600.0,
+                ..c
+            },
+            PoolConditions { stop_c: None, ..c },
+            PoolConditions {
+                stop_c: Some(f64::from_bits(c.stop_c.unwrap().to_bits() + 1)),
+                ..c
+            },
+        ] {
+            assert_ne!(base, Key::new(HeaterState::Steady, true, changed));
+        }
+        assert_ne!(base, Key::new(HeaterState::Steady, false, c));
+        assert_ne!(
+            Key::new(HeaterState::Off { seconds: 0.0 }, true, c),
+            Key::new(HeaterState::Off { seconds: -0.0 }, true, c)
+        );
+        assert_ne!(
+            Key::new(HeaterState::Off { seconds: 1.0 }, true, c),
+            Key::new(HeaterState::Running { seconds: 1.0 }, true, c)
+        );
+        assert_ne!(
+            Key::new(HeaterState::OffUnobserved, true, c),
+            Key::new(HeaterState::Off { seconds: 0.0 }, true, c)
+        );
+        assert_ne!(
+            Key::new(
+                HeaterState::Steady,
+                true,
+                PoolConditions { water_c: 0.0, ..c }
+            ),
+            Key::new(
+                HeaterState::Steady,
+                true,
+                PoolConditions { water_c: -0.0, ..c }
+            )
+        );
+    }
+    #[test]
+    fn delayed_on_and_off_states_match_direct_and_models_are_isolated() {
+        for tau in [0.0, 0.675, 2.0] {
+            let (heater, store) = models(tau);
+            let mut memo = PoolMemo::new(&heater, &store);
+            for _ in 0..2 {
+                for pending in [0.0, 5.0] {
+                    for on in [false, true] {
+                        let c = PoolConditions {
+                            pending_heat_kwh: pending,
+                            ..conditions()
+                        };
+                        exact(
+                            memo.transition(HeaterState::Steady, on, c),
+                            heater.pool_transition(&store, HeaterState::Steady, on, c),
+                        );
+                    }
+                }
+            }
+            assert!(memo.hits() > 0);
+        }
+        let (heater, store) = models(2.0);
+        let other = ThermalStore {
+            capacity_kwh_per_c: 10.0,
+            ..store.clone()
         };
+        let mut a = PoolMemo::new(&heater, &store);
+        let mut b = PoolMemo::new(&heater, &other);
+        let first = a.transition(HeaterState::Steady, true, conditions());
+        let changed = b.transition(HeaterState::Steady, true, conditions());
+        assert_ne!(first.water_c, changed.water_c);
+        exact(first, a.transition(HeaterState::Steady, true, conditions()));
+    }
+    #[test]
+    fn collisions_eviction_and_exact_hits_keep_the_two_mib_bound() {
+        let (heater, store) = models(2.0);
+        let mut memo = PoolMemo::new(&heater, &store);
         let state = HeaterState::Off { seconds: -0.0 };
-        let bucket = Key::new(0, 30.0, 0.0, state).set();
+        let c = conditions();
+        let bucket = Key::new(state, true, c).set();
         let colliding: Vec<_> = (0..100_000)
-            .map(|n| f64::from_bits(30.0_f64.to_bits() + n))
-            .filter(|water| Key::new(0, *water, 0.0, state).set() == bucket)
+            .map(|n| f64::from_bits(c.water_c.to_bits() + n))
+            .filter(|water| {
+                Key::new(
+                    state,
+                    true,
+                    PoolConditions {
+                        water_c: *water,
+                        ..c
+                    },
+                )
+                .set()
+                    == bucket
+            })
             .take(WAYS + 1)
             .collect();
         assert_eq!(colliding.len(), WAYS + 1);
-        let mut memo = PoolMemo::default();
-        let mut computations = 0;
         for water in colliding
             .iter()
             .copied()
             .chain([colliding[4], colliding[0]])
         {
-            let conditions = PoolConditions {
+            let c = PoolConditions {
                 water_c: water,
-                pending_heat_kwh: 0.0,
-                outdoor_c: 20.0,
-                seconds: 900.0,
-                stop_c: Some(30.1),
+                ..c
             };
-            let direct = heater.pool_transition(
-                &store,
-                state,
-                true,
-                PoolConditions {
-                    water_c: water,
-                    pending_heat_kwh: 0.0,
-                    outdoor_c: 20.0,
-                    seconds: 900.0,
-                    stop_c: Some(30.1),
-                },
-            );
-            let cached = memo.transition(0, state, true, conditions, |conditions| {
-                computations += 1;
-                heater.pool_transition(&store, state, true, conditions)
-            });
-            for (a, b) in [
-                (cached.electric_w, direct.electric_w),
-                (cached.compressor_w, direct.compressor_w),
-                (cached.auxiliary_w, direct.auxiliary_w),
-                (cached.heat_w, direct.heat_w),
-                (cached.water_c, direct.water_c),
-                (cached.pending_heat_kwh, direct.pending_heat_kwh),
-            ] {
-                assert_eq!(a.to_bits(), b.to_bits());
-            }
-            assert_eq!(
-                cached.start.unwrap().off_seconds.unwrap().to_bits(),
-                (-0.0_f64).to_bits()
+            exact(
+                memo.transition(state, true, c),
+                heater.pool_transition(&store, state, true, c),
             );
         }
-        assert_eq!(computations, WAYS + 2);
         assert_eq!(memo.hits, 1);
         let bytes = memo.sets.as_ref().unwrap().len() * std::mem::size_of::<Set>();
-        println!("thermal memo bytes: {bytes}");
-        assert!(bytes <= 2 * 1024 * 1024);
+        assert!(bytes <= 2 * 1024 * 1024, "thermal memo bytes: {bytes}");
     }
-
     #[test]
-    fn inactive_heating_allocates_no_table() {
-        let mut memo = PoolMemo::default();
+    fn disabled_direct_response_allocates_no_table() {
+        let (heater, store) = models(0.0);
+        let mut memo = PoolMemo::new(&heater, &store);
         for on in [false, true] {
             memo.transition(
-                0,
                 HeaterState::OffUnobserved,
                 on,
                 PoolConditions {
                     water_c: 31.0,
-                    pending_heat_kwh: 0.0,
-                    outdoor_c: 20.0,
-                    seconds: 900.0,
-                    stop_c: Some(30.1),
-                },
-                |_| PoolTransition {
-                    electric_w: 0.0,
-                    compressor_w: 0.0,
-                    auxiliary_w: 0.0,
-                    heat_w: 0.0,
-                    water_c: 30.9,
-                    pending_heat_kwh: 0.0,
-                    next: HeaterState::Off { seconds: 900.0 },
-                    start: None,
+                    ..conditions()
                 },
             );
             assert!(memo.sets.is_none());
