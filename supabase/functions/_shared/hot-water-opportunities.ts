@@ -203,7 +203,7 @@ export function scheduleHotWater(input: {
   for (const { day, indices, elapsed } of daily) {
     const permissionMinutes = indices.reduce((sum, i) => sum + (permitted[i] ? hours[i] * 60 : 0), 0);
     const power = Math.max(...indices.map(i => rated[i]));
-    const lastHeat = indices.findLast(i => run.expected_w[i] > 0 || permitted[i]);
+    const lastHeat = [...indices].reverse().find(i => run.expected_w[i] > 0 || permitted[i]);
     const after = indices.filter(i => lastHeat === undefined || i > lastHeat).reduce((sum, i) => sum + draw[i] * hours[i], 0);
     const unmetWh = Math.max(0, run.deficit_wh[indices.at(-1)!] - after);
     shortfall[day] = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - permissionMinutes, power > 0 ? unmetWh / power * 60 : 0);
