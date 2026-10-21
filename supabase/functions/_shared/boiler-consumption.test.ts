@@ -34,3 +34,11 @@ Deno.test('a locked heating prefix seeds completion into the following blocked q
   assertEquals(run.expected_w, [3000, 3000, 0]);
   assertEquals(run.unserved_wh, 0);
 });
+
+Deno.test('a run drawing 50 W or more keeps finishing; below 50 W it has finished', () => {
+  for (const [watts, next] of [[60, 3000], [50, 3000], [49, 0]]) {
+    const run = projectBoilerDay({ required_wh: 1000, running_w: [3000, 3000, 3000],
+      hours: [.25, .25, .25], permitted: [true, false, false], committed_w: [watts, undefined, undefined] });
+    assertEquals(run.expected_w[1], next);
+  }
+});

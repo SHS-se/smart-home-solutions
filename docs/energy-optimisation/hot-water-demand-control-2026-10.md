@@ -13,6 +13,17 @@ A partial current quarter contributes its remaining minutes. A horizon or real
 equipment limit that prevents 150 minutes produces explicit
 `hot_water_shortfall_minutes`, not fabricated heat or permission.
 
+User requirement, 21 October 2026: the boiler never goes more than 12 hours
+without a permitted quarter, measured from the end of one to the start of the
+next and across local midnights. The ledger therefore also keeps the last 12
+hours and the latest permission however old. Where the daily choice leaves a
+longer gap, add the fewest quarters that close it, each the best-ranked (same
+preferences as above) among the quarters that still leave the rest closable
+and whose run fits the headroom. An overdue gap is closed at the first
+eligible quarter; with no record the gap counts from the horizon start. The
+boiler is in series after the heat pump's hot water, so this bounds standing
+time at the tank rather than comfort.
+
 Select opportunities after one native household solve. Prefer quarters without
 chosen pool/EV runs, outside the typical 06:00–09:00 and 18:00–21:00 peaks, and
 at or below that day's median other-household demand. Within those preference
@@ -41,8 +52,9 @@ solve. This accepts less joint economic optimality in exchange for bounded,
 simple scheduling. Preserve actual cost, wear and terminal-credit accounting.
 
 HA receives only `permit_inhibit`. When a scheduled block encounters a permitted
-heater drawing above 500 W, keep permission on until its live heater power falls
-strictly below 500 W. Exactly 500 W retains permission. Reevaluate on meter
+heater drawing at least 50 W, keep permission on until its live heater power falls
+strictly below 50 W (user requirement, 21 October 2026; was 500 W). Exactly 50 W
+retains permission. Reevaluate on meter
 changes inside the quarter, including after restart. An already blocked heater
 is never started by this rule. The device needs an instantaneous heater power
 sensor; a static watt rating or total house power is not completion evidence.
