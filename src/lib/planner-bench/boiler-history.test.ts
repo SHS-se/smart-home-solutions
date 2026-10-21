@@ -1,5 +1,5 @@
 import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
-import { separateBoilerHistory, type MeterStatistics } from './boiler-history.ts';
+import { scaleOldHouseHotWater, separateBoilerHistory, type MeterStatistics } from './boiler-history.ts';
 import { referee } from './referee.ts';
 import { loadCase } from './case.ts';
 import { BOILER_PHASE_METERS, HOUSEHOLD } from './household.ts';
@@ -46,4 +46,22 @@ Deno.test('a repaired case produces modeled boiler consumption and heating asses
   assertEquals(outcome.series.hotWater!.demandKnown, true);
   assertEquals(outcome.series.hotWaterW, quarters(() => 600));
   assertEquals(outcome.series.loadW, c.recorded.actual!.base_load_w);
+});
+
+Deno.test('old-house hot water scales the boiler and takes the same energy out of base load', () => {
+  const { c, statistics } = sample();
+  const split = separateBoilerHistory(c, c.recorded, statistics);
+  const before = { ...split.dataset, start: '2026-08-27T22:00:00.000Z', timezone: 'Europe/Stockholm' }; // 28 Aug local midnight
+  const scaled = scaleOldHouseHotWater(before, split.recorded, 0.75);
+  assertEquals(scaled.scaled_quarters, 96); // 28 Aug only; 29 and 30 Aug are the current house.
+  const boiler = scaled.recorded.actual!.other_devices_w!['sensor.water_boiler_energy'];
+  assertEquals([boiler[0], boiler[95], boiler[96]], [450, 450, 600]);
+  const base = scaled.recorded.actual!.base_load_w;
+  assertEquals([base[0], base[96]], [2400 - 150, 2400]);
+  assertEquals(scaled.dataset.other_devices_w['sensor.water_boiler_energy'][0], 450 * .75);
+  assertEquals(scaled.dataset.base_load_forecast_w[0], before.base_load_forecast_w[0] - 450 * .25);
+  // Heat-pump preheat and the rest of the house are untouched.
+  assertEquals(scaled.recorded.actual!.other_devices_w!['sensor.heat_pump_hot_water_energy'], split.recorded.actual!.other_devices_w!['sensor.heat_pump_hot_water_energy']);
+  assertEquals(scaled.recorded.actual!.other_devices_w!['sensor.hot_water_energy'][0], 1200 - 150);
+  assertThrows(() => scaleOldHouseHotWater(scaled.dataset, scaled.recorded), Error, 'already scaled');
 });
