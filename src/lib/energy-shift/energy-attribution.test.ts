@@ -254,13 +254,28 @@ Deno.test('a metered load that disagrees with its categories is reported', () =>
   assertClose(
     result.summary.unexplainedLoadKwh,
     1,
-    'the unexplained kWh is surfaced, not spread across the devices',
+    'the unexplained kWh is still surfaced in the summary',
   );
-  assertClose(
-    totalRow(result.rows).gridKwh,
-    4,
-    'and the grid column still totals the metered import',
-  );
+  const totals = totalRow(result.rows);
+  const estimatedGrid = result.rows.reduce((sum, row) => sum + row.estimatedGridKwh, 0);
+  assertClose(totals.gridKwh - estimatedGrid, 4, 'the measured grid still totals the metered import');
+  assertClose(estimatedGrid, 1, 'the uncovered kWh is credited as estimated grid');
+  const pool = result.rows.find(row => row.key === 'pool')!;
+  assertClose(pool.gridKwh, pool.totalKwh, 'so a device splits fully into its sources');
+});
+
+Deno.test('uncovered load takes its quarter\'s supply mix as an estimate', () => {
+  const result = attributeEnergy([
+    // Supply covers 2 of 4 kWh, half grid and half battery.
+    slot({ loadKwh: 4, gridImportKwh: 1, batteryDischargeKwh: 1, deviceKwh: { pool: 2 }, importPriceSekPerKwh: 2 }),
+  ], names([['pool', 'Pool heater']]), labels);
+  const pool = result.rows.find(row => row.key === 'pool')!;
+  assertClose(pool.gridKwh, 1, 'measured 0.5 plus estimated 0.5');
+  assertClose(pool.batteryKwh, 1, 'measured 0.5 plus estimated 0.5');
+  assertClose(pool.estimatedGridKwh, 0.5, 'the grid half of the gap is estimated');
+  assertClose(pool.estimatedBatteryKwh, 0.5, 'and so is the battery half');
+  assertClose(pool.costSek, 2, 'all grid is priced');
+  assertClose(pool.estimatedCostSek, 1, 'the gap\'s grid cost is estimated');
 });
 
 Deno.test('devices that out-measure the reported load do not over-attribute', () => {
@@ -379,6 +394,7 @@ Deno.test('timeline rows keep battery discharge and the real import price', () =
   // every device showed no battery energy and no cost.
   const [input] = supplySlotsFromTimeline([{
     start: '2026-10-20T18:00:00.000Z',
+    measured: true,
     loadW: 4_000,
     solarW: 0,
     gridImportW: 1_000,
@@ -388,6 +404,7 @@ Deno.test('timeline rows keep battery discharge and the real import price', () =
     deviceW: { pool: 2_000 },
     importPriceSekPerKwh: 2,
     exportPriceSekPerKwh: 0.5,
+    shadowImportSekPerKwh: null,
   }]);
   assertClose(input.batteryDischargeKwh ?? 0, 0.75, 'discharge passes through as kWh');
   const { rows } = attributeEnergy([input], names([['pool', 'Pool']]), labels);
@@ -401,10 +418,46 @@ Deno.test('timeline rows keep battery discharge and the real import price', () =
 Deno.test('a missing load stays unknown instead of becoming zero', () => {
   const [input] = supplySlotsFromTimeline([{
     start: '2026-10-20T18:00:00.000Z',
+    measured: true,
     loadW: null, solarW: 2_000, gridImportW: null, gridExportW: null,
     batteryChargeW: null, batteryDischargeW: null, deviceW: {},
-    importPriceSekPerKwh: null, exportPriceSekPerKwh: null,
+    importPriceSekPerKwh: null, exportPriceSekPerKwh: null, shadowImportSekPerKwh: null,
   }]);
   assert(input.loadKwh === null, 'null load must not read as a zero-kWh quarter');
   assertClose(decomposeSlotSupply(input).solarToLoad, 0.5, 'solar is not capped away');
+});
+
+Deno.test('planned quarters and shadow prices are carried as estimates', () => {
+  const result = attributeEnergy([
+    // Measured, published price: nothing estimated.
+    slot({ loadKwh: 1, gridImportKwh: 1, deviceKwh: { pool: 1 }, importPriceSekPerKwh: 2 }),
+    // Measured energy, but only the planner's price: the cost is estimated.
+    slot({ loadKwh: 1, gridImportKwh: 1, deviceKwh: { pool: 1 }, importPriceSekPerKwh: null, shadowImportSekPerKwh: 3 }),
+    // Planned: energy and cost both estimated, even at a published price.
+    slot({ estimated: true, loadKwh: 2, gridImportKwh: 1, solarKwh: 1, deviceKwh: { pool: 2 }, importPriceSekPerKwh: 1 }),
+  ], names([['pool', 'Pool heater']]), labels);
+
+  const pool = result.rows.find(row => row.key === 'pool')!;
+  assertClose(pool.gridKwh, 3, 'grid includes every quarter');
+  assertClose(pool.estimatedGridKwh, 1, 'only the planned grid is estimated');
+  assertClose(pool.estimatedSolarKwh, 1, 'and the planned solar');
+  assertClose(pool.costSek, 2 + 3 + 1, 'the shadow price fills the unpublished quarter');
+  assertClose(pool.estimatedCostSek, 3 + 1, 'shadow-priced and planned cost are estimated');
+  assert(pool.fullyPriced, 'a shadow price counts as a price');
+  assertClose(result.summary.importCostSek, 2 + 1, 'the bill summary uses published prices only');
+});
+
+Deno.test('timeline rows mark planned and delayed-counter quarters estimated', () => {
+  const row = {
+    start: '2026-10-21T18:00:00.000Z', loadW: 0, solarW: 0, gridImportW: 0, gridExportW: 0,
+    batteryChargeW: 0, batteryDischargeW: 0, deviceW: {},
+    importPriceSekPerKwh: null, exportPriceSekPerKwh: null, shadowImportSekPerKwh: 1.5,
+  };
+  const [measured, delayed, planned] = supplySlotsFromTimeline([
+    { ...row, measured: true },
+    { ...row, measured: true, estimatedEnergy: true },
+    { ...row, measured: false },
+  ]);
+  assert(measured.estimated === false && delayed.estimated === true && planned.estimated === true, 'only readings count as measured');
+  assert(planned.shadowImportSekPerKwh === 1.5, 'the shadow price passes through');
 });

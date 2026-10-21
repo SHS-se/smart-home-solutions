@@ -20,6 +20,16 @@ export interface SupplySlotInput {
   deviceKwh: Record<string, number>;
   importPriceSekPerKwh: number | null;
   exportPriceSekPerKwh: number | null;
+  /**
+   * The quarter's energy is not a reading: a planned quarter, or one whose
+   * energy was spread over a delayed counter's reporting interval.
+   */
+  estimated?: boolean;
+  /**
+   * The planner's value for a quarter with no published price. Used only where
+   * `importPriceSekPerKwh` is null, and any cost it prices is estimated.
+   */
+  shadowImportSekPerKwh?: number | null;
 }
 
 /** How one quarter's energy moved between the grid, the panels and the cells. */
@@ -50,7 +60,17 @@ export interface AttributionRow {
   batteryKwh: number;
   totalKwh: number;
   costSek: number;
-  /** False once any quarter this row drew in had no published price. */
+  /**
+   * The parts of the figures above that are estimates rather than readings
+   * and published prices: energy from estimated quarters, load no supply
+   * reading covers (credited in its quarter's mix), and cost from either or
+   * from quarters priced at the planner's shadow price.
+   */
+  estimatedGridKwh: number;
+  estimatedSolarKwh: number;
+  estimatedBatteryKwh: number;
+  estimatedCostSek: number;
+  /** False once any quarter this row drew in had neither a price nor an estimate of one. */
   fullyPriced: boolean;
 }
 
@@ -70,8 +90,8 @@ export interface WindowSummary {
    * Load that grid, solar and battery do not account for. Zero whenever
    * `total_load_kwh` was derived from the category balance, which is the normal
    * case; non-zero means a separately metered load disagrees with its
-   * categories. Reported rather than scaled away — this surface exists to find
-   * exactly that.
+   * categories. The rows carry it as estimated energy; it is also reported
+   * here so the disagreement stays findable.
    */
   unexplainedLoadKwh: number;
   /**
@@ -89,6 +109,9 @@ export interface AttributionResult {
 /** The fields of a timeline row (energy-timeline.ts) the attribution reads. */
 export interface TimelineSupplyRow {
   start: string;
+  /** History side; planned quarters are estimates. */
+  measured: boolean;
+  estimatedEnergy?: boolean;
   loadW: number | null;
   solarW: number | null;
   gridImportW: number | null;
@@ -100,6 +123,7 @@ export interface TimelineSupplyRow {
   deviceW: Record<string, number>;
   importPriceSekPerKwh: number | null;
   exportPriceSekPerKwh: number | null;
+  shadowImportSekPerKwh: number | null;
 }
 
 const QUARTER_W_TO_KWH = 4_000;
@@ -113,7 +137,7 @@ const quarterKwh = (watts: number | null) =>
  * discharge left at zero bills the battery's share of the load to nobody and
  * shows it as unexplained; a price left null prices every device at zero. The
  * planner's shadow price for an unpublished quarter is not a price anyone pays,
- * so it stays out and the quarter counts as unpriced.
+ * so it travels separately and whatever it prices is marked estimated.
  */
 export const supplySlotsFromTimeline = (
   rows: readonly TimelineSupplyRow[],
@@ -130,6 +154,8 @@ export const supplySlotsFromTimeline = (
   ),
   importPriceSekPerKwh: row.importPriceSekPerKwh,
   exportPriceSekPerKwh: row.exportPriceSekPerKwh,
+  estimated: !row.measured || row.estimatedEnergy === true,
+  shadowImportSekPerKwh: row.shadowImportSekPerKwh,
 }));
 
 const positive = (value: number) => (value > 0 ? value : 0);
@@ -233,6 +259,10 @@ interface Accumulator {
   batteryKwh: number;
   totalKwh: number;
   costSek: number;
+  estimatedGridKwh: number;
+  estimatedSolarKwh: number;
+  estimatedBatteryKwh: number;
+  estimatedCostSek: number;
   fullyPriced: boolean;
 }
 
@@ -242,8 +272,41 @@ const emptyAccumulator = (): Accumulator => ({
   batteryKwh: 0,
   totalKwh: 0,
   costSek: 0,
+  estimatedGridKwh: 0,
+  estimatedSolarKwh: 0,
+  estimatedBatteryKwh: 0,
+  estimatedCostSek: 0,
   fullyPriced: true,
 });
+
+/**
+ * Add one quarter's share to a row. The price is the published one when there
+ * is one and the shadow price otherwise; a shadow-priced cost is estimated even
+ * when the energy behind it was measured.
+ */
+const credit = (
+  row: Accumulator,
+  energy: { grid: number; solar: number; battery: number; total: number },
+  price: { sekPerKwh: number | null; estimated: boolean },
+  estimatedEnergy: boolean,
+) => {
+  row.gridKwh += energy.grid;
+  row.solarKwh += energy.solar;
+  row.batteryKwh += energy.battery;
+  row.totalKwh += energy.total;
+  if (estimatedEnergy) {
+    row.estimatedGridKwh += energy.grid;
+    row.estimatedSolarKwh += energy.solar;
+    row.estimatedBatteryKwh += energy.battery;
+  }
+  if (price.sekPerKwh === null) {
+    if (energy.grid > 0) row.fullyPriced = false;
+    return;
+  }
+  const cost = energy.grid * price.sekPerKwh;
+  row.costSek += cost;
+  if (estimatedEnergy || price.estimated) row.estimatedCostSek += cost;
+};
 
 const round = (value: number, decimals: number) => {
   const scale = 10 ** decimals;
@@ -299,6 +362,15 @@ export function attributeEnergy(
         Number.isFinite(slot.importPriceSekPerKwh)
       ? slot.importPriceSekPerKwh
       : null;
+    const shadowPrice = typeof slot.shadowImportSekPerKwh === 'number' &&
+        Number.isFinite(slot.shadowImportSekPerKwh)
+      ? slot.shadowImportSekPerKwh
+      : null;
+    const rowPrice = {
+      sekPerKwh: importPrice ?? shadowPrice,
+      estimated: importPrice === null,
+    };
+    const estimated = slot.estimated === true;
     const exportPrice = typeof slot.exportPriceSekPerKwh === 'number' &&
         Number.isFinite(slot.exportPriceSekPerKwh)
       ? slot.exportPriceSekPerKwh
@@ -330,44 +402,55 @@ export function attributeEnergy(
     summary.unexplainedLoadKwh += supply.unexplainedLoadKwh;
     summary.excessSupplyKwh += supply.excessSupplyKwh;
 
-    const charge = accumulator(BATTERY_CHARGING_KEY);
-    charge.gridKwh += supply.gridToBattery;
-    charge.solarKwh += supply.solarToBattery;
-    charge.totalKwh += supply.gridToBattery + supply.solarToBattery;
-    if (importPrice === null) {
-      if (supply.gridToBattery > 0) charge.fullyPriced = false;
-    } else {
-      charge.costSek += supply.gridToBattery * importPrice;
-    }
+    credit(accumulator(BATTERY_CHARGING_KEY), {
+      grid: supply.gridToBattery,
+      solar: supply.solarToBattery,
+      battery: 0,
+      total: supply.gridToBattery + supply.solarToBattery,
+    }, rowPrice, estimated);
 
     if (load <= 0) continue;
+    // Load the supply readings do not cover still came from somewhere. It is
+    // credited as estimated energy in the quarter's measured mix, or as grid
+    // when the quarter has no supply reading at all.
+    const gapKwh = positive(load - supply.supplyToLoad);
+    const mix = supply.supplyToLoad > 0
+      ? {
+        grid: supply.gridToLoad / supply.supplyToLoad,
+        solar: supply.solarToLoad / supply.supplyToLoad,
+        battery: supply.batteryToLoad / supply.supplyToLoad,
+      }
+      : { grid: 1, solar: 0, battery: 0 };
+    const creditShare = (key: string, kwh: number) => {
+      const share = kwh / load;
+      const row = accumulator(key);
+      credit(row, {
+        grid: share * supply.gridToLoad,
+        solar: share * supply.solarToLoad,
+        battery: share * supply.batteryToLoad,
+        total: kwh,
+      }, rowPrice, estimated);
+      if (gapKwh > 0) {
+        credit(row, {
+          grid: share * gapKwh * mix.grid,
+          solar: share * gapKwh * mix.solar,
+          battery: share * gapKwh * mix.battery,
+          total: 0,
+        }, rowPrice, true);
+      }
+    };
+
     // Anything metered under a key we have no device for is unnamed, not
     // absent: it still consumed, so it belongs in the base-load remainder.
     let namedKwh = 0;
     for (const [key, value] of deviceEntries) {
       if (!deviceNames.has(key)) continue;
       namedKwh += value;
-      const share = value / load;
-      const row = accumulator(key);
-      row.gridKwh += share * supply.gridToLoad;
-      row.solarKwh += share * supply.solarToLoad;
-      row.batteryKwh += share * supply.batteryToLoad;
-      row.totalKwh += value;
-      if (importPrice === null) row.fullyPriced = false;
-      else row.costSek += share * supply.gridToLoad * importPrice;
+      creditShare(key, value);
     }
 
     const remainderKwh = positive(load - namedKwh);
-    if (remainderKwh > 0) {
-      const share = remainderKwh / load;
-      const row = accumulator(BASE_LOAD_KEY);
-      row.gridKwh += share * supply.gridToLoad;
-      row.solarKwh += share * supply.solarToLoad;
-      row.batteryKwh += share * supply.batteryToLoad;
-      row.totalKwh += remainderKwh;
-      if (importPrice === null) row.fullyPriced = false;
-      else row.costSek += share * supply.gridToLoad * importPrice;
-    }
+    if (remainderKwh > 0) creditShare(BASE_LOAD_KEY, remainderKwh);
   }
 
   summary.netCostSek = summary.importCostSek - summary.exportCreditSek;
@@ -390,6 +473,10 @@ export function attributeEnergy(
       batteryKwh: round(value.batteryKwh, 4),
       totalKwh: round(value.totalKwh, 4),
       costSek: round(value.costSek, 4),
+      estimatedGridKwh: round(value.estimatedGridKwh, 4),
+      estimatedSolarKwh: round(value.estimatedSolarKwh, 4),
+      estimatedBatteryKwh: round(value.estimatedBatteryKwh, 4),
+      estimatedCostSek: round(value.estimatedCostSek, 4),
       fullyPriced: value.fullyPriced,
     }))
     .sort((left, right) => right.totalKwh - left.totalKwh);
@@ -420,4 +507,5 @@ export const totalRow = (rows: AttributionRow[]) => ({
   batteryKwh: round(rows.reduce((total, row) => total + row.batteryKwh, 0), 4),
   totalKwh: round(rows.reduce((total, row) => total + row.totalKwh, 0), 4),
   costSek: round(rows.reduce((total, row) => total + row.costSek, 0), 4),
+  estimatedCostSek: round(rows.reduce((total, row) => total + row.estimatedCostSek, 0), 4),
 });

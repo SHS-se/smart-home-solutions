@@ -84,15 +84,15 @@ export const DeviceEnergyNotes: React.FC<{
     <>
       <p className="mt-2 text-xs text-muted-foreground">
         {t(
-          'Energi i kWh, kostnad i SEK. Bara nätenergi kostar pengar: varje enhet får sin andel av kvartens nätimport till kvartens marginalpris. Sol och batteri räknas som noll — slitage på paneler och celler ingår inte. Raden Batteriladdning bär den nätenergi som laddade batteriet, så nätkolumnen summerar till mätarens import.',
-          'Energy in kWh, cost in SEK. Only grid energy costs money: each device takes its share of the quarter\'s grid import at that quarter\'s marginal price. Solar and battery count as zero — panel and cell degradation are not included. The battery charging row carries the grid energy that charged the battery, so the grid column totals the metered import.',
+          'Energi i kWh, kostnad i SEK. Bara nätenergi kostar pengar: varje enhet får sin andel av kvartens nätimport till kvartens marginalpris. Sol och batteri räknas som noll — slitage på paneler och celler ingår inte. Raden Batteriladdning bär den nätenergi som laddade batteriet, så de uppmätta kvartarnas nätenergi summerar till mätarens import. Planerade kvartar, kvartar utan publicerat pris och last som tillförselmätarna inte täcker är uppskattningar och visas randiga i diagrammet.',
+          'Energy in kWh, cost in SEK. Only grid energy costs money: each device takes its share of the quarter\'s grid import at that quarter\'s marginal price. Solar and battery count as zero — panel and cell degradation are not included. The battery charging row carries the grid energy that charged the battery, so the measured quarters\' grid energy totals the metered import. Planned quarters, quarters with no published price yet, and load the supply meters did not cover are estimates and are striped in the chart.',
         )}
       </p>
       {unpriced && (
         <p className="mt-1 text-xs text-muted-foreground">
           {t(
-            `Priser saknas för delar av perioden: ${result.summary.pricedSlotCount} av ${result.summary.slotCount} kvartar är prissatta. Kostnaden gäller bara dessa; i diagrammet märks den med ≥.`,
-            `Prices are missing for part of the period: ${result.summary.pricedSlotCount} of ${result.summary.slotCount} quarters are priced. The cost covers only those, marked ≥ in the chart.`,
+            'Vissa kvartar saknar både pris och prisuppskattning. Kostnaden gäller bara de prissatta och märks med ≥ i diagrammet.',
+            'Some quarters have neither a price nor an estimate of one. The cost covers only the priced ones and is marked ≥ in the chart.',
           )}
         </p>
       )}
