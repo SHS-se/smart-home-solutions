@@ -70,6 +70,7 @@ import {
   poolTrainingWindowStartMs,
 } from "../_shared/pool-training.ts";
 import { readPagedRows } from "../_shared/read-paged-rows.ts";
+import { storePoolModelRow } from "../_shared/pool-training-persistence.ts";
 import {
   summerHeatingLockoutForStarts,
 } from "../_shared/comfort-schedule.ts";
@@ -350,11 +351,15 @@ async function refitPoolModel(
   poolDeviceKeys: string[],
 ): Promise<void> {
   const now = Date.now();
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("energy_optimisation_pool_model")
     .select("*")
     .eq("home_id", homeId)
     .maybeSingle();
+  if (existingError) {
+    console.error("[ENERGY-OPTIMISATION] pool model read failed", existingError);
+    return;
+  }
   const lastFit = existing?.last_attempted_at ? Date.parse(existing.last_attempted_at) : 0;
   // Samples from before the current heat pump was commissioned describe a
   // different machine, so the window is clamped to it and a newly recorded
@@ -509,10 +514,9 @@ async function refitPoolModel(
     instantaneous_rmse_c: dynamics.fitted.instantaneous_rmse_c,
     sample_count: dynamics.fitted.sample_count,
   } } : {}) };
-  const { error } = await supabase
-    .from("energy_optimisation_pool_model")
-    .upsert({ ...row, ...("fitted" in dynamics ? { thermal_dynamics: dynamics.fitted } : {}),
-      last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt }, { onConflict: "home_id" });
+  const { error } = await storePoolModelRow(supabase,
+    { ...row, ...("fitted" in dynamics ? { thermal_dynamics: dynamics.fitted } : {}),
+      last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt }, existing != null);
   if (error) console.error("[ENERGY-OPTIMISATION] pool refit failed", error);
 }
 
