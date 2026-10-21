@@ -14,8 +14,10 @@ import type { PoolCheckpoint } from './pool-carry.ts';
 // v6 pins delayed pool response in the pool-continuation schema; the hash also pins energy interval accounting
 // the rule that the plain thermostat holds the same pool target as the scheduler,
 // and the correction of counters that report an hour late.
+// Pin the host model sources as well as the binary: pool physics and ready-input
+// changes can alter results while producing identical Wasm bytes.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v6:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v2-pending-heat', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v6:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, source: artifact.source_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', pool: 'independent-month-continuation-v2-pending-heat', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),

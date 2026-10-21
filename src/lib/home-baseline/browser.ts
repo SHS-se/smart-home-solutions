@@ -23,7 +23,10 @@ export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor,
       cleanup();
       if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data);
     };
-    worker.onerror = event => { cleanup(); reject(new Error(event.message || 'Default model worker failed')); };
+    worker.onerror = event => {
+      cleanup();
+      reject(new Error(event.message || 'ROI calculation worker could not start or stopped unexpectedly. Reload the page to load the current version.'));
+    };
     worker.postMessage(input);
   });
   return { input, ...projected };

@@ -141,16 +141,35 @@ function plannerMemory(
     "buffer" in value && value.buffer instanceof ArrayBuffer;
 }
 
-/** Compile once; each solve gets private mutable memory and no cross-home cache. */
+/** Fresh native memory per invocation for live planning and independent reference checks. */
 export function createWasmPlanner(bytes: Uint8Array) {
+  return createPlanner(bytes, false);
+}
+
+/** One monthly replay owns its projection memory; optimiser solves remain private.
+ * Thousands of quarter projections must not depend on GC reclaiming a new Wasm
+ * memory for every trial. Rust projections carry all state in their input and
+ * return independently decoded JSON, so only the allocator is retained here.
+ */
+export function createWasmReplayPlanner(bytes: Uint8Array) {
+  return createPlanner(bytes, true);
+}
+
+function createPlanner(bytes: Uint8Array, reuseProjections: boolean) {
   const module = new WebAssembly.Module(new Uint8Array(bytes));
+  let projectionInstance: WebAssembly.Instance | undefined;
+  let projectionFailure: Error | undefined;
   function invoke<T>(
     inputValue: unknown,
     exportName: "planner_solve" | "planner_project",
     parse: (value: unknown) => T,
     trace?: PlanningTrace,
   ) {
-    const instance = planningStage(trace, "wasm_instantiate", () => new WebAssembly.Instance(module));
+    const retained = reuseProjections && exportName === "planner_project";
+    if (retained && projectionFailure) throw projectionFailure;
+    const instance = planningStage(trace, "wasm_instantiate", () => retained
+      ? projectionInstance ??= new WebAssembly.Instance(module)
+      : new WebAssembly.Instance(module));
     const {
       memory,
       planner_alloc: alloc,
@@ -192,8 +211,8 @@ export function createWasmPlanner(bytes: Uint8Array) {
       );
       const outcome = parse(JSON.parse(text));
       decoded?.({ input_bytes: input.length, output_bytes: outputLength, wasm_memory_bytes: memory.buffer.byteLength });
-      // Wasm memory only grows, so its final size is its instance high-water
-      // mark. This excludes JS/compiler memory and is not whole-handler RSS.
+      // Wasm memory only grows: replay projections report their retained
+      // instance's high-water mark. This is not whole-handler/browser RSS.
       return {
         outcome,
         wasm_memory_bytes: memory.buffer.byteLength,
@@ -241,18 +260,27 @@ export function createWasmPlanner(bytes: Uint8Array) {
       return result;
     },
     project(problem: ReadyProblem, commands: NativeCommand[]) {
-      const result = invoke(
-        { problem, commands },
-        "planner_project",
-        (value) => projectionOutcome.parse(value) as ProjectionOutcome,
-      );
-      if (
-        result.outcome.kind === "projected" &&
-        result.outcome.quarters.length !== problem.slots.length
-      ) {
-        throw new Error("Invalid model projection coverage.");
+      try {
+        const result = invoke(
+          { problem, commands },
+          "planner_project",
+          (value) => projectionOutcome.parse(value) as ProjectionOutcome,
+        );
+        if (
+          result.outcome.kind === "projected" &&
+          result.outcome.quarters.length !== problem.slots.length
+        ) {
+          throw new Error("Invalid model projection coverage.");
+        }
+        return result;
+      } catch (error) {
+        if (reuseProjections) {
+          projectionInstance = undefined;
+          projectionFailure = error instanceof Error ? error : new Error(String(error));
+          throw projectionFailure;
+        }
+        throw error;
       }
-      return result;
     },
   };
 }

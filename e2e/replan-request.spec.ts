@@ -255,6 +255,45 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
+  test('a full ROI month completes with bounded native projection memory', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-07', to: '2026-07' });
+    history.fixture.snapshot.device_physics = baselineFixture().snapshot.device_physics;
+    history.fixture.snapshot.device_physics!.pool!.store.response_time_constant_h = .675;
+    // Model finite browser Wasm resources deterministically. A month formerly
+    // created thousands of projection memories; daily optimizer solves stay private.
+    await context.route('**/assets/worker-*.js', async route => {
+      const response = await route.fetch();
+      await route.fulfill({ response, body: `let instances = 0;
+        WebAssembly.Instance = new Proxy(WebAssembly.Instance, { construct(target, args) {
+          if (++instances > 150) throw new Error('Monthly ROI exhausted native instance budget');
+          return Reflect.construct(target, args);
+        }});\n${await response.text()}` });
+    });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(1/1)');
+    const month = history.saved()!.months['2026-07'].ledger;
+    expect(month.quarters).toBe(31 * 96);
+    expect(month.replay.solves).toBeGreaterThan(30);
+    expect(Number.isFinite(month.modeled.baselineBill.totalSek)).toBe(true);
+    expect(Number.isFinite(month.modeled.schedulerBill.totalSek)).toBe(true);
+  });
+
+  test('a missing deployed ROI worker gives reload guidance', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-07', to: '2026-07' });
+    let requests = 0;
+    await context.route('**/assets/worker-*.js', route => {
+      requests++;
+      return route.fulfill({ status: 404, contentType: 'text/html', body: '<html>Not found</html>' });
+    });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expect(page.getByTestId('scheduler-month-2026-07')).toContainText('Reload the page to load the current version.');
+    expect(requests).toBe(1);
+    expect(Object.keys(history.saved()!.months)).toHaveLength(0);
+  });
+
   test('customer ROI uses optimizer replay and original bills, with subscription only in ROI', async ({ context, page }) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
