@@ -2123,18 +2123,15 @@
               },
               "target_c": {
                 "type": "number",
-                "minimum": 5,
-                "maximum": 35
+                "description": "Native thermostat target. The zone carries separate room comfort objectives."
               },
               "minimum_c": {
                 "type": "number",
-                "minimum": 5,
-                "maximum": 35
+                "description": "Native actuator minimum supported temperature."
               },
               "maximum_c": {
                 "type": "number",
-                "minimum": 5,
-                "maximum": 35
+                "description": "Native actuator maximum supported temperature."
               }
             },
             "additionalProperties": false

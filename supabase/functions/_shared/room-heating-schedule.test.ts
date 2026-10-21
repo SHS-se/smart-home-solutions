@@ -19,6 +19,7 @@ function bathroom(prices: number[] = Array(32).fill(1)): OptimisationSnapshot {
   const n = s.slots.length, series = (f: (i: number) => number) => Array.from({ length: n }, (_v, i) => f(i));
   s.device_models = [{ key: "floor", name: "Master bathroom floor", statistic_id: "sensor.floor", category: "heating",
     suggested_load_type: "duty_cycle", load_type: "duty_cycle", planning_role: "controllable", control_type: "setpoint",
+    thermostat: { entity_id: "climate.floor", minimum_c: 5, maximum_c: 35, step_c: .5, current_temperature_c: SETBACK, target_temperature_c: SETBACK, hvac_action: "idle" },
     active_power_w: 2000, profile_sample_count: 1000, forecast_w_by_slot: series(() => 500) }];
   s.outdoor_temperature_c = series(() => 0);
   const objective = series(i => i >= COMFORT_FROM ? COMFORT : SETBACK);
@@ -44,7 +45,7 @@ Deno.test("flat prices recover as late as possible and reach Comfort when its fi
   assert(temperature[COMFORT_FROM - 1] >= COMFORT - 1e-6);
   assert(temperature.slice(COMFORT_FROM).every(t => t >= COMFORT - 1e-6));
   // Without a price reason the floor only holds Setback before recovering.
-  assert(temperature.slice(0, 8).every(t => Math.abs(t - SETBACK) < .01), "no early preheat");
+  assert(temperature.slice(0, 8).every(t => t >= SETBACK - 1e-6 && t <= SETBACK + .55), "no early preheat");
   assert(power[COMFORT_FROM - 1] > 0, "recovery runs right up to the deadline");
   assertEquals(rooms.warnings.filter(w => w.code === "comfort_shortfall"), []);
 });
@@ -62,20 +63,19 @@ Deno.test("cheap night hours carry the recovery and the deadline still holds", (
   assert(cost(power, nightTariff) < cost(flat, nightTariff));
 });
 
-Deno.test("each setpoint is the planned temperature at the end of its quarter", () => {
+Deno.test("new thermostat commands are supported native targets, with hardware bounds separate from room comfort", () => {
   const s = bathroom();
   const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
-  const temperature = rooms.temperature.bathroom as number[];
-  rooms.commands.floor.forEach((command, i) => {
+  const native = s.device_models[0].thermostat!;
+  rooms.commands.floor.forEach(command => {
     assert(command.type === "setpoint");
-    assertEquals(command.minimum_c, s.thermal_zones![0].comfort_min_c[i]);
-    assertEquals(command.maximum_c, COMFORT + .5);
-    assert(command.minimum_c <= command.target_c && command.target_c <= command.maximum_c);
-    assertAlmostEquals(command.target_c, Math.max(command.minimum_c, temperature[i]), .006);
+    assertEquals(command.minimum_c, native.minimum_c);
+    assertEquals(command.maximum_c, native.maximum_c);
+    assert(command.target_c >= native.minimum_c && command.target_c <= native.maximum_c);
+    assertAlmostEquals((command.target_c - native.minimum_c) / native.step_c,
+      Math.round((command.target_c - native.minimum_c) / native.step_c), 1e-8);
   });
-  // The quarter before Comfort already asks for Comfort.
-  const before = rooms.commands.floor[COMFORT_FROM - 1];
-  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+  assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
 });
 
 Deno.test("solar surplus is priced as foregone export", () => {
@@ -90,7 +90,7 @@ Deno.test("an unreachable deadline gets the closest recovery and a warning, neve
   const s = bathroom(nightTariff);
   s.thermal_zones![0].start_temperature_c = 5;
   const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
-  assert(rooms.room_power.bathroom.slice(0, COMFORT_FROM).every(w => w === 2000));
+  assert(rooms.room_power.bathroom.slice(0, COMFORT_FROM).every(w => Math.abs(w - 2000) < 1e-6));
   assert(rooms.warnings.some(w => w.code === "comfort_shortfall"));
   assertEquals(rooms.commands.floor.length, s.slots.length);
 });
@@ -100,7 +100,7 @@ Deno.test("committed quarters and shared headroom bind the room plan", () => {
   const retained = [{ device_commands: { floor: { type: "setpoint" as const, target_c: 19, minimum_c: 18, maximum_c: 22.5 } },
     device_loads_w: { floor: 1234 } }];
   const rooms = prepareRoomServices(s, retained, Array(32).fill(900), prices(nightTariff));
-  assertEquals(rooms.room_power.bathroom[0], 1234);
+  assertAlmostEquals(rooms.room_power.bathroom[0], 2000); // Retain target 19, not the obsolete 1234 W forecast.
   assertEquals(rooms.commands.floor[0], retained[0].device_commands.floor);
   assert(rooms.room_power.bathroom.slice(1).every(w => w <= 900 + 1e-9));
 });
@@ -111,7 +111,8 @@ Deno.test("the household planner moves bathroom recovery into the cheap hours", 
   const heat = slots.map(slot => slot.device_loads_w.floor);
   assert(heat.slice(0, 12).some(w => w > 0));
   const before = slots[COMFORT_FROM - 1].device_commands!.floor;
-  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+  assert(before.type === "setpoint");
+  assert((plan.thermal_projection!.zones[0].planned_temperature_c[COMFORT_FROM - 1]) >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
 
@@ -133,7 +134,8 @@ Deno.test("a relay in a thermostat room no longer drops the room out of deadline
   assert(temperature.slice(COMFORT_FROM).every(t => t >= COMFORT - 1e-6));
   assertEquals(rooms.warnings.filter(w => w.code === "comfort_shortfall"), []);
   const before = rooms.commands.floor[COMFORT_FROM - 1];
-  assert(before.type === "setpoint" && before.target_c >= COMFORT, "the thermostat is asked for Comfort ahead of it");
+  assert(before.type === "setpoint");
+  assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
 });
 
 Deno.test("relays run whole quarters and the room's power is the sum of its members", () => {
@@ -172,7 +174,7 @@ Deno.test("a committed relay quarter keeps its retained state and power", () => 
     device_loads_w: { rack: 140 } }];
   const rooms = prepareRoomServices(s, retained, undefined, prices(Array(32).fill(5)));
   assertEquals(rooms.commands.rack[0], retained[0].device_commands.rack);
-  assertEquals(rooms.power.rack[0], 140);
+  assertEquals(rooms.power.rack[0], 150); // Its measured running rating, not retained forecast watts.
 });
 
 Deno.test("the household planner plans the towel rack with the floor", () => {
@@ -180,7 +182,8 @@ Deno.test("the household planner plans the towel rack with the floor", () => {
   const slots = plan.plans.priority.slots;
   assert(slots.every(slot => slot.device_commands!.rack.type === "switch_schedule"));
   const before = slots[COMFORT_FROM - 1].device_commands!.floor;
-  assert(before.type === "setpoint" && before.target_c >= COMFORT);
+  assert(before.type === "setpoint");
+  assert((plan.thermal_projection!.zones[0].planned_temperature_c[COMFORT_FROM - 1]) >= COMFORT);
   assert(!plan.planning_warnings?.some(w => w.code === "comfort_shortfall"));
 });
 
@@ -231,4 +234,37 @@ Deno.test("a house-coupled room without the house forecast is not run on a guess
   assert(rooms.temperature.bathroom.every(t => t === null));
   assert(rooms.warnings.some(w => w.code === "room_estimate"));
   assertEquals(rooms.commands.floor.length, s.slots.length);
+});
+
+Deno.test("missing native action retains comfort intent and empirical power without invented temperature", () => {
+  const s = bathroom();
+  s.device_models[0].thermostat = null;
+  const rooms = prepareRoomServices(s);
+  assert(rooms.commands.floor.every(c => c.type === "setpoint"));
+  assertEquals(rooms.power.floor, s.device_models[0].forecast_w_by_slot);
+  assert(rooms.temperature.bathroom.every(t => t === null));
+  assert(rooms.warnings.some(w => w.code === "room_estimate"));
+});
+
+Deno.test("multiple native sensors retain separate HVAC latches and power contributions", () => {
+  const s = bathroom();
+  s.device_models[0].active_power_w = 1000;
+  s.device_models.push({ ...s.device_models[0], key: "second", name: "Second heater",
+    thermostat: { ...s.device_models[0].thermostat!, entity_id: "climate.second", current_temperature_c: 19, hvac_action: "heating" } });
+  s.thermal_zones![0].device_keys.push("second");
+  const rooms = prepareRoomServices(s, [], undefined, prices(nightTariff));
+  rooms.room_power.bathroom.forEach((w, i) => {
+    assertAlmostEquals(w, rooms.power.floor[i] + rooms.power.second[i], 1e-8);
+    assert(w <= 2000 + 1e-8);
+  });
+  assert((rooms.temperature.bathroom[COMFORT_FROM - 1] as number) >= COMFORT);
+});
+
+Deno.test("heat unavoidable at a native minimum stays visible instead of rejecting the household", () => {
+  const s = bathroom();
+  s.thermal_zones![0].start_temperature_c = 4;
+  s.device_models[0].thermostat = { ...s.device_models[0].thermostat!, current_temperature_c: 4, target_temperature_c: 5 };
+  const rooms = prepareRoomServices(s, [], s.slots.map(() => 0), prices(Array(32).fill(1)));
+  assert(rooms.power.floor[0] > 0);
+  assert(rooms.commands.floor.every(c => c.type === "setpoint"));
 });

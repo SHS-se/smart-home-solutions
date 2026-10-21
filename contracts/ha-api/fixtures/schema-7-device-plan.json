@@ -10,7 +10,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v18:b887355db00a09d9f256961c15e026f8b89e04c4e41cc8c1f5ab761853768ccf",
+    "model_version": "rules-planner-v19:25e13586d4b4433582237b053409cb7cb43b48a571fff5b88292d6741b3a85c7",
     "decision_diagnostics_version": 2,
     "plan_id": "eedefc70-b625-42f0-be09-b1e79c0c88d9",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -60,14 +60,14 @@
         0
       ],
       "unplanned_total_power_w": [
-        1500,
-        1500,
-        1500,
-        1500,
-        1500,
-        1500,
-        1500,
-        1500
+        999.9999999999998,
+        1999.9999999999998,
+        1933.333333333333,
+        1000,
+        0,
+        1000,
+        1000,
+        1000
       ],
       "zones": [
         {
@@ -112,24 +112,24 @@
             24
           ],
           "planned_temperature_c": [
-            19.937889002469408,
-            19.876549560141665,
-            19.815972088604113,
-            19.756147122503574,
-            19.697065314067384,
-            19.63871743164277,
-            19.581094358254397,
-            19.524187090179808
+            19.93788900246938,
+            19.87654956014161,
+            19.815972088604024,
+            19.75614712250346,
+            19.697065314067245,
+            19.638717431642608,
+            19.5810943582542,
+            19.52418709017959
           ],
           "unplanned_temperature_c": [
-            20.310554987652964,
-            20.617252199291684,
-            20.920139556979457,
-            21.219264387482152,
-            21.51467342966311,
-            21.80641284178618,
-            22.09452820872806,
-            22.379064549101013
+            20.186332992591772,
+            20.618795309697337,
+            21.029225769470106,
+            21.202773514216688,
+            21.1257214241318,
+            21.2980704806047,
+            21.4682785827134,
+            21.636372325820144
           ],
           "planned_power_w": [
             0,
@@ -142,14 +142,14 @@
             0
           ],
           "unplanned_power_w": [
-            1500,
-            1500,
-            1500,
-            1500,
-            1500,
-            1500,
-            1500,
-            1500
+            999.9999999999998,
+            1999.9999999999998,
+            1933.333333333333,
+            1000,
+            0,
+            1000,
+            1000,
+            1000
           ]
         }
       ]
@@ -293,6 +293,15 @@
       {
         "key": "thermostat",
         "control_type": "setpoint",
+        "thermostat": {
+          "entity_id": "climate.thermostat",
+          "minimum_c": 5,
+          "maximum_c": 35,
+          "step_c": 0.5,
+          "current_temperature_c": 20,
+          "target_temperature_c": 20,
+          "hvac_action": "idle"
+        },
         "name": "thermostat",
         "statistic_id": "sensor.thermostat",
         "category": "heating",
@@ -353,9 +362,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.94,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -424,9 +433,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.88,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -495,9 +504,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.82,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -566,9 +575,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.76,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -637,9 +646,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.7,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -708,9 +717,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.64,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -779,9 +788,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.58,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -850,9 +859,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.52,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -953,9 +962,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.94,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1025,9 +1034,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.88,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1097,9 +1106,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.82,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1169,9 +1178,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.76,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1241,9 +1250,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.7,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1313,9 +1322,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.64,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1385,9 +1394,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.58,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1457,9 +1466,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.52,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1561,9 +1570,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.94,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1633,9 +1642,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.88,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1705,9 +1714,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.82,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1777,9 +1786,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.76,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1849,9 +1858,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.7,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1921,9 +1930,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.64,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -1993,9 +2002,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.58,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,
@@ -2065,9 +2074,9 @@
               },
               "thermostat": {
                 "type": "setpoint",
-                "target_c": 19.52,
-                "minimum_c": 19,
-                "maximum_c": 24
+                "target_c": 19,
+                "minimum_c": 5,
+                "maximum_c": 35
               }
             },
             "ev_target_current_a": 0,

@@ -32,7 +32,7 @@ import type { BatteryCommand } from "./planner/battery-command.ts";
 import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v18:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v19:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -521,11 +521,11 @@ export function generateRulesPlan(input: PreparedRulesInput): OptimisationResult
     source:"comfort_schedule_model",season:null,slot_minutes:15,starts:snapshot.slots.map(s=>s.start),
     outdoor_temperature_c:snapshot.outdoor_temperature_c as number[],
     planned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.room_power[z.key][i]))),
-    unplanned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>z.unplanned_power_w[i]))),
+    unplanned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.unplanned_power[z.key][i]))),
     zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,device_keys:z.device_keys,control_type:"setpoint",load_type:"duty_cycle",priority:i+1,
       rated_power_w:z.rated_power_w,comfort_min_c:z.comfort_min_c,target_c:z.target_c,comfort_max_c:z.comfort_max_c,
       planned_temperature_c:input.rooms.temperature[z.key] as number[],unplanned_temperature_c:input.rooms.unplanned_temperature[z.key] as number[],
-      planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:z.unplanned_power_w}))} : undefined;
+      planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:input.rooms.unplanned_power[z.key]}))} : undefined;
   let plan: OptimisationPlan = { schema_version: snapshot.schema_version, mode: "live", capabilities: snapshot.capabilities,
     model_version: RULES_MODEL_VERSION, decision_diagnostics_version: 2, plan_id: snapshot.snapshot_id, snapshot_id: snapshot.snapshot_id,
     issued_at: input.now, valid_until: new Date(Date.parse(snapshot.slots.at(-1)!.start) + QUARTER_MS).toISOString(),

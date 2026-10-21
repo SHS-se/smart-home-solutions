@@ -97,3 +97,46 @@ Rooms with more than four relays, rooms without a usable model, a measured
 temperature or a complete outdoor forecast keep the previous quarter-by-quarter
 path. Ingest still publishes the backward-pass power forecast as each room's
 unplanned reference. No snapshot, plan or HA contract changed.
+
+## Native thermostat commands and power, 21 October 2026
+
+This section supersedes the continuous-thermostat-power and end-temperature
+command descriptions above. The bathroom replay showed why: targets between
+21.11 and 21.46 °C all became 21 °C on its whole-degree thermostat, while the
+planner expected 686 W and the observed thermostat stayed idle.
+
+The snapshot now carries each native thermostat's supported target grid, current
+target, own measured temperature and HVAC heating/idle state. The HA gateway
+preserves `hvac_action` in its ordered observations. These facts are captured
+freshly, independently of fitted room parameters. Missing native evidence uses
+the existing empirical estimate policy, without publishing invented temperatures.
+
+The room programme chooses supported targets directly, together with full-quarter
+relay states. Its state includes each thermostat's heating latch as well as room
+temperature and delayed heat. User requirement, 21 October: heating starts when
+the target exceeds the thermostat's own temperature by at least 0.5 °C. Heating
+stops at the target; within that band the observed/predicted latch is retained.
+The own sensor is projected from the room using their measured offset at capture.
+That constant-offset assumption is an approximation, renewed on the next capture.
+
+A shared projector integrates on-cycle electrical power and the fitted room
+transition at intervals of at most one minute, including the shortened first
+quarter. The same projection supplies optimisation, published device watts and
+room temperatures. A heater is never assigned fractional native power to fit
+headroom: new commands must fit their actual projected on-cycle demand. Retained
+commands remain exact, but their old watt forecasts are recomputed from native
+state. The unplanned comfort reference uses the same thermostat physics.
+
+New setpoint commands carry actual native targets and native hardware bounds in
+`minimum_c`/`maximum_c`. Those bounds describe actuator settings; the zone's
+`comfort_min_c`/`comfort_max_c` remain room-temperature objectives. This distinction
+allows, for example, a supported 22 °C native target to heat a room whose ceiling
+is 21.5 °C. The room programme still evaluates the resulting room temperature.
+HA's existing nearest-step rounding, halves up, is unchanged, including for exact
+retained commands from older plans. No controller ownership or handover changes.
+
+The checked-in bathroom regression preserves captured physics, weather, old
+commands and actuals, with a labelled native-state overlay from HA Recorder
+because the original export omitted these facts. Replaying historical commands
+is separate from assessing a changed schedule: later historical measurements
+cannot validate a counterfactual heating schedule.

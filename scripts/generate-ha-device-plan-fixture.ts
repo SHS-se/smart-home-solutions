@@ -19,6 +19,7 @@ export function commandSnapshot(): OptimisationSnapshot {
     { key: "thermostat", control_type: "setpoint" as const },
   ].map((m) => ({
     ...m,
+    ...(m.control_type === "setpoint" ? { thermostat: { entity_id: "climate.thermostat", minimum_c: 5, maximum_c: 35, step_c: .5, current_temperature_c: 20, target_temperature_c: 20, hvac_action: "idle" as const } } : {}),
     name: m.key,
     statistic_id: `sensor.${m.key}`,
     category: "heating",

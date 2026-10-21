@@ -6,7 +6,6 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { type OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { prepareRoomServices } from "./rules-room-services.ts";
-import { deviceCommands } from "./planner/device-commands.ts";
 
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 
@@ -47,14 +46,8 @@ Deno.test("discrete relays remain full-quarter runs and impossible comfort warns
 Deno.test("unmodelled controls get a reason, never a command guessed from a forecast", () => {
   const snapshot = commandSnapshot();
   snapshot.thermal_zones = [];
-  const commands = deviceCommands(snapshot, {
-    index: 0,
-    roomHeating: {},
-    relayPower: {},
-    boilerPermitted: true,
-    poolW: 0,
-    evCurrentA: 0,
-  });
+  const plan = runRulesPlanner({ snapshot, now: snapshot.captured_at, price_archive: [] }).plan;
+  const commands = plan.plans.priority.slots[0].device_commands!;
   assertEquals(commands.relay.type, "unavailable");
   assertEquals(commands.thermostat.type, "unavailable");
 });

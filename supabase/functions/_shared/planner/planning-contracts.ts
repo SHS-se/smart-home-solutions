@@ -11,6 +11,7 @@ import type { LevelBasis, WindDay, StoredPriceRow } from "./energy-price-shape.t
 import type { DemandDay } from "./demand-outlook.ts";
 import type { ThermalZoneModel } from "./thermal-model.ts";
 import type { DeviceCommand } from "./device-commands.ts";
+import type { ThermostatInput } from "./thermostat.ts";
 import type { UtilityCurve } from "./store-value.ts";
 import type { ValueSettings, ValueStoreKey } from "./value-curves.ts";
 import type { PoolDynamics } from "./pool-response.ts";
@@ -219,6 +220,8 @@ export interface EmpiricalDeviceModelInput {
   planning_role: "controllable";
   control_type: DeviceControlType;
   active_power_w: number | null;
+  /** Native thermostat sensor, target, HVAC state and supported target grid. */
+  thermostat?: ThermostatInput | null;
   /** Explicit membership resolved from the installation mapping, never category alone. */
   planning_service?: "pool";
   /**

@@ -1,0 +1,665 @@
+{
+  "source_plan_id": "0f664854-69e9-483e-9cea-5330c75d963d",
+  "captured_at": "2026-10-21T11:16:52.560093+00:00",
+  "timezone": "Europe/Stockholm",
+  "thermostat_evidence": {
+    "source": "Home Assistant recorder at plan capture; inspected 21 October 2026",
+    "entity_id": "climate.master_bathroom_floor_thermostat",
+    "minimum_c": 5,
+    "maximum_c": 90,
+    "step_c": 1,
+    "current_temperature_c": 21,
+    "target_temperature_c": 21,
+    "hvac_action": "idle"
+  },
+  "zone": {
+    "key": "master_bathroom",
+    "name": "Master bathroom",
+    "model": {
+      "r2": 0.29824545700880867,
+      "heat_lag_h": null,
+      "sample_count": 836,
+      "gain_c_per_wh": 0.0005525580706482624,
+      "residual_std_c": 0.06138950962233964,
+      "time_constant_h": 1073.5440111976734,
+      "heat_loss_w_per_c": 1.6857851345712487,
+      "prediction_error_c": 0.4289037237169868,
+      "solar_mean_w_per_m2": 51.964114832535884,
+      "heating_rate_c_per_h": 0.47647082431999666,
+      "house_coupling_per_h": null,
+      "cooling_constant_per_h": 0.0009314941814862106,
+      "background_gain_c_per_h": -0.08911470775817597,
+      "thermal_capacity_wh_per_c": 1809.7645353850278,
+      "solar_gain_c_per_h_per_wm2": 0.000305377281895835
+    },
+    "target_c": [
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18
+    ],
+    "device_keys": [
+      "sensor.master_bathroom_floor_heating_switch_0_energy",
+      "sensor.heated_towel_rack_energy"
+    ],
+    "comfort_max_c": [
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5,
+      21.5
+    ],
+    "comfort_min_c": [
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18,
+      18
+    ],
+    "rated_power_w": 834.5999999999999,
+    "start_delivered_w": 0,
+    "unplanned_power_w": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "start_temperature_c": 20.9985,
+    "maximum_power_w_by_slot": [
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999,
+      834.5999999999999
+    ]
+  },
+  "devices": [
+    {
+      "key": "sensor.master_bathroom_floor_heating_switch_0_energy",
+      "name": "Master bathroom floor heating",
+      "category": "heating",
+      "inference": {
+        "rule": "thermostat_semantics",
+        "method": "energy_dashboard_semantics_v1",
+        "profile": "pooled_shape_weekday_level_v1",
+        "planning": {
+          "rule": "user_opt_in_required",
+          "method": "energy_dashboard_planning_semantics_v1",
+          "confidence": "high",
+          "load_type_evidence": "duty_cycle"
+        },
+        "confidence": "medium",
+        "history_days": 10,
+        "daily_energy_kwh_by_weekday": {
+          "0": 1.4317525,
+          "1": 1.2487750000000002,
+          "2": 1.2774825,
+          "3": 1.74475,
+          "4": 1.72152,
+          "5": 1.7295225,
+          "6": 2.5965475000000002
+        }
+      },
+      "load_type": "duty_cycle",
+      "control_type": "setpoint",
+      "statistic_id": "sensor.master_bathroom_floor_heating_switch_0_energy",
+      "mapping_error": null,
+      "planning_role": "controllable",
+      "active_power_w": 686.3,
+      "mapping_status": "ready",
+      "profile_status": "ready",
+      "mapping_summary": {
+        "room_key": "master_bathroom",
+        "room_name": "Master bathroom",
+        "control_type": "setpoint",
+        "entity_count": 2,
+        "configured_fields": [
+          "actuator_entity_ids",
+          "power",
+          "temperature_entity_id"
+        ],
+        "power_entity_name": "Master bathroom floor heating",
+        "controlled_devices": [
+          "Master bathroom floor thermostat"
+        ]
+      },
+      "planning_warnings": [],
+      "forecast_w_by_slot": [
+        12.23,
+        12.3,
+        12.32,
+        12.24,
+        12.38,
+        12.26,
+        11.98,
+        11.84,
+        35.67,
+        13.88,
+        12.4,
+        0.58,
+        0,
+        0,
+        0,
+        225.95
+      ],
+      "mapped_control_type": "setpoint",
+      "suggested_load_type": "duty_cycle",
+      "profile_sample_count": 960,
+      "suggested_control_type": null,
+      "suggested_planning_role": "base_load"
+    },
+    {
+      "key": "sensor.heated_towel_rack_energy",
+      "name": "Heated towel rack",
+      "category": "heating",
+      "inference": {
+        "rule": "default_fixed_power",
+        "method": "energy_dashboard_semantics_v1",
+        "profile": "pooled_shape_weekday_level_v1",
+        "planning": {
+          "rule": "user_opt_in_required",
+          "method": "energy_dashboard_planning_semantics_v1",
+          "confidence": "high",
+          "load_type_evidence": "fixed_full_load"
+        },
+        "confidence": "low",
+        "history_days": 10,
+        "daily_energy_kwh_by_weekday": {
+          "0": 0.9959,
+          "1": 0.7351375,
+          "2": 1.0637999999999999,
+          "3": 0.9474199999999999,
+          "4": 1.01302,
+          "5": 1.013195,
+          "6": 0.9354025
+        }
+      },
+      "load_type": "fixed_full_load",
+      "control_type": "switch_schedule",
+      "statistic_id": "sensor.heated_towel_rack_energy",
+      "mapping_error": null,
+      "planning_role": "controllable",
+      "active_power_w": 148.3,
+      "mapping_status": "ready",
+      "profile_status": "ready",
+      "mapping_summary": {
+        "room_key": "master_bathroom",
+        "room_name": "Master bathroom",
+        "control_type": "switch_schedule",
+        "entity_count": 2,
+        "configured_fields": [
+          "actuator_entity_ids",
+          "power",
+          "temperature_entity_id"
+        ],
+        "power_entity_name": "Heated towel rack",
+        "controlled_devices": [
+          "Heated towel rack"
+        ]
+      },
+      "planning_warnings": [],
+      "forecast_w_by_slot": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1.21,
+        0.13,
+        0,
+        0,
+        0.05,
+        0,
+        0,
+        133.89
+      ],
+      "mapped_control_type": "switch_schedule",
+      "suggested_load_type": "fixed_full_load",
+      "profile_sample_count": 960,
+      "suggested_control_type": null,
+      "suggested_planning_role": "base_load"
+    }
+  ],
+  "slots": [
+    {
+      "start": "2026-10-21T11:15:00+00:00",
+      "pv_forecast_w": 272,
+      "base_load_forecast_w": 915.56,
+      "export_price_sek_per_kwh": 0.93402,
+      "import_price_sek_per_kwh": 1.96253
+    },
+    {
+      "start": "2026-10-21T11:30:00+00:00",
+      "pv_forecast_w": 283,
+      "base_load_forecast_w": 905.78,
+      "export_price_sek_per_kwh": 0.78833,
+      "import_price_sek_per_kwh": 1.78041
+    },
+    {
+      "start": "2026-10-21T11:45:00+00:00",
+      "pv_forecast_w": 307,
+      "base_load_forecast_w": 791.11,
+      "export_price_sek_per_kwh": 0.89487,
+      "import_price_sek_per_kwh": 1.91359
+    },
+    {
+      "start": "2026-10-21T12:00:00+00:00",
+      "pv_forecast_w": 331,
+      "base_load_forecast_w": 805.33,
+      "export_price_sek_per_kwh": 0.99941,
+      "import_price_sek_per_kwh": 2.04426
+    },
+    {
+      "start": "2026-10-21T12:15:00+00:00",
+      "pv_forecast_w": 341,
+      "base_load_forecast_w": 788.44,
+      "export_price_sek_per_kwh": 1.01275,
+      "import_price_sek_per_kwh": 2.06094
+    },
+    {
+      "start": "2026-10-21T12:30:00+00:00",
+      "pv_forecast_w": 340,
+      "base_load_forecast_w": 835.56,
+      "export_price_sek_per_kwh": 0.85005,
+      "import_price_sek_per_kwh": 1.85756
+    },
+    {
+      "start": "2026-10-21T12:45:00+00:00",
+      "pv_forecast_w": 326,
+      "base_load_forecast_w": 1062.22,
+      "export_price_sek_per_kwh": 0.96704,
+      "import_price_sek_per_kwh": 2.0038
+    },
+    {
+      "start": "2026-10-21T13:00:00+00:00",
+      "pv_forecast_w": 300,
+      "base_load_forecast_w": 1897.78,
+      "export_price_sek_per_kwh": 1.03377,
+      "import_price_sek_per_kwh": 2.08721
+    },
+    {
+      "start": "2026-10-21T13:15:00+00:00",
+      "pv_forecast_w": 273,
+      "base_load_forecast_w": 1986.67,
+      "export_price_sek_per_kwh": 1.06713,
+      "import_price_sek_per_kwh": 2.12891
+    },
+    {
+      "start": "2026-10-21T13:30:00+00:00",
+      "pv_forecast_w": 222,
+      "base_load_forecast_w": 1995.56,
+      "export_price_sek_per_kwh": 1.29912,
+      "import_price_sek_per_kwh": 2.4189
+    },
+    {
+      "start": "2026-10-21T13:45:00+00:00",
+      "pv_forecast_w": 173,
+      "base_load_forecast_w": 1662.22,
+      "export_price_sek_per_kwh": 1.59193,
+      "import_price_sek_per_kwh": 2.78491
+    },
+    {
+      "start": "2026-10-21T14:00:00+00:00",
+      "pv_forecast_w": 113,
+      "base_load_forecast_w": 1104.49,
+      "export_price_sek_per_kwh": 1.37807,
+      "import_price_sek_per_kwh": 2.51759
+    },
+    {
+      "start": "2026-10-21T14:15:00+00:00",
+      "pv_forecast_w": 77,
+      "base_load_forecast_w": 857.78,
+      "export_price_sek_per_kwh": 1.56068,
+      "import_price_sek_per_kwh": 2.74585
+    },
+    {
+      "start": "2026-10-21T14:30:00+00:00",
+      "pv_forecast_w": 40,
+      "base_load_forecast_w": 1011.87,
+      "export_price_sek_per_kwh": 1.55456,
+      "import_price_sek_per_kwh": 2.7382
+    },
+    {
+      "start": "2026-10-21T14:45:00+00:00",
+      "pv_forecast_w": 17,
+      "base_load_forecast_w": 1044.9,
+      "export_price_sek_per_kwh": 1.55634,
+      "import_price_sek_per_kwh": 2.74043
+    },
+    {
+      "start": "2026-10-21T15:00:00+00:00",
+      "pv_forecast_w": 0,
+      "base_load_forecast_w": 1084.93,
+      "export_price_sek_per_kwh": 1.34171,
+      "import_price_sek_per_kwh": 2.47214
+    }
+  ],
+  "outdoor_temperature_c": [
+    10.95,
+    11,
+    11.05,
+    11.1,
+    11.1,
+    11.1,
+    11.1,
+    11.1,
+    11.075,
+    11.05,
+    11.025,
+    11,
+    10.95,
+    10.9,
+    10.850000000000001,
+    10.8
+  ],
+  "solar_irradiance_w_per_m2": [
+    22,
+    22,
+    22,
+    28,
+    28,
+    28,
+    28,
+    21,
+    21,
+    21,
+    21,
+    5,
+    5,
+    5,
+    5,
+    0
+  ],
+  "house_temperature_c": [
+    21.788,
+    21.741,
+    21.733,
+    21.7,
+    21.693,
+    21.694,
+    21.714,
+    21.722,
+    21.732,
+    21.773,
+    21.786,
+    21.805,
+    21.783,
+    21.765,
+    21.748,
+    21.755
+  ],
+  "historical_commands": [
+    {
+      "type": "setpoint",
+      "target_c": 21.37,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.46,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.45,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.43,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.41,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.11,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.2,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.29,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.38,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.36,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.34,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.31,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.29,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.26,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.24,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    },
+    {
+      "type": "setpoint",
+      "target_c": 21.21,
+      "maximum_c": 21.5,
+      "minimum_c": 18
+    }
+  ],
+  "historical_planned_floor_w": [
+    0,
+    686.3,
+    69.32672884068486,
+    0,
+    0,
+    686.3,
+    686.3,
+    686.3,
+    686.3,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "actuals": [
+    {
+      "start": "2026-10-21T11:15:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.95
+    },
+    {
+      "start": "2026-10-21T11:30:00.000Z",
+      "floor_w": 0,
+      "rack_w": 142.808,
+      "room_c": 20.95
+    },
+    {
+      "start": "2026-10-21T11:45:00.000Z",
+      "floor_w": 0,
+      "rack_w": 10.768,
+      "room_c": 20.9544
+    },
+    {
+      "start": "2026-10-21T12:00:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.9293
+    },
+    {
+      "start": "2026-10-21T12:15:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.8944
+    },
+    {
+      "start": "2026-10-21T12:30:00.000Z",
+      "floor_w": 0,
+      "rack_w": 139.696,
+      "room_c": 20.87
+    },
+    {
+      "start": "2026-10-21T12:45:00.000Z",
+      "floor_w": 0,
+      "rack_w": 150.724,
+      "room_c": 20.8485
+    },
+    {
+      "start": "2026-10-21T13:00:00.000Z",
+      "floor_w": 0,
+      "rack_w": 151.74,
+      "room_c": 20.78
+    },
+    {
+      "start": "2026-10-21T13:15:00.000Z",
+      "floor_w": 0,
+      "rack_w": 151.732,
+      "room_c": 20.8039
+    },
+    {
+      "start": "2026-10-21T13:30:00.000Z",
+      "floor_w": 0,
+      "rack_w": 10.52,
+      "room_c": 20.81
+    },
+    {
+      "start": "2026-10-21T13:45:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.81
+    },
+    {
+      "start": "2026-10-21T14:00:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.81
+    },
+    {
+      "start": "2026-10-21T14:15:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.81
+    },
+    {
+      "start": "2026-10-21T14:30:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.81
+    },
+    {
+      "start": "2026-10-21T14:45:00.000Z",
+      "floor_w": 0,
+      "rack_w": 0,
+      "room_c": 20.7402
+    },
+    {
+      "start": "2026-10-21T15:00:00.000Z",
+      "floor_w": 648.204,
+      "rack_w": 0,
+      "room_c": 20.7346
+    }
+  ]
+}

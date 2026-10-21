@@ -1,262 +1,116 @@
-/**
- * Price- and deadline-aware heating for one thermostat room.
- *
- * A backward dynamic programme over room temperature chooses each quarter's
- * heat. Comfort comes first: every °C below a quarter's objective costs far
- * more than any electricity, so an attainable deadline is always met and an
- * unattainable one gets the closest recovery. Among plans that serve comfort
- * equally, the cheapest wins: the room coasts while power is dear and keeps
- * or stores warmth (never above its ceiling) while it is cheap.
- *
- * The cost-to-go is held on a temperature grid and interpolated linearly, so
- * the forward pass runs from the exact measured temperature and every planned
- * temperature is exact first-order physics, not a grid value.
- *
- * Relays (a towel rack on a smart plug) switch for whole quarters only, so each
- * on/off combination is a step of fixed heat with the thermostats' continuous
- * power on top.
- *
- * A room whose heat arrives through a delay (a floor slab) has a second state:
- * the heat already on its way. Its programme runs over both, on a coarser grid
- * of delivered heat. Heat put into the floor now warms the room for hours, so
- * its ceiling cannot be a cap on this quarter's power: every quarter planned
- * above the ceiling costs a penalty below a comfort shortfall but above any
- * price, and the programme sees the overshoot that parked heat would cause.
- * A room without a delay keeps its exact one-dimensional programme.
- */
+/** Finite native thermostat targets and whole-quarter relays, comfort before cost. */
+import { type RoomTransition, stepRoom } from "./planner/thermal-model.ts";
+import { heatingMask, projectThermostatQuarter, thermostatTargets,
+  type RoomThermostat, type ThermostatQuarter, type ThermostatRoomState } from "./planner/thermostat.ts";
 
-/**
- * One quarter's exact transition:
- *   next = start·decay + offset + delivered_gain·delivered + gain·watts
- *   next delivered = carry·delivered + (1 − carry)·watts
- */
-export interface RoomQuarter {
-  hours: number;
-  decay: number;
-  offset_c: number;
-  gain_c_per_w: number;
-  /** Zero, with `carry`, for a room whose heat arrives at once. */
-  delivered_gain_c_per_w?: number;
-  carry?: number;
-  /** Temperature the room should have reached when this quarter ends. */
+export interface RoomQuarter extends ThermostatQuarter {
+  transition: RoomTransition;
   required_c: number;
-  /** Heating may not lift the room above this; passive warmth may. */
   maximum_c: number;
-  /** All heat in the room, relays and thermostats together. */
   maximum_w: number;
-  /** Combined thermostat rating: the continuous part of the room's heat. */
-  continuous_w: number;
-  /** Each relay's heat when on for the whole quarter. */
   relay_w: number[];
-  /** A committed quarter keeps its retained thermostat power exactly. */
-  fixed_w: number | null;
-  /** A committed quarter keeps each relay's retained state; null is free. */
   fixed_relays: (boolean | null)[];
+  /** Native applied targets; the original retained command stays with its caller. */
+  fixed_targets_c: (number | null)[];
   import_sek_per_kwh: number;
-  /** Foregone export: the price of power that solar surplus already covers. */
   export_sek_per_kwh: number;
   surplus_w: number;
 }
-
 export interface RoomHeatingPlan {
-  /** All heat in the room, relays included. */
   power_w: number[];
-  /** Each quarter's relay states, in `relay_w` order. */
+  thermostat_w: number[][];
+  targets_c: number[][];
   relays_on: boolean[][];
-  /** Planned temperature at the end of each quarter. */
   temperature_c: number[];
   shortfall_c: number[];
 }
 
-const GRID_C = 0.05;
-/** A lexicographic weight, not a price: comfort before cost. */
-const SHORTFALL_SEK_PER_C = 10_000;
-const MARGIN_C = 2;
-/** Relay combinations double per relay; past this a room keeps the old path. */
 export const MAX_ROOM_RELAYS = 4;
+const SHORTFALL_SEK_PER_C = 10_000, OVERSHOOT_SEK_PER_C = 1_000;
+const DELIVERED_POINTS = 7, MARGIN_C = 2;
+interface Grid { low: number; step_c: number; temperatures: number; delivered_step: number; points: number; masks: number }
+interface Choice { score: number; watts: number; targets: number[]; relays: boolean[]; state: ThermostatRoomState; thermostat_w: number[] }
 
-interface Choice { total: number; watts: number; next: number; relays: boolean[] }
-
-function interpolate(values: Float64Array, low: number, t: number): number {
-  const position = (t - low) / GRID_C;
-  if (position <= 0) return values[0];
-  if (position >= values.length - 1) return values[values.length - 1];
-  const index = Math.floor(position);
-  const fraction = position - index;
-  return values[index] * (1 - fraction) + values[index + 1] * fraction;
+function future(table: Float64Array | undefined, grid: Grid, state: ThermostatRoomState): number {
+  if (!table) return 0;
+  const tp = Math.min(Math.max((state.temperature_c - grid.low) / grid.step_c, 0), grid.temperatures - 1);
+  const ti = Math.min(Math.floor(tp), grid.temperatures - 2), tf = tp - ti;
+  const dp = grid.points > 1 ? Math.min(Math.max(state.delivered_w / grid.delivered_step, 0), grid.points - 1) : 0;
+  const di = Math.min(Math.floor(dp), Math.max(0, grid.points - 2)), df = dp - di;
+  const at = (t: number, d: number) => table[(t * grid.points + Math.min(d, grid.points - 1)) * grid.masks + state.heating_mask];
+  const bottom = at(ti, di) * (1 - df) + at(ti, di + 1) * df;
+  const top = at(ti + 1, di) * (1 - df) + at(ti + 1, di + 1) * df;
+  return bottom * (1 - tf) + top * tf;
+}
+function combinations<T>(options: T[][]): T[][] {
+  return options.reduce<T[][]>((rows, values) => rows.flatMap(row => values.map(value => [...row, value])), [[]]);
 }
 
-/** Every relay combination a quarter allows, committed relays held. */
-function relayStates(q: RoomQuarter): boolean[][] {
-  let states: boolean[][] = [[]];
-  q.relay_w.forEach((_w, r) => {
-    const fixed = q.fixed_relays[r];
-    states = states.flatMap(state => fixed === null || fixed === undefined
-      ? [[...state, false], [...state, true]] : [[...state, fixed]]);
-  });
-  return states;
-}
-
-function choose(t: number, q: RoomQuarter, value: Float64Array | null, low: number): Choice {
-  const passive = t * q.decay + q.offset_c;
-  let best: Choice = { total: Infinity, watts: 0, next: passive, relays: q.relay_w.map(() => false) };
-  for (const relays of relayStates(q)) {
-    const committed = relays.every((on, r) => q.fixed_relays[r] === on);
-    const stepW = relays.reduce((sum, on, r) => sum + (on ? q.relay_w[r] : 0), 0);
-    const base = passive + q.gain_c_per_w * stepW;
-    // A free relay may not overrun the room's power or lift it past its ceiling.
-    if (!committed && (stepW > q.maximum_w + 1e-9 || (stepW > 0 && base > Math.max(passive, q.maximum_c) + 1e-9))) continue;
-    const candidates: number[] = [];
-    if (q.fixed_w !== null) candidates.push(q.fixed_w);
-    else if (q.gain_c_per_w > 0 && q.continuous_w > 0 && q.maximum_w > stepW) {
-      const cap = Math.max(0, Math.min(q.continuous_w, q.maximum_w - stepW, (Math.max(base, q.maximum_c) - base) / q.gain_c_per_w));
-      const watts = (target: number) => (target - base) / q.gain_c_per_w;
-      candidates.push(0, cap);
-      // The objective is piecewise linear in power: its kinks are the grid
-      // points, the end of free surplus and the comfort objective itself.
-      for (const kink of [q.surplus_w - stepW, watts(q.required_c)]) if (kink > 0 && kink < cap) candidates.push(kink);
-      const first = Math.ceil((base - low) / GRID_C), last = Math.floor((base + q.gain_c_per_w * cap - low) / GRID_C);
-      for (let g = Math.max(0, first); g <= last; g++) {
-        const w = watts(low + g * GRID_C);
-        if (w > 0 && w < cap) candidates.push(w);
-      }
-      candidates.sort((a, b) => a - b);
-    } else candidates.push(0);
-    for (const continuous of candidates) {
-      const watts = stepW + continuous;
-      const next = passive + q.gain_c_per_w * watts;
-      const covered = Math.min(watts, Math.max(0, q.surplus_w));
-      const energy = q.hours / 1000 * (q.export_sek_per_kwh * covered + q.import_sek_per_kwh * (watts - covered));
-      const total = energy + SHORTFALL_SEK_PER_C * Math.max(0, q.required_c - next) +
-        (value ? interpolate(value, low, next) : 0);
-      // Ties keep the smaller heat, so equal plans never heat for nothing.
-      if (total < best.total - 1e-9 || (Math.abs(total - best.total) <= 1e-9 && watts < best.watts)) {
-        best = { total, watts, next, relays };
-      }
+function choose(initial: ThermostatRoomState, q: RoomQuarter, thermostats: readonly RoomThermostat[],
+  relayOptions: boolean[][], table: Float64Array | undefined, grid: Grid): Choice {
+  const passive = stepRoom(q.transition, initial, 0).temperature_c;
+  const full = stepRoom(q.transition, initial, thermostats.reduce((s, t) => s + t.power_w, 0) + q.relay_w.reduce((a, b) => a + b, 0)).temperature_c;
+  const targets = combinations(thermostats.map((t, j) => q.fixed_targets_c[j] !== null
+    ? [q.fixed_targets_c[j]] : thermostatTargets(t, Math.min(initial.temperature_c, passive), Math.max(initial.temperature_c, full))));
+  let best: Choice | undefined;
+  // Committed commands remain exact, including when their physical demand
+  // exceeds new headroom. A native minimum can also make heat unavoidable.
+  // Only additional free demand must fit that headroom.
+  const committedRelays = q.relay_w.reduce((s, w, j) => s + (q.fixed_relays[j] === true ? w : 0), 0);
+  const committedTargets = thermostats.map((t, j) => q.fixed_targets_c[j] ?? t.minimum_c);
+  const hasCommitment = q.fixed_targets_c.some(t => t !== null) || q.fixed_relays.some(on => on !== null);
+  const minimumCanHeat = thermostats.some(t => Math.min(initial.temperature_c, passive) + t.sensor_offset_c < t.minimum_c);
+  const committed = hasCommitment || minimumCanHeat ? projectThermostatQuarter(q, thermostats, initial, committedTargets, committedRelays)
+    : { peak_w: 0, state: { temperature_c: passive } };
+  const budget = Math.max(q.maximum_w, committed.peak_w);
+  for (const relays of relayOptions) for (const target of targets) {
+    const relayW = relays.reduce((s, on, j) => s + (on ? q.relay_w[j] : 0), 0);
+    const projection = projectThermostatQuarter(q, thermostats, initial, target, relayW);
+    if (projection.peak_w > budget + 1e-6) continue;
+    const watts = relayW + projection.thermostat_w.reduce((a, b) => a + b, 0);
+    const next = projection.state.temperature_c;
+    if (q.transition.carry === 0 && next > Math.max(q.maximum_c, passive, committed.state.temperature_c) + 1e-9) continue;
+    const covered = Math.min(watts, Math.max(0, q.surplus_w));
+    const energy = q.hours / 1000 * (q.export_sek_per_kwh * covered + q.import_sek_per_kwh * (watts - covered));
+    // Native targets may sit above the room ceiling to activate heating. The
+    // ceiling applies to the predicted room, never to a different sensor's target.
+    const overshoot = Math.max(0, next - Math.max(q.maximum_c, passive));
+    const score = energy + SHORTFALL_SEK_PER_C * Math.max(0, q.required_c - next) +
+      OVERSHOOT_SEK_PER_C * overshoot + future(table, grid, projection.state);
+    if (!best || score < best.score - 1e-9 || Math.abs(score - best.score) <= 1e-9 && watts < best.watts) {
+      best = { score, watts, targets: target, relays, state: projection.state, thermostat_w: projection.thermostat_w };
     }
   }
+  if (!best) throw new Error("No native room command fits the configured electrical headroom");
   return best;
 }
 
-/**
- * A delayed room's grid. Two dimensions cost the product of both, so each is
- * coarser than the one-dimensional programme's; the forward pass still runs
- * exact physics from the measured state.
- */
-const DELAYED_GRID_C = 0.1;
-const DELIVERED_POINTS = 7;
-/** Below comfort, above any electricity: a delayed room planned over its ceiling. */
-const OVERSHOOT_SEK_PER_C = 1_000;
-
-interface DelayedChoice extends Choice { delivered: number }
-
-function interpolate2(values: Float64Array, low: number, t: number, step: number, points: number, d: number): number {
-  const rows = values.length / points;
-  let position = (t - low) / DELAYED_GRID_C;
-  position = Math.min(Math.max(position, 0), rows - 1);
-  const ti = Math.min(Math.floor(position), rows - 2), tf = position - ti;
-  let dp = step > 0 ? d / step : 0;
-  dp = Math.min(Math.max(dp, 0), points - 1);
-  const di = Math.min(Math.floor(dp), Math.max(0, points - 2)), df = points > 1 ? dp - di : 0;
-  const at = (r: number, c: number) => values[r * points + Math.min(c, points - 1)];
-  const lowRow = at(ti, di) * (1 - df) + at(ti, di + 1) * df;
-  const highRow = at(ti + 1, di) * (1 - df) + at(ti + 1, di + 1) * df;
-  return lowRow * (1 - tf) + highRow * tf;
-}
-
-interface RelayOption { relays: boolean[]; stepW: number }
-
-/** A quarter's allowed relay combinations, built once rather than per grid state. */
-function relayOptions(q: RoomQuarter): RelayOption[] {
-  return relayStates(q).flatMap(relays => {
-    const committed = relays.every((on, r) => q.fixed_relays[r] === on);
-    const stepW = relays.reduce((sum, on, r) => sum + (on ? q.relay_w[r] : 0), 0);
-    return !committed && stepW > q.maximum_w + 1e-9 ? [] : [{ relays, stepW }];
-  });
-}
-
-function chooseDelayed(t: number, d: number, q: RoomQuarter, options: RelayOption[], value: Float64Array | null,
-  low: number, step: number, points: number): DelayedChoice {
-  const carry = q.carry ?? 0;
-  const passive = t * q.decay + q.offset_c + (q.delivered_gain_c_per_w ?? 0) * d;
-  let best: DelayedChoice = { total: Infinity, watts: 0, next: passive, delivered: carry * d, relays: options[0]?.relays ?? [] };
-  for (const { relays, stepW } of options) {
-    const candidates: number[] = [];
-    if (q.fixed_w !== null) candidates.push(q.fixed_w);
-    else if (q.continuous_w > 0 && q.maximum_w > stepW) {
-      const cap = Math.max(0, Math.min(q.continuous_w, q.maximum_w - stepW));
-      candidates.push(0, cap, cap / 4, cap / 2, 3 * cap / 4);
-      const toRequired = q.gain_c_per_w > 0 ? (q.required_c - passive - q.gain_c_per_w * stepW) / q.gain_c_per_w : -1;
-      for (const kink of [q.surplus_w - stepW, toRequired]) if (kink > 0 && kink < cap) candidates.push(kink);
-      candidates.sort((a, b) => a - b);
-    } else candidates.push(0);
-    for (const continuous of candidates) {
-      const watts = stepW + continuous;
-      const next = passive + q.gain_c_per_w * watts;
-      const delivered = carry * d + (1 - carry) * watts;
-      const covered = Math.min(watts, Math.max(0, q.surplus_w));
-      const energy = q.hours / 1000 * (q.export_sek_per_kwh * covered + q.import_sek_per_kwh * (watts - covered));
-      const total = energy + SHORTFALL_SEK_PER_C * Math.max(0, q.required_c - next) +
-        OVERSHOOT_SEK_PER_C * Math.max(0, next - q.maximum_c) +
-        (value ? interpolate2(value, low, next, step, points, delivered) : 0);
-      if (total < best.total - 1e-9 || (Math.abs(total - best.total) <= 1e-9 && watts < best.watts)) {
-        best = { total, watts, next, delivered, relays };
-      }
-    }
-  }
-  return best;
-}
-
-function planDelayedRoom(startC: number, startDeliveredW: number, quarters: RoomQuarter[],
-  low: number, high: number): RoomHeatingPlan {
-  const size = Math.max(2, Math.ceil((high - low) / DELAYED_GRID_C) + 1);
-  const top = Math.max(startDeliveredW, ...quarters.map(q => q.continuous_w + q.relay_w.reduce((a, w) => a + w, 0)));
-  const points = top > 0 ? DELIVERED_POINTS : 1, step = top > 0 ? top / (points - 1) : 0;
+export function planRoomHeating(startC: number, thermostats: readonly RoomThermostat[], quarters: RoomQuarter[], startDeliveredW = 0): RoomHeatingPlan {
+  const temperatures = [startC, ...quarters.flatMap(q => [q.required_c, q.maximum_c])];
+  const delayed = quarters.some(q => q.transition.carry > 0);
+  const top = Math.max(startDeliveredW, thermostats.reduce((s, t) => s + t.power_w, 0) + Math.max(0, ...quarters.map(q => q.relay_w.reduce((a, b) => a + b, 0))));
+  const points = delayed && top > 0 ? DELIVERED_POINTS : 1;
+  const low = Math.min(...temperatures) - MARGIN_C, stepC = delayed ? .1 : .05;
+  const grid: Grid = { low, step_c: stepC, temperatures: Math.max(2, Math.ceil((Math.max(...temperatures) + MARGIN_C - low) / stepC) + 1),
+    delivered_step: points > 1 ? top / (points - 1) : 0, points, masks: 2 ** thermostats.length };
+  const options = quarters.map(q => combinations(q.relay_w.map((_w, j) => q.fixed_relays[j] === null ? [false, true] : [q.fixed_relays[j]])));
   const values: Float64Array[] = Array(quarters.length + 1);
-  const options = quarters.map(relayOptions);
   for (let i = quarters.length - 1; i >= 0; i--) {
-    const table = new Float64Array(size * points);
-    for (let g = 0; g < size; g++) for (let p = 0; p < points; p++) {
-      table[g * points + p] = chooseDelayed(low + g * DELAYED_GRID_C, p * step, quarters[i], options[i], values[i + 1] ?? null,
-        low, step, points).total;
+    const table = new Float64Array(grid.temperatures * points * grid.masks);
+    for (let t = 0; t < grid.temperatures; t++) for (let d = 0; d < points; d++) for (let mask = 0; mask < grid.masks; mask++) {
+      table[(t * points + d) * grid.masks + mask] = choose({ temperature_c: low + t * stepC,
+        delivered_w: d * grid.delivered_step, heating_mask: mask }, quarters[i], thermostats, options[i], values[i + 1], grid).score;
     }
     values[i] = table;
   }
-  const plan: RoomHeatingPlan = { power_w: [], relays_on: [], temperature_c: [], shortfall_c: [] };
-  let t = startC, d = startDeliveredW;
+  const plan: RoomHeatingPlan = { power_w: [], thermostat_w: [], targets_c: [], relays_on: [], temperature_c: [], shortfall_c: [] };
+  let state: ThermostatRoomState = { temperature_c: startC, delivered_w: startDeliveredW, heating_mask: heatingMask(thermostats) };
   quarters.forEach((q, i) => {
-    const choice = chooseDelayed(t, d, q, options[i], values[i + 1] ?? null, low, step, points);
-    plan.power_w.push(choice.watts);
-    plan.relays_on.push(choice.relays);
-    plan.temperature_c.push(choice.next);
-    plan.shortfall_c.push(Math.max(0, q.required_c - choice.next));
-    t = choice.next; d = choice.delivered;
-  });
-  return plan;
-}
-
-export function planRoomHeating(startC: number, quarters: RoomQuarter[], startDeliveredW = 0): RoomHeatingPlan {
-  const temperatures = [startC, ...quarters.flatMap(q => [q.required_c, q.maximum_c])].filter(Number.isFinite);
-  const low = Math.min(...temperatures) - MARGIN_C;
-  const size = Math.max(2, Math.ceil((Math.max(...temperatures) - low) / GRID_C) + 1);
-  if (quarters.some(q => (q.carry ?? 0) > 0 || (q.delivered_gain_c_per_w ?? 0) > 0)) {
-    return planDelayedRoom(startC, Math.max(0, startDeliveredW), quarters, low, Math.max(...temperatures));
-  }
-  const values: Float64Array[] = Array(quarters.length + 1);
-  for (let i = quarters.length - 1; i >= 0; i--) {
-    const row = new Float64Array(size);
-    for (let g = 0; g < size; g++) row[g] = choose(low + g * GRID_C, quarters[i], values[i + 1] ?? null, low).total;
-    values[i] = row;
-  }
-  const plan: RoomHeatingPlan = { power_w: [], relays_on: [], temperature_c: [], shortfall_c: [] };
-  let t = startC;
-  quarters.forEach((q, i) => {
-    const step = choose(t, q, values[i + 1] ?? null, low);
-    plan.power_w.push(step.watts);
-    plan.relays_on.push(step.relays);
-    plan.temperature_c.push(step.next);
-    plan.shortfall_c.push(Math.max(0, q.required_c - step.next));
-    t = step.next;
+    const next = choose(state, q, thermostats, options[i], values[i + 1], grid);
+    plan.power_w.push(next.watts); plan.thermostat_w.push(next.thermostat_w); plan.targets_c.push(next.targets);
+    plan.relays_on.push(next.relays); plan.temperature_c.push(next.state.temperature_c);
+    plan.shortfall_c.push(Math.max(0, q.required_c - next.state.temperature_c));
+    state = next.state;
   });
   return plan;
 }

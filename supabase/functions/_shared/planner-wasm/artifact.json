@@ -1,7 +1,7 @@
 {
   "abi": 11,
   "wasm_sha256": "746e535ee47bec97b4ae6e6b3eb4f8f0cbb0089a3df23b4d1c4cba33c6400648",
-  "source_sha256": "2e12495b0c00ae3855a3e56bc42bfe520bbf7056ad2056aac5285601b2f60225",
+  "source_sha256": "c5378fcef779dce203ef688e2294dbae3adadaf66f9696107d8b1e7438f8c9ab",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -69,6 +69,7 @@
     "supabase/functions/_shared/planner/pool-response.ts",
     "supabase/functions/_shared/planner/store-value.ts",
     "supabase/functions/_shared/planner/thermal-model.ts",
+    "supabase/functions/_shared/planner/thermostat.ts",
     "supabase/functions/_shared/planner/value-curves.ts",
     "supabase/functions/_shared/room-heating-schedule.ts",
     "supabase/functions/_shared/rules-baseline.ts",
