@@ -3,6 +3,7 @@ import artifact from '../../../supabase/functions/_shared/planner-wasm/artifact.
 import { resolveRulePolicy } from '../../../supabase/functions/_shared/planner-wasm/rule-policy.ts';
 import { builderRecipe, type NativeCommand, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { problemEndCredit } from '../../../supabase/functions/_shared/planner-wasm/end-credit.ts';
+import { allocatedBatteryCommand } from '../../../supabase/functions/_shared/planner-wasm/battery-command.ts';
 import type { createWasmPlanner, NativeQuarter } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import { recordedTrips, withdrawTrip } from './trip-ledger.ts';
@@ -11,7 +12,7 @@ import { projectionSeries, type BaselineInput } from './model.ts';
 import { quarterPool, withPoolState } from './pool-carry.ts';
 
 export type ReplayEngine = Pick<ReturnType<typeof createWasmPlanner>, 'solve' | 'project'>;
-export const REPLAY_PROTOCOL = 'perfect-forecast-72h-ev-departure-daily-homecoming-v2';
+export const REPLAY_PROTOCOL = 'perfect-forecast-72h-ev-departure-daily-homecoming-v3';
 export const REPLAY_ENGINE = `${runtime.recipe.version}:${runtime.policy_manifest.version}:${artifact.wasm_sha256}`;
 
 /** Current optimizer, isolated from live planning/dispatch. Trips are external physical withdrawals. */
@@ -46,7 +47,8 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
       horizon.end_credit = problemEndCredit(horizon);
       const outcome = engine.solve(horizon).outcome; solves++;
       if (outcome.kind === 'failed') throw new Error(`Historical scheduler at ${at}: ${outcome.issue}`);
-      selected = outcome.selection.commands as NativeCommand[]; plannedAt = i; day = currentDay;
+      selected = outcome.selection.commands.map((command, n) => allocatedBatteryCommand(command, outcome.selection.quarters[n]));
+      plannedAt = i; day = currentDay;
     }
     const command = selected[i - plannedAt];
     const quarter: ReadyProblem = { ...problem, initial: state, accepted: null, locked_through_seconds: 0,

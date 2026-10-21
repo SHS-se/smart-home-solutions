@@ -30,6 +30,7 @@ import { buildBatteryExecutionContract, validateExecutionFeedback } from "./plan
 import type { BatteryProjectionRow } from "./planner/planning-contracts.ts";
 import type { BatteryCommand } from "./planner/battery-command.ts";
 import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./planner/battery-instruction.ts";
+import { allocatedBatteryCommand } from "./planner-wasm/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { planningStage, type PlanningTrace } from "./planning-trace.ts";
 
@@ -353,14 +354,11 @@ function batteryCommand(command: NativeCommand, quarter: NativeQuarter): Battery
   // HA treats grid purchases/sales as sized allocations. Publish the power
   // that survived native grid/storage saturation, not an unattainable ceiling.
   // Automatic operations retain their demand-following permission ceilings.
-  const forced = command.battery === "grid_charge" || command.battery === "export";
-  const charge = forced ? quarter.charge_w : command.charge_limit_w;
-  const discharge = forced ? quarter.discharge_w : command.discharge_limit_w;
+  const allocated = allocatedBatteryCommand(command, quarter);
   // Schema 3 has no import-target response; its nearest meaning follows demand.
-  const native = command.battery === "shave_import" ? "self_consumption" : command.battery;
-  const operation = forced && charge === 0 && discharge === 0 ? "idle" : native;
-  return { schema_version: 3, operation, charge_limit_w: charge,
-    discharge_limit_w: discharge, allow_grid_charge: operation === "grid_charge",
+  const operation = allocated.battery === "shave_import" ? "self_consumption" : allocated.battery;
+  return { schema_version: 3, operation, charge_limit_w: allocated.charge_limit_w,
+    discharge_limit_w: allocated.discharge_limit_w, allow_grid_charge: operation === "grid_charge",
     allow_battery_export: operation === "export" };
 }
 

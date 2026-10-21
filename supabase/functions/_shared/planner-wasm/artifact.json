@@ -1,7 +1,7 @@
 {
   "abi": 11,
   "wasm_sha256": "746e535ee47bec97b4ae6e6b3eb4f8f0cbb0089a3df23b4d1c4cba33c6400648",
-  "source_sha256": "c26d88de78d3d3c84531c0ab9feb591085a8573b5de8e01865a205801faae590",
+  "source_sha256": "2ce6c2fa7e56d41fc4952da50ae54c862402e0a620795247e30276a2ee7856ea",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -47,6 +47,7 @@
     "supabase/functions/_shared/battery-supply.ts",
     "supabase/functions/_shared/boiler-consumption.ts",
     "supabase/functions/_shared/hot-water-opportunities.ts",
+    "supabase/functions/_shared/planner-wasm/battery-command.ts",
     "supabase/functions/_shared/planner-wasm/calendar.ts",
     "supabase/functions/_shared/planner-wasm/core.ts",
     "supabase/functions/_shared/planner-wasm/cost-policy.ts",

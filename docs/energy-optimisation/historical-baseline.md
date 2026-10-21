@@ -104,6 +104,12 @@ Daily and homecoming replans retain their 72-hour horizons. See the
 [profiling and month-horizon experiments](roi-performance.md) for measurements
 and the reasons for retaining this replay protocol.
 
+The retained hour uses the same battery allocation sizing as live publication:
+forced charges and exports commit the power projected by native physics after
+storage and grid saturation, with zero allocations becoming idle. Automatic
+battery modes keep their permission ceilings. Replanning therefore retains the
+executable allocation rather than an unattainable power ceiling.
+
 The Plan page, planner bench and ROI use `energy/charts/EnergyChart.tsx`.
 ROI displays the entire selected frame without day buttons. Controls and costs
 sit above the graph; rounded parameters, daily EV demand and provenance sit

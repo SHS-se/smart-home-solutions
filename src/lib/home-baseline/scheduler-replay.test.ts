@@ -4,7 +4,44 @@ import { prepareHomeBaseline } from './model';
 import { replayScheduler, REPLAY_PROTOCOL } from './scheduler-replay';
 import { compareModels } from './model-comparison';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
+import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem';
 const engine=createWasmPlanner(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm',import.meta.url)));
+for (const operation of ['grid_charge', 'export'] as const) for (const remaining of [0, .7]) Deno.test(`midnight retains the allocated ${operation} power with ${remaining} kWh remaining`,()=>{
+ const input=prepareHomeBaseline(baselineFixture({start:'2026-02-26T22:00:00Z',end:'2026-02-27T01:00:00Z'}));
+ const battery=input.problem.battery!;
+ input.problem.initial.battery_kwh=operation==='grid_charge'
+  ? battery.max_soc*battery.capacity_kwh-3*battery.charge_max_w/4000*battery.charge_efficiency-remaining
+  : battery.min_soc*battery.capacity_kwh+3*battery.discharge_max_w/4000/battery.discharge_efficiency+remaining;
+ input.settings.policy!.battery_export_enabled=true;
+ input.settings.policy!.battery_export_reserve_soc=battery.min_soc;
+ const requests: ReadyProblem[]=[];
+ let allocated=0;
+ const r=replayScheduler(input,{project:engine.project,solve:p=>{
+  requests.push(p);
+  const result=engine.solve(p);
+  if(requests.length!==1 || result.outcome.kind!=='selected') return result;
+  // Pin a valid saturated candidate, independent of optimiser tie-breaking.
+  const commands: NativeCommand[]=p.slots.map((_,i)=>({pool_on:false,ev_amps:0,
+   battery:i>=4&&i<8?operation:'hold',
+   charge_limit_w:i>=4&&i<8?operation==='grid_charge'?battery.charge_max_w:0:battery.charge_max_w,
+   discharge_limit_w:i>=4&&i<8&&operation==='export'?battery.discharge_max_w:0}));
+  const projected=engine.project(p,commands).outcome;
+  assert(projected.kind==='projected');
+  allocated=operation==='grid_charge'?projected.quarters[7].charge_w:projected.quarters[7].discharge_w;
+  assertAlmostEquals(allocated,remaining*4000*(operation==='grid_charge'?1/battery.charge_efficiency:battery.discharge_efficiency),1e-7);
+  assert(allocated<(operation==='grid_charge'?battery.charge_max_w:battery.discharge_max_w));
+  return {...result,outcome:{...result.outcome,selection:{...result.outcome.selection,commands,quarters:projected.quarters}}};
+ }});
+ assertEquals(requests.length,2);
+ assertEquals(requests[1].locked_through_seconds,3600);
+ assertEquals(requests[1].accepted,r.commands.slice(4,8));
+ const committed=requests[1].accepted![3];
+ assertEquals(committed.battery,allocated===0?'idle':operation);
+ assertEquals(r.commands[0].battery,'hold');
+ assertEquals(r.commands[0].charge_limit_w,battery.charge_max_w);
+ assertAlmostEquals(operation==='grid_charge'?committed.charge_limit_w:committed.discharge_limit_w,allocated);
+ assertAlmostEquals(operation==='grid_charge'?r.series.batteryChargeW[7]:r.series.batteryDischargeW[7],allocated);
+});
 Deno.test('current native scheduler executes its own commands, carries state and withdraws recorded trips without charging gains',()=>{
  const rows=baselineFixture(); rows.actual.forEach(r=>r.grid_import_kwh=999);
  rows.actual.slice(40,100).forEach(r=>r.ev_soc=.75); rows.actual.slice(100).forEach(r=>r.ev_soc=.8);
