@@ -163,36 +163,55 @@ export function scheduleHotWater(input: {
     });
     for (const i of candidates[0]?.indices ?? []) permitted[i] = true;
   }
-  // No more than the maximum gap without a permitted quarter. A longer gap
-  // gets the fewest extra quarters that close it, each the best-ranked one
-  // in the span that still leaves the rest closable and whose run fits the
-  // headroom. Failing that, the latest inside the gap, then the earliest after.
+  // No more than the maximum gap without heating (user requirement, 21
+  // October 2026): a quarter where the tank model expects the heater to draw
+  // at least FINISH_HEATING_W closes a gap; permission on a satisfied tank
+  // heats nothing. A longer gap gets the fewest extra quarters that close it,
+  // each the best-ranked one in the span that still leaves the rest closable,
+  // that heats there and whose run fits the headroom; failing that, the latest
+  // inside the gap that heats, then the earliest after it. Where nothing in a
+  // gap can heat (no water drawn), permission alone closes it, chosen alike.
   // The horizon's end closes the last gap; the next replan continues it.
   const horizonEnd = at(starts.length - 1) + QUARTER_MS;
-  // An overdue gap is closed at the first eligible quarter. Without any
-  // record the gap is counted from the start of the horizon.
-  let lastEnd = latest === null ? horizonStart : Date.parse(latest) + QUARTER_MS;
-  for (;;) {
-    const next = permitted.findIndex((p, i) => p && at(i) >= lastEnd);
-    const nextStart = next >= 0 ? at(next) : horizonEnd;
-    if (nextStart - lastEnd <= gapMs) {
-      if (next < 0) break;
-      lastEnd = at(next) + QUARTER_MS;
-      continue;
-    }
-    const needed = Math.ceil((nextStart - lastEnd - gapMs) / (gapMs + QUARTER_MS));
-    const from = Math.max(lastEnd, nextStart - needed * (gapMs + QUARTER_MS)), until = lastEnd + gapMs;
-    const open = starts.flatMap((_s, i) => at(i) >= lastEnd && at(i) < nextStart && eligible(i) ? [i] : []);
+  const closer = (heats: boolean, window: { lastEnd: number; nextStart: number }) => {
+    const needed = Math.ceil((window.nextStart - window.lastEnd - gapMs) / (gapMs + QUARTER_MS));
+    const from = Math.max(window.lastEnd, window.nextStart - needed * (gapMs + QUARTER_MS)), until = window.lastEnd + gapMs;
+    const open = starts.flatMap((_s, i) => at(i) >= window.lastEnd && at(i) < window.nextStart && eligible(i) && !permitted[i] ? [i] : []);
     const span = open.filter(i => at(i) >= from && at(i) <= until).sort(rank);
     const inside = open.filter(i => at(i) < from && at(i) <= until).reverse();
-    const pick = [...span, ...inside, ...open.filter(i => at(i) > until)].find(i => {
+    return [...span, ...inside, ...open.filter(i => at(i) > until)].find(i => {
       permitted[i] = true;
-      if (fits()) return true;
+      const run = project();
+      if (withinHeadroom(run) && (!heats || run.expected_w[i] >= FINISH_HEATING_W)) return true;
       permitted[i] = false;
       return false;
     });
-    if (pick === undefined) break;
-    lastEnd = at(pick) + QUARTER_MS;
+  };
+  // History is known only as permission: the gap is counted from the latest
+  // permitted quarter, an overdue one closed at the first that heats. Without
+  // any record the gap is counted from the start of the horizon.
+  let lastEnd = latest === null ? horizonStart : Date.parse(latest) + QUARTER_MS;
+  for (;;) {
+    const heat = project().expected_w;
+    const nextHeat = heat.findIndex((w, i) => w >= FINISH_HEATING_W && at(i) >= lastEnd);
+    const heatStart = nextHeat >= 0 ? at(nextHeat) : horizonEnd;
+    if (heatStart - lastEnd <= gapMs) {
+      if (nextHeat < 0) break;
+      lastEnd = at(nextHeat) + QUARTER_MS;
+      continue;
+    }
+    const heating = closer(true, { lastEnd, nextStart: heatStart });
+    if (heating !== undefined) { lastEnd = at(heating) + QUARTER_MS; continue; }
+    const nextPermit = permitted.findIndex((p, i) => p && at(i) >= lastEnd);
+    const permitStart = nextPermit >= 0 ? at(nextPermit) : horizonEnd;
+    if (permitStart - lastEnd <= gapMs) {
+      if (nextPermit < 0) break;
+      lastEnd = at(nextPermit) + QUARTER_MS;
+      continue;
+    }
+    const permission = closer(false, { lastEnd, nextStart: permitStart });
+    if (permission === undefined) break;
+    lastEnd = at(permission) + QUARTER_MS;
   }
   const run = project();
   if (!withinHeadroom(run)) throw new Error("Committed boiler completion exceeds electrical headroom");

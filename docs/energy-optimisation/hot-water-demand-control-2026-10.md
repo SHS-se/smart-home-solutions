@@ -14,15 +14,19 @@ equipment limit that prevents 150 minutes produces explicit
 `hot_water_shortfall_minutes`, not fabricated heat or permission.
 
 User requirement, 21 October 2026: the boiler never goes more than 12 hours
-without a permitted quarter, measured from the end of one to the start of the
-next and across local midnights. The ledger therefore also keeps the last 12
-hours and the latest permission however old. Where the daily choice leaves a
-longer gap, add the fewest quarters that close it, each the best-ranked (same
-preferences as above) among the quarters that still leave the rest closable
-and whose run fits the headroom. An overdue gap is closed at the first
-eligible quarter; with no record the gap counts from the horizon start. The
-boiler is in series after the heat pump's hot water, so this bounds standing
-time at the tank rather than comfort.
+without heating, measured from the end of one heating quarter to the start of
+the next and across local midnights. A heating quarter is one where the tank
+model (below) expects the heater to draw at least 50 W; permission on a
+satisfied tank heats nothing and does not count. The ledger also keeps the
+last 12 hours and the latest permission however old; history is known only as
+permission, so the first gap counts from the latest permitted quarter. Where
+the daily choice leaves a longer gap, add the fewest quarters that close it,
+each the best-ranked (same preferences as above) among the quarters that still
+leave the rest closable, heat there, and whose run fits the headroom. An
+overdue gap is closed at the first quarter that heats; with no record the gap
+counts from the horizon start. Where nothing in a gap can heat because no water
+is drawn, permission alone closes it. The boiler is in series after the heat
+pump's hot water, so this bounds standing time at the tank rather than comfort.
 
 Select opportunities after one native household solve. Prefer quarters without
 chosen pool/EV runs, outside the typical 06:00–09:00 and 18:00–21:00 peaks, and

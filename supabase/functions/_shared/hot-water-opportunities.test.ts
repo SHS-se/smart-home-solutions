@@ -158,3 +158,17 @@ Deno.test('a gap quarter is skipped where the run it starts could not finish wit
   assertEquals(permittedAt(w).filter(i => i < 60), [32]);
   assert(w.expected_w[35] <= 1000);
 });
+
+Deno.test('a gap closes only where the heater heats, not at a cheap quarter on a satisfied tank', () => {
+  const p = gapOnly('2026-10-14T02:30:00Z', 86); // Quota met by 02:30; the gap runs from there.
+  const draws = p.starts.map((_s, i) => i < 47 ? 0 : 250); // Nothing drawn before 14:15.
+  p.services[0].control.expected_power_w_by_slot = draws;
+  p.services[0].required_kwh = draws.reduce((sum, w) => sum + w / 4000, 0);
+  p.import_price = p.starts.map((_s, i) => (86 - i) / 100); // The daily run is late in the evening.
+  p.import_price[38] = -1; // 12:00 is cheapest, but the tank has nothing to heat then.
+  const w = scheduleHotWater(p);
+  assert(!w.permitted[38]);
+  assert(w.permitted[48] && w.expected_w[48] >= 50, 'closed at 14:30, the first quarter that heats');
+  const heated = w.expected_w.flatMap((watts, i) => watts >= 50 ? [i] : []);
+  assertEquals(heated[0] * 15 <= WATER_MAX_GAP_MINUTES, true);
+});
