@@ -1,3 +1,4 @@
+import { ridge } from "./ridge.ts";
 import { buildPriceOutlook, localSlot, type StoredPriceRow, type WindDay } from "./planner/energy-price-shape.ts";
 import { forecastCalibration } from "./market-wind.ts";
 import { priceCoverageByBucket } from "./planner/price-coverage.ts";
@@ -341,27 +342,4 @@ function retrospectiveFactors(bundle: ResearchBundle): ComparisonReport["retrosp
   const available = models.some(model => model.status === "available");
   return { status: available ? "available" : "unavailable",
     ...(!available ? { reason: "No factor experiment has sufficient usable ENTSO-E evidence; unavailable factors are never replaced by zero." } : {}), models };
-}
-
-/** Standardize from training rows only; fixed ridge=1, unpenalized intercept. */
-function ridge(inputs: number[][], prices: number[], target: number[]): number {
-  const width = target.length;
-  const means = target.map((_, column) => inputs.reduce((sum, row) => sum + row[column], 0) / inputs.length);
-  const scales = means.map((mean, column) => Math.sqrt(inputs.reduce((sum, row) => sum + (row[column] - mean) ** 2, 0) / inputs.length) || 1);
-  const transform = (row: number[]) => [1, ...row.map((value, column) => (value - means[column]) / scales[column])];
-  const x = inputs.map(transform);
-  const matrix = Array.from({ length: width + 1 }, (_, left) =>
-    Array.from({ length: width + 2 }, (_, right) => right > width
-      ? x.reduce((sum, row, index) => sum + row[left] * prices[index], 0)
-      : x.reduce((sum, row) => sum + row[left] * row[right], 0) + (left === right && left > 0 ? 1 : 0)));
-  for (let column = 0; column <= width; column++) {
-    const pivot = matrix[column][column];
-    for (let right = column; right <= width + 1; right++) matrix[column][right] /= pivot;
-    for (let row = 0; row <= width; row++) {
-      if (row === column) continue;
-      const factor = matrix[row][column];
-      for (let right = column; right <= width + 1; right++) matrix[row][right] -= factor * matrix[column][right];
-    }
-  }
-  return transform(target).reduce((sum, value, column) => sum + value * matrix[column][width + 1], 0);
 }

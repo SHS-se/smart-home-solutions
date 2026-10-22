@@ -76,7 +76,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
       graph.add("scripts/deploy-planner-probe.ts");
       graph.add("scripts/planner-probe-auth.ts");
     }
-    if (name === "energy-market-archive") {
+    if (name === "energy-market-archive" || name === "energy-price-experiment") {
       graph.add("scripts/deploy-market-archive.ts");
     }
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));

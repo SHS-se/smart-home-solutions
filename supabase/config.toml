@@ -137,3 +137,7 @@ verify_jwt = false
 # TEST-only collector verifies its private database cron token in the handler.
 [functions.energy-market-archive]
 verify_jwt = false
+
+# TEST-only paired price research authenticates using the private archive token.
+[functions.energy-price-experiment]
+verify_jwt = false
