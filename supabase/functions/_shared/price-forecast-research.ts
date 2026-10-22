@@ -51,6 +51,8 @@ interface DailyFactorResult {
   mae: number | null;
   bias: number | null;
   baselineMae: number | null;
+  daily: { day: string; actual: number; prediction: number; baselinePrediction: number;
+    absoluteError: number; baselineAbsoluteError: number }[];
 }
 export interface ComparisonReport {
   assumptions: string[];
@@ -278,15 +280,22 @@ function retrospectiveFactors(bundle: ResearchBundle): ComparisonReport["retrosp
       .map(([key, day]) => [key, day.sum / day.duration])));
   }
   const specifications = [
+    { id: "calendar_lags_load", factors: ["load_actual"] },
     { id: "calendar_lags_wind", factors: ["wind_actual"] },
     { id: "calendar_lags_load_solar", factors: ["load_actual", "solar_actual"] },
     { id: "calendar_lags_wind_load_solar", factors: ["wind_actual", "load_actual", "solar_actual"] },
     { id: "calendar_lags_wind_load_solar_nuclear", factors: ["wind_actual", "load_actual", "solar_actual", "nuclear_actual"] },
+    { id: "calendar_lags_wind_load_solar_hydro", factors: ["wind_actual", "load_actual", "solar_actual", "hydro_actual"] },
+    { id: "calendar_lags_wind_load_solar_hydro_nuclear", factors: ["wind_actual", "load_actual", "solar_actual", "hydro_actual", "nuclear_actual"] },
+    { id: "calendar_lags_generation_mix", factors: ["wind_actual", "solar_actual", "hydro_actual", "nuclear_actual", "gas_actual", "other_actual"] },
+    { id: "calendar_lags_load_generation_mix", factors: ["load_actual", "wind_actual", "solar_actual", "hydro_actual", "nuclear_actual", "gas_actual", "other_actual"] },
+    { id: "calendar_lags_load_generation_mix_without_nuclear", factors: ["load_actual", "wind_actual", "solar_actual", "hydro_actual", "gas_actual", "other_actual"] },
+    { id: "calendar_lags_load_generation_mix_without_hydro", factors: ["load_actual", "wind_actual", "solar_actual", "nuclear_actual", "gas_actual", "other_actual"] },
   ];
   type FactorSpecification = typeof specifications[number];
   interface FactorPrediction { day: string; actual: number; baseline: number; estimated: number }
   const unavailable = (specification: FactorSpecification, reason: string): DailyFactorResult => ({ ...specification,
-    status: "unavailable", reason, days: 0, targetDays: [], mae: null, bias: null, baselineMae: null });
+    status: "unavailable", reason, days: 0, targetDays: [], mae: null, bias: null, baselineMae: null, daily: [] });
   const experiments = specifications.map(specification => {
     const missing = specification.factors.filter(name => !factors.get(name)?.size);
     if (missing.length) return { specification, predictions: [] as FactorPrediction[], reason:
@@ -324,7 +333,10 @@ function retrospectiveFactors(bundle: ResearchBundle): ComparisonReport["retrosp
     const baselineAbsolute = scored.reduce((sum, row) => sum + Math.abs(row.baseline - row.actual), 0);
     return { ...experiment.specification, status: "available", days: scored.length,
       targetDays: scored.map(row => row.day), mae: absolute / scored.length, bias: bias / scored.length,
-      baselineMae: baselineAbsolute / scored.length };
+      baselineMae: baselineAbsolute / scored.length,
+      daily: scored.map(row => ({ day: row.day, actual: row.actual, prediction: row.estimated,
+        baselinePrediction: row.baseline, absoluteError: Math.abs(row.estimated - row.actual),
+        baselineAbsoluteError: Math.abs(row.baseline - row.actual) })) };
   });
   const available = models.some(model => model.status === "available");
   return { status: available ? "available" : "unavailable",

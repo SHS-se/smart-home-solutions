@@ -1,3 +1,4 @@
+import { marketSeries } from '../scripts/price-forecast-research.ts';
 import { comparePriceForecasts, type ResearchBundle } from "../supabase/functions/_shared/price-forecast-research.ts";
 
 const DAY = 86_400_000, QUARTER = 900_000;
@@ -122,7 +123,7 @@ Deno.test("uneven factor coverage is scored on identical held-out target days ac
     series("nuclear_actual", index => index >= 10)];
   const report = comparePriceForecasts(bundle);
   const available = report.retrospective.models.filter(model => model.status === "available");
-  close(available.length, 4, "all four specifications have enough chronological training rows");
+  close(available.length, 5, "all five specifications supported by these factors have enough chronological training rows");
   const expectedDays = [24, 25, 27, 28].map(day);
   for (const model of available) {
     assert(JSON.stringify(model.targetDays) === JSON.stringify(expectedDays), "all ablations use the held-out-day intersection despite unequal raw coverage");
@@ -153,4 +154,33 @@ Deno.test("empty research input reports unavailable experiments without fabricat
   const report = comparePriceForecasts({ prices: [], observedWind: [], windForecasts: [], market: [] });
   close(report.origins.length, 0, "no origins without prices");
   assert(report.models.every(model => model.status === "unavailable"), "all price models are unavailable");
+});
+
+Deno.test('full generation mix ablations include hydro and nuclear and never replace missing technologies by zero', () => {
+  const bundle = fixture();
+  const signals = ['load_actual', 'wind_actual', 'solar_actual', 'hydro_actual', 'nuclear_actual', 'gas_actual', 'other_actual'];
+  bundle.market = signals.map((signal, factor) => ({ signal, evidence: 'retrospective' as const,
+    intervals: Array.from({ length: 36 }, (_, index) => ({ startMs: START + index * DAY,
+      endMs: START + (index + 1) * DAY, value: 100 + factor * 40 + Math.sin(index * (factor + 1)) * 30 })) }));
+  const report = comparePriceForecasts(bundle);
+  const full = report.retrospective.models.find(model => model.id === 'calendar_lags_load_generation_mix')!;
+  const reduced = report.retrospective.models.find(model => model.id === 'calendar_lags_wind_load_solar')!;
+  const demand = report.retrospective.models.find(model => model.id === 'calendar_lags_load')!;
+  assert(full.status === 'available', 'the six reported generation types and demand can be evaluated');
+  assert(full.factors.includes('hydro_actual') && full.factors.includes('nuclear_actual'), 'hydro and nuclear are actual model features');
+  assert(JSON.stringify(full.targetDays) === JSON.stringify(reduced.targetDays), 'full and reduced models score identical held-out days');
+  assert(JSON.stringify(full.targetDays) === JSON.stringify(demand.targetDays), 'demand-only comparison scores identical held-out days');
+  const missing = comparePriceForecasts({ ...bundle, market: bundle.market.filter(row => row.signal !== 'other_actual') });
+  assert(missing.retrospective.models.find(model => model.id === full.id)?.status === 'unavailable', 'unreported generation is not silently zero');
+});
+
+Deno.test('full production response maps hydro, gas and other into research features without consumption or absent zeros', () => {
+  const intervals = ['B04', 'B12', 'B19', 'B20'].map((psrType, index) => ({
+    startMs: START, endMs: START + DAY, value: 100 + index, unit: 'MAW', psrType,
+    resolution: 'PT60M', businessType: 'A01', seriesId: psrType, flow: 'production' as const,
+  }));
+  const consumption = intervals.map(row => ({ ...row, value: 99999, flow: 'consumption' as const }));
+  const result = marketSeries('wind_actual', [...intervals, ...consumption]);
+  assert(JSON.stringify(result.map(row => row.signal).sort()) === JSON.stringify(['gas_actual', 'hydro_actual', 'other_actual', 'wind_actual']), 'only observed production types are mapped');
+  assert(result.every(row => row.intervals.length === 1 && row.intervals[0].value < 99999), 'consumption cannot inflate production');
 });

@@ -42,7 +42,7 @@ function totalWind(intervals: EntsoeInterval[]): MarketSeries['intervals'] {
   }
   return result;
 }
-function marketSeries(dataset: EntsoeDataset, intervals: EntsoeInterval[]): MarketSeries[] {
+export function marketSeries(dataset: EntsoeDataset, intervals: EntsoeInterval[]): MarketSeries[] {
   if (!dataset.endsWith('_outages') && intervals.some(row => row.unit !== (dataset === 'price' ? 'MWH' : 'MAW'))) {
     throw new Error(`Unexpected ${dataset} unit; source retained without using values`);
   }
@@ -50,8 +50,15 @@ function marketSeries(dataset: EntsoeDataset, intervals: EntsoeInterval[]): Mark
   const select = (signal: string, rows: EntsoeInterval[]): MarketSeries => ({ signal, evidence: 'retrospective',
     intervals: rows.map(({ startMs, endMs, value }) => ({ startMs, endMs, value })) });
   if (dataset === 'wind_actual' || dataset === 'wind_day_ahead') {
-    const wind = intervals.filter(row => row.psrType === 'B18' || row.psrType === 'B19');
+    const wind = intervals.filter(row => (row.psrType === 'B18' || row.psrType === 'B19') && row.flow === 'production');
     const result: MarketSeries[] = wind.length ? [{ signal: dataset, evidence: 'retrospective', intervals: totalWind(wind) }] : [];
+    if (dataset === 'wind_actual') {
+      // The unfiltered A75 response contains all reported SE3 production types.
+      for (const [psrType, signal] of [['B04', 'gas_actual'], ['B12', 'hydro_actual'], ['B20', 'other_actual']]) {
+        const selected = intervals.filter(row => row.psrType === psrType && row.flow === 'production');
+        if (selected.length) result.push(select(signal, selected));
+      }
+    }
     if (dataset === 'wind_day_ahead') {
       const solar = intervals.filter(row => row.psrType === 'B16');
       if (solar.length) result.push(select('solar_day_ahead', solar));
