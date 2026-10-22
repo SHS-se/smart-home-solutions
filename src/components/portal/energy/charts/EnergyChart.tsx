@@ -20,7 +20,7 @@
 // *fewer* meters rather than coarser ones — see consumption-series.ts for
 // which ones earn a band.
 
-import React, { useId, useMemo, useRef, useState } from 'react';
+import React, { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   linearScale, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
@@ -181,24 +181,52 @@ const EndLabel: React.FC<{
 const NO_ROOMS: readonly EnergyRoomLine[] = [];
 const NONE_HIDDEN: ReadonlySet<string> = new Set();
 
-/**
- * Which colour is which room, on the heading line, right-aligned. A room's
- * note sits beside its name: the planner's word on its comfort belongs with
- * the line it describes, not in a banner above the page.
- */
-const RoomLegend: React.FC<{ rooms: readonly EnergyRoomLine[]; y: number }> = ({ rooms, y }) => {
-  let right = RIGHT;
-  return <>{[...rooms].reverse().map(room => {
-    const label = room.note ? `${room.name} · ${room.note}` : room.name;
-    const end = right;
-    right -= label.length * 6 + 24;
-    return (
-      <g key={room.key} data-room-legend={room.key}>
-        <rect x={end - label.length * 6 - 12} y={y - 7} width={8} height={8} rx={1.5} fill={room.colour} />
-        <text x={end} y={y} textAnchor="end" className={AXIS_TEXT}>{label}</text>
-      </g>
-    );
-  })}</>;
+/** Browser text layout keeps full names and comfort notes clear of the plot. */
+const RoomLegend: React.FC<{
+  rooms: readonly EnergyRoomLine[]; y: number; height: number;
+  onHeightChange: (height: number) => void;
+}> = ({ rooms, y, height, onHeightChange }) => {
+  const containerRef = useRef<SVGForeignObjectElement>(null);
+  const contentRef = useRef<HTMLUListElement>(null);
+  const [scale, setScale] = useState(1);
+  const [width, setWidth] = useState(PLOT_W);
+
+  useLayoutEffect(() => {
+    const svg = containerRef.current!.ownerSVGElement!;
+    const viewport = svg.parentElement!;
+    const content = contentRef.current!;
+    const measure = () => {
+      const nextScale = svg.getBoundingClientRect().width / VIEW_W;
+      setScale(nextScale);
+      // The timeline can scroll on phones; its key stays within the visible width.
+      setWidth(Math.min(PLOT_W, (viewport.clientWidth - 16) / nextScale - MARGIN_LEFT));
+      onHeightChange(Math.ceil(content.getBoundingClientRect().height / nextScale));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(svg);
+    observer.observe(viewport);
+    observer.observe(content);
+    measure();
+    return () => observer.disconnect();
+  }, [onHeightChange]);
+
+  return <foreignObject ref={containerRef} data-room-legend-area x={MARGIN_LEFT} y={y} width={width} height={height}
+    style={{ cursor: 'default' }}>
+    <ul ref={contentRef} className="m-0 grid list-none gap-x-6 gap-y-3 p-0 text-foreground"
+      style={{ fontSize: 14 / scale, lineHeight: 1.5,
+        gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${220 / scale}px), 1fr))` }}>
+      {rooms.map(room => (
+        <li key={room.key} data-room-legend={room.key} className="flex min-w-0 items-start gap-2">
+          <span aria-hidden="true" className="mt-[0.6em] h-0.5 w-5 shrink-0 rounded-full"
+            style={{ backgroundColor: room.colour }} />
+          <span className="min-w-0 [overflow-wrap:anywhere]">
+            <span className="font-medium">{room.name}</span>
+            {room.note && <span className="block text-muted-foreground">{room.note}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  </foreignObject>;
 };
 
 /** Band order in the flow panel, so a placement can be turned back into a name. */
@@ -299,6 +327,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [pointer, setPointer] = useState<{ left: number; top: number } | null>(null);
+  const [roomLegendHeight, setRoomLegendHeight] = useState(0);
 
   const n = rows.length;
   const showSoc = (hasBattery && rows.some(row => row.homeSoc !== null))
@@ -327,7 +356,9 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const knownRoomC = roomLines.flatMap(room => [...room.values, ...room.comfortMin])
       .filter((value): value is number => value !== null);
     const showRooms = knownRoomC.length > 0;
-    const room: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0), height: showRooms ? 96 : 0 };
+    const roomHeadingY = pool.top + (showPool ? pool.height + GAP : 0) - 14;
+    const roomLegendY = roomHeadingY + 34;
+    const room: Panel = { top: showRooms ? roomLegendY + roomLegendHeight + 16 : roomHeadingY + 14, height: showRooms ? 96 : 0 };
     const knownCost = (costLines ?? []).flatMap(line => line.values.slice(0, n))
       .filter((value): value is number => value !== null && Number.isFinite(value));
     const showCost = knownCost.length > 0;
@@ -428,10 +459,10 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels, water, showWater,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
-      room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
+      room, roomHeadingY, roomLegendY, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden, roomLegendHeight]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
@@ -439,7 +470,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels, water, showWater,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
-    room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
+    room, roomHeadingY, roomLegendY, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
     cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
@@ -471,6 +502,9 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   };
 
   const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    if ((event.target as Element).closest('[data-room-legend-area]')) {
+      setHover(null); setPointer(null); return;
+    }
     const wrap = wrapRef.current;
     if (!wrap) return;
     const index = quarterAt(event.clientX);
@@ -526,6 +560,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           onPointerLeave={() => { setHover(null); setPointer(null); }}
           onKeyDown={handleKey}
           onClick={event => {
+            if ((event.target as Element).closest('[data-room-legend-area]')) return;
             const index = quarterAt(event.clientX) ?? hover;
             if (index !== null) onQuarterClick?.(index);
           }}
@@ -804,12 +839,13 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           {/* ----------------------------------------- Room temperature --- */}
           {showRooms && (
             <g id="plan-room-temperature">
-              <PanelHeading
-                title={t('Rumstemperatur', 'Room temperature')}
-                unit={t('°C · uppmätt före nu, planerad efter · streckat = komfort', '°C · measured before now, planned after · dashed = comfort')}
-                y={room.top - 14}
-              />
-              <RoomLegend rooms={roomLines} y={room.top - 14} />
+              <text x={MARGIN_LEFT} y={roomHeadingY} className="fill-foreground text-[12px] font-medium">
+                {t('Rumstemperatur', 'Room temperature')}
+              </text>
+              <text x={MARGIN_LEFT} y={roomHeadingY + 18} className={AXIS_TEXT}>
+                {t('°C · uppmätt före nu, planerad efter · streckat = komfort', '°C · measured before now, planned after · dashed = comfort')}
+              </text>
+              <RoomLegend rooms={roomLines} y={roomLegendY} height={roomLegendHeight} onHeightChange={setRoomLegendHeight} />
               <Gridlines ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
               {roomLines.map(line => (
                 <g key={line.key} data-room={line.key}>
