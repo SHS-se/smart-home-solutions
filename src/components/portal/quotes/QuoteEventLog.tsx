@@ -121,7 +121,7 @@ const QuoteEventLog: React.FC<QuoteEventLogProps> = ({ quoteId }) => {
           <div className="space-y-4">
             {events.map((event) => (
               <div key={event.id} className="relative flex gap-3 items-start">
-                <div className="relative z-10 flex-shrink-0 w-6 h-6 bg-background rounded-full border border-border flex items-center justify-center">
+                <div className="relative z-10 shrink-0 w-6 h-6 bg-background rounded-full border border-border flex items-center justify-center">
                   {getEventIcon(event.event_type)}
                 </div>
                 <div className="flex-1 min-w-0">

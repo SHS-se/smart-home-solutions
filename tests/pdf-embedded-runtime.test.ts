@@ -5,8 +5,7 @@ Deno.test('shared PDF extraction preserves page and text-item order and destroys
   let destroyed = 0;
   const result = await extractEmbeddedPdfText(() => ({ promise: Promise.resolve({ numPages: 2,
     getPage: async page => ({ getTextContent: async () => ({ items: [{ str: `page${page}` }, {}, { str: 'invoice billing text long enough for embedded-text detection' }] }) }),
-    destroy: async () => { destroyed++; },
-  }) }), new Uint8Array());
+  }), destroy: async () => { destroyed++; } }), new Uint8Array());
   assertEquals(result.text, 'page1 invoice billing text long enough for embedded-text detection \npage2 invoice billing text long enough for embedded-text detection');
   assertEquals(result.pageCount, 2); assertEquals(result.isScanned, false); assertEquals(destroyed, 1);
 });

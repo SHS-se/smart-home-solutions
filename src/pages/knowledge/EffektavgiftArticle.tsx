@@ -395,7 +395,7 @@ const EffektavgiftArticle = () => {
                   },
                 ].map((tip) => (
                   <div key={tip.number} className="flex gap-4 bg-muted/50 border border-border rounded-xl p-5 opacity-80">
-                    <div className="w-8 h-8 rounded-full bg-muted-foreground/20 text-muted-foreground flex items-center justify-center font-medium flex-shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-muted-foreground/20 text-muted-foreground flex items-center justify-center font-medium shrink-0">
                       {tip.number}
                     </div>
                     <div>

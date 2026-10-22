@@ -10,7 +10,7 @@ runs:
       uses: actions/setup-node@v4
       with:
         # Matches the deployment PDF runtime smoke test; wrangler 4.x also requires Node >= 22.
-        node-version: "22"
+        node-version: "22.23.4"
 
     - name: Restore node_modules
       id: cache

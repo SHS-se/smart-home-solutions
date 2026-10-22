@@ -122,7 +122,7 @@ const InvoicePdfModal: React.FC<InvoicePdfModalProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0" hideClose>
-        <DialogHeader className="p-4 border-b border-border flex-shrink-0">
+        <DialogHeader className="p-4 border-b border-border shrink-0">
           <div className="flex items-center justify-between">
             <DialogTitle>
               {t('Förhandsgranska faktura', 'Preview Invoice')} #{invoiceNumber}

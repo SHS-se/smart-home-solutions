@@ -500,7 +500,7 @@ const CustomerViewOfferDetail: React.FC = () => {
                   <div className="space-y-4">
                     {events.map((event) => (
                       <div key={event.id} className={`relative flex gap-3 items-start ${event.event_type === 'revision_requested' ? 'bg-amber-500/5 -mx-2 px-2 py-1 rounded-md' : ''}`}>
-                        <div className="relative z-10 flex-shrink-0 w-6 h-6 bg-background rounded-full border border-border flex items-center justify-center">
+                        <div className="relative z-10 shrink-0 w-6 h-6 bg-background rounded-full border border-border flex items-center justify-center">
                           {getEventIcon(event.event_type)}
                         </div>
                         <div className="flex-1 min-w-0">

@@ -209,7 +209,7 @@ const Knowledge = () => {
                 to={`/knowledge/${article.slug}`}
                 className="service-card flex gap-6 group"
               >
-                <div className={`${article.categoryColor} w-24 h-24 rounded-xl flex items-center justify-center flex-shrink-0`}>
+                <div className={`${article.categoryColor} w-24 h-24 rounded-xl flex items-center justify-center shrink-0`}>
                   <article.icon className="w-8 h-8 opacity-40" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -225,7 +225,7 @@ const Knowledge = () => {
                     <span>{article.readTime} {t('läsning', 'read')}</span>
                   </div>
                 </div>
-                <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors flex-shrink-0 self-center" />
+                <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0 self-center" />
               </Link>
             ))}
           </div>

@@ -391,7 +391,7 @@ const EnergyDataUploadCard: React.FC<EnergyDataUploadCardProps> = ({
 
   return (
     <Card className="overflow-hidden border-border/70 shadow-sm" data-testid="energy-data-upload">
-      <CardHeader className="border-b border-border/60 bg-gradient-to-r from-blue-500/5 via-background to-teal-500/5">
+      <CardHeader className="border-b border-border/60 bg-linear-to-r from-blue-500/5 via-background to-teal-500/5">
         <div className="flex items-start gap-3">
           <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
             <Files className="h-5 w-5" />

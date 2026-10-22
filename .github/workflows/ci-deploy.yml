@@ -60,7 +60,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       - name: Find the last deployed commit
         # Diff against the last successful run, not the previous push: a cancelled or failed
@@ -111,7 +111,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       - name: Check isolated edge-function dependencies
         run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
@@ -134,7 +134,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       - name: Unit tests
         run: deno task test --shard ${{ matrix.shard }}/4
@@ -151,7 +151,7 @@ jobs:
       - name: Set up Deno
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
       - name: Install pinned Rust toolchain
         # rustup reads rust-toolchain.toml, including Wasm, rustfmt and Clippy.
         run: rustup show
@@ -336,7 +336,7 @@ jobs:
       - name: Set up Deno for the private TEST probe deployment
         uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.x
+          deno-version: v2.9.8
 
       - name: Deploy edge functions
         # Deploys the functions whose code changed (per-function settings come from config.toml,
@@ -384,7 +384,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22" # wrangler 4.x requires Node >= 22
+          node-version: "22.23.4" # wrangler 4.x requires Node >= 22
 
       - name: Download build output
         uses: actions/download-artifact@v4

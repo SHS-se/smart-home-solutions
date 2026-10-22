@@ -153,7 +153,7 @@ const About = () => {
             <div className="space-y-4">
               {approach.map((item, index) => (
                 <div key={index} className="flex items-start gap-4 p-4 rounded-xl bg-card border border-border">
-                  <CheckCircle className="w-6 h-6 text-energy-dark flex-shrink-0 mt-0.5" />
+                  <CheckCircle className="w-6 h-6 text-energy-dark shrink-0 mt-0.5" />
                   <p className="text-foreground">{item}</p>
                 </div>
               ))}

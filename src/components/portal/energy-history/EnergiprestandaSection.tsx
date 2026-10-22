@@ -319,7 +319,7 @@ const EnergiprestandaSection: React.FC<EnergiprestandaSectionProps> = ({
         className="overflow-hidden border-border/70 shadow-sm"
         data-testid="energy-performance"
       >
-        <CardHeader className="border-b border-border/60 bg-gradient-to-r from-emerald-500/5 via-background to-amber-500/5">
+        <CardHeader className="border-b border-border/60 bg-linear-to-r from-emerald-500/5 via-background to-amber-500/5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2 text-base">

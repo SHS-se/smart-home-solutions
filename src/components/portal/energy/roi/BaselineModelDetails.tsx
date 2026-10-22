@@ -9,7 +9,7 @@ export default function BaselineModelDetails({ capture }: { capture: ComparisonC
   const p = input.problem;
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   const demand = input.evDemandKwh.reduce((sum, value) => sum + value, 0);
-  return <details className="rounded-lg border p-4 break-words" data-testid="baseline-details">
+  return <details className="rounded-lg border p-4 wrap-break-word" data-testid="baseline-details">
     <summary className="cursor-pointer text-sm font-medium">{t('Modelldetaljer', 'Model details')}</summary>
     <div className="mt-4 space-y-4 text-sm" data-testid="baseline-models">
       <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">

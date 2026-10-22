@@ -244,7 +244,7 @@ const EnergyHistoryDocuments: React.FC<EnergyHistoryDocumentsProps> = ({
                       <summary className="cursor-pointer font-medium">
                         {t('Teknisk detalj', 'Technical detail')}
                       </summary>
-                      <p className="mt-1 break-words font-mono">{failure.parser_error}</p>
+                      <p className="mt-1 wrap-break-word font-mono">{failure.parser_error}</p>
                     </details>
                   )}
                 </div>

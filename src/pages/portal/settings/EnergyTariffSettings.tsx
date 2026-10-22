@@ -226,7 +226,7 @@ const EnergyTariffSettings: React.FC = () => {
             <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}><Upload className="mr-2 h-4 w-4" />{t('Importera JSON', 'Import JSON')}</Button>
             <input ref={fileInputRef} className="hidden" type="file" accept="application/json,.json" onChange={handleFile} />
           </div>
-          <div className="space-y-2"><Label htmlFor="tariff-definition">{t('Maskinläsbar definition', 'Machine-readable definition')}</Label><Textarea id="tariff-definition" className="min-h-[28rem] font-mono text-xs" value={definitionText} onChange={(event) => setDefinitionText(event.target.value)} spellCheck={false} /></div>
+          <div className="space-y-2"><Label htmlFor="tariff-definition">{t('Maskinläsbar definition', 'Machine-readable definition')}</Label><Textarea id="tariff-definition" className="min-h-112 font-mono text-xs" value={definitionText} onChange={(event) => setDefinitionText(event.target.value)} spellCheck={false} /></div>
           <div className="flex justify-end"><Button onClick={publish} disabled={publishing || !profileId || !revision || !validFrom || !sourceUrl || !definitionText}>{publishing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}{t('Publicera version', 'Publish version')}</Button></div>
         </CardContent>
       </Card>

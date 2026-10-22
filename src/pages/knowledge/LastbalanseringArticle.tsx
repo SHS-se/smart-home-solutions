@@ -622,7 +622,7 @@ const LastbalanseringArticle = () => {
                 },
               ].map((item, index) => (
                 <div key={index} className="flex gap-4 bg-card border border-border rounded-xl p-5">
-                  <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-medium flex-shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-medium shrink-0">
                     <TrendingDown className="w-4 h-4" />
                   </div>
                   <div>

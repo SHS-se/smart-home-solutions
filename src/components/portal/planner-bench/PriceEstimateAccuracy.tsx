@@ -151,7 +151,7 @@ const PriceEstimateAccuracy: React.FC = () => {
               <span className="sm:hidden">{t('Föregående', 'Previous')}</span>
               <span className="hidden sm:inline">{t('Föregående uppskattning', 'Previous estimate')}</span>
             </Button>
-            <div className="order-first col-span-2 text-center sm:order-none" aria-live="polite">
+            <div className="order-first col-span-2 text-center sm:order-0" aria-live="polite">
               <CardTitle id="price-estimate-title" className="text-lg">{t('Uppskattning gjord', 'Estimate made')} {dayLabel(estimate.issuedOn)}</CardTitle>
               <p className="text-xs text-muted-foreground">{t(`${index + 1} av ${estimates.length}`, `${index + 1} of ${estimates.length}`)}</p>
             </div>

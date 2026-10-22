@@ -173,7 +173,7 @@ const QuestionFunctionalityOverview: React.FC<QuestionFunctionalityOverviewProps
   )).length;
 
   return (
-    <Card className="border-primary/20 bg-gradient-to-br from-primary/5 via-background to-violet-500/5">
+    <Card className="border-primary/20 bg-linear-to-br from-primary/5 via-background to-violet-500/5">
       <CardHeader className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

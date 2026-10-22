@@ -115,7 +115,7 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
   return <>
     <ul className="divide-y">{input.checks.map(check => <li key={check.key} className="flex justify-between gap-4 py-2 text-sm">
       <span className="flex min-w-0 flex-col"><span>{t(...CHECKS[check.key])}</span>
-        <span className="break-words text-xs text-muted-foreground">{detail(check)}{issues(check)}</span></span>
+        <span className="wrap-break-word text-xs text-muted-foreground">{detail(check)}{issues(check)}</span></span>
       <span className={`font-medium tabular-nums ${check.grade ? colours[check.grade] : 'text-muted-foreground'}`}>
         {value(check.percentage)}{check.percentage !== null ? '%' : ''}</span>
     </li>)}</ul>

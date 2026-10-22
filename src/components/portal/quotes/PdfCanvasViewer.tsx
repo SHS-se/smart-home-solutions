@@ -3,7 +3,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 // pdfjs-dist v4+ ships ESM worker.
-import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from "pdfjs-dist";
+import { getDocument, GlobalWorkerOptions, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist";
 
 // Configure worker once per bundle.
 // Vite can resolve node_modules paths via new URL(..., import.meta.url).
@@ -46,6 +46,7 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
 
   useEffect(() => {
     let cancelled = false;
+    let loadingTask: PDFDocumentLoadingTask | null = null;
     let pdfDoc: PDFDocumentProxy | null = null;
 
     const clearContainer = () => {
@@ -61,7 +62,7 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
       clearContainer();
 
       try {
-        const loadingTask = getDocument({ data });
+        loadingTask = getDocument({ data });
         pdfDoc = await loadingTask.promise;
         if (cancelled) return;
 
@@ -105,7 +106,7 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
     return () => {
       cancelled = true;
       try {
-        pdfDoc?.destroy();
+        void loadingTask?.destroy();
       } catch {
         // noop
       }
@@ -129,7 +130,7 @@ const PdfCanvasViewer: React.FC<Props> = ({ data, className }) => {
   return (
     <div className={`flex flex-col overflow-hidden ${className ?? ""}`}>
       {isRendering && (
-        <div className="flex-shrink-0 z-10 bg-background/80 backdrop-blur border-b border-border px-4 py-2 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="shrink-0 z-10 bg-background/80 backdrop-blur border-b border-border px-4 py-2 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>
             {t("Renderar PDF...", "Rendering PDF...")}

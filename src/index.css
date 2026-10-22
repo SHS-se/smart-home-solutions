@@ -1,8 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import 'tailwindcss';
+@config '../tailwind.config.ts';
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@utility container {
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+  @media (width >= 1200px) { max-width: 1200px; }
+  @media (width >= 1400px) { max-width: 1400px; }
+  @media (width >= 1536px) { max-width: 1400px; }
+}
 
 /* SHS Smart Home Solutions - Scandinavian Design System */
 
@@ -134,15 +140,19 @@
 
   /* Typography scale */
   h1 {
-    @apply text-4xl md:text-5xl lg:text-6xl font-light tracking-tight;
+    @apply text-4xl font-light tracking-tight;
+    @variant md { @apply text-5xl; }
+    @variant lg { @apply text-6xl; }
   }
 
   h2 {
-    @apply text-3xl md:text-4xl font-medium tracking-tight;
+    @apply text-3xl font-medium tracking-tight;
+    @variant md { @apply text-4xl; }
   }
 
   h3 {
-    @apply text-xl md:text-2xl font-medium;
+    @apply text-xl font-medium;
+    @variant md { @apply text-2xl; }
   }
 
   h4 {
@@ -190,7 +200,8 @@
 
   /* Stats number animation */
   .stat-number {
-    @apply text-4xl md:text-5xl font-light tracking-tight;
+    @apply text-4xl font-light tracking-tight;
+    @variant md { @apply text-5xl; }
     color: hsl(var(--primary));
   }
 
@@ -201,13 +212,15 @@
 
   /* Testimonial quote styling */
   .testimonial-quote {
-    @apply text-lg md:text-xl text-center italic leading-relaxed;
+    @apply text-lg text-center italic leading-relaxed;
+    @variant md { @apply text-xl; }
     color: hsl(var(--muted-foreground));
   }
 
   /* Navigation link with underline animation */
   .nav-link {
-    @apply relative text-foreground/80 hover:text-foreground transition-colors duration-200;
+    @apply relative text-foreground/80 transition-colors duration-200;
+    @variant hover { @apply text-foreground; }
   }
 
   .nav-link::after {

@@ -359,7 +359,7 @@ const PurchaseUpload: React.FC = () => {
                                 </p>
                               )}
                               {result.errorDetails?.map((detail) => (
-                                <p key={`${result.fileName}-${detail}`} className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                                <p key={`${result.fileName}-${detail}`} className="text-xs text-muted-foreground whitespace-pre-wrap wrap-break-word">
                                   {detail}
                                 </p>
                               ))}
@@ -390,7 +390,7 @@ const PurchaseUpload: React.FC = () => {
                   ))}
 
                   {uploadResults.length === 0 && (
-                    <div className="flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
+                    <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4" />
                         <span>{t('Förbereder uppladdning...', 'Preparing upload...')}</span>

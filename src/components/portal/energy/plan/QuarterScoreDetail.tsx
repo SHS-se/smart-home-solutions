@@ -37,7 +37,7 @@ const QuarterScoreDetail: React.FC<{
   const { t } = useLanguage();
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-      <div id={id} className="min-h-[2.5rem] min-w-0 flex-1 basis-64 space-y-2" aria-live="polite">
+      <div id={id} className="min-h-10 min-w-0 flex-1 basis-64 space-y-2" aria-live="polite">
         {!quarter
           ? <span className="text-muted-foreground">{(slotDetail ? selectedLabel : empty) ?? t('Klicka på en kvart i diagrammet för att se varför den fick sin poäng.', 'Click a quarter in the chart to see why it scored what it did.')}</span>
           : (

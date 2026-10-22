@@ -718,7 +718,7 @@ const PurchaseDetail: React.FC = () => {
                     <p className="text-sm text-muted-foreground">{t('Laddar dokument...', 'Loading document...')}</p>
                   </div>
                 ) : documentUrl ? (
-                  <div className="min-h-[28rem] flex-1">
+                  <div className="min-h-112 flex-1">
                     <DocumentPreview fileUrl={documentUrl} fileName={purchase.document_file_path} />
                   </div>
                 ) : (

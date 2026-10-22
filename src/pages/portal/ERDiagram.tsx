@@ -189,7 +189,7 @@ const ERDiagram = () => {
                 <Button variant="outline" size="icon" onClick={handleZoomOut} title={t('Zooma ut', 'Zoom out')}>
                   <ZoomOut className="h-4 w-4" />
                 </Button>
-                <span className="text-sm text-muted-foreground min-w-[4rem] text-center">
+                <span className="text-sm text-muted-foreground min-w-16 text-center">
                   {Math.round(scale * 100)}%
                 </span>
                 <Button variant="outline" size="icon" onClick={handleZoomIn} title={t('Zooma in', 'Zoom in')}>
