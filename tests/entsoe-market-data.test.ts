@@ -32,10 +32,45 @@ Deno.test("ENTSO-E A01 keeps missing quarter positions as gaps and source metada
   assertEquals(result.status, "data");
   if (result.status !== "data") throw new Error("Expected data");
   assertEquals(result.createdAt, "2026-10-22T12:00:00Z");
+  assertEquals([result.documentId, result.revisionNumber, result.processType], [null, null, null]);
   assertEquals(result.intervals, [
-    { startMs: Date.parse(FROM), endMs: Date.parse(FROM) + 900_000, value: 12, unit: "MAW", psrType: "B19" },
-    { startMs: Date.parse(FROM) + 1_800_000, endMs: Date.parse(FROM) + 2_700_000, value: 18, unit: "MAW", psrType: "B19" },
+    { startMs: Date.parse(FROM), endMs: Date.parse(FROM) + 900_000, value: 12, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null },
+    { startMs: Date.parse(FROM) + 1_800_000, endMs: Date.parse(FROM) + 2_700_000, value: 18, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null },
   ]);
+});
+
+Deno.test("ENTSO-E P1D keeps A60/A61 daily min/max and document provenance", () => {
+  const xml = `<GL_MarketDocument xmlns="urn:entsoe:test"><mRID>source-document</mRID><revisionNumber>7</revisionNumber>
+  <process.processType>A31</process.processType><createdDateTime>2026-10-20T08:15:00Z</createdDateTime>
+  ${["A60", "A61"].map((business, index) => `<TimeSeries><mRID>series-${index}</mRID><businessType>${business}</businessType>
+  <curveType>A01</curveType><quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name><Period>
+  <timeInterval><start>2026-10-24T22:00Z</start><end>2026-10-26T23:00Z</end></timeInterval>
+  <resolution>P1D</resolution><Point><position>1</position><quantity>${5000 + index * 3000}</quantity></Point>
+  <Point><position>2</position><quantity>${5500 + index * 3000}</quantity></Point></Period></TimeSeries>`).join("")}</GL_MarketDocument>`;
+  const result = parseEntsoeResponse(xml);
+  if (result.status !== "data") throw new Error("Expected daily range data");
+  assertEquals([result.documentId, result.revisionNumber, result.processType], ["source-document", "7", "A31"]);
+  assertEquals(result.intervals.length, 4);
+  assertEquals(result.intervals.map(row => [row.resolution, row.businessType, row.seriesId, (row.endMs - row.startMs) / 3_600_000]), [
+    ["P1D", "A60", "series-0", 25], ["P1D", "A60", "series-0", 24],
+    ["P1D", "A61", "series-1", 25], ["P1D", "A61", "series-1", 24],
+  ]);
+  assertEquals(result.intervals.map(row => row.value), [5000, 5500, 8000, 8500]);
+  assertThrows(() => parseEntsoeResponse(xml.replaceAll("2026-10-24T22:00Z", "2026-10-24T21:00Z")), Error, "expected SE3 midnight");
+});
+
+Deno.test("ENTSO-E P1D explicit end clamps a short calendar day while retaining gaps", () => {
+  const xml = `<GL_MarketDocument><TimeSeries><curveType>A01</curveType><businessType>A60</businessType>
+  <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name><Period>
+  <timeInterval><start>2026-03-28T23:00Z</start><end>2026-03-30T22:00Z</end></timeInterval><resolution>P1D</resolution>
+  <Point><position>1</position><quantity>1</quantity></Point></Period></TimeSeries></GL_MarketDocument>`;
+  const result = parseEntsoeResponse(xml);
+  if (result.status !== "data") throw new Error("Expected data");
+  assertEquals(result.intervals.length, 1);
+  assertEquals((result.intervals[0].endMs - result.intervals[0].startMs) / 3_600_000, 23);
+  const clamped = parseEntsoeResponse(xml.replace("2026-03-30T22:00Z", "2026-03-29T21:00Z"));
+  if (clamped.status !== "data") throw new Error("Expected data");
+  assertEquals(clamped.intervals[0].endMs, Date.parse("2026-03-29T21:00Z"));
 });
 
 Deno.test("ENTSO-E A03 holds each block until the next position or period end", () => {

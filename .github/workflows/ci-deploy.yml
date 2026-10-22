@@ -349,6 +349,7 @@ jobs:
           set -euo pipefail
           rest=()
           planning_deployed=false
+          market_archive_deployed=false
           # Qualify the complete handler in a private, nonpublishing TEST
           # endpoint before deploying the planning executors and callers.
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-planner-probe "* ]]; then
@@ -359,10 +360,18 @@ jobs:
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-research "* ]]; then
             supabase functions deploy energy-market-research --project-ref "$SUPABASE_PROJECT_REF" --yes
           fi
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-archive "* ]]; then
+            deno task deploy:market-archive
+            market_archive_deployed=true
+          fi
           for name in $FUNCTIONS; do
             if [ "$name" = energy-planner-probe ]; then
               continue
             elif [ "$name" = energy-market-research ]; then
+              continue
+            elif [ "$name" = energy-market-archive ]; then
+              continue
+            elif [ "$name" = energy-optimisation-ingest ] && [ "$market_archive_deployed" = true ]; then
               continue
             elif [ "$name" = energy-optimisation-plan-step ]; then
               if [ "$planning_deployed" = false ]; then

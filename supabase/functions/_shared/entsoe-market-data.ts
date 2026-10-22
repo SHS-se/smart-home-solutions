@@ -48,10 +48,15 @@ export function entsoeParameters(query: unknown): URLSearchParams {
 
 export interface EntsoeInterval {
   startMs: number; endMs: number; value: number; unit: string; psrType: string | null;
+  /** Native provider resolution and series labels; daily min/max is not a mean. */
+  resolution: string; businessType: string | null; seriesId: string | null;
 }
 export type EntsoeResponse =
-  | { status: "data"; createdAt: string | null; intervals: EntsoeInterval[] }
+  | { status: "data"; createdAt: string | null; documentId: string | null;
+    revisionNumber: string | null; processType: string | null; intervals: EntsoeInterval[] }
   | { status: "no_data"; reason: string };
+
+export class EntsoeProviderError extends Error {}
 
 type Element = Record<string, unknown>;
 function element(value: unknown): Element {
@@ -67,6 +72,25 @@ function numeric(value: unknown): number {
   const parsed = Number(text(value));
   if (!Number.isFinite(parsed)) throw new Error("Invalid ENTSO-E numeric value");
   return parsed;
+}
+function optionalText(value: unknown): string | null { return value === undefined ? null : text(value); }
+
+/** P1D at SE3 midnight follows the source calendar through daylight-saving changes. */
+function dailyBoundary(start: number, position: number): number {
+  const format = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const parts = Object.fromEntries(format.formatToParts(start).map(part => [part.type, part.value]));
+  if (parts.hour !== "00" || parts.minute !== "00") throw new Error("Unsupported ENTSO-E daily period: expected SE3 midnight");
+  if (position === 1) return start;
+  const targetDate = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + position - 1));
+  const targetDay = targetDate.toISOString().slice(0, 10);
+  // The provider's UTC interval establishes the SE3 day; choose the UTC instant
+  // that is midnight on its target calendar day instead of assuming 24 hours.
+  for (const offsetHours of [1, 2]) {
+    const candidate = targetDate.getTime() - offsetHours * 3_600_000;
+    const candidateParts = Object.fromEntries(format.formatToParts(candidate).map(part => [part.type, part.value]));
+    if (`${candidateParts.year}-${candidateParts.month}-${candidateParts.day}` === targetDay && candidateParts.hour === "00" && candidateParts.minute === "00") return candidate;
+  }
+  throw new Error("Unsupported ENTSO-E daily calendar boundary");
 }
 
 /** Parse XML only. ZIP outage payloads must be retained and explicitly reported as unsupported. */
@@ -84,7 +108,7 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
     if (reasons.length && reasons.every(reason => reason.code === "999" && /no matching data found/i.test(reason.reason))) {
       return { status: "no_data", reason: reasons.map(reason => reason.reason).join("; ") };
     }
-    throw new Error(`ENTSO-E acknowledgement: ${reasons.map(reason => `${reason.code}: ${reason.reason}`).join("; ")}`);
+    throw new EntsoeProviderError(`ENTSO-E acknowledgement: ${reasons.map(reason => `${reason.code}: ${reason.reason}`).join("; ")}`);
   }
   const series = list(document.TimeSeries);
   if (!series.length) throw new Error("ENTSO-E document has no supported time series");
@@ -95,29 +119,34 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
     if (curve !== "A01" && curve !== "A03") throw new Error(`Unsupported ENTSO-E curve ${curve}`);
     const unit = text(s["quantity_Measure_Unit.name"] ?? s["price_Measure_Unit.name"]);
     const psr = s.MktPSRType === undefined ? null : text(element(s.MktPSRType).psrType);
+    const businessType = optionalText(s.businessType), seriesId = optionalText(s.mRID);
     const periods = list(s.Period);
     if (!periods.length) throw new Error("ENTSO-E series has no supported periods");
     for (const rawPeriod of periods) {
       const period = element(rawPeriod), span = element(period.timeInterval);
       const start = dateMs(span.start), end = dateMs(span.end);
       const resolution = text(period.resolution);
-      const step = resolution === "PT15M" ? 900_000 : resolution === "PT60M" ? 3_600_000 : null;
+      const daily = resolution === "P1D";
+      const step = resolution === "PT15M" ? 900_000 : resolution === "PT60M" ? 3_600_000 : daily ? 86_400_000 : null;
       if (step === null) throw new Error(`Unsupported ENTSO-E resolution ${resolution}`);
-      if (end <= start || (end - start) % step !== 0) throw new Error("Invalid ENTSO-E period duration");
+      if (end <= start || (!daily && (end - start) % step !== 0)) throw new Error("Invalid ENTSO-E period duration");
+      const boundary = (position: number) => daily ? dailyBoundary(start, position) : start + (position - 1) * step;
       const points = list(period.Point).map(rawPoint => {
         const point = element(rawPoint), position = numeric(point.position);
-        if (!Number.isInteger(position) || position < 1 || start + (position - 1) * step >= end) throw new Error("Invalid ENTSO-E point position");
+        if (!Number.isInteger(position) || position < 1 || boundary(position) >= end) throw new Error("Invalid ENTSO-E point position");
         return { position, value: numeric(point.quantity ?? point["price.amount"]) };
       }).sort((a, b) => a.position - b.position);
       for (let i = 0; i < points.length; i++) {
         const point = points[i], next = points[i + 1];
         if (next?.position === point.position) throw new Error("Duplicate ENTSO-E point position");
-        const startMs = start + (point.position - 1) * step;
+        const startMs = boundary(point.position);
         // A01 missing positions are gaps. A03 omits unchanged block positions.
-        const endMs = curve === "A03" ? next ? start + (next.position - 1) * step : end : startMs + step;
-        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr });
+        const endMs = curve === "A03" ? next ? boundary(next.position) : end : Math.min(boundary(point.position + 1), end);
+        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr, resolution, businessType, seriesId });
       }
     }
   }
-  return { status: "data", createdAt: document.createdDateTime === undefined ? null : text(document.createdDateTime), intervals };
+  return { status: "data", createdAt: optionalText(document.createdDateTime),
+    documentId: optionalText(document.mRID), revisionNumber: optionalText(document.revisionNumber),
+    processType: optionalText(document["process.processType"]), intervals };
 }

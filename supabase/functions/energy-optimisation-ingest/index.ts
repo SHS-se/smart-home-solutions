@@ -4,7 +4,8 @@ import { mergePlanningWarnings, planningWarning } from "../_shared/planner/plann
 import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
-import { prepareRulesPlanningInput } from "../_shared/rules-planner.ts";
+import { prepareRulesPlanningInput, RULES_MODEL_VERSION } from "../_shared/rules-planner.ts";
+import { recordTestPriceForecastGeneration, testPriceForecastContext } from "../_shared/price-estimate-evidence.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase, type PreparedRoom } from "../_shared/prepared-energy-forecasts.ts";
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
@@ -855,8 +856,24 @@ async function refreshPreparedForecasts(
     source.planning_warnings=mergePlanningWarnings(source.planning_warnings,[planningWarning("price_history_read","prices",
       "Historical prices could not be read.","Price estimates use the currently published horizon.")]);
   }
-  const outlook = buildPriceOutlook(forecastSlots, (archiveResult.data ?? []) as StoredPriceRow[], {
+  const priceHistory = (archiveResult.data ?? []) as StoredPriceRow[];
+  const projectUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const priceZone = source.sources.import_price?.location?.market_area?.trim().toUpperCase() ?? null;
+  const marketContext = await testPriceForecastContext(supabase, projectUrl, priceZone);
+  const priceGeneratedAt = new Date().toISOString();
+  const outlook = buildPriceOutlook(forecastSlots, priceHistory, {
     timeZone: source.timezone, asOf: Date.parse(source.captured_at), wind: wind.wind_outlook?.days });
+  if (marketContext && priceZone) EdgeRuntime.waitUntil(recordTestPriceForecastGeneration(supabase, projectUrl, {
+    id: crypto.randomUUID(), home_id: homeId, generated_at: priceGeneratedAt,
+    model_as_of: source.captured_at, timezone: source.timezone, zone: priceZone,
+    algorithm: RULES_MODEL_VERSION, market_context: marketContext,
+    inputs: structuredClone({ format_version: 1 as const,
+      slot_starts: forecastSlots.map(slot => slot.start),
+      published_import_sek_per_kwh: forecastSlots.map(slot => slot.import_price_sek_per_kwh ?? null),
+      price_history_available: !archiveResult.error, price_history: priceHistory,
+      smhi_wind_outlook: wind.wind_outlook ?? null }),
+    outlook: structuredClone(outlook),
+  }));
   if (source.pool) await refitPoolModel(supabase, customerId, homeId, source.pool.volume_m3,
     poolHeaters(source.device_models).map(device => device.key));
   const thermal = await prepareThermalPlanning(supabase, customerId, homeId, {

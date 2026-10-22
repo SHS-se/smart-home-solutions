@@ -47,6 +47,12 @@ Deno.test("probe credential and deployment changes redeploy only the private pro
   }
 });
 
+Deno.test("market archive setup changes select its TEST-only deployment lane", () => {
+  const changes = classify(root, ["scripts/deploy-market-archive.ts"]);
+  assertEquals(changes.functions, ["energy-market-archive"]);
+  assert(!changes.frontend && !changes.planner && !changes.migrations);
+});
+
 Deno.test("tests and docs deploy nothing", () => {
   const c = classify(root, ["supabase/functions/_shared/energy-optimisation.test.ts", "docs/x.md"]);
   assertEquals([c.frontend, c.migrations, c.functions.length, c.planner], [false, false, 0, false]);
