@@ -3,7 +3,7 @@ import type { StoredPriceRow, PriceOutlook } from './planner/energy-price-shape.
 import type { OptimisationSnapshot } from './planner/planning-contracts.ts';
 
 export const TEST_MARKET_PROJECT_URL = 'https://vxqpgbzseckgceopitpm.supabase.co';
-export const ARCHIVED_MARKET_DATASETS = ['wind_day_ahead', 'load_day_ahead', 'load_week_ahead'] as const;
+export const ARCHIVED_MARKET_DATASETS = ['wind_day_ahead', 'load_day_ahead', 'load_week_ahead', 'weather_medium_range'] as const;
 export interface MarketForecastContext {
   known_at: string;
   datasets: Record<typeof ARCHIVED_MARKET_DATASETS[number], {

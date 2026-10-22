@@ -1,7 +1,9 @@
 /** Deploy and enable the explicitly authorized TEST research archive only. */
 const TEST = 'vxqpgbzseckgceopitpm';
-const VERSION = '20261022180000';
-const NAME = 'test_market_forecast_vintages';
+const MIGRATIONS = [
+  { version: '20261022180000', name: 'test_market_forecast_vintages' },
+  { version: '20261022190000', name: 'test_medium_range_weather' },
+];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
 
@@ -20,17 +22,18 @@ try {
     if (!parsed || typeof parsed !== 'object' || !('rows' in parsed) || !Array.isArray(parsed.rows)) throw new Error('Invalid TEST database result.');
     return parsed.rows;
   };
-  const applied = await query(`SELECT EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations WHERE version='${VERSION}') AS applied;`);
-  if (applied[0]?.applied !== true) {
-    const source = await Deno.readTextFile(`${root}/supabase/migrations/${VERSION}_${NAME}.sql`);
+  for (const { version, name } of MIGRATIONS) {
+    const applied = await query(`SELECT EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations WHERE version='${version}') AS applied;`);
+    if (applied[0]?.applied === true) continue;
+    const source = await Deno.readTextFile(`${root}/supabase/migrations/${version}_${name}.sql`);
     const delimiter = '$shs_market_archive_source$';
     if (source.includes(delimiter)) throw new Error('Unexpected migration source delimiter.');
     // Apply only this authorized migration and preserve the exact standard history identity.
-    await query(`BEGIN;\n${source}\nINSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES('${VERSION}','${NAME}',ARRAY[${delimiter}${source}${delimiter}]);\nCOMMIT;\nSELECT true AS applied;`);
-    console.log('Applied the forecast-vintage migration to TEST.');
+    await query(`BEGIN;\n${source}\nINSERT INTO supabase_migrations.schema_migrations(version,name,statements) VALUES('${version}','${name}',ARRAY[${delimiter}${source}${delimiter}]);\nCOMMIT;\nSELECT true AS applied;`);
+    console.log(`Applied TEST archive migration ${version}.`);
   }
-  await cli(['functions', 'deploy', 'energy-market-archive', 'energy-optimisation-ingest', '--project-ref', TEST, '--use-api', '--yes']);
-  console.log('Deployed the TEST collector and price producer.');
+  await cli(['functions', 'deploy', 'energy-market-archive', '--project-ref', TEST, '--use-api', '--yes']);
+  console.log('Deployed the TEST collector.');
   await query('SELECT private.enable_test_market_archive(); SELECT private.request_test_market_archive(); SELECT true AS enabled;');
   const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname='test-energy-market-forecast-archive';");
   console.log(JSON.stringify({ project: TEST, archive: 'enabled', first_collection: 'requested', schedule }));

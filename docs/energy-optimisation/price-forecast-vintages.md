@@ -22,7 +22,7 @@ if (context) EdgeRuntime.waitUntil(recordTestPriceForecastGeneration(db, project
 
 ```sh
 deno task deploy:market-archive
-# Applies only this migration to TEST, deploys its endpoint and ingest, enables
+# Applies only the authorized archive migrations to TEST, deploys its endpoint, enables
 # the TEST cron and requests the first collection. Never selects production.
 ```
 
@@ -42,7 +42,7 @@ its exact calibrated SMHI wind days, price inputs, output and explicit market ID
 There is no collection on cache reuse and no research ID in planner contracts.
 
 A TEST-only `energy-market-archive` endpoint collects A69 wind/solar, A65 day-ahead
-load and A65 week-ahead load once per hour. P1D business A60/A61 remains a daily
+load, A65 week-ahead load and medium-range weather once per hour. P1D business A60/A61 remains a daily
 range, never a fabricated quarter-hour mean. Every response, including identical
 payloads, no-data and errors, is a distinct local observation. Source document
 creation/revision times remain provenance; they do not order local availability.
@@ -120,3 +120,85 @@ Earlier vintages cannot be recovered. Existing source coverage can end before a
 72-hour estimate horizon; retain that gap. Raw SMHI hourly provider runs are not
 archived by this change, but the exact calibrated wind values actually passed to
 the estimator are frozen. No new live forecast model or retention expiry is added.
+
+## Medium-range weather extension
+
+```ts
+const request = mediumRangeWeatherRequest(); // Fixed ten SE3 sites, ECMWF IFS 0.25°.
+const document = parseMediumRangeWeather(JSON.parse(rawBody), requestedAt);
+// Independent collector saves dataset: 'weather_medium_range', request.record,
+// raw_body, digest, native series and local D+2/D+3 coverage in the same archive.
+// Existing producer pins the extra observation ID returned by the context RPC.
+```
+
+The new dataset preserves seven days of hourly 10 m/120 m wind speed (m/s),
+temperature (°C) and shortwave radiation (W/m²) at the existing ten SE3 sample
+sites. These are weather drivers, not forecasts of SE3 electricity generation
+or consumption in MW. The existing ENTSO-E A65/A31 daily minimum/maximum load
+forecasts remain the available longer-range electricity-demand forecast; no
+hourly mean demand is invented from those ranges.
+
+Use the Codex candidate's single additional dataset in the existing evidence
+stream. Adopt Claude's explicit request metadata on every outcome and separate
+JSON raw-body field. Reject a second table/collector, a canonical-content hash,
+and an arbitrary grid-distance rejection: none adds an invariant needed here.
+Requested station coordinates and returned model-grid coordinates are distinct
+provenance. The provider exposes no model issue time: store null rather than
+misreading its response-generation duration as an issue timestamp.
+
+Coverage counts native non-null samples per site and variable on local D+2 and
+D+3 dates. It respects Stockholm's 23/25-hour clock-change days. Radiation is the
+mean of the preceding hour; the midnight label belongs to the preceding day.
+Weather failures and ENTSO-E failures are recorded independently. No provider
+fallback or new price policy is introduced.
+
+A new migration expands the closed dataset set and pinned context. Older
+generation rows stay immutable; an in-flight three-key write spanning rollout
+may fail as an explicit research gap instead of receiving retroactive weather.
+Deploy only the collector, not the shared workspace's unrelated ingest changes.
+
+We accept equal sampling at ten existing sites in exchange for comparability
+with the wind research; it is not capacity- or population-weighted aggregation.
+We accept a missing model-run timestamp in exchange for honest local acquisition
+times. We accept one batch failure affecting all sites in exchange for a single
+bounded request and no duplicated scheduling, authentication or persistence.
+
+Source checks on 22 October 2026:
+
+- [Open-Meteo forecast API](https://open-meteo.com/en/docs): one explicit ECMWF
+  IFS 0.25° seven-day batch returned all four variables at all ten sites, with
+  168 hourly labels per site and no missing values. The free tier permits
+  [evaluation/prototyping](https://open-meteo.com/en/pricing); commercial use
+  requires a subscription. This deployment is TEST research only.
+- [SMHI SNOW1g](https://opendata.smhi.se/metfcst/snow1gv1): verified wind and
+  temperature through 2 November, but no irradiance variable. Existing estimates
+  already preserve their exact calibrated SMHI wind inputs.
+- [Energy-Charts API](https://api.energy-charts.info/): Swedish current wind and
+  solar ended today, explicit week-ahead requests returned 404, and load ended
+  tomorrow. These responses do not supply the required longer-range series.
+- [ENTSO-E load specification](https://transparency.entsoe.eu/content/static_content/download?loggedUserIsPrivileged=false&path=%2FStatic+content%2Fknowledge+base%2Fentso-e-transparency-xml-schema-use-1-0.pdf):
+  week-ahead A60/A61 values are daily minimum/maximum demand, already archived.
+- [Montel EQ](https://app.energyquantified.com/api/docs/) offers authenticated
+  forecast-instance APIs. No licensed key was provided; no account or purchase
+  was created. No verified open hourly SE3 D+2/D+3 demand feed was found.
+
+The extension was deployed only to TEST on 22 October 2026. Its first weather
+observation was stored at 16:35:22 UTC: all ten sites and all four variables
+covered D+2 (24 October, 24 hourly samples) and D+3 (25 October, 25 samples).
+A real price calculation at 16:36:26 UTC pinned all four datasets. Its frozen
+384-quarter price outlook replayed within 1.8e-15 SEK/kWh rounding difference.
+The collector remains hourly at minute 7. The existing producer was not
+redeployed, and no production operation was performed.
+
+The stored SE3 week-ahead daily load lows/highs were 7,750/9,748 MW on 24 October
+and 7,942/10,275 MW on 25 October. These are the day's load minimum/maximum
+forecasts, not an hourly profile or a statistical confidence interval.
+
+Extension validation: 32 typed focused tests passed, including migration-version
+uniqueness; the complete working-workspace Deno suite passed 1,777 tests. Root
+ESLint and the archive-only snapshot's ESLint both reported zero errors and 27
+existing warnings. The TEST build passed. All four browser suites passed against
+a fresh archive-only snapshot: 83 passed, one existing skip. An unrelated E2E run
+occupied port 4173, so the validation used the same suites and configuration
+with port 4174 and a separate result directory. Concurrent planner changes were
+excluded from that snapshot and from this archive commit.

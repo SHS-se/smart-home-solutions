@@ -6,6 +6,7 @@ const context: MarketForecastContext = { known_at: '2026-10-22T16:00:00Z', datas
   wind_day_ahead: { latest_attempt_id: 'wind-attempt', latest_data_id: 'wind-data' },
   load_day_ahead: { latest_attempt_id: 'load-failed', latest_data_id: 'load-prior-data' },
   load_week_ahead: { latest_attempt_id: null, latest_data_id: null },
+  weather_medium_range: { latest_attempt_id: 'weather-attempt', latest_data_id: 'weather-data' },
 } };
 const generation: PriceForecastGeneration = {
   id: 'generation', home_id: 'home', generated_at: '2026-10-22T16:00:01Z',
