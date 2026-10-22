@@ -162,7 +162,7 @@ Deno.test('missing whole days do not become selectable history', () => {
     actuals: [actual(dayBounds(NOW, -2, TZ).startMs)],
     planSlots: [planned(NOW)],
   });
-  assertEquals(availableDayWindows(rows, NOW, TZ), [-2, 0, 'all'], 'a day of placeholders is not data');
+  assertEquals(availableDayWindows(rows, NOW, TZ), ['upcoming', -2, 0, 'all'], 'a day of placeholders is not data');
   assertEquals(build(), [], 'empty inputs remain empty');
 });
 
@@ -236,7 +236,7 @@ Deno.test('windows only offer days the loaded data can fill', () => {
     actuals: [actual(dayBounds(NOW, -1, TZ).startMs)],
     planSlots: [planned(NOW), planned(dayBounds(NOW, 1, TZ).startMs)],
   });
-  assertEquals(availableDayWindows(rows, NOW, TZ), [-1, 0, 1, 'all'], 'offered windows');
+  assertEquals(availableDayWindows(rows, NOW, TZ), ['upcoming', -1, 0, 1, 'all'], 'offered windows');
   const empty = dayWindowRange(rows, -2, NOW, TZ);
   assertEquals(empty, { from: 0, to: 0 }, 'a day with no data is empty');
 });
@@ -306,4 +306,17 @@ Deno.test('standby draw never earns a place on the chart', () => {
     ['sensor.hot_water', 'sensor.internet'],
     'only loads worth a colour',
   );
+});
+
+Deno.test('upcoming shows the remaining published plan without measured history', () => {
+  const rows = buildEnergyTimeline({ actuals: [actual(NOW - SLOT_MS)], planSlots: [planned(NOW), planned(NOW + 100 * SLOT_MS)],
+    deviceActuals: [], deviceKeyById: new Map(), prices: [], nowMs: NOW });
+  const future = dayWindowRange(rows, 'upcoming', NOW + 60_000, TZ);
+  assertEquals(rows[future.from].startMs, NOW, 'includes the current quarter');
+  assertEquals(future.to, rows.length, 'uses actual available horizon');
+  assertEquals(nowDividerIndex(rows, future), 0, 'future is at the left edge');
+  assertEquals(dayWindowRange(rows, 'all', NOW, TZ), { from: 0, to: rows.length }, 'history remains available');
+  const past = buildEnergyTimeline({ actuals: [actual(NOW - SLOT_MS)], planSlots: [], deviceActuals: [],
+    deviceKeyById: new Map(), prices: [], nowMs: NOW });
+  assertEquals(dayWindowRange(past, 'upcoming', NOW, TZ), { from: past.length, to: past.length }, 'no future invented');
 });

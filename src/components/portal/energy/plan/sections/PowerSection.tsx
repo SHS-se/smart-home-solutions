@@ -28,7 +28,6 @@ import {
   type TimelineRange,
   type TimelineRow,
 } from '@/lib/energy-shift/energy-timeline';
-import type { ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { projectPlanChart, type ChartHotWater } from '@/lib/energy-shift/plan-chart-data';
 import { hotWaterQuarter } from '@/lib/energy-shift/hot-water-gate';
 import { DayWindowToggle } from '../ui';
@@ -39,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import PlanReplayDownload from '../PlanReplayDownload';
 import { replayDescription } from '@/lib/energy-shift/plan-replay';
 import EnergyChart, { type EnergyRoomLine } from '../../charts/EnergyChart';
+import { planChartRelations } from '@/lib/energy-shift/plan-chart-relations';
 import type { ChartRoom } from '@/lib/energy-shift/room-temperature';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
@@ -81,14 +81,6 @@ const PowerSection: React.FC<{
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const [selectedQuarterStart, setSelectedQuarterStart] = useState<string | null>(null);
-  // Series the reader has switched off in the legend, to look at the rest.
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const toggle = (key: string) => setHidden(current => {
-    const next = new Set(current);
-    if (!next.delete(key)) next.add(key);
-    return next;
-  });
-
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
   const { plan } = model;
@@ -191,7 +183,7 @@ const PowerSection: React.FC<{
         hasEvBattery={hasEvBattery}
         poolTargetC={poolTargetC}
         rooms={roomLines}
-        hidden={hidden}
+        relations={planChartRelations({ series: consumption.series, deviceModels: plan.device_models, rooms })}
         quarterScores={quarterScores}
         scoreDetail={(quarterScores || model.active.slots.length > 0) && (
           <QuarterScoreDetail
@@ -214,14 +206,6 @@ const PowerSection: React.FC<{
       {consumption.invalidIndices.length > 0 && <p role="status" className="text-xs text-muted-foreground">{t(
         'Baslasten saknas när mätvärden inte kan stämmas av. Tillgängliga enhetsvärden visas fortfarande; ≥ anger en ofullständig grupp.',
         'Base load is unavailable when readings cannot be reconciled. Available device readings remain visible; ≥ marks an incomplete group.')}</p>}
-      <PanelLegend
-        series={consumption.series}
-        hasBattery={hasBattery}
-        hasEvBattery={hasEvBattery}
-        hasHotWater={panelRows.some(row => row.hotWater)}
-        hidden={hidden}
-        onToggle={toggle}
-      />
       <div className="mt-6">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -243,99 +227,6 @@ const PowerSection: React.FC<{
         <DeviceEnergyNotes result={attribution} />
       </div>
     </>
-  );
-};
-
-/**
- * What each colour means. A power series — solar, grid and battery in the
- * flows, every band in the consumption stack — is also a switch: hiding the
- * big bands is how the small ones beneath them become readable.
- */
-const PanelLegend: React.FC<{
-  series: ConsumptionSeries[];
-  hasBattery: boolean;
-  hasEvBattery: boolean;
-  hasHotWater: boolean;
-  hidden: ReadonlySet<string>;
-  onToggle: (key: string) => void;
-}> = ({ series, hasBattery, hasEvBattery, hasHotWater, hidden, onToggle }) => {
-  const { t } = useLanguage();
-  const flows: Array<{ key: string; label: string; colour: string }> = [
-    { key: 'solar', label: t('Sol', 'Solar'), colour: PLAN_COLOURS.solar },
-    { key: 'grid', label: t('Nät', 'Grid'), colour: PLAN_COLOURS.grid },
-    ...(hasBattery ? [{ key: 'battery', label: t('Batteri', 'Battery'), colour: PLAN_COLOURS.battery }] : []),
-  ];
-  const toggle = (key: string) => ({ hidden: hidden.has(key), onToggle: () => onToggle(key) });
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground" data-testid="plan-legend">
-      {flows.map(flow => (
-        <Key key={flow.key} colour={flow.colour} {...toggle(flow.key)}>{flow.label}</Key>
-      ))}
-      {hasEvBattery && <Key colour={PLAN_COLOURS.ev} line>{t('Bilbatteri', 'Car battery')}</Key>}
-      <span className="text-border" aria-hidden="true">|</span>
-      {series.map(entry => (
-        <Key key={entry.key} colour={seriesColour(entry)} {...toggle(entry.key)}>{entry.key === '$other_planned' ? t('Övriga planerade enheter', 'Other planned devices') : entry.name}</Key>
-      ))}
-      <Key colour={PLAN_COLOURS.base} {...toggle('base')}>
-        {t('Baslast', 'Base load')}
-      </Key>
-      {hasHotWater && <>
-        <span className="text-border" aria-hidden="true">|</span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="flex gap-px" aria-hidden="true">
-            <span className="h-2.5 w-2.5" style={{ backgroundColor: PLAN_COLOURS.water }} />
-            <span className="h-2.5 w-2.5" style={{ background: HATCH }} />
-            <span className="h-2.5 w-2.5 bg-muted-foreground/60" />
-          </span>
-          {t('Varmvatten tillåtet · spärras troligen av last · spärrat av plan',
-            'Hot water allowed · likely held off by load · blocked by plan')}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="w-3.5 border-t-2 border-dashed" style={{ borderColor: PLAN_COLOURS.waterLine }} aria-hidden="true" />
-          {t('Varmvatten får starta under', 'Hot water may start below')}
-        </span>
-      </>}
-      <span className="inline-flex items-center gap-1.5">
-        <span className="flex" aria-hidden="true">
-          {[1, 3, 5, 7].map(step => (
-            <span
-              key={step} className="h-2.5 w-2.5"
-              style={{ backgroundColor: `var(--plan-price-${step})` }}
-            />
-          ))}
-        </span>
-        {t('Köppris, billigt → dyrt', 'Buy price, cheap → dear')}
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="h-px w-3.5 bg-muted-foreground" aria-hidden="true" />
-        {t('Säljpris · under noll kostar export', 'Sell price · below zero, exporting costs money')}
-      </span>
-    </div>
-  );
-};
-
-const HATCH = `repeating-linear-gradient(45deg, ${PLAN_COLOURS.water} 0 1.5px, transparent 1.5px 4px)`;
-
-const Key: React.FC<{
-  colour: string; line?: boolean; children: React.ReactNode;
-  /** Given for a series that can be switched off in the chart. */
-  hidden?: boolean; onToggle?: () => void;
-}> = ({ colour, line, children, hidden = false, onToggle }) => {
-  const swatch = (
-    <span
-      className={line ? 'h-0.5 w-3.5 rounded-full' : 'h-2.5 w-2.5 rounded-sm'}
-      style={hidden ? { boxShadow: `inset 0 0 0 1.5px ${colour}` } : { backgroundColor: colour }}
-      aria-hidden="true"
-    />
-  );
-  if (!onToggle) return <span className="inline-flex items-center gap-1.5">{swatch}{children}</span>;
-  return (
-    <button
-      type="button" aria-pressed={!hidden} onClick={onToggle}
-      className={`-mx-1 inline-flex min-h-8 items-center gap-1.5 rounded px-1 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${hidden ? 'line-through opacity-60' : ''}`}
-    >
-      {swatch}{children}
-    </button>
   );
 };
 

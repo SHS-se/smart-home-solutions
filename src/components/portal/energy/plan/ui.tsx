@@ -105,7 +105,8 @@ export const DayWindowToggle: React.FC<{
   const { t } = useLanguage();
   const homeTimeZone = useHomeTimeZone();
   const label = (window: DayWindow) => {
-    if (window === 'all') return t('Alla', 'All');
+    if (window === 'upcoming') return t('Kommande', 'Upcoming');
+    if (window === 'all') return t('Historik + plan', 'History + plan');
     if (window === 0) return t('Idag', 'Today');
     // The label has to name the home's day, not the reader's: off by a
     // timezone it disagrees with the chart it switches.
@@ -115,7 +116,7 @@ export const DayWindowToggle: React.FC<{
     );
   };
   const tone = (window: DayWindow) => {
-    if (window === 'all' || window === 0) return '';
+    if (window === 'all' || window === 'upcoming' || window === 0) return '';
     return window < 0
       ? 'text-slate-600 dark:text-slate-300'
       : 'text-sky-700 dark:text-sky-300';

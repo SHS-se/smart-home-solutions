@@ -301,7 +301,7 @@ test.describe('requesting a replan', () => {
     await page.goto('/portal/energy-modeling?tab=savings');
     await expectRoiMonths(page, '(2/2)');
     await expect(page.getByTestId('roi-baseline')).toHaveCount(0);
-    await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: /power flows|effektflöden/i })).toHaveCount(0);
     const cells = page.getByTestId('scheduler-totals').locator('td');
     const totals = history.saved()!.months;
     const totalGross = Object.values(totals).reduce((n,m) => n + m.ledger.modeled.baselineBill.totalSek - m.ledger.modeled.schedulerBill.totalSek,0);
@@ -501,7 +501,7 @@ test.describe('requesting a replan', () => {
     await viewer.getByTestId('baseline-details').locator('summary').first().click();
     await expect(page.getByTestId('baseline-models')).toContainText(/80% from midnight|80% från midnatt/);
     await expect(page.getByTestId('baseline-models')).toContainText('60 W');
-    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const chart = viewer.getByRole('group', { name: /power flows|effektflöden/i }).first();
     await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).toContainText(/Driving demand|Körbehov/);
     const download = page.waitForEvent('download');
@@ -588,11 +588,11 @@ test.describe('requesting a replan', () => {
     windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
     const reads = history.reads();
     await page.getByTestId('comparison-graph-scheduler').click();
-    await expect(viewer.getByRole('img', { name: /power flows|effektflöden/i }).first()).toContainText(/SHS ENERGY SCHEDULER|SHS ENERGIS/);
-    await expect(viewer.getByRole('img', { name: /power flows|effektflöden/i }).first()).toContainText(`${capture.modeled.schedulerBill.totalSek.toFixed(0)} kr`);
+    await expect(viewer.getByRole('group', { name: /power flows|effektflöden/i }).first()).toContainText(/SHS ENERGY SCHEDULER|SHS ENERGIS/);
+    await expect(viewer.getByRole('group', { name: /power flows|effektflöden/i }).first()).toContainText(`${capture.modeled.schedulerBill.totalSek.toFixed(0)} kr`);
     await page.getByTestId('comparison-graph-actual').click();
     await expect(page.getByTestId('comparison-graph-actual')).toHaveText(/Actual consumption|Faktisk förbrukning/);
-    const chart = viewer.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const chart = viewer.getByRole('group', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toContainText(/Actual consumption|Faktisk förbrukning/i);
     await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
     await expect(page.getByTestId('baseline-quarter')).not.toContainText(/Driving demand|Körbehov/);
@@ -697,7 +697,7 @@ test.describe('requesting a replan', () => {
     await expectRoiMonths(page, '(1/1)');
     await page.getByTestId('roi-view-graphs').click();
     await page.getByTestId('comparison-graph-actual').click();
-    const chart = page.getByTestId('roi-baseline').getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const chart = page.getByTestId('roi-baseline').getByRole('group', { name: /power flows|effektflöden/i }).first();
     await chart.focus(); await chart.press('ArrowRight');
     const tooltip = page.getByRole('tooltip');
     await expect(tooltip).toContainText(/estimated|uppskattat/);
@@ -718,7 +718,8 @@ test.describe('requesting a replan', () => {
     replan.devices = [{ id: 'heater-id', device_key: 'pool_heater', name: 'Pool heater', planning_role_override: 'controllable' }];
     replan.deviceHistory = [{ start_ts: replan.history[0].start_ts, device_energy_kwh: { 'heater-id': 0.45 } }];
     await page.goto('/portal/energy-modeling?tab=plan');
-    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
     await expect(chart).toBeVisible();
     await chart.focus();
     await chart.press('ArrowLeft');
@@ -747,14 +748,14 @@ test.describe('requesting a replan', () => {
     await expect(page.locator('#plan-quarter-explanation [data-boiler-control]')).toContainText(/Water boiler|Varmvattenberedare/);
     await expect(page.locator('#plan-quarter-explanation [data-boiler-control]')).toContainText(/Modeled consumption|Modellerad förbrukning/);
     await expect(page.getByRole('tooltip')).not.toContainText(/Thermostat controlled|Termostaten styr/);
-    await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: testInfo.outputPath('boiler-slot-control.png') });
+    await page.getByRole('group', { name: /power flows|effektflöden/i }).first().screenshot({ path: testInfo.outputPath('boiler-slot-control.png') });
   });
 
   test('a plan made by rules shows its score under the chart and explains the picked quarter', async ({ page }, testInfo) => {
     replan.publishedPlan=withoutRulePoints(PLAN);
     // A plan from a planner without rules has no score to show.
     await page.goto('/portal/energy-modeling?tab=plan');
-    await expect(page.getByRole('img', { name: /effektflöden|power flows/i }).first()).toBeVisible();
+    await expect(page.getByRole('group', { name: /effektflöden|power flows/i }).first()).toBeVisible();
     await expect(page.locator('#plan-score')).toHaveCount(0);
     // The replay download closes the chart's section either way, and says what it holds while there is no score.
     const download = page.getByRole('button', { name: /Ladda ned repris|Download replay/ });
@@ -777,7 +778,7 @@ test.describe('requesting a replan', () => {
     await expect(explanation).toContainText('−2 Pool far below target');
     await expect(explanation).toContainText('−1 Pool below target');
     await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
-    const chart = (await page.getByRole('img', { name: /effektflöden|power flows/i }).first().boundingBox())!;
+    const chart = (await page.getByRole('group', { name: /effektflöden|power flows/i }).first().boundingBox())!;
     const cell = (await strip.locator('[data-score="-3"]').first().boundingBox())!, why = (await explanation.boundingBox())!;
     expect(cell.y).toBeGreaterThan(chart.y + chart.height * 0.8);
     expect(why.y).toBeGreaterThan(cell.y);
@@ -795,7 +796,8 @@ test.describe('requesting a replan', () => {
     }));
     replan.poolHistory = [{ start_ts: replan.history[0].start_ts, water_temperature_c: 31.7 }];
     await page.goto('/portal/energy-modeling?tab=plan');
-    const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
     await expect(chart).toBeVisible();
     await chart.focus();
     await chart.press('ArrowLeft');
@@ -816,6 +818,22 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText('31.6 °C');
   });
 
+  test('the default shows the upcoming horizon and history is an explicit view', async ({ page }) => {
+    const start = Date.parse(CAPTURED_AT);
+    replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: .65 }));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const upcoming = page.getByRole('button', { name: /^(Upcoming|Kommande)$/ });
+    await expect(upcoming).toHaveAttribute('aria-pressed', 'true');
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    await expect(chart).toHaveAttribute('data-divider-index', '0');
+    await expect(chart).toHaveAttribute('data-window-start', String(start));
+    await page.getByRole('button', { name: /^(History \+ plan|Historik \+ plan)$/ }).click();
+    await expect(chart).toHaveAttribute('data-divider-index', '3');
+    await expect(chart).toHaveAttribute('data-window-start', String(start - 3 * 900_000));
+    await upcoming.click();
+    await expect(chart).toHaveAttribute('data-divider-index', '0');
+  });
+
   test('room measurements include monitored rooms while forecasts only show controlled rooms', async ({ page }, testInfo) => {
     const start = Date.parse(CAPTURED_AT);
     const starts = PLAN.plans.priority.slots.map(slot => slot.start);
@@ -825,7 +843,19 @@ test.describe('requesting a replan', () => {
       comfort_max_c: starts.map(() => base + 3), planned_temperature_c: starts.map((_s, i) => base + .5 + Math.sin(i / 12) / 2),
       unplanned_temperature_c: starts.map(() => base), planned_power_w: starts.map(() => 0), unplanned_power_w: starts.map(() => 0),
     });
+    const evBattery = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-6-dispatched-ev-plan.json', import.meta.url), 'utf8')).plan.ev_battery;
+    const device = mixedModeFixture.plan.device_models[0];
     replan.publishedPlan = { ...PLAN,
+      capabilities: { ...PLAN.capabilities, ev: true }, ev_battery: evBattery,
+      device_models: [
+        { ...device, key: 'pool_heater', name: 'Pool heater' },
+        { ...device, key: 'floor', name: 'Bathroom heater', planning_service: undefined },
+        { ...device, key: 'car', name: 'Car charging', category: 'ev_charging', planning_service: undefined },
+      ],
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({ ...slot,
+        ev_soc: .6, load_w: slot.load_w + 1400,
+        device_loads_w: { ...slot.device_loads_w, pool_heater: 500, floor: 300, car: 600 },
+      })) } },
       operating_scope: { ...PLAN.operating_scope, modes: { ...PLAN.operating_scope?.modes, floor: 'controlling', hall: 'monitoring' },
         device_owners: { ...PLAN.operating_scope?.device_owners, floor: 'floor', hall: 'hall' }, external_demands: {} },
       thermal_projection: { source: 'comfort_schedule_model', season: null, slot_minutes: 15, starts,
@@ -845,6 +875,7 @@ test.describe('requesting a replan', () => {
         room_name: name, room_temperature_c: 20 + index / 10 })),
     ]);
     await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
     const panel = page.locator('#plan-room-temperature');
     await expect(panel).toBeVisible();
     await expect(panel.locator('[data-room="bath"]')).toHaveCount(1);
@@ -852,7 +883,7 @@ test.describe('requesting a replan', () => {
     await expect(panel.locator('[data-room="hall"] path').first()).toHaveAttribute('d', '');
     await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
     await expect(panel.locator('[data-room-label="bath"] title')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
-    const bathName = panel.getByRole('button', { name: /(?:Highlight|Markera) Master bathroom/ });
+    const bathName = panel.getByRole('button', { name: 'Master bathroom' });
     const hallName = panel.locator('[data-room-label="hall"] button');
     const bathCurve = panel.locator('[data-room="bath"]');
     const hallCurve = panel.locator('[data-room="hall"]');
@@ -860,6 +891,8 @@ test.describe('requesting a replan', () => {
     await expect(bathCurve).toHaveAttribute('opacity', '1');
     await expect(bathCurve.locator('path').last()).toHaveAttribute('stroke-width', '3');
     await expect(hallCurve).toHaveAttribute('opacity', '0.18');
+    await expect(page.locator('[data-series="load:floor"]').first()).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="load:pool_heater"]').first()).toHaveAttribute('opacity', '0.18');
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await panel.screenshot({ path: testInfo.outputPath('room-highlight.png'), animations: 'disabled' });
     await page.mouse.move(0, 0);
@@ -876,6 +909,26 @@ test.describe('requesting a replan', () => {
     await bathName.blur();
     await expect(panel.locator('[data-room][opacity="1"]')).toHaveCount(9);
     await expect(bathCurve.locator('path').last()).toHaveAttribute('stroke-width', '2');
+    const poolControl = page.locator('[data-series-control="temperature:pool"] button');
+    await poolControl.hover();
+    await expect(page.locator('[data-series="temperature:pool"]')).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="load:pool_heater"]').first()).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="load:floor"]').first()).toHaveAttribute('opacity', '0.18');
+    await poolControl.click();
+    await expect(page.locator('[data-series="temperature:pool"]')).toHaveAttribute('opacity', '0');
+    await expect(page.locator('[data-series="load:pool_heater"]').first()).toHaveAttribute('opacity', '1');
+    await poolControl.click();
+    await poolControl.blur();
+    const carControl = page.locator('[data-series-control="soc:car"] button');
+    await carControl.hover();
+    await expect(page.locator('[data-series="load:car"]').first()).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="soc:home"]')).toHaveAttribute('opacity', '0.18');
+    await page.locator('[data-series-control="soc:home"] button').hover();
+    await expect(page.locator('[data-series="flow:battery-in"]')).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="flow:battery-out"]')).toHaveAttribute('opacity', '1');
+    await expect(page.locator('[data-series="load:car"]').first()).toHaveAttribute('opacity', '0.18');
+    await page.mouse.move(0, 0);
+
     // The comfort note is on the chart, so nothing is left for a banner or the notes.
     await expect(page.getByText(/Planning needs attention|Planeringen behöver uppmärksamhet/)).toHaveCount(0);
     await expect(page.getByTestId('planning-notes')).toHaveCount(0);
@@ -888,7 +941,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
     await page.keyboard.press('Escape');
     // Names belong beside the curves, without a legend block separating the plots.
-    for (const width of [1440, 768, 375]) {
+    for (const width of [2560, 1440, 768, 375]) {
       await page.setViewportSize({ width, height: 900 });
       await expect.poll(() => panel.evaluate(element => {
         const svg = element.closest('svg')!;
@@ -899,7 +952,10 @@ test.describe('requesting a replan', () => {
         const pool = svg.querySelector('#plan-temperature')!.getBoundingClientRect();
         const roomPath = element.querySelector('[data-room="bath"] path')!;
         const plotLeft = roomPath.getBoundingClientRect().left;
-        return labels.length === 9 && !element.querySelector('[data-room-legend-area]')
+        const edges = [...svg.querySelectorAll('[data-chart-grid]')].map(line => Number(line.getAttribute('x2')));
+        const gutter = (svg.viewBox.baseVal.width - edges[0]) * scale;
+        return edges.length > 8 && new Set(edges).size === 1 && Math.abs(gutter - 260) < 1
+          && labels.length === 9 && !element.querySelector('[data-room-legend-area]')
           && heading.top - pool.bottom <= 34 * scale
           && labels.every((box, i) => box.left > plotLeft && box.right < svg.getBoundingClientRect().right
             && labels.slice(i + 1).every(other => box.bottom <= other.top + 0.5 || other.bottom <= box.top + 0.5));
@@ -927,6 +983,7 @@ test.describe('requesting a replan', () => {
       replan.roomHistory.push({ start_ts: new Date(start + 900_000).toISOString(),
         room_key: 'bath', room_name: 'Master bathroom', room_temperature_c: 99 });
       await page.goto('/portal/energy-modeling?tab=plan');
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
       const panel = page.locator('#plan-room-temperature');
       await expect(panel).toBeVisible();
       await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
@@ -947,28 +1004,26 @@ test.describe('requesting a replan', () => {
     });
   }
 
-  test('power series are switched off and on from the legend', async ({ page }, testInfo) => {
-    const start = Date.parse(CAPTURED_AT);
-    replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
+  test('series controls hide and restore bands and storage independently', async ({ page }, testInfo) => {
     await page.goto('/portal/energy-modeling?tab=plan');
-    const legend = page.getByTestId('plan-legend');
-    const base = legend.getByRole('button', { name: /^(Base load|Baslast)$/ });
-    const band = page.locator('#plan-energy-chart path[data-band="base"], svg path[data-band="base"]').first();
+    const base = page.locator('[data-series-control="base"] button').first();
+    const band = page.locator('svg path[data-band="base"]').first();
     await expect(base).toHaveAttribute('aria-pressed', 'true');
     expect((await band.boundingBox())!.height).toBeGreaterThan(5);
     await base.click();
     await expect(base).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(async () => (await band.boundingBox())?.height ?? 0).toBeLessThan(1);
-    // Solar is a switch too, and switches its outline in the consumption panel with it.
-    const solar = legend.getByRole('button', { name: /^(Solar|Sol)$/ });
-    await solar.click();
-    await expect(solar).toHaveAttribute('aria-pressed', 'false');
-    await page.screenshot({ path: testInfo.outputPath('legend-hidden.png'), fullPage: true });
     await base.click();
-    await expect(base).toHaveAttribute('aria-pressed', 'true');
     expect((await band.boundingBox())!.height).toBeGreaterThan(5);
-    // The car battery is a storage line, not a power series.
-    await expect(legend.getByRole('button', { name: /Car battery|Bilbatteri/ })).toHaveCount(0);
+    const car = page.locator('[data-series-control="soc:home"] button').first();
+    await car.hover();
+    await expect(page.locator('[data-series="flow:grid-in"]').first()).toHaveAttribute('opacity', '0.18');
+    await car.click();
+    await expect(car).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('[data-series="soc:home"]').first()).toHaveAttribute('opacity', '0');
+    await car.click();
+    await expect(car).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: testInfo.outputPath('series-controls.png'), fullPage: true });
   });
 
   test('TEST ignores stale HA recovery and identity without locking replanning', async ({ page }) => {
@@ -1259,13 +1314,13 @@ test.describe('requesting a replan', () => {
     await page.getByTestId('planning-notes').click();
     await expect(page.getByTestId('planning-warnings')).toContainText('The selected control plan remains available.');
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
+    await expect(page.getByRole('group', {name: /effektflöden|power flows/i}).first()).toBeVisible();
     await expect(page.getByRole('button', {name: replanButton})).toBeEnabled();
     expect(pageErrors).toEqual([]);
     replan.publishedPlan = PLAN;
     await page.reload();
     await expect(page.getByTestId('planning-notes')).toHaveCount(0);
-    await expect(page.getByRole('img', {name: /effektflöden|power flows/i}).first()).toBeVisible();
+    await expect(page.getByRole('group', {name: /effektflöden|power flows/i}).first()).toBeVisible();
   });
 
   test('the planner installation address can be edited in its existing home',async({context,page})=>{

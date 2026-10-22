@@ -17,9 +17,9 @@ import { homeDayBounds } from './home-time';
 import type { RoomSlotRow, RoomTemperaturePlan } from './room-temperature';
 
 /** Days either side of today, or the whole span. */
-export type DayWindow = -2 | -1 | 0 | 1 | 2 | 'all';
+export type DayWindow = -2 | -1 | 0 | 1 | 2 | 3 | 'upcoming' | 'all';
 
-export const DAY_WINDOW_OPTIONS: DayWindow[] = [-2, -1, 0, 1, 2, 'all'];
+export const DAY_WINDOW_OPTIONS: DayWindow[] = ['upcoming', -2, -1, 0, 1, 2, 3, 'all'];
 
 export const SLOT_MS = 15 * 60_000;
 
@@ -307,6 +307,10 @@ export const dayWindowRange = (
   timeZone: string,
 ): TimelineRange => {
   if (window === 'all') return { from: 0, to: rows.length };
+  if (window === 'upcoming') {
+    const from = rows.findIndex(row => !row.measured && row.startMs + SLOT_MS > nowMs);
+    return { from: from < 0 ? rows.length : from, to: rows.length };
+  }
   const { startMs, endMs } = dayBounds(nowMs, window, timeZone);
   let from = rows.length;
   let to = 0;

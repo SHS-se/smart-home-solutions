@@ -20,7 +20,7 @@
 // *fewer* meters rather than coarser ones — see consumption-series.ts for
 // which ones earn a band.
 
-import React, { useId, useMemo, useRef, useState } from 'react';
+import React, { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import {
   linearScale, midpointLinePath, niceTicks, placeBandLabels, priceDomain, stackBands,
@@ -37,18 +37,21 @@ import { scoreColour } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
 
+import SeriesControl from './SeriesControl';
+import { BUILTIN_RELATIONS, placeSeriesLabels, seriesOpacity, spotlightSeries, type EnergySeriesId, type EnergySeriesRelation } from './series-interaction';
+
 import { energyChartTicks } from '@/lib/energy-shift/energy-chart-axis';
 
 import type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 import { hotWaterStateLabel } from '@/lib/energy-shift/hot-water-gate';
 export type { PlanPanelRow } from '@/lib/energy-shift/plan-chart-data';
 
-const VIEW_W = 1160;
+const CONTROL_WIDTH = 260;
 const MARGIN_LEFT = 58;
-const MARGIN_RIGHT = 92;
-const PLOT_W = VIEW_W - MARGIN_LEFT - MARGIN_RIGHT;
-const RIGHT = MARGIN_LEFT + PLOT_W;
 const GAP = 34;
+const SUPPLY_IDS = ['flow:solar', 'flow:battery-out', 'flow:grid-in'] as const;
+const DISPOSAL_IDS = ['flow:battery-in', 'flow:grid-out'] as const;
+const FLOW_IDS = [...SUPPLY_IDS, ...DISPOSAL_IDS];
 
 const kw = (watts: number | null): number | null =>
   watts === null || !Number.isFinite(watts) ? null : watts / 1_000;
@@ -127,35 +130,35 @@ const PanelHeading: React.FC<{ title: string; unit: string; y: number }> = ({ ti
 
 /** Shared tracks and energy labels keep device controls visually aligned. */
 const SlotControlLane: React.FC<{
-  device: string; label: string; top: number; energy?: SlotEnergy; children: React.ReactNode;
+  device: string; label: string; top: number; right: number; energy?: SlotEnergy; children: React.ReactNode;
   t: (sv: string, en: string) => string;
-}> = ({ device, label, top, energy, children, t }) => {
+}> = ({ device, label, top, right, energy, children, t }) => {
   const format = (value: number | null) => value === null ? '— kWh' : `${value.toFixed(1)} kWh`;
   const battery = energy?.dischargedKwh !== undefined;
   return <g data-slot-device={device}>
     <text x={MARGIN_LEFT - 7} y={top + 14} textAnchor="end" className={AXIS_TEXT}>{label}</text>
-    <rect x={MARGIN_LEFT} y={top} width={PLOT_W} height={24} className="fill-muted" />
+    <rect x={MARGIN_LEFT} y={top} width={right - MARGIN_LEFT} height={24} className="fill-muted" />
     {children}
     {energy && <g data-slot-energy={device}>
       <title>{t('Modellerad energi under visad period', 'Modeled energy in displayed period')}</title>
-      <text x={RIGHT + 7} y={top + (battery ? 9 : 14)} className={AXIS_TEXT}>
+      <text x={right + 7} y={top + (battery ? 9 : 14)} className={AXIS_TEXT}>
         {format(energy.kwh)}{battery ? ` ${t('in', 'in')}` : ''}
       </text>
-      {battery && <text x={RIGHT + 7} y={top + 21} className={AXIS_TEXT}>
+      {battery && <text x={right + 7} y={top + 21} className={AXIS_TEXT}>
         {format(energy.dischargedKwh!)} {t('ut', 'out')}
       </text>}
     </g>}
   </g>;
 };
 
-const Gridlines: React.FC<{ ticks: number[]; y: Scale; format: (tick: number) => string }> = ({
-  ticks, y, format,
+const Gridlines: React.FC<{ right: number; ticks: number[]; y: Scale; format: (tick: number) => string }> = ({
+  right, ticks, y, format,
 }) => (
   <>
     {ticks.map(tick => (
       <g key={tick}>
         <line
-          x1={MARGIN_LEFT} x2={RIGHT} y1={y(tick)} y2={y(tick)}
+          data-chart-grid x1={MARGIN_LEFT} x2={right} y1={y(tick)} y2={y(tick)}
           className="stroke-border" strokeWidth={1}
         />
         <text x={MARGIN_LEFT - 8} y={y(tick) + 3} textAnchor="end" className={AXIS_TEXT}>
@@ -166,20 +169,8 @@ const Gridlines: React.FC<{ ticks: number[]; y: Scale; format: (tick: number) =>
   </>
 );
 
-/** The one label a line always earns: its own value, at its own end. */
-const EndLabel: React.FC<{
-  y: number; colour: string; children: string;
-  /** Where the text sits when a neighbouring label has taken the line's own height. */
-  labelY?: number;
-}> = ({ y, colour, children, labelY = y }) => (
-  <g>
-    <circle cx={RIGHT} cy={y} r={3} fill={colour} className="stroke-card" strokeWidth={2} />
-    <text x={RIGHT + 7} y={labelY + 3.5} className={AXIS_TEXT}>{children}</text>
-  </g>
-);
-
 const NO_ROOMS: readonly EnergyRoomLine[] = [];
-const NONE_HIDDEN: ReadonlySet<string> = new Set();
+const NO_RELATIONS: readonly EnergySeriesRelation[] = [];
 
 /** Band order in the flow panel, so a placement can be turned back into a name. */
 const FLOW_NAMES = (t: (sv: string, en: string) => string): string[] => [
@@ -258,18 +249,14 @@ export interface EnergyChartProps {
   storeLines?: EnergyStoreLines;
   /** Measured rooms and rooms the plan forecasts, each with its own line. */
   rooms?: readonly EnergyRoomLine[];
-  /**
-   * Power series the reader has switched off: `solar`, `grid`, `battery`,
-   * `base` or a consumption series key. Hidden bands keep their place in the
-   * stack at zero height, so the rest close up and colours never move.
-   */
-  hidden?: ReadonlySet<string>;
+  /** Explicit device relationships used only for linked highlighting. */
+  relations?: readonly EnergySeriesRelation[];
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
   rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
-  costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, hidden = NONE_HIDDEN,
+  costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, relations = NO_RELATIONS,
 }) => {
   const { t } = useLanguage();
   const contextTimeZone = useHomeTimeZone();
@@ -279,20 +266,35 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [pointer, setPointer] = useState<{ left: number; top: number } | null>(null);
-  const [hoveredRoom, setHoveredRoom] = useState<string | null>(null);
-  const [focusedRoom, setFocusedRoom] = useState<string | null>(null);
-  const highlightedRoom = hoveredRoom ?? focusedRoom;
+  const [pointedSeries, setPointedSeries] = useState<EnergySeriesId | null>(null);
+  const [focusedSeries, setFocusedSeries] = useState<EnergySeriesId | null>(null);
+  const [hidden, setHidden] = useState<ReadonlySet<EnergySeriesId>>(() => new Set());
+  const activeSeries = pointedSeries ?? focusedSeries;
+  const spotlight = useMemo(() => spotlightSeries(activeSeries !== null && hidden.has(activeSeries) ? null : activeSeries,
+    [...BUILTIN_RELATIONS, ...relations]), [activeSeries, hidden, relations]);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [viewWidth, setViewWidth] = useState(1160);
+  const right = viewWidth - CONTROL_WIDTH;
+  const plotWidth = right - MARGIN_LEFT;
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current!;
+    const measure = () => setViewWidth(canvas.getBoundingClientRect().width);
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas);
+    measure();
+    return () => observer.disconnect();
+  }, []);
 
   const n = rows.length;
   const showSoc = (hasBattery && rows.some(row => row.homeSoc !== null))
     || (hasEvBattery && rows.some(row => row.evSoc !== null));
 
   const geometry = useMemo(() => {
-    const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, RIGHT]);
+    const x = linearScale([0, Math.max(1, n)], [MARGIN_LEFT, right]);
 
     const price: Panel = { top: 30, height: 68 };
     const flow: Panel = { top: price.top + price.height + GAP, height: 126 };
-    const load: Panel = { top: flow.top + flow.height + GAP, height: 150 };
+    const load: Panel = { top: flow.top + flow.height + GAP, height: Math.max(150, (series.length + 2) * 18 + 8) };
     const showWater = rows.some(row => row.hotWater);
     const soc: Panel = { top: load.top + load.height + GAP, height: showSoc ? 62 : 0 };
     const poolC = rows.map(row => row.poolTemperatureC ?? null);
@@ -311,11 +313,11 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       .filter((value): value is number => value !== null);
     const showRooms = knownRoomC.length > 0;
     const room: Panel = { top: pool.top + (showPool ? pool.height + GAP : 0),
-      height: showRooms ? Math.max(96, roomLines.length * 14 + 8) : 0 };
+      height: showRooms ? Math.max(96, roomLines.length * 18 + 8) : 0 };
     const knownCost = (costLines ?? []).flatMap(line => line.values.slice(0, n))
       .filter((value): value is number => value !== null && Number.isFinite(value));
     const showCost = knownCost.length > 0;
-    const cost: Panel = { top: room.top + (showRooms ? room.height + GAP : 0), height: showCost ? 90 : 0 };
+    const cost: Panel = { top: room.top + (showRooms ? room.height + GAP : 0), height: showCost ? Math.max(90, (costLines?.length ?? 0) * 18 + 8) : 0 };
     const axisY = showCost ? cost.top + cost.height : showRooms ? room.top + room.height
       : showPool ? pool.top + pool.height : (showSoc ? soc.top + soc.height : load.top + load.height);
     // The score is a section of its own, below the axis labels of the panels above.
@@ -339,14 +341,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
     // --- Flows: into the house above zero, out of it below ----------------
     const flows = powerFlowMagnitudes(rows);
-    const shown = (key: string, values: number[]) => hidden.has(key) ? values.map(() => 0) : values;
-    const toKw = (key: string, values: number[]) => shown(key, values.map(watts => watts / 1_000));
-    const toNegativeKw = (key: string, values: number[]) => shown(key, values.map(watts => -watts / 1_000));
+    const shown = (key: EnergySeriesId, values: number[]) => hidden.has(key) ? values.map(() => 0) : values;
+    const toKw = (key: EnergySeriesId, values: number[]) => shown(key, values.map(watts => watts / 1_000));
+    const toNegativeKw = (key: EnergySeriesId, values: number[]) => shown(key, values.map(watts => -watts / 1_000));
     const supply = stackBands([
-      toKw('solar', flows.solarDirect), toKw('battery', flows.batteryOut), toKw('grid', flows.gridIn),
+      toKw('flow:solar', flows.solarDirect), toKw('flow:battery-out', flows.batteryOut), toKw('flow:grid-in', flows.gridIn),
     ]);
     const disposal = stackBands([
-      toNegativeKw('battery', flows.batteryIn), toNegativeKw('grid', flows.gridOut),
+      toNegativeKw('flow:battery-in', flows.batteryIn), toNegativeKw('flow:grid-out', flows.gridOut),
     ]);
     const flowMax = Math.max(0.5, ...supply[2].map(pair => pair[1])) * 1.12;
     const flowMin = Math.min(-0.5, ...disposal[1].map(pair => pair[0])) * 1.1;
@@ -355,12 +357,12 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     // --- Consumption: base at the floor, movable loads riding on top -------
     const loadBands = stackBands([
       shown('base', baseValues.map(watts => watts / 1_000)),
-      ...series.map(entry => shown(entry.key, entry.values.map(watts => watts / 1_000))),
+      ...series.map(entry => shown(`load:${entry.key}`, entry.values.map(watts => watts / 1_000))),
     ]);
     const loadMax = Math.max(
       0.5,
       ...loadBands.flatMap(band => band.map(pair => pair[1])).filter(Number.isFinite),
-      ...(hidden.has('solar') ? [] : rows.map(row => (row.solarW ?? 0) / 1_000)),
+      ...(hidden.has('solar:outline') ? [] : rows.map(row => (row.solarW ?? 0) / 1_000)),
     ) * 1.1;
     const flowLabels = placeBandLabels([...supply, ...disposal], FLOW_NAMES(t), x, flowY);
 
@@ -387,15 +389,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       const last = [...line.values].reverse().find((value): value is number => value !== null);
       return last === undefined ? [] : [{ line, value: last, y: roomY(last), labelY: roomY(last) }];
     }).sort((a, b) => a.y - b.y);
-    roomEnds.forEach((end, index) => {
-      end.labelY = Math.max(room.top + 8, end.y,
-        index === 0 ? room.top + 8 : roomEnds[index - 1].labelY + 14);
-    });
-    // Pack back upwards when several rooms finish at similar temperatures.
-    for (let index = roomEnds.length - 1; index >= 0; index--) {
-      roomEnds[index].labelY = Math.min(roomEnds[index].labelY,
-        index === roomEnds.length - 1 ? room.top + room.height - 6 : roomEnds[index + 1].labelY - 14);
-    }
+    const roomPositions = placeSeriesLabels(roomEnds.map(end => end.y), room.top, room.height);
+    roomEnds.forEach((end, index) => { end.labelY = roomPositions[index]; });
 
     // Zero is always on the axis, and a window that cost next to nothing keeps
     // a ten-krona span so its noise is not drawn as a cliff.
@@ -407,33 +402,31 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       return last === null || last === undefined || !Number.isFinite(last)
         ? [] : [{ line, value: last, y: costY(last), labelY: costY(last) }];
     }).sort((a, b) => a.y - b.y);
-    costEnds.forEach((end, index) => {
-      if (index > 0) end.labelY = Math.max(end.labelY, costEnds[index - 1].labelY + 11);
-    });
+    const costPositions = placeSeriesLabels(costEnds.map(end => end.y), cost.top, cost.height);
+    costEnds.forEach((end, index) => { end.labelY = costPositions[index]; });
 
     return {
       x, axisY, height: scoreStrip ? scoreStrip.top + scoreStrip.height + 10 : axisY + 42, scoreStrip,
       price, priceY, priceMin, priceMax, buy, sell, bands,
       quotedBuy, modelledBuy, hasModelledPrice,
-      flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
+      flow, flowY, flowMin, flowMax, flows, supply, disposal, flowLabels,
       load, loadY, loadMax, loadBands, loadLabels, water, showWater,
       soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
       room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
       cost, costY, costMin, costMax, costEnds, showCost,
     };
-  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden]);
+  }, [baseValues, n, rows, series, showSoc, t, quarterScores, quarterAudit, realPrices, poolTargetC, costLines, storeLines, rooms, hidden, right]);
 
   const {
     x, axisY, height, scoreStrip, price, priceY, priceMin, priceMax, buy, sell, bands,
     quotedBuy, modelledBuy, hasModelledPrice,
-    flow, flowY, flowMin, flowMax, supply, disposal, flowLabels,
+    flow, flowY, flowMin, flowMax, flows, supply, disposal, flowLabels,
     load, loadY, loadMax, loadBands, loadLabels, water, showWater,
     soc, socY, pool, poolY, poolC, showPool, poolMin, poolMax,
     room, roomY, roomLines, roomEnds, showRooms, roomMin, roomMax,
     cost, costY, costMin, costMax, costEnds, showCost,
   } = geometry;
 
-  const viewWidth = VIEW_W + (showRooms ? 180 : 0);
 
   const gradientId = `energy-price-ramp-${chartId}`;
   const priceStroke = bands ? `url(#${gradientId})` : 'var(--plan-price-4)';
@@ -458,12 +451,12 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     const box = svg.getBoundingClientRect();
     if (box.width === 0) return null;
     const viewX = (clientX - box.left) * (viewWidth / box.width);
-    const index = Math.floor(((viewX - MARGIN_LEFT) / PLOT_W) * n);
+    const index = Math.floor(((viewX - MARGIN_LEFT) / plotWidth) * n);
     return index < 0 || index >= n ? null : index;
   };
 
   const handleMove = (event: React.PointerEvent<SVGSVGElement>) => {
-    if ((event.target as Element).closest('[data-room-label]')) {
+    if ((event.target as Element).closest('[data-series-control]')) {
       setHover(null); setPointer(null); return;
     }
     const wrap = wrapRef.current;
@@ -476,7 +469,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   };
 
   const handleKey = (event: React.KeyboardEvent<SVGSVGElement>) => {
-    if ((event.target as Element).closest('[data-room-label]')) return;
+    if ((event.target as Element).closest('[data-series-control]')) return;
     if ((event.key === 'Enter' || event.key === ' ') && onQuarterClick) {
       event.preventDefault();
       onQuarterClick(hover ?? Math.max(0, selectedIndex));
@@ -493,6 +486,25 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       top: svgBox.top - wrapBox.top + flow.top * svgBox.height / height });
   };
 
+  const presentation = (id: EnergySeriesId) => ({
+    'data-series': id,
+    opacity: hidden.has(id) ? 0 : seriesOpacity(id, spotlight),
+    className: 'transition-opacity duration-150 motion-reduce:transition-none',
+  });
+  const point = (id: EnergySeriesId | null) => { setPointedSeries(id); setHover(null); setPointer(null); };
+  const focus = (id: EnergySeriesId | null) => { setFocusedSeries(id); setHover(null); setPointer(null); };
+  const toggle = (id: EnergySeriesId) => setHidden(current => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
+  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, note?: string | null) => (
+    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} note={note}
+      right={right} width={viewWidth} hidden={hidden.has(id)} active={spotlight?.has(id) ?? false}
+      onPoint={point} onFocusSeries={focus} onToggle={toggle} />
+  );
+  const energy = (values: readonly (number | null)[]) => `${(values.reduce<number>((sum, w) => sum + (w !== null && Number.isFinite(w) ? Math.abs(w) : 0), 0) / 4000).toFixed(1)} kWh`;
+
   const hovered = hover === null ? null : rows[hover];
   const comparedNote = storeLines ? ` · ${t('streckat', 'dashed')} = ${storeLines.name}` : '';
   const planWidth = dividerIndex >= n ? 0 : x(n) - x(dividerIndex);
@@ -501,13 +513,15 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     <div ref={wrapRef} className="relative">
       <div className="rounded-lg border bg-card">
         <div className="overflow-x-auto">
+        <div ref={canvasRef} className="min-w-[1000px]">
         <svg
           ref={svgRef}
+          data-window-start={rows[0]?.startMs} data-divider-index={dividerIndex}
           viewBox={`0 0 ${viewWidth} ${height}`}
           preserveAspectRatio="xMidYMid meet"
-          className={`block h-auto w-full ${showRooms ? 'min-w-[1000px]' : 'min-w-[760px]'} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+          className="block h-auto w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           style={onQuarterClick ? { cursor: 'pointer' } : undefined}
-          role={showRooms ? 'group' : 'img'}
+          role="group"
           tabIndex={0}
           aria-label={showCost
             ? t(
@@ -522,7 +536,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           onPointerLeave={() => { setHover(null); setPointer(null); }}
           onKeyDown={handleKey}
           onClick={event => {
-            if ((event.target as Element).closest('[data-room-label]')) return;
+            if ((event.target as Element).closest('[data-series-control]')) return;
             const index = quarterAt(event.clientX) ?? hover;
             if (index !== null) onQuarterClick?.(index);
           }}
@@ -572,40 +586,37 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               {Array.from({ length: PRICE_RAMP_STEPS }, (_, step) => (
                 <rect
                   key={step}
-                  x={RIGHT - PRICE_RAMP_STEPS * 13 - 6 + step * 13}
-                  y={price.top - 23} width={12} height={9}
+                  x={right + 58 + step * 13}
+                  y={price.top + 50} width={12} height={9}
                   fill={`var(--plan-price-${step + 1})`}
                 />
               ))}
               <text
-                x={RIGHT - PRICE_RAMP_STEPS * 13 - 12} y={price.top - 15}
+                x={right + 50} y={price.top + 58}
                 textAnchor="end" className={AXIS_TEXT}
               >
                 {bands.min.toFixed(2)}
               </text>
-              <text x={RIGHT + 2} y={price.top - 15} className={AXIS_TEXT}>
+              <text x={right + 60 + PRICE_RAMP_STEPS * 13} y={price.top + 58} className={AXIS_TEXT}>
                 {bands.max.toFixed(2)}+
               </text>
             </g>
           )}
-          <Gridlines
+          <Gridlines right={right}
             ticks={niceTicks(priceMin, priceMax, 3)} y={priceY}
             format={tick => tick.toFixed(tick !== 0 && Math.abs(tick) < 0.1 ? 2 : 1)}
           />
           {priceMin < 0 && (
             <line
-              x1={MARGIN_LEFT} x2={RIGHT} y1={priceY(0)} y2={priceY(0)}
+              x1={MARGIN_LEFT} x2={right} y1={priceY(0)} y2={priceY(0)}
               className="stroke-foreground" strokeWidth={1.25}
             />
           )}
           {/* A thinner wash under the estimated stretch, so the difference is
               legible from across the room rather than only on hover. */}
+          <g {...presentation('price:buy')}>
           <path d={stepAreaPath(quotedBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.2} />
           <path d={stepAreaPath(modelledBuy, x, priceY, 0)} fill={priceStroke} fillOpacity={0.08} />
-          <path
-            id="plan-sell-price" d={stepLinePath(sell, x, priceY)} fill="none"
-            className="stroke-muted-foreground" strokeWidth={1.25}
-          />
           <path
             d={stepLinePath(realPrices ? buy : quotedBuy, x, priceY)} fill="none"
             stroke={priceStroke} strokeWidth={3} strokeLinejoin="round"
@@ -620,6 +631,18 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             />
           )}
 
+          </g>
+          <g {...presentation('price:sell')}>
+          <path
+            id="plan-sell-price" d={stepLinePath(sell, x, priceY)} fill="none"
+            className="stroke-muted-foreground" strokeWidth={1.25}
+          />
+          </g>
+          {control('price:buy', t('Köppris', 'Buy price'), 'var(--plan-price-5)', price.top + 12,
+            buy[n - 1] === null ? '—' : `${buy[n - 1]?.toFixed(2)} kr/kWh`)}
+          {control('price:sell', t('Säljpris', 'Sell price'), 'var(--plan-base)', price.top + 32,
+            sell[n - 1] === null ? '—' : `${sell[n - 1]?.toFixed(2)} kr/kWh`)}
+
           {/* ---------------------------------------------------- Flows --- */}
           <PanelHeading
             title={t('Effektflöden', 'Power flows')}
@@ -629,7 +652,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             )}
             y={flow.top - 14}
           />
-          <Gridlines
+          <Gridlines right={right}
             ticks={niceTicks(flowMin, flowMax, 4)} y={flowY}
             format={tick => tick.toFixed(Math.abs(tick) >= 10 ? 0 : 1)}
           />
@@ -637,6 +660,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             <path
               key={`supply-${index}`} d={stepBandPath(supply[index], x, flowY)}
               data-band={['solar', 'battery', 'grid'][index]}
+              {...presentation(SUPPLY_IDS[index])}
               fill={colour} fillOpacity={0.9}
             />
           ))}
@@ -644,6 +668,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             <path
               key={`disposal-${index}`} d={stepBandPath(disposal[index], x, flowY)}
               data-band={['battery', 'grid'][index]}
+              {...presentation(DISPOSAL_IDS[index])}
               fill={colour} fillOpacity={0.42}
             />
           ))}
@@ -656,14 +681,22 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             />
           ))}
           <line
-            x1={MARGIN_LEFT} x2={RIGHT} y1={flowY(0)} y2={flowY(0)}
+            x1={MARGIN_LEFT} x2={right} y1={flowY(0)} y2={flowY(0)}
             className="stroke-foreground" strokeWidth={1.25}
           />
           {flowLabels.map(placement => (
-            <InlineLabel key={placement.band} placement={placement}>
-              {FLOW_NAMES(t)[placement.band]}
-            </InlineLabel>
+            <g key={placement.band} opacity={hidden.has(FLOW_IDS[placement.band]) ? 0 : seriesOpacity(FLOW_IDS[placement.band], spotlight)}>
+              <InlineLabel placement={placement}>{FLOW_NAMES(t)[placement.band]}</InlineLabel>
+            </g>
           ))}
+
+          {([
+            ['flow:solar', t('Sol till huset', 'Solar to house'), PLAN_COLOURS.solar, flows.solarDirect],
+            ['flow:battery-out', t('Batteri ut', 'Battery out'), PLAN_COLOURS.battery, flows.batteryOut],
+            ['flow:grid-in', t('Nätimport', 'Grid in'), PLAN_COLOURS.grid, flows.gridIn],
+            ['flow:battery-in', t('Batteri in', 'Battery in'), PLAN_COLOURS.battery, flows.batteryIn],
+            ['flow:grid-out', t('Nätexport', 'Grid out'), PLAN_COLOURS.grid, flows.gridOut],
+          ] as const).map(([id, name, colour, values], index) => control(id, name, colour, flow.top + 12 + index * 20, energy(values)))}
 
           {/* ---------------------------------------------- Consumption --- */}
           <PanelHeading
@@ -674,7 +707,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             )}
             y={load.top - 14}
           />
-          <Gridlines
+          <Gridlines right={right}
             ticks={niceTicks(0, loadMax, 3)} y={loadY}
             format={tick => tick.toFixed(Math.abs(tick) >= 10 ? 0 : 1)}
           />
@@ -682,6 +715,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             <path
               key={index === 0 ? 'base' : series[index - 1].key}
               data-band={index === 0 ? 'base' : series[index - 1].key}
+              {...presentation(index === 0 ? 'base' : `load:${series[index - 1].key}`)}
               d={stepBandPath(band, x, loadY)}
               fill={index === 0 ? PLAN_COLOURS.base : seriesColour(series[index - 1])}
               fillOpacity={0.92}
@@ -695,108 +729,74 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             />
           ))}
           {loadLabels.filter(placement => placement.band > 0).map(placement => (
-            <InlineLabel key={series[placement.band - 1].key} placement={placement}>
-              {shorten(series[placement.band - 1].name)}
-            </InlineLabel>
+            <g key={series[placement.band - 1].key} {...presentation(`load:${series[placement.band - 1].key}`)}>
+              <InlineLabel placement={placement}>{shorten(series[placement.band - 1].name)}</InlineLabel>
+            </g>
           ))}
           {/* Solar as an outline over the stack, so "did the sun cover it?" is
               one comparison between two edges rather than a hunt through fills. */}
-          {!hidden.has('solar') && <path
+          <path {...presentation('solar:outline')}
             d={stepLinePath(rows.map(row => kw(row.solarW)), x, loadY)}
             fill="none" stroke={PLAN_COLOURS.solar} strokeWidth={2}
             strokeDasharray="1 3" strokeLinecap="round"
-          />}
+          />
+
+          {series.map((entry, index) => control(`load:${entry.key}`, entry.name, seriesColour(entry), load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
+          {control('base', t('Baslast', 'Base load'), PLAN_COLOURS.base, load.top + 12 + series.length * 18, energy(baseValues))}
+          {control('solar:outline', t('Solproduktion', 'Solar production'), PLAN_COLOURS.solar, load.top + 30 + series.length * 18, energy(rows.map(row => row.solarW)))}
 
           {/* -------------------------------------------------- Storage --- */}
-          {showSoc && (
-            <g id="plan-storage">
-              <PanelHeading title={t('Lager', 'Storage')} unit={`%${comparedNote}`} y={soc.top - 14} />
-              <Gridlines ticks={[0, 50, 100]} y={socY} format={tick => String(tick)} />
-              {hasBattery && (
-                <path
-                  d={stepAreaPath(rows.map(row => row.homeSoc), x, socY, 0)}
-                  fill={PLAN_COLOURS.battery} fillOpacity={0.2}
-                />
-              )}
-              {/* Under the plan's own lines: where the two planners agree there
-                  is one line, and a dash only shows where they part. */}
-              {storeLines && hasBattery && (
-                <path
-                  d={stepLinePath(storeLines.homeSoc.slice(0, n), x, socY)}
-                  fill="none" stroke={PLAN_COLOURS.battery}
-                  strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH}
-                />
-              )}
-              {storeLines && hasEvBattery && (
-                <path
-                  d={midpointLinePath(storeLines.evSoc.slice(0, n), x, socY)}
-                  fill="none" stroke={PLAN_COLOURS.ev}
-                  strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH}
-                />
-              )}
-              {hasBattery && (
-                <path
-                  d={stepLinePath(rows.map(row => row.homeSoc), x, socY)}
-                  fill="none" stroke={PLAN_COLOURS.battery} strokeWidth={2}
-                />
-              )}
-              {hasEvBattery && (
-                <path
-                  d={midpointLinePath(rows.map(row => row.evSoc), x, socY)}
-                  fill="none" stroke={PLAN_COLOURS.ev} strokeWidth={2}
-                />
-              )}
-              {hasBattery && rows[n - 1]?.homeSoc !== null && (
-                <EndLabel y={socY(rows[n - 1].homeSoc as number)} colour={PLAN_COLOURS.battery}>
-                  {`${t('hem', 'home')} ${Math.round(rows[n - 1].homeSoc as number)}%`}
-                </EndLabel>
-              )}
-              {hasEvBattery && rows[n - 1]?.evSoc !== null && (
-                <EndLabel y={socY(rows[n - 1].evSoc as number)} colour={PLAN_COLOURS.ev}>
-                  {`${t('bil', 'car')} ${Math.round(rows[n - 1].evSoc as number)}%`}
-                </EndLabel>
-              )}
-            </g>
-          )}
+          {showSoc && <g id="plan-storage">
+            <PanelHeading title={t('Lager', 'Storage')} unit={`%${comparedNote}`} y={soc.top - 14} />
+            <Gridlines right={right} ticks={[0, 50, 100]} y={socY} format={tick => String(tick)} />
+            {hasBattery && <g {...presentation('soc:home')}>
+              <path d={stepAreaPath(rows.map(row => row.homeSoc), x, socY, 0)} fill={PLAN_COLOURS.battery} fillOpacity={0.2} />
+              {storeLines && <path d={stepLinePath(storeLines.homeSoc.slice(0, n), x, socY)} fill="none"
+                stroke={PLAN_COLOURS.battery} strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH} />}
+              <path d={stepLinePath(rows.map(row => row.homeSoc), x, socY)} fill="none"
+                stroke={PLAN_COLOURS.battery} strokeWidth={spotlight?.has('soc:home') ? 3 : 2} />
+            </g>}
+            {hasEvBattery && <g {...presentation('soc:car')}>
+              {storeLines && <path d={midpointLinePath(storeLines.evSoc.slice(0, n), x, socY)} fill="none"
+                stroke={PLAN_COLOURS.ev} strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH} />}
+              <path d={midpointLinePath(rows.map(row => row.evSoc), x, socY)} fill="none"
+                stroke={PLAN_COLOURS.ev} strokeWidth={spotlight?.has('soc:car') ? 3 : 2} />
+            </g>}
+            {(() => {
+              const stores = [
+                ...(hasBattery ? [{ id: 'soc:home' as const, name: t('Hembatteri', 'Home battery'), colour: PLAN_COLOURS.battery, value: rows[n - 1]?.homeSoc }] : []),
+                ...(hasEvBattery ? [{ id: 'soc:car' as const, name: t('Bilbatteri', 'Car battery'), colour: PLAN_COLOURS.ev, value: rows[n - 1]?.evSoc }] : []),
+              ].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+              const anchors = stores.map(store => store.value == null ? soc.top + 12 : socY(store.value));
+              const positions = placeSeriesLabels(anchors, soc.top, soc.height);
+              return stores.map((store, index) => control(store.id, store.name, store.colour, positions[index],
+                store.value == null ? '—' : `${Math.round(store.value)}%`, store.value == null ? undefined : anchors[index]));
+            })()}
+          </g>}
 
           {/* ---------------------------------------------- Temperature --- */}
-          {showPool && (
-            <g id="plan-temperature">
-              <PanelHeading
-                title={t('Temperatur', 'Temperature')}
-                unit={`${t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}${comparedNote}`}
-                y={pool.top - 14}
-              />
-              <Gridlines ticks={niceTicks(poolMin, poolMax, 4)} y={poolY} format={tick => tick.toFixed(1)} />
-              {poolTargetC !== null && (
-                <>
-                  <line
-                    x1={MARGIN_LEFT} x2={RIGHT} y1={poolY(poolTargetC)} y2={poolY(poolTargetC)}
-                    stroke={PLAN_COLOURS.grid} strokeWidth={1} strokeDasharray="2 3"
-                  />
-                  <text x={MARGIN_LEFT + 4} y={poolY(poolTargetC) - 3} className="text-[9px]" fill={PLAN_COLOURS.grid}>
-                    {`${poolTargetC} °C ${t('mål', 'target')}`}
-                  </text>
-                </>
-              )}
-              {storeLines && (
-                <path
-                  d={midpointLinePath(storeLines.poolC.slice(0, n), x, poolY)} fill="none"
-                  stroke={POOL_COLOUR} strokeWidth={COMPARED_WIDTH} strokeLinejoin="round"
-                  strokeDasharray={COMPARED_DASH}
-                />
-              )}
-              <path
-                d={midpointLinePath(poolC, x, poolY)} fill="none"
-                stroke={POOL_COLOUR} strokeWidth={2} strokeLinejoin="round"
-              />
-              {poolC[n - 1] !== null && (
-                <EndLabel y={poolY(poolC[n - 1] as number)} colour={POOL_COLOUR}>
-                  {`${t('pool', 'pool')} ${(poolC[n - 1] as number).toFixed(1)} °C`}
-                </EndLabel>
-              )}
+          {showPool && <g id="plan-temperature">
+            <PanelHeading title={t('Temperatur', 'Temperature')}
+              unit={`${t('°C · uppmätt före nu, planerad efter', '°C · measured before now, planned after')}${comparedNote}`} y={pool.top - 14} />
+            <Gridlines right={right} ticks={niceTicks(poolMin, poolMax, 4)} y={poolY} format={tick => tick.toFixed(1)} />
+            <g {...presentation('temperature:pool')}>
+              {poolTargetC !== null && <>
+                <line x1={MARGIN_LEFT} x2={right} y1={poolY(poolTargetC)} y2={poolY(poolTargetC)}
+                  stroke={PLAN_COLOURS.grid} strokeWidth={1} strokeDasharray="2 3" />
+                <text x={MARGIN_LEFT + 4} y={poolY(poolTargetC) - 3} className="text-[9px]" fill={PLAN_COLOURS.grid}>
+                  {`${poolTargetC} °C ${t('mål', 'target')}`}
+                </text>
+              </>}
+              {storeLines && <path d={midpointLinePath(storeLines.poolC.slice(0, n), x, poolY)} fill="none"
+                stroke={POOL_COLOUR} strokeWidth={COMPARED_WIDTH} strokeLinejoin="round" strokeDasharray={COMPARED_DASH} />}
+              <path d={midpointLinePath(poolC, x, poolY)} fill="none" stroke={POOL_COLOUR}
+                strokeWidth={spotlight?.has('temperature:pool') ? 3 : 2} strokeLinejoin="round" />
             </g>
-          )}
+            {control('temperature:pool', t('Pool', 'Pool'), POOL_COLOUR,
+              poolC[n - 1] == null ? pool.top + 12 : poolY(poolC[n - 1]!),
+              poolC[n - 1] == null ? '—' : `${poolC[n - 1]!.toFixed(1)} °C`,
+              poolC[n - 1] == null ? undefined : poolY(poolC[n - 1]!))}
+          </g>}
 
           {/* ----------------------------------------- Room temperature --- */}
           {showRooms && (
@@ -806,44 +806,22 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                 unit={t('°C · uppmätt före nu, planerad efter · streckat = komfort', '°C · measured before now, planned after · dashed = comfort')}
                 y={room.top - 14}
               />
-              <Gridlines ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
+              <Gridlines right={right} ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
               {roomLines.map(line => (
                 <g key={line.key} data-room={line.key}
-                  opacity={highlightedRoom !== null && highlightedRoom !== line.key ? 0.18 : 1}
-                  className="transition-opacity duration-150 motion-reduce:transition-none">
+                  {...presentation(`room:${line.key}`)}>
                   <path
                     d={stepLinePath(line.comfortMin, x, roomY)} fill="none"
-                    stroke={line.colour} strokeWidth={highlightedRoom === line.key ? 1.5 : 1} strokeOpacity={0.7} strokeDasharray="2 3"
+                    stroke={line.colour} strokeWidth={spotlight?.has(`room:${line.key}`) ? 1.5 : 1} strokeOpacity={0.7} strokeDasharray="2 3"
                   />
                   <path
                     d={midpointLinePath(line.values, x, roomY)} fill="none"
-                    stroke={line.colour} strokeWidth={highlightedRoom === line.key ? 3 : 2} strokeLinejoin="round"
+                    stroke={line.colour} strokeWidth={spotlight?.has(`room:${line.key}`) ? 3 : 2} strokeLinejoin="round"
                   />
                 </g>
               ))}
-              {roomEnds.map(end => (
-                <g key={end.line.key} data-room-label={end.line.key}
-                  onPointerEnter={() => setHoveredRoom(end.line.key)}
-                  onPointerLeave={() => setHoveredRoom(null)}>
-                  <title>{[end.line.name, `${end.value.toFixed(1)} °C`, end.line.note].filter(Boolean).join(' · ')}</title>
-                  <path d={`M ${RIGHT} ${end.y} L ${RIGHT + 8} ${end.y} L ${RIGHT + 18} ${end.labelY}`}
-                    fill="none" stroke={end.line.colour} strokeWidth={1} strokeOpacity={0.7} />
-                  <circle cx={RIGHT} cy={end.y} r={2.5} fill={end.line.colour} />
-                  <foreignObject x={RIGHT + 22} y={end.labelY - 9} width={175} height={14}>
-                    <button type="button"
-                      aria-label={`${t('Markera', 'Highlight')} ${end.line.name}`}
-                      onFocus={() => { setFocusedRoom(end.line.key); setHover(null); setPointer(null); }}
-                      onBlur={() => setFocusedRoom(null)}
-                      onClick={event => event.currentTarget.focus()}
-                      className={`block w-full truncate text-left text-[12px] leading-[14px] text-foreground focus-visible:underline ${highlightedRoom === end.line.key ? 'font-semibold' : ''}`}>
-                      {end.line.name}
-                    </button>
-                  </foreignObject>
-                  <text x={viewWidth - 10} y={end.labelY + 3} textAnchor="end" className={AXIS_TEXT}>
-                    {`${end.value.toFixed(1)} °C`}
-                  </text>
-                </g>
-              ))}
+              {roomEnds.map(end => control(`room:${end.line.key}`, end.line.name, end.line.colour,
+                end.labelY, `${end.value.toFixed(1)} °C`, end.y, end.line.note))}
             </g>
           )}
 
@@ -858,25 +836,22 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                 ].join(' · ')}
                 y={cost.top - 14}
               />
-              <Gridlines ticks={niceTicks(costMin, costMax, 3)} y={costY} format={tick => tick.toFixed(0)} />
+              <Gridlines right={right} ticks={niceTicks(costMin, costMax, 3)} y={costY} format={tick => tick.toFixed(0)} />
               {costMin < 0 && (
                 <line
-                  x1={MARGIN_LEFT} x2={RIGHT} y1={costY(0)} y2={costY(0)}
+                  x1={MARGIN_LEFT} x2={right} y1={costY(0)} y2={costY(0)}
                   className="stroke-foreground" strokeWidth={1.25}
                 />
               )}
               {costLines.map(line => (
                 <path
-                  key={line.key} d={stepLinePath(line.values.slice(0, n), x, costY)} fill="none"
+                  key={line.key} {...presentation(`cost:${line.key}`)} d={stepLinePath(line.values.slice(0, n), x, costY)} fill="none"
                   stroke={line.colour} strokeWidth={line.dashed ? COMPARED_WIDTH : 2.2} strokeLinejoin="round"
                   strokeDasharray={line.dashed ? COMPARED_DASH : undefined}
                 />
               ))}
-              {costEnds.map(end => (
-                <EndLabel key={end.line.key} y={end.y} labelY={end.labelY} colour={end.line.colour}>
-                  {`${end.value.toFixed(0)} kr`}
-                </EndLabel>
-              ))}
+              {costEnds.map(end => control(`cost:${end.line.key}`, end.line.name, end.line.colour,
+                end.labelY, `${end.value.toFixed(0)} kr`, end.y))}
             </g>
           )}
 
@@ -934,7 +909,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
 
           {/* ------------------------------------------------- X axis ----- */}
           <line
-            x1={MARGIN_LEFT} x2={RIGHT} y1={axisY} y2={axisY}
+            x1={MARGIN_LEFT} x2={right} y1={axisY} y2={axisY}
             className="stroke-border" strokeWidth={1}
           />
           {hourTicks.map(({ index, date }) => (
@@ -960,7 +935,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           {scoreStrip && (
             <g id="plan-slot-control"><g id={quarterAudit ? "plan-audit" : quarterScores ? "plan-score" : undefined}>
               <line
-                x1={MARGIN_LEFT} x2={RIGHT} y1={scoreStrip.top - 22} y2={scoreStrip.top - 22}
+                x1={MARGIN_LEFT} x2={right} y1={scoreStrip.top - 22} y2={scoreStrip.top - 22}
                 className="stroke-border" strokeWidth={1}
               />
               <PanelHeading
@@ -968,7 +943,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                 unit={quarterAudit?.description ?? (quarterScores ? t('regelpoäng per kvart', 'rule points per quarter') : t('blå: tillåten · tom: spärrad', 'blue: allowed · empty: blocked'))}
                 y={scoreStrip.top - 6}
               />
-              {quarterAudit?.lanes.map((lane, laneIndex) => <SlotControlLane key={lane.key}
+              {quarterAudit?.lanes.map((lane, laneIndex) => <SlotControlLane right={right} key={lane.key}
                 device={lane.key} label={lane.label} top={scoreStrip.top + laneIndex * 28} energy={lane.energy} t={t}>
                 {lane.cells.map((cell, index) => {
                   if (!cell.description) return null;
@@ -1011,7 +986,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               })}
           {showWater && (
             <g id="plan-water-lane">
-              <SlotControlLane device="boiler" label={t('Beredare', 'Boiler')} top={water.top} energy={quarterAudit?.boilerEnergy} t={t}>
+              <SlotControlLane right={right} device="boiler" label={t('Beredare', 'Boiler')} top={water.top} energy={quarterAudit?.boilerEnergy} t={t}>
               {rows.map((row, index) => {
                 const state = row.hotWater?.state;
                 if (!state || state === 'uncontrolled') return null;
@@ -1045,7 +1020,12 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           )}
         </svg>
         </div>
+        </div>
+
         {scoreDetail && <div className="border-t px-3 py-2 text-sm">{scoreDetail}</div>}
+        <p className="border-t px-3 py-1.5 text-xs text-muted-foreground">{t(
+          'Peka på ett namn för att följa relaterade serier. Klicka för att dölja eller visa serien.',
+          'Hover a name to follow related series. Click to hide or show that series.')}</p>
       </div>
 
       {hovered && pointer && (

@@ -104,7 +104,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
   const [requestingReplan, setRequestingReplan] = useState(false);
   // The chart always loads the full window and slices locally, so this is
   // presentation state and never triggers a refetch.
-  const [dayWindow, setDayWindow] = useState<DayWindow>(0);
+  const [dayWindow, setDayWindow] = useState<DayWindow>('upcoming');
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
 
@@ -633,7 +633,9 @@ const PlanView: React.FC<{
   const dayWindowOptions = availableDayWindows(timeline, nowMs, homeTimeZone);
   const timelineRange = dayWindowRange(timeline, dayWindow, nowMs, homeTimeZone);
   const windowSummary = summariseTimeline(timeline, timelineRange);
-  const windowLabel = dayWindow === 'all'
+  const windowLabel = dayWindow === 'upcoming'
+    ? t('kommande plan', 'upcoming plan')
+    : dayWindow === 'all'
     ? t('hela perioden', 'the whole period')
     : dayWindow === 0
       ? t('idag', 'today')

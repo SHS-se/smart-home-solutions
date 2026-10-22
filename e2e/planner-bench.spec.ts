@@ -356,9 +356,14 @@ test.describe('planner bench', () => {
     await expect(strip.locator('[data-audit-marker="sourceKnown"]')).toHaveCount(1);
     await expect(strip.locator('[data-audit-marker="destinationKnown"]')).toHaveCount(1);
     await expect(strip).not.toContainText('1.25');
-    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    const box = (await chart.boundingBox())!;
-    await chart.click({ position: { x: box.width * (58 + 24.5 / 288 * 1010) / 1160, y: box.height * .2 } });
+    const chart = page.getByRole('group', { name: /power flows|effektflöden/i }).first();
+    const position = await chart.evaluate(element => {
+      const svg = element as SVGSVGElement;
+      const grid = svg.querySelector('[data-chart-grid]')!;
+      const left = Number(grid.getAttribute('x1')), right = Number(grid.getAttribute('x2'));
+      return { x: left + 24.5 / 288 * (right - left), y: svg.viewBox.baseVal.height * .2 };
+    });
+    await chart.click({ position });
     const detail = page.locator('#bench-quarter-explanation');
     await expect(detail.locator('[data-finding-id="k1"]')).toContainText('Price spread not used');
     await expect(detail.locator('[data-finding-id="k1"]')).toContainText(/Known in advance|Känt i förväg/);
@@ -386,9 +391,14 @@ test.describe('planner bench', () => {
     const strip = page.locator('#plan-audit');
     await expect(strip.locator('[data-audit-marker="sourceHindsight"]')).toHaveCount(4);
     await expect(strip.locator('[data-audit-marker="destinationHindsight"]')).toHaveCount(4);
-    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
-    const box = (await chart.boundingBox())!;
-    await chart.click({ position: { x: box.width * (58 + 24.5 / 288 * 1010) / 1160, y: box.height * .2 } });
+    const chart = page.getByRole('group', { name: /power flows|effektflöden/i }).first();
+    const position = await chart.evaluate(element => {
+      const svg = element as SVGSVGElement;
+      const grid = svg.querySelector('[data-chart-grid]')!;
+      const left = Number(grid.getAttribute('x1')), right = Number(grid.getAttribute('x2'));
+      return { x: left + 24.5 / 288 * (right - left), y: svg.viewBox.baseVal.height * .2 };
+    });
+    await chart.click({ position });
     const detail = page.locator('#bench-quarter-explanation');
     await expect(detail.locator('[data-finding-id]')).toHaveCount(2);
     const hindsight = detail.locator('[data-finding-id="h1"]');
@@ -547,7 +557,7 @@ test.describe('planner bench', () => {
     await expect(pending).not.toContainText(/dev [−-]?\d+|main [−-]?\d+/);
     await pending.click();
     await expect(page.getByText(/measurement window ends tomorrow/)).toBeVisible();
-    await expect(page.getByRole('img', { name: /power flows|effektflöden/i })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: /power flows|effektflöden/i })).toHaveCount(0);
   });
 
   test('changed case inputs cannot enter an otherwise current suite score', async ({ context, page }) => {
@@ -711,7 +721,7 @@ test.describe('planner bench', () => {
     expect(why.y - (strip.y + strip.height)).toBeLessThan(40);
 
     // Clicking a quarter opens its audit details and service deductions.
-    const plan = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    const plan = page.getByRole('group', { name: /power flows|effektflöden/i }).first();
     const box = (await plan.boundingBox())!;
     await plan.click({ position: { x: box.width * 0.2, y: box.height * 0.5 } });
     await expect(page.locator('#bench-quarter-explanation')).toContainText(/Service deductions|Serviceavdrag/);
@@ -768,8 +778,8 @@ test.describe('planner bench', () => {
     await expect(compared).toHaveCount(2);
     await expect(page.locator('#plan-storage')).toContainText(/(dashed|streckat) = main/);
     await expect(page.locator('#plan-temperature')).toContainText(/(dashed|streckat) = main/);
-    await page.getByRole('img', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
-    const chart = page.getByRole('img', { name: /power flows|effektflöden/i }).first();
+    await page.getByRole('group', { name: /power flows|effektflöden/i }).first().screenshot({ path: test.info().outputPath('plan-chart.png') });
+    const chart = page.getByRole('group', { name: /power flows|effektflöden/i }).first();
     await expect(chart).toBeVisible();
     const drawn = await chart.innerHTML();
     await page.locator('#bench-show-current').click();
