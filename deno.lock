@@ -268,7 +268,7 @@
         "npm:typescript@^5.8.3",
         "npm:vaul@~0.9.9",
         "npm:vite@^6.4.5",
-        "npm:wrangler@^4.103.0",
+        "npm:wrangler@^4.151.3",
         "npm:zod@^3.25.76"
       ]
     }

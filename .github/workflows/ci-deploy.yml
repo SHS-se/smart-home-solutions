@@ -399,7 +399,7 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          WRANGLER="npx -y wrangler@4.103.0"
+          WRANGLER="npx -y wrangler@4.151.3"
           # main -> prod project, dev -> test project. Each project's production branch is the
           # deploying branch, so deploying that branch is a PRODUCTION deploy served at the clean
           # <project>.pages.dev URL (no hash).

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { consumeRateLimit } from "../_shared/rate-limit.ts";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
 
 const corsHeaders = {
@@ -15,11 +16,6 @@ interface ContactEmailRequest {
   message: string;
   website?: string;
   draft_answers?: Array<{ question_id: string; answer_text: string; answer_value?: unknown }>;
-}
-
-interface RateLimitRecord {
-  request_count: number;
-  window_start: string;
 }
 
 const RATE_LIMIT = 5;
@@ -44,56 +40,6 @@ function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim()
     || req.headers.get('x-real-ip')
     || 'unknown';
-}
-
-async function checkRateLimit(
-  supabase: SupabaseClient,
-  identifier: string,
-  endpoint: string
-): Promise<{ allowed: boolean; remaining: number }> {
-  const windowStart = new Date(Date.now() - RATE_WINDOW_MINUTES * 60 * 1000).toISOString();
-
-  const { data: existing, error: selectError } = await supabase
-    .from('rate_limits')
-    .select('request_count, window_start')
-    .eq('identifier', identifier)
-    .eq('endpoint', endpoint)
-    .single();
-
-  if (selectError && selectError.code !== 'PGRST116') {
-    console.error('Rate limit check error:', selectError);
-    return { allowed: true, remaining: RATE_LIMIT - 1 };
-  }
-
-  const now = new Date().toISOString();
-  const record = existing as RateLimitRecord | null;
-
-  if (record) {
-    if (new Date(record.window_start) < new Date(windowStart)) {
-      await supabase
-        .from('rate_limits')
-        .update({ request_count: 1, window_start: now })
-        .eq('identifier', identifier)
-        .eq('endpoint', endpoint);
-      return { allowed: true, remaining: RATE_LIMIT - 1 };
-    }
-
-    if (record.request_count >= RATE_LIMIT) {
-      return { allowed: false, remaining: 0 };
-    }
-
-    await supabase
-      .from('rate_limits')
-      .update({ request_count: record.request_count + 1 })
-      .eq('identifier', identifier)
-      .eq('endpoint', endpoint);
-    return { allowed: true, remaining: RATE_LIMIT - record.request_count - 1 };
-  } else {
-    await supabase
-      .from('rate_limits')
-      .insert({ identifier, endpoint, request_count: 1, window_start: now });
-    return { allowed: true, remaining: RATE_LIMIT - 1 };
-  }
 }
 
 async function logIntakeEvent(
@@ -419,7 +365,7 @@ const handler = async (req: Request): Promise<Response> => {
     const clientIP = getClientIP(req);
 
     // ---- Rate limit ----
-    const { allowed, remaining } = await checkRateLimit(supabase, clientIP, 'contact_form');
+    const { allowed, remaining } = await consumeRateLimit(supabase, clientIP, 'contact_form', RATE_LIMIT, RATE_WINDOW_MINUTES * 60);
 
     if (!allowed) {
       console.log(`Rate limit exceeded for IP: ${clientIP}`);

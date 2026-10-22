@@ -1,3 +1,5 @@
+import { consumeRateLimit } from "../_shared/rate-limit.ts";
+import { claimVerificationToken } from "../_shared/verification-token.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
@@ -44,37 +46,13 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     // Rate limit check (DB-backed)
-    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+    const { allowed } = await consumeRateLimit(supabaseAdmin, clientIp, "resolve-verification", RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS / 1000);
 
-    const { data: rateData } = await supabaseAdmin
-      .from("rate_limits")
-      .select("id, request_count, window_start")
-      .eq("endpoint", "resolve-verification")
-      .eq("identifier", clientIp)
-      .gte("window_start", windowStart)
-      .maybeSingle();
-
-    if (rateData && rateData.request_count >= RATE_LIMIT_MAX) {
+    if (!allowed) {
       return new Response(
         JSON.stringify({ error: "Too many requests. Please try again later." }),
         { status: 429, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
-    }
-
-    if (rateData) {
-      await supabaseAdmin
-        .from("rate_limits")
-        .update({ request_count: rateData.request_count + 1 })
-        .eq("id", rateData.id);
-    } else {
-      await supabaseAdmin
-        .from("rate_limits")
-        .insert({
-          endpoint: "resolve-verification",
-          identifier: clientIp,
-          request_count: 1,
-          window_start: new Date().toISOString(),
-        });
     }
 
     // Parse request body
@@ -119,13 +97,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Mark as used atomically
-    const { error: updateError } = await supabaseAdmin
-      .from("verification_tokens")
-      .update({ used_at: new Date().toISOString() })
-      .eq("id", token.id)
-      .is("used_at", null);
-
-    if (updateError) {
+    if (!await claimVerificationToken(supabaseAdmin, token.id)) {
       return new Response(
         JSON.stringify({ error: "This link has already been used." }),
         { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }

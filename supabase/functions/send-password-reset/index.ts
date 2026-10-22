@@ -1,3 +1,4 @@
+import { consumeRateLimit } from "../_shared/rate-limit.ts";
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { getRequestAppOrigin } from "../_shared/app-origin.ts";
@@ -68,38 +69,15 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     // Rate limit by email
-    const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
-    const { data: rateData } = await supabaseAdmin
-      .from("rate_limits")
-      .select("id, request_count, window_start")
-      .eq("endpoint", "send-password-reset")
-      .eq("identifier", email)
-      .gte("window_start", windowStart)
-      .maybeSingle();
+    const { allowed } = await consumeRateLimit(supabaseAdmin, email, "send-password-reset", RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS / 1000);
 
-    if (rateData && rateData.request_count >= RATE_LIMIT_MAX) {
+    if (!allowed) {
       // Still return 200 to not leak info about rate limiting
       console.log("send-password-reset: rate limited for", email);
       return new Response(
         JSON.stringify({ success: true }),
         { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
-    }
-
-    if (rateData) {
-      await supabaseAdmin
-        .from("rate_limits")
-        .update({ request_count: rateData.request_count + 1 })
-        .eq("id", rateData.id);
-    } else {
-      await supabaseAdmin
-        .from("rate_limits")
-        .insert({
-          endpoint: "send-password-reset",
-          identifier: email,
-          request_count: 1,
-          window_start: new Date().toISOString(),
-        });
     }
 
     // Always return success to prevent email enumeration

@@ -71,7 +71,7 @@ const ERDiagram = () => {
     mermaid.initialize({
       startOnLoad: false,
       theme: 'dark',
-      securityLevel: 'loose',
+      securityLevel: 'strict',
       er: { useMaxWidth: false },
       // Use native SVG text instead of foreignObject HTML so PNG export works
       htmlLabels: false,
