@@ -836,6 +836,7 @@ test.describe('requesting a replan', () => {
         consequence: 'The best attainable room schedule is included and household planning continues.', evidence: { quarters: 2 } }],
     } as typeof PLAN;
     replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
+    replan.poolHistory = replan.history.map(row => ({ start_ts: row.start_ts, water_temperature_c: 31 }));
     const monitoredRooms = ['Basement bathroom', 'Ground floor bathroom', 'Guest Room', 'Kitchen', 'Laundry', 'Master Bedroom', 'Mark’s bedroom'];
     replan.roomHistory = replan.history.flatMap((row, i) => [
       { start_ts: row.start_ts, room_key: 'bath', room_name: 'Master bathroom', room_temperature_c: 21.2 + i / 10 },
@@ -849,8 +850,8 @@ test.describe('requesting a replan', () => {
     await expect(panel.locator('[data-room="bath"]')).toHaveCount(1);
     await expect(panel.locator('[data-room="hall"]')).toHaveCount(1);
     await expect(panel.locator('[data-room="hall"] path').first()).toHaveAttribute('d', '');
-    await expect(panel.locator('[data-room-legend="bath"]')).toContainText('Master bathroom');
-    await expect(panel.locator('[data-room-legend="bath"]')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
+    await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
+    await expect(panel.locator('[data-room-label="bath"] title')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
     // The comfort note is on the chart, so nothing is left for a banner or the notes.
     await expect(page.getByText(/Planning needs attention|Planeringen behöver uppmärksamhet/)).toHaveCount(0);
     await expect(page.getByTestId('planning-notes')).toHaveCount(0);
@@ -860,28 +861,27 @@ test.describe('requesting a replan', () => {
     await chart.press('ArrowLeft');
     await expect(page.getByRole('tooltip')).toContainText(/Master bathroom21\.3 °C/);
     await expect(page.getByRole('tooltip')).toContainText('Hall18.0 °C');
+    await expect(page.getByRole('tooltip')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
     await page.keyboard.press('Escape');
-    // A crowded key must reflow without overlapping itself, the heading or the plot.
+    // Names belong beside the curves, without a legend block separating the plots.
     for (const width of [1440, 768, 375]) {
       await page.setViewportSize({ width, height: 900 });
       await expect.poll(() => panel.evaluate(element => {
-        const legend = element.querySelector('[data-room-legend-area]')!.getBoundingClientRect();
-        const entries = [...element.querySelectorAll('[data-room-legend]')];
-        const boxes = entries.map(entry => entry.getBoundingClientRect());
-        const heading = element.querySelector('text')!.getBoundingClientRect();
-        const plot = element.querySelector('[data-room="bath"]')!.getBoundingClientRect();
         const svg = element.closest('svg')!;
-        const viewport = svg.parentElement!.getBoundingClientRect();
-        return boxes.length === 9 && heading.bottom < legend.top && legend.bottom < plot.top
-          && legend.right <= viewport.right
-          && entries.every(entry => parseFloat(getComputedStyle(entry).fontSize)
-            * svg.getBoundingClientRect().width / svg.viewBox.baseVal.width >= 13.9)
-          && boxes.every((box, i) => box.left >= legend.left && box.right <= legend.right + 1
-            && box.bottom <= legend.bottom + 1 && boxes.slice(i + 1).every(other =>
-              box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top));
+        const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+        const labels = [...element.querySelectorAll('[data-room-label] foreignObject')]
+          .map(label => label.getBoundingClientRect());
+        const heading = element.querySelector('text')!.getBoundingClientRect();
+        const pool = svg.querySelector('#plan-temperature')!.getBoundingClientRect();
+        const roomPath = element.querySelector('[data-room="bath"] path')!;
+        const plotLeft = roomPath.getBoundingClientRect().left;
+        return labels.length === 9 && !element.querySelector('[data-room-legend-area]')
+          && heading.top - pool.bottom <= 34 * scale
+          && labels.every((box, i) => box.left > plotLeft && box.right < svg.getBoundingClientRect().right
+            && labels.slice(i + 1).every(other => box.bottom <= other.top + 0.5 || other.bottom <= box.top + 0.5));
       })).toBe(true);
       await panel.scrollIntoViewIfNeeded();
-      await panel.locator('[data-room-legend="bath"]').hover();
+      await page.mouse.move(0, 0);
       await page.screenshot({ path: testInfo.outputPath(`room-temperature-${width}.png`), fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -905,7 +905,7 @@ test.describe('requesting a replan', () => {
       await page.goto('/portal/energy-modeling?tab=plan');
       const panel = page.locator('#plan-room-temperature');
       await expect(panel).toBeVisible();
-      await expect(panel.locator('[data-room-legend="bath"]')).toContainText('Master bathroom');
+      await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
       await expect(panel.locator('[data-room="bath"] path').first()).toHaveAttribute('d', '');
       await expect(panel.locator('[data-room="bath"] path').last()).not.toHaveAttribute('d', '');
       const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
