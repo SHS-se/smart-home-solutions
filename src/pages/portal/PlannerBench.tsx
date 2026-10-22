@@ -46,12 +46,14 @@ import { signedPoints as signed } from '@/components/portal/energy/plan/quarter-
 import BenchStartState from '@/components/portal/planner-bench/BenchStartState';
 import BenchRuleList from '@/components/portal/planner-bench/BenchRuleList';
 import PriceEstimateAccuracy from '@/components/portal/planner-bench/PriceEstimateAccuracy';
+import GenerationMixComparison from '@/components/portal/planner-bench/GenerationMixComparison';
 import { useBenchJob, type BenchJobRun, type BenchTask } from '@/components/portal/planner-bench/useBenchJob';
 
 // The generated Database types describe the migrated schema; the bench tables
 // live only in the test project, outside it.
 const db = supabase as unknown as SupabaseClient;
 const TEST_SITE = 'https://test.smarthomesolutions.se/portal/planner-bench';
+const TEST_PRICE_STUDY = import.meta.env.VITE_SUPABASE_URL === 'https://vxqpgbzseckgceopitpm.supabase.co';
 const TZ = FALLBACK_HOME_TIME_ZONE;
 
 async function rows<T>(query: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T> {
@@ -85,7 +87,7 @@ const Bench: React.FC = () => {
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'prices' ? 'prices' : 'bench';
+  const tab = params.get('tab') === 'prices' ? 'prices' : TEST_PRICE_STUDY && params.get('tab') === 'generation-mix' ? 'generation-mix' : 'bench';
   const setTab = (value: string) => {
     const next = new URLSearchParams(params);
     if (value === 'bench') next.delete('tab'); else next.set('tab', value);
@@ -361,6 +363,7 @@ const Bench: React.FC = () => {
       <TabsList className="h-auto max-w-full flex-wrap justify-start">
         <TabsTrigger id="bench-tab-bench" value="bench" className="min-h-9">{t('Planerarbänk', 'Planner bench')}</TabsTrigger>
         <TabsTrigger id="bench-tab-prices" value="prices" className="min-h-9">{t('Prisuppskattningens träffsäkerhet', 'Price estimate accuracy')}</TabsTrigger>
+        {TEST_PRICE_STUDY && <TabsTrigger id="bench-tab-generation-mix" value="generation-mix" className="min-h-11">{t('Produktionsmix', 'Generation mix')}</TabsTrigger>}
       </TabsList>
       <TabsContent value="bench" className="mt-0 space-y-5">
       {loadError && (isMissingTable(loadError)
@@ -493,6 +496,7 @@ const Bench: React.FC = () => {
       <TabsContent value="prices" className="mt-0">
         <PriceEstimateAccuracy />
       </TabsContent>
+      {TEST_PRICE_STUDY && <TabsContent value="generation-mix" className="mt-0"><GenerationMixComparison /></TabsContent>}
       </Tabs>
 
       <Dialog open={pending !== null} onOpenChange={open => { if (!open) setPending(null); }}>

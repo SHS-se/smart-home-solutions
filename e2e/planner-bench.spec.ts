@@ -19,8 +19,31 @@ import type { BenchScenarioData } from '../src/lib/planner-bench/case';
 import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
 import { priceEstimates, summariseEstimates, type EstimateSeries } from '../src/lib/planner-bench/price-estimates';
 import { realisticWorld } from '../src/lib/planner-bench/world.fixture';
+import type { PricePairComparison } from '../src/lib/planner-bench/price-pair-comparison';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const PRICE_PAIR_ID = '44444444-4444-4444-8444-444444444444';
+const OLDER_PRICE_PAIR_ID = '55555555-5555-4555-8555-555555555555';
+/** Synthetic prospective evidence only: D+2 complete, D+3 partial across DST. */
+function mixComparison(published = false, older = false, corrected = false): PricePairComparison {
+  const id = older ? OLDER_PRICE_PAIR_ID : PRICE_PAIR_ID;
+  const targets = Array.from({ length: 184 }, (_, index) => {
+    const at = Date.parse('2026-10-23T22:00Z') + index * 900_000;
+    const actual = 1.7 + .4 * Math.sin(index / 96 * Math.PI * 2) + .2 * Math.cos(index / 12);
+    return { start: new Date(at).toISOString(), target_day: index < 96 ? '2026-10-24' : '2026-10-25',
+      lead_day: index < 96 ? 2 : 3, reduced: actual + .3, full: actual + (older ? .2 : .1),
+      actual: published && index < 96 ? actual + (corrected ? .5 : 0) : null, truth_sequence: published && index < 96 ? index + (corrected ? 97 : 1) : null };
+  });
+  const selected = { id, status: 'paired' as const, reserved_at: older ? '2026-10-22T14:00Z' : '2026-10-22T20:31Z',
+    saved_at: older ? '2026-10-22T14:00Z' : '2026-10-22T20:31Z', target_count: 288, eligible_count: 184, reason: null, training_quarters: 2680 };
+  return { enabled: true, home_name: 'Test home', updated_at: '2026-10-23T12:00Z', selected, targets,
+    report: { truth_cutoff: published ? 96 : 0, pair_count: 2,
+      pairs: [PRICE_PAIR_ID, OLDER_PRICE_PAIR_ID].map((pairId, i) => ({ ...selected, id: pairId,
+        reserved_at: i ? '2026-10-22T14:00Z' : '2026-10-22T20:31Z', saved_at: i ? '2026-10-22T14:00Z' : '2026-10-22T20:31Z', scored_count: published ? 96 : 0 })),
+      scores: published ? [{ lead_day: 2, scored_quarters: 192, origin_count: 2, target_day_count: 1,
+        reduced_mae: corrected ? .2 : .3, full_mae: corrected ? .35 : .15, reduced_bias: corrected ? -.2 : .3, full_bias: corrected ? -.35 : .15, mae_improvement: corrected ? -.15 : .15,
+        reduced_daily_mean_mae: corrected ? .2 : .3, full_daily_mean_mae: corrected ? .35 : .15, complete_day_origins: 2, scored_day_origins: 2 }] : [] } };
+}
 const CURRENT = { sha: 'c'.repeat(40), short_sha: 'ccccccc', committed_at: '2026-09-27T13:40:00Z', subject: 'Current planner' };
 const TEST = { sha: 'd'.repeat(40), short_sha: 'ddddddd', committed_at: '2026-09-29T08:26:00Z', subject: 'Test planner' };
 /** Two versions before the current one whose plans, and so whose scores, are the current planner's. */
@@ -320,6 +343,81 @@ async function login(page: Page) {
 }
 
 test.describe('planner bench', () => {
+  test('TEST generation mix shows pending pairs, scores arriving prices and corrections, and keeps pair selection in the URL', async ({ context, page }) => {
+    await mockBackend(context);
+    let published = false, corrected = false, fail = false;
+    await context.route('**/rest/v1/rpc/get_test_price_pair_comparison', async route => {
+      if (fail) return route.fulfill({ status: 503, json: { message: 'Study unavailable' } });
+      const older = route.request().postDataJSON().p_pair_id === OLDER_PRICE_PAIR_ID;
+      await route.fulfill({ json: mixComparison(published, older, corrected) });
+    });
+    await login(page);
+    await page.clock.install();
+    await page.goto('/portal/planner-bench');
+    await expect(page.getByTestId('generation-mix-comparison')).toHaveCount(0);
+    await page.locator('#bench-tab-generation-mix').click();
+    await expect(page).toHaveURL(/tab=generation-mix/);
+    const view = page.getByTestId('generation-mix-comparison');
+    await expect(view.getByTestId('mix-coverage')).toContainText(/0 (of|av) 184/);
+    await expect(view.getByTestId('mix-score-2')).toContainText(/Waiting|Väntar/);
+    await expect(view.getByTestId('mix-score-3')).toContainText(/Waiting|Väntar/);
+    await expect(view.getByTestId('mix-days').locator('tbody tr').nth(1)).toContainText('88/100');
+    await expect(view.getByTestId('mix-full-mae')).toHaveCount(0);
+    published = true;
+    await page.clock.fastForward(61_000); // Published truth appears on the automatic poll.
+    await expect(view.getByTestId('mix-score-2')).toContainText(/50.0% (lower|lägre)/);
+    await expect(view.getByTestId('mix-score-2')).toContainText(/1 (distinct target days|unika måldagar)/);
+    await expect(view.getByTestId('mix-full-mae')).toHaveText('0.150');
+    await expect(view.getByTestId('mix-coverage')).toContainText(/96 (of|av) 184/);
+    await expect(view.getByTestId('mix-score-3')).toContainText(/Waiting|Väntar/);
+    await expect(view.getByTestId('mix-price-chart').locator('.recharts-line-curve')).toHaveCount(3);
+    await expect.poll(() => view.getByTestId('mix-price-chart').locator('path[stroke="var(--plan-grid)"]').evaluate(element => getComputedStyle(element).stroke)).not.toBe('none');
+    await view.screenshot({ path: test.info().outputPath('generation-mix-desktop.png') });
+    await view.locator('#mix-pair-select').click();
+    await page.getByRole('option').last().click();
+    await expect(page).toHaveURL(new RegExp(`pair=${OLDER_PRICE_PAIR_ID}`));
+    await expect(view.getByTestId('mix-days').locator('tbody tr').first()).toContainText('0.200');
+    await page.reload();
+    await expect(view.getByTestId('mix-days').locator('tbody tr').first()).toContainText('0.200');
+    corrected = true;
+    await view.getByRole('button', { name: /Refresh|Uppdatera/ }).click();
+    await expect(view.getByTestId('mix-score-2')).toContainText(/75.0% (higher|högre)/);
+    await expect(view.getByTestId('mix-days').locator('tbody tr').first()).toContainText('0.300');
+    fail = true;
+    await view.getByRole('button', { name: /Refresh|Uppdatera/ }).click();
+    await expect(view.getByRole('alert')).toContainText(/Could not load|Kunde inte/);
+    fail = false;
+    await view.getByRole('button', { name: /Refresh|Uppdatera/ }).click();
+    await expect(view.getByRole('alert')).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await view.getByText(/Show all quarter values|Visa alla kvartsvärden/).click();
+    await expect(view.getByText(/GMT\+1/).first()).toBeVisible();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await view.screenshot({ path: test.info().outputPath('generation-mix-mobile.png') });
+  });
+
+  test('TEST generation mix handles a study without pairs and a pair with missing inputs without showing zero error', async ({ context, page }) => {
+    await mockBackend(context);
+    let empty = true;
+    await context.route('**/rest/v1/rpc/get_test_price_pair_comparison', async route => {
+      const data = mixComparison();
+      data.targets = [];
+      if (empty) { data.selected = null; data.report.pairs = []; data.report.pair_count = 0; }
+      else { data.selected!.status = 'unavailable'; data.selected!.eligible_count = 0; data.selected!.reason = 'Missing nuclear forecast'; }
+      await route.fulfill({ json: data });
+    });
+    await login(page);
+    await page.goto('/portal/planner-bench?tab=generation-mix');
+    const view = page.getByTestId('generation-mix-comparison');
+    await expect(view).toContainText(/No forecast pairs saved|Inga prognospar/);
+    empty = false;
+    await view.getByRole('button', { name: /Refresh|Uppdatera/ }).click();
+    await expect(view).toContainText('Missing nuclear forecast');
+    await expect(view.getByTestId('mix-full-mae')).toHaveCount(0);
+    await expect(view.getByTestId('mix-price-chart')).toHaveCount(0);
+  });
+
   test('the removed default comparison is absent from the planner bench', async ({ context, page }) => {
     await mockBackend(context);
     await login(page);

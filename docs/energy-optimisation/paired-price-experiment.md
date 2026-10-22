@@ -122,3 +122,15 @@ outcomes. Local PostgreSQL connections verified price-first exclusion,
 forecast-first automatic scoring, the activation/writer race and rejection of
 stale-snapshot isolation. Rollback-only TEST fixtures verified revised truth and
 immutability without retaining synthetic prices or forecasts.
+
+The TEST staff app exposes this study at
+`/portal/planner-bench?tab=generation-mix` (Generation mix / Produktionsmix).
+A staff-only RPC returns all-time D+2/D+3 paired summaries and a bounded list of
+recent pairs. Selecting a pair loads at most its 288 eligible quarters, with both
+frozen forecasts and the latest published truth. No coefficients, raw training
+prices or provider evidence are sent to the browser. Staff authorization is
+checked before reading; anonymous callers have no RPC grant. The tab mounts only
+when the app points at the exact TEST Supabase URL. It polls every minute and
+shows unscored forecasts as waiting, never zero error. Summary results and the
+selected pair have separate labels: all-time results may differ from a single
+forecast. The coverage table uses the actual 92/96/100-quarter Stockholm day.

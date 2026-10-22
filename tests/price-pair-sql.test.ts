@@ -10,7 +10,7 @@ async function setup() {
   const db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
     CREATE SCHEMA private; CREATE SCHEMA cron; CREATE SCHEMA net;
-    CREATE TABLE homes(id uuid PRIMARY KEY); INSERT INTO homes VALUES('${HOME}');
+    CREATE TABLE homes(id uuid PRIMARY KEY,name text DEFAULT 'TEST home'); INSERT INTO homes(id) VALUES('${HOME}');
     CREATE TABLE private.test_market_archive_config(singleton boolean PRIMARY KEY,token uuid NOT NULL,function_url text NOT NULL);
     INSERT INTO private.test_market_archive_config VALUES(true,gen_random_uuid(),'https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/energy-market-archive');
     CREATE TABLE energy_optimisation_price_slots(home_id uuid,start_ts timestamptz,import_price_sek_per_kwh numeric NOT NULL,export_price_sek_per_kwh numeric NOT NULL DEFAULT 0,source text NOT NULL DEFAULT 'integration',received_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(home_id,start_ts));
@@ -19,6 +19,10 @@ async function setup() {
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$INSERT INTO cron.jobs VALUES($1,$2,$3) ON CONFLICT(name) DO UPDATE SET schedule=$2,command=$3;SELECT 1;$$;
     CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$SELECT 1::bigint;$$;`);
   await db.exec(await Deno.readTextFile(migration));
+  await db.exec(`CREATE SCHEMA auth;
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+    CREATE FUNCTION public.is_staff(uuid) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$SELECT $1='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid$$;`);
+  await db.exec(await Deno.readTextFile('supabase/migrations/20261022233000_test_price_pair_comparison_ui.sql'));
   return db;
 }
 async function enable(db: PGlite) { await db.query("SELECT private.enable_test_price_experiment($1)", [HOME]); }
@@ -53,6 +57,37 @@ Deno.test("paired-price migration is dormant and RPC-only until the explicit TES
     const privileges = (await db.query("SELECT has_table_privilege('service_role','energy_test_price_pairs','INSERT') writable,has_table_privilege('authenticated','energy_test_price_pair_outcomes','SELECT') readable,has_function_privilege('authenticated','begin_test_price_pair()','EXECUTE') executable")).rows;
     assertEquals(privileges, [{ writable: false, readable: false, executable: false }]);
     await assertRejects(() => db.query("INSERT INTO energy_optimisation_price_slots(home_id,start_ts,import_price_sek_per_kwh) VALUES($1,$2,'NaN')", [HOME, new Date(START + 900_000).toISOString()]), Error, "check constraint");
+  } finally { await db.close(); }
+});
+
+Deno.test("staff comparison projection excludes known targets, updates published truth, and never exposes training evidence", async () => {
+  const db = await setup();
+  const read = async (id: string | null = null) => (await db.query<{ value: {
+    enabled: boolean; report: { scores: { full_mae: number }[] }; selected: Record<string, unknown>;
+    targets: { start: string; actual: number | null; reduced: number; full: number }[];
+  } }>('SELECT get_test_price_pair_comparison($1) value', [id])).rows[0].value;
+  try {
+    await assertRejects(() => read(), Error, 'staff-only');
+    await db.exec("SET request.jwt.claim.sub='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'");
+    await assertRejects(() => read(), Error, 'staff-only');
+    await db.exec("SET request.jwt.claim.sub='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'");
+    assertEquals((await read()).enabled, false);
+    await enable(db); await price(db, START, 1.25); await mix(db);
+    const reserved = (await begin(db))!; await complete(db, reserved.id, output());
+    const pending = await read();
+    assertEquals(pending.targets.length, 287);
+    assertEquals(pending.targets.every(row => row.actual === null), true);
+    assertEquals(pending.report.scores, []);
+    assertEquals('context' in pending.selected || 'forecast' in pending.selected, false);
+    await price(db, START + 900_000, 1.5);
+    const scored = await read(reserved.id);
+    assertEquals(Date.parse(scored.targets[0].start), START + 900_000);
+    assertEquals([scored.targets[0].reduced, scored.targets[0].full, scored.targets[0].actual], [2, 1.5, 1.5]);
+    assertEquals(Number(scored.report.scores[0].full_mae), 0);
+    await price(db, START + 900_000, 2);
+    assertEquals((await read()).targets[0].actual, 2);
+    await assertRejects(() => read('99999999-9999-4999-8999-999999999999'), Error, 'Unknown TEST');
+    assertEquals((await db.query("SELECT has_function_privilege('anon','get_test_price_pair_comparison(uuid)','EXECUTE') anon,has_function_privilege('authenticated','get_test_price_pair_comparison(uuid)','EXECUTE') staff")).rows, [{ anon: false, staff: true }]);
   } finally { await db.close(); }
 });
 

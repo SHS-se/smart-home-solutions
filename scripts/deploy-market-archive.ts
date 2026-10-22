@@ -7,6 +7,7 @@ const MIGRATIONS = [
   { version: '20261022211000', name: 'test_generation_validation_permissions' },
   { version: '20261022220000', name: 'test_hydro_nuclear_forecasts' },
   { version: '20261022230000', name: 'test_paired_price_experiment' },
+  { version: '20261022233000', name: 'test_price_pair_comparison_ui' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
