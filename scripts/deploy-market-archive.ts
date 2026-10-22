@@ -22,10 +22,12 @@ try {
   const query = async (sql: string): Promise<Record<string, unknown>[]> => {
     const path = `${temporary}/query.sql`;
     await Deno.writeTextFile(path, sql, { mode: 0o600 });
-    const output = await cli(['db', 'query', '--linked', '--project-ref', TEST, '--file', path, '--output', 'json']);
+    // Agent auto-detection wraps rows in a warning envelope locally but not in CI.
+    // Request one explicit machine protocol in both environments.
+    const output = await cli(['db', 'query', '--linked', '--project-ref', TEST, '--file', path, '--agent', 'no', '--output', 'json']);
     const parsed: unknown = JSON.parse(output);
-    if (!parsed || typeof parsed !== 'object' || !('rows' in parsed) || !Array.isArray(parsed.rows)) throw new Error('Invalid TEST database result.');
-    return parsed.rows;
+    if (!Array.isArray(parsed) || parsed.some(row => !row || typeof row !== 'object' || Array.isArray(row))) throw new Error('Invalid TEST database result.');
+    return parsed;
   };
   for (const { version, name } of MIGRATIONS) {
     const applied = await query(`SELECT EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations WHERE version='${version}') AS applied;`);

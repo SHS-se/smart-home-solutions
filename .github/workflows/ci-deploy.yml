@@ -219,6 +219,9 @@ jobs:
 
       - name: Install Playwright browser
         run: |
+          # The Azure HTTP mirror can throttle font downloads for many minutes.
+          # Use Ubuntu's HTTPS archive as the primary source for the same packages.
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = true ]; then
             npx playwright install-deps chromium
           else
