@@ -85,7 +85,7 @@ export interface EnergyStoreLines {
   poolC: readonly (number | null)[];
 }
 
-/** A room the plan drives, drawn in the room temperature panel from `rows[].roomTemperatureC`. */
+/** A measured or forecast room, drawn from `rows[].roomTemperatureC`. */
 export interface EnergyRoomLine {
   key: string;
   name: string;
@@ -276,7 +276,7 @@ export interface EnergyChartProps {
    * Optional comparison stores, drawn as dashed lines.
    */
   storeLines?: EnergyStoreLines;
-  /** Rooms in control verification or controlling, each with its own line. */
+  /** Measured rooms and rooms the plan forecasts, each with its own line. */
   rooms?: readonly EnergyRoomLine[];
   /**
    * Power series the reader has switched off: `solar`, `grid`, `battery`,
@@ -1209,16 +1209,6 @@ const PlanTooltip: React.FC<{
           />
         )}
         {compared(t('Pooltemperatur', 'Pool temperature'), undefined, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
-        {rooms.map(room => {
-          const value = row.roomTemperatureC?.[room.key], comfort = row.roomComfortMinC?.[room.key];
-          return value === undefined && comfort === undefined ? null : (
-            <Reading
-              key={room.key} name={room.name} colour={room.colour}
-              value={[value === undefined ? '—' : `${value.toFixed(1)} °C`,
-                ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`])].join(' · ')}
-            />
-          );
-        })}
         {costLines
           ? costLines.map(line => {
             const value = line.values[index];
@@ -1237,6 +1227,16 @@ const PlanTooltip: React.FC<{
           )}
       </div>
       </>}
+      {rooms.map(room => {
+        const value = row.roomTemperatureC?.[room.key], comfort = row.roomComfortMinC?.[room.key];
+        return value === undefined && comfort === undefined ? null : (
+          <Reading
+            key={room.key} name={room.name} colour={room.colour}
+            value={[value === undefined ? '—' : `${value.toFixed(1)} °C`,
+              ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`])].join(' · ')}
+          />
+        );
+      })}
     </div>
   );
 };

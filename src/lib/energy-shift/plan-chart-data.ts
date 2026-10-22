@@ -41,7 +41,7 @@ export interface PlanPanelRow {
   cumulativeCostSek: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolTemperatureC?: number | null;
-  /** Driven rooms, °C by room key: measured on the past side, planned on the future side. */
+  /** Room readings on the past side, driven rooms' forecasts on the future side. */
   roomTemperatureC?: Record<string, number>;
   /** Planned quarters: each driven room's comfort minimum, °C by room key. */
   roomComfortMinC?: Record<string, number>;

@@ -95,7 +95,7 @@ interface MockPlanState {
   history?: Array<{ start_ts: string; total_load_kwh: number }>;
   deviceHistory?: Array<{ start_ts: string; device_energy_kwh: Record<string, number> }>;
   poolHistory?: Array<{ start_ts: string; water_temperature_c: number }>;
-  roomHistory?: Array<{ start_ts: string; room_key: string; room_temperature_c: number }>;
+  roomHistory?: Array<{ start_ts: string; room_key: string; room_name: string; room_temperature_c: number }>;
   devices?: Array<Record<string, unknown>>;
 }
 
@@ -223,7 +223,7 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'energy_optimisation_pool_slots'
       ? replan.poolHistory ?? []
       : table === 'energy_optimisation_thermal_slots'
-      ? (replan.roomHistory ?? []).filter(row => (url.searchParams.get('room_key') ?? '').includes(row.room_key))
+      ? (replan.roomHistory ?? []).filter(row => !url.searchParams.has('room_key') || url.searchParams.get('room_key')!.includes(row.room_key))
       : [];
     const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
     await route.fulfill({
@@ -816,7 +816,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('tooltip')).toContainText('31.6 °C');
   });
 
-  test('rooms in verification or controlling are drawn measured before now and planned after, with their comfort note', async ({ page }, testInfo) => {
+  test('room measurements include monitored rooms while forecasts only show controlled rooms', async ({ page }, testInfo) => {
     const start = Date.parse(CAPTURED_AT);
     const starts = PLAN.plans.priority.slots.map(slot => slot.start);
     const zone = (key: string, name: string, device: string, base: number) => ({
@@ -837,13 +837,14 @@ test.describe('requesting a replan', () => {
     } as typeof PLAN;
     replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
     replan.roomHistory = replan.history.flatMap((row, i) => [
-      { start_ts: row.start_ts, room_key: 'bath', room_temperature_c: 21.2 + i / 10 },
-      { start_ts: row.start_ts, room_key: 'hall', room_temperature_c: 18 }]);
+      { start_ts: row.start_ts, room_key: 'bath', room_name: 'Master bathroom', room_temperature_c: 21.2 + i / 10 },
+      { start_ts: row.start_ts, room_key: 'hall', room_name: 'Hall', room_temperature_c: 18 }]);
     await page.goto('/portal/energy-modeling?tab=plan');
     const panel = page.locator('#plan-room-temperature');
     await expect(panel).toBeVisible();
     await expect(panel.locator('[data-room="bath"]')).toHaveCount(1);
-    await expect(panel.locator('[data-room="hall"]')).toHaveCount(0);
+    await expect(panel.locator('[data-room="hall"]')).toHaveCount(1);
+    await expect(panel.locator('[data-room="hall"] path').first()).toHaveAttribute('d', '');
     await expect(panel.locator('[data-room-legend="bath"]')).toContainText(/Master bathroom · 2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
     // The comfort note is on the chart, so nothing is left for a banner or the notes.
     await expect(page.getByText(/Planning needs attention|Planeringen behöver uppmärksamhet/)).toHaveCount(0);
@@ -853,11 +854,45 @@ test.describe('requesting a replan', () => {
     await chart.press('ArrowLeft');
     await chart.press('ArrowLeft');
     await expect(page.getByRole('tooltip')).toContainText(/Master bathroom21\.3 °C/);
-    await expect(page.getByRole('tooltip')).not.toContainText('Hall');
+    await expect(page.getByRole('tooltip')).toContainText('Hall18.0 °C');
     await page.keyboard.press('Escape');
     await panel.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath('room-temperature.png'), fullPage: true });
   });
+
+  for (const electricityHistory of [true, false]) {
+    test(`measured room temperatures remain visible without forecasts ${electricityHistory ? 'with' : 'without'} electricity history`, async ({ page }, testInfo) => {
+      const start = Date.parse(CAPTURED_AT);
+      replan.publishedPlan = { ...PLAN, thermal_projection: undefined };
+      const history = [3, 2, 1].map(quartersAgo => ({
+        start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: .65,
+      }));
+      replan.history = electricityHistory ? history : [];
+      replan.roomHistory = history.map((row, i) => ({ start_ts: row.start_ts,
+        room_key: 'bath', room_name: 'Master bathroom', room_temperature_c: 20.5 + i / 10 }));
+      // A measured value on the future side must not turn into a forecast.
+      replan.roomHistory.push({ start_ts: new Date(start + 900_000).toISOString(),
+        room_key: 'bath', room_name: 'Master bathroom', room_temperature_c: 99 });
+      await page.goto('/portal/energy-modeling?tab=plan');
+      const panel = page.locator('#plan-room-temperature');
+      await expect(panel).toBeVisible();
+      await expect(panel.locator('[data-room-legend="bath"]')).toContainText('Master bathroom');
+      await expect(panel.locator('[data-room="bath"] path').first()).toHaveAttribute('d', '');
+      await expect(panel.locator('[data-room="bath"] path').last()).not.toHaveAttribute('d', '');
+      const chart = page.getByRole('img', { name: /effektflöden|power flows/i }).first();
+      await chart.focus();
+      await chart.press('ArrowLeft');
+      await chart.press('ArrowLeft');
+      await expect(page.getByRole('tooltip')).toContainText('Master bathroom20.6 °C');
+      await chart.press('ArrowRight');
+      await chart.press('ArrowRight');
+      await chart.press('ArrowRight');
+      await expect(page.getByRole('tooltip')).not.toContainText('Master bathroom');
+      await page.keyboard.press('Escape');
+      await panel.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath('measured-room-without-forecast.png'), fullPage: true });
+    });
+  }
 
   test('power series are switched off and on from the legend', async ({ page }, testInfo) => {
     const start = Date.parse(CAPTURED_AT);

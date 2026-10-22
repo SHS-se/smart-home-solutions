@@ -52,7 +52,7 @@ import {
   type PoolSlotRow,
 } from '@/lib/energy-shift/energy-timeline';
 import { plannedPoolTarget, plannedPoolTemperature } from '@/lib/energy-shift/pool-temperature';
-import { plannedRoomTemperatures, type RoomSlotRow } from '@/lib/energy-shift/room-temperature';
+import { chartedTemperatureRooms, plannedRoomTemperatures, type RoomSlotRow } from '@/lib/energy-shift/room-temperature';
 import { controlledRooms } from '../../../../supabase/functions/_shared/planner/controlled-rooms';
 export type { PlanSection } from './plan/types';
 import type { PlanSection } from './plan/types';
@@ -287,12 +287,10 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
     };
   }, [homeId]);
 
-  // Measured temperatures of the rooms the plan drives, read like the pool's.
-  const roomKeys = useMemo(() => current?.plan ? controlledRooms(current.plan).map(room => room.key).sort().join('\n') : '',
-    [current?.plan]);
+  // Measurements exist independently of a room's forecast or execution mode.
   useEffect(() => {
     setRoomActuals([]);
-    if (!homeId || !roomKeys) return;
+    if (!homeId) return;
     let cancelled = false;
     const read = async () => {
       if (cancelled || document.visibilityState !== 'visible') return;
@@ -301,10 +299,9 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       for (let from = 0; ; from += 1000) {
         const { data, error: roomError } = await (supabase as unknown as SupabaseClient)
           .from('energy_optimisation_thermal_slots')
-          .select('start_ts, room_key, room_temperature_c')
-          .eq('home_id', homeId).in('room_key', roomKeys.split('\n')).gte('start_ts', since)
+          .select('start_ts, room_key, room_name, room_temperature_c')
+          .eq('home_id', homeId).gte('start_ts', since)
           .order('start_ts').order('room_key').range(from, from + 999);
-        // Left silent: the chart draws the planned temperatures without them.
         if (cancelled || roomError) return;
         rows.push(...(data ?? []) as RoomSlotRow[]);
         if ((data ?? []).length < 1000) break;
@@ -320,7 +317,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', resume);
     };
-  }, [homeId, roomKeys]);
+  }, [homeId]);
 
   const activeConnection: HomeAssistantConnection | undefined = latestRuntime?.ha_runtime_received_at
     ? { device_name: 'Home Assistant', home_id: homeId!, last_seen_at: latestRuntime.ha_runtime_received_at }
@@ -619,6 +616,8 @@ const PlanView: React.FC<{
     active.store_diagnostics?.find(store => store.key === 'pool')?.end_state,
   ), [active.slots, active.store_diagnostics, plan.pool?.water_temperature_c]);
   const roomPlan = useMemo(() => plannedRoomTemperatures(plan), [plan]);
+  const chartRooms = useMemo(() => chartedTemperatureRooms(roomPlan.rooms, roomActuals, empiricalDevices),
+    [roomPlan.rooms, roomActuals, empiricalDevices]);
   const timeline = useMemo(() => buildEnergyTimeline({
     actuals,
     deviceActuals,
@@ -909,7 +908,7 @@ const PlanView: React.FC<{
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}
             poolTargetC={plannedPoolTarget(plan)}
-            rooms={roomPlan.rooms}
+            rooms={chartRooms}
           />
           </>
           )}

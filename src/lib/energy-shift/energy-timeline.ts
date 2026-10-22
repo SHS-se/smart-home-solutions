@@ -79,7 +79,7 @@ export interface TimelineRow {
   shadowExportSekPerKwh: number | null;
   /** Pool water, °C: measured on the past side, the plan's projection on the future side. */
   poolC?: number | null;
-  /** Driven rooms, °C by room key: measured on the past side, planned on the future side. */
+  /** Room readings on the past side, driven rooms' forecasts on the future side. */
   roomC?: Record<string, number>;
   /** Planned quarters: each driven room's comfort minimum, °C by room key. */
   roomComfortMinC?: Record<string, number>;
@@ -116,7 +116,7 @@ export interface TimelineInput {
   poolActuals?: readonly PoolSlotRow[];
   /** The plan's pool temperature at the end of each of `planSlots` (pool-temperature.ts). */
   plannedPoolC?: readonly (number | null)[];
-  /** Measured temperatures of the rooms in `roomPlan`. */
+  /** Measured room temperatures, independent of `roomPlan`. */
   roomActuals?: readonly RoomSlotRow[];
   /** The plan's driven rooms (room-temperature.ts). */
   roomPlan?: RoomTemperaturePlan;
@@ -256,15 +256,16 @@ export const buildEnergyTimeline = ({
     });
   }
 
-  const ordered = [...rows.values()].sort((left, right) => left.startMs - right.startMs);
-  if (ordered.length === 0) return [];
+  const starts = [...rows.keys(), ...[...roomByStart.keys()].filter(start => start < boundary)];
+  if (starts.length === 0) return [];
+  const firstStart = Math.min(...starts), lastStart = Math.max(...starts);
 
   // The chart uses one equal-width column per quarter. Omitting an absent
   // quarter compresses time, especially while measurements lag behind now
   // or the new plan starts at the next quarter. Preserve those columns with
   // explicit missing data; an elapsed forecast is not a measurement.
   const timeline: TimelineRow[] = [];
-  for (let startMs = ordered[0].startMs; startMs <= ordered[ordered.length - 1].startMs; startMs += SLOT_MS) {
+  for (let startMs = firstStart; startMs <= lastStart; startMs += SLOT_MS) {
     timeline.push(rows.get(startMs) ?? {
       startMs,
       start: new Date(startMs).toISOString(),

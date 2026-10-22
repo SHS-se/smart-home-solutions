@@ -1,5 +1,5 @@
 // Room temperatures for the plan chart: measured before now, planned after,
-// for the rooms the plan drives (controlled-rooms.ts).
+// measured rooms remain visible even when the plan cannot forecast them.
 import {
   controlledRooms, type RoomPlan,
 } from '../../../supabase/functions/_shared/planner/controlled-rooms';
@@ -8,10 +8,31 @@ import {
 export interface RoomSlotRow {
   start_ts: string;
   room_key: string;
+  room_name: string;
   room_temperature_c: number;
 }
 
 export interface ChartRoom { key: string; name: string; deviceKeys: string[] }
+
+/** Measurements identify their own rooms; forecasting is not a prerequisite. */
+export function chartedTemperatureRooms(
+  planned: readonly ChartRoom[],
+  actuals: readonly RoomSlotRow[],
+  devices: readonly { device_key: string; mapping_summary: Record<string, unknown> }[],
+): ChartRoom[] {
+  const rooms = new Map(planned.map(room => [room.key, room]));
+  const measuredNames = new Map(actuals.map(row => [row.room_key, row.room_name]));
+  for (const [key, name] of measuredNames) {
+    rooms.set(key, {
+      key, name,
+      deviceKeys: [...new Set([
+        ...(rooms.get(key)?.deviceKeys ?? []),
+        ...devices.filter(device => device.mapping_summary.room_key === key).map(device => device.device_key),
+      ])],
+    });
+  }
+  return [...rooms.values()];
+}
 
 export interface RoomTemperaturePlan {
   rooms: ChartRoom[];
