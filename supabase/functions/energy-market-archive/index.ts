@@ -2,9 +2,11 @@ import { entsoeParameters, parseEntsoeResponse, EntsoeProviderError, type Entsoe
 import { ARCHIVED_MARKET_DATASETS } from "../_shared/price-estimate-evidence.ts";
 import { mediumRangeWeatherRequest, parseMediumRangeWeather, type MediumRangeWeatherDocument } from "../_shared/medium-range-weather.ts";
 
+import { forecastGenerationMix } from "../_shared/generation-mix.ts";
+
 const TEST = "https://vxqpgbzseckgceopitpm.supabase.co";
 const DAY = 86_400_000;
-export type ArchiveDataset = typeof ARCHIVED_MARKET_DATASETS[number];
+export type ArchiveDataset = typeof ARCHIVED_MARKET_DATASETS[number] | "generation_actual";
 type EntsoeArchiveDataset = Exclude<ArchiveDataset, "weather_medium_range">;
 type DataDocument = Extract<EntsoeResponse, { status: "data" }>;
 interface ResultEvidence {
@@ -36,9 +38,18 @@ export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: EntsoeArchiveDataset; result: EntsoeArchiveResult }
   | { dataset: "weather_medium_range"; result: WeatherArchiveResult }
 );
+export interface GenerationForecastRun {
+  id: string;
+  zone: "SE3";
+  origin: string;
+  algorithm: string;
+  source_refs: Partial<Record<ArchiveDataset, string>>;
+  forecast: ReturnType<typeof forecastGenerationMix>;
+}
 export interface MarketArchiveStore {
   verifyToken(token: string): Promise<boolean>;
   saveObservation(row: MarketArchiveObservation): Promise<void>;
+  saveGenerationRun(row: GenerationForecastRun): Promise<void>;
 }
 
 function redact(body: string, token: string): string {
@@ -85,8 +96,8 @@ async function entsoeResult(dataset: EntsoeArchiveDataset, from: string, to: str
   }
 }
 
-async function weatherResult(requestedAt: string, token: string, fetchProvider: typeof fetch): Promise<WeatherArchiveResult> {
-  const request = mediumRangeWeatherRequest();
+async function weatherResult(requestedAt: string, token: string, fetchProvider: typeof fetch, pastDays: 0 | 28): Promise<WeatherArchiveResult> {
+  const request = mediumRangeWeatherRequest(pastDays);
   const held = await providerResponse(request.url, token, fetchProvider);
   const evidence = { http_status: held.http_status, body_sha256: held.body_sha256,
     raw_body: held.body, error_code: null, request: request.record };
@@ -118,22 +129,53 @@ export function createMarketArchiveHandler(
     try {
       if (!await store.verifyToken(token)) return Response.json({ error: "unauthorized" }, { status: 401 });
     } catch { return Response.json({ error: "archive_auth_failed" }, { status: 500 }); }
+    let generation = false;
+    try {
+      const body = await request.text();
+      const options: unknown = body.trim() ? JSON.parse(body) : {};
+      if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid archive request");
+      const fields = Object.keys(options);
+      if (fields.length && (fields.length !== 1 || fields[0] !== "generation" || !("generation" in options) || options.generation !== true)) throw new Error("Invalid archive request");
+      generation = "generation" in options;
+    } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     const today = Date.parse(`${clock().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    const outcomes = await Promise.allSettled(ARCHIVED_MARKET_DATASETS.map(async dataset => {
-      const from = new Date(today).toISOString();
-      const to = new Date(today + (dataset === "load_week_ahead" ? 9 : dataset === "weather_medium_range" ? 7 : 3) * DAY).toISOString();
+    const datasets: ArchiveDataset[] = [...ARCHIVED_MARKET_DATASETS, ...(generation ? ["generation_actual" as const] : [])];
+    const outcomes = await Promise.allSettled(datasets.map(async dataset => {
+      const from = new Date(dataset === "generation_actual" ? Math.floor(clock().getTime() / 60_000) * 60_000 - 28 * DAY
+        : today - (generation && dataset === "weather_medium_range" ? 28 * DAY : 0)).toISOString();
+      const to = dataset === "generation_actual" ? new Date(Math.floor(clock().getTime() / 60_000) * 60_000).toISOString()
+        : new Date(today + (dataset === "load_week_ahead" ? 9 : dataset === "weather_medium_range" ? 7 : 3) * DAY).toISOString();
       const requestedAt = clock().toISOString();
       const identity = { id: crypto.randomUUID(), zone: "SE3" as const,
         requested_from: from, requested_to: to, requested_at: requestedAt };
       const row: MarketArchiveObservation = dataset === "weather_medium_range"
-        ? { ...identity, dataset, result: await weatherResult(requestedAt, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
+        ? { ...identity, dataset, result: await weatherResult(requestedAt, config.entsoeToken, fetchProvider, generation ? 28 : 0), resolved_at: clock().toISOString() }
         : { ...identity, dataset, result: await entsoeResult(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() };
       await store.saveObservation(row);
-      return { id: row.id, dataset, status: row.result.status };
+      return row;
     }));
-    const saved = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
-    if (saved.length !== ARCHIVED_MARKET_DATASETS.length) return Response.json({ error: "archive_storage_failed", observations: saved }, { status: 500 });
-    return Response.json({ observations: saved });
+    const rows = outcomes.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []);
+    const observations = rows.map(row => ({ id: row.id, dataset: row.dataset, status: row.result.status }));
+    if (rows.length !== datasets.length) return Response.json({ error: "archive_storage_failed", observations }, { status: 500 });
+    if (!generation) return Response.json({ observations });
+    const actual = rows.find(row => row.dataset === "generation_actual");
+    const weather = rows.find(row => row.dataset === "weather_medium_range");
+    const published = rows.find(row => row.dataset === "wind_day_ahead");
+    const forecast = forecastGenerationMix({ origin: clock().toISOString(),
+      actuals: actual?.dataset === "generation_actual" && actual.result.status === "data" ? actual.result.document.intervals : [],
+      weather: weather?.dataset === "weather_medium_range" && weather.result.status === "data" ? weather.result.document : null,
+      published: published?.dataset === "wind_day_ahead" && published.result.status === "data" ? published.result.document.intervals : [],
+    });
+    const run: GenerationForecastRun = { id: crypto.randomUUID(), zone: forecast.zone,
+      origin: forecast.origin, algorithm: forecast.algorithm,
+      source_refs: Object.fromEntries(rows.map(row => [row.dataset, row.id])), forecast };
+    try { await store.saveGenerationRun(run); }
+    catch { return Response.json({ error: "generation_run_storage_failed", observations }, { status: 500 }); }
+    const predicted: Record<string, number> = {};
+    for (const hour of forecast.hours) for (const candidates of Object.values(hour.byPsr)) {
+      for (const [model, prediction] of Object.entries(candidates)) if (prediction.status === "predicted") predicted[model] = (predicted[model] ?? 0) + 1;
+    }
+    return Response.json({ observations, generation: { id: run.id, origin: run.origin, predicted } });
   };
 }
 
@@ -150,6 +192,10 @@ if (import.meta.main) {
     async saveObservation(row) {
       const { error } = await client.from("energy_market_forecast_observations").insert(row);
       if (error) throw new Error("Archive observation storage failed");
+    },
+    async saveGenerationRun(row) {
+      const { error } = await client.from("energy_generation_forecast_runs").insert(row);
+      if (error) throw new Error("Generation run storage failed");
     },
   }));
 }

@@ -35,10 +35,10 @@ export interface MediumRangeWeatherDocument {
 }
 
 /** Fixed model, sites and native units make successive vintages comparable. */
-export function mediumRangeWeatherRequest() {
+export function mediumRangeWeatherRequest(pastDays: 0 | 28 = 0) {
   const sites = ZONE_STATIONS.SE3.map(({ id, latitude, longitude }) => ({ station_id: id, latitude, longitude }));
   const record = {
-    provider: "open_meteo" as const, model: MODEL as typeof MODEL, forecast_days: 7 as const,
+    provider: "open_meteo" as const, model: MODEL as typeof MODEL, forecast_days: 7 as const, past_days: pastDays,
     timezone: "UTC" as const, wind_speed_unit: "ms" as const,
     variables: [...MEDIUM_RANGE_VARIABLES], sites,
   };
@@ -50,6 +50,7 @@ export function mediumRangeWeatherRequest() {
     timezone: record.timezone, wind_speed_unit: record.wind_speed_unit,
     hourly: record.variables.join(","),
   }).toString();
+  if (pastDays !== 0) url.searchParams.set("past_days", String(pastDays));
   return { url, record };
 }
 

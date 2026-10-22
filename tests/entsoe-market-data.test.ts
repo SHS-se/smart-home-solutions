@@ -34,8 +34,8 @@ Deno.test("ENTSO-E A01 keeps missing quarter positions as gaps and source metada
   assertEquals(result.createdAt, "2026-10-22T12:00:00Z");
   assertEquals([result.documentId, result.revisionNumber, result.processType], [null, null, null]);
   assertEquals(result.intervals, [
-    { startMs: Date.parse(FROM), endMs: Date.parse(FROM) + 900_000, value: 12, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null },
-    { startMs: Date.parse(FROM) + 1_800_000, endMs: Date.parse(FROM) + 2_700_000, value: 18, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null },
+    { startMs: Date.parse(FROM), endMs: Date.parse(FROM) + 900_000, value: 12, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null, flow: null },
+    { startMs: Date.parse(FROM) + 1_800_000, endMs: Date.parse(FROM) + 2_700_000, value: 18, unit: "MAW", psrType: "B19", resolution: "PT15M", businessType: null, seriesId: null, flow: null },
   ]);
 });
 
@@ -137,4 +137,22 @@ Deno.test("market research does not expose credential-bearing transport errors",
   const response = await createMarketResearchHandler(config, upstream)(request());
   assertEquals(response.status, 502);
   assertEquals(await response.json(), { error: "entsoe_transport_failed" });
+});
+
+Deno.test("ENTSO-E explicit generation query retains production and consumption directions", () => {
+  const params = entsoeParameters({ ...query, dataset: "generation_actual" });
+  assertEquals([params.get("documentType"), params.get("processType"), params.get("psrType")], ["A75", "A16", null]);
+  const xml = document("A01", "PT60M", point(1, 9));
+  const annotate = (fields: string) => xml.replace("<ns:curveType>", `${fields}<ns:curveType>`);
+  const flow = (fields: string) => {
+    const response = parseEntsoeResponse(annotate(fields));
+    if (response.status !== "data") throw new Error("Expected generation data");
+    return response.intervals[0].flow;
+  };
+  assertEquals(flow('<ns:inBiddingZone_Domain.mRID>SE3</ns:inBiddingZone_Domain.mRID><ns:businessType>A01</ns:businessType>'), "production");
+  assertEquals(flow('<ns:outBiddingZone_Domain.mRID>SE3</ns:outBiddingZone_Domain.mRID><ns:businessType>A04</ns:businessType>'), "consumption");
+  assertEquals(flow('<ns:businessType>A01</ns:businessType>'), "production");
+  assertEquals(flow(''), null);
+  assertThrows(() => flow('<ns:outBiddingZone_Domain.mRID>SE3</ns:outBiddingZone_Domain.mRID><ns:businessType>A01</ns:businessType>'), Error, "Inconsistent");
+  assertThrows(() => flow('<ns:outBiddingZone_Domain.mRID>SE3</ns:outBiddingZone_Domain.mRID><ns:inBiddingZone_Domain.mRID>SE3</ns:inBiddingZone_Domain.mRID>'), Error, "Ambiguous");
 });

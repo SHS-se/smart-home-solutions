@@ -87,3 +87,12 @@ Deno.test("weather rejects malformed batches, calendars, units, offsets and non-
     assertThrows(() => parseMediumRangeWeather(raw, acquired));
   }
 });
+
+Deno.test("generation research weather explicitly requests and records 28 past days", () => {
+  assertEquals(mediumRangeWeatherRequest().url.searchParams.get("past_days"), null);
+  assertEquals(mediumRangeWeatherRequest().record.past_days, 0);
+  const research = mediumRangeWeatherRequest(28);
+  assertEquals(research.url.searchParams.get("past_days"), "28");
+  assertEquals(research.record.past_days, 28);
+  assertEquals(research.url.searchParams.get("forecast_days"), "7");
+});

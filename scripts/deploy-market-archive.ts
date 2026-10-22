@@ -3,6 +3,8 @@ const TEST = 'vxqpgbzseckgceopitpm';
 const MIGRATIONS = [
   { version: '20261022180000', name: 'test_market_forecast_vintages' },
   { version: '20261022190000', name: 'test_medium_range_weather' },
+  { version: '20261022210000', name: 'test_generation_mix' },
+  { version: '20261022211000', name: 'test_generation_validation_permissions' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
@@ -34,8 +36,8 @@ try {
   }
   await cli(['functions', 'deploy', 'energy-market-archive', '--project-ref', TEST, '--use-api', '--yes']);
   console.log('Deployed the TEST collector.');
-  await query('SELECT private.enable_test_market_archive(); SELECT private.request_test_market_archive(); SELECT true AS enabled;');
-  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname='test-energy-market-forecast-archive';");
+  await query('SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT true AS enabled;');
+  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast');");
   console.log(JSON.stringify({ project: TEST, archive: 'enabled', first_collection: 'requested', schedule }));
 } finally {
   await Deno.remove(temporary, { recursive: true });

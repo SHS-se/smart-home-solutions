@@ -3,7 +3,7 @@ import { XMLParser, XMLValidator } from "npm:fast-xml-parser@5.11.2";
 export type EntsoeDataset =
   | "price" | "load_actual" | "load_day_ahead" | "load_week_ahead"
   | "wind_actual" | "solar_actual" | "nuclear_actual" | "wind_day_ahead"
-  | "generation_outages";
+  | "generation_outages" | "generation_actual";
 
 export interface EntsoeQuery { dataset: EntsoeDataset; from: string; to: string }
 
@@ -14,6 +14,7 @@ const DATASETS: Record<EntsoeDataset, Record<string, string>> = {
   load_day_ahead: { documentType: "A65", processType: "A01", outBiddingZone_Domain: SE3 },
   load_week_ahead: { documentType: "A65", processType: "A31", outBiddingZone_Domain: SE3 },
   // Keep both offshore (B18) and onshore (B19) available, with each series' PSR label.
+  generation_actual: { documentType: "A75", processType: "A16", in_Domain: SE3 },
   wind_actual: { documentType: "A75", processType: "A16", in_Domain: SE3 },
   solar_actual: { documentType: "A75", processType: "A16", in_Domain: SE3, psrType: "B16" },
   nuclear_actual: { documentType: "A75", processType: "A16", in_Domain: SE3, psrType: "B14" },
@@ -50,6 +51,7 @@ export interface EntsoeInterval {
   startMs: number; endMs: number; value: number; unit: string; psrType: string | null;
   /** Native provider resolution and series labels; daily min/max is not a mean. */
   resolution: string; businessType: string | null; seriesId: string | null;
+  flow: "production" | "consumption" | null;
 }
 export type EntsoeResponse =
   | { status: "data"; createdAt: string | null; documentId: string | null;
@@ -120,6 +122,13 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
     const unit = text(s["quantity_Measure_Unit.name"] ?? s["price_Measure_Unit.name"]);
     const psr = s.MktPSRType === undefined ? null : text(element(s.MktPSRType).psrType);
     const businessType = optionalText(s.businessType), seriesId = optionalText(s.mRID);
+    const inZone = optionalText(s["inBiddingZone_Domain.mRID"]);
+    const outZone = optionalText(s["outBiddingZone_Domain.mRID"]);
+    if (inZone !== null && outZone !== null) throw new Error("Ambiguous ENTSO-E generation flow");
+    const domainFlow = inZone !== null ? "production" : outZone !== null ? "consumption" : null;
+    const businessFlow = businessType === "A01" ? "production" : businessType === "A04" ? "consumption" : null;
+    if (domainFlow !== null && businessFlow !== null && domainFlow !== businessFlow) throw new Error("Inconsistent ENTSO-E generation flow");
+    const flow = domainFlow ?? businessFlow;
     const periods = list(s.Period);
     if (!periods.length) throw new Error("ENTSO-E series has no supported periods");
     for (const rawPeriod of periods) {
@@ -142,7 +151,7 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
         const startMs = boundary(point.position);
         // A01 missing positions are gaps. A03 omits unchanged block positions.
         const endMs = curve === "A03" ? next ? boundary(next.position) : end : Math.min(boundary(point.position + 1), end);
-        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr, resolution, businessType, seriesId });
+        intervals.push({ startMs, endMs, value: point.value, unit, psrType: psr, resolution, businessType, seriesId, flow });
       }
     }
   }

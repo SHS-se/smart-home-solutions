@@ -16,6 +16,7 @@
     "generate:ha-contract-fixture": "deno run --allow-write scripts/generate-ha-plan-fixture.ts && deno run --allow-write scripts/generate-battery-execution-fixture.ts",
     "research:prices:collect": "deno run --sloppy-imports --allow-read --allow-write --allow-run --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-forecast-research.ts collect",
     "research:prices:compare": "deno run --sloppy-imports --allow-read --allow-write scripts/price-forecast-research.ts compare",
+    "research:generation:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/generation-forecast-report.ts",
     "deploy:market-archive": "deno run --allow-read --allow-write --allow-run=supabase scripts/deploy-market-archive.ts"
   },
   "imports": {
