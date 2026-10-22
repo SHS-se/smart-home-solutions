@@ -15,8 +15,8 @@ const hash = (value: string | Uint8Array) => Array.from(sha256(typeof value === 
 import artifact from "./planner-wasm/artifact.json" with { type: "json" };
 import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 const { recipe, policy_manifest: policyManifest } = runtime;
-import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
-import { createWasmPlanner, type NativeQuarter } from "./planner-wasm/core.ts";
+import { nativePlanner } from "./planner-wasm/runtime.ts";
+import type { NativeQuarter } from "./planner-wasm/core.ts";
 import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
@@ -70,20 +70,6 @@ export interface PreparedRulesInput {
   base_w: number[];
 }
 
-let compiled: ReturnType<typeof createWasmPlanner> | undefined;
-function planner(trace?: PlanningTrace): ReturnType<typeof createWasmPlanner> {
-  if (compiled) return compiled;
-  const bytes = planningStage(trace, "wasm_artifact_decode", () => {
-    const decoded = Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0));
-    if (artifact.abi !== 11 || hash(decoded) !== artifact.wasm_sha256) {
-      return fail("Rules planner artifact is missing, obsolete or corrupt");
-    }
-    return decoded;
-  });
-  compiled = planningStage(trace, "wasm_compile", () => createWasmPlanner(bytes));
-  return compiled;
-}
-
 function alignedSnapshot(original: OptimisationSnapshot, effective: number): { snapshot: OptimisationSnapshot; offset: number } {
   const offset = original.slots.findIndex(s => Date.parse(s.start) + QUARTER_MS > effective);
   if (offset < 0) return fail("Snapshot has no remaining planning intervals");
@@ -120,7 +106,7 @@ function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapsho
 
 /** Freeze supplied forecasts/models and current published commands before admission. */
 export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "price_archive"> & { price_archive?: EnergyPlanningInput["price_archive"] }, reference: PublishedCommandReference | null,
-  approved: ReadyRulePolicy): PreparedRulesInput {
+  approved: ReadyRulePolicy, trace?: PlanningTrace): PreparedRulesInput {
   if (!input.resolved_price_outlook) return fail("Rules planner requires an already resolved price outlook");
   if (!approved || !Array.isArray(approved.rules)) return fail("Rules planner requires the approved rule policy");
   // State and commitment belong to the immutable measurement capture, not the
@@ -268,7 +254,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const rooms = prepareRoomServices(snapshot, retainedServices, headroom, {
     import_sek_per_kwh: outlook.shadow_import_sek_per_kwh,
     export_sek_per_kwh: snapshot.slots.map((s, i) => s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread),
-    surplus_w: spare });
+    surplus_w: spare }, trace);
   Object.assign(passive, rooms.power, poolService.power);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
@@ -443,7 +429,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
-  const core = planningStage(trace, "wasm_initialise", () => planner(trace), { cold: !compiled });
+  const core = nativePlanner(trace);
   let solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
   let released: GeneratedPlan["continuity"];
   if (solved.kind === "failed") {

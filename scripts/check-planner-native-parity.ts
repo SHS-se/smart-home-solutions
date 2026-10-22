@@ -4,6 +4,10 @@ import { assertEquals } from "@std/assert";
 import { causalCase, command, forecastProblem, problem } from "../tests/planner-wasm.fixture.ts";
 import { loadWasmCandidate, readyProblem } from "../bench/wasm-planner.ts";
 import recipe from "../planner-core/recipe.json" with { type: "json" };
+import roomVectors from "../tests/room-heating-native.fixture.json" with { type: "json" };
+import { nativePlanner } from "../supabase/functions/_shared/planner-wasm/runtime.ts";
+import type { RoomThermostat } from "../supabase/functions/_shared/planner/thermostat.ts";
+import type { RoomQuarter } from "../supabase/functions/_shared/room-heating-schedule.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const planner = await loadWasmCandidate(root);
@@ -51,3 +55,16 @@ for (const input of [base, committed, reservoir, forecastProblem(), readyProblem
 console.log(
   "Native and Wasm commands, physical trajectories, accounts and work usage match exactly.",
 );
+for (const { name, input } of roomVectors) {
+  const process = new Deno.Command(`${root}/planner-core/target/release/shs-planner-core`, {
+    args: ["--room"], stdin: "piped", stdout: "piped", stderr: "inherit",
+  }).spawn();
+  const writer = process.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(JSON.stringify(input)));
+  await writer.close();
+  const result = await process.output();
+  if (!result.success) throw new Error(`Native room reference failed: ${name}`);
+  assertEquals(nativePlanner().room({ ...input, thermostats: input.thermostats as RoomThermostat[],
+    quarters: input.quarters as RoomQuarter[] }), JSON.parse(new TextDecoder().decode(result.stdout)).plan);
+}
+console.log("Native and Wasm room commands and physical trajectories match exactly.");

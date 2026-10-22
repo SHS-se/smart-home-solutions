@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { NativeCommand, ReadyProblem } from "./ready-problem.ts";
 import { planningStage, type PlanningTrace } from "../planning-trace.ts";
+import type { RoomQuarter, RoomHeatingPlan } from "../room-heating-schedule.ts";
+import type { RoomThermostat } from "../planner/thermostat.ts";
 
 const age = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("off_unobserved") }),
@@ -122,6 +124,14 @@ export const projectionOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
   z.object({ kind: z.literal("projected"), quarters: quarter.array() }),
 ]);
+const roomOutcome = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("failed"), issue: z.string() }),
+  z.object({ kind: z.literal("planned"), plan: z.object({
+    power_w: z.number().finite().array(), thermostat_w: z.number().finite().array().array(),
+    targets_c: z.number().finite().array().array(), relays_on: z.boolean().array().array(),
+    temperature_c: z.number().finite().array(), shortfall_c: z.number().finite().array(),
+  }) }),
+]);
 // All fields in the validated wire schemas are required. Preserve that fact
 // for browser consumers whose project disables strictNullChecks (Zod otherwise
 // infers optional object keys there); runtime parsing remains unchanged.
@@ -161,7 +171,7 @@ function createPlanner(bytes: Uint8Array, reuseProjections: boolean) {
   let projectionFailure: Error | undefined;
   function invoke<T>(
     inputValue: unknown,
-    exportName: "planner_solve" | "planner_project",
+    exportName: "planner_solve" | "planner_project" | "planner_room",
     parse: (value: unknown) => T,
     trace?: PlanningTrace,
   ) {
@@ -225,6 +235,18 @@ function createPlanner(bytes: Uint8Array, reuseProjections: boolean) {
     }
   }
   return {
+    room(input: { start_c: number; start_delivered_w: number; thermostats: readonly RoomThermostat[]; quarters: RoomQuarter[] }, trace?: PlanningTrace): RoomHeatingPlan {
+      const { outcome } = invoke(input, "planner_room", value => roomOutcome.parse(value), trace);
+      if (outcome.kind === "failed") throw new Error(outcome.issue);
+      const plan = outcome.plan as RoomHeatingPlan;
+      if (Object.values(plan).some(series => series.length !== input.quarters.length) ||
+        plan.targets_c.some(row => row.length !== input.thermostats.length) ||
+        plan.thermostat_w.some(row => row.length !== input.thermostats.length) ||
+        plan.relays_on.some((row, i) => row.length !== input.quarters[i].relay_w.length)) {
+        throw new Error("Invalid native room plan coverage");
+      }
+      return plan;
+    },
     solve(problem: ReadyProblem, trace?: PlanningTrace) {
       const result = invoke(
         problem,

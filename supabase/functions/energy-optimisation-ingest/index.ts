@@ -39,6 +39,7 @@ import {
   type OptimisationSnapshot,
 } from "../_shared/planner/planning-contracts.ts";
 import { poolHeaters } from "../_shared/planner/pool-devices.ts";
+import { PlanningTrace } from "../_shared/planning-trace.ts";
 import { parseHeaterResponse, WATER_KWH_PER_M3_K } from "../_shared/planner/device-models.ts";
 import { poolPhysics } from "../_shared/planner/pool-physics.ts";
 import { fitPoolDynamics, poolDynamicsAnchor, poolPartialElectricity, poolPendingHeatAt, type PoolDynamics, type PoolElectricalInterval } from "../_shared/pool-dynamics.ts";
@@ -904,6 +905,7 @@ async function refreshPreparedForecasts(
 
 serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
   const requestId = haRequestId(req);
+  const trace = new PlanningTrace(requestId);
   const ingestStarted = performance.now();
   const json = (body: unknown, status = 200) =>
     haApiResponse(requestId, body, status, {}, req.headers.get("X-SHS-API-Version"));
@@ -1738,12 +1740,15 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           .select("criteria").eq("id", true).single();
         if (rulesError) throw new Error(rulesError.message);
         const planningNow = new Date();
-        const rulesInput = prepareRulesPlanningInput({ snapshot, now: planningNow.toISOString(),
-          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook },
-          fixedState?.published_commands ?? null, resolveRulePolicy(savedRules.criteria));
+        const planningInput = { snapshot, now: planningNow.toISOString(),
+          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook };
+        const rulesInput = trace.run("admission_preparation", () => prepareRulesPlanningInput(planningInput,
+          fixedState?.published_commands ?? null, resolveRulePolicy(savedRules.criteria), trace),
+          { rooms: snapshot.thermal_zones?.length ?? 0, slots: snapshot.slots.length });
         const planningStarted = performance.now();
         console.info("[ENERGY-OPTIMISATION] inputs ready", { request_id: requestId, replan_request_id: portalReplanId,
           elapsed_ms: Math.round(planningStarted - ingestStarted) });
+        const admitted = trace.start("job_admission");
         planningReceipt = await jobs.accept({
           homeId: auth.homeId, customerId: auth.customerId,
           snapshotId: snapshot.snapshot_id, sourceHash: sourceHash!,
@@ -1772,6 +1777,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             },
           },
         });
+        admitted({ job_id: planningReceipt.job_id });
         // Admission returns the durable receipt. HA's existing status loop
         // runs the complete solve in a fresh request, preserving ingest's CPU.
         console.info("[ENERGY-OPTIMISATION] planning response", {

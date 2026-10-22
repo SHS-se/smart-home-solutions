@@ -4,6 +4,7 @@ import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/ther
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { heatingMask, isThermostat, nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
+import type { PlanningTrace } from "./planning-trace.ts";
 
 export interface RoomServices {
   commands: Record<string, DeviceCommand[]>;
@@ -24,12 +25,13 @@ export interface RoomPrices {
 }
 
 /** Comfort service is authoritative even when its statistical model is weak. */
-export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], sharedHeadroom?: number[], prices?: RoomPrices): RoomServices {
+export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], sharedHeadroom?: number[], prices?: RoomPrices, trace?: PlanningTrace): RoomServices {
   const result: RoomServices = { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, unplanned_power: {}, warnings: [] };
   const n = snapshot.slots.length;
   const remaining=sharedHeadroom?.slice() ?? snapshot.slots.map(()=>Infinity);
   const surplus=prices?.surplus_w.map(w=>Math.max(0,w)) ?? snapshot.slots.map(()=>0);
   for (const zone of snapshot.thermal_zones ?? []) {
+    const complete = trace?.start("room_scheduling", { room_key: zone.key, slots: n });
     const members = snapshot.device_models.filter(m => zone.device_keys.includes(m.key));
     const relays = members.filter(m => m.control_type === "switch_schedule");
     const thermostats = members.filter(m => m.control_type === "setpoint");
@@ -51,8 +53,9 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     if (relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
       outdoorKnown && houseKnown && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
-      comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result);
+      comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
+      complete?.();
       continue;
     }
     // Incomplete native/thermal evidence is an estimate, not an ideal heater.
@@ -90,6 +93,7 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
     result.warnings.push(planningWarning("room_estimate", zone.key,
       `${zone.name}: the thermal or native thermostat forecast has incomplete evidence.`,
       "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
+    complete?.();
   }
   return result;
 }
@@ -105,7 +109,7 @@ const shortfall = (zone: Zone, quarters: number) => planningWarning("comfort_sho
 /** Native target actions and the resulting demand are solved together. */
 function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Member[], relays: Member[],
   retained: Retained, remaining: number[], surplus: number[],
-  prices: RoomPrices | undefined, result: RoomServices): number {
+  prices: RoomPrices | undefined, result: RoomServices, trace?: PlanningTrace): number {
   const model = zone.model!, n = snapshot.slots.length;
   const thermostats: RoomThermostat[] = members.map(m => {
     if (!isThermostat(m.thermostat)) throw new Error("Native thermostat evidence was not prepared");
@@ -126,7 +130,7 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
       import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1, surplus_w: surplus[i] };
   });
-  const plan = planRoomHeating(zone.start_temperature_c!, thermostats, quarters, zone.start_delivered_w ?? 0);
+  const plan = planRoomHeating(zone.start_temperature_c!, thermostats, quarters, zone.start_delivered_w ?? 0, trace);
   let misses = 0, previousC = zone.start_temperature_c!;
   let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, delivered_w: zone.start_delivered_w ?? 0, heating_mask: heatingMask(thermostats) };
   const debts = relays.map(() => 0);

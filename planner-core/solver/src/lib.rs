@@ -7,6 +7,7 @@ mod move_resize;
 mod opportunity;
 mod physics;
 mod policy;
+pub mod room_heating;
 mod witnesses;
 use serde::{Deserialize, Serialize};
 use shs_planner_models::{
@@ -522,6 +523,16 @@ pub fn project_json(bytes: &[u8]) -> Vec<u8> {
 #[no_mangle]
 pub unsafe extern "C" fn planner_project(pointer: *const u8, length: usize) -> u64 {
     let output = project_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+/// # Safety
+/// Input must name a live initialized module allocation. Caller owns both buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_room(pointer: *const u8, length: usize) -> u64 {
+    let output = room_heating::plan_json(std::slice::from_raw_parts(pointer, length));
     let length = output.len() as u64;
     let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
     (length << 32) | pointer

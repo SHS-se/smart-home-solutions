@@ -11,7 +11,10 @@
  */
 import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
-import { cpuPlanningInput } from "../tests/planner-handler-cpu.fixture.ts";
+import { cpuPlanningInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import { prepareRulesPlanningInput } from "../supabase/functions/_shared/rules-planner.ts";
+import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
+import { PlanningTrace } from "../supabase/functions/_shared/planning-trace.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
@@ -20,12 +23,14 @@ const RUNS = 3;
 // hosted two-second CPU ceiling for host differences and transport. The native
 // work and projection tests also bound work deterministically.
 const BUDGET_MS = 1500;
+// Admission still needs CPU for authentication, telemetry and database JSON.
+const PREPARATION_BUDGET_MS = 1000;
 // Median reference CPU on the baseline machine (Apple M-series, 2026-10-14),
 // where the cold worker used ≈1,000 ms. Re-measure only with the reference.
 const BASELINE_REFERENCE_MS = 340;
 const REFERENCE_ROUNDS = 400;
 
-type Sample = { cpu_ms: number; elapsed_ms: number };
+type Sample = { cpu_ms: number; elapsed_ms: number; wasm_memory_bytes?: number };
 
 const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> => {
   const before = cpuUsage();
@@ -50,6 +55,26 @@ async function planSample(): Promise<Sample> {
   assertEquals(body.result.plan.status, "ready");
   assertEquals(body.result.plan.plans.priority.slots.length, 288);
   return sample;
+}
+
+/** Cold admission preparation and its durable RPC encoding, with nine rooms. */
+async function preparationSample(mode: "household" | "mixed" | "varying" = "household"): Promise<Sample> {
+  const source = mode === "mixed" ? cpuMixedRoomPlanningSource()
+    : mode === "varying" ? cpuVaryingRoomPlanningSource() : cpuPlanningSource(true);
+  let input!: ReturnType<typeof prepareRulesPlanningInput>;
+  let memory = 0;
+  const trace = new PlanningTrace("cpu-preparation", message => {
+    const event = JSON.parse(message);
+    memory = Math.max(memory, event.wasm_memory_bytes ?? 0);
+  });
+  const sample = await measure(() => {
+    input = prepareRulesPlanningInput(JSON.parse(JSON.stringify(source)), null, resolveRulePolicy(), trace);
+    JSON.stringify({ input });
+  });
+  assertEquals(Object.keys(input.rooms.commands).length, mode === "mixed" ? 4 : 9);
+  assertEquals(input.problem.slots.length, 288);
+  assert(memory > 0 && memory < 128 * 1024 * 1024, `Native room memory exceeded the preparation budget: ${memory}`);
+  return { ...sample, wasm_memory_bytes: memory };
 }
 
 /** Fixed single-threaded JIT work (allocation, sorting, JSON, float loops). */
@@ -77,7 +102,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "reference"): Promise<Sample> {
+async function coldSample(kind: "plan" | "reference" | "preparation" | "mixed-room" | "varying-rooms"): Promise<Sample> {
   const { code, stdout } = await new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
     args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--no-code-cache", import.meta.filename!, `--${kind}`],
@@ -110,19 +135,44 @@ if (Deno.args.includes("--plan")) {
   console.log(JSON.stringify(await planSample()));
 } else if (Deno.args.includes("--reference")) {
   console.log(JSON.stringify(await referenceSample()));
+} else if (Deno.args.includes("--preparation")) {
+  console.log(JSON.stringify(await preparationSample()));
+} else if (Deno.args.includes("--mixed-room")) {
+  console.log(JSON.stringify(await preparationSample("mixed")));
+} else if (Deno.args.includes("--varying-rooms")) {
+  console.log(JSON.stringify(await preparationSample("varying")));
 } else {
   console.log(JSON.stringify({ cpu_model: await cpuModel() }));
-  const plans: number[] = [], references: number[] = [];
+  const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
     const plan = await coldSample("plan");
+    const preparation = await coldSample("preparation");
+    const mixed = await coldSample("mixed-room");
+    const varying = await coldSample("varying-rooms");
     references.push(ref.cpu_ms);
     plans.push(plan.cpu_ms);
-    console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, plan_elapsed_ms: plan.elapsed_ms }));
+    preparations.push(preparation.cpu_ms);
+    mixedRooms.push(mixed.cpu_ms);
+    varyingRooms.push(varying.cpu_ms);
+    console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
+      preparation_cpu_ms: preparation.cpu_ms, preparation_elapsed_ms: preparation.elapsed_ms,
+      mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms,
+      preparation_wasm_memory_bytes: preparation.wasm_memory_bytes, mixed_room_wasm_memory_bytes: mixed.wasm_memory_bytes,
+      varying_rooms_wasm_memory_bytes: varying.wasm_memory_bytes }));
   }
   const speed = BASELINE_REFERENCE_MS / median(references);
   const scaled = median(plans) * speed;
   console.log(JSON.stringify({ median_plan_cpu_ms: median(plans), median_reference_cpu_ms: median(references), speed_vs_baseline: speed, baseline_plan_cpu_ms: scaled }));
   assert(scaled < BUDGET_MS, `Complete cold planning worker used ${scaled.toFixed(1)} baseline ms CPU (median ${median(plans).toFixed(1)} ms on this machine, ${speed.toFixed(2)}× baseline speed); budget is ${BUDGET_MS} ms`);
+  const prepared = median(preparations) * speed;
+  console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
+  assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
+  const mixed = median(mixedRooms) * speed;
+  console.log(JSON.stringify({ median_mixed_room_cpu_ms: median(mixedRooms), baseline_mixed_room_cpu_ms: mixed }));
+  assert(mixed < PREPARATION_BUDGET_MS, `Cold mixed-device room admission preparation used ${mixed.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
+  const varying = median(varyingRooms) * speed;
+  console.log(JSON.stringify({ median_varying_rooms_cpu_ms: median(varyingRooms), baseline_varying_rooms_cpu_ms: varying }));
+  assert(varying < PREPARATION_BUDGET_MS, `Cold varying-physics room admission preparation used ${varying.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
 }
