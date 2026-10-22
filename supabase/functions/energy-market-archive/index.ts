@@ -2,12 +2,15 @@ import { entsoeParameters, parseEntsoeResponse, EntsoeProviderError, type Entsoe
 import { ARCHIVED_MARKET_DATASETS } from "../_shared/price-estimate-evidence.ts";
 import { mediumRangeWeatherRequest, parseMediumRangeWeather, type MediumRangeWeatherDocument } from "../_shared/medium-range-weather.ts";
 
-import { forecastGenerationMix } from "../_shared/generation-mix.ts";
+import { forecastGenerationMixV2 } from "../_shared/generation-mix-v2.ts";
+import { acquireSwedishHydrology, type HydroAcquisition } from "../_shared/reservoir-hydrology.ts";
+import { captureCapacityEvidence, type CapacityDataset, type CapacityDocuments, type CapacityEvidence } from "../_shared/entsoe-capacity-evidence.ts";
 
 const TEST = "https://vxqpgbzseckgceopitpm.supabase.co";
 const DAY = 86_400_000;
-export type ArchiveDataset = typeof ARCHIVED_MARKET_DATASETS[number] | "generation_actual";
-type EntsoeArchiveDataset = Exclude<ArchiveDataset, "weather_medium_range">;
+const GENERATION_DATASETS = ["generation_actual", "sweden_hydrology", "production_outages", "generation_outages", "installed_generation_units"] as const;
+export type ArchiveDataset = typeof ARCHIVED_MARKET_DATASETS[number] | typeof GENERATION_DATASETS[number];
+type EntsoeArchiveDataset = Exclude<typeof ARCHIVED_MARKET_DATASETS[number], "weather_medium_range"> | "generation_actual";
 type DataDocument = Extract<EntsoeResponse, { status: "data" }>;
 interface ResultEvidence {
   http_status: number | null;
@@ -25,7 +28,7 @@ type WeatherArchiveResult = Omit<ResultEvidence, "raw_xml"> & {
   request: ReturnType<typeof mediumRangeWeatherRequest>["record"];
 } & ({ status: "data"; document: MediumRangeWeatherDocument }
   | { status: "provider_error" | "transport_error" | "parse_error" });
-export type MarketArchiveResult = EntsoeArchiveResult | WeatherArchiveResult;
+export type MarketArchiveResult = EntsoeArchiveResult | WeatherArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
 interface ObservationIdentity {
   id: string;
   zone: "SE3";
@@ -34,9 +37,12 @@ interface ObservationIdentity {
   requested_at: string;
   resolved_at: string;
 }
+type CapacityObservation = { [K in CapacityDataset]: { dataset: K; result: CapacityEvidence<CapacityDocuments[K]> } }[CapacityDataset];
 export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: EntsoeArchiveDataset; result: EntsoeArchiveResult }
   | { dataset: "weather_medium_range"; result: WeatherArchiveResult }
+  | { dataset: "sweden_hydrology"; result: HydroAcquisition }
+  | CapacityObservation
 );
 export interface GenerationForecastRun {
   id: string;
@@ -44,7 +50,7 @@ export interface GenerationForecastRun {
   origin: string;
   algorithm: string;
   source_refs: Partial<Record<ArchiveDataset, string>>;
-  forecast: ReturnType<typeof forecastGenerationMix>;
+  forecast: ReturnType<typeof forecastGenerationMixV2>;
 }
 export interface MarketArchiveStore {
   verifyToken(token: string): Promise<boolean>;
@@ -120,6 +126,7 @@ export function createMarketArchiveHandler(
   store: MarketArchiveStore,
   fetchProvider: typeof fetch = fetch,
   clock: () => Date = () => new Date(),
+  acquireHydro: typeof acquireSwedishHydrology = acquireSwedishHydrology,
 ) {
   return async (request: Request): Promise<Response> => {
     if (config.projectUrl !== TEST) return Response.json({ error: "test_lane_only" }, { status: 403 });
@@ -139,17 +146,33 @@ export function createMarketArchiveHandler(
       generation = "generation" in options;
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     const today = Date.parse(`${clock().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    const datasets: ArchiveDataset[] = [...ARCHIVED_MARKET_DATASETS, ...(generation ? ["generation_actual" as const] : [])];
+    const datasets: ArchiveDataset[] = [...ARCHIVED_MARKET_DATASETS, ...(generation ? GENERATION_DATASETS : [])];
     const outcomes = await Promise.allSettled(datasets.map(async dataset => {
-      const from = new Date(dataset === "generation_actual" ? Math.floor(clock().getTime() / 60_000) * 60_000 - 28 * DAY
+      const currentMinute = Math.floor(clock().getTime() / 60_000) * 60_000;
+      const yearStart = Date.UTC(clock().getUTCFullYear(), 0, 1);
+      const nextYearStart = Date.UTC(clock().getUTCFullYear() + 1, 0, 1);
+      const from = new Date(dataset === "generation_actual" ? currentMinute - 28 * DAY
+        : dataset === "installed_generation_units" ? yearStart
+        : dataset === "production_outages" || dataset === "generation_outages" ? today - 180 * DAY
+        : dataset === "sweden_hydrology" ? today - 49 * DAY
         : today - (generation && dataset === "weather_medium_range" ? 28 * DAY : 0)).toISOString();
-      const to = dataset === "generation_actual" ? new Date(Math.floor(clock().getTime() / 60_000) * 60_000).toISOString()
-        : new Date(today + (dataset === "load_week_ahead" ? 9 : dataset === "weather_medium_range" ? 7 : 3) * DAY).toISOString();
+      const to = new Date(dataset === "generation_actual" ? currentMinute
+        : dataset === "installed_generation_units" ? nextYearStart
+        : dataset === "sweden_hydrology" ? today + DAY
+        : today + (dataset === "load_week_ahead" ? 9 : dataset === "weather_medium_range" || dataset === "production_outages" || dataset === "generation_outages" ? 7 : 3) * DAY).toISOString();
       const requestedAt = clock().toISOString();
       const identity = { id: crypto.randomUUID(), zone: "SE3" as const,
         requested_from: from, requested_to: to, requested_at: requestedAt };
       const row: MarketArchiveObservation = dataset === "weather_medium_range"
         ? { ...identity, dataset, result: await weatherResult(requestedAt, config.entsoeToken, fetchProvider, generation ? 28 : 0), resolved_at: clock().toISOString() }
+        : dataset === "sweden_hydrology"
+        ? { ...identity, dataset, result: await acquireHydro(fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === "production_outages"
+        ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === "generation_outages"
+        ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === "installed_generation_units"
+        ? { ...identity, dataset, result: await captureCapacityEvidence(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
         : { ...identity, dataset, result: await entsoeResult(dataset, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() };
       await store.saveObservation(row);
       return row;
@@ -161,10 +184,20 @@ export function createMarketArchiveHandler(
     const actual = rows.find(row => row.dataset === "generation_actual");
     const weather = rows.find(row => row.dataset === "weather_medium_range");
     const published = rows.find(row => row.dataset === "wind_day_ahead");
-    const forecast = forecastGenerationMix({ origin: clock().toISOString(),
+    const hydro = rows.find(row => row.dataset === "sweden_hydrology");
+    const roster = rows.find(row => row.dataset === "installed_generation_units");
+    const production = rows.find(row => row.dataset === "production_outages");
+    const generators = rows.find(row => row.dataset === "generation_outages");
+    const forecast = forecastGenerationMixV2({ origin: clock().toISOString(),
       actuals: actual?.dataset === "generation_actual" && actual.result.status === "data" ? actual.result.document.intervals : [],
       weather: weather?.dataset === "weather_medium_range" && weather.result.status === "data" ? weather.result.document : null,
       published: published?.dataset === "wind_day_ahead" && published.result.status === "data" ? published.result.document.intervals : [],
+      hydro: hydro?.dataset === "sweden_hydrology" && hydro.result.status === "data" ? hydro.result.document : null,
+      nuclear: {
+        roster: roster?.dataset === "installed_generation_units" && roster.result.status === "data" ? roster.result.document : null,
+        productionOutages: production?.dataset === "production_outages" && production.result.status === "data" ? production.result.document : null,
+        generationOutages: generators?.dataset === "generation_outages" && generators.result.status === "data" ? generators.result.document : null,
+      },
     });
     const run: GenerationForecastRun = { id: crypto.randomUUID(), zone: forecast.zone,
       origin: forecast.origin, algorithm: forecast.algorithm,

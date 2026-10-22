@@ -4,15 +4,16 @@
 
 ```ts
 // Collector, after saving the current acquisition batch. No household-plan writes.
-const forecast = forecastGenerationMix({
-  origin: clock().toISOString(), actuals, weather, published,
+const forecast = forecastGenerationMixV2({
+  origin: clock().toISOString(), actuals, weather, published, hydro, nuclear,
 });
-await store.saveGenerationRun({ id: crypto.randomUUID(), ...forecast, source_refs });
+await store.saveGenerationRun({ id: crypto.randomUUID(), zone: forecast.zone,
+  origin: forecast.origin, algorithm: forecast.algorithm, forecast, source_refs });
 // Offline report reads immutable runs and subsequent actual observations.
 const scores = scoreGenerationRuns(runs, actuals);
 ```
 
-`forecastGenerationMix` is pure: it returns a frozen 72-hour UTC panel,
+The versioned forecasters are pure: they return a frozen 72-hour UTC panel,
 training counts and explicit per-model unavailability. Inputs are full-generation
 ENTSO-E intervals, ten-site ECMWF weather and published day-ahead wind/solar.
 The collector owns provider authentication, redacted raw evidence, acquisition
@@ -110,3 +111,72 @@ No future target has settled yet, so this establishes functioning collection and
 prediction, not forecast skill or a price improvement. Service-role validation
 confirmed inserts work, updates are denied, incomplete source references are
 rejected, and the price context pins the visible generation run.
+
+## Hydro and nuclear extension (version 2)
+
+Caller usage stays `forecastGenerationMixV2({...v1Inputs, hydro, nuclear})`, then
+append a run referencing all acquisition IDs. Offline replay dispatches on the
+stored algorithm. The v1 forecaster remains unchanged; v2 wraps its four models
+and adds independent hydro-state and nuclear-availability candidates. Scoring
+must retain algorithm identity so the two experiments are not pooled.
+
+Use Codex's additive versioned domain adapter as the base, and Claude's independent
+ratio/delta nuclear comparators and explicit A77/A80/A71 verification seams.
+Reject a full dispatch model and arbitrary corrections to the existing curves.
+Use the shared collector, TEST guard, private cron credential and append-only
+observations. Generation mode adds a bounded Swedish report batch plus separate
+A77, A80 and A71 observations. The SQL trigger requires the additional source IDs
+only for v2; older v1 runs retain their original identities and schema.
+
+The Swedish adapter discovers the latest six weekly reports from Energiföretagen's
+actual index links, preserving raw PDF bytes, hash, version, geography and HTTP
+Last-Modified independently of local acquisition. Parse only page 1 sequentially;
+verify hosted CPU/memory before enabling its recurring use. A serverless PDF.js
+build avoids reliance on native canvas. Capture each failed source explicitly.
+Do not substitute another source/parser when acquisition fails. Six reports bound
+both work and the history required by the existing 28-day training window.
+
+The hydro-state candidate learns positive analog weights from SE3 reservoir
+filling and Sweden-wide inflow anomaly. Pair historical generation only with
+reports whose completed period and provider-modified time precede that hour.
+This reconstruction is training evidence acquired now, not proof of historical
+forecast skill. Target features hold the latest known weekly state across the
+72-hour horizon. National inflow is not SE3 inflow and is not a future forecast.
+
+The nuclear adapter resolves document versions and cancellations before merging
+unit timelines. Quantities are available MW, not lost MW. Combine overlapping
+notices on one unit without double counting; parent production constraints and
+child generator constraints require verified roster identities. Unknown joins,
+conflicting revisions or response truncation leave the candidate unavailable.
+Neither an empty outage response nor an outage-derived partial roster proves
+fleet completeness. First enable the closed TEST A77/A71 probe vocabulary, inspect
+real responses and verify the current operator roster before activating nuclear
+output. Compare announced fleet availability at the latest measured nuclear hour
+and each target hour. Ratio and change candidates remain separate experiments;
+never treat capacity as guaranteed production or clip surprising predictions.
+
+Public sources: [Energiföretagen Kraftläget](https://www.energiforetagen.se/statistik/kraftlaget/)
+and [weekly archive](https://www.energiforetagen.se/statistik/kraftlaget/kraftlagets-arkiv/);
+[ENTSO-E extraction guide](https://transparency.entsoe.eu/content/static_content/download?path=%2FStatic+content%2Fweb+api%2FIG-for-TP-data-extraction-process.pdf),
+A77 production outages, A80 generation outages, A71/A33 installed units.
+[NVE](https://www.nve.no/energi/analyser-og-statistikk/hydrologiske-data-til-kraftsituasjonsrapporten/)
+provides separate Norwegian hydrology; it is not used as a substitute for Swedish
+inflow. SMHI's advertised energy-inflow forecasts are a separate commercial
+service, not a verified open feed. Preserve attribution; no public redistribution
+of the source reports is part of this TEST experiment.
+
+The first hosted v2 run is `36036737-6c08-4d95-979b-13eececbc491`, issued
+2026-10-22 19:24:41 UTC. All nine sources returned data. Six reports (weeks 37–42)
+provided five historical states paired with 670 observed hydro hours. Hydro-state,
+nuclear-delta and nuclear-ratio each produced all 72 target hours. Current announced
+nuclear capacity is 3,693 MW after resolving notices for all six production units;
+this agrees with the operating reactors implied by operator maintenance pages.
+The week-42 report gives SE3 storage 1,806 GWh / 63.5%, with national weekly inflow
+1,059 GWh / 91% of its seasonal median. Hosted acquisition and forecast saving
+succeeded; every stored v1 and v2 run replayed exactly.
+
+The offline truth resolver now clears the entire complete-hour request window
+when applying a newer actual-data observation, including omitted first/last hours.
+A partial requested edge cannot invalidate older complete truth outside that
+scope. Per-hour source identities are retained in the report. This prevents
+unintentional filling of a revised data gap with an older observation.

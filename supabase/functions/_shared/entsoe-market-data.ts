@@ -3,7 +3,7 @@ import { XMLParser, XMLValidator } from "npm:fast-xml-parser@5.11.2";
 export type EntsoeDataset =
   | "price" | "load_actual" | "load_day_ahead" | "load_week_ahead"
   | "wind_actual" | "solar_actual" | "nuclear_actual" | "wind_day_ahead"
-  | "generation_outages" | "generation_actual";
+  | "generation_outages" | "generation_actual" | "production_outages" | "installed_generation_units";
 
 export interface EntsoeQuery { dataset: EntsoeDataset; from: string; to: string }
 
@@ -20,6 +20,8 @@ const DATASETS: Record<EntsoeDataset, Record<string, string>> = {
   nuclear_actual: { documentType: "A75", processType: "A16", in_Domain: SE3, psrType: "B14" },
   wind_day_ahead: { documentType: "A69", processType: "A01", in_Domain: SE3 },
   generation_outages: { documentType: "A80", biddingZone_Domain: SE3 },
+  production_outages: { documentType: "A77", biddingZone_Domain: SE3 },
+  installed_generation_units: { documentType: "A71", processType: "A33", in_Domain: SE3 },
 };
 
 // Transmission outages (A78) require an explicit in/out border. The SE3-only

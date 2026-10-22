@@ -72,6 +72,7 @@ Deno.test("market archive records native market and seven-day weather windows an
     assertEquals(row.requested_at, now().toISOString());
     assertEquals(row.resolved_at, now().toISOString());
     assertEquals(row.result.status, "data");
+    if (!("body_sha256" in row.result)) throw new Error("Unexpected research source in ordinary hourly collection");
     assertMatch(row.result.body_sha256!, /^[a-f0-9]{64}$/);
     if (row.dataset === "weather_medium_range") {
       assertEquals(row.requested_to, "2026-10-31T00:00:00.000Z");
@@ -82,13 +83,16 @@ Deno.test("market archive records native market and seven-day weather windows an
       continue;
     }
     if (row.result.status !== "data") throw new Error("Expected data");
+    if (!("documentId" in row.result.document)) throw new Error("Unexpected research document in ordinary hourly collection");
     assertEquals(row.result.document.documentId, "doc-1");
     assertEquals(row.result.document.revisionNumber, "2");
   }
   for (const dataset of ["wind_day_ahead", "load_day_ahead", "load_week_ahead", "weather_medium_range"]) {
     const repeated = db.rows.filter(row => row.dataset === dataset);
     assertEquals(repeated.length, 2);
-    assertEquals(repeated[0].result.body_sha256, repeated[1].result.body_sha256);
+    const first = repeated[0].result, second = repeated[1].result;
+    if (!("body_sha256" in first) || !("body_sha256" in second)) throw new Error("Unexpected research source");
+    assertEquals(first.body_sha256, second.body_sha256);
   }
 });
 
@@ -167,7 +171,7 @@ Deno.test("public weather remains independently archived when ENTSO-E credential
   const response = await createMarketArchiveHandler({ ...config, entsoeToken: "" }, db.store, upstream, now)(request());
   assertEquals(response.status, 200);
   assertEquals(calls, 1);
-  assertEquals(db.rows.filter(row => row.result.error_code === "entsoe_token_not_configured").length, 3);
+  assertEquals(db.rows.filter(row => "error_code" in row.result && row.result.error_code === "entsoe_token_not_configured").length, 3);
   const captured = db.rows.find(row => row.dataset === "weather_medium_range");
   if (captured?.dataset !== "weather_medium_range") throw new Error("Missing weather");
   assertEquals(captured.result.status, "data");
@@ -208,7 +212,7 @@ Deno.test("generation research acquires 28-day actuals and weather, commits sour
   let committed = 0;
   const store: MarketArchiveStore = { ...db.store,
     async saveObservation(row) { await db.store.saveObservation(row); committed++; },
-    async saveGenerationRun(run) { assertEquals(committed, 5); await db.store.saveGenerationRun(run); },
+    async saveGenerationRun(run) { assertEquals(committed, 9); await db.store.saveGenerationRun(run); },
   };
   const upstream: typeof fetch = input => {
     const url = new URL(String(input)); queries.push(url);
@@ -216,7 +220,7 @@ Deno.test("generation research acquires 28-day actuals and weather, commits sour
   };
   const response = await createMarketArchiveHandler(config, store, upstream, now)(generationRequest());
   assertEquals(response.status, 200);
-  assertEquals(db.rows.length, 5);
+  assertEquals(db.rows.length, 9);
   assertEquals(db.runs.length, 1);
   const actual = queries.find(url => url.searchParams.get("documentType") === "A75")!;
   assertEquals([actual.searchParams.get("processType"), actual.searchParams.get("psrType"), actual.searchParams.get("periodStart"), actual.searchParams.get("periodEnd")], ["A16", null, "202609262015", "202610242015"]);
@@ -241,7 +245,7 @@ Deno.test("generation research archives failed current sources without substitut
   };
   const response = await createMarketArchiveHandler(config, db.store, upstream, now)(generationRequest());
   assertEquals(response.status, 200);
-  assertEquals(db.rows.length, 5);
+  assertEquals(db.rows.length, 9);
   assertEquals(db.runs.length, 1);
   assertEquals(db.rows.every(row => row.result.status === "provider_error"), true);
   assertEquals(db.runs[0].source_refs, Object.fromEntries(db.rows.map(row => [row.dataset, row.id])));

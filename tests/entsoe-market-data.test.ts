@@ -156,3 +156,14 @@ Deno.test("ENTSO-E explicit generation query retains production and consumption 
   assertThrows(() => flow('<ns:outBiddingZone_Domain.mRID>SE3</ns:outBiddingZone_Domain.mRID><ns:businessType>A01</ns:businessType>'), Error, "Inconsistent");
   assertThrows(() => flow('<ns:outBiddingZone_Domain.mRID>SE3</ns:outBiddingZone_Domain.mRID><ns:inBiddingZone_Domain.mRID>SE3</ns:inBiddingZone_Domain.mRID>'), Error, "Ambiguous");
 });
+
+Deno.test('capacity research queries distinguish production notices and annual installed-unit metadata', () => {
+  const from = '2026-01-01T00:00:00Z', to = '2027-01-01T00:00:00Z';
+  const production = entsoeParameters({ dataset: 'production_outages', from, to });
+  assertEquals(production.get('documentType'), 'A77');
+  assertEquals(production.get('biddingZone_Domain'), '10Y1001A1001A46L');
+  const roster = entsoeParameters({ dataset: 'installed_generation_units', from, to });
+  assertEquals(roster.get('documentType'), 'A71');
+  assertEquals(roster.get('processType'), 'A33');
+  assertEquals(roster.get('in_Domain'), '10Y1001A1001A46L');
+});

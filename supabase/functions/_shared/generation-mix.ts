@@ -7,13 +7,14 @@ const NEIGHBOURS = 12;
 const ZONE = "SE3";
 const ALGORITHM = "se3-generation-analog-v1";
 const MODELS = ["persistence", "calendar", "weather", "published"] as const;
-export type GenerationModel = typeof MODELS[number];
+export type GenerationModel = typeof MODELS[number] | "hydro_state" | "nuclear_delta" | "nuclear_ratio";
 export type GenerationPrediction =
   | { status: "predicted"; mw: number; trainingSamples: number; latestTrainingEnd: string | null }
   | { status: "unavailable"; reason: string };
-export type GenerationModels = Record<GenerationModel, GenerationPrediction>;
+export type GenerationModels = Record<typeof MODELS[number], GenerationPrediction> &
+  Partial<Record<"hydro_state" | "nuclear_delta" | "nuclear_ratio", GenerationPrediction>>;
 export interface GenerationMixForecast {
-  algorithm: typeof ALGORITHM;
+  algorithm: typeof ALGORITHM | "se3-generation-analog-v2";
   zone: typeof ZONE;
   origin: string;
   hours: { start: string; byPsr: Record<string, GenerationModels> }[];
@@ -27,6 +28,7 @@ export interface GenerationMixForecast {
   };
 }
 export interface GenerationScore {
+  algorithm: GenerationMixForecast["algorithm"];
   psrType: string;
   model: GenerationModel;
   lead: "0–24h" | "24–48h" | "48–72h";
@@ -68,7 +70,7 @@ function production(row: EntsoeInterval): boolean {
 }
 
 /** Union equal overlaps once; a conflicting overlap or any gap invalidates that hour. */
-function hourlyPanel(intervals: readonly EntsoeInterval[], cutoff = Infinity): HourlyPanel {
+export function hourlyPanel(intervals: readonly EntsoeInterval[], cutoff = Infinity): HourlyPanel {
   const pieces = new Map<string, Map<number, Piece[]>>();
   for (const row of intervals) {
     if (!production(row) || row.endMs > cutoff) continue;
@@ -227,7 +229,7 @@ export function scoreGenerationRuns(runs: readonly GenerationMixForecast[], actu
   const targetDays = new Map<number, string>();
   interface PairedAccumulator { baselineAbsolute: number; candidateAbsolute: number; count: number;
     origins: Set<string>; days: Set<string> }
-  const groups = new Map<string, { psrType: string; model: GenerationModel; lead: GenerationScore["lead"];
+  const groups = new Map<string, { algorithm: GenerationMixForecast["algorithm"]; psrType: string; model: GenerationModel; lead: GenerationScore["lead"];
     absolute: number; signed: number; count: number; origins: Set<string>; days: Set<string>;
     paired: Partial<Record<"persistence" | "calendar", PairedAccumulator>> }>();
   // A repeated read of the same origin is not an independent forecast sample.
@@ -242,11 +244,11 @@ export function scoreGenerationRuns(runs: readonly GenerationMixForecast[], actu
       for (const [psrType, predictions] of Object.entries(hour.byPsr)) {
         const actual = panel.get(psrType)?.get(at);
         if (!actual) continue;
-        for (const model of MODELS) {
+        for (const model of [...MODELS, "hydro_state", "nuclear_delta", "nuclear_ratio"] as const) {
           const prediction = predictions[model];
-          if (prediction.status !== "predicted") continue;
-          const key = `${psrType}:${model}:${lead}`;
-          const group = groups.get(key) ?? { psrType, model, lead, absolute: 0, signed: 0, count: 0,
+          if (!prediction || prediction.status !== "predicted") continue;
+          const key = `${run.algorithm}:${psrType}:${model}:${lead}`;
+          const group = groups.get(key) ?? { algorithm: run.algorithm, psrType, model, lead, absolute: 0, signed: 0, count: 0,
             origins: new Set<string>(), days: new Set<string>(), paired: {} };
           const error = prediction.mw - actual.mw;
           group.absolute += Math.abs(error); group.signed += error; group.count++;
@@ -265,7 +267,7 @@ export function scoreGenerationRuns(runs: readonly GenerationMixForecast[], actu
       }
     }
   }
-  return [...groups.values()].map(group => ({ psrType: group.psrType, model: group.model, lead: group.lead,
+  return [...groups.values()].map(group => ({ algorithm: group.algorithm, psrType: group.psrType, model: group.model, lead: group.lead,
     hours: group.count, origins: group.origins.size, targetDays: group.days.size,
     maeMw: group.absolute / group.count, biasMw: group.signed / group.count,
     pairedBaseline: Object.fromEntries((["persistence", "calendar"] as const).map(baseline => {
@@ -274,5 +276,7 @@ export function scoreGenerationRuns(runs: readonly GenerationMixForecast[], actu
         baselineMaeMw: pair.baselineAbsolute / pair.count, candidateMaeMw: pair.candidateAbsolute / pair.count,
         deltaMaeMw: (pair.candidateAbsolute - pair.baselineAbsolute) / pair.count } : null];
     })) as GenerationScore["pairedBaseline"] }))
-    .sort((a, b) => a.psrType.localeCompare(b.psrType) || a.model.localeCompare(b.model) || a.lead.localeCompare(b.lead));
+    .sort((a, b) => a.algorithm.localeCompare(b.algorithm) || a.psrType.localeCompare(b.psrType) || a.model.localeCompare(b.model) || a.lead.localeCompare(b.lead));
 }
+
+export { local as generationLocalTime };

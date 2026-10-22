@@ -310,6 +310,7 @@
         "npm:tesseract.js@7",
         "npm:typescript-eslint@^8.38.0",
         "npm:typescript@^5.8.3",
+        "npm:unpdf@1.9.1",
         "npm:vaul@~0.9.9",
         "npm:vite@^6.4.5",
         "npm:wrangler@^4.151.3",
