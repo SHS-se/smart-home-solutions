@@ -1,8 +1,9 @@
 // How windy the home's bidding zone has been and is forecast to be.
 //
 // The market publishes prices through tomorrow and a plan runs three days, so
-// the level of the days after tomorrow has to be estimated. Wind is the largest
-// thing that moves it, and the weather forecast reaches ten days where the
+// the level of the days after tomorrow has to be estimated. Wind can move that
+// level materially; its predictive value varies with other market conditions.
+// The weather forecast reaches ten days where the
 // market's own wind forecast stops at tomorrow. The planner fits its recent
 // prices to the wind that blew (planner/energy-price-shape.ts) and reads the
 // days ahead off the forecast; this module supplies both halves from SMHI.

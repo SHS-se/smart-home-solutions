@@ -34,6 +34,9 @@
 // The one case left without a shape is a plan carrying no prices at all, which
 // is a broken price source rather than a young one.
 
+import { priceCoverageByBucket } from "./price-coverage.ts";
+
+/** Native archived prices each cover one quarter-hour. */
 export interface StoredPriceRow {
   start_ts: string;
   import_price_sek_per_kwh: number;
@@ -42,6 +45,9 @@ export interface StoredPriceRow {
 export type DayType = "weekday" | "weekend";
 
 export const QUARTERS_PER_DAY = 96;
+const PRICE_INTERVAL_MS = 15 * 60_000;
+/** Existing daily-level policy requires at least twenty hours of prices. */
+const MIN_DAILY_PRICE_COVERAGE_MS = 20 * 3_600_000;
 /** Guards against a near-zero daily mean turning a normalisation into a spike. */
 const MIN_LEVEL_SEK_PER_KWH = 0.01;
 
@@ -430,19 +436,13 @@ export const BOUNDARY_CARRY_HALF_LIFE_HOURS = 6;
  * null without enough of them.
  */
 export function recentDailyNorm(archive: readonly StoredPriceRow[], asOf: number): number | null {
-  const days = new Map<number, { sum: number; count: number }>();
-  for (const row of archive) {
-    const at = Date.parse(row.start_ts);
-    if (!Number.isFinite(at) || at >= asOf || !Number.isFinite(row.import_price_sek_per_kwh)) continue;
+  const days = priceCoverageByBucket(archive, PRICE_INTERVAL_MS, (at) => {
+    if (at >= asOf) return null;
     const daysBack = Math.floor((asOf - at) / 86_400_000);
-    if (daysBack >= LEVEL_NORM_DAYS) continue;
-    const day = days.get(daysBack) ?? { sum: 0, count: 0 };
-    day.sum += row.import_price_sek_per_kwh;
-    day.count += 1;
-    days.set(daysBack, day);
-  }
-  // A day counts when most of it is on record, at quarter or hour resolution.
-  const means = [...days.values()].filter(day => day.count >= 20).map(day => day.sum / day.count).sort((a, b) => a - b);
+    return daysBack < LEVEL_NORM_DAYS ? daysBack : null;
+  });
+  const means = [...days.values()].filter(day => day.coveredMs >= MIN_DAILY_PRICE_COVERAGE_MS)
+    .map(day => day.mean).sort((a, b) => a - b);
   if (means.length < LEVEL_NORM_MIN_DAYS) return null;
   const middle = Math.floor(means.length / 2);
   return means.length % 2 ? means[middle] : (means[middle - 1] + means[middle]) / 2;
@@ -488,22 +488,13 @@ export function windLevelModel(
   }
   if (speedByDay.size === 0) return null;
   const firstMs = asOf - WIND_FIT_DAYS * 86_400_000;
-  const prices = new Map<string, { sum: number; count: number }>();
-  for (const row of archive) {
-    const at = Date.parse(row.start_ts);
-    if (!Number.isFinite(at) || at >= asOf || at < firstMs || !Number.isFinite(row.import_price_sek_per_kwh)) continue;
-    const day = utcDay(at);
-    const held = prices.get(day) ?? { sum: 0, count: 0 };
-    held.sum += row.import_price_sek_per_kwh;
-    held.count += 1;
-    prices.set(day, held);
-  }
+  const prices = priceCoverageByBucket(archive, PRICE_INTERVAL_MS,
+    (at) => at < asOf && at >= firstMs ? utcDay(at) : null);
   const rows: { speed: number; weekend: number; level: number }[] = [];
   for (const [day, held] of prices) {
     const speed = speedByDay.get(day);
-    // A day counts when most of it is on record, at quarter or hour resolution.
-    if (speed === undefined || held.count < 20) continue;
-    rows.push({ speed, weekend: isWeekend(day), level: held.sum / held.count });
+    if (speed === undefined || held.coveredMs < MIN_DAILY_PRICE_COVERAGE_MS) continue;
+    rows.push({ speed, weekend: isWeekend(day), level: held.mean });
   }
   if (rows.length < WIND_FIT_MIN_DAYS) return null;
 

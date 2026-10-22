@@ -1,7 +1,7 @@
 {
   "abi": 11,
   "wasm_sha256": "58d3a7813e00431f1ca9ede614689a37b36aa5a379e8ba10b3e22a6ce48333bb",
-  "source_sha256": "43bb4678cb9f38462b24d63203bea24968f41f233ad8b6f26ba31b5be9caadba",
+  "source_sha256": "728e7dd33c6d0c99735005865f843f34d2d202bfc2079282e5e7b33345b08179",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -68,6 +68,7 @@
     "supabase/functions/_shared/planner/pool-devices.ts",
     "supabase/functions/_shared/planner/pool-physics.ts",
     "supabase/functions/_shared/planner/pool-response.ts",
+    "supabase/functions/_shared/planner/price-coverage.ts",
     "supabase/functions/_shared/planner/store-value.ts",
     "supabase/functions/_shared/planner/thermal-model.ts",
     "supabase/functions/_shared/planner/thermostat.ts",

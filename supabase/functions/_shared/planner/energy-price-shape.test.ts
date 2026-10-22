@@ -2,10 +2,14 @@ import {
   buildPriceOutlook,
   estimatePriceShape,
   localSlot,
+  recentDailyNorm,
   QUARTERS_PER_DAY,
   RECENCY_HALF_LIFE_DAYS,
+  windLevelModel,
   type StoredPriceRow,
+  type WindDay,
 } from "./energy-price-shape.ts";
+import { priceCoverageByBucket } from "./price-coverage.ts";
 
 const TZ = "Europe/Stockholm";
 /** Noon on 2026-06-30, after every fixture day below. */
@@ -71,6 +75,59 @@ const archive = (days: number, base = 1, spikeHours = [7, 8, 19, 20]) => {
   }
   return rows;
 };
+
+Deno.test("price coverage uses explicit source duration without filling gaps or counting duplicates", () => {
+  const first = Date.parse("2026-06-01T00:00:00Z");
+  const hourly = Array.from({ length: 20 }, (_, hour) => ({
+    start_ts: new Date(first + hour * 3_600_000).toISOString(),
+    import_price_sek_per_kwh: hour + 1,
+  }));
+  const quarterSource = priceCoverageByBucket(hourly, 900_000, () => "day").get("day")!;
+  const hourlySource = priceCoverageByBucket(hourly, 3_600_000, () => "day").get("day")!;
+  assertClose(quarterSource.coveredMs / 3_600_000, 5, "sparse quarter records cover only five hours");
+  assertClose(hourlySource.coveredMs / 3_600_000, 20, "an explicitly hourly source covers twenty hours");
+  assertClose(hourlySource.mean, 10.5, "hourly interval mean");
+  const duplicate = priceCoverageByBucket([...hourly, ...hourly, {
+    ...hourly[0], import_price_sek_per_kwh: 21,
+  }], 3_600_000, () => "day").get("day")!;
+  assertClose(duplicate.coveredMs, hourlySource.coveredMs, "duplicates cannot add coverage");
+  assertClose(duplicate.mean, 11.5, "the last usable duplicate supplies the interval's price once");
+});
+
+Deno.test("recent price norm needs twenty hours in each existing rolling day bucket", () => {
+  const asOf = Date.parse("2026-06-30T12:00:00Z");
+  const history = (quarters: number): StoredPriceRow[] => Array.from({ length: 5 }, (_, dayBack) =>
+    Array.from({ length: quarters }, (_, quarter) => ({
+      start_ts: new Date(asOf - dayBack * 86_400_000 - (quarter + 1) * 900_000).toISOString(),
+      import_price_sek_per_kwh: dayBack + 1,
+    }))).flat();
+  assert(recentDailyNorm(history(20), asOf) === null, "five hours per day cannot establish a norm");
+  assert(recentDailyNorm(history(79), asOf) === null, "nineteen hours and forty-five minutes is incomplete");
+  assertClose(recentDailyNorm(history(80), asOf)!, 3, "twenty hours in each asOf-anchored bucket establish the norm");
+  const duplicated = history(20).flatMap(row => [row, row, row, row]);
+  assert(recentDailyNorm(duplicated, asOf) === null, "duplicating five hours does not establish twenty hours");
+});
+
+Deno.test("wind level requires twenty covered hours per UTC day even when asOf is midday", () => {
+  const asOf = Date.parse("2026-07-01T12:00:00Z");
+  const midnight = Date.parse("2026-07-01T00:00:00Z");
+  const wind = Array.from({ length: 14 }, (_, index) => ({
+    day: new Date(midnight - (index + 1) * 86_400_000).toISOString().slice(0, 10),
+    mean_speed_m_s: 2 + index % 5,
+  }));
+  const history = (quarters: number): StoredPriceRow[] => wind.flatMap(entry =>
+    Array.from({ length: quarters }, (_, quarter) => ({
+      start_ts: new Date(Date.parse(`${entry.day}T00:00:00Z`) + quarter * 900_000).toISOString(),
+      import_price_sek_per_kwh: 2.5 - 0.25 * entry.mean_speed_m_s,
+    })));
+  assert(windLevelModel(history(20), wind, asOf) === null, "five-hour days cannot fit the wind model");
+  assert(windLevelModel(history(79), wind, asOf) === null, "days below twenty hours cannot fit the wind model");
+  const fitted = windLevelModel(history(80), wind, asOf);
+  assert(fitted !== null, "fourteen twenty-hour UTC days fit even when rolling buckets would split them");
+  assertClose(fitted!(wind[0].day)!, 2, "complete UTC-day means retain the observed price-wind relationship");
+  const duplicated = history(20).flatMap(row => [row, row, row, row]);
+  assert(windLevelModel(duplicated, wind, asOf) === null, "duplicate quarters cannot make incomplete UTC days eligible");
+});
 
 Deno.test("quarter index comes from local wall clock", () => {
   const summer = localSlot(Date.parse("2026-06-15T10:30:00+02:00"), TZ);
@@ -422,12 +479,12 @@ Deno.test("with wind, an unpublished day is priced by the wind forecast for it r
   const speedOn = (daysBack: number) => 2 + (daysBack * 7) % 5;
   const dayOf = (offset: number) => new Date(asOf + offset * 86_400_000).toISOString().slice(0, 10);
   const history: StoredPriceRow[] = [];
-  const wind = [];
+  const wind: WindDay[] = [];
   for (let daysBack = 30; daysBack >= 1; daysBack -= 1) {
     wind.push({ day: dayOf(-daysBack), mean_speed_m_s: speedOn(daysBack) });
-    for (let hour = 0; hour < 24; hour += 1) {
+    for (let quarter = 0; quarter < 96; quarter += 1) {
       history.push({
-        start_ts: new Date(asOf - daysBack * 86_400_000 + hour * 3_600_000).toISOString(),
+        start_ts: new Date(asOf - daysBack * 86_400_000 + quarter * 900_000).toISOString(),
         import_price_sek_per_kwh: 2.5 - 0.25 * speedOn(daysBack),
       });
     }

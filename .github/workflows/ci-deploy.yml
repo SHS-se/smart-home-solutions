@@ -355,8 +355,14 @@ jobs:
             deno task deploy:planner-probe
             deno task probe:planner-handler
           fi
+          # Research uses a TEST-only credential and never joins production deployments.
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-research "* ]]; then
+            supabase functions deploy energy-market-research --project-ref "$SUPABASE_PROJECT_REF" --yes
+          fi
           for name in $FUNCTIONS; do
             if [ "$name" = energy-planner-probe ]; then
+              continue
+            elif [ "$name" = energy-market-research ]; then
               continue
             elif [ "$name" = energy-optimisation-plan-step ]; then
               if [ "$planning_deployed" = false ]; then
