@@ -279,6 +279,9 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [pointer, setPointer] = useState<{ left: number; top: number } | null>(null);
+  const [hoveredRoom, setHoveredRoom] = useState<string | null>(null);
+  const [focusedRoom, setFocusedRoom] = useState<string | null>(null);
+  const highlightedRoom = hoveredRoom ?? focusedRoom;
 
   const n = rows.length;
   const showSoc = (hasBattery && rows.some(row => row.homeSoc !== null))
@@ -473,6 +476,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
   };
 
   const handleKey = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    if ((event.target as Element).closest('[data-room-label]')) return;
     if ((event.key === 'Enter' || event.key === ' ') && onQuarterClick) {
       event.preventDefault();
       onQuarterClick(hover ?? Math.max(0, selectedIndex));
@@ -503,7 +507,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           preserveAspectRatio="xMidYMid meet"
           className={`block h-auto w-full ${showRooms ? 'min-w-[1000px]' : 'min-w-[760px]'} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
           style={onQuarterClick ? { cursor: 'pointer' } : undefined}
-          role="img"
+          role={showRooms ? 'group' : 'img'}
           tabIndex={0}
           aria-label={showCost
             ? t(
@@ -804,25 +808,36 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               />
               <Gridlines ticks={niceTicks(roomMin, roomMax, 4)} y={roomY} format={tick => tick.toFixed(1)} />
               {roomLines.map(line => (
-                <g key={line.key} data-room={line.key}>
+                <g key={line.key} data-room={line.key}
+                  opacity={highlightedRoom !== null && highlightedRoom !== line.key ? 0.18 : 1}
+                  className="transition-opacity duration-150 motion-reduce:transition-none">
                   <path
                     d={stepLinePath(line.comfortMin, x, roomY)} fill="none"
-                    stroke={line.colour} strokeWidth={1} strokeOpacity={0.7} strokeDasharray="2 3"
+                    stroke={line.colour} strokeWidth={highlightedRoom === line.key ? 1.5 : 1} strokeOpacity={0.7} strokeDasharray="2 3"
                   />
                   <path
                     d={midpointLinePath(line.values, x, roomY)} fill="none"
-                    stroke={line.colour} strokeWidth={2} strokeLinejoin="round"
+                    stroke={line.colour} strokeWidth={highlightedRoom === line.key ? 3 : 2} strokeLinejoin="round"
                   />
                 </g>
               ))}
               {roomEnds.map(end => (
-                <g key={end.line.key} data-room-label={end.line.key}>
+                <g key={end.line.key} data-room-label={end.line.key}
+                  onPointerEnter={() => setHoveredRoom(end.line.key)}
+                  onPointerLeave={() => setHoveredRoom(null)}>
                   <title>{[end.line.name, `${end.value.toFixed(1)} °C`, end.line.note].filter(Boolean).join(' · ')}</title>
                   <path d={`M ${RIGHT} ${end.y} L ${RIGHT + 8} ${end.y} L ${RIGHT + 18} ${end.labelY}`}
                     fill="none" stroke={end.line.colour} strokeWidth={1} strokeOpacity={0.7} />
                   <circle cx={RIGHT} cy={end.y} r={2.5} fill={end.line.colour} />
                   <foreignObject x={RIGHT + 22} y={end.labelY - 9} width={175} height={14}>
-                    <div className="truncate text-[12px] leading-[14px] text-foreground">{end.line.name}</div>
+                    <button type="button"
+                      aria-label={`${t('Markera', 'Highlight')} ${end.line.name}`}
+                      onFocus={() => { setFocusedRoom(end.line.key); setHover(null); setPointer(null); }}
+                      onBlur={() => setFocusedRoom(null)}
+                      onClick={event => event.currentTarget.focus()}
+                      className={`block w-full truncate text-left text-[12px] leading-[14px] text-foreground focus-visible:underline ${highlightedRoom === end.line.key ? 'font-semibold' : ''}`}>
+                      {end.line.name}
+                    </button>
                   </foreignObject>
                   <text x={viewWidth - 10} y={end.labelY + 3} textAnchor="end" className={AXIS_TEXT}>
                     {`${end.value.toFixed(1)} °C`}
