@@ -2400,6 +2400,7 @@ export type Database = {
         Row: {
           active_power_w: number | null
           category: string
+          colour: string
           control_type_override: string | null
           customer_id: string
           device_key: string
@@ -2428,6 +2429,7 @@ export type Database = {
         Insert: {
           active_power_w?: number | null
           category: string
+          colour?: string
           control_type_override?: string | null
           customer_id: string
           device_key: string
@@ -2456,6 +2458,7 @@ export type Database = {
         Update: {
           active_power_w?: number | null
           category?: string
+          colour?: string
           control_type_override?: string | null
           customer_id?: string
           device_key?: string

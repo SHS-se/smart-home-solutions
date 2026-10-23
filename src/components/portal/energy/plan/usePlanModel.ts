@@ -1,3 +1,5 @@
+import { deviceColour, ownerColour } from '@/lib/energy-shift/device-colours';
+import { PLAN_COLOURS } from '../charts/palette';
 // Everything the plan sections derive from one plan row.
 //
 // Extracted from PlanView on 2026-08-13 so each section can be its own
@@ -20,7 +22,6 @@ import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonthTime, homeHourMinute } from '@/lib/energy-shift/home-time';
 import {
   COLORS,
-  DEVICE_COLORS,
   type CurrentRow,
   type PlanChartSeries,
   type PlanChartSeriesKey,
@@ -126,7 +127,7 @@ export function usePlanModel(
     key: `device:${model.key}`,
     dataKey: `device${index}`,
     label: `${model.name} · ${model.control_type.replace(/_/g, ' ')}`,
-    color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+    color: deviceColour(empiricalDevices, model.key),
   }));
   const representedCategories = new Set(plan.device_models.map(model => model.category));
   const showBoilerAggregate = plan.capabilities.boiler && !representedCategories.has('hot_water');
@@ -151,13 +152,13 @@ export function usePlanModel(
         key: `zoneTemperature:${zone.key}` as const,
         dataKey: `zoneTemperature${index}`,
         label: `${zone.name} · ${t('temperatur', 'temperature')}`,
-        color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+        color: ownerColour(empiricalDevices, zone.device_keys ?? [], PLAN_COLOURS.room),
       },
       {
         key: `zoneTarget:${zone.key}` as const,
         dataKey: `zoneTarget${index}`,
         label: `${zone.name} · ${t('börvärde', 'target')}`,
-        color: DEVICE_COLORS[index % DEVICE_COLORS.length],
+        color: ownerColour(empiricalDevices, zone.device_keys ?? [], PLAN_COLOURS.room),
       },
     ]) ?? []),
   ];

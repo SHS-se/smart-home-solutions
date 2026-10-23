@@ -1,3 +1,4 @@
+import { TEST_DEVICE_COLOURS } from './helpers/device-colours';
 /**
  * Navigation shell smoke tests — fully local, no real backend.
  *
@@ -421,7 +422,7 @@ test.describe('staff navigation shell', () => {
     const labels = ['Välj metod', 'På/av-schema', 'Variabel effekt', 'Tillåt/blockera', 'Börvärde'];
     const devices = methods.map((method, index) => ({
       id: `device-${index}`, device_key: `sensor.device_${index}`, statistic_id: `sensor.device_${index}`,
-      name: `Device ${index}`, category: 'heating', load_type_override: 'duty_cycle',
+      name: `Device ${index}`, colour: TEST_DEVICE_COLOURS[index], retired_at: null, category: 'heating', load_type_override: 'duty_cycle',
       planning_role_override: method ? 'controllable' : 'base_load', control_type_override: method,
       planning_choice_at: null, mapping_status: method ? 'ready' : 'not_configured', mapped_control_type: method,
       mapping_error: null, mapping_summary: {}, active_power_w: 1000, profile_sample_count: 937,

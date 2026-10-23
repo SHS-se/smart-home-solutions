@@ -1,3 +1,6 @@
+import { parseDeviceColours } from '../energy-shift/device-colours.ts';
+import { deviceMembers, allocateDevicePower, type DeviceMember } from '../../../supabase/functions/_shared/planner/device-power-allocation.ts';
+import { poolHeaters } from '../../../supabase/functions/_shared/planner/pool-devices.ts';
 import recipe from '../../../planner-core/recipe.json' with { type: 'json' };
 import { builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { localDay, localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
@@ -19,14 +22,14 @@ import { inferredEvAvailability } from './trip-ledger.ts';
 export const QUARTER_MS = 900_000, FRAME_MS = 72 * 3_600_000;
 export type ActualRow = ActualEnergySlot;
 export type PriceRow = import('../../../supabase/functions/_shared/historical-electricity-prices.ts').HistoricalPrice;
-export interface DeviceRow { id: string; device_key: string; name?: string; category: string }
+export interface DeviceRow { colour: string; id: string; device_key: string; name?: string; category: string }
 export interface DeviceSlot { start_ts: string; device_energy_kwh: Record<string, number | null> }
 export interface PoolRow { start_ts: string; water_temperature_c: number | null }
 export interface OutdoorRow { start_ts: string; temperature_c: number }
 export interface EvInitialRow { start_ts: string; ev_soc: number | null }
 export interface HistoricalRows { snapshot: HomeModelCapture; solar?: { profile: SolarProfile; hours: SolarHour[] }; start: string; end: string; priceArea: string; evInitial: EvInitialRow | null; actual: ActualRow[]; prices: PriceRow[]; actualPrices: ActualPrice[];
     devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[]; intervalFields?: { start_ts: string; fields: string[] }[]; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue }
-export interface BaselineInput { tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue; settings: Pick<HomeModelCapture, 'comfort' | 'policy' | 'criteria' | 'ev_battery' | 'pool_model'>; start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
+export interface BaselineInput { members: { heater: DeviceMember[]; auxiliary: DeviceMember[]; ev: DeviceMember[] }; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue; settings: Pick<HomeModelCapture, 'comfort' | 'policy' | 'criteria' | 'ev_battery' | 'pool_model'>; start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
   pool: PoolStart | null;
   evidence: InputEvidence;
   solar: { profileHash: string | null; reconstructedKwh: number; reconstructedQuarters: number };
@@ -61,6 +64,7 @@ function soc(value: unknown, label: string, at: string) {
 
 /** Missing energy contributes zero; missing household totals use the other device meters. */
 export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
+  parseDeviceColours(rows.devices);
   const facts = homePhysics(rows.snapshot), startMs = time(rows.start), start = new Date(startMs).toISOString();
   const count = (time(rows.end) - startMs) / QUARTER_MS;
   if (count <= 0) throw new Error('Historical period must contain completed quarters');
@@ -176,14 +180,21 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, released: null, unavailable: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
-  return { pool: null, tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
+  const poolMembers = rows.snapshot.device_models.filter(model => model.planning_service === 'pool');
+  const heaterKeys = new Set(poolHeaters(poolMembers).map(model => model.key));
+  const members = {
+    heater: facts.heater ? deviceMembers(poolMembers.filter(model => heaterKeys.has(model.key)), facts.heater.compressor_w) : [],
+    auxiliary: facts.heater ? deviceMembers(poolMembers.filter(model => !heaterKeys.has(model.key)), facts.heater.auxiliary_w) : [],
+    ev: facts.charger ? deviceMembers(rows.snapshot.device_models.filter(model => model.category === 'ev_charging'), facts.charger.max_current_a * facts.charger.voltage_v * facts.charger.phase_count) : [],
+  };
+  return { members, pool: null, tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
     priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
     assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,
     evDailyDemand: [...daily].map(([day, kwh]) => ({ day, kwh })), evMissingSocQuarters, energyGaps,
     recorded: { ...recorded,
       devices: rows.devices.map(d => ({ key: d.device_key, name: d.name ?? rows.snapshot.device_models.find(m => m.key === d.device_key)?.name ?? d.device_key,
-        schedulable: facts.memberKeys.includes(d.device_key) })),
+        colour: d.colour, schedulable: facts.memberKeys.includes(d.device_key) })),
       rows: buildEnergyTimeline({ nowMs: time(rows.end), planSlots: [],
         actuals: starts.map(start_ts => {
           const observed = actual.get(Date.parse(start_ts));
@@ -210,13 +221,21 @@ export function projectBaseline(input: BaselineInput, engine: ProjectionEngine, 
 
 export function projectionSeries(input: BaselineInput, problem: ReadyProblem, quarters: import('../../../supabase/functions/_shared/planner-wasm/core.ts').NativeQuarter[]): BenchSeries {
   const field = (get: (q: typeof quarters[number], i: number) => number) => quarters.map(get);
-  const devices = [
-    ...(problem.pool_store ? [{ key: '$default_pool_heat', name: 'Pool heat pump', schedulable: true }, { key: '$default_pool_pump', name: 'Pool circulation', schedulable: true }] : []),
-    ...(problem.car ? [{ key: '$default_ev', name: input.carName, schedulable: true }] : []),
-  ];
+  const keys = new Set(Object.values(input.members).flat().map(member => member.key));
+  const devices = [...keys].map(key => {
+    const device = input.recorded.devices.find(device => device.key === key);
+    if (!device) throw new Error(`Historical device presentation is missing: ${key}`);
+    return { ...device };
+  });
+  const loads = quarters.map(quarter => {
+    const result: Record<string, number> = {};
+    allocateDevicePower(input.members.heater, quarter.pool_compressor_w, result);
+    allocateDevicePower(input.members.auxiliary, quarter.pool_auxiliary_w + input.idlePumpW, result);
+    allocateDevicePower(input.members.ev, quarter.ev_w, result);
+    return result;
+  });
   const series: BenchSeries = {
-    devices, deviceW: Object.fromEntries(devices.map(d => [d.key, d.key === '$default_pool_heat' ? field(q => q.pool_compressor_w)
-      : d.key === '$default_pool_pump' ? field(q => q.pool_auxiliary_w + input.idlePumpW) : field(q => q.ev_w)])),
+    devices, deviceW: Object.fromEntries(devices.map(device => [device.key, loads.map(slot => slot[device.key])])),
     start: problem.slots.map(s => new Date(Date.parse(input.start) + s.start_seconds * 1000).toISOString()), hours: problem.slots.map(s => s.hours),
     published: problem.slots.map(() => 1), importPrice: problem.slots.map(s => s.import_price), exportPrice: problem.slots.map(s => s.export_price),
     solarW: field((q, i) => Math.max(0, problem.slots[i].solar_w - q.curtailed_w)), loadW: field((q, i) => problem.slots[i].base_w + q.pool_w + q.ev_w),

@@ -190,7 +190,4 @@ export interface PlanChartSeries {
   dataKey?: string;
 }
 
-/** Muted device fills leave the saturated semantic colours above unambiguous. */
-export const DEVICE_COLORS = ['#7c8da6', '#9b8aa5', '#6f9a85', '#b49a63', '#b07f65', '#a77f91', '#6f9399', '#879467'];
-
 export type ReadinessState = 'ready' | 'blocked' | 'waiting';

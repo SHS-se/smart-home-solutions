@@ -1,12 +1,6 @@
 /** A quarter of average watts is that many watt-hours over four. */
 const QUARTER_W_TO_KWH = 4_000;
 
-/**
- * Eight is the ceiling on hues a reader can tell apart, so it is the ceiling
- * on individually named bands. Planned meters past it share one band.
- */
-export const MAX_SERIES = 8;
-
 export interface ConsumptionCandidate {
   key: string;
   name: string;
@@ -17,7 +11,7 @@ export interface ConsumptionCandidate {
   /** Always drawn, first above base load, whatever it used. */
   pinned?: boolean;
   /** A fixed colour, for a band that means one thing in every home. */
-  colour?: string;
+  colour: string;
 }
 
 export interface ConsumptionSeries {
@@ -27,14 +21,7 @@ export interface ConsumptionSeries {
   kwh: number;
   /** Missing device readings contribute zero to consumption statistics. */
   partial: boolean[];
-  /**
-   * Palette slot, assigned over every schedulable meter the home has rather
-   * than over the ones drawn today. A meter that happens not to run keeps its
-   * colour, so yesterday's chart and today's agree about what green means.
-   */
-  slot: number;
-  /** Overrides the palette slot. */
-  colour?: string;
+  colour: string;
 }
 
 export interface ConsumptionIssue {
@@ -77,7 +64,7 @@ const totalKwh = (values: readonly number[]): number =>
  * Split the window's meters into bands and background.
  *
  * `houseDemandW` is gross household consumption. Subtract all Planned meters,
- * including those grouped for display. Missing device readings contribute zero;
+ * Missing device readings contribute zero;
  * inconsistent household/device totals still leave the base unknown.
  */
 export const splitConsumption = (
@@ -89,16 +76,6 @@ export const splitConsumption = (
     values: Array.from({ length }, (_, i) => Number.isFinite(candidate.values[i]) ? candidate.values[i] : 0),
   }));
 
-  // Slots follow the meter, not its rank, so filtering never repaints the
-  // survivors. Sorted by key rather than by energy for the same reason.
-  const slotByKey = new Map(
-    candidates
-      .filter(candidate => candidate.schedulable && !candidate.colour)
-      .map(candidate => candidate.key)
-      .sort()
-      .map((key, index) => [key, index % MAX_SERIES]),
-  );
-
   const eligible = candidates
     .filter(candidate => candidate.schedulable && (candidate.pinned || earnsOwnBand(candidate.values)))
     .map(candidate => ({
@@ -107,24 +84,14 @@ export const splitConsumption = (
       values: [...candidate.values],
       kwh: totalKwh(candidate.values),
       partial: candidate.values.map(() => false),
-      slot: slotByKey.get(candidate.key) ?? 0,
-      ...(candidate.colour ? { colour: candidate.colour } : {}),
+      colour: candidate.colour,
       pinned: candidate.pinned ?? false,
     }))
     .sort((left, right) => Number(right.pinned) - Number(left.pinned)
       || right.kwh - left.kwh || left.key.localeCompare(right.key))
     .map(({ pinned: _pinned, ...entry }) => entry);
 
-  const series = eligible.slice(0, MAX_SERIES);
-  const drawn = new Set(series.map(entry => entry.key));
-  const grouped = candidates.filter(c => c.schedulable && !drawn.has(c.key));
-  if (grouped.some(c => c.values.some(w => w > 0))) {
-    const readings = Array.from({ length }, (_, i) => grouped.map(c => c.values[i]).filter(Number.isFinite));
-    const values = readings.map(known => known.length ? known.reduce((sum, w) => sum + w, 0) : NaN);
-    const partial = readings.map(known => known.length < grouped.length);
-    series.push({ key: "$other_planned", name: "Other planned devices", values,
-      kwh: totalKwh(values), partial, slot: MAX_SERIES });
-  }
+  const series = eligible;
   const planned = candidates.filter(c => c.schedulable);
   const invalidIndices: number[] = [];
   const issues: (ConsumptionIssue | null)[] = Array(length).fill(null);

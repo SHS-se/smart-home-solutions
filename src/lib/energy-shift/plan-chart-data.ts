@@ -49,7 +49,7 @@ export interface PlanPanelRow {
   hotWater?: HotWaterQuarter | null;
 }
 
-export interface ChartDevice { key: string; name: string; schedulable: boolean }
+export interface ChartDevice { key: string; name: string; colour: string; schedulable: boolean }
 /** `bench`: every price is the real one, and the planner was given it. */
 export type ChartPrices = { kind: 'live' } | { kind: 'bench' } | { kind: 'actual' };
 const quoted = (value: number | null) => value !== null && Number.isFinite(value);
@@ -97,15 +97,16 @@ export function projectPlanChart(input: {
   });
   const catalogue = new Map(devices.map(d => [d.key, d]));
   const waterKeys = new Set(hotWater?.keys ?? []);
+  const waterDevice = waterKeys.size === 1 ? catalogue.get([...waterKeys][0]) : undefined;
   const active = new Set([...activeDeviceKeys(rows, range), ...devices.filter(d => d.schedulable).map(d => d.key)]
     .filter(key => !waterKeys.has(key)));
   const water = hotWater ? [{
-    key: HOT_WATER_SERIES_KEY, name: hotWater.name, schedulable: true, pinned: true, colour: hotWater.colour,
+    key: waterDevice?.key ?? HOT_WATER_SERIES_KEY, name: waterDevice?.name ?? hotWater.name, schedulable: true, pinned: true, colour: waterDevice?.colour ?? hotWater.colour,
     values: view.map((row, i) => panelRows[i].hotWater?.expectedW
       ?? [...waterKeys].reduce((sum, key) => sum + (row.deviceW[key] ?? 0), 0)),
   }] : [];
-  const consumption = splitConsumption([...[...active].map(key => ({
-    key, name: catalogue.get(key)?.name ?? key,
+  const consumption = splitConsumption([...[...active].filter(key => catalogue.has(key)).map(key => ({
+    key, name: catalogue.get(key)!.name, colour: catalogue.get(key)!.colour,
     values: view.map(row => row.deviceW[key] ?? NaN), schedulable: catalogue.get(key)?.schedulable ?? false,
   })), ...water], view.map(row => row.loadW));
   return { rows: panelRows, consumption, realPrices: prices.kind !== 'live' };

@@ -7,7 +7,7 @@ interface ActualSlotRow { start_ts: string; total_load_kwh: number }
 interface PortalDelta {
   plan: { plan_id: string } | null;
   actuals: HistoryDelta<ActualSlotRow>;
-  devices: ChangedValue<{ name: string }[]>;
+  devices: ChangedValue<{ name: string; colour: string; retired_at: string | null }[]>;
   thermal: ChangedValue<ThermalObservationSummary>;
   zone_models: ChangedValue<unknown[]>;
 }
@@ -25,7 +25,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
         plan_id uuid, generation_request_id uuid, plan_schema_version int, ha_runtime jsonb,
         ha_runtime_received_at timestamptz, ha_ack_status text, ha_acknowledged_at timestamptz,
         ha_integration_version text, ha_ack_request_id uuid, ha_ack_error jsonb,
-        replan_request_id uuid, replan_requested_at timestamptz, replan_completed_request_id uuid, replan_error text);
+        replan_request_id uuid, replan_requested_at timestamptz, replan_completed_request_id uuid, replan_error text, replan_recommendations jsonb);
       CREATE TABLE energy_optimisation_actual_slots (customer_id uuid, home_id uuid, start_ts timestamptz,
         total_load_kwh numeric, solar_production_kwh numeric, grid_import_kwh numeric, grid_export_kwh numeric,
         battery_charge_kwh numeric, battery_discharge_kwh numeric, battery_soc numeric, ev_soc numeric);
@@ -35,7 +35,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
         name text, category text, load_type_override text, planning_role_override text, planning_choice_at timestamptz,
         control_type_override text, mapping_status text, mapped_control_type text, mapping_error text,
         mapping_summary jsonb, mapping_reported_at timestamptz, active_power_w numeric, profile_sample_count int,
-        last_seen_at timestamptz, retired_at timestamptz);
+        last_seen_at timestamptz, retired_at timestamptz, first_seen_at timestamptz DEFAULT now(), UNIQUE(home_id,device_key));
       CREATE TABLE energy_optimisation_device_slots (customer_id uuid, home_id uuid, start_ts timestamptz, device_id uuid, energy_kwh numeric);
       CREATE TABLE energy_optimisation_zone_models (customer_id uuid, home_id uuid, room_key text, trained boolean, rejection_reason text, sample_count int);
       CREATE TABLE energy_optimisation_thermal_slots (customer_id uuid, home_id uuid, start_ts timestamptz, room_key text);
@@ -50,6 +50,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
     const start = deviceMigration.indexOf('CREATE OR REPLACE FUNCTION public.get_energy_optimisation_device_slots(');
     await db.exec(deviceMigration.slice(start, deviceMigration.indexOf('$$;', start) + 3));
     await db.exec(await Deno.readTextFile('supabase/migrations/20260912090000_add_incremental_energy_portal_sync.sql'));
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261023182000_persistent_device_colours.sql'));
     const id = '11111111-1111-4111-8111-111111111111';
     const other = '22222222-2222-4222-8222-222222222222';
     const sync = async (known = {}, home = id) => (await db.query<{ delta: PortalDelta }>(
@@ -63,12 +64,14 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
       INSERT INTO energy_optimisation_actual_slots (customer_id, home_id, start_ts, total_load_kwh)
         VALUES ('${id}', '${id}', date_bin(interval '15 minutes', now(), '2000-01-01') - interval '15 minutes', 1),
         ('${other}', '${other}', date_bin(interval '15 minutes', now(), '2000-01-01') - interval '15 minutes', 99);
-      INSERT INTO energy_optimisation_devices (id, customer_id, home_id, name) VALUES ('${id}', '${id}', '${id}', 'Heater');
+      INSERT INTO energy_optimisation_devices (id, customer_id, home_id, device_key, name) VALUES ('${id}', '${id}', '${id}', 'heater', 'Heater');
       INSERT INTO energy_optimisation_thermal_slots VALUES ('${id}', '${id}', now() - interval '1 day', 'room');
       INSERT INTO energy_optimisation_outdoor_slots SELECT home_id, start_ts, 12 FROM energy_optimisation_thermal_slots;
     `);
     const initial = await sync();
     assertEquals(initial.actuals.upserts.length, 1);
+    const savedColour = initial.devices.value![0].colour;
+    assertEquals(/^#[0-9a-f]{6}$/.test(savedColour), true);
     assertEquals(initial.thermal.value.slotCount, 1);
     assertEquals(initial.thermal.value.outdoorSlotCount, 1);
     assertEquals(initial.thermal.value.observedRoomKeys, ['room']);
@@ -86,7 +89,12 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
       UPDATE energy_optimisation_devices SET name = 'Renamed heater' WHERE home_id = '${id}';`);
     const corrected = await sync(known);
     assertEquals(cache.apply(corrected.actuals)[0].total_load_kwh, 2);
-    assertEquals(corrected.devices.value[0].name, 'Renamed heater');
+    assertEquals(corrected.devices.value![0].name, 'Renamed heater');
+    assertEquals(corrected.devices.value![0].colour, savedColour);
+    await db.exec(`UPDATE energy_optimisation_devices SET retired_at=now() WHERE home_id='${id}'`);
+    const retired = await sync(known);
+    assertEquals(retired.devices.value![0].colour, savedColour);
+    assertEquals(retired.devices.value![0].retired_at !== null, true);
     assertEquals(corrected.thermal.value, null);
     await db.exec(`DELETE FROM energy_optimisation_actual_slots WHERE home_id = '${id}';`);
     const deleted = await sync({ ...known, actuals: cache.hashes() });

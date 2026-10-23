@@ -77,7 +77,7 @@ export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, per
       signal.throwIfAborted();
       return loadWindow(w, i === 0);
     }),
-    read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name,category')
+    read<DeviceRow[]>(scoped(ref, 'energy_optimisation_devices').select('id,device_key,name,category,colour')
       .abortSignal(signal)),
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')

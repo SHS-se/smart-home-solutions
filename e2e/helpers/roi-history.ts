@@ -83,7 +83,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
       else await route.fallback();
       return;
     }
-    if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: [...fixture.devices, { id: 'household-id', device_key: 'household', name: 'Other appliances' }] }); return; }
+    if (table === 'energy_optimisation_devices') { reads++; await route.fulfill({ json: [...fixture.devices, { id: 'household-id', device_key: 'household', colour: '#c07800', category: 'household', name: 'Other appliances' }] }); return; }
     if (!['energy_optimisation_actual_slots', 'energy_optimisation_pool_slots'].includes(table!)) { await route.fallback(); return; }
     reads++;
     expect(url.searchParams.get('customer_id')).toBe(`eq.${customerId}`);

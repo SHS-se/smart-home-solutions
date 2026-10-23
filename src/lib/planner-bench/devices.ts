@@ -5,7 +5,7 @@ export const BENCH_DEVICE_KEYS = {
   ev: "sensor.car_charging_total_energy",
 } as const;
 export const BENCH_DEVICES = [
-  { key: BENCH_DEVICE_KEYS.poolPump, name: "Pool pump", schedulable: true },
-  { key: BENCH_DEVICE_KEYS.poolHeater, name: "Pool heater", schedulable: true },
-  { key: BENCH_DEVICE_KEYS.ev, name: "Car charging", schedulable: true },
+  { key: BENCH_DEVICE_KEYS.poolPump, name: "Pool pump", colour: "#007f86", schedulable: true },
+  { key: BENCH_DEVICE_KEYS.poolHeater, name: "Pool heater", colour: "#c43c54", schedulable: true },
+  { key: BENCH_DEVICE_KEYS.ev, name: "Car charging", colour: "#7851a9", schedulable: true },
 ];

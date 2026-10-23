@@ -1,3 +1,4 @@
+import { parseDeviceColours } from '@/lib/energy-shift/device-colours';
 import ReplanControls from './ReplanControls';
 import { isTestEnvironment } from '@/lib/environment';
 import MeasurementIssuesAlert from './MeasurementIssuesAlert';
@@ -184,7 +185,7 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
       setActuals(cache.actuals.apply(delta.actuals));
       setPrices(cache.prices.apply(delta.prices));
       setDeviceActuals(cache.deviceActuals.apply(delta.device_actuals));
-      if (delta.devices.value !== null) setEmpiricalDevices(delta.devices.value);
+      if (delta.devices.value !== null) setEmpiricalDevices(parseDeviceColours(delta.devices.value));
       if (delta.zone_models.value !== null) setZoneModels(delta.zone_models.value);
       if (delta.thermal.value !== null) setThermalObservations(delta.thermal.value);
       cache.known.devices = delta.devices.hash;
@@ -905,7 +906,7 @@ const PlanView: React.FC<{
             dayWindow={dayWindow}
             dayWindowOptions={dayWindowOptions}
             onDayWindowChange={onDayWindowChange}
-            deviceNameByKey={deviceNameByKey}
+            devices={empiricalDevices}
             schedulableKeys={schedulableKeys}
             hasBattery={hasBattery}
             hasEvBattery={hasEvBattery}

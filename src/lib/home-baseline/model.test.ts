@@ -175,7 +175,7 @@ Deno.test('replacement heater and offline meter readings contribute zero without
   assertAlmostEquals(input.problem.slots[2].base_w, 1120);
   assertEquals(input.energyGaps.deviceReadings, 5);
   assertEquals(result.commands[0].pool_on, true);
-  assert(result.series.deviceW.$default_pool_heat[0] > 0);
+  assert(result.series.deviceW.pool_heater[0] > 0);
   assertAlmostEquals(result.ledger.costSek, result.series.costSek.reduce((a, b) => a + b, 0));
 });
 
@@ -422,4 +422,23 @@ Deno.test('quarter-by-quarter baseline preserves delayed response through thermo
     assertAlmostEquals(projected.quarters[i].pool_c!, continuous.quarters[i].pool_c!, 1e-9);
     assertAlmostEquals(projected.quarters[i].pool_pending_heat_kwh!, continuous.quarters[i].pool_pending_heat_kwh!, 1e-9);
   }
+});
+
+Deno.test('historical model bands retain real device colours and distribute multiple members without changing power totals', () => {
+  const rows = baselineFixture();
+  const heater = rows.snapshot.device_models.find(device => device.key === 'pool_heater')!;
+  rows.snapshot.device_models.push({ ...heater, key: 'second_heater', name: 'Second heater', active_power_w: heater.active_power_w! / 2 });
+  rows.devices.push({ id: 'second-id', device_key: 'second_heater', name: 'Second heater', category: 'pool_heating', colour: '#c07800' });
+  for (const slot of rows.deviceSlots) slot.device_energy_kwh['second-id'] = 0;
+  rows.pool[0].water_temperature_c = 30;
+  const input = prepareHomeBaseline(rows), result = projectBaseline(input, engine);
+  assertEquals(result.series.devices.map(device => device.key).sort(), ['car', 'pool_heater', 'pool_pump', 'second_heater']);
+  for (const device of result.series.devices) {
+    assertEquals(device.colour, input.recorded.devices.find(recorded => recorded.key === device.key)!.colour);
+  }
+  result.series.poolW.forEach((watts, i) => {
+    assertAlmostEquals(result.series.deviceW.pool_heater[i] + result.series.deviceW.second_heater[i]
+      + result.series.deviceW.pool_pump[i], watts, 1e-8);
+    assertAlmostEquals(result.series.deviceW.pool_heater[i], 2 * result.series.deviceW.second_heater[i], 1e-8);
+  });
 });

@@ -14,25 +14,9 @@ import type {
   DevicePlanningRole,
 } from '@/lib/energy-shift/contracts';
 
-export interface EmpiricalEnergyDevice {
-  id: string;
-  device_key: string;
-  statistic_id: string;
-  name: string;
-  category: string;
-  load_type_override: DeviceLoadType;
-  planning_role_override: DevicePlanningRole;
-  planning_choice_at: string | null;
-  control_type_override: DeviceControlType | null;
-  mapping_status: 'not_configured' | 'ready' | 'invalid';
-  mapped_control_type: DeviceControlType | null;
-  mapping_error: string | null;
-  mapping_summary: Record<string, unknown>;
-  mapping_reported_at: string | null;
-  active_power_w: number | null;
-  profile_sample_count: number;
-  last_seen_at: string;
-}
+export type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
+import type { EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
+import DeviceName from './DeviceName';
 
 const LOAD_TYPES: DeviceLoadType[] = [
   'fixed_full_load',
@@ -65,6 +49,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
   onChanged: () => Promise<void> | void;
   refreshing?: boolean;
 }> = ({ devices, homeId, onChanged, refreshing = false }) => {
+  devices = devices.filter(device => device.retired_at === null);
   const { t } = useLanguage();
   const { toast } = useToast();
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -214,7 +199,7 @@ const EmpiricalDeviceModelsCard: React.FC<{
                 {devices.map(device => (
                   <TableRow key={device.id}>
                     <TableCell>
-                      <div className="font-medium">{device.name}</div>
+                      <DeviceName name={device.name} colour={device.colour} deviceKey={device.device_key} className="font-medium" />
                       <div className="max-w-[300px] truncate text-xs text-muted-foreground" title={device.statistic_id}>{device.statistic_id}</div>
                     </TableCell>
                     <TableCell><Badge variant="outline">{device.category.replace(/_/g, ' ')}</Badge></TableCell>

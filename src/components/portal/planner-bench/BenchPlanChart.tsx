@@ -29,7 +29,7 @@ import { OPPORTUNITY_RULES } from '@/lib/planner-bench/opportunities';
 import { periodRange, type BenchDay, type BenchPeriod } from '@/lib/planner-bench/days';
 
 const CURRENT_COLOUR = 'hsl(var(--muted-foreground))';
-const TEST_COLOUR = 'var(--plan-load-2)';
+const TEST_COLOUR = PLAN_COLOURS.cost;
 
 interface Props {
   series: BenchSeries;
@@ -96,7 +96,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
     lanes: (['pool', 'ev', 'battery'] as const).map(device => ({
       key: device,
       label: device === 'pool' ? 'Pool' : device === 'ev' ? t('Bil', 'Car') : t('Batteri', 'Battery'),
-      colour: device === 'pool' ? 'var(--plan-load-2)' : device === 'ev' ? 'var(--plan-ev)' : 'var(--plan-battery)',
+      colour: device === 'pool' ? PLAN_COLOURS.pool : device === 'ev' ? 'var(--plan-ev)' : 'var(--plan-battery)',
       energy: device === 'battery' ? { kwh: energyKwh(series.batteryChargeW), dischargedKwh: energyKwh(series.batteryDischargeW) }
         : { kwh: energyKwh(device === 'pool' ? series.poolW : series.carW) },
       cells: rows.map((_, index) => {
@@ -130,6 +130,7 @@ const BenchPlanChart: React.FC<Props> = ({ series, compared, names, timeZone, au
         </button>
       </div>
       <EnergyChart
+        colours={{ pool: PLAN_COLOURS.pool, ev: PLAN_COLOURS.ev, water: PLAN_COLOURS.water }}
         timeZone={timeZone}
         rows={rows}
         series={consumption.series}

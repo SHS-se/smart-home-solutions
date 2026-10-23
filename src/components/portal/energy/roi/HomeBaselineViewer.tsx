@@ -1,3 +1,5 @@
+import { PLAN_COLOURS } from '../charts/palette';
+import { ownerColour } from '@/lib/energy-shift/device-colours';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -71,12 +73,16 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
           <Button variant={graphMode === 'scheduler' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'scheduler'} onClick={() => setGraphMode('scheduler')} data-testid="comparison-graph-scheduler">SHS Energy Scheduler</Button>
           <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Faktisk förbrukning', 'Actual consumption')}</Button>
         </div>
-        <EnergyChart key={`${graphMode}:${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
+        <EnergyChart colours={{
+          pool: ownerColour(input.recorded.devices.map(device => ({ device_key: device.key, colour: device.colour })), input.members.heater.map(member => member.key), PLAN_COLOURS.pool),
+          ev: ownerColour(input.recorded.devices.map(device => ({ device_key: device.key, colour: device.colour })), input.members.ev.map(member => member.key), PLAN_COLOURS.ev),
+          water: PLAN_COLOURS.water,
+        }} key={`${graphMode}:${view}:${input.start}:${input.end}`} rows={chart.rows} series={chart.consumption.series}
           baseValues={chart.consumption.baseValues} consumptionIssues={chart.consumption.issues}
           timeZone={input.timeZone} dividerIndex={graphMode === 'actual' ? chart.rows.length : 0} dividerLabel={graphMode === 'actual' ? t('FAKTISK', 'ACTUAL') : graphMode === 'scheduler' ? 'SHS ENERGY SCHEDULER' : t('BASMODELL', 'BASELINE MODEL')}
           hasBattery={p.battery !== null} hasEvBattery={p.car !== null} realPrices={chart.realPrices}
           poolTargetC={p.pool_stop_c} selectedIndex={quarter ?? -1} onQuarterClick={setSelected}
-          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Faktisk förbrukning', 'Actual consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: 'var(--plan-load-2)',
+          costLines={[{ key: graphMode, name: graphMode === 'actual' ? t('Faktisk förbrukning', 'Actual consumption') : graphMode === 'scheduler' ? 'SHS Energy Scheduler' : t('Basmodell', 'Baseline model'), colour: PLAN_COLOURS.cost,
             values: graphMode === 'actual' ? chart.rows.map(row => row.cumulativeCostSek)
               : cumulativeModeledCost(costs[graphMode === 'scheduler' ? 'scheduler' : 'baseline'], chart.rows.map(row => row.cumulativeCostSek)) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">

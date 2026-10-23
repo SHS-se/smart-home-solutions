@@ -98,7 +98,7 @@ const PRICE_SERIES: EstimateSeries = (() => {
 function series(runStart: number, runQuarters: number): BenchSeries {
   const n = 288, start = Date.parse('2026-09-24T00:00:00Z');
   const s: BenchSeries = {
-    devices: [{ key: 'pool', name: 'Pool', schedulable: true }, { key: 'car', name: 'Car', schedulable: true }],
+    devices: [{ key: 'pool', name: 'Pool', colour: '#c43c54', schedulable: true }, { key: 'car', name: 'Car', colour: '#7851a9', schedulable: true }],
     deviceW: {},
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], solarW: [], loadW: [], poolW: [],
     hotWaterW: [], carW: [], gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], baseLoadBatteryCoverW: [],

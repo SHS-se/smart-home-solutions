@@ -1,3 +1,5 @@
+import DeviceName from '../DeviceName';
+import { deviceColour, type DeviceColour } from '@/lib/energy-shift/device-colours';
 // Per-device energy and cost for the selected window, as bars.
 //
 // Each device gets two bars across the full width: energy split by where it
@@ -73,7 +75,7 @@ const Swatch: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
   <span aria-hidden className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={style} />
 );
 
-const DeviceEnergyChart: React.FC<{ result: AttributionResult }> = ({ result }) => {
+const DeviceEnergyChart: React.FC<{ result: AttributionResult; devices: readonly DeviceColour[] }> = ({ result, devices }) => {
   const { t } = useLanguage();
   const totals = totalRow(result.rows);
   const sources = (row: AttributionRow) => row.gridKwh + row.solarKwh + row.batteryKwh;
@@ -114,7 +116,7 @@ const DeviceEnergyChart: React.FC<{ result: AttributionResult }> = ({ result }) 
     ];
     return (
       <div className="min-w-52">
-        <p className="mb-1 font-medium">{row.name}</p>
+        <p className="mb-1 font-medium">{row.kind === 'device' ? <DeviceName name={row.name} colour={deviceColour(devices, row.key)} deviceKey={row.key} /> : row.name}</p>
         <dl className="grid grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-0.5">
           {lines.map(line => (
             <React.Fragment key={line.label}>
@@ -153,7 +155,7 @@ const DeviceEnergyChart: React.FC<{ result: AttributionResult }> = ({ result }) 
                 className="flex flex-col gap-1 rounded-sm py-2 outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className={`truncate text-sm ${row.kind === 'device' ? 'font-medium' : 'text-muted-foreground'}`}>
-                  {row.name}
+                  {row.kind === 'device' ? <DeviceName name={row.name} colour={deviceColour(devices, row.key)} deviceKey={row.key} /> : row.name}
                 </span>
                 <Bar parts={energyParts(row)} max={maxKwh} height="h-3"
                   value={<>{kwh(row.totalKwh)}<Unit>kWh</Unit></>} />

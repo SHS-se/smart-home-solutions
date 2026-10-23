@@ -32,7 +32,7 @@ import {
 import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
-import { loadColour, PLAN_COLOURS, seriesColour } from './palette';
+import { PLAN_COLOURS } from './palette';
 import { scoreColour } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
@@ -57,8 +57,6 @@ const kw = (watts: number | null): number | null =>
   watts === null || !Number.isFinite(watts) ? null : watts / 1_000;
 
 const AXIS_TEXT = 'fill-muted-foreground text-[10px] font-mono';
-/** The pool's own colour, as its band in the consumption stack usually is. */
-const POOL_COLOUR = loadColour(2);
 
 interface Panel { top: number; height: number }
 
@@ -202,6 +200,7 @@ const shorten = (name: string): string =>
   name.length <= INLINE_NAME_MAX ? name : `${name.slice(0, INLINE_NAME_MAX - 1)}…`;
 
 export interface EnergyChartProps {
+  colours: { pool: string; ev: string; water: string };
   /** Any contiguous time horizon, including calendar months. */
   rows: PlanPanelRow[];
   /** Meters that earned a band of their own, largest first. */
@@ -252,7 +251,7 @@ export interface EnergyChartProps {
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
-  rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
+  colours, rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
   costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, relations = NO_RELATIONS,
 }) => {
@@ -715,7 +714,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               data-band={index === 0 ? 'base' : series[index - 1].key}
               {...presentation(index === 0 ? 'base' : `load:${series[index - 1].key}`)}
               d={stepBandPath(band, x, loadY)}
-              fill={index === 0 ? PLAN_COLOURS.base : seriesColour(series[index - 1])}
+              fill={index === 0 ? PLAN_COLOURS.base : series[index - 1].colour}
               fillOpacity={0.92}
             />
           ))}
@@ -739,7 +738,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             strokeDasharray="1 3" strokeLinecap="round"
           />
 
-          {series.map((entry, index) => control(`load:${entry.key}`, entry.name, seriesColour(entry), load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
+          {series.map((entry, index) => control(`load:${entry.key}`, entry.name, entry.colour, load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
           {control('base', t('Baslast', 'Base load'), PLAN_COLOURS.base, load.top + 12 + series.length * 18, energy(baseValues))}
           {control('solar:outline', t('Solproduktion', 'Solar production'), PLAN_COLOURS.solar, load.top + 30 + series.length * 18, energy(rows.map(row => row.solarW)))}
 
@@ -756,14 +755,14 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             </g>}
             {hasEvBattery && <g {...presentation('soc:car')}>
               {storeLines && <path d={midpointLinePath(storeLines.evSoc.slice(0, n), x, socY)} fill="none"
-                stroke={PLAN_COLOURS.ev} strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH} />}
+                stroke={colours.ev} strokeWidth={COMPARED_WIDTH} strokeDasharray={COMPARED_DASH} />}
               <path d={midpointLinePath(rows.map(row => row.evSoc), x, socY)} fill="none"
-                stroke={PLAN_COLOURS.ev} strokeWidth={spotlight?.has('soc:car') ? 3 : 2} />
+                stroke={colours.ev} strokeWidth={spotlight?.has('soc:car') ? 3 : 2} />
             </g>}
             {(() => {
               const stores = [
                 ...(hasBattery ? [{ id: 'soc:home' as const, name: t('Hembatteri', 'Home battery'), colour: PLAN_COLOURS.battery, value: rows[n - 1]?.homeSoc }] : []),
-                ...(hasEvBattery ? [{ id: 'soc:car' as const, name: t('Bilbatteri', 'Car battery'), colour: PLAN_COLOURS.ev, value: rows[n - 1]?.evSoc }] : []),
+                ...(hasEvBattery ? [{ id: 'soc:car' as const, name: t('Bilbatteri', 'Car battery'), colour: colours.ev, value: rows[n - 1]?.evSoc }] : []),
               ].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
               const anchors = stores.map(store => store.value == null ? soc.top + 12 : socY(store.value));
               const positions = placeSeriesLabels(anchors, soc.top, soc.height);
@@ -786,11 +785,11 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                 </text>
               </>}
               {storeLines && <path d={midpointLinePath(storeLines.poolC.slice(0, n), x, poolY)} fill="none"
-                stroke={POOL_COLOUR} strokeWidth={COMPARED_WIDTH} strokeLinejoin="round" strokeDasharray={COMPARED_DASH} />}
-              <path d={midpointLinePath(poolC, x, poolY)} fill="none" stroke={POOL_COLOUR}
+                stroke={colours.pool} strokeWidth={COMPARED_WIDTH} strokeLinejoin="round" strokeDasharray={COMPARED_DASH} />}
+              <path d={midpointLinePath(poolC, x, poolY)} fill="none" stroke={colours.pool}
                 strokeWidth={spotlight?.has('temperature:pool') ? 3 : 2} strokeLinejoin="round" />
             </g>
-            {control('temperature:pool', t('Pool', 'Pool'), POOL_COLOUR,
+            {control('temperature:pool', t('Pool', 'Pool'), colours.pool,
               poolC[n - 1] == null ? pool.top + 12 : poolY(poolC[n - 1]!),
               poolC[n - 1] == null ? '—' : `${poolC[n - 1]!.toFixed(1)} °C`,
               poolC[n - 1] == null ? undefined : poolY(poolC[n - 1]!))}
@@ -992,7 +991,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   <rect
                     key={index} data-water={state}
                     x={x(index) + .5} y={water.top + 8} width={Math.max(0.5, x(index + 1) - x(index) - 1)} height={8}
-                    fill={state === 'allowed' ? PLAN_COLOURS.water : 'transparent'}
+                    fill={state === 'allowed' ? colours.water : 'transparent'}
                   ><title>{hotWaterStateLabel(state, t)}</title></rect>
                 );
               })}
@@ -1029,6 +1028,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
       {hovered && pointer && (
         <PlanTooltip
           row={hovered}
+          colours={colours}
           series={series}
           baseValue={baseValues[hover as number]}
           consumptionIssue={consumptionIssues[hover as number]}
@@ -1060,6 +1060,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
  */
 const PlanTooltip: React.FC<{
   row: PlanPanelRow;
+  colours: EnergyChartProps['colours'];
   series: ConsumptionSeries[];
   baseValue: number;
   consumptionIssue: ConsumptionIssue | null;
@@ -1076,7 +1077,7 @@ const PlanTooltip: React.FC<{
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
+  row, colours, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
   rooms, left, top, bounds, auditDescriptions,
 }) => {
   const { t } = useLanguage();
@@ -1145,7 +1146,7 @@ const PlanTooltip: React.FC<{
         />
         {running.map(entry => (
           <Reading
-            key={entry.key} name={entry.name} colour={seriesColour(entry)}
+            key={entry.key} name={entry.name} colour={entry.colour}
             value={`${entry.partial[index] ? "≥ " : ""}${(entry.value / 1_000).toFixed(2)} kW`}
           />
         ))}
@@ -1169,12 +1170,12 @@ const PlanTooltip: React.FC<{
         )}
         {hasEvBattery && row.evSoc !== null && (
           <Reading
-            name={t('Bilbatteri', 'Car battery')} colour={PLAN_COLOURS.ev}
+            name={t('Bilbatteri', 'Car battery')} colour={colours.ev}
             value={`${Math.round(row.evSoc)} %`}
           />
         )}
         {hasEvBattery && compared(
-          t('Bilbatteri', 'Car battery'), PLAN_COLOURS.ev, storeLines?.evSoc, value => `${Math.round(value)} %`,
+          t('Bilbatteri', 'Car battery'), colours.ev, storeLines?.evSoc, value => `${Math.round(value)} %`,
         )}
         {row.importPriceSekPerKwh !== null && (
           <Reading
@@ -1198,11 +1199,11 @@ const PlanTooltip: React.FC<{
         )}
         {row.poolTemperatureC != null && (
           <Reading
-            name={t('Pooltemperatur', 'Pool temperature')}
+            name={t('Pooltemperatur', 'Pool temperature')} colour={colours.pool}
             value={`${row.poolTemperatureC.toFixed(1)} °C`}
           />
         )}
-        {compared(t('Pooltemperatur', 'Pool temperature'), undefined, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
+        {compared(t('Pooltemperatur', 'Pool temperature'), colours.pool, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
         {costLines
           ? costLines.map(line => {
             const value = line.values[index];

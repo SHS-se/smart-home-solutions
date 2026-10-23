@@ -1,3 +1,5 @@
+import DeviceName from '../DeviceName';
+import { deviceColour } from '@/lib/energy-shift/device-colours';
 // Per-zone thermal model readiness. Lives on the Thermal tab.
 //
 // Moved verbatim out of the former LoadShiftTab on 2026-08-13.
@@ -198,7 +200,7 @@ const ThermalReadinessPanel: React.FC<{
           <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
             {readiness.mappingBlockers.map(device => (
               <li key={device.device_key}>
-                {device.name}{device.mapping_error ? ` — ${device.mapping_error}` : ''}
+                <DeviceName name={device.name} colour={deviceColour(devices, device.device_key)} deviceKey={device.device_key} />{device.mapping_error ? ` — ${device.mapping_error}` : ''}
               </li>
             ))}
           </ul>

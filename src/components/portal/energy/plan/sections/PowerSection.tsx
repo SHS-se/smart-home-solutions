@@ -42,7 +42,9 @@ import { planChartRelations } from '@/lib/energy-shift/plan-chart-relations';
 import type { ChartRoom } from '@/lib/energy-shift/room-temperature';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
-import { loadColour, PLAN_COLOURS, seriesColour } from '../../charts/palette';
+import { PLAN_COLOURS } from '../../charts/palette';
+import { ownerColour, type EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
+import { poolHeaters } from '../../../../../../supabase/functions/_shared/planner/pool-devices';
 import { useHomeTimeZone } from '../../HomeTimeZoneContext';
 
 const RULE_LABEL = new Map(DEFAULT_RULES.map(rule => [rule.key, rule.label]));
@@ -55,7 +57,7 @@ const PowerSection: React.FC<{
   dayWindow: DayWindow;
   dayWindowOptions: DayWindow[];
   onDayWindowChange: (value: DayWindow) => void;
-  deviceNameByKey: ReadonlyMap<string, string>;
+  devices: readonly EmpiricalEnergyDevice[];
   /** Meters the plan is allowed to move. Only these earn a band of their own. */
   schedulableKeys: ReadonlySet<string>;
   hasBattery: boolean;
@@ -71,7 +73,7 @@ const PowerSection: React.FC<{
   dayWindow,
   dayWindowOptions,
   onDayWindowChange,
-  deviceNameByKey,
+  devices,
   schedulableKeys,
   hasBattery,
   hasEvBattery,
@@ -84,30 +86,33 @@ const PowerSection: React.FC<{
   const view = useMemo(() => rows.slice(range.from, range.to), [range.from, range.to, rows]);
 
   const { plan } = model;
+  const deviceNameByKey = useMemo(() => new Map(devices.map(device => [device.device_key, device.name])), [devices]);
+  const colours = useMemo(() => ({
+    pool: ownerColour(devices, poolHeaters(plan.device_models).map(device => device.key), PLAN_COLOURS.pool),
+    ev: ownerColour(devices, plan.device_models.filter(device => device.category === 'ev_charging').map(device => device.key), PLAN_COLOURS.ev),
+    water: ownerColour(devices, plan.device_models.filter(device => device.category === 'hot_water' && device.control_type === 'permit_inhibit').map(device => device.key), PLAN_COLOURS.water),
+  }), [devices, plan.device_models]);
   const hotWater = useMemo((): ChartHotWater | undefined => {
     if (!plan.capabilities.boiler) return undefined;
     const keys = plan.device_models.filter(device => device.category === 'hot_water' && device.control_type === 'permit_inhibit').map(device => device.key);
     return {
-      name: t('Varmvattenberedare', 'Water boiler'), colour: PLAN_COLOURS.water, keys,
+      name: t('Varmvattenberedare', 'Water boiler'), colour: colours.water, keys,
       byStart: new Map(model.active.slots.map(slot => [Date.parse(slot.start), hotWaterQuarter(slot, keys)])),
     };
-  }, [model.active.slots, plan.capabilities.boiler, plan.device_models, t]);
+  }, [model.active.slots, plan.capabilities.boiler, plan.device_models, colours.water, t]);
 
   const chart = useMemo(() => projectPlanChart({ rows, range, timeZone: homeTimeZone, prices: { kind: 'live' },
-    devices: [...new Set([...deviceNameByKey.keys(), ...schedulableKeys])].map(key => ({
-      key, name: deviceNameByKey.get(key) ?? key, schedulable: schedulableKeys.has(key),
+    devices: devices.map(device => ({
+      key: device.device_key, name: device.name, colour: device.colour, schedulable: schedulableKeys.has(device.device_key),
     })),
     hotWater,
-  }), [rows, range, homeTimeZone, deviceNameByKey, schedulableKeys, hotWater]);
+  }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater]);
   const { rows: panelRows, consumption } = chart;
   // A room is drawn in its heater's band colour, so the line and the energy
   // that moved it read as one thing.
-  const roomLines = useMemo((): EnergyRoomLine[] => rooms.map((room, index) => {
-    const band = consumption.series.find(entry => room.deviceKeys.includes(entry.key));
-    return {
-      key: room.key, name: room.name, colour: band ? seriesColour(band) : loadColour((index + 5) % 9),
-    };
-  }), [rooms, consumption.series]);
+  const roomLines = useMemo((): EnergyRoomLine[] => rooms.map(room => ({
+    key: room.key, name: room.name, colour: ownerColour(devices, room.deviceKeys, PLAN_COLOURS.room),
+  })), [rooms, devices]);
 
   const divider = nowDividerIndex(rows, range);
   const plannedStarts = useMemo(
@@ -170,6 +175,7 @@ const PowerSection: React.FC<{
       </div>
       <EnergyChart
         rows={panelRows}
+        colours={colours}
         series={consumption.series}
         baseValues={consumption.baseValues}
         consumptionIssues={consumption.issues}
@@ -218,7 +224,7 @@ const PowerSection: React.FC<{
             ))}
           </div>
         </div>
-        {deviceView === 'chart' ? <DeviceEnergyChart result={attribution} /> : <DeviceEnergyTable result={attribution} />}
+        {deviceView === 'chart' ? <DeviceEnergyChart devices={devices} result={attribution} /> : <DeviceEnergyTable devices={devices} result={attribution} />}
         <DeviceEnergyNotes result={attribution} />
       </div>
     </>

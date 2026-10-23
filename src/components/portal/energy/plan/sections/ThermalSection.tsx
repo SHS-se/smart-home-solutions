@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { COLORS, DEVICE_COLORS } from '../types';
+import { COLORS } from '../types';
 import { SeriesToggleLegend, useSeriesVisibility } from '../ui';
 import type { PlanModel } from '../usePlanModel';
 import type { ThermalSeriesKey } from '../types';
@@ -50,8 +50,8 @@ const ThermalSection: React.FC<{
                         {thermalVisibility.visible('outdoor') && <Line yAxisId="temperature" type="monotone" dataKey="outdoor" name={thermalSeries[0].label} stroke="#475569" strokeWidth={2} dot={false} />}
                         {thermalProjection.zones.map((zone, index) => (
                           <React.Fragment key={zone.key}>
-                            {thermalVisibility.visible(`zoneTemperature:${zone.key}`) && <Line yAxisId="temperature" type="monotone" dataKey={`zoneTemperature${index}`} name={thermalSeries[2 + index * 2].label} stroke={DEVICE_COLORS[index % DEVICE_COLORS.length]} strokeWidth={2} dot={false} />}
-                            {thermalVisibility.visible(`zoneTarget:${zone.key}`) && <Line yAxisId="temperature" type="stepAfter" dataKey={`zoneTarget${index}`} name={thermalSeries[3 + index * 2].label} stroke={DEVICE_COLORS[index % DEVICE_COLORS.length]} strokeDasharray="4 3" strokeOpacity={0.65} dot={false} />}
+                            {thermalVisibility.visible(`zoneTemperature:${zone.key}`) && <Line yAxisId="temperature" type="monotone" dataKey={`zoneTemperature${index}`} name={thermalSeries[2 + index * 2].label} stroke={thermalSeries[2 + index * 2].color} strokeWidth={2} dot={false} />}
+                            {thermalVisibility.visible(`zoneTarget:${zone.key}`) && <Line yAxisId="temperature" type="stepAfter" dataKey={`zoneTarget${index}`} name={thermalSeries[3 + index * 2].label} stroke={thermalSeries[2 + index * 2].color} strokeDasharray="4 3" strokeOpacity={0.65} dot={false} />}
                           </React.Fragment>
                         ))}
                         <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} labelFormatter={index => thermalData[index as number]?.label ?? ''} formatter={(value, name) => [name === thermalSeries[1].label ? `${(Number(value) / 1_000).toFixed(2)} kW` : `${Number(value).toFixed(1)} °C`, name]} />

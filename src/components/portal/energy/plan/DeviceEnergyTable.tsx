@@ -1,3 +1,5 @@
+import DeviceName from '../DeviceName';
+import { deviceColour, type DeviceColour } from '@/lib/energy-shift/device-colours';
 // Per-device energy and cost for the selected window, as numbers: the table
 // view of DeviceEnergyChart.
 //
@@ -13,7 +15,7 @@ import { totalRow, type AttributionResult } from '@/lib/energy-shift/energy-attr
 
 const kwh = (value: number) => value.toFixed(value >= 100 ? 0 : 2);
 
-const DeviceEnergyTable: React.FC<{ result: AttributionResult }> = ({ result }) => {
+const DeviceEnergyTable: React.FC<{ result: AttributionResult; devices: readonly DeviceColour[] }> = ({ result, devices }) => {
   const { t } = useLanguage();
   const totals = totalRow(result.rows);
 
@@ -41,7 +43,7 @@ const DeviceEnergyTable: React.FC<{ result: AttributionResult }> = ({ result }) 
         {result.rows.map(row => (
           <TableRow key={row.key} className={row.kind === 'device' ? '' : 'text-muted-foreground'}>
             <TableCell className="font-medium">
-              {row.name}
+              {row.kind === 'device' ? <DeviceName name={row.name} colour={deviceColour(devices, row.key)} deviceKey={row.key} /> : row.name}
               {!row.fullyPriced && (
                 <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
                   {t('· delvis prissatt', '· partly priced')}

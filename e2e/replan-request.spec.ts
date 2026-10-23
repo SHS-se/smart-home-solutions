@@ -1,3 +1,4 @@
+import { TEST_DEVICE_COLOURS } from './helpers/device-colours';
 import { runRulesPlanner } from "../supabase/functions/_shared/run-rules-planner.ts";
 /**
  * "Planera om nu", fully local — no real backend.
@@ -97,6 +98,7 @@ interface MockPlanState {
 }
 
 async function mockBackend(context: BrowserContext, replan: MockPlanState, plan = PLAN, planSnapshot = snapshot()) {
+  const savedColours = new Map<string, string>();
   const nowIso = new Date().toISOString();
   // Reloading ROI uses the historical fixture's fixed clock, which can be ahead
   // of the test runner. Keep mocked sessions valid on both clocks.
@@ -190,7 +192,16 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
           ...replan.row,
         },
         plan: replan.unsupportedPlan ? { ...shown, schema_version: 999 } : shown,
-        devices: replan.devices ?? [],
+        devices: [...new Map([
+          ...shown.device_models.map(device => ({ id: device.key, device_key: device.key, statistic_id: device.statistic_id, name: device.name,
+            category: device.category, planning_role_override: device.planning_role, control_type_override: device.control_type,
+            load_type_override: device.load_type, mapping_summary: {}, mapping_status: 'ready', mapped_control_type: device.control_type })),
+          ...(replan.devices ?? []),
+        ].map(device => [device.device_key, device])).values()].map(device => {
+          const key = device.device_key as string;
+          if (!savedColours.has(key)) savedColours.set(key, TEST_DEVICE_COLOURS[savedColours.size]);
+          return { retired_at: null, ...device, colour: device.colour ?? savedColours.get(key) };
+        }),
       }),
       device_actuals: {
         upserts: (replan.deviceHistory ?? []).map(row => ({ row, hash: JSON.stringify(row) })), removed: [],
@@ -706,6 +717,61 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('estimated-counter-interval.png') });
   });
 
+  test('device colours match every reference and survive refresh, reorder, configuration changes and additions', async ({ page, context }, testInfo) => {
+    const model = mixedModeFixture.plan.device_models[0];
+    const models = Array.from({ length: 11 }, (_, index) => ({ ...model,
+      key: `heater-${String(index).padStart(2, '0')}`,
+      name: index === 2 ? 'Guest bedroom heater' : index === 10 ? 'Pool heater' : `Heater ${index}`,
+      planning_service: undefined,
+    }));
+    replan.devices = models.map((device, index) => ({ id: device.key, device_key: device.key, statistic_id: device.key,
+      name: device.name, colour: TEST_DEVICE_COLOURS[index], category: device.category, retired_at: null,
+      planning_role_override: 'controllable', control_type_override: 'switch_schedule', load_type_override: 'fixed_full_load',
+      mapping_status: 'ready', mapped_control_type: 'switch_schedule', mapping_summary: {}, profile_sample_count: 1000,
+    }));
+    replan.publishedPlan = { ...PLAN, device_models: models,
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map(slot => ({
+        ...slot, load_w: 5990, device_loads_w: Object.fromEntries(models.map((device, i) => [device.key, i === 10 ? 2990 : 100])),
+      })) } },
+    };
+    await context.route('**/rest/v1/rpc/set_energy_device_planning', async route => {
+      const body = route.request().postDataJSON();
+      const device = replan.devices!.find(device => device.id === body.p_device_id)!;
+      device.planning_role_override = body.p_planning_role;
+      await route.fulfill({ json: device });
+    });
+    const guest = models[2], pool = models[10];
+    await page.goto('/portal/energy-modeling?tab=devices');
+    const guestSwatch = page.locator(`[data-device-colour="${guest.key}"]`).first();
+    await expect(guestSwatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+    await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
+    await expect(guestSwatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+    await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
+    await page.screenshot({ path: testInfo.outputPath('saved-device-colours-list.png'), fullPage: true });
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    const verify = async () => {
+      await expect(chart.locator('[data-band="heater-10"]')).toBeVisible();
+      const bands = await chart.locator('path[data-band][data-series^="load:"]').evaluateAll(elements =>
+        elements.map(element => getComputedStyle(element).fill));
+      expect(bands.length).toBe(11);
+      expect(new Set(bands).size).toBe(11);
+      await expect(chart.locator(`[data-band="${guest.key}"]`)).toHaveCSS('fill', 'rgb(120, 81, 169)');
+      await expect(chart.locator(`[data-band="${pool.key}"]`)).toHaveCSS('fill', 'rgb(0, 134, 99)');
+      await chart.focus(); await chart.press('ArrowRight');
+      const tooltip = page.getByRole('tooltip');
+      const swatch = tooltip.getByText(guest.name, { exact: true }).locator('..').locator('[aria-hidden]');
+      await expect(swatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+      await page.keyboard.press('Escape');
+    };
+    await verify();
+    replan.devices.reverse();
+    replan.devices.push({ ...replan.devices[0], id: 'new-device', device_key: 'aaa-new-device', name: 'New earlier device', colour: TEST_DEVICE_COLOURS[11] });
+    await page.reload();
+    await verify();
+    await page.screenshot({ path: testInfo.outputPath('saved-device-colours-chart.png'), fullPage: true });
+  });
+
   test('missing device readings contribute zero and preserve base load in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{
@@ -862,6 +928,8 @@ test.describe('requesting a replan', () => {
         message: 'Master bathroom: 2 quarters may be outside the requested comfort band.',
         consequence: 'The best attainable room schedule is included and household planning continues.', evidence: { quarters: 2 } }],
     } as typeof PLAN;
+    replan.devices = [{ id: 'hall', device_key: 'hall', statistic_id: 'hall', name: 'Hall heater',
+      planning_role_override: 'base_load', mapping_summary: { room_key: 'hall' } }];
     replan.history = [3, 2, 1].map(quartersAgo => ({ start_ts: new Date(start - quartersAgo * 900_000).toISOString(), total_load_kwh: 0.65 }));
     replan.poolHistory = replan.history.map(row => ({ start_ts: row.start_ts, water_temperature_c: 31 }));
     const monitoredRooms = ['Basement bathroom', 'Ground floor bathroom', 'Guest Room', 'Kitchen', 'Laundry', 'Master Bedroom', 'Mark’s bedroom'];

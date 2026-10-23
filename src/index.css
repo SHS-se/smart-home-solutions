@@ -92,20 +92,10 @@
     --plan-price-6: #d4634f;
     --plan-price-7: #a92e22;
 
-    /* Consumption bands. Assigned to a meter and held there, so filtering a
-       series never repaints the ones that remain. Eight is the ceiling: a
-       ninth qualifying meter joins base load rather than take a colour nobody
-       could tell from the others. The last three repeat the flow hues, which
-       is safe only because flows and consumption never share a panel. */
-    --plan-load-0: #e34948;
-    --plan-load-1: #4a3aa7;
-    --plan-load-2: #e87ba4;
-    --plan-load-3: #eda100;
-    --plan-load-4: #008300;
-    --plan-load-5: #2a78d6;
-    --plan-load-6: #eb6834;
-    --plan-load-7: #1baf7a;
-    --plan-load-8: #a855b5;
+    /* Semantic aggregates and model cost; devices use their saved RGB values. */
+    --plan-pool: #e87ba4;
+    --plan-room: #475569;
+    --plan-cost: #a855f7;
     /* Base load is grey on purpose: it is the background, not a series. */
     --plan-base: #8a8f98;
     /* Hot water is pinned to one colour in every home, because the strip

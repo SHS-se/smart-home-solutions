@@ -1,3 +1,4 @@
+import { deviceMembers as group, allocateDevicePower as allocate, type DeviceMember } from './planner/device-power-allocation.ts';
 import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
 import { addHotWater } from "./rules-hot-water.ts";
 import { projectRulesBaseline } from "./rules-baseline.ts";
@@ -49,7 +50,6 @@ export interface PublishedCommandReference {
   hot_water_permissions?: string[];
   slots: PublishedCommandSlot[];
 }
-interface DeviceMember { key: string; watts: number }
 export interface PreparedRulesInput {
   rooms: RoomServices;
   pool_service: PoolService;
@@ -187,11 +187,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const poolMembers = snapshot.device_models.filter(m => m.planning_service === "pool");
   const heaterKeys = new Set(poolHeaters(poolMembers).map(m => m.key));
   const member = (m: OptimisationSnapshot["device_models"][number]): DeviceMember => ({ key: m.key, watts: m.active_power_w ?? 0 });
-  const group = (models: typeof snapshot.device_models, total: number): DeviceMember[] => {
-    const weights=models.map(m=>Math.max(m.active_power_w??0,...m.forecast_w_by_slot));
-    const measured=sum(weights);
-    return models.map((m,i)=>({key:m.key,watts:measured>0?weights[i]:total/models.length}));
-  };
   const members = {
     heater: pool ? group(poolMembers.filter(m => heaterKeys.has(m.key)),pool.heater.compressor_w) : [],
     auxiliary: pool ? group(poolMembers.filter(m => !heaterKeys.has(m.key)),pool.heater.auxiliary_w) : [],
@@ -354,11 +349,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     boiler_shortfall_minutes: {}, base_w: baseW };
 }
 
-function allocate(members: DeviceMember[], watts: number, into: Record<string, number>) {
-  const total = sum(members.map(m => m.watts));
-  if (members.length && watts > 0 && !(total > 0)) return fail("Physical device members require measured allocation powers");
-  for (const m of members) into[m.key] = total > 0 ? watts * m.watts / total : 0;
-}
 function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number): Record<string, DeviceCommand> {
   const locked = input.fixed_slots[i] ?? input.locked_slots[i];
   const result: Record<string, DeviceCommand> = {};
