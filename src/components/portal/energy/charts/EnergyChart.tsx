@@ -1037,7 +1037,6 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
           hasBattery={hasBattery}
           hasEvBattery={hasEvBattery}
           realPrices={realPrices}
-          costLines={showCost ? costLines : undefined}
           storeLines={storeLines}
           rooms={rooms}
           auditDescriptions={quarterAudit?.lanes.map(lane => lane.cells[hover as number]?.description).filter(Boolean)}
@@ -1069,7 +1068,6 @@ const PlanTooltip: React.FC<{
   hasBattery: boolean;
   hasEvBattery: boolean;
   realPrices: boolean;
-  costLines?: readonly EnergyCostLine[];
   storeLines?: EnergyStoreLines;
   rooms: readonly EnergyRoomLine[];
   auditDescriptions?: readonly string[];
@@ -1077,7 +1075,7 @@ const PlanTooltip: React.FC<{
   top: number;
   bounds: DOMRect | null;
 }> = ({
-  row, colours, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, costLines, storeLines,
+  row, colours, series, baseValue, consumptionIssue, index, measured, hasBattery, hasEvBattery, realPrices, storeLines,
   rooms, left, top, bounds, auditDescriptions,
 }) => {
   const { t } = useLanguage();
@@ -1112,7 +1110,7 @@ const PlanTooltip: React.FC<{
       <Reading name={`${name} · ${storeLines?.name}`} colour={colour} value={format(value)} />
     );
   };
-  const estimated = 190 + (row.estimatedEnergy ? 40 : 0) + (running.length + (costLines?.length ?? 0) + (storeLines ? 3 : 0) + rooms.length) * 16;
+  const estimated = 174 + (row.estimatedEnergy ? 40 : 0) + (running.length + (storeLines ? 3 : 0) + rooms.length) * 16;
   const clampedTop = bounds
     ? Math.min(Math.max(4, top - 40), Math.max(4, bounds.height - estimated))
     : Math.max(4, top - 40);
@@ -1136,6 +1134,26 @@ const PlanTooltip: React.FC<{
       {gap ? (
         <p className="text-muted-foreground">{gap.detail}</p>
       ) : <>
+      {row.importPriceSekPerKwh !== null && (
+        <Reading
+          name={realPrices
+            ? t('Köp (verkligt)', 'Buy (real)')
+            : row.importPriceQuoted
+              ? t('Köp', 'Buy')
+              : t('Köp (uppskattat)', 'Buy (estimated)')}
+          value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+        />
+      )}
+      {row.exportPriceSekPerKwh !== null && (
+        <Reading
+          name={realPrices
+            ? t('Sälj (verkligt)', 'Sell (real)')
+            : row.importPriceQuoted
+            ? t('Sälj', 'Sell')
+            : t('Sälj (uppskattat)', 'Sell (estimated)')}
+          value={`${row.exportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
+        />
+      )}
       {flows.filter(([, value]) => value >= 0.02).map(([name, value, colour]) => (
         <Reading key={name} name={name} colour={colour} value={`${value.toFixed(2)} kW`} />
       ))}
@@ -1177,26 +1195,6 @@ const PlanTooltip: React.FC<{
         {hasEvBattery && compared(
           t('Bilbatteri', 'Car battery'), colours.ev, storeLines?.evSoc, value => `${Math.round(value)} %`,
         )}
-        {row.importPriceSekPerKwh !== null && (
-          <Reading
-            name={realPrices
-              ? t('Köp (verkligt)', 'Buy (real)')
-              : row.importPriceQuoted
-                ? t('Köp', 'Buy')
-                : t('Köp (uppskattat)', 'Buy (estimated)')}
-            value={`${row.importPriceSekPerKwh.toFixed(2)} SEK/kWh`}
-          />
-        )}
-        {row.exportPriceSekPerKwh !== null && (
-          <Reading
-            name={realPrices
-              ? t('Sälj (verkligt)', 'Sell (real)')
-              : row.importPriceQuoted
-              ? t('Sälj', 'Sell')
-              : t('Sälj (uppskattat)', 'Sell (estimated)')}
-            value={`${row.exportPriceSekPerKwh.toFixed(2)} SEK/kWh`}
-          />
-        )}
         {row.poolTemperatureC != null && (
           <Reading
             name={t('Pooltemperatur', 'Pool temperature')} colour={colours.pool}
@@ -1204,22 +1202,6 @@ const PlanTooltip: React.FC<{
           />
         )}
         {compared(t('Pooltemperatur', 'Pool temperature'), colours.pool, storeLines?.poolC, value => `${value.toFixed(1)} °C`)}
-        {costLines
-          ? costLines.map(line => {
-            const value = line.values[index];
-            return value === null || value === undefined ? null : (
-              <Reading
-                key={line.key} name={`${t('Kostnad', 'Cost so far')} · ${line.name}`} colour={line.colour}
-                value={`${value.toFixed(2)} kr`}
-              />
-            );
-          })
-          : (
-            <Reading
-              name={t('Kostnad hittills', 'Cost so far')}
-              value={row.cumulativeCostSek === null ? '—' : `${row.cumulativeCostSek.toFixed(2)} kr`}
-            />
-          )}
       </div>
       </>}
       {rooms.map(room => {
