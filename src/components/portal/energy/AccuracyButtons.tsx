@@ -33,8 +33,9 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
       </Button>;
     })}</div>
     <Dialog open={open !== null} onOpenChange={visible => {if (!visible) setOpen(null);}}>
-      <DialogContent className="max-w-sm" aria-describedby={undefined} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus();}}>
-        <DialogHeader><DialogTitle>{open ? labels[open] : ''}</DialogTitle></DialogHeader>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-sm flex-col overflow-hidden" aria-describedby={undefined} onCloseAutoFocus={event => {event.preventDefault(); trigger.current?.focus();}}>
+        <DialogHeader className="shrink-0 pr-6"><DialogTitle>{open ? labels[open] : ''}</DialogTitle></DialogHeader>
+        <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain" data-testid="accuracy-details">
         {open === 'input' ? <InputChecks input={input} unavailable={inputUnavailable} timeZone={timeZone} t={t} /> : <>
           {error ? <p role="status" className="text-sm text-muted-foreground">{error}</p> : <>
             <section aria-labelledby="accuracy-energy">
@@ -49,6 +50,7 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
           </>}
           <AccuracyFooter report={report} stamp={stamp} />
         </>}
+        </div>
       </DialogContent>
     </Dialog></>;
 }

@@ -1305,11 +1305,14 @@ test.describe('requesting a replan', () => {
 
   test('accuracy buttons open compact device lists with all five grades', async ({page}) => {
     const devices = [['baseline','Baseline',94,'green'],['ev','Car',84,'lime'],['pool','Pool',74,'yellow'],
-      ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red']].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
+      ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red'],
+      ...Array.from({length:15},(_,i)=>[`device-${i}`,`Bedroom heater ${i+1}`,null,null])].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
     replan.accuracy = {version:2,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',historical_from:CAPTURED_AT,
       historical:{percentage:64,grade:'orange',devices},prices:{percentage:80,grade:'lime',quarters:96},
       room_temperature:{tolerance_c:.5,rooms:[{key:'bath',name:'Master bathroom',percentage:82,grade:'lime',quarters:180,
-        mean_absolute_error_c:.31,bias_c:-.1}]}};
+        mean_absolute_error_c:.31,bias_c:-.1},
+        ...Array.from({length:6},(_,i)=>({key:`room-${i}`,name:`Bedroom ${i+1}`,percentage:82,grade:'lime',quarters:180,
+          mean_absolute_error_c:.31,bias_c:-.1}))]}};
     replan.reportedPlanId = PLAN.plan_id;
     replan.inputAccuracy = {version:1,observed_at:CAPTURED_AT,percentage:88,grade:'lime',checks:[
       {key:'prices',percentage:80,grade:'lime',quarters:96,calculated_at:CAPTURED_AT,issues:[]},
@@ -1351,7 +1354,28 @@ test.describe('requesting a replan', () => {
     await expect(page.getByRole('dialog').getByRole('heading',{name:/Historical accuracy %|Historisk noggrannhet %/})).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCSS('opacity','1');
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
-    await page.screenshot({path:test.info().outputPath('website-accuracy.png')});
+    for (const viewport of [{width:1280,height:720},{width:390,height:660}]) {
+      await page.setViewportSize(viewport);
+      const heading = popup.getByRole('heading',{name:/Historical accuracy %|Historisk noggrannhet %/});
+      const close = popup.getByRole('button',{name:'Close',exact:true});
+      await expect(heading).toBeInViewport();
+      await expect(close).toBeInViewport();
+      await expect.poll(async()=>{
+        const bounds = await popup.boundingBox();
+        return bounds !== null && bounds.y >= 16 && bounds.y + bounds.height <= viewport.height - 16
+          && bounds.x >= 16 && bounds.x + bounds.width <= viewport.width - 16;
+      }).toBe(true);
+      const details = popup.getByTestId('accuracy-details');
+      expect(await details.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
+      await details.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+      await expect(popup.getByTestId('accuracy-schedule')).toBeInViewport();
+      await expect(heading).toBeInViewport();
+      await expect(close).toBeInViewport();
+      await page.screenshot({path:test.info().outputPath(`website-accuracy-${viewport.width}.png`)});
+      await details.evaluate(el=>{el.scrollTop=0;});
+    }
+    await popup.getByRole('button',{name:'Close',exact:true}).click();
+    await expect(forecast).toBeFocused();
   });
 
   test('routine learning does not create a banner or block replanning', async ({page})=>{
