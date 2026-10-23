@@ -20,6 +20,7 @@ import { BASE_LANE, LANES } from '../src/lib/planner-bench/lanes';
 import { priceEstimates, summariseEstimates, type EstimateSeries } from '../src/lib/planner-bench/price-estimates';
 import { realisticWorld } from '../src/lib/planner-bench/world.fixture';
 import type { PricePairComparison } from '../src/lib/planner-bench/price-pair-comparison';
+import { isTestWebsite } from './helpers/environment';
 
 const STAFF_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const PRICE_PAIR_ID = '44444444-4444-4444-8444-444444444444';
@@ -342,11 +343,23 @@ async function login(page: Page) {
   await page.waitForURL(url => !url.pathname.endsWith('/login'));
 }
 
+async function expectGenerationMixAvailability(page: Page): Promise<boolean> {
+  await expect(page.locator('#bench-tab-bench')).toBeVisible();
+  const enabled = await isTestWebsite(page);
+  await expect(page.locator('#bench-tab-generation-mix')).toHaveCount(enabled ? 1 : 0);
+  if (!enabled) {
+    await expect(page.getByTestId('generation-mix-comparison')).toHaveCount(0);
+    await expect(page.locator('#bench-tab-bench')).toHaveAttribute('data-state', 'active');
+  }
+  return enabled;
+}
+
 test.describe('planner bench', () => {
   test('TEST generation mix shows pending pairs, scores arriving prices and corrections, and keeps pair selection in the URL', async ({ context, page }) => {
     await mockBackend(context);
-    let published = false, corrected = false, fail = false;
+    let published = false, corrected = false, fail = false, studyRequests = 0;
     await context.route('**/rest/v1/rpc/get_test_price_pair_comparison', async route => {
+      studyRequests++;
       if (fail) return route.fulfill({ status: 503, json: { message: 'Study unavailable' } });
       const older = route.request().postDataJSON().p_pair_id === OLDER_PRICE_PAIR_ID;
       await route.fulfill({ json: mixComparison(published, older, corrected) });
@@ -354,6 +367,10 @@ test.describe('planner bench', () => {
     await login(page);
     await page.clock.install();
     await page.goto('/portal/planner-bench');
+    if (!await expectGenerationMixAvailability(page)) {
+      expect(studyRequests).toBe(0);
+      return;
+    }
     await expect(page.getByTestId('generation-mix-comparison')).toHaveCount(0);
     await page.locator('#bench-tab-generation-mix').click();
     await expect(page).toHaveURL(/tab=generation-mix/);
@@ -399,8 +416,9 @@ test.describe('planner bench', () => {
 
   test('TEST generation mix handles a study without pairs and a pair with missing inputs without showing zero error', async ({ context, page }) => {
     await mockBackend(context);
-    let empty = true;
+    let empty = true, studyRequests = 0;
     await context.route('**/rest/v1/rpc/get_test_price_pair_comparison', async route => {
+      studyRequests++;
       const data = mixComparison();
       data.targets = [];
       if (empty) { data.selected = null; data.report.pairs = []; data.report.pair_count = 0; }
@@ -409,6 +427,10 @@ test.describe('planner bench', () => {
     });
     await login(page);
     await page.goto('/portal/planner-bench?tab=generation-mix');
+    if (!await expectGenerationMixAvailability(page)) {
+      expect(studyRequests).toBe(0);
+      return;
+    }
     const view = page.getByTestId('generation-mix-comparison');
     await expect(view).toContainText(/No forecast pairs saved|Inga prognospar/);
     empty = false;

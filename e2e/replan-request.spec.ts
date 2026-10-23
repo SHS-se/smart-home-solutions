@@ -23,6 +23,7 @@ const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fi
 import { baselineFixture } from '../src/lib/home-baseline/fixture';
 import { mockRoiHistory, expectRoiMonths } from './helpers/roi-history';
 import { portalDelta } from './helpers/portal-delta';
+import { isTestWebsite } from './helpers/environment';
 
 const CUSTOMER_ID = '11111111-2222-4333-8444-555555555555';
 const CUSTOMER_USER_ID = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
@@ -37,10 +38,6 @@ function withoutRulePoints(plan:typeof PLAN):typeof PLAN {
  const copy=structuredClone(plan);
  for(const scenario of Object.values(copy.plans)) for(const slot of scenario.slots) delete slot.rule_points;
  return copy;
-}
-
-async function isTestWebsite(page: Page): Promise<boolean> {
-  return page.getByText(/TESTMILJÖ -|TEST ENVIRONMENT -/).isVisible();
 }
 
 async function expectTestPlanStatus(page: Page) {
