@@ -882,7 +882,7 @@ test.describe('requesting a replan', () => {
     await expect(panel.locator('[data-room="hall"]')).toHaveCount(1);
     await expect(panel.locator('[data-room="hall"] path').first()).toHaveAttribute('d', '');
     await expect(panel.locator('[data-room-label="bath"]')).toContainText('Master bathroom');
-    await expect(panel.locator('[data-room-label="bath"] title')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
+    await expect(panel.locator('[data-room-label] title')).not.toContainText([/may be outside comfort|kan hamna utanför komfort/]);
     const bathName = panel.getByRole('button', { name: 'Master bathroom' });
     const hallName = panel.locator('[data-room-label="hall"] button');
     const bathCurve = panel.locator('[data-room="bath"]');
@@ -929,7 +929,7 @@ test.describe('requesting a replan', () => {
     await expect(page.locator('[data-series="load:car"]').first()).toHaveAttribute('opacity', '0.18');
     await page.mouse.move(0, 0);
 
-    // The comfort note is on the chart, so nothing is left for a banner or the notes.
+    // Comfort shortfalls do not add a banner, planning notes, or chart label text.
     await expect(page.getByText(/Planning needs attention|Planeringen behöver uppmärksamhet/)).toHaveCount(0);
     await expect(page.getByTestId('planning-notes')).toHaveCount(0);
     const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
@@ -938,7 +938,7 @@ test.describe('requesting a replan', () => {
     await chart.press('ArrowLeft');
     await expect(page.getByRole('tooltip')).toContainText(/Master bathroom21\.3 °C/);
     await expect(page.getByRole('tooltip')).toContainText('Hall18.0 °C');
-    await expect(page.getByRole('tooltip')).toContainText(/2 (quarters may be outside comfort|kvartar kan hamna utanför komfort)/);
+    await expect(page.getByRole('tooltip')).not.toContainText(/may be outside comfort|kan hamna utanför komfort/);
     await page.keyboard.press('Escape');
     // Names belong beside the curves, without a legend block separating the plots.
     for (const width of [2560, 1440, 768, 375]) {

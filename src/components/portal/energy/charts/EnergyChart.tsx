@@ -93,8 +93,6 @@ export interface EnergyRoomLine {
   key: string;
   name: string;
   colour: string;
-  /** What the plan says about the room's comfort, shown beside its name. */
-  note?: string | null;
 }
 
 /** Findings aligned with chart quarters; amounts belong to findings, never to these markers. */
@@ -498,8 +496,8 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
     if (!next.delete(id)) next.add(id);
     return next;
   });
-  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number, note?: string | null) => (
-    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY} note={note}
+  const control = (id: EnergySeriesId, name: string, colour: string, y: number, value?: string, anchorY?: number) => (
+    <SeriesControl key={id} id={id} name={name} colour={colour} y={y} value={value} anchorY={anchorY}
       right={right} width={viewWidth} hidden={hidden.has(id)} active={spotlight?.has(id) ?? false}
       onPoint={point} onFocusSeries={focus} onToggle={toggle} />
   );
@@ -821,7 +819,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                 </g>
               ))}
               {roomEnds.map(end => control(`room:${end.line.key}`, end.line.name, end.line.colour,
-                end.labelY, `${end.value.toFixed(1)} °C`, end.y, end.line.note))}
+                end.labelY, `${end.value.toFixed(1)} °C`, end.y))}
             </g>
           )}
 
@@ -1226,14 +1224,12 @@ const PlanTooltip: React.FC<{
       {rooms.map(room => {
         const value = row.roomTemperatureC?.[room.key], comfort = row.roomComfortMinC?.[room.key];
         return value === undefined && comfort === undefined ? null : (
-          <React.Fragment key={room.key}>
           <Reading
+            key={room.key}
             name={room.name} colour={room.colour}
             value={[value === undefined ? '—' : `${value.toFixed(1)} °C`,
               ...(comfort === undefined ? [] : [`${t('komfort', 'comfort')} ${comfort.toFixed(1)}`])].join(' · ')}
           />
-          {room.note && <p className="text-muted-foreground">{room.note}</p>}
-          </React.Fragment>
         );
       })}
     </div>

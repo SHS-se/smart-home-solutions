@@ -3,7 +3,7 @@ import type { EnergySeriesId } from './series-interaction';
 
 export interface SeriesControlProps {
   id: EnergySeriesId; name: string; value?: string; colour: string;
-  right: number; width: number; y: number; anchorY?: number; note?: string | null;
+  right: number; width: number; y: number; anchorY?: number;
   hidden: boolean; active: boolean;
   onPoint: (id: EnergySeriesId | null) => void;
   onFocusSeries: (id: EnergySeriesId | null) => void;
@@ -11,11 +11,11 @@ export interface SeriesControlProps {
 }
 
 /** Every panel uses the same compact, keyboard-operable key. */
-export default function SeriesControl({ id, name, value, colour, right, width, y, anchorY, note,
+export default function SeriesControl({ id, name, value, colour, right, width, y, anchorY,
   hidden, active, onPoint, onFocusSeries, onToggle }: SeriesControlProps) {
   return <g data-series-control={id} data-room-label={id.startsWith('room:') ? id.slice(5) : undefined}
     onPointerEnter={() => onPoint(id)} onPointerLeave={() => onPoint(null)}>
-    <title>{[name, value, note].filter(Boolean).join(' · ')}</title>
+    <title>{[name, value].filter(Boolean).join(' · ')}</title>
     {anchorY !== undefined && !hidden && <>
       <polyline points={`${right},${anchorY} ${right + 5},${anchorY} ${right + 13},${y}`}
         fill="none" stroke={colour} strokeWidth={1} strokeOpacity={0.7} />

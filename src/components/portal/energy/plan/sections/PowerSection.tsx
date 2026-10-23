@@ -104,15 +104,10 @@ const PowerSection: React.FC<{
   // that moved it read as one thing.
   const roomLines = useMemo((): EnergyRoomLine[] => rooms.map((room, index) => {
     const band = consumption.series.find(entry => room.deviceKeys.includes(entry.key));
-    const shortfall = plan.planning_warnings?.find(warning => warning.code === 'comfort_shortfall' && warning.scope === room.key);
-    const quarters = Number(shortfall?.evidence?.quarters);
     return {
       key: room.key, name: room.name, colour: band ? seriesColour(band) : loadColour((index + 5) % 9),
-      note: !shortfall ? null : Number.isFinite(quarters)
-        ? t(`${quarters} kvartar kan hamna utanför komfort`, `${quarters} quarters may be outside comfort`)
-        : t('kan hamna utanför komfort', 'may be outside comfort'),
     };
-  }), [rooms, consumption.series, plan.planning_warnings, t]);
+  }), [rooms, consumption.series]);
 
   const divider = nowDividerIndex(rows, range);
   const plannedStarts = useMemo(
