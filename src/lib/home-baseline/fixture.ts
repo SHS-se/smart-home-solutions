@@ -1,3 +1,4 @@
+import { CHART_COLOURS } from '../energy-shift/chart-palette.ts';
 // Test data only; production loads the selected home's captured physical models.
 import gridFixture from '../../../supabase/functions/_shared/grid-price-parity.fixture.json' with { type: 'json' };
 import type { GridTariffCatalogue } from '../../../supabase/functions/_shared/energy-grid-pricing.ts';
@@ -32,7 +33,7 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
     actual: times.map(start_ts => ({ start_ts, total_load_kwh: .265, solar_production_kwh: 0, battery_soc: .5, ev_soc: .79, grid_import_kwh: .265, grid_export_kwh: 0, battery_charge_kwh: 0, battery_discharge_kwh: 0 })),
     prices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2, grid_import_price_sek_per_kwh: .5, source: 'archive', supplier_revision: '', spot_price_sek_per_kwh: .4 })),
     actualPrices: times.slice(1).map(start_ts => ({ start_ts, import_price_sek_per_kwh: 1, export_price_sek_per_kwh: .2, source: 'archive' })),
-    devices: [{ id: 'heater-id', colour: '#c43c54', device_key: 'pool_heater', category: 'pool_heating' }, { id: 'pump-id', colour: '#007f86', device_key: 'pool_pump', category: 'property_energy' }, { id: 'car-id', colour: '#7851a9', device_key: 'car', category: 'ev_charging' }],
+    devices: [{ id: 'heater-id', colour: CHART_COLOURS.pool, device_key: 'pool_heater', category: 'pool_heating' }, { id: 'pump-id', colour: CHART_COLOURS.amber, device_key: 'pool_pump', category: 'property_energy' }, { id: 'car-id', colour: CHART_COLOURS.ev, device_key: 'car', category: 'ev_charging' }],
     deviceSlots: times.slice(1).map(start_ts => ({ start_ts, device_energy_kwh: { 'heater-id': 0, 'pump-id': .015, 'car-id': 0 } })),
     pool: [{ start_ts: times[0], water_temperature_c: 31 }],
     outdoor: [],

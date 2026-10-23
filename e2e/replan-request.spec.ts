@@ -718,6 +718,8 @@ test.describe('requesting a replan', () => {
   });
 
   test('device colours match every reference and survive refresh, reorder, configuration changes and additions', async ({ page, context }, testInfo) => {
+    const rgb = (colour: string) => `rgb(${[1, 3, 5].map(at => parseInt(colour.slice(at, at + 2), 16)).join(', ')})`;
+    const guestColour = rgb(TEST_DEVICE_COLOURS[2]), poolColour = rgb(TEST_DEVICE_COLOURS[10]);
     const model = mixedModeFixture.plan.device_models[0];
     const models = Array.from({ length: 11 }, (_, index) => ({ ...model,
       key: `heater-${String(index).padStart(2, '0')}`,
@@ -743,9 +745,9 @@ test.describe('requesting a replan', () => {
     const guest = models[2], pool = models[10];
     await page.goto('/portal/energy-modeling?tab=devices');
     const guestSwatch = page.locator(`[data-device-colour="${guest.key}"]`).first();
-    await expect(guestSwatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+    await expect(guestSwatch).toHaveCSS('background-color', guestColour);
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
-    await expect(guestSwatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+    await expect(guestSwatch).toHaveCSS('background-color', guestColour);
     await page.getByRole('switch', { name: new RegExp(`^(Plan|Planera) ${guest.name}$`) }).click();
     await page.screenshot({ path: testInfo.outputPath('saved-device-colours-list.png'), fullPage: true });
     await page.goto('/portal/energy-modeling?tab=plan');
@@ -756,12 +758,12 @@ test.describe('requesting a replan', () => {
         elements.map(element => getComputedStyle(element).fill));
       expect(bands.length).toBe(11);
       expect(new Set(bands).size).toBe(11);
-      await expect(chart.locator(`[data-band="${guest.key}"]`)).toHaveCSS('fill', 'rgb(120, 81, 169)');
-      await expect(chart.locator(`[data-band="${pool.key}"]`)).toHaveCSS('fill', 'rgb(0, 134, 99)');
+      await expect(chart.locator(`[data-band="${guest.key}"]`)).toHaveCSS('fill', guestColour);
+      await expect(chart.locator(`[data-band="${pool.key}"]`)).toHaveCSS('fill', poolColour);
       await chart.focus(); await chart.press('ArrowRight');
       const tooltip = page.getByRole('tooltip');
       const swatch = tooltip.getByText(guest.name, { exact: true }).locator('..').locator('[aria-hidden]');
-      await expect(swatch).toHaveCSS('background-color', 'rgb(120, 81, 169)');
+      await expect(swatch).toHaveCSS('background-color', guestColour);
       await page.keyboard.press('Escape');
     };
     await verify();

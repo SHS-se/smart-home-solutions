@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import 'tailwindcss';
+@import './components/portal/energy/charts/palette.css';
 @config '../tailwind.config.ts';
 
 @utility container {
@@ -67,50 +68,9 @@
     --sidebar-border: 210 20% 91%;
     --sidebar-ring: 207 52% 37%;
 
-    /* Plan chart.
-       Plain hex rather than the HSL triples above, because these are read
-       straight into SVG fill/stroke and never go through Tailwind.
-
-       One colour per thing, held across every panel of the chart and never
-       recycled for a second meaning. Chosen as a set: each pair clears the
-       colour-vision-deficiency separation threshold (deutan, protan, tritan)
-       against the card surface, which is why the sun is orange rather than the
-       obvious yellow — yellow beside orange is a pair full-colour vision
-       cannot reliably split either. */
-    --plan-solar: #eb6834;
-    --plan-grid: #2a78d6;
-    --plan-battery: #1baf7a;
-    --plan-ev: #4a3aa7;
+    /* Categorical colours, price bands and score tokens are generated from
+       chart-palette.json. The wash is a translucent view of its grid blue. */
     --plan-wash: rgba(42, 120, 214, 0.06);
-
-    /* Buy price, cheap to dear: a diverging ramp with a neutral middle. */
-    --plan-price-1: #1b5aa8;
-    --plan-price-2: #4a8ed6;
-    --plan-price-3: #9dc0e2;
-    --plan-price-4: #b9bcc0;
-    --plan-price-5: #eda893;
-    --plan-price-6: #d4634f;
-    --plan-price-7: #a92e22;
-
-    /* Semantic aggregates and model cost; devices use their saved RGB values. */
-    --plan-pool: #e87ba4;
-    --plan-room: #475569;
-    --plan-cost: #a855f7;
-    /* Base load is grey on purpose: it is the background, not a series. */
-    --plan-base: #8a8f98;
-    /* Hot water is pinned to one colour in every home, because the strip
-       under the consumption panel says when it may run in the same hue. The
-       line is the load gate it may start under. */
-    --plan-water: #38bdf8;
-    --plan-water-line: #0284c7;
-
-    /* Planner bench quarter scores, -2..+2. Red to green through grey, with
-       lightness stepping too, so the five stay apart without hue. */
-    --plan-score-n2: #b3261e;
-    --plan-score-n1: #e0735a;
-    --plan-score-p0: #8a8f98;
-    --plan-score-p1: #2fae78;
-    --plan-score-p2: #0b6e44;
   }
 }
 

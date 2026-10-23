@@ -1,3 +1,4 @@
+import { CHART_COLOURS } from '@/lib/energy-shift/chart-palette';
 // Shared types and constants for the energy plan workspace.
 //
 // Split out of the former LoadShiftTab on 2026-08-13 so the plan's five
@@ -122,22 +123,22 @@ export interface HomeAssistantConnection {
 
 
 export const COLORS = {
-  base: '#64748b',
-  boiler: '#38bdf8',
-  pool: '#14b8a6',
-  ev: '#a78bfa',
-  pv: '#f59e0b',
-  soc: '#f43f5e',
-  evSoc: '#06b6d4',
-  import: '#dc2626',
-  export: '#0f766e',
-  importPrice: '#a855f7',
-  exportPrice: '#65a30d',
-  actual: '#111827',
-  batteryCharge: '#2563eb',
-  batteryDischarge: '#7c3aed',
-  batteryExport: '#059669',
-};
+  base: CHART_COLOURS.base,
+  boiler: CHART_COLOURS.water,
+  pool: CHART_COLOURS.pool,
+  ev: CHART_COLOURS.ev,
+  pv: CHART_COLOURS.solar,
+  soc: CHART_COLOURS.battery,
+  evSoc: CHART_COLOURS.ev,
+  import: CHART_COLOURS.grid,
+  export: CHART_COLOURS.grid,
+  importPrice: CHART_COLOURS.grid,
+  exportPrice: CHART_COLOURS.ink,
+  actual: CHART_COLOURS.ink,
+  batteryCharge: CHART_COLOURS.battery,
+  batteryDischarge: CHART_COLOURS.battery,
+  batteryExport: CHART_COLOURS.battery,
+} as const;
 
 /**
  * The optimisation workspace uses top-level tabs. `plan` contains the headline

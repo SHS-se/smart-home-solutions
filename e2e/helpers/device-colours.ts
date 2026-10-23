@@ -1,6 +1,4 @@
-/** Authored test catalogue colours; production assignment belongs to PostgreSQL. */
-export const TEST_DEVICE_COLOURS = [
-  '#c43c54', '#007f86', '#7851a9', '#c07800', '#467821', '#b54f91',
-  '#3865ad', '#a35127', '#638a00', '#b03636', '#008663', '#806cba',
-  '#c06582', '#34666b', '#95641a', '#6c854c', '#a24472', '#527aa4',
-];
+import { DEVICE_COLOURS } from '../../src/lib/energy-shift/chart-palette';
+
+/** The test catalogue uses the website's one shared colour set. */
+export const TEST_DEVICE_COLOURS = DEVICE_COLOURS;

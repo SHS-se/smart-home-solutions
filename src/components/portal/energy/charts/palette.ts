@@ -1,9 +1,8 @@
 /**
  * The plan chart's palette, one entry per thing rather than per series.
  *
- * Values live in index.css so both the SVG and the surrounding HTML read the
- * same token. Device colours are saved in the device catalogue, independently
- * of these semantic colours for flows, stores and aggregate measurements.
+ * chart-palette.json is the shared definition for generated CSS tokens and
+ * the database allocator. Device assignments are saved once from this set.
  */
 export const PLAN_COLOURS = {
   solar: 'var(--plan-solar)',

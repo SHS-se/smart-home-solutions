@@ -8,21 +8,31 @@ Deno.test('device colours are assigned once, unique beyond the palette, immutabl
     await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated;
       CREATE TABLE energy_optimisation_devices (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(), home_id uuid NOT NULL, device_key text NOT NULL,
-        name text NOT NULL, first_seen_at timestamptz NOT NULL DEFAULT now(), retired_at timestamptz,
+        name text NOT NULL, category text DEFAULT 'heating', first_seen_at timestamptz NOT NULL DEFAULT now(), retired_at timestamptz,
         planning_role_override text, UNIQUE(home_id, device_key));
       INSERT INTO energy_optimisation_devices(home_id,device_key,name,retired_at) VALUES
         ('${HOME}', 'guest', 'Guest bedroom heater', null), ('${HOME}', 'retired', 'Retired heater', now());`);
     const migration = await Deno.readTextFile('supabase/migrations/20261023182000_persistent_device_colours.sql');
     await db.exec(migration.split('-- Portal device transport:')[0]);
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261023193000_expand_shared_chart_palette.sql'));
     const colours = async () => (await db.query<{ device_key: string; colour: string }>(
       'SELECT device_key,colour FROM energy_optimisation_devices WHERE home_id=$1 ORDER BY device_key', [HOME])).rows;
     const before = await colours();
+    assertEquals(before[0].colour, '#e34948', 'the original red is restored');
     assertEquals(before.length, 2);
     assert(before.every(device => /^#[0-9a-f]{6}$/.test(device.colour)));
     await db.query(`INSERT INTO energy_optimisation_devices(home_id,device_key,name)
-      SELECT $1, 'device-' || i, 'Device ' || i FROM generate_series(1,100) i`, [HOME]);
+      SELECT $1, 'device-' || i, 'Device ' || i FROM generate_series(1,257) i`, [HOME]);
     const all = await colours();
-    assertEquals(new Set(all.map(device => device.colour)).size, 102);
+    assertEquals(new Set(all.map(device => device.colour)).size, 259);
+    const primary = (await db.query<{ point: number[] }>(`SELECT energy_chart_colour_coordinates(colour) point
+      FROM energy_optimisation_devices WHERE home_id=$1 AND (device_key IN ('guest','retired')
+        OR device_key = ANY(SELECT 'device-' || i FROM generate_series(1,10) i))`, [HOME])).rows;
+    for (let i = 0; i < primary.length; i++) for (let j = 0; j < i; j++) {
+      const distance = Math.hypot(...primary[i].point.map((value, k) => value - primary[j].point[k]));
+      assert(distance > 0.10, 'early device colours must remain perceptually separated');
+    }
+
     for (const device of before) assertEquals(all.find(row => row.device_key === device.device_key)?.colour, device.colour);
     await db.query(`INSERT INTO energy_optimisation_devices(home_id,device_key,name) VALUES ($1,'guest','Renamed guest')
       ON CONFLICT(home_id,device_key) DO UPDATE SET name=excluded.name, colour=excluded.colour`, [HOME]);
@@ -34,7 +44,15 @@ Deno.test('device colours are assigned once, unique beyond the palette, immutabl
     await assertRejects(() => db.query(`INSERT INTO energy_optimisation_devices(home_id,device_key,name,colour) VALUES ($1,'supplied','Bad','#123456')`, [HOME]), Error, 'assigned by the catalogue');
     await db.query(`INSERT INTO energy_optimisation_devices(home_id,device_key,name) VALUES ('22222222-2222-4222-8222-222222222222','guest','Other home')`);
     assertEquals((await db.query<{ colour: string }>("SELECT colour FROM energy_optimisation_devices WHERE name='Other home'")).rows[0].colour, before[0].colour);
+    await db.query(`INSERT INTO energy_optimisation_devices(home_id,device_key,name,category) VALUES
+      ($1,'pool','Pool heater','pool_heating'), ($1,'car','Car','ev_charging'), ($1,'boiler','Boiler','hot_water')`, [HOME]);
+    const preferred = await colours();
+    assertEquals(preferred.find(device => device.device_key === 'pool')!.colour, '#e87ba4');
+    assertEquals(preferred.find(device => device.device_key === 'car')!.colour, '#4a3aa7');
+    assertEquals(preferred.find(device => device.device_key === 'boiler')!.colour, '#38bdf8');
+    const { rows: coordinates } = await db.query<{ point: number[] }>("SELECT energy_chart_colour_coordinates('#ffffff') point");
+    assert(Math.abs(coordinates[0].point[0] - 1) < 1e-6);
     await db.exec('SET ROLE authenticated');
-    await assertRejects(() => db.query('SELECT next_energy_device_colour($1)', [HOME]), Error, 'permission denied');
+    await assertRejects(() => db.query("SELECT next_energy_device_colour($1, 'heating')", [HOME]), Error, 'permission denied');
   } finally { await db.close(); }
 });

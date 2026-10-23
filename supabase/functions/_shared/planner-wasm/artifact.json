@@ -1,7 +1,7 @@
 {
   "abi": 12,
   "wasm_sha256": "7a8062c42f235bf7ce38ddd6c91e7f867b976bf99dcccc60240f966d7db3e7ec",
-  "source_sha256": "a3e26a7acb8712ab7bed2a5bb8f4295620d46cfe23a151d04944cabc21f304cf",
+  "source_sha256": "796e1c217d63a7fc877e505c28b6aa59e3a7981387d2101e195d97e3b1149e54",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -36,6 +36,8 @@
     "scripts/build-planner-wasm.ts",
     "scripts/module-graph.ts",
     "scripts/rustc-wasm-wrapper.rs",
+    "src/lib/energy-shift/chart-palette.json",
+    "src/lib/energy-shift/chart-palette.ts",
     "src/lib/planner-bench/case.ts",
     "src/lib/planner-bench/devices.ts",
     "src/lib/planner-bench/household.ts",

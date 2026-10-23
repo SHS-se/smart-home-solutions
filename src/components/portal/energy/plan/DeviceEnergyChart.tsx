@@ -22,7 +22,7 @@ const kwh = (value: number) => value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 
 const sek = (value: number) => value.toFixed(value >= 100 ? 0 : 2);
 
 // Money is not a source of energy, so it takes neutral ink rather than a hue.
-const COST = 'hsl(var(--foreground) / 0.55)';
+const COST = PLAN_COLOURS.cost;
 const STRIPES = 'repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0 2px, transparent 2px 5px)';
 
 const fill = (colour: string, estimated: boolean): React.CSSProperties =>

@@ -46,8 +46,8 @@ const ThermalSection: React.FC<{
                         <XAxis dataKey="i" type="number" domain={[0, thermalData.length - 1]} ticks={ticks} tickFormatter={index => thermalData[index]?.label ?? ''} tick={{ fontSize: 11 }} interval={0} />
                         <YAxis yAxisId="temperature" tick={{ fontSize: 11 }} tickFormatter={value => `${Number(value).toFixed(0)}°`} label={{ value: '°C', angle: -90, position: 'insideLeft', fontSize: 11 }} />
                         <YAxis yAxisId="power" orientation="right" tick={{ fontSize: 11 }} tickFormatter={value => `${(Number(value) / 1_000).toFixed(1)}`} label={{ value: 'kW', angle: 90, position: 'insideRight', fontSize: 11 }} />
-                        {thermalVisibility.visible('thermalPower') && <Area yAxisId="power" type="step" dataKey="thermalPower" name={thermalSeries[1].label} stroke="#f97316" fill="#f97316" fillOpacity={0.16} dot={false} />}
-                        {thermalVisibility.visible('outdoor') && <Line yAxisId="temperature" type="monotone" dataKey="outdoor" name={thermalSeries[0].label} stroke="#475569" strokeWidth={2} dot={false} />}
+                        {thermalVisibility.visible('thermalPower') && <Area yAxisId="power" type="step" dataKey="thermalPower" name={thermalSeries[1].label} stroke={thermalSeries[1].color} fill={thermalSeries[1].color} fillOpacity={0.16} dot={false} />}
+                        {thermalVisibility.visible('outdoor') && <Line yAxisId="temperature" type="monotone" dataKey="outdoor" name={thermalSeries[0].label} stroke={thermalSeries[0].color} strokeWidth={2} dot={false} />}
                         {thermalProjection.zones.map((zone, index) => (
                           <React.Fragment key={zone.key}>
                             {thermalVisibility.visible(`zoneTemperature:${zone.key}`) && <Line yAxisId="temperature" type="monotone" dataKey={`zoneTemperature${index}`} name={thermalSeries[2 + index * 2].label} stroke={thermalSeries[2 + index * 2].color} strokeWidth={2} dot={false} />}

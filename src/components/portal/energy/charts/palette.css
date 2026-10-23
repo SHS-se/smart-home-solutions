@@ -1,0 +1,27 @@
+/* Generated from src/lib/energy-shift/chart-palette.json by scripts/generate-chart-palette.ts. */
+@layer base {
+  :root {
+    --plan-solar: #eb6834;
+    --plan-grid: #2a78d6;
+    --plan-battery: #1baf7a;
+    --plan-ev: #4a3aa7;
+    --plan-base: #8a8f98;
+    --plan-water: #38bdf8;
+    --plan-pool: #e87ba4;
+    --plan-water-line: #0284c7;
+    --plan-room: #475569;
+    --plan-cost: #475569;
+    --plan-price-1: #1b5aa8;
+    --plan-price-2: #4a8ed6;
+    --plan-price-3: #9dc0e2;
+    --plan-price-4: #b9bcc0;
+    --plan-price-5: #eda893;
+    --plan-price-6: #d4634f;
+    --plan-price-7: #a92e22;
+    --plan-score-n2: #b3261e;
+    --plan-score-n1: #e0735a;
+    --plan-score-p0: #8a8f98;
+    --plan-score-p1: #2fae78;
+    --plan-score-p2: #0b6e44;
+  }
+}

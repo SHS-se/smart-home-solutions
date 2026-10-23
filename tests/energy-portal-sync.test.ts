@@ -51,6 +51,7 @@ Deno.test('portal delta: access control, unchanged content, corrections, removal
     await db.exec(deviceMigration.slice(start, deviceMigration.indexOf('$$;', start) + 3));
     await db.exec(await Deno.readTextFile('supabase/migrations/20260912090000_add_incremental_energy_portal_sync.sql'));
     await db.exec(await Deno.readTextFile('supabase/migrations/20261023182000_persistent_device_colours.sql'));
+    await db.exec(await Deno.readTextFile('supabase/migrations/20261023193000_expand_shared_chart_palette.sql'));
     const id = '11111111-1111-4111-8111-111111111111';
     const other = '22222222-2222-4222-8222-222222222222';
     const sync = async (known = {}, home = id) => (await db.query<{ delta: PortalDelta }>(

@@ -1,3 +1,4 @@
+import { CHART_COLOURS } from '@/lib/energy-shift/chart-palette';
 import { deviceColour, ownerColour } from '@/lib/energy-shift/device-colours';
 import { PLAN_COLOURS } from '../charts/palette';
 // Everything the plan sections derive from one plan row.
@@ -145,8 +146,8 @@ export function usePlanModel(
     ...(hasBattery ? [seriesByKey.batteryChargePower] : []),
   ];
   const thermalSeries = [
-    { key: 'outdoor' as const, label: t('Utomhus', 'Outdoor'), color: '#475569' },
-    { key: 'thermalPower' as const, label: t('Samordnad värmeeffekt', 'Coordinated heat power'), color: '#f97316' },
+    { key: 'outdoor' as const, label: t('Utomhus', 'Outdoor'), color: CHART_COLOURS.ink },
+    { key: 'thermalPower' as const, label: t('Samordnad värmeeffekt', 'Coordinated heat power'), color: CHART_COLOURS.solar },
     ...(thermalProjection?.zones.flatMap((zone, index) => [
       {
         key: `zoneTemperature:${zone.key}` as const,
@@ -165,15 +166,15 @@ export function usePlanModel(
   const storageSeries = [
     ...(hasBattery ? [
       { key: 'homeSoc' as const, label: t('Hembatteri SOC', 'Home battery SOC'), color: COLORS.soc },
-      { key: 'homeTarget' as const, label: t('Hembatteriets mål', 'Home battery target'), color: '#fb7185' },
+      { key: 'homeTarget' as const, label: t('Hembatteriets mål', 'Home battery target'), color: CHART_COLOURS.battery },
       { key: 'homeCharge' as const, label: t('Batteriladdning', 'Battery charge'), color: COLORS.batteryCharge },
       { key: 'homeDischarge' as const, label: t('Total batteriurladdning', 'Total battery discharge'), color: COLORS.batteryDischarge },
       { key: 'homeExport' as const, label: t('Batteriexport till nätet', 'Battery-to-grid export'), color: COLORS.batteryExport },
     ] : []),
     ...(hasEvBattery ? [
       { key: 'evSoc' as const, label: t('Bilbatteri SOC', 'EV battery SOC'), color: COLORS.evSoc },
-      { key: 'evTarget' as const, label: t('Bilens SOC-mål', 'EV target SOC'), color: '#c084fc' },
-      { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: '#7c3aed' },
+      { key: 'evTarget' as const, label: t('Bilens SOC-mål', 'EV target SOC'), color: CHART_COLOURS.ev },
+      { key: 'evCharge' as const, label: t('Billaddning', 'EV charge'), color: CHART_COLOURS.ev },
     ] : []),
   ];
   const connectedIndices = chartData
