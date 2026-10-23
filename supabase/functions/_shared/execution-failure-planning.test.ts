@@ -8,7 +8,7 @@ import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 
 const requestId = "fd1b02a1-0000-4000-8000-000000000001";
 const input = (snapshot: OptimisationSnapshot, execution_replan?: ExecutionReplan) => ({snapshot,
-  now: snapshot.captured_at, price_archive: [], resolved_price_outlook: rulesFixtureInput(snapshot).price_outlook, execution_replan});
+  now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {...rulesFixtureInput(snapshot).price_outlook, shadow_import_sek_per_kwh: snapshot.slots.map(slot => slot.import_price_sek_per_kwh!)}, execution_replan});
 const end = (start: string) => new Date(Date.parse(start) + 900_000).toISOString();
 const change = (owner: string, snapshot: OptimisationSnapshot, status: ExecutionChange["status"] = "faulted"): ExecutionChange => ({
   owner, status, cause: status === "temporarily_absent" ? "vehicle_disconnected" : "actuator_unavailable",
@@ -59,10 +59,21 @@ Deno.test("faulted battery remains modelled without projected charging, while he
   assert(result.planning_warnings!.some(warning => warning.code === "execution_unavailable"));
 });
 
+Deno.test("a delayed absence capture still releases EV destinations after its missed source quarter", () => {
+  const {snapshot, reference} = chargingHouse();
+  const missed = change("$ev", snapshot, "temporarily_absent");
+  snapshot.captured_at = new Date(Date.parse(snapshot.captured_at) + 16 * 60_000).toISOString();
+  snapshot.ev_battery!.connected = false;
+  const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [missed])), reference).plan;
+  assert(result.plans.priority.slots.slice(0, 3).some(slot => slot.ev_target_current_a > 0));
+  for (let i = 0; i < 5; i++) assertEquals(result.plans.priority.slots[i].battery_command, reference.slots[i + 1].battery_command);
+  assert(result.execution_replan!.released_intervals.every(interval => interval.owner === "$ev"));
+});
+
 for (const native of [false, true]) Deno.test(`a scoped ${native ? "native" : "empirical"} pool failure preserves unrelated held battery and pump draw`, () => {
   const snapshot = native ? rulesFixtureInput(mixedModeSnapshot()).snapshot : mixedModeSnapshot();
-  snapshot.operating_scope.modes.$pool = "controlling";
-  delete snapshot.operating_scope.external_demands.pool_heater;
+  snapshot.operating_scope!.modes.$pool = "controlling";
+  delete snapshot.operating_scope!.external_demands.pool_heater;
   const plan = runRulesPlanner(input(snapshot)).plan;
   const reference = {plan_id: plan.plan_id, slots: plan.plans.priority.slots};
   const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [change("$pool", snapshot)])), reference).plan;

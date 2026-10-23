@@ -55,10 +55,13 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
     if (!prior) break;
     original.push(prior);
   }
-  const evidence: ExecutionChange[] = [...snapshot.execution_availability ?? [], ...request?.changes ?? []];
+  const evidence: ExecutionChange[] = snapshot.execution_availability ?? [];
   const owners = new Set(evidence.filter(change => change.status === "recovered" || change.status === "faulted" ||
     change.blocked_intervals.some(interval => Date.parse(interval.end) > capture && Date.parse(interval.start) < capture + HOUR))
     .map(change => change.owner));
+  // A delayed capture may follow the blocked source quarter. Its explicitly
+  // requested repair still needs eligible destinations in the current held hour.
+  for (const change of request?.changes ?? []) owners.add(change.owner);
   const released = original.map(() => ({pool: owners.has("$pool"), ev: owners.has("$ev"), battery: owners.has("$battery")}));
   const retained: RetainedCommandSlot[] = original.map(slot => {
     const next: RetainedCommandSlot = structuredClone(slot);
