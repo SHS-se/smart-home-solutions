@@ -79,7 +79,8 @@ Deno.test('comparison cannot reduce an explicit future booking to disguise infea
 Deno.test('quarter load balancing respects battery eligibility bounds and real charger steps', () => {
   const input = house();
   const p = input.problem;
-  const quarter = {...p, accepted: null, fixed_commands: null, locked_through_seconds: 0,
+  const quarter = {...p, accepted: null, released: null, unavailable: p.unavailable?.slice(6, 7) ?? null,
+    fixed_commands: null, locked_through_seconds: 0,
     initial: {...p.initial, battery_kwh: 4},
     slots: [{...p.slots[6], start_seconds: 0}],
     charger: {...p.charger!, min_current_a: 6, current_step_a: 2}};

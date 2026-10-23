@@ -414,8 +414,14 @@ impl Opportunity {
                             Device::Battery => state.battery = t.axis[node],
                         }
                         state.heater = t.phases[phase];
-                        let options = if physics::locked(&m, i) {
-                            std::slice::from_ref(physics::locked_command(&m, i).unwrap())
+                        let hold = commitments::hold(&m, i);
+                        let retained = hold.impose(idle());
+                        let options = if hold.has(match t.device {
+                            Device::Pool => commitments::Owner::Pool,
+                            Device::Ev => commitments::Owner::Ev,
+                            Device::Battery => commitments::Owner::Battery,
+                        }) {
+                            std::slice::from_ref(&retained)
                         } else {
                             &t.options
                         };

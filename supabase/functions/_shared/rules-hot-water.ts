@@ -4,6 +4,7 @@ import { proportionalSupply } from "./battery-supply.ts";
 import type { NativeCommand } from "./planner-wasm/ready-problem.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { scheduleHotWater } from "./hot-water-opportunities.ts";
+import { nativeOwnerHeld } from "./rules-commitments.ts";
 
 type Selection = Extract<SolveOutcome, { kind: "selected" }>["selection"];
 
@@ -43,7 +44,7 @@ export function waterBatteryCommands(input: PreparedRulesInput, commands: Native
 export function waterBatteryCommand(input: PreparedRulesInput, command: NativeCommand,
   quarter: Pick<NativeQuarter, "pool_w" | "ev_w">, i: number): NativeCommand {
   const p = input.problem;
-  if (input.fixed_slots[i] || i < input.locked_slots.length || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
+  if (nativeOwnerHeld(p, i, "battery") || !input.boiler_permitted[i] && input.boiler_w[i] === 0) return command;
   const gross = p.slots[i].base_w + quarter.pool_w + quarter.ev_w;
   const excluded = (p.ev_battery_supply_allowed ? 0 : quarter.ev_w + p.slots[i].base_ev_w) + (input.boiler_battery_allowed[i] ? 0 : input.boiler_w[i]);
   const bound = proportionalSupply(gross, p.slots[i].solar_w, Math.max(0, gross - excluded)).houseSupplyBoundW;
@@ -65,7 +66,15 @@ export function addHotWater(core: ReturnType<typeof createWasmPlanner>, input: P
     other_house_w: other, import_price: p.slots.map(s => s.import_price), export_price: p.slots.map(s => s.export_price),
     solar_w: p.slots.map(s => s.solar_w), large_load_w: native.quarters.map(q => q.pool_w + q.ev_w + q.charge_w),
     available_w: native.quarters.map((q, i) => p.limits.import_w - q.net_w + q.charge_w + input.boiler_w[i]),
-    locked: input.snapshot.slots.map((_s,i) => input.fixed_slots[i] ?? input.locked_slots[i]), previous_permissions: input.boiler_permission_starts });
+    locked: input.snapshot.slots.map((s,i) => {
+      if (input.boiler_unavailable) {
+        if (input.fixed_slots[i]?.boiler_permitted) throw new Error(`Fixed booking conflicts with unavailable boiler at ${s.start}`);
+        return {start: s.start, boiler_permitted: false, boiler_expected_w: 0};
+      }
+      const slot = input.fixed_slots[i] ?? input.locked_slots[i];
+      return typeof slot?.boiler_permitted === "boolean" && typeof slot.boiler_expected_w === "number"
+        ? { start: slot.start, boiler_permitted: slot.boiler_permitted, boiler_expected_w: slot.boiler_expected_w } : undefined;
+    }), previous_permissions: input.boiler_permission_starts });
   const batteryAllowed = hotWaterSurplusPermissions(input, native.quarters, water.rated_w.map((w, i) => water.permitted[i] ? w : 0));
   for (let i = 0; i < input.locked_slots.length; i++) batteryAllowed[i] = input.boiler_battery_allowed[i];
   for (const key of Object.keys(input.fixed_slots)) { const i=Number(key); batteryAllowed[i]=input.boiler_battery_allowed[i]; }

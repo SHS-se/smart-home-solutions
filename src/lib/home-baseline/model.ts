@@ -121,7 +121,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 11, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: 12, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
@@ -165,7 +165,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
         solar_w: (modeledKwh ?? energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters')) * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
-        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i] };
+        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i], pool_auxiliary_dispatch: null };
     }),
     targets: { pool_c: facts.poolStore ? settings.poolStopC : null,
       ev_km: facts.car ? .8 * facts.car.capacity_kwh / facts.car.kwh_per_km : null,
@@ -173,7 +173,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     limits: { import_w: rows.snapshot.grid.import_limit_w, export_w: rows.snapshot.grid.export_limit_w,
       battery_export_enabled: false, battery_export_reserve_kwh: 0, battery_export_min_price: 0,
       wear_per_kwh: facts.wear, ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
-    rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, locked_through_seconds: 0,
+    rules: [], service_guard: { pool: [0, 0], ev: [0, 0] }, accepted: null, released: null, unavailable: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
   return { pool: null, tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),

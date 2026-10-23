@@ -26,7 +26,7 @@ Deno.test("rules preparation preserves absent equipment and disconnected EV stat
   assertEquals(p.battery, null);
   assertEquals(p.pool_store, null);
   assert(p.car);
-  assert(p.slots.every(slot => !slot.ev_available));
+  assert(p.slots.some(slot => slot.ev_available), "a disconnected cable must not erase future charging opportunities");
   assertEquals(p.initial.ev_kwh, s.ev_battery!.soc * s.ev_battery!.capacity_kwh);
 });
 Deno.test("rules preparation counts a supplied passive device exactly once and never mutates input", () => {
@@ -285,7 +285,7 @@ Deno.test("passive external EV forecast remains an excluded part of native base 
   assertEquals(plan.battery_supply_scope, { kind: "selected", include_base: true, planned_device_keys: ["fridge"] });
 });
 
-Deno.test("a retained command that violates the changed grid limit releases the hour and publishes its repaired requests", () => {
+Deno.test("a changed grid limit reports a retained-command conflict without releasing the hour", () => {
   const s = snapshot();
   s.schema_version = 8;
   s.device_models = [{ key: "ev", name: "EV", statistic_id: "ev", category: "ev_charging", suggested_load_type: "variable_full_load",
@@ -300,16 +300,8 @@ Deno.test("a retained command that violates the changed grid limit releases the 
   const reference = { plan_id: prior.plan_id, slots: locked };
   const prepared = prepare(s, reference);
   const before = JSON.stringify(prepared);
-  const replacement = generateRulesPlan(prepared).plan;
+  assertThrows(() => generateRulesPlan(prepared), Error, "Previously accepted commands");
   assertEquals(JSON.stringify(prepared), before);
-  assertEquals(replacement.status, "ready");
-  assert(replacement.plans.priority.slots.every(slot => slot.grid_import_w <= 8000 + 1e-7));
-  assert(replacement.plans.priority.slots[0].ev_target_current_a < 16);
-  assertEquals(replacement.plans.priority.continuity, { source_plan_id: prior.plan_id, selected: "repaired",
-    reason: `shared_grid_limit at ${s.slots[0].start}`, proposed_sek: null, reference_sek: null, deadband_sek: 0 });
-  assertEquals(replacement.plans.priority.slots[0].device_commands!.ev, {
-    type: "variable_power", value: replacement.plans.priority.slots[0].ev_target_current_a, unit: "A",
-  });
 });
 Deno.test("a malformed retained command is refused without releasing the hour", () => {
   const s = snapshot();
@@ -319,7 +311,7 @@ Deno.test("a malformed retained command is refused without releasing the hour", 
   assertThrows(() => generateRulesPlan(prepared), Error, "negative_native_power_limit");
 });
 
-Deno.test("a clipped retained grid purchase releases the hour and materializes executable battery allocations", () => {
+Deno.test("a clipped retained grid purchase reports a conflict without releasing unrelated commands", () => {
   const s = snapshot();
   s.schema_version = 8;
   s.capabilities.battery = true;
@@ -334,17 +326,8 @@ Deno.test("a clipped retained grid purchase releases the hour and materializes e
   s.grid.import_limit_w = 2000;
   const prepared = prepare(s, { plan_id: prior.plan_id, slots: locked });
   const before = JSON.stringify(prepared);
-  const replacement = generateRulesPlan(prepared).plan;
+  assertThrows(() => generateRulesPlan(prepared), Error, "native_battery_power_limit");
   assertEquals(JSON.stringify(prepared), before);
-  assertEquals(replacement.plans.priority.continuity?.reason, `native_battery_power_limit at ${s.slots[0].start}`);
-  for (const slot of replacement.plans.priority.slots) {
-    assert(slot.grid_import_w <= 2000 + 1e-7);
-    const command = slot.battery_command!;
-    if (command.operation === "grid_charge" || command.operation === "export") {
-      assertAlmostEquals(command.charge_limit_w, slot.battery_charge_w, .01);
-      assertAlmostEquals(command.discharge_limit_w, slot.battery_discharge_w, .01);
-    }
-  }
 });
 
 function waterSnapshot(): OptimisationSnapshot {

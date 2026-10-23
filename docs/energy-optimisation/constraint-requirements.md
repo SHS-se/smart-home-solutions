@@ -110,3 +110,17 @@ chose, never reconstructed from forecast flows. The plan lists every load it
 separated from base load and which of them the battery may supply; HA executes
 that law and the plan view describes the same instruction. See
 [battery execution contract v2](battery-execution-contract-v2.md).
+
+User requirement, 23 October 2026: an unplugged car retains future charging
+planning and truthful cable telemetry. When a scheduled load cannot execute and
+its work must move, forced household replanning is mandatory, including for pool
+heating, battery charging and other devices. Release only the affected owner's
+commitments needed to remove or reschedule the unexecutable work, including its
+source and destination slots. All other executable loads retain the normal
+next-hour hold (four quarters at a quarter boundary,
+including intersecting slots for a partial current quarter). No household-wide
+unlock or manual-click requirement is permitted for this case. Preserve actuals,
+outstanding service, original deadlines, equipment limits and permissions. See
+[execution-failure replanning and selective commitment release](authoritative-plan-contract.md#execution-failure-replanning-and-selective-commitment-release)
+for trigger, retry, accounting and acceptance requirements. This is normative
+design; implementation and deployment require separate verification.

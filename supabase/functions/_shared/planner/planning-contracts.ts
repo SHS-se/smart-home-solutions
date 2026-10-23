@@ -15,6 +15,7 @@ import type { ThermostatInput } from "./thermostat.ts";
 import type { UtilityCurve } from "./store-value.ts";
 import type { ValueSettings, ValueStoreKey } from "./value-curves.ts";
 import type { PoolDynamics } from "./pool-response.ts";
+import type { ExecutionChange, ExecutionReplan } from "./execution-evidence.ts";
 
 export type PlanKey = "baseline" | "priority" | "cost";
 
@@ -260,6 +261,8 @@ export interface ThermalZonePlanningInput {
 }
 
 export interface OptimisationSnapshot {
+  /** Unresolved execution evidence, independent of snapshot capture and plan IDs. */
+  execution_availability?: ExecutionChange[];
   planning_warnings?: PlanningWarning[];
   battery_execution_feedback?: ExecutionFeedback;
   /** Required by schema 9; frozen before server forecast enrichment. */
@@ -513,6 +516,8 @@ export interface QuarterDecisionDiagnostic {
 }
 
 export interface PlannedSlot {
+  /** Forecast charging assumes a future cable connection; telemetry stays truthful. */
+  ev_charging_conditional?: boolean;
   pool_permitted?: boolean;
   /** Hot water may use storage only with forecast replaceable surplus. */
   boiler_battery_allowed?: boolean;
@@ -640,6 +645,9 @@ export type BaselinePlan = GeneratedPlan | (Omit<GeneratedPlan, "summary"> & {
 });
 
 export interface OptimisationPlan {
+  execution_availability?: ExecutionChange[];
+  execution_replan?: { request_id: string; accepted_plan_id: string; changes: ExecutionChange[];
+    released_intervals: Array<{owner: string; start: string; end: string}> };
   thermal_projection?: ThermalPlanningProjection;
   planning_warnings?: PlanningWarning[];
   /** Selected opportunities retained across rolling replans, keyed by UTC start. */
@@ -831,6 +839,8 @@ export interface OptimisationResult {
 }
 
 export interface EnergyPlanningInput {
+  /** Explicit automatic request; never interpreted as a manual booking or energy debt. */
+  execution_replan?: ExecutionReplan | null;
   snapshot: OptimisationSnapshot;
   now: string;
   price_archive: StoredPriceRow[];

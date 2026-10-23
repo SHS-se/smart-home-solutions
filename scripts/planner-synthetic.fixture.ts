@@ -13,7 +13,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 11,
+    abi: 12,
     ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -28,7 +28,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       import_price: price,
       export_price: price - .5,
       published: i < 96,
-      ev_available: true,
+      ev_available: true, pool_auxiliary_dispatch: null,
     })),
     battery: {
       capacity_kwh: 10,
@@ -88,7 +88,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     ),
     service_guard: { pool: [1, 2], ev: [50, 100] },
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
-    accepted: null,
+    accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
   problem.end_credit = problemEndCredit(problem);

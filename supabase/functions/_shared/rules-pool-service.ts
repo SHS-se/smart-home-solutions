@@ -2,6 +2,7 @@ import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contr
 import { type PublishedHeater, type ThermalStoreModel } from "./planner/device-models.ts";
 import { poolPhysics } from "./planner/pool-physics.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
+import { unavailableOwner } from "./rules-commitments.ts";
 
 export interface PoolService {
   physics: { store: ThermalStoreModel; heater: PublishedHeater } | null;
@@ -49,6 +50,7 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
   const power = Object.fromEntries(members.map(m => [m.key, m.forecast_w_by_slot.slice()]));
   const running = sum(members.map(m => m.active_power_w && m.active_power_w > 0 ? m.active_power_w : Math.max(0, ...m.forecast_w_by_slot)));
   const permitted = snapshot.slots.map((_slot, i) => {
+    if (unavailableOwner(snapshot, "$pool", snapshot.slots[i].start)) return false;
     const old = retained[i];
     if (typeof old?.pool_permitted === "boolean") return old.pool_permitted;
     if (old && finite(old.pool_command_w)) return old.pool_command_w > 0;
@@ -57,7 +59,8 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
   });
   for (const m of members) for (let i = 0; i < n; i++) {
     const old = retained[i]?.device_loads_w?.[m.key];
-    power[m.key][i] = finite(old) ? old : permitted[i] ? power[m.key][i] : 0;
+    power[m.key][i] = unavailableOwner(snapshot, "$pool", snapshot.slots[i].start) ? power[m.key][i]
+      : finite(old) ? old : permitted[i] ? power[m.key][i] : 0;
   }
   return { physics: null, pending_heat_kwh: null, empirical: true, permitted, power,
     command_w: permitted.map(on => on ? running : 0),

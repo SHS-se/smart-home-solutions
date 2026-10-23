@@ -33,8 +33,11 @@ import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./plan
 import { allocatedBatteryCommand } from "./planner-wasm/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { planningStage, type PlanningTrace } from "./planning-trace.ts";
+import { assertHeldCommands, commandOwner, compileCommitments, unavailableOwner, type RetainedCommandSlot } from "./rules-commitments.ts";
+import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
+import type { ExecutionReplan } from "./execution-replan.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v19:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+export const RULES_MODEL_VERSION = `rules-planner-v20:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -55,12 +58,17 @@ export interface PreparedRulesInput {
   model_version: string;
   problem: ReadyProblem;
   price_outlook: OptimisationPlan["price_outlook"];
-  locked_slots: PublishedCommandSlot[];
+  locked_slots: RetainedCommandSlot[];
+  held_reference: PublishedCommandSlot[];
+  released_owners: string[];
+  execution_replan: ExecutionReplan | null;
   fixed_slots: Record<number, PublishedCommandSlot>;
   reference_plan_id: string | null;
   members: { heater: DeviceMember[]; auxiliary: DeviceMember[]; ev: DeviceMember[]; boiler: DeviceMember[] };
   passive_w: Record<string, number[]>;
+  auxiliary_dispatch: Record<string, {fixed_w: number; on_w: number}[]>;
   boiler_services: DutyCycleServiceInput[];
+  boiler_unavailable: boolean;
   boiler_w: number[];
   boiler_rated_w: number[];
   boiler_permitted: boolean[];
@@ -113,7 +121,14 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   // later admission or retry clock. issued_at separately records this generation.
   const effective = Date.parse(input.snapshot.captured_at);
   if (!finite(effective)) return fail("Invalid planning capture time");
+  if (input.execution_replan && input.execution_replan.accepted_plan_id !== reference?.plan_id) return fail("Execution replan must name the retained accepted plan");
   const isolated = isolateMeasurements(structuredClone(input.snapshot));
+  const availability = new Map(parseExecutionChanges(isolated.execution_availability ?? []).map(change => [change.owner, change]));
+  for (const change of input.execution_replan?.changes ?? []) {
+    if (change.status === "recovered") availability.delete(change.owner);
+    else availability.set(change.owner, change);
+  }
+  isolated.execution_availability = [...availability.values()];
   if (isolated.device_physics) {
     const {pool,...electrical}=isolated.device_physics;
     isolated.device_physics=parseDeviceModels(electrical);
@@ -122,6 +137,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       "pool_physics_evidence","pool",String(error),"Pool service continues using empirical demand and known comfort targets.")]); }
   }
   const { snapshot, offset } = alignedSnapshot(isolated, effective);
+  validateExecutionAvailability(snapshot);
   if (snapshot.schema_version >= 9) validateOperatingScope(snapshot);
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   const count = snapshot.slots.length;
@@ -155,9 +171,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (snapshot.policy.battery_target_is_hard) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
     "battery_target_not_guaranteed", "battery", "The requested hard battery target cannot be guaranteed by the rules objective.",
     "Battery and household planning continue within the configured equipment limits.")]);
-  const previous = new Map(reference?.slots.map(slot => [Date.parse(slot.start), slot]) ?? []);
-  const retained = snapshot.slots.map(slot => reference && Date.parse(slot.start) < effective + 3_600_000
-    ? previous.get(Date.parse(slot.start)) ?? {} : {});
+  const commitments = compileCommitments(snapshot, reference, input.execution_replan);
+  const retained = snapshot.slots.map((_slot, i) => commitments.retained[i] ?? {});
   const fixedByStart = new Map(input.fixed_plan?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
   const poolService = preparePoolService(snapshot, snapshot.slots.map((s, i) => fixedByStart.get(Date.parse(s.start)) ?? retained[i]));
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, poolService.warnings);
@@ -197,9 +212,40 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     }
     return [m.key, m.forecast_w_by_slot];
   }));
+  for (const model of snapshot.device_models) if (owned.has(model.key) &&
+    snapshot.execution_availability?.some(change => change.owner === commandOwner(snapshot, model) && change.status === "faulted")) {
+    passive[model.key] = model.forecast_w_by_slot.slice();
+  }
+  // A separately owned pump keeps its own accepted request when the heater
+  // moves. Its electrical draw need not follow the heater's enable command.
+  const auxiliaryDispatch: PreparedRulesInput["auxiliary_dispatch"] = {};
+  const auxiliaryTotal = sum(members.auxiliary.map(m => m.watts));
+  for (const member of members.auxiliary) {
+    const model = snapshot.device_models.find(m => m.key === member.key)!;
+    const owner = commandOwner(snapshot, model);
+    const watts = auxiliaryTotal > 0 ? member.watts / auxiliaryTotal * pool!.heater.auxiliary_w : 0;
+    auxiliaryDispatch[member.key] = snapshot.slots.map((slot, i) => {
+      if (unavailableOwner(snapshot, owner, slot.start)) return {fixed_w: 0, on_w: 0};
+      const held = commitments.retained[i]?.device_commands?.[member.key];
+      if (owner !== "$pool" && held?.type === "switch_schedule") {
+        return {fixed_w: watts * held.on_seconds / 900, on_w: 0};
+      }
+      return {fixed_w: 0, on_w: watts};
+    });
+  }
   for (const [key, values] of Object.entries(passive)) if (values.length !== count || values.some(v => !finite(v) || v < 0)) return fail(`Invalid supplied passive forecast: ${key}`);
   let boilerService = snapshot.services.filter((s): s is DutyCycleServiceInput => s.device === "boiler");
-  if (snapshot.capabilities.boiler && (!boilerService.length || boilerService.some(s => s.control.type !== "duty_cycle"))) {
+  const faultedBoilers = snapshot.device_models.filter(model => model.category === "hot_water" &&
+    snapshot.execution_availability?.some(change => change.owner === commandOwner(snapshot, model) && change.status === "faulted"));
+  if (faultedBoilers.length) {
+    const blocked = new Set(faultedBoilers.map(model => model.key));
+    members.boiler = members.boiler.filter(member => !blocked.has(member.key));
+    const rating = sum(members.boiler.map(member => member.watts));
+    boilerService = rating > 0 ? boilerService.map(service => ({...service, control: {...service.control,
+      rated_power_w: rating, expected_power_w_by_slot: service.control.expected_power_w_by_slot.map((w, i) =>
+        Math.max(0, w - sum(faultedBoilers.map(model => model.forecast_w_by_slot[i])))) }})) : boilerService;
+  }
+  if (snapshot.capabilities.boiler && !faultedBoilers.length && (!boilerService.length || boilerService.some(s => s.control.type !== "duty_cycle"))) {
     snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("boiler_service_evidence","boiler",
       "The boiler's permit/inhibit service forecast is incomplete.",
       "Household planning continues with its measured demand; the boiler retains its existing settings.")]);
@@ -210,24 +256,16 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if(boilerService.some(s=>s.control.rated_power_w===null)) snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning(
     "boiler_power_estimated","boiler","Boiler running power has not been observed yet.",
     "Daily heating permissions remain active. Electrical consumption is unknown until the boiler's running power is measured.")]);
-  const locked: PublishedCommandSlot[] = [];
-  if (reference) {
-    for (const slot of snapshot.slots) {
-      if (Date.parse(slot.start) >= effective + 3_600_000) break;
-      const prior = previous.get(Date.parse(slot.start));
-      if (!prior) {
-        snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("reference_coverage","household",
-          "The retained plan does not cover the complete next hour.","Existing covered commands are retained; uncovered intervals receive a new plan.")]);
-        break;
-      }
-      locked.push(prior);
-    }
-
+  const locked = commitments.retained;
+  if (faultedBoilers.length) for (const [i, slot] of locked.entries()) if (finite(slot.boiler_expected_w)) {
+    slot.boiler_expected_w = Math.max(0, slot.boiler_expected_w - sum(faultedBoilers.map(model => model.forecast_w_by_slot[i])));
+  }
+  if (reference && locked.length < snapshot.slots.filter(slot => Date.parse(slot.start) < effective + 3_600_000).length) {
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("reference_coverage", "household",
+      "The retained plan does not cover the complete next hour.", "Existing covered commands are retained; uncovered intervals receive a new plan.")]);
   }
   for (let i = 0; i < locked.length; i++) {
     if (!locked[i].device_commands && snapshot.device_models.length && snapshot.schema_version >= 7) return fail("Committed device command map missing");
-    if (snapshot.capabilities.boiler && typeof locked[i].boiler_permitted !== "boolean") return fail("Committed boiler permission missing");
-    if (snapshot.capabilities.boiler && !finite(locked[i].boiler_expected_w)) return fail(`Committed hot-water power missing or non-finite at ${snapshot.slots[i].start}`);
   }
   const fixedSlots: Record<number, PublishedCommandSlot> = {};
   for (const booking of input.fixed_plan?.slots ?? []) {
@@ -260,7 +298,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 11, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 12, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -273,7 +311,13 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
         outdoor_c: finite(outdoor) ? outdoor : 0,
         import_price: outlook.shadow_import_sek_per_kwh[i], export_price: s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread,
         published: s.import_price_sek_per_kwh !== null && s.export_price_sek_per_kwh !== null,
-        ev_available: !!ev && ev.connected && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)) && (ev.departure === null || start < Date.parse(ev.departure)),
+        pool_auxiliary_dispatch: pool && members.auxiliary.some(member => {
+          const model = snapshot.device_models.find(m => m.key === member.key)!;
+          return unavailableOwner(snapshot, commandOwner(snapshot, model), s.start) ||
+            commandOwner(snapshot, model) !== "$pool" && !!commitments.retained[i]?.device_commands?.[member.key];
+        }) ? {fixed_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].fixed_w)),
+          on_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].on_w))} : null,
+        ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)) && (ev.departure === null || start < Date.parse(ev.departure)),
       };
     }),
     battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
@@ -295,14 +339,16 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     rules: approved.rules, service_guard: approved.service_guard,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
-    accepted: locked.length ? locked.map(slot => nativeCommand(slot, snapshot, !!pool)) : null,
+    accepted: locked.length ? commitments.original.map(slot => nativeCommand(slot, snapshot, !!pool)) : null,
+    released: locked.length ? commitments.released : null,
+    unavailable: commitments.unavailable,
     fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
     locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
   };
   problem.end_credit = problemEndCredit(problem);
   return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
-    price_outlook: outlook, locked_slots: locked, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
-    members, passive_w: passive, boiler_services: boilerService, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
+    price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners: [...commitments.owners], execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
+    members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
     boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
     boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
     boiler_shortfall_minutes: {}, base_w: baseW };
@@ -320,6 +366,11 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
   const ev = new Set(input.members.ev.map(m => m.key));
   const boiler = new Set(input.members.boiler.map(m => m.key));
   for (const model of input.snapshot.device_models) {
+    if (unavailableOwner(input.snapshot, commandOwner(input.snapshot, model), input.snapshot.slots[i].start)) {
+      if (input.fixed_slots[i]?.device_commands?.[model.key]) return fail(`Fixed booking conflicts with unavailable ${model.key} at ${input.snapshot.slots[i].start}`);
+      result[model.key] = {type: "unavailable", reason: "Equipment execution is unavailable until recovery is observed"};
+      continue;
+    }
     // Commitments retain requests for current owners, not a frozen inventory.
     // A separated/replaced meter gets its command from the current service;
     // removed meters cannot remain in the replacement plan's command map.
@@ -358,9 +409,19 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     const f = p.slots[i], source = snapshot.slots[i], command = commands[i];
     const hours = f.hours + Math.min(0, f.start_seconds) / 3600;
     const loads = Object.fromEntries(Object.entries(input.passive_w).map(([k, values]) => [k, values[i]]));
-    allocate(input.members.heater, q.pool_compressor_w, loads);
-    allocate(input.members.auxiliary, q.pool_auxiliary_w, loads);
-    allocate(input.members.ev, q.ev_w, loads);
+    if (!unavailableOwner(snapshot, "$pool", source.start)) {
+      allocate(input.members.heater, q.pool_compressor_w, loads);
+
+    }
+    if (f.pool_auxiliary_dispatch) {
+      for (const member of input.members.auxiliary) {
+        const model = snapshot.device_models.find(m => m.key === member.key)!;
+        if (unavailableOwner(snapshot, commandOwner(snapshot, model), source.start)) continue;
+        const dispatch = input.auxiliary_dispatch[member.key][i];
+        loads[member.key] = dispatch.fixed_w + (command.pool_on ? dispatch.on_w : 0);
+      }
+    } else if (!unavailableOwner(snapshot, "$pool", source.start)) allocate(input.members.auxiliary, q.pool_auxiliary_w, loads);
+    if (!unavailableOwner(snapshot, "$ev", source.start)) allocate(input.members.ev, q.ev_w, loads);
     allocate(input.members.boiler, input.boiler_w[i], loads);
     const unrepresented = (input.members.heater.length + input.members.auxiliary.length ? 0 : q.pool_w) +
       (input.members.ev.length ? 0 : q.ev_w) + (input.members.boiler.length ? 0 : input.boiler_w[i]);
@@ -387,7 +448,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       ...(input.boiler_services.length ? { boiler_battery_allowed: input.boiler_battery_allowed[i] } : {}),
       ev_w: q.ev_w, room_heating_w: Object.fromEntries(Object.entries(input.rooms.room_power).map(([key, values]) => [key, values[i]])), device_loads_w: loads, device_commands: commandMap(input, command, i),
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
-      ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: f.ev_available,
+      ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: !!snapshot.ev_battery?.connected,
+      ...(p.car && !snapshot.ev_battery?.connected && command.ev_amps > 0 ? { ev_charging_conditional: true } : {}),
       load_w: load, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
       battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command, q) : null,
       ...(p.battery && snapshot.schema_version >= 10 ? { battery_instruction: locked?.battery_instruction ??
@@ -430,26 +492,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
   const core = nativePlanner(trace);
-  let solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
-  let released: GeneratedPlan["continuity"];
-  if (solved.kind === "failed") {
-    // The next hour remains exact unless its commands violate current
-    // equipment limits or permissions. A price change or a cheaper schedule
-    // is never authority to release it. Rebuild once under the same limits;
-    // malformed inputs and unrelated construction failures still fail fast.
-    const violation = /^committed_command_infeasible:(\d+):(shared_grid_limit|native_battery_power_limit|export_without_permission|non_native_ev_command|command_for_absent_device)$/.exec(solved.issue);
-    if (violation && input.reference_plan_id) {
-      released = { source_plan_id: input.reference_plan_id, selected: "repaired",
-        reason: `${violation[2]} at ${input.snapshot.slots[Number(violation[1])].start}`,
-        proposed_sek: null, reference_sek: null, deadband_sek: 0 };
-      // Clear the native lock and its materialization maps together, so the
-      // published device requests describe the replacement actually solved.
-      input = { ...input, locked_slots: [], problem: { ...input.problem, accepted: null, locked_through_seconds: 0 } };
-      input = { ...input, boiler_w: input.boiler_w.map(() => 0), boiler_permitted: input.boiler_permitted.map(() => false),
-        problem: { ...input.problem, slots: input.problem.slots.map((s, i) => ({ ...s, base_w: s.base_w - input.boiler_w[i] })) } };
-      solved = planningStage(trace, "solve_released_commitments", () => core.solve(input.problem, trace)).outcome;
-    }
-  }
+  const solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
   if (solved.kind === "failed") {
     const committed = /^committed_command_infeasible:(\d+):(.+)$/.exec(solved.issue);
     if (committed) {
@@ -466,7 +509,6 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   const p = input.problem;
   const materialized = trace?.start("selected_plan_materialize");
   const priority = scenario(input, selected.commands, selected.quarters, "priority", "Rule-based plan");
-  if (released) priority.generated.continuity = released;
   // Only the selected schedule has a rule account; the baseline was never scored.
   priority.generated.slots.forEach((slot, i) => {
     slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {
@@ -499,8 +541,20 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
         { quarters: reduced, selected_ev_kwh: evEnergy(selected.quarters), baseline_ev_kwh: evEnergy(baselineProjection.quarters) })]);
     }
   }
+  assertHeldCommands(input.snapshot, input.held_reference, new Set(input.released_owners), priority.generated.slots);
   const cost = { ...priority.generated, key: "cost" as const, label: "Rule-based plan (same selected schedule)" };
   const snapshot = input.snapshot;
+  if (snapshot.ev_battery && !snapshot.ev_battery.connected && priority.generated.slots.some(slot => slot.ev_w > 0)) {
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "ev_connection_required", "ev", "The car is unplugged. Its future charging remains planned.",
+      "Forecast charging and range depend on connecting the car. Scheduled charging that cannot execute automatically requests a new plan.")]);
+  }
+  for (const change of snapshot.execution_availability ?? []) {
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "execution_unavailable", change.owner, `Scheduled work could not execute: ${change.cause}.`,
+      "The replacement accounts for current state and outstanding service. Other loads retain their accepted next-hour commands.",
+      { status: change.status, blocked_intervals: JSON.stringify(change.blocked_intervals) })]);
+  }
   const bindingUntil = priority.generated.slots.filter(s => s.binding).at(-1);
   const overloads = priority.generated.slots.filter(s => s.grid_import_w > snapshot.grid.import_limit_w + 1e-6);
   if (overloads.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
@@ -525,6 +579,19 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     hot_water_permissions: input.boiler_permission_starts, hot_water_shortfall_minutes: input.boiler_shortfall_minutes,
     timezone: snapshot.timezone, slot_minutes: 15, status: "ready", validation_errors: [], measurement_issues: snapshot.measurement_issues ?? [],
     planning_warnings: snapshot.planning_warnings ?? [],
+    execution_availability: snapshot.execution_availability ?? [],
+    ...(input.execution_replan ? { execution_replan: { request_id: input.execution_replan.request_id,
+      accepted_plan_id: input.execution_replan.accepted_plan_id, changes: input.execution_replan.changes,
+      released_intervals: input.held_reference.flatMap((slot, i) => input.released_owners.filter(owner => {
+        const command = (row: PublishedCommandSlot) => [
+          ...(owner === "$ev" ? [row.ev_target_current_a, row.ev_min_current_a, row.ev_max_current_a]
+            : owner === "$pool" ? [row.pool_command_w, row.pool_permitted]
+            : owner === "$battery" ? [row.battery_command, row.battery_instruction] : []),
+          ...snapshot.device_models.filter(model => commandOwner(snapshot, model) === owner).map(model => row.device_commands?.[model.key]),
+        ];
+        const before = command(slot), after = command(priority.generated.slots[i]);
+        return JSON.stringify(before) !== JSON.stringify(after);
+      }).map(owner => ({ owner, start: slot.start, end: new Date(Date.parse(slot.start) + QUARTER_MS).toISOString() }))) } } : {}),
     ...(thermalProjection?{thermal_projection:thermalProjection}:{}),
     sources: snapshot.sources, pv_calibration: snapshot.pv_calibration, price_outlook: input.price_outlook,
     battery_value_curve: null, resolved_value_stores: [], policy: { ...snapshot.policy, battery_end_of_solar_target_soc: 0, battery_target_is_hard: false, terminal_soc_min: 0, terminal_energy_value_sek_per_kwh: 0 }, battery_supply_scope: { kind: "selected", include_base: true,

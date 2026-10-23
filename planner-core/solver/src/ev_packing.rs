@@ -1,5 +1,7 @@
 //! Energy-preserving EV permutations for coupled battery refinement.
 //! Off-destination span moves cannot exchange two already-positive currents.
+use crate::commitments;
+
 use crate::{physics, Command, Problem, Work};
 
 #[derive(Clone, Copy, Debug)]
@@ -39,8 +41,11 @@ pub(crate) fn proposals(
     if !work.spend(n as u64 * (n.max(1).ilog2() as u64 + 8) * 4) {
         return None;
     }
-    let eligible =
-        |i: usize| !physics::locked(p, i) && p.slots[i].ev_available && commands[i].ev_amps > 0;
+    let eligible = |i: usize| {
+        !commitments::hold(p, i).has(commitments::Owner::Ev)
+            && p.slots[i].ev_available
+            && commands[i].ev_amps > 0
+    };
     let mut windows = Vec::new();
     let mut start = 0;
     while start < n {

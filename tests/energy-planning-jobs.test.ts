@@ -1,6 +1,6 @@
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
-import { dispatchedEvSnapshot } from '../scripts/generate-ha-plan-fixture.ts';
+import { dispatchedEvSnapshot, rulesFixtureInput } from '../scripts/generate-ha-plan-fixture.ts';
 import { generateRulesPlan, prepareRulesPlanningInput, type PublishedCommandReference } from '../supabase/functions/_shared/rules-planner.ts';
 import { resolveRulePolicy } from '../supabase/functions/_shared/planner-wasm/rule-policy.ts';
 
@@ -719,5 +719,79 @@ Deno.test('publication completion requires an explicit matching manual request a
     assertEquals((await db.query<{ request: string; completed: string | null; snapshot_id: string }>(
       'SELECT replan_request_id request,replan_completed_request_id completed,snapshot_id FROM energy_optimisation_current')).rows[0],
       { request: nextManual, completed: null, snapshot_id: snapshot });
+  } finally { await db.close(); }
+});
+
+const executionMigration = '20261023121000_scoped_execution_replans';
+Deno.test('forced execution receipts are immutable, home scoped and require the exact HA-accepted reference', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await db.exec(await migration(executionMigration));
+    const published = { ...currentRow(), plan: { ...currentRow().plan, status: 'ready' } };
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify(published)]);
+    const execution = { request_id: manual, accepted_plan_id: plan, observed_at: '2026-10-23T12:00:00Z',
+      changes: [{ owner: '$ev', status: 'temporarily_absent', cause: 'cable_disconnected', blocked_intervals: [{ start: '2026-10-23T12:00:00Z', end: '2026-10-23T12:15:00Z' }] }] };
+    const args = { ...rulesSubmission(nextManual, { reference_plan_id: plan, execution_replan: execution }),
+      input: { devices: {}, execution_replan: execution } };
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', args), Error, 'exact HA-accepted');
+    await db.exec("UPDATE energy_optimisation_current SET ha_ack_status='accepted',ha_acknowledged_at=now()");
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, context: { ...args.context, execution_replan: { ...execution, accepted_plan_id: other } } }), Error, 'exact HA-accepted');
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, input: { execution_replan: { ...execution, changes: [] } } }), Error, 'exact HA-accepted');
+    const receipt = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    assertEquals((await rpc<Receipt>(db, 'accept_energy_planning_job', args)).job_id, receipt.job_id);
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, snapshot_id: other, source_hash: 'changed body' }), Error, 'Execution request identity reused');
+    const recovered = await db.query<{ value: Receipt }>('SELECT read_execution_planning_job($1,$2) value', [home, manual]);
+    assertEquals(recovered.rows[0].value.job_id, receipt.job_id);
+    assertEquals(recovered.rows[0].value.source_hash, args.source_hash);
+    assertEquals((await db.query<{ value: unknown }>('SELECT read_execution_planning_job($1,$2) value', [other, manual])).rows[0].value, null);
+    const loaded = await attemptLoad(db, (await attemptClaim(db, receipt.job_id))!);
+    assertEquals(loaded!.context.execution_replan, execution);
+    assertEquals(loaded!.input, args.input);
+  } finally { await db.close(); }
+});
+
+Deno.test('execution reference preserves battery instructions, physical scope and HA acknowledgement', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await db.exec(await migration(executionMigration));
+    const instruction = { kind: 'grid_charge', charge_ac_w: 2000 };
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify({ ...currentRow(),
+      snapshot: { operating_scope: { modes: { $ev: 'controlling' } }, execution_availability: [] },
+      plan: { status: 'ready', plans: { priority: { slots: [{ start: '2026-10-23T12:00:00Z', battery_instruction: instruction }] } } } })]);
+    const state = (await db.query<{ value: { ha_ack_status: string; published_commands: { slots: Array<{ battery_instruction: unknown }>; operating_scope: unknown; execution_availability: unknown } } }>('SELECT get_energy_replan_state($1) value', [home])).rows[0].value;
+    assertEquals(state.ha_ack_status, 'pending');
+    assertEquals(state.published_commands.slots[0].battery_instruction, instruction);
+    assertEquals(state.published_commands.operating_scope, { modes: { $ev: 'controlling' } });
+    assertEquals(state.published_commands.execution_availability, []);
+  } finally { await db.close(); }
+});
+
+Deno.test('real planner preparation freezes the execution envelope accepted by the durable admission RPC', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await db.exec(await migration(executionMigration));
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify(currentRow())]);
+    await db.exec("UPDATE energy_optimisation_current SET ha_ack_status='accepted',ha_acknowledged_at=now()");
+    const capture = dispatchedEvSnapshot();
+    capture.captured_at = capture.slots[0].start;
+    capture.comfort = { ev: { target_km: 300 } };
+    const source = capture.slots[0].start;
+    const execution = { request_id: manual, accepted_plan_id: plan, observed_at: capture.captured_at,
+      changes: [{ owner: '$ev', status: 'temporarily_absent' as const, cause: 'cable_disconnected',
+        blocked_intervals: [{ start: source, end: new Date(Date.parse(source) + 900_000).toISOString() }] }] };
+    const reference: PublishedCommandReference = { plan_id: plan, slots: capture.slots.map(slot => ({ start: slot.start,
+      pool_w: 0, pool_command_w: 0, ev_target_current_a: 6, ev_min_current_a: 0, ev_max_current_a: 16,
+      boiler_permitted: false, boiler_expected_w: 0 })) };
+    const prepared = prepareRulesPlanningInput({ snapshot: capture, now: capture.captured_at, execution_replan: execution,
+      resolved_price_outlook: rulesFixtureInput(capture).price_outlook }, reference, resolveRulePolicy());
+    assertEquals(prepared.execution_replan, execution);
+    const args = { ...rulesSubmission(nextManual, { reference_plan_id: plan, execution_replan: execution }), input: prepared };
+    const receipt = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    assertEquals(receipt.state, 'pending');
+    const loaded = await attemptLoad(db, (await attemptClaim(db, receipt.job_id))!);
+    assertEquals(loaded!.context.execution_replan, execution);
+    const frozen = (await db.query<{ input: { execution_replan: unknown } }>(
+      'SELECT input FROM private.energy_planning_jobs WHERE id=$1', [receipt.job_id])).rows[0].input;
+    assertEquals(frozen.execution_replan, execution);
   } finally { await db.close(); }
 });

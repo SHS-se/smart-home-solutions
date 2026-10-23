@@ -18,6 +18,7 @@ export type BatteryOperation =
   | "supply_house"
   | "export"
   | "shave_import";
+export interface NativeOwnerMask { pool: boolean; ev: boolean; battery: boolean }
 export interface NativeCommand {
   pool_on: boolean;
   ev_amps: number;
@@ -41,10 +42,11 @@ export interface ReadySlot {
   export_price: number;
   published: boolean;
   ev_available: boolean;
+  pool_auxiliary_dispatch: { fixed_w: number; on_w: number } | null;
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 11;
+  abi: 12;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;
@@ -101,6 +103,8 @@ export interface ReadyProblem {
   }[];
   service_guard: { pool: [number, number]; ev: [number, number] };
   accepted: NativeCommand[] | null;
+  released: NativeOwnerMask[] | null;
+  unavailable: NativeOwnerMask[] | null;
   fixed_commands?: Array<NativeCommand | null> | null;
   locked_through_seconds: number;
 }

@@ -8,6 +8,12 @@ pub(crate) enum Device {
     Ev,
 }
 impl Device {
+    fn owner(self) -> commitments::Owner {
+        match self {
+            Self::Pool => commitments::Owner::Pool,
+            Self::Ev => commitments::Owner::Ev,
+        }
+    }
     fn active(self, c: &Command) -> bool {
         match self {
             Self::Pool => c.pool_on,
@@ -256,13 +262,16 @@ pub(crate) fn proposals(
     for device in [Device::Pool, Device::Ev] {
         let mut i = 0;
         while i < n {
-            if physics::locked(p, i) || !device.active(&commands[i]) {
+            if commitments::hold(p, i).has(device.owner()) || !device.active(&commands[i]) {
                 i += 1;
                 continue;
             }
             let from = i;
             i += 1;
-            while i < n && !physics::locked(p, i) && device.same(&commands[from], &commands[i]) {
+            while i < n
+                && !commitments::hold(p, i).has(device.owner())
+                && device.same(&commands[from], &commands[i])
+            {
                 i += 1;
             }
             sources.push((device, from, i, false));
@@ -296,7 +305,8 @@ pub(crate) fn proposals(
         };
         let estimate = Estimate::new(p, device, watts, quarters);
         let free = |i: usize| {
-            !physics::locked(p, i) && (from <= i && i < to || !device.active(&commands[i]))
+            !commitments::hold(p, i).has(device.owner())
+                && (from <= i && i < to || !device.active(&commands[i]))
         };
         // The same candidate ranges are checked repeatedly. Prefix counts keep
         // the exact per-quarter eligibility without rescanning every range.

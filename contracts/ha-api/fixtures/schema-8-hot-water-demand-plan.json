@@ -12,7 +12,7 @@
       "boiler": true,
       "ev": false
     },
-    "model_version": "rules-planner-v19:4cfe814f68cf9302f5bafacf85cc7877c42c28468081aab0b21c1b5a115b535f",
+    "model_version": "rules-planner-v20:899f96191ea5b958d696bcbb503a914c12b884d5561073d37920cb08c56c6687",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -40,6 +40,7 @@
     "validation_errors": [],
     "measurement_issues": [],
     "planning_warnings": [],
+    "execution_availability": [],
     "sources": {
       "pv": {
         "provider": "home_assistant_entity",

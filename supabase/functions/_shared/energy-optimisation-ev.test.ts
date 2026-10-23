@@ -359,7 +359,7 @@ Deno.test("the native planner uses the vehicle's own consumption when buying ran
  assert(solve(.24)>solve(.14),"the thirstier car needs more electricity for the same requested range");
 });
 
-Deno.test("unplugging keeps household planning active without inventing cable availability", async () => {
+Deno.test("unplugging preserves the car's planned energy while cable telemetry stays false", async () => {
   const { dispatchedEvSnapshot } = await import(
     "../../../scripts/generate-ha-plan-fixture.ts"
   );
@@ -371,7 +371,9 @@ Deno.test("unplugging keeps household planning active without inventing cable av
   assertEquals(unplugged.validation_errors, []);
   assertEquals(unplugged.ev_battery!.connected, false);
   assert(connected.plans.priority.slots.some(s=>s.ev_w>0),"connected fixture must charge");
-  assert(unplugged.plans.priority.slots.every(s=>s.ev_w===0),"no draw can be forecast through a disconnected cable");
+  assertEquals(unplugged.plans.priority.slots.map(slot => slot.ev_w), connected.plans.priority.slots.map(slot => slot.ev_w));
+  assert(unplugged.plans.priority.slots.some(slot => slot.ev_w > 0), "the unplugged car must still be planned");
+  assert(unplugged.plans.priority.slots.some(slot => slot.ev_charging_conditional), "future charging must disclose its connection dependency");
   assert(
     unplugged.plans.priority.slots.every((slot) => !slot.ev_connected),
     "do not invent a cable connection",

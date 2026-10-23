@@ -51,25 +51,18 @@ pub(crate) fn initial(p: &Problem) -> State {
         pool_run_quarters: None,
     }
 }
-pub(crate) fn locked_command(p: &Problem, i: usize) -> Option<&Command> {
-    p.fixed_commands
-        .as_ref()
-        .and_then(|cs| cs.get(i))
-        .and_then(|c| c.as_ref())
-        .or_else(|| {
-            if p.slots[i].start_seconds < p.locked_through_seconds {
-                p.accepted.as_ref().and_then(|cs| cs.get(i))
-            } else {
-                None
-            }
-        })
-}
-pub(crate) fn locked(p: &Problem, i: usize) -> bool {
-    locked_command(p, i).is_some()
-}
-
 pub(crate) fn projected_hours(s: &Slot) -> f64 {
     s.hours + s.start_seconds.min(0.0) / 3600.0
+}
+
+/// An independently commanded auxiliary keeps drawing when the thermal owner
+/// is off. Thermal state and compressor startup remain owned by the pool model.
+pub(crate) fn pool_auxiliary_w(s: &Slot, on: bool, coupled_w: f64) -> f64 {
+    s.pool_auxiliary_dispatch
+        .as_ref()
+        .map_or(coupled_w, |dispatch| {
+            dispatch.fixed_w + if on { dispatch.on_w } else { 0.0 }
+        })
 }
 
 fn transition(
@@ -80,8 +73,11 @@ fn transition(
     external: bool,
     pool_step: impl FnOnce(&Heater, &ThermalStore, HeaterState, bool, PoolConditions) -> PoolTransition,
 ) -> Result<Quarter, String> {
-    if !external && locked(p, i) && command != locked_command(p, i).unwrap() {
+    if !external && !commitments::hold(p, i).admits(command) {
         return Err("commitment_changed".into());
+    }
+    if !commitments::available_command(p, i, command) {
+        return Err("owner_unavailable".into());
     }
     let s = &p.slots[i];
     let hours = projected_hours(s);
@@ -117,18 +113,30 @@ fn transition(
                 },
             )
         });
-    let pool_w = pool.as_ref().map_or(0.0, |h| h.electric_w);
+    let pool_auxiliary_w = pool_auxiliary_w(
+        s,
+        command.pool_on,
+        pool.as_ref().map_or(0.0, |h| h.auxiliary_w),
+    );
+    let pool_w = pool.as_ref().map_or(0.0, |h| h.compressor_w) + pool_auxiliary_w;
     let ev_w = if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
         let nominal = charger
             .watts(command.ev_amps)
             .ok_or("non_native_ev_command")?;
-        if !s.ev_available && command.ev_amps != 0 && !locked(p, i) && !external {
+        if !s.ev_available
+            && command.ev_amps != 0
+            && !commitments::hold(p, i).has(commitments::Owner::Ev)
+            && !external
+        {
             return Err("ev_unavailable".into());
         }
         let room = (p.targets.ev_limit_kwh.unwrap() - state.ev).max(0.0) * 1000.0
             / hours
             / car.charge_efficiency;
-        if nominal > room + 1e-7 && !locked(p, i) && !external {
+        if nominal > room + 1e-7
+            && !commitments::hold(p, i).has(commitments::Owner::Ev)
+            && !external
+        {
             return Err("ev_command_beyond_charge_limit".into());
         }
         if s.ev_available {
@@ -149,7 +157,9 @@ fn transition(
         && p.battery.is_some()
         && (s.battery_export_allowed == Some(false)
             || !p.limits.battery_export_enabled
-            || (!external && !locked(p, i) && s.export_price < p.limits.battery_export_min_price))
+            || (!external
+                && !commitments::hold(p, i).has(commitments::Owner::Battery)
+                && s.export_price < p.limits.battery_export_min_price))
     {
         return Err("export_without_permission".into());
     }
@@ -216,7 +226,7 @@ fn transition(
         },
         pool_w,
         pool_compressor_w: pool.as_ref().map_or(0.0, |h| h.compressor_w),
-        pool_auxiliary_w: pool.as_ref().map_or(0.0, |h| h.auxiliary_w),
+        pool_auxiliary_w,
         pool_heat_w: pool.as_ref().map_or(0.0, |h| h.heat_w),
         ev_w,
         charge_w: charge,
@@ -955,14 +965,14 @@ mod supply_permission_tests {
     }
 
     #[test]
-    fn pool_reservoir_requires_abi_ten_and_matching_device_presence() {
+    fn pool_reservoir_requires_current_abi_and_matching_device_presence() {
         let mut p = crate::witnesses::tests::problem(1);
         p.abi = 9;
         assert_eq!(
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 11;
+        p.abi = 12;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

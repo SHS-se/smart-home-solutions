@@ -30,7 +30,7 @@ export function scheduleHotWater(input: {
   solar_w: number[];
   large_load_w: number[];
   available_w: number[];
-  locked: WaterCommitment[];
+  locked: Array<WaterCommitment | undefined>;
   previous_permissions: string[];
 }): WaterOpportunities {
   const { starts, hours, services, locked } = input;
@@ -115,7 +115,7 @@ export function scheduleHotWater(input: {
     const remainingMinutes = Math.max(0, WATER_MINUTES_PER_DAY - elapsed - fixed);
     let prefix = 0;
     while (prefix < indices.length && locked[indices[prefix]]) prefix++;
-    const continuing = prefix > 0 && prefix < indices.length && locked[indices[prefix - 1]].boiler_expected_w >= FINISH_HEATING_W
+    const continuing = prefix > 0 && prefix < indices.length && (locked[indices[prefix - 1]]?.boiler_expected_w ?? 0) >= FINISH_HEATING_W
       && project().deficit_wh[indices[prefix - 1]] > 1e-6;
     // Each candidate is one run, permitted for as long as the tank keeps it
     // heating, then the quota's other quarters after it. A run that would

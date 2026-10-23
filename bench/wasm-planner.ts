@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 11,
+    abi: 12,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -154,7 +154,7 @@ export function readyProblem(
       outdoor_c: c.recorded.outdoor_temperature_c[i],
       import_price: prices[i],
       export_price: c.known_prices.export_sek_per_kwh[i] ?? prices[i] - spread,
-      ev_available: true,
+      ev_available: true, pool_auxiliary_dispatch: null,
       published: c.known_prices.import_sek_per_kwh[i] !== null &&
         c.known_prices.export_sek_per_kwh[i] !== null,
     })),
@@ -204,7 +204,7 @@ export function readyProblem(
     service_guard: serviceGuard(criteria),
     // Filled below from the finished problem: the credit's reference is the median of the prices it was told.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
-    accepted: null,
+    accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
   problem.end_credit = problemEndCredit(problem);

@@ -18,7 +18,7 @@ impl Context<'_> {
     fn demand(&self, i: usize) -> physics::BatteryLoad {
         let s = &self.p.slots[i];
         // Candidate current owns EV headroom; accepted commands retain their exact clipped draw.
-        let ev_w = if physics::locked(self.p, i) {
+        let ev_w = if commitments::hold(self.p, i).has(commitments::Owner::Ev) {
             self.planned[i].ev_w
         } else {
             self.p
@@ -36,7 +36,7 @@ impl Context<'_> {
     /// physical/tariff boundary. Include both, deriving partial native powers
     /// from actual energy changes rather than testing guessed power fractions.
     fn options(&self, i: usize, kwh: f64) -> Vec<Command> {
-        if physics::locked(self.p, i) {
+        if commitments::hold(self.p, i).has(commitments::Owner::Battery) {
             return vec![self.commands[i].clone()];
         }
         let p = self.p;
@@ -135,9 +135,14 @@ impl Context<'_> {
         if demand > 0.0 && demand < export {
             add(Operation::Export, 0.0, demand);
         }
+        out.retain(|c| commitments::available_command(p, i, c));
         out
     }
     fn carry(&self, i: usize, kwh: f64, c: &Command) -> Option<physics::CarriedQuarter> {
+        if !commitments::available_command(self.p, i, c) || !commitments::hold(self.p, i).admits(c)
+        {
+            return None;
+        }
         let q = physics::carry(self.p, &self.p.slots[i], c, self.demand(i), kwh);
         physics::within_grid(self.p, q.net).then_some(q)
     }
@@ -238,7 +243,7 @@ impl Values {
             let continuation = self.at(ctx, i + 1, q.battery_kwh, charging);
             // Both incoming charging states examine identical options and physics.
             // Only their start charge differs; retain each state's arithmetic/ties.
-            if !physics::locked(ctx.p, i)
+            if !commitments::hold(ctx.p, i).has(commitments::Owner::Battery)
                 && matches!(c.battery, Operation::GridCharge | Operation::Export)
             {
                 if q.charge == 0.0 && q.discharge == 0.0 {
@@ -287,7 +292,7 @@ impl Values {
                 continue;
             }
             if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
-                if !physics::locked(ctx.p, i)
+                if !commitments::hold(ctx.p, i).has(commitments::Owner::Battery)
                     && matches!(c.battery, Operation::GridCharge | Operation::Export)
                 {
                     if q.charge == 0.0 && q.discharge == 0.0 {
@@ -377,7 +382,7 @@ impl Allocation {
             let mut out = Vec::with_capacity(commands.len());
             for (i, command) in commands.iter().enumerate() {
                 let mut options = ctx.options(i, state.battery);
-                if !physics::locked(p, i) {
+                if !commitments::hold(p, i).has(commitments::Owner::Battery) {
                     let b = p.battery.as_ref().unwrap();
                     let mut full_supply = command.clone();
                     full_supply.battery = Operation::SelfConsumption;
@@ -409,7 +414,7 @@ impl Allocation {
                         continue;
                     }
                     if best.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9) {
-                        if !physics::locked(p, i) {
+                        if !commitments::hold(p, i).has(commitments::Owner::Battery) {
                             if c.battery == Operation::GridCharge {
                                 c.charge_limit_w = q.charge_w;
                             }

@@ -197,6 +197,35 @@ Deno.test("missing, incomplete and overlong accepted prefixes fail explicitly", 
   assertEquals(solve(p), { kind: "failed", issue: "commitment_unavailable" });
 });
 
+Deno.test("selective owner masks cross Wasm without releasing unrelated OFF or battery commands", () => {
+  const p = problem();
+  p.slots = p.slots.slice(0, 4);
+  p.initial.ev_kwh = 10;
+  p.targets.ev_km = 300;
+  p.end_credit = { reference_sek_per_kwh: 1000, battery: null, pool: null,
+    ev: { cap: 60, grid_kwh_per_unit: 1 } };
+  p.accepted = p.slots.map(() => ({ ...command(false), battery: "hold" as const, charge_limit_w: 1234, discharge_limit_w: 0 }));
+  p.accepted[0].ev_amps = 16;
+  p.locked_through_seconds = 3600;
+  p.released = p.slots.map(() => ({ pool: false, ev: true, battery: false }));
+  p.unavailable = p.slots.map((_, i) => ({ pool: false, ev: i === 0, battery: false }));
+  const result = solve(p);
+  assert(result.kind === "selected");
+  assertEquals(result.selection.commands[0].ev_amps, 0);
+  assert(result.selection.commands.slice(1).some(c => c.ev_amps > 0));
+  for (const c of result.selection.commands) {
+    assertEquals(c.pool_on, false);
+    assertEquals(c.battery, "hold");
+    assertEquals(c.charge_limit_w, 1234);
+    assertEquals(c.discharge_limit_w, 0);
+  }
+  p.released.pop();
+  assertEquals(solve(p), { kind: "failed", issue: "invalid_released_owners" });
+  p.released = null;
+  p.unavailable.pop();
+  assertEquals(solve(p), { kind: "failed", issue: "invalid_unavailable_owners" });
+});
+
 Deno.test("first hour includes the intersecting partial quarter and keeps exact commands", () => {
   const p = problem();
   for (const s of p.slots) s.start_seconds -= 300;

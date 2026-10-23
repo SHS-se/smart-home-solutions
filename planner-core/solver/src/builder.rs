@@ -52,9 +52,11 @@ fn command(
     }
 }
 fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> {
-    if physics::locked(p, i) {
-        return vec![physics::locked_command(p, i).unwrap().clone()];
+    if let Some(command) = commitments::hold(p, i).full() {
+        return vec![command.clone()];
     }
+    let hold = commitments::hold(p, i);
+    let held = hold.impose(command(p, false, 0, Operation::Idle, 0.0, 0.0));
     let s = &p.slots[i];
     let h = physics::projected_hours(s);
     let f = &index.future[i];
@@ -116,33 +118,41 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             }
         }
     }
+    if hold.has(commitments::Owner::Ev) {
+        ev_levels = vec![held.ev_amps];
+    } else if commitments::unavailable(p, i, commitments::Owner::Ev) {
+        ev_levels = vec![0];
+    }
     ev_levels.sort_unstable();
     ev_levels.dedup();
     let mut out = Vec::new();
     for on in [false, true] {
-        if on && !pool_needed {
+        if hold.has(commitments::Owner::Pool) && on != held.pool_on
+            || !hold.has(commitments::Owner::Pool) && on && !pool_needed
+            || on && commitments::unavailable(p, i, commitments::Owner::Pool)
+        {
             continue;
         }
-        let pool_w = p
+        let pool = p
             .heater
             .as_ref()
             .zip(p.pool_store.as_ref())
-            .map_or(0.0, |(heater, store)| {
-                heater
-                    .pool_transition(
-                        store,
-                        label.state.heater,
-                        on,
-                        shs_planner_models::PoolConditions {
-                            water_c: label.state.pool,
-                            pending_heat_kwh: label.state.pool_pending_heat_kwh,
-                            outdoor_c: s.outdoor_c,
-                            seconds: h * 3600.0,
-                            stop_c: p.pool_stop_c,
-                        },
-                    )
-                    .electric_w
+            .map(|(heater, store)| {
+                heater.pool_transition(
+                    store,
+                    label.state.heater,
+                    on,
+                    shs_planner_models::PoolConditions {
+                        water_c: label.state.pool,
+                        pending_heat_kwh: label.state.pool_pending_heat_kwh,
+                        outdoor_c: s.outdoor_c,
+                        seconds: h * 3600.0,
+                        stop_c: p.pool_stop_c,
+                    },
+                )
             });
+        let pool_w = pool.as_ref().map_or(0.0, |h| h.compressor_w)
+            + physics::pool_auxiliary_w(s, on, pool.as_ref().map_or(0.0, |h| h.auxiliary_w));
         for &amps in &ev_levels {
             let ev_w = p
                 .charger
@@ -210,6 +220,19 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             }
         }
     }
+    // Held owner values must participate in the physical candidate, including
+    // ON commands that the current-state need heuristic did not propose.
+    let hold = commitments::hold(p, i);
+    out = out
+        .into_iter()
+        .map(|c| hold.impose(c))
+        .filter(|c| commitments::available_command(p, i, c))
+        .fold(Vec::new(), |mut commands, c| {
+            if !commands.contains(&c) {
+                commands.push(c);
+            }
+            commands
+        });
     // Round-robin the whole pool/current cross product. Truncating halves of
     // the flat list erased high-current EV actions when battery variants grew.
     if out.len() > p.recipe.max_actions {
@@ -274,7 +297,7 @@ fn construct(
                 let mut next = l.clone();
                 let q = match projector.step(i, &c, &mut next.state) {
                     Ok(q) => q,
-                    Err(issue) if physics::locked(p, i) => {
+                    Err(issue) if commitments::hold(p, i).any() => {
                         committed_issue = Some(format!("committed_command_infeasible:{i}:{issue}"));
                         continue;
                     }
@@ -283,7 +306,7 @@ fn construct(
                 // HA requires forced purchases/sales to equal their physical
                 // allocations. Check the actual retained trajectory here;
                 // opportunity tables explore hypothetical inventory states.
-                if physics::locked(p, i)
+                if commitments::hold(p, i).has(commitments::Owner::Battery)
                     && ((c.battery == Operation::GridCharge
                         && (q.charge_w - c.charge_limit_w).abs() > 0.01)
                         || (c.battery == Operation::Export
@@ -789,7 +812,11 @@ fn runs(p: &Problem, commands: &[Command]) -> Vec<RunPurpose> {
             while to < commands.len() && active(to) {
                 to += 1;
             }
-            let purpose = if physics::locked(p, from) {
+            let purpose = if commitments::hold(p, from).has(match device {
+                "pool" => commitments::Owner::Pool,
+                "ev" => commitments::Owner::Ev,
+                _ => commitments::Owner::Battery,
+            }) {
                 "accepted_command"
             } else if device == "battery" {
                 "forecast_demand_or_permitted_sale"
@@ -844,6 +871,17 @@ fn pack_ev(scorer: &mut CandidateScorer, best: Candidate, work: &mut Work) -> Ca
 
 pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     validate(p)?;
+    for i in 0..p.slots.len() {
+        // Diagnose an unavailable held/booked owner before opportunity guidance
+        // obscures the exact conflict as a missing hypothetical transition.
+        let retained =
+            commitments::hold(p, i).impose(command(p, false, 0, Operation::Idle, 0.0, 0.0));
+        if !commitments::available_command(p, i, &retained) {
+            return Err(format!(
+                "committed_command_infeasible:{i}:owner_unavailable"
+            ));
+        }
+    }
     let n = p.slots.len() as u64;
     let startup = match p.heater.as_ref().map(|h| &h.response) {
         None | Some(shs_planner_models::Response::Steady) => 0,
@@ -962,7 +1000,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         return Err("account_parity".into());
     }
     for (i, c) in best.commands.iter().enumerate() {
-        if physics::locked(p, i) && c != physics::locked_command(p, i).unwrap() {
+        if !commitments::hold(p, i).admits(c) {
             return Err("commitment_changed".into());
         }
     }

@@ -3,6 +3,7 @@ import type { NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.t
 import { projectLoadBalancedEv } from "./planner-wasm/load-balanced-ev.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { waterBatteryCommand, waterBatteryCommands } from "./rules-hot-water.ts";
+import { applyNativeHolds, nativeOwnerHeld } from "./rules-commitments.ts";
 
 /** Same scheduled loads, reactive self-consumption and charger load balancing.
  * Carry this comparison's own stores; the selected battery trajectory cannot
@@ -10,10 +11,10 @@ import { waterBatteryCommand, waterBatteryCommands } from "./rules-hot-water.ts"
 export function projectRulesBaseline(core: Pick<ReturnType<typeof createWasmPlanner>, "project">,
   input: PreparedRulesInput, selected: NativeCommand[], selectedQuarters: NativeQuarter[]): { commands: NativeCommand[]; outcome: ProjectionOutcome } {
   const p = input.problem;
-  const requested = selected.map((command, i) => p.fixed_commands?.[i] ?? p.accepted?.[i] ?? {
+  const requested = selected.map((command, i) => applyNativeHolds(p, i, {
     ...command, battery: p.battery ? "self_consumption" as const : "idle" as const,
     charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,
-  });
+  }));
   if (!p.car || !p.charger) {
     const commands = waterBatteryCommands(input, requested, selectedQuarters);
     return { commands, outcome: core.project(p, commands).outcome };
@@ -24,8 +25,10 @@ export function projectRulesBaseline(core: Pick<ReturnType<typeof createWasmPlan
     const retained = p.fixed_commands?.[i] ?? (slot.start_seconds < p.locked_through_seconds ? p.accepted?.[i] : null);
     const hours = slot.hours + Math.min(0, slot.start_seconds) / 3600;
     const quarter: ReadyProblem = { ...p, initial, slots: [{ ...slot, start_seconds: 0, hours }],
-      accepted: retained ? [retained] : null, fixed_commands: null, locked_through_seconds: retained ? hours * 3600 : 0 };
-    const balanced = projectLoadBalancedEv(core, quarter, requested[i], !retained,
+      accepted: retained ? [retained] : null, released: retained && !p.fixed_commands?.[i] && p.released ? [p.released[i]] : null,
+      unavailable: p.unavailable ? [p.unavailable[i]] : null,
+      fixed_commands: null, locked_through_seconds: retained ? hours * 3600 : 0 };
+    const balanced = projectLoadBalancedEv(core, quarter, requested[i], !nativeOwnerHeld(p, i, "ev"),
       (command, q) => waterBatteryCommand(input, command, q, i));
     if (balanced.outcome.kind === "failed") return { commands, outcome: balanced.outcome };
     const q = balanced.outcome.quarters[0];

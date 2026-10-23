@@ -13,6 +13,7 @@ import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { OptimisationPlan, FixedEnergyPlan } from "../_shared/planner/planning-contracts.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
+import { ExecutionReplanError, parseExecutionChanges, parseExecutionReplan, shouldAdmitPlanningSnapshot, validateExecutionReplan, type ExecutionReplan } from "../_shared/execution-replan.ts";
 // Device-authenticated exchange for the live 15-minute energy model.
 //
 // Home Assistant sends only completed quarter-hour aggregates and, at most
@@ -939,6 +940,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     let equipment: { battery: boolean } | undefined;
     let integrationVersion: string | null = null;
     let portalReplanId: string | null = null;
+    let executionReplan: ExecutionReplan | null = null;
     let replanRecommendation: string | null = null;
     try {
       const declaredLength = Number(req.headers.get("content-length") ?? 0);
@@ -972,6 +974,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       // The portal request this push is answering, if it is answering one.
       // Only meaningful alongside a snapshot: an actuals-only exchange produces
       // no plan, so it cannot complete anything.
+      if (body.execution_replan !== undefined) {
+        executionReplan = parseExecutionReplan(body.execution_replan);
+        if (!body.snapshot) throw new ExecutionReplanError("invalid_execution_replan", "Execution replan requires a snapshot");
+      }
       if (body.replan_request_id !== undefined) {
         if (
           typeof body.replan_request_id !== "string" ||
@@ -1034,7 +1040,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         if (body.planning_exchange_version !== PLANNING_EXCHANGE_VERSION) {
           return json({ error: "planning_exchange_upgrade_required", detail: "Update the SHS app to use durable planning.", retryable: false }, 426);
         }
-        sourceHash = await sha256Hex(JSON.stringify({ snapshot, replan_request_id: portalReplanId }));
+        if (snapshot.execution_availability !== undefined) snapshot.execution_availability = parseExecutionChanges(snapshot.execution_availability);
+        sourceHash = await sha256Hex(JSON.stringify({ snapshot, replan_request_id: portalReplanId, execution_replan: executionReplan }));
         const negotiationError = validatePlanningNegotiation(
           body,
           snapshot.schema_version,
@@ -1048,11 +1055,13 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             retryable: negotiationError.retryable,
           }, 426);
         }
-        const existing = await jobs.findSnapshot(auth.homeId, snapshot.snapshot_id, sourceHash);
+        const existing = executionReplan
+          ? await jobs.findExecutionRequest(auth.homeId, executionReplan.request_id, sourceHash) ?? await jobs.findSnapshot(auth.homeId, snapshot.snapshot_id, sourceHash)
+          : await jobs.findSnapshot(auth.homeId, snapshot.snapshot_id, sourceHash);
         if (existing) return json(existing, existing.pending ? 202 : 200);
       }
     } catch (error) {
-      if (error instanceof PlanningJobError) return json({ error: error.code, detail: error.message }, error.status);
+      if (error instanceof PlanningJobError || error instanceof ExecutionReplanError) return json({ error: error.code, detail: error.message }, error.status);
       return json({ error: "invalid_body" }, 400);
     }
     if (
@@ -1591,13 +1600,17 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     const pendingManual = accepted?.replan_request_id && !accepted.replan_error &&
       accepted.replan_request_id !== accepted.replan_completed_request_id && snapshot &&
       portalReplanId === accepted.replan_request_id;
-    if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
+    const admitSnapshot = snapshot !== null && shouldAdmitPlanningSnapshot({
+      hasAcceptedPlan: !!accepted?.plan, pendingManual: !!pendingManual,
+      newPublishedPrices: hasNewPublishedPrices(accepted?.snapshot ?? null, snapshot), executionReplan,
+    });
+    if (snapshot && !admitSnapshot) {
       const refresh = refreshPreparedForecasts(supabase, auth.customerId, auth.homeId,
         structuredClone(snapshot), storedDevices).catch(error =>
           console.error("[ENERGY-FORECAST] preparation failed", describeThrown(error)));
       EdgeRuntime.waitUntil(refresh);
     }
-    if (snapshot && accepted?.plan && !pendingManual && !hasNewPublishedPrices(accepted.snapshot, snapshot)) {
+    if (snapshot && !admitSnapshot) {
       snapshot = null;
     }
 
@@ -1732,6 +1745,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const fixedPlan = fixedState?.fixed_plan as FixedEnergyPlan | null;
       const fixedRevision = fixedState?.fixed_plan_revision ?? 0;
       try {
+        if (executionReplan) {
+          if (fixedState?.ha_ack_status !== "accepted") throw new ExecutionReplanError("execution_reference_changed", "The current publication must be acknowledged by Home Assistant before applying execution evidence", 409);
+          executionReplan = validateExecutionReplan(executionReplan, fixedState.published_commands ?? null, snapshot);
+        }
         const prepared = await readOrPrepareForecasts(supabase as unknown as PreparedForecastDatabase, auth.homeId, snapshot,
           () => refreshPreparedForecasts(supabase, auth.customerId, auth.homeId, structuredClone(forecastSource), storedDevices));
         // Comfort routines and room temperatures are read now, never from the prepared copy.
@@ -1741,7 +1758,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         if (rulesError) throw new Error(rulesError.message);
         const planningNow = new Date();
         const planningInput = { snapshot, now: planningNow.toISOString(),
-          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook };
+          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook, execution_replan: executionReplan };
         const rulesInput = trace.run("admission_preparation", () => prepareRulesPlanningInput(planningInput,
           fixedState?.published_commands ?? null, resolveRulePolicy(savedRules.criteria), trace),
           { rooms: snapshot.thermal_zones?.length ?? 0, slots: snapshot.slots.length });
@@ -1757,7 +1774,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             request_id: requestId, integration_version: integrationVersion,
             reference_plan_id: fixedState?.reference_plan_id ?? null, fixed_revision: fixedRevision,
             observed_replan_request_id: accepted?.replan_request_id ?? null,
-            replan_request_id: portalReplanId,
+            replan_request_id: portalReplanId, execution_replan: executionReplan,
             completion_basis: planningCompletionBasis(Deno.env.get("SUPABASE_URL") ?? ""),
             exchange: {
               planning_warnings: uploadedActuals.warnings,
@@ -1787,7 +1804,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       } catch (error) {
         const detail = describeThrown(error);
         console.error("[ENERGY-OPTIMISATION] preparation refused", detail, error);
-        if (error instanceof PlanningJobError) return json({ error: error.code, detail }, error.status);
+        if (error instanceof PlanningJobError || error instanceof ExecutionReplanError) return json({ error: error.code, detail }, error.status);
         return json({ error: "invalid_snapshot", detail }, 400);
       }
     }

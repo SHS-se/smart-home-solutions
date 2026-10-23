@@ -43,7 +43,7 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   return {
-    abi: 11,
+    abi: 12,
     // No end credit unless a test asks for one.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     ev_battery_supply_allowed: false,
@@ -68,7 +68,7 @@ export function problem(): EquippedProblem {
         import_price: 1 + i / 10,
         export_price: .5,
         published: true,
-        ev_available: true,
+        ev_available: true, pool_auxiliary_dispatch: null,
       }),
     ),
     battery: HOUSEHOLD.battery,
@@ -101,7 +101,7 @@ export function problem(): EquippedProblem {
     },
     rules: [],
     service_guard: { pool: [1, 2], ev: [50, 100] },
-    accepted: null,
+    accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
 }

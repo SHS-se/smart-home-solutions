@@ -1,6 +1,6 @@
 //! Bounded causal certificates. Shapes suggest trials; only projected, service-
 //! and inventory-preserving alternatives produce economic findings and repair commands.
-use crate::physics::{locked, project_metered, projected_hours};
+use crate::physics::{project_metered, projected_hours};
 use crate::*;
 
 const EPS: f64 = 1e-6;
@@ -224,19 +224,20 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
     let days = n.div_ceil(96);
     let mut queues = vec![Vec::new(); FAMILIES.len() * days];
     for from in 0..n {
-        if locked(p, from) {
-            continue;
-        }
         let source_surplus = (-q[from].net_w).max(0.0);
         for to in 0..n {
-            if to == from || locked(p, to) {
+            if to == from {
                 continue;
             }
             let delta = p.slots[from].import_price - p.slots[to].import_price;
             let dest_surplus = (-q[to].net_w).max(0.0);
             let dest_import = q[to].net_w.max(0.0);
             // Forecast opportunities can repair the plan; publication labels provenance.
-            if commands[from].ev_amps > 0 && (delta > 0.0 || dest_surplus > source_surplus) {
+            if !commitments::hold(p, from).has(commitments::Owner::Ev)
+                && !commitments::hold(p, to).has(commitments::Owner::Ev)
+                && commands[from].ev_amps > 0
+                && (delta > 0.0 || dest_surplus > source_surplus)
+            {
                 offer(
                     &mut queues,
                     days,
@@ -259,8 +260,12 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                         continue;
                     }
                     if to + length > n
-                        || (to..to + length).any(|i| commands[i].pool_on || locked(p, i))
-                        || (from..from + length).any(|i| locked(p, i))
+                        || (to..to + length).any(|i| {
+                            commands[i].pool_on
+                                || commitments::hold(p, i).has(commitments::Owner::Pool)
+                        })
+                        || (from..from + length)
+                            .any(|i| commitments::hold(p, i).has(commitments::Owner::Pool))
                     {
                         continue;
                     }
@@ -290,6 +295,11 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                         );
                     }
                 }
+            }
+            if commitments::hold(p, from).has(commitments::Owner::Battery)
+                || commitments::hold(p, to).has(commitments::Owner::Battery)
+            {
+                continue;
             }
             let Some(model) = &p.battery else {
                 continue;
@@ -457,7 +467,7 @@ fn edit(
         .iter()
         .zip(original)
         .enumerate()
-        .any(|(i, (a, b))| a != b && locked(p, i))
+        .any(|(i, (a, _b))| !commitments::hold(p, i).admits(a))
         || commands == original
     {
         return None;
@@ -836,7 +846,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 11,
+            abi: 12,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -867,6 +877,7 @@ pub(crate) mod tests {
                     export_price: 0.0,
                     published: true,
                     ev_available: true,
+                    pool_auxiliary_dispatch: None,
                 })
                 .collect(),
             battery: Some(Battery {
@@ -934,6 +945,8 @@ pub(crate) mod tests {
                 ev: [50.0, 100.0],
             },
             accepted: None,
+            released: None,
+            unavailable: None,
             fixed_commands: None,
             locked_through_seconds: 0.0,
         }

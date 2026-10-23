@@ -4,6 +4,7 @@ import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/ther
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { heatingMask, isThermostat, nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";
+import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 import type { PlanningTrace } from "./planning-trace.ts";
 
 export interface RoomServices {
@@ -51,7 +52,8 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
     // A room coupled to the house cannot be run forward without it.
     const houseKnown = !zone.model || !usesHouse(zone.model) || (snapshot.house_temperature_c?.length === n &&
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
-    if (relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
+    const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
+    if (!executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
       outdoorKnown && houseKnown && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
@@ -65,6 +67,14 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
       let total = 0;
       for (const m of members) {
         const locked = retained[i]?.device_commands?.[m.key];
+        if (unavailableOwner(snapshot, commandOwner(snapshot, m), snapshot.slots[i].start)) {
+          result.commands[m.key].push({type: "unavailable", reason: "Equipment execution is unavailable until recovery is observed"});
+          // An unavailable actuator can still be drawing power under its last
+          // setting. Preserve measured demand; do not credit unconfirmed heat.
+          const watts = m.forecast_w_by_slot[i];
+          result.power[m.key].push(watts); total += watts;
+          continue;
+        }
         if (m.control_type === "setpoint") {
           const t = isThermostat(m.thermostat) ? m.thermostat : null;
           const command = locked?.type === "setpoint" ? locked : { type: "setpoint" as const,

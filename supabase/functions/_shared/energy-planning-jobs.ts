@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import type { ExecutionReplan } from "./execution-replan.ts";
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
 import { RULES_MODEL_VERSION, type PreparedRulesInput } from "./rules-planner.ts";
 import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, EnergyPlanningError } from "./rules-planning-client.ts";
@@ -43,6 +44,7 @@ export interface PlanningContext {
   fixed_revision: number;
   observed_replan_request_id: string | null;
   replan_request_id: string | null;
+  execution_replan?: ExecutionReplan | null;
   completion_basis: PlanningCompletionBasis;
   exchange: Record<string, unknown>;
 }
@@ -100,6 +102,16 @@ export class PlanningJobs {
     });
     if (receipt && receipt.source_hash !== sourceHash) {
       throw new PlanningJobError("planning_snapshot_conflict", "Snapshot identity was reused with different input", 409);
+    }
+    return this.delivery(receipt);
+  }
+
+  async findExecutionRequest(homeId: string, requestId: string, sourceHash: string): Promise<PlanningReceipt | null> {
+    const receipt = await this.rpc<PlanningReceipt | null>("read_execution_planning_job", {
+      p_home_id: homeId, p_request_id: requestId,
+    });
+    if (receipt && receipt.source_hash !== sourceHash) {
+      throw new PlanningJobError("planning_execution_conflict", "Execution request identity was reused with different input", 409);
     }
     return this.delivery(receipt);
   }

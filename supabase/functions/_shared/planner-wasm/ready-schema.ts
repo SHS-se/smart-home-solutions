@@ -9,6 +9,7 @@ const age = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("steady") }),
   z.object({ kind: z.literal("running"), seconds: number.nonnegative() }),
 ]);
+const ownerMask = z.object({ pool: z.boolean(), ev: z.boolean(), battery: z.boolean() }).strict();
 const command = z.object({
   pool_on: z.boolean(),
   ev_amps: number.int().nonnegative(),
@@ -26,7 +27,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(11),
+  abi: z.literal(12),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -48,6 +49,7 @@ export const readyProblemSchema = z.object({
     export_price: number,
     published: z.boolean(),
     ev_available: z.boolean(),
+    pool_auxiliary_dispatch: z.object({ fixed_w: number.nonnegative(), on_w: number.nonnegative() }).strict().nullable(),
   }).array().nonempty(),
   battery: z.object({
     capacity_kwh: number,
@@ -143,5 +145,15 @@ export const readyProblemSchema = z.object({
     ev: z.tuple([number, number]),
   }),
   accepted: command.array().nullable(),
+  fixed_commands: command.nullable().array().nullable().optional(),
+  released: ownerMask.array().nullable(),
+  unavailable: ownerMask.array().nullable(),
   locked_through_seconds: number,
-}).strict();
+}).strict().superRefine((problem, context) => {
+  if (problem.released !== null && (problem.accepted === null || problem.released.length !== problem.accepted.length)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["released"], message: "Released owners must align with the accepted prefix" });
+  }
+  if (problem.unavailable !== null && problem.unavailable.length !== problem.slots.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["unavailable"], message: "Unavailable owners must align with planning intervals" });
+  }
+});

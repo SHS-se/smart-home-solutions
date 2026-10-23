@@ -2,6 +2,7 @@
 mod battery_schedule;
 mod builder;
 mod charging;
+mod commitments;
 mod ev_packing;
 mod move_resize;
 mod opportunity;
@@ -14,6 +15,12 @@ use shs_planner_models::{
     Battery, CarBattery, Charger, Heater, HeaterStart, HeaterState, ThermalStore,
 };
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolAuxiliaryDispatch {
+    pub fixed_w: f64,
+    pub on_w: f64,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Slot {
     pub battery_export_allowed: Option<bool>,
@@ -29,6 +36,9 @@ pub struct Slot {
     pub export_price: f64,
     pub published: bool,
     pub ev_available: bool,
+    /// Independent retained auxiliary draw plus draw following the enable command.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub pool_auxiliary_dispatch: Option<PoolAuxiliaryDispatch>,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +61,13 @@ pub struct Command {
     pub battery: Operation,
     pub charge_limit_w: f64,
     pub discharge_limit_w: f64,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerMask {
+    pub pool: bool,
+    pub ev: bool,
+    pub battery: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Initial {
@@ -145,6 +162,10 @@ pub struct Problem {
     pub service_guard: ServiceGuard,
     /// None means first-ever plan. A partial accepted prefix is never silently filled.
     pub accepted: Option<Vec<Command>>,
+    /// Released components of the accepted prefix; fixed bookings stay exact.
+    pub released: Option<Vec<OwnerMask>>,
+    /// Evidenced equipment unavailability, aligned with all planning intervals.
+    pub unavailable: Option<Vec<OwnerMask>>,
     /// Explicit reviewed bookings, independent of the automatic next-hour lock.
     pub fixed_commands: Option<Vec<Option<Command>>>,
     /// Relative to capture; every intersecting slot remains committed.
@@ -210,7 +231,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 11 || p.slots.is_empty() {
+    if p.abi != 12 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -233,6 +254,13 @@ fn validate(p: &Problem) -> Result<(), String> {
         })
     {
         return bad("invalid_end_credit");
+    }
+    if p.slots.iter().any(|s| {
+        s.pool_auxiliary_dispatch.as_ref().is_some_and(|d| {
+            !d.fixed_w.is_finite() || d.fixed_w < 0.0 || !d.on_w.is_finite() || d.on_w < 0.0
+        })
+    }) {
+        return bad("invalid_pool_auxiliary_dispatch");
     }
     if p.slots.iter().any(|s| !(1..=12).contains(&s.local_month)) {
         return bad("invalid_calendar");
@@ -349,6 +377,19 @@ fn validate(p: &Problem) -> Result<(), String> {
     if p.slots[0].start_seconds > 0.0 || p.slots[0].start_seconds + p.slots[0].hours * 3600.0 <= 0.0
     {
         return bad("missing_capture_interval");
+    }
+    if p.released.as_ref().is_some_and(|masks| {
+        p.accepted
+            .as_ref()
+            .is_none_or(|accepted| masks.len() != accepted.len())
+    }) {
+        return bad("invalid_released_owners");
+    }
+    if p.unavailable
+        .as_ref()
+        .is_some_and(|masks| masks.len() != p.slots.len())
+    {
+        return bad("invalid_unavailable_owners");
     }
     if p.fixed_commands
         .as_ref()

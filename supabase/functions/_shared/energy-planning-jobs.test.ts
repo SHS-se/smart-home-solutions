@@ -197,3 +197,24 @@ Deno.test("delivery scopes the job, expands schema9 and rejects conflicting snap
   assertEquals(await jobs.readForHome("other-home", jobId), null);
   assertEquals(requests.at(-1), { p_home_id: "other-home", p_job_id: jobId });
 });
+
+Deno.test("execution request lookup reuses its durable receipt and refuses changed evidence", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const db = createClient("http://localhost:54321", "test-service", {
+    auth: { persistSession: false }, global: { fetch: async (url, init) => {
+      assert(String(url).endsWith("/read_execution_planning_job"));
+      const body = JSON.parse(String(init?.body)); calls.push(body);
+      return Response.json(body.p_home_id === jobId ? { job_id: jobId, snapshot_id: snapshot.snapshot_id,
+        source_hash: "immutable-evidence", state: "pending", pending: true, retry_after_ms: 100,
+        exchange: { actual_slots_accepted: 2 } } : null);
+    } },
+  });
+  const jobs = new PlanningJobs(db);
+  const receipt = await jobs.findExecutionRequest(jobId, snapshot.snapshot_id, "immutable-evidence");
+  assertEquals(receipt?.job_id, jobId);
+  assertEquals((receipt as Record<string, unknown>).actual_slots_accepted, 2);
+  assertEquals(receipt?.source_hash, undefined);
+  assertEquals(calls[0], { p_home_id: jobId, p_request_id: snapshot.snapshot_id });
+  await assertRejects(() => jobs.findExecutionRequest(jobId, snapshot.snapshot_id, "changed-evidence"), PlanningJobError, "reused with different input");
+  assertEquals(await jobs.findExecutionRequest("other-home", snapshot.snapshot_id, "immutable-evidence"), null);
+});

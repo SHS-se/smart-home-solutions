@@ -2,6 +2,15 @@
 
 Proposed design, 6 October; revised 7 October 2026 after independent GPT-6 Astra (high effort) and Claude Opus (high effort) reviews of the hosted Edge execution, forecast, model and command-lock requirements. Compatibility decisions clarified by the user on 7 October: remove cost-value curves, their related UI and the entire “Build a plan” schedule editor; source pool heater settings independently of comfort preferences. Design review only; product code, deployed planning and HA behaviour are unchanged.
 
+Mandatory amendment, 23 October 2026: [execution-failure replanning and selective
+commitment release](authoritative-plan-contract.md#execution-failure-replanning-and-selective-commitment-release)
+adds an automatic forced-replan trigger and a narrow exception to the first-hour
+lock. Release only the affected owner's commitments needed to move its
+unexecutable work, including source and destination slots; preserve every
+unaffected owner's held commands. This supersedes the two-trigger and
+blanket-lock statements below for that case. Future EV charging remains planned
+while the car is unplugged. This is a design requirement, not a claim of delivery.
+
 Build a **measurement-driven household planner**: one model-owned physical evaluator, one explicit preference account, and a bounded search over complete coordinated schedules. Compile the solver and authoritative device-response kernels from Rust to WebAssembly and run one complete solve inside a hosted Supabase Edge Function. No external native worker or resident daemon is part of the deployment. Read a ready, immutable forecast bundle and fresh current device state once per job. Keep planner-bench as the independent test of what the selected schedule achieves.
 
 The purpose is to make adding a measurement and improving a planner two small, visible changes, rather than spreading new preferences through valuation curves, bidding, settlement and response ranking. The execution redesign addresses a separate problem: repeated transport and reconstruction of the growing solve state.
@@ -16,7 +25,7 @@ The purpose is to make adding a measurement and improving a planner two small, v
 | Less than 10 seconds | Click through updated plan and completion toast, including exact HA acceptance | Browser-to-HA end-to-end timing, including queue, notification delivery and rendering |
 | UI scope | Remove cost-value curves, related UI and the “Build a plan” tab as explicitly requested; preserve remaining screens/interactions and approved invisible refresh; publish pool preference independently of heater settings | Remaining screens/interactions and planner-bench pass E2E checks; retired editor navigation is absent; versioned portal/HA contracts preserve exact command semantics |
 | Independent device models | Model-owned learning, autonomous forecasts and controlled-response kernels, separately versioned from search | Add/tune a model without editing preference/search logic; support 20–30 model types |
-| First-hour consistency | Hard command lock for the next hour from the HA-accepted plan; softer decreasing continuity beyond it | Byte/semantic command comparison across initial-state and forecast changes, for both triggers |
+| First-hour consistency | Hard command lock for the next hour from the HA-accepted plan, with mandatory selective release of unexecutable commitments on execution failure; softer decreasing continuity beyond it | Exact unaffected commands across manual, price-release and forced execution-failure replans, including held OFF requests and partial quarters |
 | Pool preference and equipment settings | Read the heater’s start/stop settings as device-model inputs; retain independent comfort targets; remove the invented target-plus-two cutoff | Device/HA/chart parity at 28°C start, 34°C stop and 30/30.5°C preference, including native restart behavior and changed settings |
 
 The user explicitly clarified that the hour is a **command lock during every replan**, not a cooldown between replans. A further manual request can run immediately. Ordinary state deviations change predicted outcomes, not those locked commands. The 10-second requirement supersedes the earlier handoff's withdrawn timing target; neither the speed target nor the original 200-point gain has been demonstrated.
@@ -485,6 +494,13 @@ Anchor the lock at the current-state capture used to assemble the immutable prob
 At quarter boundaries this covers four quarters. A request partway through a quarter also preserves the running quarter's remainder and the intersecting future quarter commands. With unchanged 15-minute command slots, lock every slot intersecting the hour; the effective commitment may extend to that slot's end by less than 15 minutes. This conservative alignment avoids a new mid-quarter command/UI protocol. Use absolute intervals and slot durations, never array offsets. Take capture promptly; record both request and capture anchors and include the capture delay in the latency budget. Preserve this capture anchor, accepted revision and lock endpoint through attempt retries and lease takeover. A recapture creates a new immutable problem and commitment, never a silently shifted resume.
 
 Reproject from current measured/native state, including the unchanged prefix. Predicted SOC/temperatures and electrical delivery can change while commands stay the same: a battery strategy or thermostat command is not a promise that measured power is constant. Normal saturation and existing controller safety behavior remain modeled. A realistic out-of-target state is not a reason to reject a household or release the lock.
+
+The 23 October execution-failure requirement is the explicit exception: an
+evidenced unexecutable scheduled request MUST force a replan when its work needs
+moving, and only that affected owner's commitments needed to move the work
+may be released, including its source and destination slots. All other first-hour commands remain exact. No global lock
+clear, resource-price improvement or attempt retry may widen that release. See
+the authoritative contract for availability, shortfall and acceptance semantics.
 
 If a locked command actually conflicts with configured capability/permission or a changed physical resource, report the named commitment conflict through existing failure fields. Do not silently unlock, cap/change the command, skip its device, or claim search proved infeasibility. Existing physical safety and revoked authority still govern actuation; this planning lock does not override them. Impossible readings retain the existing device-isolation semantics, with an explicit conflict if isolation prevents fulfilling a retained command. First-ever plans have no prior commands to lock. An expired, missing or partially covered prior reference is a distinct unavailable-commitment result, not a first plan or a successful partial lock. Under the stated hard-hour requirement it fails explicitly rather than inventing missing commands or claiming the hour was preserved. For an owner whose accepted schedule explicitly provides no planner control, preserve that absence; newly added controllable owners cannot acquire first-hour commands that change it. A missing-prefix exception would require a separately approved rule before implementation. If an existing fixed booking conflicts with the accepted prefix, report it explicitly instead of assigning an undeclared precedence.
 

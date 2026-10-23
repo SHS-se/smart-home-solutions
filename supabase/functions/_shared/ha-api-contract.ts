@@ -102,7 +102,7 @@ const errorMessage = (code: string): string => ({
   method_not_allowed: "The HTTP method is not supported for this operation.",
   stale_plan_ack:
     "The acknowledgement does not name the current generated plan.",
-}[code] ?? code.replaceAll("_", " "));
+}[code] ?? code.replace(/_/g, " "));
 
 const retryableCode = (code: string): boolean =>
   [
