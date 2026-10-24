@@ -95,8 +95,14 @@ impl<'a> SourceKernel<'a> {
         }
     }
     fn matrix(&self, hours: f64, slope: f64) -> Matrix {
-        let key = hours.to_bits() ^ slope.to_bits().rotate_left(17);
-        let index = (key ^ (key >> 32)) as usize & (Self::ENTRIES - 1);
+        // Binary interval lengths share low mantissa bits. Mix the entire
+        // key before masking so common dyadic durations do not evict one
+        // another while locating a thermostat crossing.
+        let mut key = hours.to_bits() ^ slope.to_bits().rotate_left(17);
+        key ^= key >> 32;
+        key = key.wrapping_mul(0xd6e8feb86659fd93);
+        key ^= key >> 32;
+        let index = key as usize & (Self::ENTRIES - 1);
         if let Some(cells) = &self.weights {
             if let Some(w) = cells[index].get() {
                 if w.hours == hours.to_bits() && w.slope == slope.to_bits() {
@@ -369,6 +375,54 @@ impl<'a> SourceKernel<'a> {
             source_depletion_kwh: depletion,
             next,
             start: active.start,
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn common_interval_matrices_coexist_and_match_uncached_calculation() {
+        let heater = Heater {
+            compressor_w: 3000.0,
+            auxiliary_w: 700.0,
+            heat_w: 12000.0,
+            response: Response::Steady,
+            source: Some(SourceModel {
+                recovery_rate_per_h: 0.1,
+                heat_loss_per_kwh: 0.02,
+            }),
+        };
+        let store = ThermalStore {
+            capacity_kwh_per_c: 60.0,
+            response_time_constant_h: 0.5,
+            loss: super::super::StandingLoss::Measured {
+                points: vec![super::super::LossPoint {
+                    at_c: 30.0,
+                    c_per_h: -0.01,
+                }],
+            },
+        };
+        let cached = SourceKernel::new(&heater, &store, true);
+        let direct = SourceKernel::new(&heater, &store, false);
+        for hours in [0.25, 0.125, 0.0625, 0.03125] {
+            assert_eq!(
+                cached.matrix(hours, 0.0).map(f64::to_bits),
+                direct.matrix(hours, 0.0).map(f64::to_bits)
+            );
+        }
+        let entries = cached.weights.as_ref().unwrap();
+        assert_eq!(
+            entries.iter().filter(|cell| cell.get().is_some()).count(),
+            4
+        );
+        for hours in [0.03125, 0.0625, 0.125, 0.25] {
+            assert_eq!(
+                cached.matrix(hours, 0.0).map(f64::to_bits),
+                direct.matrix(hours, 0.0).map(f64::to_bits)
+            );
         }
     }
 }
