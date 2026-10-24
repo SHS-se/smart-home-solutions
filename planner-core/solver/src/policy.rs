@@ -200,9 +200,9 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             (reach_pool, p.targets.pool_c.unwrap_or(0.0))
         } else {
             (
-                p.car
-                    .as_ref()
-                    .map_or(0.0, |c| measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)),
+                p.car.as_ref().map_or(0.0, |c| {
+                    measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)
+                }),
                 p.targets.ev_km.unwrap_or(0.0),
             )
         };
@@ -244,9 +244,9 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
                 (measured(reach_pool, 100.0), p.targets.pool_c.unwrap_or(0.0))
             } else {
                 (
-                    p.car
-                        .as_ref()
-                        .map_or(0.0, |c| measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)),
+                    p.car.as_ref().map_or(0.0, |c| {
+                        measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)
+                    }),
                     p.targets.ev_km.unwrap_or(0.0),
                 )
             };
