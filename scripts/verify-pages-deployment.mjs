@@ -10,8 +10,8 @@ if (!distArgument || !originArgument) {
 
 const distDirectory = path.resolve(distArgument);
 const origin = new URL(originArgument);
-// Pages' immutable deployment URL is ready immediately, while a custom domain
-// can expose newly uploaded chunks gradually for roughly two minutes.
+// CI passes the immutable URL returned by this upload. Custom domains have a
+// separate geographic access policy and can also take time to expose new chunks.
 const retryDelaysMs = [
   0,
   2_000,

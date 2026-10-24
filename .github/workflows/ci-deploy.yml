@@ -407,6 +407,7 @@ jobs:
           path: dist
 
       - name: Deploy to Cloudflare Pages
+        id: pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -423,11 +424,22 @@ jobs:
           $WRANGLER pages project list | grep -q "$PROJECT" \
             || $WRANGLER pages project create "$PROJECT" --production-branch="$BRANCH"
           # Output directory comes from wrangler.toml (pages_build_output_dir = "dist").
-          $WRANGLER pages deploy --project-name="$PROJECT" --branch="$BRANCH"
+          output_file="$RUNNER_TEMP/pages-deploy.ndjson"
+          WRANGLER_OUTPUT_FILE_PATH="$output_file" $WRANGLER pages deploy --project-name="$PROJECT" --branch="$BRANCH"
+          # Use Wrangler's structured result for this upload, never a moving alias or log text.
+          deployment_url=$(jq -ers --arg project "$PROJECT" '
+            [.[] | select(.type == "pages-deploy" and .version == 1 and .pages_project == $project)]
+            | if length == 1 then .[0].url else error("Expected one Pages deployment result for " + $project) end
+            | if type == "string" and test("^https://[a-z0-9-]+\\." + $project + "\\.pages\\.dev/?$")
+              then . else error("Expected an immutable Pages deployment URL") end
+          ' "$output_file")
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
 
       - name: Verify deployed static assets
+        # The custom domains allow visitors from SE/AU; GitHub-hosted runners are outside
+        # that geographic policy. Verify the exact published build without changing the WAF.
         env:
-          DEPLOY_ORIGIN: ${{ github.ref_name == 'main' && 'https://smarthomesolutions.se' || 'https://test.smarthomesolutions.se' }}
+          DEPLOY_ORIGIN: ${{ steps.pages.outputs.url }}
         run: node scripts/verify-pages-deployment.mjs dist "$DEPLOY_ORIGIN"
 
       - name: Prune old Cloudflare deployments

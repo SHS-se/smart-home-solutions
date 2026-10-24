@@ -92,8 +92,13 @@ runs lint/typecheck, four balanced unit-test shards, and the frontend build/brow
 tests in parallel. The `Lint, test & build` gate requires all their results before a
 push to `dev` deploys to the `test-smart-home-solutions` project
 (https://test-smart-home-solutions.pages.dev) and a push to `main` deploys to
-`prod-smart-home-solutions` (https://prod-smart-home-solutions.pages.dev); each deploy then
-prunes that project's older deployments, keeping only the latest. Add two repository secrets
+`prod-smart-home-solutions` (https://prod-smart-home-solutions.pages.dev). CI reads the exact
+immutable deployment URL from Wrangler's structured output and verifies every uploaded
+asset, SPA deep links, and safe missing-asset responses there. Missing or invalid deployment
+output fails the job. The custom domains restrict visitors to Sweden and Australia, so
+GitHub's runners cannot reliably verify those domains; their geographic WAF rule remains
+in place. Custom-domain checks must run from an allowed country. Each successful deploy
+then prunes older deployments, retaining the five newest. Add two repository secrets
 under *Settings → Secrets and variables → Actions* to enable the deploy step:
 
 - `CLOUDFLARE_API_TOKEN` — a token with the *Cloudflare Pages: Edit* permission
