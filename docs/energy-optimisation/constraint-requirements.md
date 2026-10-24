@@ -137,3 +137,12 @@ outstanding service, original deadlines, equipment limits and permissions. See
 [execution-failure replanning and selective commitment release](authoritative-plan-contract.md#execution-failure-replanning-and-selective-commitment-release)
 for trigger, retry, accounting and acceptance requirements. This is normative
 design; implementation and deployment require separate verification.
+
+User requirement, 25 October 2026: an increase in physical pool power may release
+only affected pool-ON commitments. An empirical permission that reserved average
+draw must be compared with the corrected full demand, using the accepted plan's
+explicit planning basis. Normal thermal startup draw is not a rating change.
+Keep EV, battery, independently owned circulation, pool-OFF slots, other loads
+and explicit bookings held. This grants no household-wide unlock, cross-owner
+release or retry with relaxed holds. If the remaining commands are infeasible,
+report the conflict without raising the grid limit.

@@ -3,6 +3,9 @@ import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 import type { NativeOwnerMask, NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import type { PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
 
+import { poolElectricalDemand } from "./planner/pool-physics.ts";
+import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
+
 export type RetainedCommandSlot = Partial<PublishedCommandSlot> & { start: string };
 const HOUR = 3_600_000, QUARTER = 900_000;
 const emptyMask = (): NativeOwnerMask => ({pool: false, ev: false, battery: false});
@@ -62,8 +65,35 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
   // A delayed capture may follow the blocked source quarter. Its explicitly
   // requested repair still needs eligible destinations in the current held hour.
   for (const change of request?.changes ?? []) owners.add(change.owner);
-  const released = original.map(() => ({pool: owners.has("$pool"), ev: owners.has("$ev"), battery: owners.has("$battery")}));
-  const retained: RetainedCommandSlot[] = original.map(slot => {
+  const slotOwners = original.map(() => new Set(owners));
+  const warnings: PlanningWarning[] = [];
+  if (snapshot.capabilities.pool && (reference?.pool_planning_basis === "empirical" || reference?.pool_planning_basis === "thermal")) {
+    const members = snapshot.device_models.filter(model => model.planning_service === "pool");
+    const own = members.filter(model => commandOwner(snapshot, model) === "$pool");
+    const demand = poolElectricalDemand(snapshot);
+    const watts = own.reduce((sum, model) => sum + (demand.member_w[model.key] ?? 0), 0);
+    const corrections: Array<{start: string; before_w: number; after_w: number}> = [];
+    original.forEach((slot, i) => {
+      if (!(slot.pool_command_w! > 0)) return;
+      // Empirical permissions reserved duty averages. Thermal commands already
+      // name the full rating; their normal startup forecast is not a correction.
+      // Independent circulation is never authority to release the heater.
+      const before = reference.pool_planning_basis === "empirical"
+        ? own.every(model => typeof slot.device_loads_w?.[model.key] === "number")
+          ? own.reduce((sum, model) => sum + slot.device_loads_w![model.key], 0) : null
+        : own.length === members.length ? slot.pool_command_w : null;
+      if (before == null || !(watts > before + 1e-6)) return;
+      slotOwners[i].add("$pool");
+      corrections.push({start: slot.start, before_w: before, after_w: watts});
+    });
+    if (corrections.length) warnings.push(planningWarning("pool_commitment_power_corrected", "pool",
+      "Accepted pool heating reserved less than its current physical demand.",
+      "Only affected pool-ON commitments may move. Other accepted loads and bookings remain held.",
+      {basis: reference.pool_planning_basis, intervals: JSON.stringify(corrections)}));
+  }
+  const released = slotOwners.map(owners => ({pool: owners.has("$pool"), ev: owners.has("$ev"), battery: owners.has("$battery")}));
+  const retained: RetainedCommandSlot[] = original.map((slot, i) => {
+    const owners = slotOwners[i];
     const next: RetainedCommandSlot = structuredClone(slot);
     if (owners.has("$ev")) {
       delete next.ev_target_current_a; delete next.ev_min_current_a; delete next.ev_max_current_a;
@@ -91,22 +121,23 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
     mask.battery = unavailableOwner(snapshot, "$battery", slot.start);
     return mask;
   });
-  return {original, retained, released, unavailable, owners};
+  return {original, retained, released, unavailable, owners_by_slot: slotOwners.map(owners => [...owners]), warnings};
 }
 
 /** Independent publication check catches TS postprocessing that changes held requests. */
 export function assertHeldCommands(snapshot: OptimisationSnapshot, original: PublishedCommandSlot[],
-  released: Set<string>, actual: PlannedSlot[]): void {
+  released: readonly string[][], actual: PlannedSlot[]): void {
   const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const fields = { $ev: ["ev_target_current_a", "ev_min_current_a", "ev_max_current_a"],
     $pool: ["pool_command_w", "pool_permitted"], $battery: ["battery_command", "battery_instruction"] } as const;
   for (const [i, old] of original.entries()) {
-    for (const [owner, keys] of Object.entries(fields)) if (!released.has(owner)) for (const key of keys) {
+    const owners = new Set(released[i]);
+    for (const [owner, keys] of Object.entries(fields)) if (!owners.has(owner)) for (const key of keys) {
       if (old[key] !== undefined && !equal(old[key], actual[i]?.[key])) throw new Error(`Held ${owner} command changed at ${old.start}: ${key}`);
     }
     for (const model of snapshot.device_models) {
       const command = old.device_commands?.[model.key];
-      if (!released.has(commandOwner(snapshot, model)) && command?.type === model.control_type &&
+      if (!owners.has(commandOwner(snapshot, model)) && command?.type === model.control_type &&
         !equal(command, actual[i]?.device_commands?.[model.key])) throw new Error(`Held ${model.key} command changed at ${old.start}`);
     }
   }

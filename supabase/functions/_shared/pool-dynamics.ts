@@ -472,7 +472,7 @@ export function fitPoolDynamics(
       } else if (seen) idle += HOURS;
     }
   }
-  const profiles = rates.map((rate) => ({
+  const profiles = (hypothesis === "constant_gain" ? [] : rates).map((rate) => ({
     recovery_rate_per_h: rate,
     rmse_c: Math.sqrt(
       responseCandidate(groups, fit.tau, rate)?.mse ?? Infinity,

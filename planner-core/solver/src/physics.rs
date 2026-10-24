@@ -67,6 +67,52 @@ pub(crate) fn pool_auxiliary_w(s: &Slot, on: bool, coupled_w: f64) -> f64 {
         })
 }
 
+/// Energy stays quarter-resolved; permission must also fit the full ON draw.
+/// Battery support at this reservation is checked for the whole remaining
+/// interval. This is conservative for brief thermostat-limited runs.
+pub(crate) struct PoolDemand {
+    pub average_w: f64,
+    pub admission_w: f64,
+}
+pub(crate) fn pool_demand(
+    p: &Problem,
+    s: &Slot,
+    on: bool,
+    water_c: f64,
+    pool: Option<&PoolTransition>,
+) -> PoolDemand {
+    let compressor = pool.map_or(0.0, |q| q.compressor_w);
+    let auxiliary = pool_auxiliary_w(s, on, pool.map_or(0.0, |q| q.auxiliary_w));
+    let active = on && p.pool_stop_c.is_none_or(|stop| water_c < stop);
+    let full = p.heater.as_ref().map_or(0.0, |heater| {
+        let fraction = match &heater.response {
+            shs_planner_models::Response::Steady => 1.0,
+            shs_planner_models::Response::Bergvarme { startup } => startup
+                .iter()
+                .map(|point| point.electric_fraction)
+                .fold(1.0, f64::max),
+        };
+        if active {
+            heater.compressor_w * fraction
+        } else {
+            0.0
+        }
+    });
+    let full_auxiliary = pool_auxiliary_w(
+        s,
+        on,
+        if active {
+            p.heater.as_ref().map_or(0.0, |heater| heater.auxiliary_w)
+        } else {
+            0.0
+        },
+    );
+    PoolDemand {
+        average_w: compressor + auxiliary,
+        admission_w: full + full_auxiliary,
+    }
+}
+
 fn transition(
     p: &Problem,
     i: usize,
@@ -121,7 +167,8 @@ fn transition(
         command.pool_on,
         pool.as_ref().map_or(0.0, |h| h.auxiliary_w),
     );
-    let pool_w = pool.as_ref().map_or(0.0, |h| h.compressor_w) + pool_auxiliary_w;
+    let pool_demand = pool_demand(p, s, command.pool_on, state.pool, pool.as_ref());
+    let pool_w = pool_demand.average_w;
     let ev_w = if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
         let nominal = charger
             .watts(command.ev_amps)
@@ -173,6 +220,61 @@ fn transition(
     let unavoidable_import = (s.base_w - s.solar_w).max(0.0);
     if !within_grid(p, net) && !(net >= 0.0 && net <= unavoidable_import + 1e-7) {
         return Err("shared_grid_limit".into());
+    }
+    let held_battery = commitments::hold(p, i).has(commitments::Owner::Battery);
+    let admission_ev_w = if s.ev_available && ev_w > 0.0 {
+        p.charger
+            .as_ref()
+            .and_then(|charger| charger.watts(command.ev_amps))
+            .unwrap_or(0.0)
+    } else {
+        0.0
+    };
+    let fixed_charge = if command.battery == Operation::GridCharge && held_battery {
+        command.charge_limit_w.min(
+            p.battery
+                .as_ref()
+                .map_or(0.0, |battery| battery.charge_max_w),
+        )
+    } else {
+        charge
+    };
+    if pool_demand.admission_w > pool_w + 1e-7
+        || admission_ev_w > ev_w + 1e-7
+        || fixed_charge > charge + 1e-7
+    {
+        let reservation = BatteryLoad {
+            gross_w: s.base_w + pool_demand.admission_w + admission_ev_w,
+            solar_w: s.solar_w,
+            ev_w: admission_ev_w + s.base_ev_w,
+        };
+        let (reserved_charge, reserved_discharge) =
+            battery_flows(p, command, reservation, state.battery, hours);
+        // Published grid-charge is a fixed figure, not a peak-time reduction.
+        let reserved_charge = if command.battery == Operation::GridCharge {
+            fixed_charge
+        } else {
+            reserved_charge
+        };
+        // Export is published as a fixed allocation. Only automatic house
+        // supply may increase its discharge when pool demand rises.
+        let reserved_discharge = if command.battery == Operation::Export && !held_battery {
+            reserved_discharge.min(discharge.floor())
+        } else {
+            reserved_discharge
+        };
+        let (reserved_net, _) = grid_flow(
+            p,
+            reservation.net_w(),
+            s.solar_w,
+            reserved_charge,
+            reserved_discharge,
+        );
+        if !within_grid(p, reserved_net)
+            && !(reserved_net >= 0.0 && reserved_net <= unavoidable_import + 1e-7)
+        {
+            return Err("shared_grid_limit".into());
+        }
     }
     let cost = grid_cost(s, net, hours);
     // Battery throughput and heater starts are modelled wear, not meter cash.

@@ -164,10 +164,10 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     },
                 )
             });
-        let pool_w = pool.as_ref().map_or(0.0, |h| h.compressor_w)
-            + physics::pool_auxiliary_w(s, on, pool.as_ref().map_or(0.0, |h| h.auxiliary_w));
-        let household_w = s.base_w + pool_w - s.solar_w;
-        for amps in ev_levels(p, index, i, label, household_w) {
+        let pool_demand = physics::pool_demand(p, s, on, label.state.pool, pool.as_ref());
+        let household_w = s.base_w + pool_demand.average_w - s.solar_w;
+        let admission_w = s.base_w + pool_demand.admission_w - s.solar_w;
+        for amps in ev_levels(p, index, i, label, admission_w) {
             let ev_w = p
                 .charger
                 .as_ref()
@@ -1380,7 +1380,7 @@ mod forecast_tests {
     }
     #[test]
     fn joint_current_uses_pool_power_solar_auxiliaries_and_native_steps_under_action_cap() {
-        for variant in 0..4 {
+        for variant in 0..6 {
             let mut p = witnesses::tests::problem(8);
             p.recipe.max_actions = 32;
             p.charger.as_mut().unwrap().phase_count = 3;
@@ -1409,6 +1409,36 @@ mod forecast_tests {
                     p.charger.as_mut().unwrap().max_current_a = 15;
                     13
                 }
+                4 => {
+                    // A tiny thermostat-limited burst must fit before it starts.
+                    p.pool_stop_c = Some(29.0001);
+                    14
+                }
+                5 => {
+                    // An observed electrical startup delay is not permission
+                    // to reserve zero power for a full ON command.
+                    p.heater.as_mut().unwrap().response = shs_planner_models::Response::Bergvarme {
+                        startup: vec![
+                            shs_planner_models::StartupPoint {
+                                elapsed_seconds: 0.0,
+                                electric_fraction: 0.0,
+                                heat_fraction: 0.0,
+                            },
+                            shs_planner_models::StartupPoint {
+                                elapsed_seconds: 900.0,
+                                electric_fraction: 0.0,
+                                heat_fraction: 0.0,
+                            },
+                            shs_planner_models::StartupPoint {
+                                elapsed_seconds: 1800.0,
+                                electric_fraction: 1.0,
+                                heat_fraction: 1.0,
+                            },
+                        ],
+                    };
+                    p.initial.heater_state = Some(HeaterState::OffUnobserved);
+                    14
+                }
                 _ => 14,
             };
             let index = policy::index(&p, &mut work(&p)).unwrap();
@@ -1421,11 +1451,68 @@ mod forecast_tests {
             let mut state = physics::initial(&p);
             let q = physics::step(&p, 0, c, &mut state).unwrap();
             assert!(q.net_w <= p.limits.import_w);
+            if variant == 4 || variant == 5 {
+                let max = choices
+                    .iter()
+                    .find(|c| c.pool_on && c.ev_amps == 16 && c.battery == Operation::Idle)
+                    .unwrap();
+                assert_eq!(
+                    physics::step(&p, 0, max, &mut physics::initial(&p)).unwrap_err(),
+                    "shared_grid_limit"
+                );
+            }
             // Still offer maximum current: a battery may supply the pool/house.
             assert!(choices
                 .iter()
                 .any(|c| c.pool_on && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
         }
+    }
+
+    #[test]
+    fn pool_admission_reserves_held_grid_charge_instead_of_saturated_average() {
+        let mut p = witnesses::tests::problem(4);
+        p.car = None;
+        p.charger = None;
+        p.slots[0].base_w = 9000.0;
+        p.slots[0].solar_w = 0.0;
+        p.limits.import_w = 15000.0;
+        p.heater.as_mut().unwrap().compressor_w = 3000.0;
+        p.heater.as_mut().unwrap().auxiliary_w = 700.0;
+        p.initial.pool_c = Some(29.0);
+        p.pool_stop_c = Some(29.001);
+        let battery = p.battery.as_ref().unwrap();
+        p.initial.battery_kwh = Some(battery.capacity_kwh * battery.max_soc - 0.45);
+        let c = command(&p, true, 0, Operation::GridCharge, 5000.0, 0.0);
+        // An unheld purchase publishes the smaller energy-saturated allocation.
+        assert!(physics::step(&p, 0, &c, &mut physics::initial(&p)).is_ok());
+        p.accepted = Some(vec![c.clone(); p.slots.len()]);
+        p.locked_through_seconds = 3600.0;
+        assert_eq!(
+            physics::step(&p, 0, &c, &mut physics::initial(&p)).unwrap_err(),
+            "shared_grid_limit"
+        );
+    }
+
+    #[test]
+    fn pool_admission_does_not_credit_unpublished_peak_export_discharge() {
+        let mut p = witnesses::tests::problem(4);
+        p.slots[0].base_w = 1000.0;
+        p.slots[0].solar_w = 0.0;
+        p.charger.as_mut().unwrap().phase_count = 3;
+        p.limits.import_w = 15000.0;
+        p.limits.battery_export_enabled = true;
+        p.slots[0].export_price = p.limits.battery_export_min_price + 1.0;
+        p.heater.as_mut().unwrap().compressor_w = 4000.0;
+        p.heater.as_mut().unwrap().auxiliary_w = 700.0;
+        p.initial.pool_c = Some(29.0);
+        p.pool_stop_c = Some(29.001);
+        p.targets.ev_limit_kwh = Some(p.car.as_ref().unwrap().capacity_kwh);
+        p.initial.battery_kwh = Some(p.battery.as_ref().unwrap().capacity_kwh * 0.8);
+        let c = command(&p, true, 16, Operation::Export, 0.0, 6000.0);
+        assert_eq!(
+            physics::step(&p, 0, &c, &mut physics::initial(&p)).unwrap_err(),
+            "shared_grid_limit"
+        );
     }
 
     #[test]

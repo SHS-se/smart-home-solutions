@@ -18,6 +18,8 @@ import { PlanningTrace } from "../supabase/functions/_shared/planning-trace.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
+import { selectPoolDynamics } from "../supabase/functions/_shared/pool-model-selection.ts";
+import { syntheticPoolHistory, SYNTHETIC_POOL_CAPACITY } from "../supabase/functions/_shared/pool-model-selection.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the
 // hosted two-second CPU ceiling for host differences and transport. The native
@@ -56,6 +58,15 @@ async function planSample(): Promise<Sample> {
   assertEquals(body.result.plan.status, "ready");
   assertEquals(body.result.plan.plans.priority.slots.length, 288);
   return sample;
+}
+
+/** Daily calibration uses independent synthetic chronology, including held-out selection. */
+async function calibrationSample(): Promise<Sample> {
+  const samples = syntheticPoolHistory(true);
+  return await measure(() => {
+    const fit = selectPoolDynamics(samples, SYNTHETIC_POOL_CAPACITY);
+    assert("fitted" in fit && fit.selection.selected === "recovering_source");
+  });
 }
 
 /** Cold admission preparation and its durable RPC encoding, with nine rooms. */
@@ -103,7 +114,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "reference" | "preparation" | "mixed-room" | "varying-rooms"): Promise<Sample> {
+async function coldSample(kind: "plan" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "calibration"): Promise<Sample> {
   const { code, stdout } = await new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
     args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--no-code-cache", import.meta.filename!, `--${kind}`],
@@ -142,9 +153,11 @@ if (Deno.args.includes("--plan")) {
   console.log(JSON.stringify(await preparationSample("mixed")));
 } else if (Deno.args.includes("--varying-rooms")) {
   console.log(JSON.stringify(await preparationSample("varying")));
+} else if (Deno.args.includes("--calibration")) {
+  console.log(JSON.stringify(await calibrationSample()));
 } else {
   console.log(JSON.stringify({ cpu_model: await cpuModel() }));
-  const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [];
+  const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [], calibrations: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -152,6 +165,8 @@ if (Deno.args.includes("--plan")) {
     const preparation = await coldSample("preparation");
     const mixed = await coldSample("mixed-room");
     const varying = await coldSample("varying-rooms");
+    const calibration = await coldSample("calibration");
+    calibrations.push(calibration.cpu_ms);
     references.push(ref.cpu_ms);
     plans.push(plan.cpu_ms);
     preparations.push(preparation.cpu_ms);
@@ -167,6 +182,9 @@ if (Deno.args.includes("--plan")) {
   const scaled = median(plans) * speed;
   console.log(JSON.stringify({ median_plan_cpu_ms: median(plans), median_reference_cpu_ms: median(references), speed_vs_baseline: speed, baseline_plan_cpu_ms: scaled }));
   assert(scaled < BUDGET_MS, `Complete cold planning worker used ${scaled.toFixed(1)} baseline ms CPU (median ${median(plans).toFixed(1)} ms on this machine, ${speed.toFixed(2)}× baseline speed); budget is ${BUDGET_MS} ms`);
+  const calibration = median(calibrations) * speed;
+  console.log(JSON.stringify({ median_calibration_cpu_ms: median(calibrations), baseline_calibration_cpu_ms: calibration }));
+  assert(calibration < PREPARATION_BUDGET_MS, `Held-out pool calibration used ${calibration.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
   const prepared = median(preparations) * speed;
   console.log(JSON.stringify({ median_preparation_cpu_ms: median(preparations), baseline_preparation_cpu_ms: prepared }));
   assert(prepared < PREPARATION_BUDGET_MS, `Cold nine-room admission preparation used ${prepared.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

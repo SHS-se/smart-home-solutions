@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v20:9e2bc0828b837134444f13396120de8ba6c7213f0c472389ca275a72e9844821",
+    "model_version": "rules-planner-v20:5f87c039d405b6ece86377d9a387363303aff9a914cde91ec1c09fb94d49c46d",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -162,7 +162,7 @@
       "heating_running": true,
       "heating_elapsed_seconds": 0,
       "heating_elapsed_basis": "observed_on_lower_bound",
-      "stop_temperature_c": 34,
+      "stop_temperature_c": 30,
       "planning_basis": "thermal",
       "heater_response": {
         "kind": "steady"
@@ -4078,7 +4078,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "rules-planner-v20:9e2bc0828b837134444f13396120de8ba6c7213f0c472389ca275a72e9844821",
+      "model_version": "rules-planner-v20:5f87c039d405b6ece86377d9a387363303aff9a914cde91ec1c09fb94d49c46d",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -4228,7 +4228,7 @@
         "heating_running": true,
         "heating_elapsed_seconds": 0,
         "heating_elapsed_basis": "observed_on_lower_bound",
-        "stop_temperature_c": 34,
+        "stop_temperature_c": 30,
         "planning_basis": "thermal",
         "heater_response": {
           "kind": "steady"
@@ -8076,7 +8076,7 @@
       "generation": 1,
       "mode": "controlling",
       "scope_revision": "fixture-whole-house",
-      "model_revision": "rules-planner-v20:9e2bc0828b837134444f13396120de8ba6c7213f0c472389ca275a72e9844821:ac-constant-efficiency:0.95:0.95",
+      "model_revision": "rules-planner-v20:5f87c039d405b6ece86377d9a387363303aff9a914cde91ec1c09fb94d49c46d:ac-constant-efficiency:0.95:0.95",
       "energy_basis": "stored_energy_mwh",
       "capacity_mwh": 18080000,
       "minimum_mwh": 904000,

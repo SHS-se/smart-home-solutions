@@ -48,6 +48,8 @@ export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_
 export interface PublishedCommandReference {
   plan_id: string;
   hot_water_permissions?: string[];
+  /** Provenance from the exact accepted publication, never inferred from its draw. */
+  pool_planning_basis?: "thermal" | "empirical";
   slots: PublishedCommandSlot[];
 }
 export interface PreparedRulesInput {
@@ -60,7 +62,7 @@ export interface PreparedRulesInput {
   price_outlook: OptimisationPlan["price_outlook"];
   locked_slots: RetainedCommandSlot[];
   held_reference: PublishedCommandSlot[];
-  released_owners: string[];
+  released_owners_by_slot: string[][];
   execution_replan: ExecutionReplan | null;
   fixed_slots: Record<number, PublishedCommandSlot>;
   reference_plan_id: string | null;
@@ -172,6 +174,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     "battery_target_not_guaranteed", "battery", "The requested hard battery target cannot be guaranteed by the rules objective.",
     "Battery and household planning continue within the configured equipment limits.")]);
   const commitments = compileCommitments(snapshot, reference, input.execution_replan);
+  snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, commitments.warnings);
   const retained = snapshot.slots.map((_slot, i) => commitments.retained[i] ?? {});
   const fixedByStart = new Map(input.fixed_plan?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
   const poolService = preparePoolService(snapshot, snapshot.slots.map((s, i) => fixedByStart.get(Date.parse(s.start)) ?? retained[i]));
@@ -316,7 +319,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       };
     }),
     battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
-    pool_stop_c: pool ? hardware?.stop_c ?? null : null,
+    pool_stop_c: pool ? Math.min(hardware!.stop_c, poolService.stop_c!) : null,
     initial: { battery_kwh: battery && snapshot.battery ? snapshot.battery.soc * battery.capacity_kwh : null,
       ev_kwh: ev && car ? ev.soc * car.capacity_kwh : null, pool_c: pool ? snapshot.pool!.water_temperature_c : null,
       pool_pending_heat_kwh: pool ? poolService.pending_heat_kwh : null,
@@ -343,7 +346,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   };
   problem.end_credit = problemEndCredit(problem);
   return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
-    price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners: [...commitments.owners], execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
+    price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
     members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
     boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
     boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
@@ -532,7 +535,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
         { quarters: reduced, selected_ev_kwh: evEnergy(selected.quarters), baseline_ev_kwh: evEnergy(baselineProjection.quarters) })]);
     }
   }
-  assertHeldCommands(input.snapshot, input.held_reference, new Set(input.released_owners), priority.generated.slots);
+  assertHeldCommands(input.snapshot, input.held_reference, input.released_owners_by_slot, priority.generated.slots);
   const cost = { ...priority.generated, key: "cost" as const, label: "Rule-based plan (same selected schedule)" };
   const snapshot = input.snapshot;
   if (snapshot.ev_battery && !snapshot.ev_battery.connected && priority.generated.slots.some(slot => slot.ev_w > 0)) {
@@ -574,7 +577,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     execution_availability: snapshot.execution_availability ?? [],
     ...(input.execution_replan ? { execution_replan: { request_id: input.execution_replan.request_id,
       accepted_plan_id: input.execution_replan.accepted_plan_id, changes: input.execution_replan.changes,
-      released_intervals: input.held_reference.flatMap((slot, i) => input.released_owners.filter(owner => {
+      released_intervals: input.held_reference.flatMap((slot, i) => input.released_owners_by_slot[i].filter(owner => {
         const command = (row: PublishedCommandSlot) => [
           ...(owner === "$ev" ? [row.ev_target_current_a, row.ev_min_current_a, row.ev_max_current_a]
             : owner === "$pool" ? [row.pool_command_w, row.pool_permitted]

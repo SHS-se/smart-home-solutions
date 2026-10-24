@@ -145,7 +145,8 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
       active_power_w: watts, profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => watts) });
   }
   const ready = prepare(s);
-  assertEquals(ready.problem.pool_stop_c, 34);
+  assertEquals(ready.problem.pool_stop_c, 29);
+  assertEquals(ready.snapshot.pool_model!.hardware!.stop_c, 34);
   assertEquals(ready.problem.targets.pool_c, 29);
   assertEquals(ready.problem.heater!.compressor_w, 3000);
   assertEquals(ready.problem.heater!.auxiliary_w, 700);
@@ -326,7 +327,7 @@ Deno.test("a clipped retained grid purchase reports a conflict without releasing
   s.grid.import_limit_w = 2000;
   const prepared = prepare(s, { plan_id: prior.plan_id, slots: locked });
   const before = JSON.stringify(prepared);
-  assertThrows(() => generateRulesPlan(prepared), Error, "native_battery_power_limit");
+  assertThrows(() => generateRulesPlan(prepared), Error, "Previously accepted commands");
   assertEquals(JSON.stringify(prepared), before);
 });
 

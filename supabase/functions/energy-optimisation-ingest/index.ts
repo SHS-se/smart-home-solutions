@@ -44,7 +44,7 @@ import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { PlanningTrace } from "../_shared/planning-trace.ts";
 import { parseHeaterResponse, WATER_KWH_PER_M3_K } from "../_shared/planner/device-models.ts";
 import { capturedPoolResponseState } from "../_shared/pool-capture.ts";
-import { fitPoolDynamics } from "../_shared/pool-dynamics.ts";
+import { selectPoolDynamics } from "../_shared/pool-model-selection.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
@@ -471,7 +471,7 @@ async function refitPoolModel(
   const result = fitPoolModel(samples, volumeM3);
   const idle = fitPoolLoss(samples, volumeM3);
   const response = fitPoolResponse(responseSamples);
-  const dynamics = fitPoolDynamics(responseSamples, volumeM3 * WATER_KWH_PER_M3_K);
+  const dynamics = selectPoolDynamics(responseSamples, volumeM3 * WATER_KWH_PER_M3_K);
   const idleRow = "fitted" in idle
     ? {
       idle_loss_kw_per_k: idle.fitted.loss_kw_per_k,
@@ -507,7 +507,7 @@ async function refitPoolModel(
       }),
       rejection: existing?.rated_cop != null ? null : result.rejected,
     };
-  const attempt = { issues: [
+  const attempt = { recovery_selection: dynamics.selection, issues: [
     ...("fitted" in result ? result.warnings ?? [] : [result.rejected]),
     ...("fitted" in idle ? idle.warnings ?? [] : [idle.rejected]),
     ...(response.some(bin => (bin.idle_hours > 0 && bin.idle_hours < 3) || (bin.heated_kwh > 0 && bin.heated_kwh < 3)) ? ["limited_response_observations"] : []),
