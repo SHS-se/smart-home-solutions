@@ -343,7 +343,7 @@ them:
    plan around it; the reactive layer has to absorb it. Worth noting it will
    also corrupt any base-load statistic that includes it, which is an argument
    for fitting base load robustly (median, trimmed) rather than on the mean.
-3. **Car usage.** Ordinary departure/return variance.
+3. **Car usage.** Historical trip consumption and return variance; no departure-time planning input.
 4. **Away for a few hours.** Phil's existing automation drops every zone to
    `low-temp`. **The reactive controller should deliberately do nothing here.**
    The recovery is the problem, not the setback: every zone returning to
@@ -364,7 +364,7 @@ them:
 2. Import the Node-RED cron schedules once to seed the comfort schedules.
 3. Separate solar *thermal* gain from PV electrical yield.
 4. Boiler, pool and EV keep demand-based models (litres, degrees, kWh to
-   departure) rather than occupancy schedules — they are services with
+   readiness) rather than occupancy schedules — they are services with
    deadlines, which [§5.5](contracts-and-controls.md#legacy-section-5.5) already describes.
 5. Vacation dates as a portal input; reactive controller later.
 

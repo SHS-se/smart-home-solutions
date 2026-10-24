@@ -312,7 +312,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
             commandOwner(snapshot, model) !== "$pool" && !!commitments.retained[i]?.device_commands?.[member.key];
         }) ? {fixed_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].fixed_w)),
           on_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].on_w))} : null,
-        ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)) && (ev.departure === null || start < Date.parse(ev.departure)),
+        ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)),
       };
     }),
     battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
@@ -324,7 +324,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
         ? finite(snapshot.pool!.heating_elapsed_seconds) ? { kind: "running", seconds: snapshot.pool!.heating_elapsed_seconds! } : { kind: "running", seconds: 0 }
         : { kind: "off_unobserved" } : null },
     targets: { pool_c: pool ? snapshot.comfort!.pool!.target_c : null, ev_km: car ? snapshot.comfort!.ev!.target_km : null,
-      ev_limit_kwh: car && ev ? ev.departure_target_soc * car.capacity_kwh : null },
+      ev_limit_kwh: car && ev ? ev.charge_limit_soc * car.capacity_kwh : null },
     limits: { import_w: snapshot.grid.import_limit_w, export_w: snapshot.grid.export_limit_w,
       battery_export_enabled: !!battery && snapshot.policy.battery_export_enabled,
       battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,

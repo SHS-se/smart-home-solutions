@@ -3360,7 +3360,7 @@
           "field": {
             "type": "string",
             "minLength": 1,
-            "description": "The reading, in snapshot field names, e.g. soc, departure_target_soc, capacity_kwh, water_temperature_c, connected, energy_remaining."
+            "description": "The reading, in snapshot field names, e.g. soc, charge_limit_soc, capacity_kwh, water_temperature_c, connected, energy_remaining."
           },
           "entity_id": {
             "type": [

@@ -13,7 +13,7 @@ function comfortHome(): OptimisationSnapshot {
     pool: { water_temperature_c: 30.08, volume_m3: 55, heating_running: false },
     ev_battery: { name: "Car", soc: .67, capacity_kwh: 76.119, kwh_per_km: .16,
       charge_efficiency: .92, connected: true, available_from: "2026-08-10T08:00:00Z",
-      departure: null, departure_target_soc: .8, priority: 3,
+      charge_limit_soc: .8, priority: 3,
       source_entity_ids: { connected: "binary_sensor.car_cable", soc: "sensor.car_soc",
         target_soc: "number.car_limit", energy_remaining: null, charge_current: "number.car_current" } },
     pool_model: {

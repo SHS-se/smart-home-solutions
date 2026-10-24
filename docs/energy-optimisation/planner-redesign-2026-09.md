@@ -27,7 +27,7 @@ Related documents:
 | S1 | The EV is planned whether plugged in or not. The plan keeps a *desired, conditional* schedule; its first desired start is the hook for a future "plug the car in" notification. Notifications are out of scope. |
 | S2 | When the car is plugged in, HA **executes the already-planned desired charging**. There is no automatic re-auction on cable change (plan contract: automatic bidding happens only on a price release). |
 | S3 | "Comfortable" is the curve's comfortable point: **pool 30 °C, car 300 km.** The planner prices it automatically (§5.3). Automation changes the monetary scale, never the comfort points, the curve shape, the pool's Stop-at or the car's charge limit. |
-| S4 | The car is a **continuous comfort store**, like the pool. There are no readiness events and no default departure time. This supersedes D2's anchored-event wording for everyday use. Dated trips can later add events on top. |
+| S4 | The car is a **continuous comfort store**, like the pool. There are no readiness events or departure times of any kind. Departure timestamps must not exist in code or contracts, including optional/null fields and inferred trip deadlines. This supersedes D2's anchored-event and dated-trip wording. |
 | S5 | The planner's peak-shaping term is internal, not a tariff. **Scale it down** to a spreading preference (§5.6), and build the effektavgift structure now with rate 0 so it can be switched on when the tariff returns. |
 | S6 | The pool minimum run existed to stop fragmented runs and mid-run cut-offs. It may be **retired only after** its replacement (whole-run candidates, a realistic start cost, economic continuity) passes the acceptance gates. |
 | S7 | Replan continuity keeps a running pool's remaining run unless stopping saves **≥ 5 SEK over the horizon**. This was shipped in d737694 and is kept, re-expressed without `minimum_run`. |
@@ -218,7 +218,7 @@ This replaces `anchorPreferenceCurve` against the horizon's cheapest decile for 
 
 **Valuation.** Same construction as the pool: service W with τ = 24 h relevance weights, terminal `V_H` from the EV table, comfort point 300 km calibrated as in §5.3.
 - Drive drain: learned from the last 28 days of `ev_charging_kwh` and `ev_soc` (energy delivered ≈ energy driven), as a weekday/weekend hourly profile. Default 8 kWh/day if fewer than 7 days of data.
-- The charge limit (`departure_target_soc`, the vehicle cap) is never changed.
+- The charge limit (`charge_limit_soc`, the vehicle cap) is never changed.
 
 **Branch** (`EvBranch`):
 - `connected === true`: `{kind: "executable"}`. The EV is in the joint auction.

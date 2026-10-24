@@ -361,29 +361,6 @@
               ]
             }
           ]
-        },
-        {
-          "id": "departure",
-          "kind": "event",
-          "store_id": "ev",
-          "at": "2026-09-14T09:00:00.000Z",
-          "curve": {
-            "unit": "kwh",
-            "points": [
-              {
-                "at": 30,
-                "sek_per_unit": 5
-              },
-              {
-                "at": 38,
-                "sek_per_unit": 0.2
-              },
-              {
-                "at": 40,
-                "sek_per_unit": 0
-              }
-            ]
-          }
         }
       ],
       "terminal": [
@@ -405,6 +382,30 @@
           },
           "coverage_from": "2026-09-14T09:00:00.000Z",
           "model_id": "synthetic-future-replacement",
+          "event_ids": []
+        },
+        {
+          "id": "remaining-range",
+          "store_id": "ev",
+          "curve": {
+            "unit": "kwh",
+            "points": [
+              {
+                "at": 30,
+                "sek_per_unit": 5
+              },
+              {
+                "at": 38,
+                "sek_per_unit": 0.2
+              },
+              {
+                "at": 40,
+                "sek_per_unit": 0
+              }
+            ]
+          },
+          "coverage_from": "2026-09-14T09:00:00.000Z",
+          "model_id": "synthetic-remaining-range",
           "event_ids": []
         }
       ]

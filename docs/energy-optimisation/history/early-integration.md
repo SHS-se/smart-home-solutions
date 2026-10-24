@@ -153,7 +153,7 @@ set:
 | Battery | 18.08 kWh, 8.8 kW charge, 9.6 kW discharge, live Sigen SOC, 13.2 kW plant/grid envelope |
 | Pool | `sensor.pool_heater_energy` plus `sensor.pool_pump_energy`; active measured power about 3.67 kW; `input_boolean.pool_heating` is the season gate |
 | Hot water | `sensor.hot_water_energy`; 3.0 kW installed rating remains an explicit commissioned fact |
-| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are reviewed from entity attributes. A timezone-aware departure timestamp is optional; without one, the target SOC is planned against the end of the rolling 72-hour horizon |
+| EV | `sensor.car_charging_lifetime_energy`, Tesla cable/SOC/target/energy-remaining entities, and `number.tesla_model_y_charge_current`; its 5 A minimum, 16 A maximum and 1 A step are reviewed from entity attributes. Superseded 24 October 2026: no departure time is permitted in code or contracts. Charging maintains ongoing range readiness within the vehicle cap over the rolling forecast horizon |
 
 Pool and water heating are likewise included whenever their website role and
 local mapping are ready. There is no user-defined pool service window: the

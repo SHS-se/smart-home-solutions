@@ -221,7 +221,7 @@ export function deriveRequirements(slots) {
     // is never assumed to arrive.
     //
     // Placed on the first FULL day so it lands inside the binding window. There
-    // is no departure-time entity, so the planner may not defer it to a sunnier
+    // is an ongoing readiness need, so the planner may not defer it to a sunnier
     // advisory day on the assumption the car will still be here.
     let carKwh = 0;
     if (INITIAL.carConnected && !isFirstDay && !carPlaced) {

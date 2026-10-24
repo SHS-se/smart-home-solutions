@@ -213,10 +213,9 @@ export function createWebsiteDemoPlan(
       connected: true,
       capacity_kwh: 75,
       soc: 0.64,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.94,
       available_from: at(0),
-      departure: at(64),
       priority: 3,
       source_entity_ids: {
         connected: 'binary_sensor.demo_ev_connected',

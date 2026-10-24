@@ -135,14 +135,14 @@ function impossibleReadings(snapshot: OptimisationSnapshot): MeasurementIssue[] 
         }, outside 0–100%.`,
       );
     }
-    if (!within(vehicle.departure_target_soc, 0, 1)) {
+    if (!within(vehicle.charge_limit_soc, 0, 1)) {
       add(
         "ev",
-        "departure_target_soc",
+        "charge_limit_soc",
         sources.target_soc,
-        vehicle.departure_target_soc,
+        vehicle.charge_limit_soc,
         `The car reported a charge limit of ${
-          percent(vehicle.departure_target_soc)
+          percent(vehicle.charge_limit_soc)
         }, outside 0–100%.`,
       );
     }

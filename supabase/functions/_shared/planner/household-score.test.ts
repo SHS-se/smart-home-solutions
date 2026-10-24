@@ -438,14 +438,12 @@ Deno.test("curve-valued room recovery may buy more grid energy without a nominal
   infeasible(createHouseholdScorer(p).score(heat), "grid import limit");
 });
 
-Deno.test("EV readiness is anchored, graded and conditional on declared connection", () => {
+Deno.test("EV inventory is graded and charging requires declared connection", () => {
   const p = problem();
   p.plant.equipment = [ev()];
-  p.economics.services = [{
-    id: "departure",
-    kind: "event",
+  p.economics.terminal = [{
+    id: "readiness",
     store_id: "ev",
-    at: stamp(60),
     curve: {
       unit: "kwh",
       points: [{ at: 30, sek_per_unit: 5 }, { at: 38, sek_per_unit: 0.2 }, {
@@ -453,6 +451,9 @@ Deno.test("EV readiness is anchored, graded and conditional on declared connecti
         sek_per_unit: 0,
       }],
     },
+    coverage_from: stamp(60),
+    model_id: "remaining-range",
+    event_ids: [],
   }];
   const values: number[] = [];
   for (const initial of [30, 38, 39, 40]) {
@@ -460,9 +461,9 @@ Deno.test("EV readiness is anchored, graded and conditional on declared connecti
     assert(e.kind === "ev");
     e.state_kwh.initial = initial;
     const r = scored(createHouseholdScorer(p).score(idle(p)));
-    values.push(r.objective.service_sek);
-    assertEquals(r.intervals.map((v) => v.objective.service_sek), [0, 0, 0, 0]);
-    assertEquals(r.objective.service_sek, r.closing.service_sek);
+    values.push(r.objective.terminal_sek);
+    assertEquals(r.objective.service_sek, 0);
+    assertEquals(r.objective.terminal_sek, r.closing.terminal_sek);
   }
   assert(values[1] - values[0] > 10 * (values[3] - values[1]));
   assert(values[3] > values[2] && values[2] > values[1]);
@@ -475,23 +476,22 @@ Deno.test("EV readiness is anchored, graded and conditional on declared connecti
   infeasible(createHouseholdScorer(p).score(c), "disconnected");
   c.actions.ev[0] = { kind: "ev", current_a: 6 };
   infeasible(createHouseholdScorer(p).score(c), "unsupported EV current");
-  assert(p.economics.services[0].kind === "event");
-  assertEquals(p.economics.services[0].at, stamp(60));
+  assertEquals(p.economics.services, []);
 });
 
 Deno.test("replanning preserves event date, completion and closing ownership", () => {
   const p = problem();
-  p.plant.equipment = [ev()];
+  addThermal(p, "water", 38);
   p.economics.services = [{
-    id: "departure",
+    id: "water-use",
     kind: "event",
-    store_id: "ev",
+    store_id: "water",
     at: stamp(0),
-    curve: curve("kwh", 1),
+    curve: curve("celsius", 1),
   }];
   const r = scored(createHouseholdScorer(p).score(idle(p)));
   assertEquals(r.intervals[0].objective.service_sek, 38);
-  p.economics.completed_event_ids = ["departure"];
+  p.economics.completed_event_ids = ["water-use"];
   assertEquals(
     scored(createHouseholdScorer(p).score(idle(p))).objective.service_sek,
     0,
@@ -511,21 +511,21 @@ Deno.test("replanning preserves event date, completion and closing ownership", (
 
 Deno.test("terminal coverage cannot duplicate an in-horizon event or another terminal claim", () => {
   const p = problem();
-  p.plant.equipment = [ev()];
+  addThermal(p, "water", 38);
   p.economics.services = [{
-    id: "departure",
+    id: "water-use",
     kind: "event",
-    store_id: "ev",
+    store_id: "water",
     at: stamp(60),
-    curve: curve("kwh", 1),
+    curve: curve("celsius", 1),
   }];
   p.economics.terminal = [{
     id: "future",
-    store_id: "ev",
-    curve: curve("kwh", 1),
+    store_id: "water",
+    curve: curve("celsius", 1),
     coverage_from: stamp(60),
     model_id: "tail",
-    event_ids: ["departure"],
+    event_ids: ["water-use"],
   }];
   assertThrows(() => createHouseholdScorer(p), Error, "incompatible event");
   assert(p.economics.services[0].kind === "event");

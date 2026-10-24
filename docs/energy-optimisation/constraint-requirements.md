@@ -1,5 +1,16 @@
 # Requirements for planner and controller constraints
 
+User requirement, 24 October 2026: **EV departure time must not exist in the code.**
+Do not configure, discover, infer, parse, validate, serialize or schedule against
+an EV departure timestamp. There is no optional or null departure field and no
+compatibility path for one. EV charging is ongoing household range readiness,
+with the vehicle's `charge_limit_soc` as a physical cap. Plan the car as available
+throughout the forecast horizon regardless of present cable state. The generic
+service window ends at the forecast boundary; it is not a trip deadline. Only
+actual inability to execute scheduled charging belongs to execution-failure
+handling. Earlier optional, default, learned or future departure-time proposals
+are superseded by this requirement.
+
 User requirement, 17 September 2026. This decision supersedes earlier proposals
 for invented validity bounds or timestamp-based event ordering.
 
@@ -33,7 +44,7 @@ update as time going backwards.
 
 User requirement, 23 September 2026: realistic measured state beyond a desired
 target — a car above its charge limit, a pool warmer than its stop temperature,
-a pack below a raised cut-off, an empty car, a departure beyond the horizon — is
+a pack below a raised cut-off or an empty car — is
 neither infeasibility nor invalid input. A reading no device can produce isolates
 only its own device and is named for both interfaces; it never discards otherwise
 valid household planning. See

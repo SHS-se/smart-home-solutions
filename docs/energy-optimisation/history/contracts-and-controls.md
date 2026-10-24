@@ -384,11 +384,11 @@ The integration owns:
 A planned-request entity is unavailable when the planner has no authority.
 `0 W` is used only inside a valid binding slot to mean an explicit off request;
 this distinction prevents an outage from masquerading as a stop command. A
-discrete-current EV additionally exposes target, deadline-safe minimum and
+discrete-current EV additionally exposes target, scheduled minimum and
 hardware maximum amperes. The target is the expected forecast load; the local
 controller may move inside the envelope and must account for any resulting
-energy deficit before departure. Maximum recovery headroom remains available
-through the departure window even when the forecast target finishes early.
+energy deficit within the accepted charging opportunity. Maximum recovery
+headroom remains available through that opportunity even when the forecast target finishes early.
 
 The integration does **not** guess a missing installation rating, live state,
 price or temperature. A missing device-specific fact makes only that optional
@@ -869,7 +869,7 @@ Generate a plan:
 - when a new day-ahead supplier-price forecast becomes available;
 - at least hourly while optimisation is enabled;
 - when the integration reports a material state change such as EV arrival,
-  changed departure target, manual override, completed pool/boiler service,
+  changed range preference, manual override, completed pool/boiler service,
   battery SOC drift, or a forecast revision; and
 - after a device fault changes the eligible capability set.
 
@@ -913,7 +913,7 @@ All executors use the same precedence:
 1. physical/electrical safety, equipment hard limits, and island/emergency mode;
 2. explicit manual override;
 3. hard service commitments such as minimum room temperature, hot-water hygiene,
-   pool freeze protection, and EV departure minimum;
+   pool freeze protection, and EV range readiness;
 4. local reactive correction within the current plan policy;
 5. planned preference or target;
 6. baseline schedule when no optimisation request applies.
@@ -1281,7 +1281,7 @@ controller.**
 
 | Example | Belongs to | Why |
 |---|---|---|
-| "Charge the car to full before 07:00 tomorrow, we are driving" | Planner | This is a deadline and a target — `ev_battery.departure` and its target SOC already exist in the snapshot contract ([§5.3](contracts-and-controls.md#legacy-section-5.3)). Handling it locally would have the controller fighting a plan built without it |
+| "Increase the car range preference" | Planner | Ongoing range readiness changes planning intent within the vehicle charge cap. No EV departure timestamp, deadline request or optional/null departure field is permitted (24 October 2026 clarification) |
 | "Warmer in this room, now" | Controller | Inside the comfort band it is a bounded setpoint offset the executor already supports ([§7.4](contracts-and-controls.md#legacy-section-7.4)). It reaches the planner as observed state on the next snapshot |
 | "Vacation mode until the 14th" | Planner | A comfort schedule for a date range ([§5.5](contracts-and-controls.md#legacy-section-5.5)) is what the planner optimises against; expressing it as a standing local override would hide it from every forecast |
 | "Do not touch the sauna circuit" | Controller | An eligibility flag on one load. The planner never had it as an instrument |
@@ -1294,7 +1294,7 @@ Two rules across all of them:
   their reason are indistinguishable from defects, and they are the most common
   way a planner is blamed for a decision it was not allowed to make.
 - **A planner-class override reaches the planner through the snapshot, not
-  through the controller's own state.** The contract for a departure or a
+  through the controller's own state.** The contract for range readiness or a
   comfort schedule exists; a second private path for the same fact would mean
   two answers to the same question.
 

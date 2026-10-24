@@ -15,8 +15,8 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
   const meter = { statistic_id: 'test', suggested_load_type: 'fixed_full_load' as const, load_type: 'fixed_full_load' as const, planning_role: 'controllable' as const, control_type: 'setpoint' as const, profile_sample_count: 1000, forecast_w_by_slot: Array(288).fill(0) };
   const end = range?.end ?? '2026-10-26T00:00:00.000Z', start = range ? Date.parse(range.start) : Date.parse(end) - 72 * 3_600_000;
   captured.capabilities.ev = true;
-  captured.ev_battery = { name: 'Home car', connected: true, capacity_kwh: 75.6, soc: .79, departure_target_soc: .8,
-    charge_efficiency: .92, kwh_per_km: .16, available_from: null, departure: null, priority: 1, source_entity_ids: { connected: 'test', soc: 'test', target_soc: 'test', energy_remaining: null, charge_current: null } };
+  captured.ev_battery = { name: 'Home car', connected: true, capacity_kwh: 75.6, soc: .79, charge_limit_soc: .8,
+    charge_efficiency: .92, kwh_per_km: .16, available_from: null, priority: 1, source_entity_ids: { connected: 'test', soc: 'test', target_soc: 'test', energy_remaining: null, charge_current: null } };
   captured.grid = { import_limit_w: 17_200, export_limit_w: 13_200 };
   captured.device_physics = structuredClone({ battery: HOUSEHOLD.battery, car: HOUSEHOLD.car, pool: HOUSEHOLD.pool });
   captured.comfort = { pool: { target_c: 30.5 }, ev: { target_km: 300 } };

@@ -68,17 +68,16 @@ export const INITIAL = {
   carSoc: 0.73,                   // sensor.tesla_model_y_battery_level
   carChargeLimit: 0.80,           // number.tesla_model_y_charge_limit
   carChargeCurrentA: 5,           // number.tesla_model_y_charge_current, as set now
-  carDepartureDeadline: null,     // no departure time published - see NOTE below
 };
 
 /**
- * NOTE on the car deadline.
+ * NOTE on ongoing car readiness.
  *
- * There is no departure-time entity, so the plan has no deadline to work to.
+ * EV charging is continuous readiness with no departure-time input.
  * It charges the shortfall inside the BINDING window rather than deferring to a
  * sunnier advisory day, because deferring work on unpriced forecast while the
  * vehicle could leave at any time is a bet the planner is not entitled to make.
- * A real departure target would let it wait for the better solar on 08-11/08-12.
+ * The planner must balance readiness with later solar without a trip deadline.
  */
 
 // ---------------------------------------------------------------------------

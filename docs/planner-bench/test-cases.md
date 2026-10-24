@@ -255,9 +255,9 @@ setting.
   reachable unit below the target is worth the existing urgency multiplier
   times the positive import reference, converted to the device's physical
   units. Utility saturates at the target; free solar changes procurement cost,
-  not willingness. Pool comfort and a car without a departure count throughout
-  the horizon in service days. A declared car departure counts once at that
-  event. Bids read the marginal value along the physical future trajectory;
+  not willingness. Pool comfort and car readiness count throughout
+  the horizon in service days. No EV departure timestamp or dated-trip event
+  is permitted. Bids read the marginal value along the physical future trajectory;
   whole-run selection uses the same fixed service account. See
   [comfort target economics](../energy-optimisation/comfort-target-economics.md).
 - **The one control left** is a scale per store (default 1) that multiplies the

@@ -21,10 +21,9 @@ Deno.test("EV charging has no planner minimum runtime", () => {
       connected: true,
       capacity_kwh: 77.25,
       soc: 0.4,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.cable",
@@ -72,10 +71,9 @@ Deno.test("a half-charged car takes surplus rather than letting it be exported",
       connected: true,
       capacity_kwh: 75,
       soc: 0.55,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.charge_cable",
@@ -111,10 +109,9 @@ Deno.test("schema 6 never invents a charger control for a connected EV", () => {
       connected: true,
       capacity_kwh: 75,
       soc: 0.55,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.charge_cable",
@@ -157,10 +154,9 @@ Deno.test("the car's own charge limit caps what the plan buys for it", () => {
       connected: true,
       capacity_kwh: 75,
       soc: 0.55,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.charge_cable",
@@ -220,10 +216,9 @@ Deno.test("a car past its charge limit leaves the surplus alone", () => {
       connected: true,
       capacity_kwh: 75,
       soc: 0.99,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.charge_cable",
@@ -264,10 +259,9 @@ Deno.test("an unplugged car without charger controls reports missing planning st
       connected: false,
       capacity_kwh: 76.87,
       soc: 0.4,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.9,
       available_from: null,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.cable",
@@ -294,10 +288,9 @@ Deno.test("a single-phase charger is planned at the power its cable delivers", (
     connected: true,
     capacity_kwh: 76.87,
     soc: 0.3,
-    departure_target_soc: 0.8,
+    charge_limit_soc: 0.8,
     charge_efficiency: 0.9,
     available_from: "2026-08-10T08:00:00.000Z",
-    departure: null,
     priority: 3,
     source_entity_ids: {
       connected: "binary_sensor.cable",
@@ -369,6 +362,11 @@ Deno.test("unplugging preserves the car's planned energy while cable telemetry s
   snapshot.ev_battery!.connected = false;
   const unplugged = runRulesPlanner({ snapshot: snapshot, now: (now).toISOString(), price_archive: [] }).plan;
   assertEquals(unplugged.validation_errors, []);
+  assertEquals(unplugged.ev_battery!.charge_limit_soc, 0.8);
+  for (const plan of [connected, unplugged]) {
+    assert(!("departure" in plan.ev_battery!));
+    assert(!("departure_target_soc" in plan.ev_battery!));
+  }
   assertEquals(unplugged.ev_battery!.connected, false);
   assert(connected.plans.priority.slots.some(s=>s.ev_w>0),"connected fixture must charge");
   assertEquals(unplugged.plans.priority.slots.map(slot => slot.ev_w), connected.plans.priority.slots.map(slot => slot.ev_w));

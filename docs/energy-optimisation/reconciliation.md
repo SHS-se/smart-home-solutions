@@ -68,7 +68,7 @@ The earlier review's 30 findings were handled as follows. A resolved mathematica
 | 11. Peak/cap/tariff conflation | Separated all three, removed competing numeric defaults; approved ceiling/cost trade-off is D4 |
 | 12. Universal spreading/order | Conditioned scenarios on loads, prices, and constraints; no universal merit order |
 | 13. Wear semantics | Removed no-wear inference and annual saving extrapolation as requirements; parameter meaning/value is D3 |
-| 14. EV and policy ownership | Confirmed approved customer intent; automatic learning is suggestive; absent-departure/readiness conflict is D2 |
+| 14. EV and policy ownership | Confirmed approved customer intent; automatic learning is suggestive; continuous EV readiness and the prohibition of departure-time inputs are D2 |
 | 15. Residual | Corrected planned/confirmed delta arithmetic with worked examples |
 | 16. Response-time ranking | Replaced ambiguous ratio with response eligibility, removable power, and service cost; restoration uses current grant priorities |
 | 17. Conflicting guarantees | Made safety precedence explicit and bounded claims to actual controllability; commissioned grid scope is D4 |

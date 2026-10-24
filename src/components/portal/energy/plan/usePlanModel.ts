@@ -64,9 +64,9 @@ export function usePlanModel(
       homeSoc: slot.battery_soc * 100,
       homeTarget: plan.policy.battery_end_of_solar_target_soc * 100,
       evSoc: slot.ev_soc === null ? null : slot.ev_soc * 100,
-      evTarget: plan.ev_battery?.departure_target_soc == null
+      evTarget: plan.ev_battery?.charge_limit_soc == null
         ? null
-        : plan.ev_battery.departure_target_soc * 100,
+        : plan.ev_battery.charge_limit_soc * 100,
       evConnected: slot.ev_connected,
       // Charging and export leave the house. The storage chart reads them as
       // stored-versus-released, so they keep their own sign there; the power

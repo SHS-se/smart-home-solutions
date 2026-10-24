@@ -19,11 +19,10 @@ function household(
       connected: true,
       capacity_kwh: 75,
       soc: 0.55,
-      departure_target_soc: 0.8,
+      charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       kwh_per_km: 0.16,
       available_from: snapshot.slots[0].start,
-      departure: null,
       priority: 3,
       source_entity_ids: {
         connected: "binary_sensor.ev_connected",
@@ -151,8 +150,8 @@ Deno.test("a device Home Assistant already left out stays named, and a named dev
 });
 
 Deno.test("isolation is idempotent and refuses a malformed issue list", () => {
-  const once = isolateMeasurements(household({ soc: 1.05, departure_target_soc: 8 }));
-  assertEquals(once.measurement_issues!.map((issue) => issue.field), ["soc", "departure_target_soc"]);
+  const once = isolateMeasurements(household({ soc: 1.05, charge_limit_soc: 8 }));
+  assertEquals(once.measurement_issues!.map((issue) => issue.field), ["soc", "charge_limit_soc"]);
   assertEquals(isolateMeasurements(once), once);
   const clean = household();
   assertEquals(isolateMeasurements(clean), clean);

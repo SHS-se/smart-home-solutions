@@ -16,10 +16,10 @@ export function inferredEvAvailability(demand: readonly number[], independentSoc
 export function recordedTrips(demand: readonly number[], count: number) {
   if (demand.length !== count || demand.some(v => !Number.isFinite(v) || v < 0)) throw new Error('Invalid recorded EV demand');
   const next = new Int32Array(count);
-  let departure = count;
+  let nextTrip = count;
   for (let i = count - 1; i >= 0; i--) {
-    next[i] = departure;
-    if (demand[i] > 0) departure = i;
+    next[i] = nextTrip;
+    if (demand[i] > 0) nextTrip = i;
   }
   return { next };
 }

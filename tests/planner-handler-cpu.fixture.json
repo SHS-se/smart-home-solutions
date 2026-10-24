@@ -3397,7 +3397,6 @@
       "name": "CPU fixture device",
       "priority": 3,
       "connected": false,
-      "departure": null,
       "kwh_per_km": 0.16,
       "capacity_kwh": 76.028,
       "available_from": "2026-10-14T11:00:00+00:00",
@@ -3409,7 +3408,7 @@
         "charge_current": "number.cpu_fixture_28",
         "energy_remaining": "sensor.cpu_fixture_29"
       },
-      "departure_target_soc": 0.8
+      "charge_limit_soc": 0.8
     },
     "pool_model": {
       "hardware": {

@@ -22,7 +22,6 @@ function chargingHouse() {
   const snapshot = dispatchedEvSnapshot();
   snapshot.slots = snapshot.slots.slice(0, 8).map((slot, i) => ({...slot, pv_forecast_w: 0, base_load_forecast_w: 500, import_price_sek_per_kwh: i < 4 ? .1 : 1.5}));
   snapshot.captured_at = snapshot.slots[0].start;
-  snapshot.ev_battery!.departure = snapshot.slots[4].start;
   snapshot.ev_battery!.soc = .48;
   snapshot.battery = {capacity_kwh: 18.08, soc: .5, min_soc: .05, max_soc: 1,
     charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95};

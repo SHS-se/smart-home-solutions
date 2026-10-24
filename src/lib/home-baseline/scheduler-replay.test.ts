@@ -71,7 +71,7 @@ Deno.test('a partial final midnight never fabricates a one-hour native commitmen
  assertEquals(r.series.start.length,5);assertEquals(requests.length,2);
  assertEquals(requests[1].slots.length,3);assertEquals(requests[1].accepted,null);assertEquals(requests[1].locked_through_seconds,0);
 });
-Deno.test('EV departure masks only car availability, including midnight trips; pool/battery retain the full forecast',()=>{
+Deno.test('Recorded EV trips mask only car availability, including midnight trips; pool/battery retain the full forecast',()=>{
  const rows=baselineFixture({start:'2026-10-10T12:00:00Z',end:'2026-10-13T12:00:00Z'});
  rows.actual.slice(41,81).forEach(r=>r.ev_soc=.75);
  rows.actual.slice(81).forEach(r=>r.ev_soc=.70);

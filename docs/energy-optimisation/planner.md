@@ -67,7 +67,7 @@ minimise:
   − optional service utility − continuation value
 ```
 
-Grid energy is in kWh per slot: `energy_kwh = power_w / 1000 × 0.25`. Energy prices are SEK/kWh; all objective contributions are SEK. If service utility is a rate, integrate it over time. A visit/departure utility is counted at its usage event, not once for every preceding quarter.
+Grid energy is in kWh per slot: `energy_kwh = power_w / 1000 × 0.25`. Energy prices are SEK/kWh; all objective contributions are SEK. If service utility is a rate, integrate it over time. A non-EV usage-event utility is counted at its usage event, not once for every preceding quarter.
 
 `U(x)` is total utility in SEK. A curve point expressed in SEK per state unit describes **marginal utility**, not total utility. Integrating those marginal values gives total utility. A zero marginal value means another unit has no benefit, not that all previously stored energy is worthless. Negative marginal utility would represent disutility; the existing non-negative curve type does not express that. Overtemperature limits must not be inferred from such a curve.
 

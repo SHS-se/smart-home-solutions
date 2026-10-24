@@ -119,7 +119,7 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
       pool_heater: replayHeaterState(pool),
       ev: {
         soc: reading(car?.soc, DEFAULT_START_STATE.ev_soc, 'ev_soc'),
-        target_soc: num(car?.departure_target_soc) ?? DEFAULT_START_STATE.ev_target_soc,
+        target_soc: num(car?.charge_limit_soc) ?? DEFAULT_START_STATE.ev_target_soc,
       },
     },
     ...(unread.length ? { start_state_unread: unread } : {}),

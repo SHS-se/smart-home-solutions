@@ -16,7 +16,7 @@
 | Class | Examples | Source/owner | Can be learned? |
 |---|---|---|---|
 | Hard installation | Fuse/import/export limit, rated power, battery min/max SOC, inverter modes, actuator relationship | Staff commissioning + integration verification | No |
-| Customer policy | Comfort targets/ranges, EV target SOC and optional departure, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
+| Customer policy | Comfort targets/ranges, EV range readiness and vehicle charge cap, quiet hours, reserve preference | Customer/staff in portal | No; suggestions only |
 | Live state | SOC, temperatures, presence, cycle complete, override, availability, work completed | Integration from HA | No substitution |
 | Forecast | PV, outdoor temperature, base load, import/export prices | Integration adapters + server models; outdoor temperature may also be read from met.no server-side when the home's adapter falls short ([§9.1.1](models-and-delivery.md#legacy-section-9.1.1)) | Bias/error can be learned |
 | Device dynamics | COP, modulation, startup, efficiency, thermal capacity/loss, power curve | Manufacturer profile, then measured calibration | Yes, within validated bounds |
@@ -157,7 +157,7 @@ Three properties keep this from eroding integration ownership:
 - presence/cable state, SOC source and freshness, and usable remaining energy;
 - a mapped EV energy meter whenever EV scheduling is enabled, so historical EV
   demand can be removed from base load before a new EV service is added;
-- target SOC, optional departure deadline (rolling-horizon end when absent),
+- vehicle charge cap and ongoing range readiness (no departure time),
   and urgent threshold;
 - charger current steps and vehicle limit; three 230 V phases and 92% charging
   efficiency are integration invariants, while usable capacity is derived from
@@ -446,9 +446,8 @@ states, and all reason codes.
   the unidentified Shelly channel;
 - battery capacity/power/SOC sources are verified; usable-vs-rated capacity,
   efficiency calibration, reserve policy and Sigen write-mode semantics remain;
-- EV charge-current granularity and live power are verified; an optional
-  explicit departure timestamp and SOC reliability remain commissioning
-  decisions;
+- EV charge-current granularity and live power are verified; SOC reliability remains a commissioning
+  decision; departure timestamps are explicitly prohibited;
 - boiler tank state, hard temperature bounds, losses, and hygiene policy;
 - pool water state, cover/season policy, loss model, filtration requirement,
   and hard bounds;

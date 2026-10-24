@@ -109,7 +109,7 @@ The experimental modes are confined to the benchmark:
   remaining month and retain the normal work grant.
 
 The native ABI has no future EV energy withdrawals. The replay applies every
-observed trip externally and masks car availability after its next departure.
+observed trip externally and masks car availability after its next recorded trip (offline historical replay only; no live departure-time input).
 It must replan after homecoming from the depleted state. Removing those replans
 would change driving-demand handling; this experiment keeps them.
 

@@ -1378,7 +1378,7 @@ energy*.
 
 The second attempt was wrong for a better reason. **The hardware enforces a
 state of charge, not a range.** `max_state` already derives from it
-(`departure_target_soc × capacity ÷ kWh-per-km`, recomputed every solve), so
+(`charge_limit_soc × capacity ÷ kWh-per-km`, recomputed every solve), so
 the cap is already seasonal. But the kilometres in one SOC move a long way
 between January and July, so restating a *threshold* in kilometres against
 today's reachable range would bake a season into a permanent setting — and

@@ -23,7 +23,7 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
   const approved = resolveRulePolicy(criteria);
   const problem: ReadyProblem = { ...source, ...approved, work_grant: runtime.recipe.work_grant, recipe: builderRecipe(runtime.recipe),
     ev_battery_supply_allowed: false, pool_stop_c: input.settings.pool_model?.hardware?.stop_c ?? null,
-    targets: { ...source.targets, pool_c: source.pool_store ? comfort!.pool!.target_c : null, ev_km: source.car ? comfort!.ev!.target_km : null, ev_limit_kwh: source.car ? input.settings.ev_battery!.departure_target_soc * source.car.capacity_kwh : null },
+    targets: { ...source.targets, pool_c: source.pool_store ? comfort!.pool!.target_c : null, ev_km: source.car ? comfort!.ev!.target_km : null, ev_limit_kwh: source.car ? input.settings.ev_battery!.charge_limit_soc * source.car.capacity_kwh : null },
     limits: { ...source.limits, battery_export_enabled: !!source.battery && policy.battery_export_enabled,
       battery_export_reserve_kwh: source.battery ? policy.battery_export_reserve_soc * source.battery.capacity_kwh : 0,
       battery_export_min_price: policy.battery_export_min_price_sek_per_kwh } };
@@ -41,8 +41,8 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
       const horizon: ReadyProblem = { ...problem, initial: state,
         slots: problem.slots.slice(i, i + 288).map((s, n) => ({ ...s, ev_available: s.ev_available && i + n < trips.next[i], start_seconds: n * 900 })),
         accepted: null, locked_through_seconds: 0 };
-      // Native ABI has no future EV withdrawals. Like live departure handling,
-      // stop car availability at the next trip, retaining 72h for pool/battery.
+      // Historical replay alone uses observed trip withdrawals to stop car
+      // availability at the next trip, retaining 72h for pool/battery.
       // After homecoming, replan from the depleted state with the prior committed hour.
       if (plannedAt >= 0 && horizon.slots.length >= 4 && i - plannedAt + 4 <= selected.length) {
         horizon.accepted = selected.slice(i - plannedAt, i - plannedAt + 4);

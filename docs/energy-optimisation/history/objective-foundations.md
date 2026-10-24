@@ -131,7 +131,7 @@ Every deleted setting follows from it:
 | Battery export minimum price | Export whenever the export price exceeds that marginal value |
 | Battery reserve SOC | Outage insurance and peak insurance, both priced ([§8.5](objective-foundations.md#legacy-section-8.5), [§8.6](objective-foundations.md#legacy-section-8.6)) |
 | Pool daily kWh requirement | Pool state, its loss model and its utility curve |
-| EV departure time | Learned departure distribution plus the range curve |
+| EV departure time | Removed without replacement: no configured, learned or inferred departure timestamp is permitted; use ongoing range readiness |
 
 "Roughly 10–12 kWh carries a summer night" must never be entered as a number. It
 is the point where the marginal value of the battery falls away, and it should
@@ -350,8 +350,7 @@ and the surviving comparison is plan versus measured counterfactual ([§8.10](ob
 
 **Learned from the home:** PV forecast error by lead time (the calibration data
 is already collected); base load against season, outdoor temperature, solar gain
-and occupancy ([§1.5.4](forecast-and-comfort.md#legacy-section-1.5.4) — occupancy remains the open one); trip distances and
-departure times; pool and hot-water usage; EV kWh/km against temperature;
+and occupancy ([§1.5.4](forecast-and-comfort.md#legacy-section-1.5.4) — occupancy remains the open one); historical trip distances and energy consumption; pool and hot-water usage; EV kWh/km against temperature;
 fitted room and pool thermal responses.
 
 Utility curves also need a cold start. Ship defaults, then fit from **revealed

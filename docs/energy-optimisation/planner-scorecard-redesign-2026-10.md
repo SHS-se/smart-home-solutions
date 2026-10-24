@@ -1,5 +1,16 @@
 # Planner redesign for evolving scorecards and faster replanning
 
+User requirement, 24 October 2026: **EV departure time must not exist in the code.**
+Do not configure, discover, infer, parse, validate, serialize or schedule against
+an EV departure timestamp. There is no optional or null departure field and no
+compatibility path for one. EV charging is ongoing household range readiness,
+with the vehicle's `charge_limit_soc` as a physical cap. Plan the car as available
+throughout the forecast horizon regardless of present cable state. The generic
+service window ends at the forecast boundary; it is not a trip deadline. Only
+actual inability to execute scheduled charging belongs to execution-failure
+handling. Earlier optional, default, learned or future departure-time proposals
+are superseded by this requirement.
+
 Proposed design, 6 October; revised 7 October 2026 after independent GPT-6 Astra (high effort) and Claude Opus (high effort) reviews of the hosted Edge execution, forecast, model and command-lock requirements. Compatibility decisions clarified by the user on 7 October: remove cost-value curves, their related UI and the entire “Build a plan” schedule editor; source pool heater settings independently of comfort preferences. Design review only; product code, deployed planning and HA behaviour are unchanged.
 
 Mandatory amendment, 23 October 2026: [execution-failure replanning and selective

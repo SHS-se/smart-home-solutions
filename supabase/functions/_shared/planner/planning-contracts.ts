@@ -116,7 +116,8 @@ export interface EvBatteryInput {
   connected: boolean;
   capacity_kwh: number;
   soc: number;
-  departure_target_soc: number;
+  /** Physical vehicle charge cap; independent of household range readiness. */
+  charge_limit_soc: number;
   charge_efficiency: number;
   /**
    * The vehicle's own kWh per kilometre, when the installation states one.
@@ -128,7 +129,6 @@ export interface EvBatteryInput {
    */
   kwh_per_km?: number | null;
   available_from: string | null;
-  departure: string | null;
   priority: number;
   source_entity_ids: {
     connected: string;

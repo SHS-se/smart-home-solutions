@@ -44,7 +44,7 @@ Each scenario records balance, purchase/export cost, objective components, impor
 | Sunny today, cloudy tomorrow | Preserve future useful state when its value exceeds the cost and losses of storing it |
 | Cloudy today, sunny tomorrow | Avoid unnecessary expensive early energy when later feasible supply can meet the same service |
 | EV below urgent state | Price readiness loss through the approved curve; no implied hard everyday SOC floor or fixed priority |
-| EV without explicit departure | Exercise the chosen readiness policy, including repeated replans so the target cannot silently recede forever |
+| EV ongoing readiness without a departure-time interface | Exercise the chosen readiness policy, including repeated replans so the target cannot silently recede forever |
 | EV preference above SOC cap | Report conflict; never overfill or silently redefine household preference |
 | Flat-price charging | Under enabled shaping/start costs, avoid gratuitous peaks or switching; do not impose exact spreading where constraints make it inferior |
 | Negative/extreme prices | Correct signs, opportunity costs, storage bounds, finite price-shape arithmetic, and no prohibited simultaneous flows |
@@ -74,7 +74,7 @@ These are requirements for the target [economic policy](controller-policy.md) an
 | Fixed-tail counterexample | A reduction with coupled recovery/rescheduling is correctly valued; frozen future actions must demonstrably give a different/worse answer in a fixture |
 | Cost ownership | Current grid/export cost, wear and transitions plus conditional future delta reproduce full objective differences at anchors; no duplicated start, battery opportunity value or terminal benefit |
 | Cell reference becomes unavailable | EV unplug or mode change cannot require subtracting an infeasible nominal plan; use a named common feasible cell reference, otherwise split/narrow/reject coverage |
-| Partial current quarter | Recompute remaining-segment energy and value, carry continuing runs/departures beyond it, and distinguish segment end from execution expiry |
+| Partial current quarter | Recompute remaining-segment energy and value, carry continuing runs/obligations beyond it, and distinguish segment end from execution expiry |
 | Bounded compiler | Deterministic limits on solves, alternatives, conditions, wire size and HA work; report search limit/omitted coverage separately from infeasibility |
 | Approximation and interpolation | Held-out joint solves measure cost/ranking error at tested states; any certified regional bound needs separate structural/mathematical evidence. No economic extrapolation or interpolation used as proof of hard physical feasibility |
 | Non-divisible coupled actions | Exhaustive small cases show joint selection beats an incorrect greedy ranking and does not award shared recovery or compressor capacity twice |

@@ -99,7 +99,7 @@ Solar charging and battery export have explicit allocations, checked against PV,
 load, grid balance and source/destination permissions. EV current steps and
 connection assumptions are explicit. EV predictions are conditional model
 outcomes, never achieved service. This first EV model covers charging from an
-initial state; it does not yet model trip withdrawals or departure/return cycles.
+initial state; it does not yet model historical trip withdrawals or return cycles; EV departure-time inputs are prohibited.
 State is stored in kWh or Celsius; this version requires resolved curves in those units. No curve is rescaled to meet a cap.
 
 The objective is purchases minus export, plus gross storage wear, heat-pump

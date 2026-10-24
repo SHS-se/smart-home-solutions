@@ -22,7 +22,7 @@ const replay = (snapshot: Record<string, unknown> = {}) => ({
       import_price_sek_per_kwh: i < 60 || i === 70 ? 1.5 : null, export_price_sek_per_kwh: i < 60 || i === 70 ? 0.5 : null,
     })),
     pv_calibration: { correction_factor_by_lead_day: [0.8, 0.9, 1, 1] },
-    battery: { soc: 0.4 }, pool: { water_temperature_c: 29.6 }, ev_battery: { soc: 0.8, connected: true, departure_target_soc: 0.8 },
+    battery: { soc: 0.4 }, pool: { water_temperature_c: 29.6 }, ev_battery: { soc: 0.8, connected: true, charge_limit_soc: 0.8 },
     device_models: [
       { key: 'sensor.hot_water_energy', category: 'hot_water', forecast_w_by_slot: quarters(() => 150) },
       { key: 'sensor.pool_room_floor_heater_energy', category: 'pool_heating', forecast_w_by_slot: quarters(() => 50) },
@@ -79,7 +79,7 @@ const idle = (): Decisions => ({ pool_w: quarters(() => 0), ev_w: quarters(() =>
 
 Deno.test('the referee prices a plan at real prices, whatever the planner believed', () => {
   // The car below its 80 % charge limit, so it can take the charge.
-  const c = loadCase(caseFromReplay(replay({ ev_battery: { soc: 0.5, connected: true, departure_target_soc: 0.8 } })).data, recorded());
+  const c = loadCase(caseFromReplay(replay({ ev_battery: { soc: 0.5, connected: true, charge_limit_soc: 0.8 } })).data, recorded());
   // Idle: 600 W of load against 800/900/1000 W of solar exports the difference at 0.5 kr.
   const nothing = referee(c, HOUSEHOLD, TARGETS, idle());
   assertAlmostEquals(nothing.cost_sek, -(200 * 97 + 300 * 96 + 400 * 95) * 0.5 * 0.25 / 1000, 1e-3);

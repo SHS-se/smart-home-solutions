@@ -13,7 +13,7 @@ const DEVICES: Record<MeasurementIssue['device'], [string, string]> = {
 /** Readings the planner and Home Assistant name, with the unit each is shown in. */
 const FIELDS: Record<string, { sv: string; en: string; format: (value: number) => string }> = {
   soc: { sv: 'laddnivån', en: 'the state of charge', format: (v) => `${Math.round(v * 1000) / 10} %` },
-  departure_target_soc: { sv: 'laddgränsen', en: 'the charge limit', format: (v) => `${Math.round(v * 1000) / 10} %` },
+  charge_limit_soc: { sv: 'laddgränsen', en: 'the charge limit', format: (v) => `${Math.round(v * 1000) / 10} %` },
   capacity_kwh: { sv: 'den härledda batterikapaciteten', en: 'the derived battery capacity', format: (v) => `${Math.round(v * 10) / 10} kWh` },
   energy_remaining: { sv: 'återstående energi', en: 'the remaining energy', format: (v) => `${Math.round(v * 10) / 10} kWh` },
   water_temperature_c: { sv: 'vattentemperaturen', en: 'the water temperature', format: (v) => `${Math.round(v * 10) / 10} °C` },
