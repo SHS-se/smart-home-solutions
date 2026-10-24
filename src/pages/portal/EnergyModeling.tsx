@@ -11,6 +11,7 @@ import HomeSelector from '@/components/portal/energy/HomeSelector';
 import ComfortSchedulesTab from '@/components/portal/energy/ComfortSchedulesTab';
 import HomeTimeZoneProvider from '@/components/portal/energy/HomeTimeZoneContext';
 import SetupRecords from '@/components/portal/energy/SetupRecords';
+import PlanningLog from '@/components/portal/energy/PlanningLog';
 import { Button } from '@/components/ui/button';
 
 interface EnergyModelingProps {
@@ -18,11 +19,11 @@ interface EnergyModelingProps {
   isStaffView?: boolean;
 }
 
-type EnergyTab = 'savings' | 'plan' | 'comfort' | 'setup';
+type EnergyTab = 'savings' | 'plan' | 'comfort' | 'setup' | 'log';
 /** Everything the planner needs to be told: what it controls, how the house behaves, what was billed, what changed. */
 type SetupSection = Exclude<PlanSection, 'plan'> | 'data' | 'changes';
 
-const ENERGY_TABS = new Set<EnergyTab>(['savings', 'plan', 'comfort', 'setup']);
+const ENERGY_TABS = new Set<EnergyTab>(['savings', 'plan', 'comfort', 'setup', 'log']);
 const SETUP_SECTIONS = new Set<SetupSection>(['devices', 'thermal', 'data', 'changes']);
 
 /**
@@ -114,6 +115,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
     { key: 'plan', label: t('Plan', 'Plan') },
     { key: 'comfort', label: t('Komfort', 'Comfort') },
     { key: 'setup', label: t('Inställningar', 'Setup') },
+    { key: 'log', label: t('Logg', 'Log') },
   ];
   const setupSections: Array<{ key: SetupSection; label: string }> = [
     { key: 'devices', label: t('Enheter', 'Devices') },
@@ -143,7 +145,7 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
       <Tabs value={tab} onValueChange={value => setTab(value as EnergyTab, value === 'setup' ? setupSection : undefined)}>
         <TabsList className="h-auto w-full justify-start overflow-x-auto">
           {tabs.map(item => (
-            <TabsTrigger key={item.key} value={item.key}>{item.label}</TabsTrigger>
+            <TabsTrigger key={item.key} value={item.key} className="min-h-11 min-w-11 px-2 text-xs sm:px-3 sm:text-sm">{item.label}</TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
@@ -172,6 +174,8 @@ const EnergyModeling: React.FC<EnergyModelingProps> = ({ customerId: propCustome
       <HomeTimeZoneProvider customerId={resolvedCustomerId} homeId={selectedHomeId}>
         {tab === 'savings' ? (
           <SavingsTab customerId={resolvedCustomerId} homeId={selectedHomeId} homeCount={homeCount} />
+        ) : tab === 'log' ? (
+          <PlanningLog homeId={selectedHomeId} />
         ) : tab === 'comfort' ? (
           <ComfortSchedulesTab customerId={resolvedCustomerId} homeId={selectedHomeId} />
         ) : tab === 'setup' && (setupSection === 'data' || setupSection === 'changes') ? (

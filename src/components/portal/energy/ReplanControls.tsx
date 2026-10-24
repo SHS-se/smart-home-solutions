@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import ReplanHistory from './ReplanHistory';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -105,6 +104,5 @@ export default function ReplanControls({ homeId, replan, refreshing, onReplanCha
           </AlertDescription>
         </Alert>
       )}
-    <ReplanHistory homeId={homeId} />
   </>;
 }

@@ -2615,6 +2615,54 @@ export type Database = {
           },
         ]
       }
+      energy_planning_log: {
+        Row: {
+          id: string
+          sequence: number
+          home_id: string
+          customer_id: string
+          event_key: string
+          occurred_at: string
+          last_seen_at: string
+          kind: string
+          severity: string
+          state: string
+          reason: Json
+          details: Json
+          occurrences: number
+        }
+        Insert: {
+          id?: string
+          sequence?: never
+          home_id: string
+          customer_id: string
+          event_key: string
+          occurred_at?: string
+          last_seen_at?: string
+          kind: string
+          severity: string
+          state: string
+          reason: Json
+          details?: Json
+          occurrences?: number
+        }
+        Update: {
+          id?: string
+          sequence?: never
+          home_id?: string
+          customer_id?: string
+          event_key?: string
+          occurred_at?: string
+          last_seen_at?: string
+          kind?: string
+          severity?: string
+          state?: string
+          reason?: Json
+          details?: Json
+          occurrences?: number
+        }
+        Relationships: []
+      }
       energy_replan_events: {
         Row: {
           id: string
@@ -5231,6 +5279,10 @@ export type Database = {
       }
       prune_energy_optimisation_data: {
         Args: { p_home_id: string }
+        Returns: undefined
+      }
+      record_energy_planning_activity: {
+        Args: { p_home_id: string; p_customer_id: string; p_activity: Json }
         Returns: undefined
       }
       request_energy_optimisation_replan: {

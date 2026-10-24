@@ -1,3 +1,4 @@
+import { recordPlanningActivity } from '../_shared/planning-log.ts';
 import { readPlannerLocation, withPlannerLocation } from "../_shared/home-planning-location.ts";
 import { prepareActualUpload } from "../_shared/actual-upload.ts";
 import { mergePlanningWarnings, planningWarning } from "../_shared/planner/planning-warnings.ts";
@@ -1826,6 +1827,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     const { data: recommendationState, error: recommendationError } = await supabase.from('energy_optimisation_current')
       .select('replan_recommendations').eq('home_id', auth.homeId).maybeSingle();
     if (recommendationError) throw new Error(recommendationError.message);
+    EdgeRuntime.waitUntil(recordPlanningActivity(supabase, auth.homeId, auth.customerId, {
+      receipt_id: requestId, source: 'home_assistant',
+      counts: { actuals: actualRows.length, devices: deviceSlotRows.length, thermal: thermalRows.length,
+        pool: poolRows.length, prices: priceRows.length }, warnings: uploadedActuals.warnings,
+    }));
     return json({
       replan_recommendations: recommendationState?.replan_recommendations ?? [],
       planning_warnings: uploadedActuals.warnings,

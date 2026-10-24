@@ -910,3 +910,94 @@ Deno.test('audit migration lets an already admitted job finish while retaining h
     await assertRejects(()=>rpc(db,'accept_energy_planning_job',rulesSubmission(other)),Error,'explicit audit reason');
   } finally {await db.close();}
 });
+
+async function loggedDatabase() {
+  const db = await auditedDatabase();
+  await db.exec(await migration('20261024210000_curated_planning_log'));
+  return db;
+}
+type LogEntry = {sequence:number;kind:string;state:string;severity:string;reason:Record<string,unknown>;
+  details:{counts?:Record<string,number>;calculation_ms?:number};occurrences:number};
+const logEntries = async (db:PGlite) => (await db.query<LogEntry>('SELECT * FROM energy_planning_log ORDER BY sequence DESC')).rows;
+
+Deno.test('readable log collapses a complete replan lifecycle, preserving trigger and long calculation duration', async () => {
+  const db=await loggedDatabase();
+  try {
+    await insertCurrent(db);
+    const origin={source:'portal',reason:'manual_replan_button',actor_id:home};
+    const id=(await db.query<{id:string}>('SELECT request_energy_optimisation_replan($1,$2) id',[home,origin])).rows[0].id;
+    const accepted=await rpc<Receipt>(db,'accept_energy_planning_job',rulesSubmission(snapshot,{reference_plan_id:other,
+      observed_replan_request_id:id,replan_request_id:id,completion_basis:'home_assistant_ack'}));
+    const owner=(await attemptClaim(db,accepted.job_id))!;
+    // Completion is still recent activity when a durable job outlives the log window.
+    await db.exec("UPDATE energy_planning_log SET occurred_at=now()-interval '73 hours'");
+    await rpc(db,'publish_energy_planning_job',{...attemptIdentity(owner),current:currentRow(),
+      run:{...runRow(),summary:{calculation_ms:42000}}});
+    await db.query('SELECT acknowledge_energy_optimisation_plan($1,$2,$3,9::smallint,$4,now(),$5,$6,$7)',
+      [home,plan,snapshot,'accepted','test','log-ack',null]);
+    const rows=await logEntries(db);
+    assertEquals(rows.length,1);
+    assertEquals(rows[0].state,'accepted');
+    assertEquals(rows[0].reason,origin);
+    assertEquals(rows[0].details.calculation_ms,42000);
+    assert(rows[0].sequence>1,'a newly completed old job gets a fresh position in recent history');
+    assertEquals((await auditEvents(db)).length,5,'condensing the readable log never removes audit evidence');
+  } finally {await db.close();}
+});
+
+Deno.test('readable log groups 96 uploads and repeated warnings, deduplicates retries and enforces 72-hour ownership and retention', async () => {
+  const db=await loggedDatabase();
+  try {
+    const activity=(id:string)=>({receipt_id:id,source:'home_assistant',counts:{actuals:8,thermal:12},
+      warnings:[{code:'sensor_unavailable',scope:'pool',severity:'warning',message:'Pool sensor unavailable',consequence:'Forecast needs attention'}]});
+    const send=(id:string)=>db.query('SELECT record_energy_planning_activity($1,$2,$3)',[home,home,activity(id)]);
+    // One hour bucket, one warning bucket, even for a busy backfill session.
+    for(let i=0;i<96;i++) await send('upload-'+i);
+    await send('upload-95');
+    const rows=await logEntries(db);
+    assertEquals(rows.length,2);
+    const exchange=rows.find(r=>r.kind==='exchange')!;
+    assertEquals(exchange.occurrences,96);
+    assertEquals(exchange.details.counts,{actuals:768,thermal:1152});
+    assertEquals(rows.find(r=>r.kind==='warning')!.occurrences,96);
+    await db.exec(`SET ROLE authenticated; SET test.customer='${other}'`);
+    assertEquals(await logEntries(db),[]);
+    await db.exec(`SET test.customer='${home}'`);
+    assertEquals((await logEntries(db)).length,2);
+    await assertRejects(()=>send('forbidden'),Error,'permission denied');
+    await assertRejects(()=>db.exec('DELETE FROM energy_planning_log'),Error,'permission denied');
+    await db.exec('RESET ROLE');
+    await db.exec("UPDATE energy_planning_log SET occurred_at=now()-interval '72 hours 1 second'");
+    await db.exec(`SET ROLE authenticated; SET test.customer='${home}'`);
+    assertEquals(await logEntries(db),[],'expired rows are hidden even before cleanup runs');
+    await db.exec('RESET ROLE');
+    await db.exec('SELECT private.prune_energy_planning_log()');
+    assertEquals(await logEntries(db),[]);
+    assertEquals((await db.query<{n:number}>("SELECT count(*)::int n FROM cron.schedules WHERE name='prune-energy-planning-log'")).rows[0].n,1);
+    await assertRejects(()=>db.query('SELECT record_energy_planning_activity($1,$2,$3)',[home,home,
+      {receipt_id:'bad',source:'home_assistant',counts:{actuals:-1}}]),Error,'nonnegative integers');
+  } finally {await db.close();}
+});
+
+Deno.test('healthy HA heartbeats are silent and unchanged runtime problems do not flood the log', async () => {
+  const db=await loggedDatabase();
+  try {
+    await insertCurrent(db);
+    for(let i=0;i<10;i++) await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1',[
+      {state:'ready',last_error:null,reason:'Ready',observed_at:String(i)}]);
+    assertEquals(await logEntries(db),[]);
+    for(let i=0;i<10;i++) await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1',[
+      {state:'invalid',last_error:'Plan could not be read',reason:'Invalid plan',observed_at:String(i)}]);
+    const rows=await logEntries(db);
+    assertEquals(rows.length,1);
+    assertEquals(rows[0].occurrences,1);
+    assertEquals(rows[0].severity,'error');
+    assertEquals(rows[0].reason.message,'Plan could not be read');
+    for(let i=0;i<5;i++) await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1',[
+      {state:'invalid',last_error:'Plan could not be read [request_id='+i+']',reason:'Invalid plan'}]);
+    assertEquals((await logEntries(db)).length,1,'request identities do not manufacture distinct error entries');
+    await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1',[
+      {state:'invalid',last_error:'Required grid sensor unavailable',reason:'Missing reading'}]);
+    assertEquals((await logEntries(db)).length,2,'different problems retain separate explanations');
+  } finally {await db.close();}
+});

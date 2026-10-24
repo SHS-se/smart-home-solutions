@@ -22,6 +22,8 @@ export function replanAuditReason(value: Json, t: Translate): string {
   }).join(' ');
   const code = String(reason.reason ?? reason.code ?? 'unknown');
   const labels: Record<string, [string, string]> = {
+    no_accepted_plan: ['Första planen.', 'First plan.'],
+    new_published_prices: ['Nya elpriser.', 'New electricity prices.'],
     manual_replan_button: ['Begärd med portalens knapp.', 'Requested with the portal button.'],
     local_manual_request: ['Begärd med appens knapp.', 'Requested with the app button.'],
     controller_source_selected: ['Styrenhetens källa ändrades.', 'Controller source was changed.'],

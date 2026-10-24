@@ -79,7 +79,7 @@ const idle: ReplanColumns = {
  * next read returns, which is the whole behaviour being checked.
  */
 interface MockPlanState {
-  audit?: Array<Record<string, unknown>>;
+  log?: Array<Record<string, unknown>>;
   accuracy?: Record<string, unknown>;
   inputAccuracy?: Record<string, unknown>;
   client?: { integration_version: string | null; app_version: string | null };
@@ -229,8 +229,11 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'energy_optimisation_current'
       // User-requested replay downloads read the source snapshot separately from sync.
       ? [{ snapshot: planSnapshot, plan: shown }]
-      : table === 'energy_replan_events'
-      ? replan.audit ?? []
+      : table === 'energy_planning_log'
+      ? (replan.log ?? []).filter(row =>
+        (!url.searchParams.has('sequence') || Number(row.sequence) < Number(url.searchParams.get('sequence')!.slice(3))) &&
+        Date.parse(String(row.occurred_at)) >= Date.parse(url.searchParams.get('occurred_at')!.slice(4)))
+        .sort((a,b) => Number(b.sequence)-Number(a.sequence)).slice(0,Number(url.searchParams.get('limit') ?? 50))
       : table === 'energy_optimisation_pool_slots'
       ? replan.poolHistory ?? []
       : table === 'energy_optimisation_thermal_slots'
@@ -243,6 +246,13 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       body: JSON.stringify(single ? rows[0] ?? null : rows),
     });
   });
+}
+
+function logRow(sequence:number,patch:Record<string,unknown>={}) {
+  const at=new Date(Date.parse(CAPTURED_AT)-(100-sequence)*30*60000).toISOString();
+  return {id:'log-'+sequence,sequence,home_id:HOME_ID,customer_id:CUSTOMER_ID,event_key:'test-'+sequence,
+    occurred_at:at,last_seen_at:at,kind:'planning',severity:'info',state:'accepted',occurrences:1,
+    reason:{reason:'manual_replan_button'},details:{},...patch};
 }
 
 const replanButton = /Planera om nu|Replan now/;
@@ -266,20 +276,59 @@ test.describe('requesting a replan', () => {
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
   });
 
-  test('replanning history opens with the keyboard and explains sustained battery errors', async ({page}) => {
-    replan.audit = [{id:'audit-1',occurred_at:CAPTURED_AT,event:'failed',source:'execution',
+  test('Log tab explains a planning failure and supports keyboard navigation', async ({page}, testInfo) => {
+    replan.log = [logRow(100,{state:'failed',severity:'error',
       reason:{changes:[{owner:'$battery',cause:'battery_energy_shortfall',magnitude:.225,persistence_ms:120000}]},
-      details:{detail:'Solver could not complete'}}];
+      details:{detail:'Solver could not complete'}}),logRow(99,{kind:'exchange',state:'received',occurrences:4,
+      reason:{code:'ha_data_received'},details:{counts:{actuals:48,thermal:384}},
+      last_seen_at:new Date(Date.parse(CAPTURED_AT)-15*60000).toISOString()}),
+      logRow(98,{kind:'warning',state:'observed',severity:'warning',occurrences:3,
+        reason:{message:'Pool temperature sensor unavailable',consequence:'Check the sensor connection.'}})];
     await page.goto('/portal/energy-modeling?tab=plan');
-    const disclosure=page.getByText(/Omplaneringshistorik|Replanning history/, {exact:true});
-    await disclosure.focus();
+    const tab=page.getByRole('tab',{name:/^Logg$|^Log$/});
+    await tab.focus();
     await page.keyboard.press('Enter');
-    const history=page.getByRole('list',{name:/Senaste omplaneringshändelser|Recent replanning events/});
+    await expect(page).toHaveURL(/tab=log/);
+    const history=page.getByRole('list',{name:/Planeringslogg|Planning log/});
     await expect(history).toContainText('0.225 kWh (2 min)');
     await expect(history).toContainText(/Misslyckades|Failed/);
+    await history.locator('summary').first().click();
     await expect(history).toContainText('Solver could not complete');
-    await page.keyboard.press('Enter');
-    await expect(history).toHaveCount(0);
+    await expect(history).toContainText(/4 överföringar|4 batches/);
+    await expect(history).toContainText('432');
+    await page.getByRole('button',{name:'Toggle language'}).click();
+    await page.screenshot({path:testInfo.outputPath('planning-log-desktop.png')});
+    await page.reload();
+    await expect(page.getByRole('tab',{name:/^Logg$|^Log$/})).toHaveAttribute('data-state','active');
+    await page.setViewportSize({width:375,height:812});
+    await expect(page.getByRole('region',{name:/Planeringshändelser|Planning events/})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    const tabBounds=await page.getByRole('tab',{name:/^Logg$|^Log$/}).boundingBox();
+    const stripBounds=await page.getByRole('tablist').boundingBox();
+    expect(tabBounds!.x+tabBounds!.width).toBeLessThanOrEqual(stripBounds!.x+stripBounds!.width);
+    await page.getByRole('button',{name:'Toggle language'}).click();
+    await page.screenshot({path:testInfo.outputPath('planning-log-mobile.png')});
+  });
+
+  test('Log paginates the 72-hour window without losing older entries or showing expired activity', async ({page}) => {
+    replan.log = Array.from({length:75},(_,i)=>logRow(100-i));
+    replan.log.unshift(logRow(101,{occurred_at:new Date(Date.parse(CAPTURED_AT)-73*3600000).toISOString(),
+      reason:{message:'Expired log entry'}}));
+    await page.goto('/portal/energy-modeling?tab=log');
+    const log=page.getByRole('list',{name:/Planeringslogg|Planning log/});
+    await expect(log.locator('time')).toHaveCount(50);
+    const region=page.getByRole('region',{name:/Planeringshändelser|Planning events/});
+    await region.focus();
+    await page.keyboard.press('End');
+    await page.getByRole('button',{name:/Visa äldre händelser|Show older events/}).click();
+    await expect(log.locator('time')).toHaveCount(75);
+    await expect(page.getByText('Expired log entry')).toHaveCount(0);
+    await expect(page.getByRole('button',{name:/Visa äldre händelser|Show older events/})).toHaveCount(0);
+  });
+
+  test('Log has a clear empty state', async ({page}) => {
+    await page.goto('/portal/energy-modeling?tab=log');
+    await expect(page.getByText(/Inga planeringshändelser under de senaste 72 timmarna|No planning activity in the last 72 hours/)).toBeVisible();
   });
 
   test('a full ROI month completes with bounded native projection memory', async ({ context, page }) => {

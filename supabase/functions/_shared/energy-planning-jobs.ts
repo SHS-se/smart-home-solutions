@@ -1,3 +1,4 @@
+import { recordPlanningActivity } from './planning-log.ts';
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import type { ExecutionReplan } from "./execution-replan.ts";
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
@@ -183,7 +184,7 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         // Which devices SHS was actually controlling when this plan was made. The
         // savings track record counts only months under control; nothing else records it.
-        summary: { ...compactPlanSummary(generated), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, operating_modes: snapshot.operating_scope?.modes ?? null },
+        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, operating_modes: snapshot.operating_scope?.modes ?? null },
         validation_errors: generated.validation_errors };
       for (const warning of generated.planning_warnings ?? []) {
         const evidence = {job_id:job.id,plan_id:generated.plan_id,...warning};
@@ -234,6 +235,9 @@ export class PlanningJobs {
   }
 
   private async archive(job: ClaimedJob & LoadedJob, plan: OptimisationPlan): Promise<void> {
+    await recordPlanningActivity(this.db, job.home_id, job.customer_id, {
+      receipt_id: plan.plan_id, source: 'planner', warnings: plan.planning_warnings,
+    });
     await archiveAccuracyForecast(this.db, job.home_id, job.customer_id, plan).catch(error => {
       console.error('[FORECAST-ACCURACY] forecast archive failed', {home_id: job.home_id, plan_id: plan.plan_id, detail: describeThrown(error)});
     });
