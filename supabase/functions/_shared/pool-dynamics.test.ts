@@ -249,35 +249,28 @@ Deno.test("an older capture uses its earlier fitted checkpoint, never a future h
   assertThrows(() => poolPendingHeatAt({ ...model, state: { at: model.state.at, pending_heat_kwh: NaN, source_depletion_kwh: 0 } }, CAPACITY, [], at), Error, "checkpoint");
 });
 
-Deno.test("current-quarter actuator history retains completed runs and every observed cycle", () => {
+Deno.test("current-quarter compressor memory uses meter deltas despite missing switch observations", () => {
   const at = Date.parse("2026-10-13T12:40:00Z");
-  const pool = { water_temperature_c: 29.64, volume_m3: 55, heating_running: false,
-    heating_history: { start: "2026-10-13T12:30:00Z", end: "2026-10-13T12:40:00Z", complete: true,
-      intervals: [
-        { start: "2026-10-13T12:30:00Z", end: "2026-10-13T12:35:00Z", elapsed_seconds_at_start: 1800, elapsed_basis: "confirmed_transition" as const },
-        { start: "2026-10-13T12:36:00Z", end: "2026-10-13T12:38:00Z", elapsed_seconds_at_start: 0, elapsed_basis: "confirmed_transition" as const },
-      ] } };
-  const partial = poolPartialElectricity(pool, parseHeaterResponse(startup), 2990.5, at);
-  assertEquals(partial.source, "actuator_history");
-  assertEquals(partial.complete, true);
-  assertEquals(partial.intervals.length, 2);
-  assertAlmostEquals(partial.intervals[0].electrical_kwh, 2990.5 / 1000 / 12, 1e-12);
-  assertEquals(partial.intervals[1].electrical_kwh, 0, "actual electrical startup still applies to the second run");
-  const model = fitted(synthetic(.7));
-  model.state = { at: pool.heating_history.start, pending_heat_kwh: 0, source_depletion_kwh: 0 };
-  assert(poolPendingHeatAt(model, CAPACITY, partial.intervals, at) > 0, "stopped run must not lose its pending response");
-  const incomplete = poolPartialElectricity({ ...pool, heating_history: { ...pool.heating_history, complete: false } }, parseHeaterResponse(startup), 2990.5, at);
-  assertEquals(incomplete.intervals, partial.intervals);
-  assertEquals(incomplete.complete, false, "incomplete coverage is evidence, not a gate that discards known runs");
-  const invalid = JSON.parse(JSON.stringify(pool));
-  invalid.heating_history.intervals.push(null, { start: "bad", end: "bad", elapsed_seconds_at_start: 0 });
-  const retained = poolPartialElectricity(invalid, parseHeaterResponse(startup), 2990.5, at);
-  assertEquals(retained.intervals, partial.intervals);
-  assertEquals(retained.ignored, 2);
-  assertEquals(retained.complete, false);
-  const direct = poolPartialElectricity({ water_temperature_c: 30, volume_m3: 55, heating_running: true, heating_elapsed_seconds: 600 }, { kind: "steady" }, 3000, at);
-  assertAlmostEquals(direct.intervals[0].electrical_kwh, .5, 1e-12);
-  assertEquals(direct.complete, false);
+  const pool = {water_temperature_c:30,volume_m3:55,heating_running:false,
+    heating_history:{start:"2026-10-13T12:30:00Z",end:new Date(at).toISOString(),complete:false,intervals:[]},
+    electrical_history:{start:"2026-10-13T12:30:00Z",end:new Date(at).toISOString(),counters:[
+      {device_key:"heater",start_kwh:100,end_kwh:100}, {device_key:"pump",start_kwh:10,end_kwh:11}]}};
+  const partial=poolPartialElectricity(pool,["heater"],at);
+  assertEquals(partial.source,"metered_counter");
+  assertEquals(partial.complete,true);
+  assertEquals(partial.intervals,[{start_ms:at-600_000,hours:1/6,electrical_kwh:0}]);
+  pool.electrical_history.counters[0].end_kwh=100.25;
+  assertAlmostEquals(poolPartialElectricity(pool,["heater"],at).intervals[0].electrical_kwh,.25,1e-12);
+  assertEquals(poolPartialElectricity(pool,["heater","missing"],at).complete,false);
+  for(const end of [99,NaN,Infinity]){
+    pool.electrical_history.counters[0].end_kwh=end;
+    assertEquals(poolPartialElectricity(pool,["heater"],at).intervals,[]);
+  }
+  pool.electrical_history.counters[0].end_kwh=100;
+  pool.electrical_history.counters.push({...pool.electrical_history.counters[0]});
+  assertEquals(poolPartialElectricity(pool,["heater"],at).complete,false);
+  assertEquals(poolPartialElectricity({water_temperature_c:30,volume_m3:55,heating_running:true,
+    heating_elapsed_seconds:600},["heater"],at).complete,false,"runtime must not invent unmetered electricity");
 });
 
 Deno.test("missing metering cannot restore measured source efficiency", () => {

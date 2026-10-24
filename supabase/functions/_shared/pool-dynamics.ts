@@ -3,10 +3,6 @@
 // distinguish water mixing, intermediate thermal storage and sensor filtering.
 import { solveLinearSystem } from "./planner/thermal-model.ts";
 import type { PoolResponseSample } from "./pool-training.ts";
-import {
-  type HeatPumpResponse,
-  projectHeatPumpResponse,
-} from "./planner/device-models.ts";
 import type { PoolStateInput } from "./planner/planning-contracts.ts";
 import {
   type PoolDynamics,
@@ -521,83 +517,43 @@ export interface PoolElectricalInterval {
   electrical_kwh: number;
 }
 
-/** Current-quarter on/off observations supplement completed energy counters.
- * These are estimated compressor kWh with explicit actuator provenance, not
- * invented readings and not evidence that the complete quarter was metered. */
+/** Metered partial-quarter input uses the same interval-average convention as
+ * completed energy quarters. A measured zero proves zero electricity despite
+ * missing switch observations; it does not invent an OFF transition. */
 export function poolPartialElectricity(
   pool: PoolStateInput,
-  response: HeatPumpResponse,
-  compressorW: number,
+  heaterKeys: readonly string[],
   atMs: number,
 ): {
   intervals: PoolElectricalInterval[];
   complete: boolean;
-  source: "actuator_history" | "current_run_age" | "unobserved";
+  source: "metered_counter" | "unobserved";
   ignored: number;
 } {
   const boundary = Math.floor(atMs / SLOT_MS) * SLOT_MS;
-  const intervals: PoolElectricalInterval[] = [];
+  if (boundary === atMs) return { intervals: [], complete: true, source: "metered_counter", ignored: 0 };
+  const history = pool.electrical_history;
+  const empty = { intervals: [], complete: false, source: "unobserved" as const, ignored: 0 };
+  if (!history || Date.parse(history.start) !== boundary || Date.parse(history.end) !== atMs ||
+      !Array.isArray(history.counters) || !heaterKeys.length) return empty;
+  const required = new Set(heaterKeys), energy = new Map<string, number>();
   let ignored = 0;
-  const add = (start: number, end: number, age: number) => {
-    const from = Math.max(boundary, start), to = Math.min(atMs, end);
-    if (![start, end, age].every(Number.isFinite) || age < 0 || end < start) {
+  const duplicates = new Set<string>();
+  for (const counter of history.counters) {
+    if (!counter || !required.has(counter.device_key)) continue;
+    const { device_key: key, start_kwh: start, end_kwh: end } = counter;
+    if (energy.has(key)) duplicates.add(key);
+    if (typeof start !== "number" || typeof end !== "number" ||
+        !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
       ignored++;
-      return;
+      continue;
     }
-    if (to <= from) return;
-    const hours = (to - from) / 3_600_000;
-    const projected = projectHeatPumpResponse(
-      response,
-      { compressor_w: compressorW, auxiliary_w: 0 },
-      [compressorW],
-      [hours],
-      age + (from - start) / 1000,
-    );
-    intervals.push({
-      start_ms: from,
-      hours,
-      electrical_kwh: projected.draw_w[0] / 1000 * hours,
-    });
-  };
-  const history = pool.heating_history;
-  if (history) {
-    if (Array.isArray(history.intervals)) {
-      for (const interval of history.intervals) {
-        if (!interval || typeof interval !== "object") {
-          ignored++;
-          continue;
-        }
-        add(
-          Date.parse(interval.start),
-          Date.parse(interval.end),
-          interval.elapsed_seconds_at_start,
-        );
-      }
-    } else ignored++;
-    return {
-      intervals,
-      ignored,
-      source: "actuator_history",
-      complete: history.complete === true && ignored === 0 &&
-        Date.parse(history.start) <= boundary &&
-        Date.parse(history.end) >= atMs,
-    };
+    energy.set(key, end - start);
   }
-  if (
-    pool.heating_running && typeof pool.heating_elapsed_seconds === "number" &&
-    pool.heating_elapsed_seconds > 0
-  ) {
-    const elapsed = pool.heating_elapsed_seconds,
-      start = Math.max(boundary, atMs - elapsed * 1000);
-    add(start, atMs, Math.max(0, elapsed - (atMs - start) / 1000));
-    return { intervals, ignored, source: "current_run_age", complete: false };
-  }
-  return {
-    intervals,
-    ignored,
-    source: "unobserved",
-    complete: boundary === atMs,
-  };
+  if (energy.size !== required.size || duplicates.size) return { ...empty, ignored: ignored + duplicates.size };
+  return { intervals: [{ start_ms: boundary, hours: (atMs - boundary) / 3_600_000,
+    electrical_kwh: [...energy.values()].reduce((sum, kwh) => sum + kwh, 0) }],
+    complete: true, source: "metered_counter", ignored };
 }
 
 /** State evidence must precede the capture it describes. This selects a

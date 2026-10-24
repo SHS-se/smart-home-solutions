@@ -90,6 +90,14 @@ export interface PoolHardwareInput {
 }
 
 export interface PoolStateInput {
+  /** Actual cumulative compressor-meter evidence across the unfinished quarter.
+   * Every pool meter is supplied; heater membership is resolved server-side.
+   * Missing counters remain missing, rather than inferred from switch states. */
+  electrical_history?: {
+    start: string;
+    end: string;
+    counters: { device_key: string; start_kwh: number; end_kwh: number }[];
+  };
   /** Observed actuator intervals in the unfinished quarter, including runs
    * that already stopped. Incomplete observations remain useful evidence. */
   heating_history?: {

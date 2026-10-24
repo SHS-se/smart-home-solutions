@@ -1,8 +1,8 @@
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import { type PublishedHeater, type ThermalStoreModel } from "./planner/device-models.ts";
-import { poolPhysics } from "./planner/pool-physics.ts";
+import { poolPhysics, poolElectricalDemand } from "./planner/pool-physics.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
-import { unavailableOwner } from "./rules-commitments.ts";
+import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 
 export interface PoolService {
   physics: { store: ThermalStoreModel; heater: PublishedHeater } | null;
@@ -51,7 +51,9 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
     reason = error instanceof Error ? error.message : String(error);
   }
   const power = Object.fromEntries(members.map(m => [m.key, m.forecast_w_by_slot.slice()]));
-  const running = sum(members.map(m => m.active_power_w && m.active_power_w > 0 ? m.active_power_w : Math.max(0, ...m.forecast_w_by_slot)));
+  const demand = poolElectricalDemand(snapshot);
+  const rating = (key: string) => demand.member_w[key] ?? 0;
+  const running = sum(members.map(m => rating(m.key) > 0 ? rating(m.key) : Math.max(0, ...m.forecast_w_by_slot)));
   const permitted = snapshot.slots.map((_slot, i) => {
     if (unavailableOwner(snapshot, "$pool", snapshot.slots[i].start)) return false;
     const old = retained[i];
@@ -61,9 +63,15 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
     return finite(stop) && !(finite(air) && finite(cutout) && air < cutout);
   });
   for (const m of members) for (let i = 0; i < n; i++) {
-    const old = retained[i]?.device_loads_w?.[m.key];
+    // Independently owned circulation retains its own demand and commitments.
+    if (commandOwner(snapshot, m) !== "$pool") {
+      const held = retained[i]?.device_loads_w?.[m.key];
+      if (finite(held)) { power[m.key][i] = held; continue; }
+      if (unavailableOwner(snapshot, "$pool", snapshot.slots[i].start)) continue;
+    }
+    // Retain the permission, not yesterday's duty-averaged power forecast.
     power[m.key][i] = unavailableOwner(snapshot, "$pool", snapshot.slots[i].start) ? power[m.key][i]
-      : finite(old) ? old : permitted[i] ? power[m.key][i] : 0;
+      : permitted[i] ? rating(m.key) > 0 ? rating(m.key) : power[m.key][i] : 0;
   }
   return { physics: null, pending_heat_kwh: null, source_depletion_kwh: null, empirical: true, permitted, power,
     command_w: permitted.map(on => on ? running : 0),
