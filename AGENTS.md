@@ -45,3 +45,12 @@ Supabase records that prefix as its migration-history primary key; different
 descriptive filenames do not make a shared timestamp safe. Run
 `deno test --allow-read tests/migration-versions.test.ts` when adding or renaming
 migrations. Preserve applied migration identities when resolving collisions.
+
+# Public repository privacy
+
+Never commit or push private household replays, measured energy or temperature
+histories, captured plans, personal room labels, sensor identifiers, or private
+analysis reports. Keep private inputs and measured validation outside this
+repository. Public regression inputs must be independently generated synthetic
+data, clearly labelled as synthetic; removing names alone is insufficient.
+Review staged files and their provenance for private data before every push.

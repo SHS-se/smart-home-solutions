@@ -36,3 +36,10 @@ supabase/config.toml.bak
 
 # Rust intermediates; the verified deployable Wasm artifact is tracked.
 planner-core/target/
+
+# Private household captures stay outside this public repository.
+**/plan-replay-*.json
+/private-data/
+/tests/ev-pool-headroom-replay.fixture.json
+/tests/pool-restart-capture.fixture.json
+/supabase/functions/_shared/pool-recovery-history.fixture.json

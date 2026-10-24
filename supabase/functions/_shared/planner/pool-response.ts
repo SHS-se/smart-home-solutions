@@ -5,7 +5,9 @@ export interface PoolDynamics {
   /** Gain at the start of a run. */
   heat_c_per_kwh: number;
   /** Gain lost per hour of continuous running, learned up to `heat_fade_until_h`
-   * (the longest observed run) and held there beyond it. Absent on older fits. */
+   * (the longest observed run) and held there beyond it. Absent on older fits.
+   * Resetting run age assumes full recovery after any stop; the fit has no
+   * off-duration recovery parameter. See the EV/pool replay audit in docs. */
   heat_fade_c_per_kwh_per_h?: number;
   heat_fade_until_h?: number;
   idle_c_per_h: number;

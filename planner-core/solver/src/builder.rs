@@ -51,6 +51,52 @@ fn command(
             .map_or(0.0, |b| discharge.min(b.discharge_max_w)),
     }
 }
+fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f64) -> Vec<u32> {
+    let s = &p.slots[i];
+    let h = physics::projected_hours(s);
+    let f = &index.future[i];
+    let hold = commitments::hold(p, i);
+    let held = hold.impose(command(p, false, 0, Operation::Idle, 0.0, 0.0));
+    let mut levels = vec![0];
+    if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
+        let room = (p.targets.ev_limit_kwh.unwrap() - label.state.ev).max(0.0) * 1000.0
+            / h
+            / car.charge_efficiency;
+        let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / car.charge_efficiency;
+        if s.ev_available && need > 0.0 {
+            // Offer the native current that shares this pool decision with the
+            // house. Keep max as well: the battery may supply eligible loads.
+            levels.push(charger.fitting_amps(room.min((p.limits.import_w - household_w).max(0.0))));
+            let min = charger.min_current_a;
+            if charger.watts(min).unwrap() <= room {
+                levels.push(min);
+            }
+            let target = charger.fitting_amps(need).max(min);
+            let target = if charger.watts(target).unwrap() < need {
+                target
+                    .saturating_add(charger.current_step_a)
+                    .min(charger.max_current_a)
+            } else {
+                target
+            };
+            if charger.watts(target).unwrap() <= room {
+                levels.push(target);
+            }
+            let max = charger.fitting_amps(room);
+            if max > 0 {
+                levels.push(max);
+            }
+        }
+    }
+    if hold.has(commitments::Owner::Ev) {
+        levels = vec![held.ev_amps];
+    } else if commitments::unavailable(p, i, commitments::Owner::Ev) {
+        levels = vec![0];
+    }
+    levels.sort_unstable();
+    levels.dedup();
+    levels
+}
 fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> {
     if let Some(command) = commitments::hold(p, i).full() {
         return vec![command.clone()];
@@ -90,41 +136,6 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
-    let mut ev_levels = vec![0];
-    if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-        let room = (p.targets.ev_limit_kwh.unwrap() - label.state.ev).max(0.0) * 1000.0
-            / h
-            / car.charge_efficiency;
-        let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / car.charge_efficiency;
-        if s.ev_available && need > 0.0 {
-            let min = charger.min_current_a;
-            if charger.watts(min).unwrap() <= room {
-                ev_levels.push(min);
-            }
-            let target = charger.fitting_amps(need).max(min);
-            let target = if charger.watts(target).unwrap() < need {
-                target
-                    .saturating_add(charger.current_step_a)
-                    .min(charger.max_current_a)
-            } else {
-                target
-            };
-            if charger.watts(target).unwrap() <= room {
-                ev_levels.push(target);
-            }
-            let max = charger.fitting_amps(room);
-            if max > 0 {
-                ev_levels.push(max);
-            }
-        }
-    }
-    if hold.has(commitments::Owner::Ev) {
-        ev_levels = vec![held.ev_amps];
-    } else if commitments::unavailable(p, i, commitments::Owner::Ev) {
-        ev_levels = vec![0];
-    }
-    ev_levels.sort_unstable();
-    ev_levels.dedup();
     let mut out = Vec::new();
     for on in [false, true] {
         if hold.has(commitments::Owner::Pool) && on != held.pool_on
@@ -153,7 +164,8 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             });
         let pool_w = pool.as_ref().map_or(0.0, |h| h.compressor_w)
             + physics::pool_auxiliary_w(s, on, pool.as_ref().map_or(0.0, |h| h.auxiliary_w));
-        for &amps in &ev_levels {
+        let household_w = s.base_w + pool_w - s.solar_w;
+        for amps in ev_levels(p, index, i, label, household_w) {
             let ev_w = p
                 .charger
                 .as_ref()
@@ -162,7 +174,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 out.push(command(p, on, amps, Operation::Idle, 0.0, 0.0));
                 continue;
             };
-            let demand = s.base_w + pool_w + ev_w - s.solar_w;
+            let demand = household_w + ev_w;
             let grid_room = (p.limits.import_w - demand).max(0.0);
             let stored = (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0)
                 * battery.discharge_efficiency;
@@ -286,7 +298,9 @@ fn construct(
         let mut expanded = Vec::new();
         let mut committed_issue = None;
         for l in &labels {
-            if !work.spend(work.unit_cost * 56) {
+            // Prepay generation before the action cap: two pool modes, up to
+            // five native currents and seven battery variants per current.
+            if !work.spend(work.unit_cost * (2 * 5 * 7)) {
                 return Err("work_grant_cannot_complete_construction".into());
             }
             for c in actions(p, index, i, l) {
@@ -1361,6 +1375,78 @@ mod forecast_tests {
                 .any(|c| c.pool_on == pool_on
                     && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
         }
+    }
+    #[test]
+    fn joint_current_uses_pool_power_solar_auxiliaries_and_native_steps_under_action_cap() {
+        for variant in 0..4 {
+            let mut p = witnesses::tests::problem(8);
+            p.recipe.max_actions = 32;
+            p.charger.as_mut().unwrap().phase_count = 3;
+            p.charger.as_mut().unwrap().min_current_a = 5;
+            p.limits.import_w = 15000.0;
+            p.initial.pool_c = Some(29.0);
+            p.initial.heater_state = Some(HeaterState::Steady);
+            p.heater.as_mut().unwrap().compressor_w = 2990.5;
+            p.heater.as_mut().unwrap().auxiliary_w = 760.0;
+            p.targets.ev_km = Some(250.0);
+            p.slots[0].base_w = 1000.0;
+            let expected = match variant {
+                1 => {
+                    p.slots[0].solar_w = 500.0;
+                    15
+                }
+                2 => {
+                    p.slots[0].pool_auxiliary_dispatch = Some(PoolAuxiliaryDispatch {
+                        fixed_w: 500.0,
+                        on_w: 1000.0,
+                    });
+                    13
+                }
+                3 => {
+                    p.charger.as_mut().unwrap().current_step_a = 2;
+                    p.charger.as_mut().unwrap().max_current_a = 15;
+                    13
+                }
+                _ => 14,
+            };
+            let index = policy::index(&p, &mut work(&p)).unwrap();
+            let choices = actions(&p, &index, 0, &initial_label(&p));
+            assert!(choices.len() <= p.recipe.max_actions);
+            let c = choices
+                .iter()
+                .find(|c| c.pool_on && c.ev_amps == expected && c.battery == Operation::Idle)
+                .expect("joint native current survives action cap");
+            let mut state = physics::initial(&p);
+            let q = physics::step(&p, 0, c, &mut state).unwrap();
+            assert!(q.net_w <= p.limits.import_w);
+            // Still offer maximum current: a battery may supply the pool/house.
+            assert!(choices
+                .iter()
+                .any(|c| c.pool_on && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
+        }
+    }
+
+    #[test]
+    fn joint_current_respects_partial_quarter_charge_room_and_ev_ownership() {
+        let mut p = witnesses::tests::problem(8);
+        p.charger.as_mut().unwrap().phase_count = 3;
+        p.charger.as_mut().unwrap().min_current_a = 5;
+        p.targets.ev_km = Some(250.0);
+        p.slots[0].start_seconds = -450.0;
+        p.targets.ev_limit_kwh = Some(10.6);
+        let index = policy::index(&p, &mut work(&p)).unwrap();
+        let label = initial_label(&p);
+        let levels = ev_levels(&p, &index, 0, &label, 1000.0);
+        assert_eq!(levels, vec![0, 5, 6]);
+        assert_eq!(ev_levels(&p, &index, 0, &label, 100000.0), levels);
+        p.slots[0].ev_available = false;
+        assert_eq!(ev_levels(&p, &index, 0, &label, 1000.0), vec![0]);
+        p.accepted = Some(vec![Command {
+            ev_amps: 5,
+            ..idle()
+        }]);
+        p.locked_through_seconds = 900.0;
+        assert_eq!(ev_levels(&p, &index, 0, &label, 1000.0), vec![5]);
     }
     #[test]
     fn automatic_supply_proposal_follows_changed_pool_demand_without_serving_ev() {
