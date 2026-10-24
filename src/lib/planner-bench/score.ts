@@ -9,7 +9,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from 
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 36;
+export const SCORER_VERSION = 37;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -49,15 +49,14 @@ const poolBelow = (q: QuarterView, t: number) => {
 };
 const carBelow = (q: QuarterView, t: number) => {
   const c = q.s.comfort, km = q.s.carKm;
-  return !!c && !!km && km[q.i] < c.ev_target_km - t && q.due(c.carReachableKm, c.ev_start_km, c.ev_target_km - t);
+  return !!c && !!km && km[q.i] < c.ev_target_km - t;
 };
 const poolAbove = (q: QuarterView, t: number) =>
   !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t;
 const poolAny = (s: BenchSeries) => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity;
 const poolFrom = (s: BenchSeries, t: number) =>
   s.comfort && s.poolC.some(v => v !== null) ? dueFrom(s.comfort.poolReachableC, s.comfort.pool_start_c, s.comfort.pool_target_c - t) : Infinity;
-const carFrom = (s: BenchSeries, t: number) =>
-  s.comfort && s.carKm ? dueFrom(s.comfort.carReachableKm, s.comfort.ev_start_km, s.comfort.ev_target_km - t) : Infinity;
+const carFrom = (s: BenchSeries) => s.comfort && s.carKm ? 0 : Infinity;
 
 const poolBeforeC = (s: BenchSeries, i: number): number | null =>
   s.comfort ? i === 0 ? Math.round(s.comfort.pool_start_c * 1000) / 1000 : s.poolC[i - 1] : null;

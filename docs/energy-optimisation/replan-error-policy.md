@@ -1,0 +1,35 @@
+# Readiness and automatic replan error policy
+
+Settled implementation, 24 October 2026. Supersedes any generic “error or recovery means replan” rule.
+
+EV readiness is ongoing from the current quarter, including when the initial range is low. No new plan grants another day of grace. There is no departure time, trip deadline or readiness episode clock. The household range preference and existing range bands determine readiness; the vehicle charge limit remains a physical cap. The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. An unreachable preference remains valid input and is reported honestly; it does not invalidate the household or extend a clock. The independent bench uses the same continuous EV exposure under scorer version 37; archived scorer-36 results retain their identity.
+
+## Admission thresholds
+
+All comparisons use current received observations. Available, unchanged readings never expire because of their report timestamp.
+
+| Evidence | Automatic replan condition | Clearing and repeat behavior |
+|---|---|---|
+| EV disconnected | Accepted charging is due now and the car cannot charge because disconnected | Immediate. Idle unplug/replug creates no episode or replan. |
+| Actual actuator or dispatched-command failure | A required actuator is unavailable or an actually dispatched scheduled command fails | Immediate, once per physical episode. Configuration errors and generic exceptions do not count. |
+| Required observation unavailable | The specific source has continuously reported unknown/unavailable for 15 minutes and prevents accepted work | Five-minute status attention remains; hold the last setting throughout. Each source has its own clock. Usable recovery only replans service previously suppressed by an admitted physical failure. |
+| Battery energy shortfall | At least 0.200 kWh cannot be delivered to an accepted stored-energy objective with its remaining nominal and authorized recovery capacity, continuously for 2 minutes | Clear below 0.100 kWh for 2 minutes. Exact shortfall remains diagnostic below the threshold. |
+| Pool model shortfall | Measured water is at least 0.5°C below the accepted water-temperature trajectory at the same instant, continuously for 30 minutes | Clear below 0.25°C for 5 minutes. A pool merely below the desired comfort target is not a model error. |
+
+Battery quantities use integer mWh; pool residuals are rounded to 0.001°C before threshold comparison. Stale reference samples cannot admit a correction against a replacement. Crossings at the stated magnitude and duration count; values below the entry threshold interrupt an unadmitted crossing. Missing evidence interrupts persistence instead of proving either continued error or recovery. A clock rollback cannot mature a timer early. Numeric admission latches once per accepted reference until the clear band is sustained; a replacement reference starts comparison against its own measured trajectory. Source outage episodes survive reference changes and restarts until usable observations return. Failed submissions retain immutable admitted evidence for the existing delivery retry owner.
+
+## Ownership and execution
+
+`shs_core/replan_policy.py` is the single admission-policy owner in both HA and the bundled app. The household serializes its durable signal map under the existing exchange lock. The normal five-second battery observation path and read-only controller observation timer feed it; controller threshold deadlines only request fresh observations.
+
+Exact battery accounting, nominal instructions, authorized recovery recipes and physical admission remain independent of these tolerances. No threshold grants extra energy, makes missing evidence usable, releases control, stops a device or writes a default. The existing control-continuity contract is unchanged.
+
+Actual physical failures use `faulted`/`temporarily_absent` with genuine blocked intervals and can affect `execution_availability`. A model miss uses a separate `plan_deviation` request with affected intervals, numeric magnitude and observed persistence. It releases only that owner's accepted commands for correction. It never enters physical availability, so a healthy heater or battery remains usable in the replacement. Other owners keep their accepted next-hour requests.
+
+Capture producers, backend readers and strict API schemas roll forward together. There is no compatibility parser. Historical observations and old score identities remain evidence, not current instructions.
+
+## Regression evidence
+
+The retained overnight physical problem previously scheduled zero overnight EV energy and its first charge the following evening. Continuous readiness schedules the first charge at 23:45 Stockholm, immediately after the preserved accepted-command hour, and buys 13.8 kWh overnight: projected SOC rises from 48% to approximately 64.1%. That satisfies the existing readiness band; the 80% vehicle cap is not an unconditional completion target.
+
+Tests cover exact magnitude/time boundaries, interrupted crossings, clearing hysteresis, clock rollback, persisted restart state, multiple unavailable sources, a five-second pool blip, small recorded battery errors, sustained battery/pool errors, failed delivery and healthy equipment remaining available during scoped correction. Existing continuity tests remain unchanged.

@@ -1,5 +1,7 @@
 # Requirements for planner and controller constraints
 
+User requirement, 24 October 2026: EV readiness counts immediately on every plan; no renewed grace period. Automatic replans require the explicit magnitude, persistence and execution criteria in [the replan error policy](replan-error-policy.md).
+
 User requirement, 24 October 2026: **EV departure time must not exist in the code.**
 Do not configure, discover, infer, parse, validate, serialize or schedule against
 an EV departure timestamp. There is no optional or null departure field and no

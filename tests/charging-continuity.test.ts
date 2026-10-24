@@ -70,6 +70,9 @@ Deno.test("a worthwhile price gap can still interrupt charging", () => {
 
 Deno.test("active EV currents group into blocks instead of alternating with battery headroom", () => {
   const p = activeCurrentCompetition();
+  // Isolate current smoothing from the separate ongoing-readiness preference.
+  // This regression retains its original active evening demand and all bounds.
+  p.rules = p.rules.filter(rule => rule.key !== 'ev_low' && rule.key !== 'ev_short');
   const result = selected(p);
   const evening = result.commands.slice(25, 44).map(c => c.ev_amps);
   assert(evening.every(amps => amps > 0));

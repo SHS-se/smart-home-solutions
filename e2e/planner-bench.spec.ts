@@ -966,10 +966,11 @@ test.describe('planner bench', () => {
     // Energy timing is evidence in kronor: the quarters it would change, and no points.
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
+    // Ongoing EV readiness counts immediately even in this empty-car fixture.
+    await expect(row('ev_low')).toContainText(/\d+ (q|kv) · −\d+/);
     // Rules that did not fire are kept out of the way.
-    await expect(row('ev_low')).toHaveCount(0);
+    await expect(row('ev_timing')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();
-    await expect(row('ev_low')).toContainText('N/A');
     await expect(row('ev_timing')).toContainText('N/A');
     // The list follows the day the chart shows: the battery finding sits in the first hours only.
     await page.locator('#bench-day-2').click();

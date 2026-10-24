@@ -154,3 +154,19 @@ Deno.test("unresolved faults are retained on an ordinary later capture until exp
   assertEquals(resumed.execution_availability, []);
   assert(resumed.plans.priority.slots.some(slot => slot.battery_charge_w > 0));
 });
+
+Deno.test('pool forecast deviation corrects only that owner and keeps its healthy heater available', () => {
+  const snapshot = rulesFixtureInput(mixedModeSnapshot()).snapshot;
+  snapshot.operating_scope!.modes.$pool = 'controlling';
+  delete snapshot.operating_scope!.external_demands.pool_heater;
+  snapshot.pool!.water_temperature_c = 25;
+  const original = runRulesPlanner(input(snapshot)).plan;
+  const reference = {plan_id:original.plan_id,slots:original.plans.priority.slots};
+  const deviation: ExecutionChange = {owner:'$pool',status:'plan_deviation',cause:'pool_temperature_shortfall',
+    magnitude:.5,persistence_ms:1_800_000,affected_intervals:[{start:snapshot.slots[0].start,end:end(snapshot.slots[0].start)}]};
+  const corrected = runRulesPlanner(input(snapshot,request(reference,snapshot,[deviation])),reference).plan;
+  assertEquals(corrected.execution_availability, []);
+  assert(corrected.plans.priority.slots.some(slot => slot.pool_permitted));
+  for(let i=0;i<4;i++) assertEquals(corrected.plans.priority.slots[i].battery_command,reference.slots[i].battery_command);
+  assert(corrected.execution_replan!.released_intervals.every(interval=>interval.owner==='$pool'));
+});

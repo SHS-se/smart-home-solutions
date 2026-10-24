@@ -33,13 +33,13 @@ const bytes = await Deno.readFile(
 const core = createWasmPlanner(bytes);
 const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
-Deno.test("forecast opportunities defer safe expensive opening loads and beat the old score", () => {
+Deno.test("pool heat can wait for cheap supply while low EV readiness charges immediately", () => {
   const p = forecastProblem();
   const result = solve(p);
   assert(result.kind === "selected");
   const s = result.selection;
   assertEquals(s.commands[0].pool_on, false);
-  assertEquals(s.commands[0].ev_amps, 0);
+  assert(s.commands[0].ev_amps > 0, "A low-range EV has ongoing readiness, without a fresh grace period");
   assert(s.commands[0].battery !== "grid_charge");
   const first = s.commands.findIndex(c => c.pool_on);
   assert(first > 0);

@@ -180,7 +180,6 @@ pub(crate) fn end_credit(
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
     let mut pending = p.initial.pool_pending_heat_kwh.unwrap_or(0.0);
-    let mut reach_ev = p.initial.ev_kwh.unwrap_or(0.0);
     let mut age = p
         .initial
         .heater_state
@@ -203,11 +202,13 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             (
                 p.car
                     .as_ref()
-                    .map_or(0.0, |c| measured(reach_ev / c.kwh_per_km, 10.0)),
+                    .map_or(0.0, |c| measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)),
                 p.targets.ev_km.unwrap_or(0.0),
             )
         };
-        if start >= target - threshold {
+        // EV readiness is continuous. Every solve counts missing range now;
+        // neither initial shortfall nor an unreachable preference grants delay.
+        if k >= 2 || start >= target - threshold {
             due[k] = 0;
         }
     }
@@ -235,19 +236,6 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             reach_pool = step.water_c;
             pending = step.pending_heat_kwh;
         }
-        if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-            if s.ev_available {
-                reach_ev = (reach_ev
-                    + charger.watts(charger.max_current_a).unwrap() * hours / 1000.0
-                        * car.charge_efficiency)
-                    .min(
-                        p.targets
-                            .ev_limit_kwh
-                            .unwrap()
-                            .max(p.initial.ev_kwh.unwrap()),
-                    );
-            }
-        }
         for (k, threshold) in thresholds.iter().enumerate() {
             if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {
                 continue;
@@ -258,11 +246,11 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
                 (
                     p.car
                         .as_ref()
-                        .map_or(0.0, |c| measured(reach_ev / c.kwh_per_km, 10.0)),
+                        .map_or(0.0, |c| measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)),
                     p.targets.ev_km.unwrap_or(0.0),
                 )
             };
-            if due[k] == usize::MAX && now >= target - threshold {
+            if k < 2 && due[k] == usize::MAX && now >= target - threshold {
                 due[k] = i + 96;
             }
         }
@@ -487,13 +475,13 @@ mod service_tests {
         assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1, -1]);
     }
     #[test]
-    fn unreachable_initial_targets_keep_grace_without_invalidating_the_household() {
+    fn unreachable_pool_keeps_grace_but_ev_readiness_counts_immediately() {
         let mut p = crate::witnesses::tests::problem(1);
         p.rules = rules();
         p.initial.pool_c = Some(0.0);
         p.initial.ev_kwh = Some(0.0);
         p.targets.ev_km = Some(300.0);
         assert!(crate::validate(&p).is_ok());
-        assert_eq!(eligibility(&p), [usize::MAX; 4]);
+        assert_eq!(eligibility(&p), [usize::MAX, usize::MAX, 0, 0]);
     }
 }

@@ -56,8 +56,8 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
     original.push(prior);
   }
   const evidence: ExecutionChange[] = snapshot.execution_availability ?? [];
-  const owners = new Set(evidence.filter(change => change.status === "recovered" || change.status === "faulted" ||
-    change.blocked_intervals.some(interval => Date.parse(interval.end) > capture && Date.parse(interval.start) < capture + HOUR))
+  const owners = new Set(evidence.filter(change => change.status !== "plan_deviation" && (change.status === "recovered" || change.status === "faulted" ||
+    change.blocked_intervals.some(interval => Date.parse(interval.end) > capture && Date.parse(interval.start) < capture + HOUR)))
     .map(change => change.owner));
   // A delayed capture may follow the blocked source quarter. Its explicitly
   // requested repair still needs eligible destinations in the current held hour.

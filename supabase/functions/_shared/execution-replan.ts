@@ -3,7 +3,7 @@ import type { OperatingScope } from "./planner/operating-scope.ts";
 import type { PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
 import { HA_UUID } from "./ha-api-contract.ts";
 
-import type { ExecutionChange, ExecutionReplan } from "./planner/execution-evidence.ts";
+import { changeIntervals, type ExecutionChange, type ExecutionReplan } from "./planner/execution-evidence.ts";
 export type { ExecutionChange, ExecutionReplan } from "./planner/execution-evidence.ts";
 export class ExecutionReplanError extends Error {
   constructor(readonly code: string, message: string, readonly status = 400) {
@@ -19,14 +19,21 @@ export function parseExecutionChanges(raw: unknown): ExecutionChange[] {
   if (!Array.isArray(raw)) return invalid("Execution changes must be an array");
   const owners = new Set<string>();
   return raw.map((change): ExecutionChange => {
-    if (!record(change) || !exactKeys(change, ["owner", "status", "cause", "blocked_intervals"]) ||
-        typeof change.owner !== "string" || !change.owner.trim() || change.owner !== change.owner.trim() || owners.has(change.owner) ||
-        !["temporarily_absent", "faulted", "recovered"].includes(String(change.status)) ||
-        typeof change.cause !== "string" || !change.cause.trim() || !Array.isArray(change.blocked_intervals)) {
+    if (!record(change) || typeof change.owner !== "string" || !change.owner.trim() ||
+        change.owner !== change.owner.trim() || owners.has(change.owner) ||
+        typeof change.cause !== "string" || !change.cause.trim()) return invalid("Each execution change requires one distinct owner, status, cause and blocked intervals");
+    const deviation = change.status === "plan_deviation";
+    const field = deviation ? "affected_intervals" : "blocked_intervals";
+    if (!exactKeys(change, deviation ? ["owner", "status", "cause", field, "magnitude", "persistence_ms"] : ["owner", "status", "cause", field]) ||
+        !["temporarily_absent", "faulted", "recovered", "plan_deviation"].includes(String(change.status)) || !Array.isArray(change[field])) {
       return invalid("Each execution change requires one distinct owner, status, cause and blocked intervals");
     }
+    if (deviation && (!(typeof change.magnitude === "number" && Number.isFinite(change.magnitude) && change.magnitude > 0) ||
+        !(typeof change.persistence_ms === "number" && Number.isSafeInteger(change.persistence_ms) && change.persistence_ms >= 0) ||
+        !(change.owner === "$battery" && change.cause === "battery_energy_shortfall" ||
+          change.owner === "$pool" && change.cause === "pool_temperature_shortfall"))) return invalid("Plan deviation requires a matching owner, metric, magnitude and persistence");
     owners.add(change.owner);
-    const intervals = change.blocked_intervals.map(interval => {
+    const intervals = (change[field] as unknown[]).map(interval => {
       if (!record(interval) || !exactKeys(interval, ["start", "end"]) || !timestamp(interval.start) ||
           !timestamp(interval.end) || Date.parse(interval.start) >= Date.parse(interval.end)) {
         return invalid("Blocked intervals require ordered ISO start and end timestamps");
@@ -36,7 +43,9 @@ export function parseExecutionChanges(raw: unknown): ExecutionChange[] {
     if (change.status === "recovered" && intervals.length !== 0) {
       return invalid("Recovery has no blocked intervals");
     }
-    return { owner: change.owner, status: change.status as ExecutionChange["status"], cause: change.cause, blocked_intervals: intervals };
+    if (deviation) return { owner: change.owner, status: "plan_deviation", cause: change.cause as "battery_energy_shortfall" | "pool_temperature_shortfall",
+      affected_intervals: intervals, magnitude: change.magnitude as number, persistence_ms: change.persistence_ms as number };
+    return { owner: change.owner, status: change.status as "temporarily_absent" | "faulted" | "recovered", cause: change.cause, blocked_intervals: intervals };
   });
 }
 
@@ -60,7 +69,7 @@ export function validateExecutionAvailability(snapshot: OptimisationSnapshot): v
   const changes = parseExecutionChanges(snapshot.execution_availability ?? []);
   const known = executionOwnerKeys(snapshot);
   for (const change of changes) {
-    if (!known.has(change.owner) || change.status === "recovered" ||
+    if (!known.has(change.owner) || (change.status === "recovered" || change.status === "plan_deviation") ||
         (snapshot.schema_version >= 9 && snapshot.operating_scope?.modes[change.owner] !== "controlling")) {
       return invalid(`Execution availability owner ${change.owner} must be known, controlling and unresolved`);
     }
@@ -111,12 +120,20 @@ export function validateExecutionReplan(request: ExecutionReplan, reference: Exe
   }
   const owners = executionOwnerKeys(snapshot);
   for (const change of request.changes) {
-    if (change.status !== "recovered" && !change.blocked_intervals.length) {
+    if (change.status !== "recovered" && !changeIntervals(change).length) {
       return invalid(`Execution change owner ${change.owner} must name its blocked accepted opportunity`);
     }
     if (!owners.has(change.owner) || snapshot.operating_scope?.modes[change.owner] !== "controlling" ||
         reference.operating_scope?.modes[change.owner] !== "controlling") {
       return invalid(`Execution change owner ${change.owner} must be known and controlling in the accepted plan and capture`);
+    }
+    if (change.status === "plan_deviation") {
+      const comparable = change.owner === "$pool" ? !!snapshot.pool : !!snapshot.battery;
+      if (!comparable || !reference.slots.some(slot => change.affected_intervals.some(interval =>
+        Date.parse(interval.start) < Date.parse(slot.start) + snapshot.slot_minutes * 60_000 && Date.parse(interval.end) > Date.parse(slot.start)))) {
+        return invalid("Plan deviation must name an accepted owner trajectory and affected interval");
+      }
+      continue;
     }
     const recovery = change.status === "recovered" && reference.execution_availability?.some(previous => previous.owner === change.owner && previous.status !== "recovered");
     const work = reference.slots.some(slot => ownerHasAcceptedWork(change.owner, slot, snapshot) &&

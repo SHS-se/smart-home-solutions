@@ -1,5 +1,7 @@
 # Planner bench v4: architecture decision
 
+Scorer 37, 24 October 2026: EV readiness shortfalls count from quarter zero, with no reachability grace or renewed day of deferral. Pool reachability retains its existing policy. Archived scores preserve their original scorer version. See [error and readiness policy](../energy-optimisation/replan-error-policy.md).
+
 Current behavior is defined in [scoring.md](scoring.md). The v32 cleanup removes
 the obsolete quarter evidence/cycle rules, enforces EV supply permission and
 retains economic witnesses; older decisions below are historical rationale.

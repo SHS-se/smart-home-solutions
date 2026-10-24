@@ -83,3 +83,19 @@ Deno.test("routine execution availability preserves only known unresolved contro
   snapshot.execution_availability = [{ ...parseExecutionReplan(request()).changes[0], owner: "unknown" }];
   assertThrows(() => validateExecutionAvailability(snapshot), ExecutionReplanError, "known");
 });
+
+Deno.test('model deviations are strict scoped requests and never execution unavailability', () => {
+  const snapshot = capture();
+  const raw = { ...request(), changes: [{owner:'$pool',status:'plan_deviation',cause:'pool_temperature_shortfall',
+    magnitude:.5,persistence_ms:1_800_000,affected_intervals:request().changes[0].blocked_intervals}] };
+  const parsed = parseExecutionReplan(raw);
+  const ref = reference(snapshot);
+  ref.slots[0].pool_w = 0;
+  assertEquals(validateExecutionReplan(parsed, ref, snapshot), parsed);
+  snapshot.execution_availability = parsed.changes;
+  assertThrows(() => validateExecutionAvailability(snapshot), ExecutionReplanError, 'unresolved');
+  for (const change of [{...raw.changes[0],magnitude:NaN}, {...raw.changes[0],persistence_ms:-1},
+    {...raw.changes[0],owner:'$ev'}, {...raw.changes[0],blocked_intervals:[]}]) {
+    assertThrows(() => parseExecutionReplan({...raw,changes:[change]}), ExecutionReplanError);
+  }
+});

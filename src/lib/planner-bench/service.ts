@@ -2,7 +2,8 @@
 // comfort score (score.ts) and by the guard that keeps an alternative plan from
 // buying its saving with comfort (opportunities.ts).
 //
-// A level counts only once it was reachable: where full power from the first
+// Pool levels count only once reachable; EV readiness counts immediately.
+// For the pool, full power from the first
 // quarter would have got the store there, plus a day to choose the hours.
 
 import type { BenchSeries } from './types';
@@ -30,11 +31,11 @@ export interface ServiceExposure { pool: StoreExposure; ev: StoreExposure }
 
 export function storeExposure(
   values: ArrayLike<number | null>, target: number, offsets: [number, number],
-  reachable: readonly number[], start: number,
+  reachable: readonly number[], start: number, ongoing = false,
 ): StoreExposure {
   const out: StoreExposure = { mild: 0, severe: 0, worst: 0, mildDeficitHours: 0, severeDeficitHours: 0 };
   const mild = target - offsets[0], severe = target - offsets[1];
-  const mildFrom = dueFrom(reachable, start, mild), severeFrom = dueFrom(reachable, start, severe);
+  const mildFrom = ongoing ? 0 : dueFrom(reachable, start, mild), severeFrom = ongoing ? 0 : dueFrom(reachable, start, severe);
   for (let i = Math.min(mildFrom, severeFrom); i < values.length; i++) {
     const v = values[i];
     if (v === null) continue;
@@ -47,7 +48,7 @@ export function storeExposure(
 export const poolExposure = (comfort: Comfort, poolC: ArrayLike<number | null>, guard: ServiceGuard) =>
   storeExposure(poolC, comfort.pool_target_c, guard.pool, comfort.poolReachableC, comfort.pool_start_c);
 export const evExposure = (comfort: Comfort, carKm: ArrayLike<number | null>, guard: ServiceGuard) =>
-  storeExposure(carKm, comfort.ev_target_km, guard.ev, comfort.carReachableKm, comfort.ev_start_km);
+  storeExposure(carKm, comfort.ev_target_km, guard.ev, comfort.carReachableKm, comfort.ev_start_km, true);
 
 export function serviceExposure(comfort: Comfort, poolC: ArrayLike<number | null>, carKm: ArrayLike<number | null>, guard: ServiceGuard): ServiceExposure {
   return { pool: poolExposure(comfort, poolC, guard), ev: evExposure(comfort, carKm, guard) };

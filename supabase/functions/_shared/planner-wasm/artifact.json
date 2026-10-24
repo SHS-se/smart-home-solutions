@@ -1,7 +1,7 @@
 {
   "abi": 12,
-  "wasm_sha256": "7a8062c42f235bf7ce38ddd6c91e7f867b976bf99dcccc60240f966d7db3e7ec",
-  "source_sha256": "28d112966407a94df74b708f2ab7dc623c4d18b01285f5947877236b5473ed2f",
+  "wasm_sha256": "98ef878998b8b46331c46df1f80ac9a319ace046198d4761d4e66e93e3684aca",
+  "source_sha256": "e8864ab68644a8b338ba60a47106171b8066cbfbca22cb8f5ee94e9a18e31aad",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -70,6 +70,7 @@
     "supabase/functions/_shared/planner/device-models.ts",
     "supabase/functions/_shared/planner/device-power-allocation.ts",
     "supabase/functions/_shared/planner/energy-price-shape.ts",
+    "supabase/functions/_shared/planner/execution-evidence.ts",
     "supabase/functions/_shared/planner/measurement-isolation.ts",
     "supabase/functions/_shared/planner/operating-scope.ts",
     "supabase/functions/_shared/planner/planning-warnings.ts",

@@ -126,7 +126,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const availability = new Map(parseExecutionChanges(isolated.execution_availability ?? []).map(change => [change.owner, change]));
   for (const change of input.execution_replan?.changes ?? []) {
     if (change.status === "recovered") availability.delete(change.owner);
-    else availability.set(change.owner, change);
+    else if (change.status !== "plan_deviation") availability.set(change.owner, change);
   }
   isolated.execution_availability = [...availability.values()];
   if (isolated.device_physics) {
@@ -540,6 +540,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
       "Forecast charging and range depend on connecting the car. Scheduled charging that cannot execute automatically requests a new plan.")]);
   }
   for (const change of snapshot.execution_availability ?? []) {
+    if (change.status === "plan_deviation") continue;
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "execution_unavailable", change.owner, `Scheduled work could not execute: ${change.cause}.`,
       "The replacement accounts for current state and outstanding service. Other loads retain their accepted next-hour commands.",

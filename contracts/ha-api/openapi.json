@@ -1422,6 +1422,9 @@
           },
           "planning_exchange_version": {
             "const": 2
+          },
+          "execution_replan": {
+            "$ref": "#/components/schemas/ExecutionReplan"
           }
         },
         "dependentRequired": {
@@ -1439,6 +1442,9 @@
           "integration_version": [
             "api_version",
             "accepted_plan_schema_versions"
+          ],
+          "execution_replan": [
+            "snapshot"
           ]
         },
         "additionalProperties": false,
@@ -3472,6 +3478,9 @@
             "type": "string",
             "format": "uuid",
             "description": "Resolve a submitted capture after an acceptance reply was lost."
+          },
+          "execution_replan": {
+            "$ref": "#/components/schemas/ExecutionReplan"
           }
         },
         "additionalProperties": false,
@@ -3486,7 +3495,12 @@
               "snapshot_id"
             ]
           }
-        ]
+        ],
+        "dependentRequired": {
+          "execution_replan": [
+            "snapshot"
+          ]
+        }
       },
       "PlanningReceipt": {
         "type": "object",
@@ -4045,6 +4059,154 @@
           },
           "demand": {
             "$ref": "#/components/schemas/BatteryDemandV1"
+          }
+        }
+      },
+      "ExecutionAvailabilityChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "owner",
+          "status",
+          "cause",
+          "blocked_intervals"
+        ],
+        "properties": {
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "temporarily_absent",
+              "faulted",
+              "recovered"
+            ]
+          },
+          "cause": {
+            "type": "string",
+            "minLength": 1
+          },
+          "blocked_intervals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start",
+                "end"
+              ],
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        },
+        "description": "Actual physical availability; recovery has no blocked intervals. Ordinary captures exclude recovered rows."
+      },
+      "ExecutionPlanDeviation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "owner",
+          "status",
+          "cause",
+          "affected_intervals",
+          "magnitude",
+          "persistence_ms"
+        ],
+        "properties": {
+          "owner": {
+            "enum": [
+              "$battery",
+              "$pool"
+            ]
+          },
+          "status": {
+            "const": "plan_deviation"
+          },
+          "cause": {
+            "enum": [
+              "battery_energy_shortfall",
+              "pool_temperature_shortfall"
+            ]
+          },
+          "affected_intervals": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start",
+                "end"
+              ],
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "magnitude": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Unrecoverable stored kWh for battery, or water degrees Celsius below accepted trajectory for pool."
+          },
+          "persistence_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "description": "Sustained measured forecast error. Releases only this owner for corrective scheduling; never declares healthy equipment unavailable."
+      },
+      "ExecutionReplan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_id",
+          "accepted_plan_id",
+          "observed_at",
+          "changes"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "accepted_plan_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "changes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ExecutionAvailabilityChange"
+                },
+                {
+                  "$ref": "#/components/schemas/ExecutionPlanDeviation"
+                }
+              ]
+            }
           }
         }
       }
