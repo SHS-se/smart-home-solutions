@@ -71,6 +71,7 @@ pub struct OwnerMask {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Initial {
+    pub pool_source_depletion_kwh: Option<f64>,
     pub battery_kwh: Option<f64>,
     pub ev_kwh: Option<f64>,
     pub pool_c: Option<f64>,
@@ -173,6 +174,7 @@ pub struct Problem {
 }
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Quarter {
+    pub pool_source_depletion_kwh: Option<f64>,
     pub pool_command_w: f64,
     pub pool_w: f64,
     pub pool_compressor_w: f64,
@@ -231,7 +233,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 12 || p.slots.is_empty() {
+    if p.abi != 13 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -270,6 +272,8 @@ fn validate(p: &Problem) -> Result<(), String> {
         || p.car.is_some() != p.initial.ev_kwh.is_some()
         || p.car.is_some() != p.targets.ev_km.is_some()
         || p.car.is_some() != p.targets.ev_limit_kwh.is_some()
+        || p.heater.as_ref().is_some_and(|h| h.source.is_some())
+            != p.initial.pool_source_depletion_kwh.is_some()
         || p.heater.is_some() != p.pool_store.is_some()
         || p.heater.is_some() != p.initial.pool_c.is_some()
         || p.heater.is_some() != p.initial.pool_pending_heat_kwh.is_some()
@@ -325,6 +329,16 @@ fn validate(p: &Problem) -> Result<(), String> {
         .is_some_and(|energy| !energy.is_finite() || energy < 0.0)
     {
         return bad("invalid_initial_pool_pending_heat");
+    }
+    if p.initial.pool_source_depletion_kwh.is_some_and(|d| {
+        !d.is_finite()
+            || d < 0.0
+            || p.heater
+                .as_ref()
+                .and_then(|h| h.source)
+                .is_some_and(|source| source.heat_loss_per_kwh * d >= 1.0)
+    }) {
+        return bad("invalid_initial_pool_source");
     }
     if matches!(p.initial.heater_state, Some(HeaterState::Running{seconds} | HeaterState::Off{seconds}) if seconds<0.0)
     {

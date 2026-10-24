@@ -387,6 +387,7 @@ export interface OptimisationSnapshot {
     thermal_dynamics?: PoolDynamics;
     /** Reconstructed at this capture, separate from the daily parameter fit. */
     pending_heat_kwh?: number;
+    source_depletion_kwh?: number;
     hardware?: PoolHardwareInput;
     heater_response?: HeatPumpResponse;
     /** Null while only the measured response exists; the seeded loss stands in then. */

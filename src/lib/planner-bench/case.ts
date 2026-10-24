@@ -15,7 +15,7 @@ import { parseHeaterState, type HeaterState } from '../../../supabase/functions/
 export const QUARTERS = 288;
 export const QUARTER_MS = 15 * 60_000;
 export const CASE_FORMAT = 'shs-bench-case';
-export const CASE_VERSION = 2;
+export const CASE_VERSION = 3;
 
 /** One value per quarter. */
 export type Series = number[];
@@ -23,6 +23,7 @@ export type Series = number[];
 export interface CaseStartState {
   battery_soc: number;
   pool_water_c: number;
+  pool_source_depletion_kwh: number | null;
   /** Captured native command state; unobserved stop history remains explicit. */
   pool_heater: HeaterState;
   /** `target_soc` is the car's own charge limit, not a wish; the car is planned whether plugged in or not. */
@@ -173,6 +174,7 @@ export function parseScenarioData(raw: unknown): BenchScenarioData {
     || !finite(state.ev.soc) || !finite(state.ev.target_soc)) {
     throw new CaseFormatError('start_state is incomplete.');
   }
+  if (state.pool_source_depletion_kwh !== null && (!finite(state.pool_source_depletion_kwh) || state.pool_source_depletion_kwh < 0)) throw new CaseFormatError('Missing pool source state.');
   parseHeaterState(state.pool_heater);
   return data;
 }

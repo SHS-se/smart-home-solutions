@@ -4,6 +4,7 @@ import type {
   ChargerModel,
   HeaterState,
   HeatPumpResponse,
+  PoolSourceModel,
   ThermalStoreModel,
 } from "../planner/device-models.ts";
 
@@ -46,7 +47,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 12;
+  abi: 13;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;
@@ -63,6 +64,7 @@ export interface ReadyProblem {
   charger: ChargerModel | null;
   pool_store: ThermalStoreModel | null;
   heater: {
+    source?: PoolSourceModel | null;
     compressor_w: number;
     auxiliary_w: number;
     heat_w: number;
@@ -74,6 +76,7 @@ export interface ReadyProblem {
     ev_kwh: number | null;
     pool_c: number | null;
     pool_pending_heat_kwh: number | null;
+    pool_source_depletion_kwh: number | null;
     heater_state: HeaterState | null;
   };
   targets: {

@@ -20,7 +20,7 @@ export function frameCapture(captures: readonly ComparisonCapture[], period: Bas
       solarW: gather(s => s.solarW), loadW: gather(s => s.loadW), poolW: gather(s => s.poolW), poolStart: gather(s => s.poolStart), hotWaterW: gather(s => s.hotWaterW), carW: gather(s => s.carW),
       gridImportW: gather(s => s.gridImportW), gridExportW: gather(s => s.gridExportW), batteryChargeW: gather(s => s.batteryChargeW), batteryDischargeW: gather(s => s.batteryDischargeW),
       homeStartSoc: first.from ? initial.homeSoc[first.from - 1] : initial.homeStartSoc, homeSoc: gather(s => s.homeSoc), carSoc: gather(s => s.carSoc), carKm: gather(s => s.carKm),
-      carConnected: gather(s => s.carConnected), poolC: gather(s => s.poolC), poolPendingHeatKwh: gather(s => s.poolPendingHeatKwh), costSek: gather(s => s.costSek), wearSek: gather(s => s.wearSek) };
+      carConnected: gather(s => s.carConnected), poolC: gather(s => s.poolC), poolPendingHeatKwh: gather(s => s.poolPendingHeatKwh), poolSourceDepletionKwh: gather(s => s.poolSourceDepletionKwh), costSek: gather(s => s.costSek), wearSek: gather(s => s.wearSek) };
     const ledger = emptyElectricityLedger();
     series.start.forEach((_, i) => addElectricity(ledger, series.gridImportW[i] / 4000, series.gridExportW[i] / 4000, series.importPrice[i], series.exportPrice[i]));
     return { series, ledger, commands: parts.flatMap(p => p.capture[actor].commands.slice(p.from, p.to)), poolStates: parts.flatMap(p => p.capture[actor].poolStates.slice(p.from, p.to)) };

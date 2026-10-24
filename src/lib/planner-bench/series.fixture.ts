@@ -41,7 +41,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
     start: [], hours: [], published: [], importPrice: [], exportPrice: [],
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
     gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
-    homeSoc: [], homeStartSoc: null, carSoc: [], carConnected: [], poolC: [], poolPendingHeatKwh: [], costSek: [],
+    homeSoc: [], homeStartSoc: null, carSoc: [], carConnected: [], poolC: [], poolPendingHeatKwh: [], poolSourceDepletionKwh: [], costSek: [],
   };
   slots.forEach((slot, i) => {
     const hours = slot.duration_hours ?? 0.25;
@@ -65,7 +65,7 @@ export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly 
     out.carSoc.push(slot.ev_soc === null ? null : r1(slot.ev_soc * 100));
     out.carConnected.push(slot.ev_connected ? 1 : 0);
     const temp = poolStateC?.[i + 1];
-    out.poolPendingHeatKwh.push(temp == null ? null : 0);
+    out.poolPendingHeatKwh.push(temp == null ? null : 0); out.poolSourceDepletionKwh.push(null);
     out.poolC.push(temp === undefined || temp === null || !Number.isFinite(temp) ? null : Math.round(temp * 1000) / 1000);
     out.costSek.push(r4((slot.grid_import_w * buy - slot.grid_export_w * sell) * hours / 1_000));
   });

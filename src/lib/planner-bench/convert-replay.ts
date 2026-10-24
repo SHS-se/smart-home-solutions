@@ -117,6 +117,7 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
       battery_soc: reading(battery?.soc, DEFAULT_START_STATE.battery_soc, 'battery_soc'),
       pool_water_c: reading(pool?.water_temperature_c, DEFAULT_START_STATE.pool_water_c, 'pool_water_c'),
       pool_heater: replayHeaterState(pool),
+      pool_source_depletion_kwh: isRecord(snapshot.pool_model) && typeof snapshot.pool_model.source_depletion_kwh === 'number' ? snapshot.pool_model.source_depletion_kwh : null,
       ev: {
         soc: reading(car?.soc, DEFAULT_START_STATE.ev_soc, 'ev_soc'),
         target_soc: num(car?.charge_limit_soc) ?? DEFAULT_START_STATE.ev_target_soc,

@@ -60,7 +60,7 @@ export function replayScheduler(input: BaselineInput, engine: ReplayEngine) {
     const outcome = engine.project(quarter, [command]).outcome;
     if (outcome.kind === 'failed') throw new Error(`Historical scheduler execution at ${at}: ${outcome.issue}`);
     const q = outcome.quarters[0]; commands.push(command); quarters.push(q);
-    state = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c, pool_pending_heat_kwh: q.pool_pending_heat_kwh, heater_state: q.heater_state as ReadyProblem['initial']['heater_state'] };
+    state = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c, pool_pending_heat_kwh: q.pool_pending_heat_kwh, pool_source_depletion_kwh: q.pool_source_depletion_kwh, heater_state: q.heater_state as ReadyProblem['initial']['heater_state'] };
   }
   const series = projectionSeries(input, problem, quarters), ledger = electricityLedger(quarters, problem);
   return { series, commands, ledger, poolStates: quarters.map(quarterPool), solves, engine: REPLAY_ENGINE, protocol: REPLAY_PROTOCOL };

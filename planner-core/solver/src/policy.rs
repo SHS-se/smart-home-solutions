@@ -180,6 +180,7 @@ pub(crate) fn end_credit(
 pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
     let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
     let mut pending = p.initial.pool_pending_heat_kwh.unwrap_or(0.0);
+    let mut depletion = p.initial.pool_source_depletion_kwh.unwrap_or(0.0);
     let mut age = p
         .initial
         .heater_state
@@ -225,6 +226,7 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
                 state,
                 true,
                 shs_planner_models::PoolConditions {
+                    source_depletion_kwh: depletion,
                     water_c: reach_pool,
                     pending_heat_kwh: pending,
                     outdoor_c: s.outdoor_c,
@@ -235,6 +237,7 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             age = step.next.age();
             reach_pool = step.water_c;
             pending = step.pending_heat_kwh;
+            depletion = step.source_depletion_kwh;
         }
         for (k, threshold) in thresholds.iter().enumerate() {
             if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {

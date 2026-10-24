@@ -1059,7 +1059,7 @@ test.describe('planner bench', () => {
           import_price_sek_per_kwh: i < 72 ? 1.2 : null, export_price_sek_per_kwh: i < 72 ? 0.4 : null,
         })),
         pv_calibration: { correction_factor_by_lead_day: [0.8, 0.9, 1, 1] },
-        battery: { soc: 0.42 }, pool: { water_temperature_c: 28.4 }, ev_battery: { soc: 0.7, connected: true, charge_limit_soc: 0.8 },
+        pool_model: { source_depletion_kwh: 9 }, battery: { soc: 0.42 }, pool: { water_temperature_c: 28.4 }, ev_battery: { soc: 0.7, connected: true, charge_limit_soc: 0.8 },
         device_models: [
           { key: 'sensor.hot_water_energy', category: 'hot_water', forecast_w_by_slot: new Array(288).fill(200) },
           { key: 'sensor.pool_heater_energy', category: 'pool_heating', planning_service: 'pool', forecast_w_by_slot: new Array(288).fill(900) },
@@ -1080,7 +1080,7 @@ test.describe('planner bench', () => {
     expect(data.known_prices.import_sek_per_kwh.filter(v => v !== null)).toHaveLength(72);
     expect(data.solar_forecast_w[0]).toBeCloseTo(800);
     expect(data.base_load_forecast_w[0]).toBe(700);
-    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, pool_heater: { kind: 'off_unobserved' }, ev: { soc: 0.7, target_soc: 0.8 } });
+    expect(data.start_state).toEqual({ battery_soc: 0.42, pool_water_c: 28.4, pool_heater: { kind: 'off_unobserved' }, pool_source_depletion_kwh: 9, ev: { soc: 0.7, target_soc: 0.8 } });
     // Nothing of another planner's work or the replay's bulk is.
     expect(JSON.stringify(row)).not.toMatch(/secret|frozen|value_curves|xxxxxxxx/);
     await expect.poll(() => captured.dispatched.length).toBe(1);

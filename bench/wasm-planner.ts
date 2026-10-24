@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 12,
+    abi: 13,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -170,6 +170,7 @@ export function readyProblem(
       ev_kwh: c.start_state.ev.soc * h.car.battery.capacity_kwh,
       pool_c: c.start_state.pool_water_c,
       pool_pending_heat_kwh: 0,
+      pool_source_depletion_kwh: heater.source ? c.start_state.pool_source_depletion_kwh : null,
       heater_state: c.start_state.pool_heater,
     },
     targets: {
@@ -220,7 +221,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 12 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 13 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(

@@ -9,6 +9,7 @@ const WAYS: usize = 4;
 struct Key {
     water: u64,
     pending: u64,
+    depletion: u64,
     outdoor: u64,
     seconds: u64,
     stop: Option<u64>,
@@ -19,6 +20,7 @@ struct Key {
 impl Key {
     fn new(state: HeaterState, on: bool, conditions: PoolConditions) -> Self {
         let PoolConditions {
+            source_depletion_kwh,
             water_c,
             pending_heat_kwh,
             outdoor_c,
@@ -34,6 +36,7 @@ impl Key {
         Self {
             water: water_c.to_bits(),
             pending: pending_heat_kwh.to_bits(),
+            depletion: source_depletion_kwh.to_bits(),
             outdoor: outdoor_c.to_bits(),
             seconds: seconds.to_bits(),
             stop: stop_c.map(f64::to_bits),
@@ -45,6 +48,7 @@ impl Key {
     fn set(self) -> usize {
         let mut hash = self.water
             ^ self.pending.rotate_left(31)
+            ^ self.depletion.rotate_left(11)
             ^ self.age.rotate_left(17)
             ^ self.outdoor.rotate_left(7)
             ^ self.seconds.rotate_left(43)
@@ -143,6 +147,7 @@ mod tests {
     fn models(tau: f64) -> (Heater, ThermalStore) {
         (
             Heater {
+                source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 764.0,
                 heat_w: 12000.0,
@@ -160,6 +165,7 @@ mod tests {
     }
     fn conditions() -> PoolConditions {
         PoolConditions {
+            source_depletion_kwh: 0.0,
             water_c: 30.0,
             pending_heat_kwh: 0.0,
             outdoor_c: 20.0,
@@ -175,6 +181,7 @@ mod tests {
             (a.heat_w, b.heat_w),
             (a.water_c, b.water_c),
             (a.pending_heat_kwh, b.pending_heat_kwh),
+            (a.source_depletion_kwh, b.source_depletion_kwh),
         ] {
             assert_eq!(a.to_bits(), b.to_bits());
         }
@@ -193,23 +200,32 @@ mod tests {
         let base = Key::new(HeaterState::Steady, true, c);
         for changed in [
             PoolConditions {
+                source_depletion_kwh: 0.1,
+                ..c
+            },
+            PoolConditions {
+                source_depletion_kwh: 0.0,
                 water_c: f64::from_bits(c.water_c.to_bits() + 1),
                 ..c
             },
             PoolConditions {
+                source_depletion_kwh: 0.0,
                 pending_heat_kwh: -0.0,
                 ..c
             },
             PoolConditions {
+                source_depletion_kwh: 0.0,
                 outdoor_c: f64::from_bits(c.outdoor_c.to_bits() + 1),
                 ..c
             },
             PoolConditions {
+                source_depletion_kwh: 0.0,
                 seconds: 600.0,
                 ..c
             },
             PoolConditions { stop_c: None, ..c },
             PoolConditions {
+                source_depletion_kwh: 0.0,
                 stop_c: Some(f64::from_bits(c.stop_c.unwrap().to_bits() + 1)),
                 ..c
             },
@@ -244,24 +260,34 @@ mod tests {
     }
     #[test]
     fn delayed_on_and_off_states_match_direct_and_models_are_isolated() {
-        for tau in [0.0, 0.675, 2.0] {
-            let (heater, store) = models(tau);
-            let mut memo = PoolMemo::new(&heater, &store);
-            for _ in 0..2 {
-                for pending in [0.0, 5.0] {
-                    for on in [false, true] {
-                        let c = PoolConditions {
-                            pending_heat_kwh: pending,
-                            ..conditions()
-                        };
-                        exact(
-                            memo.transition(HeaterState::Steady, on, c),
-                            heater.pool_transition(&store, HeaterState::Steady, on, c),
-                        );
+        for source in [
+            None,
+            Some(shs_planner_models::SourceModel {
+                recovery_rate_per_h: 0.15,
+                heat_loss_per_kwh: 0.02,
+            }),
+        ] {
+            for tau in [0.0, 0.675, 2.0] {
+                let (mut heater, store) = models(tau);
+                heater.source = source;
+                let mut memo = PoolMemo::new(&heater, &store);
+                for _ in 0..2 {
+                    for pending in [0.0, 5.0] {
+                        for on in [false, true] {
+                            let c = PoolConditions {
+                                source_depletion_kwh: 9.0,
+                                pending_heat_kwh: pending,
+                                ..conditions()
+                            };
+                            exact(
+                                memo.transition(HeaterState::Steady, on, c),
+                                heater.pool_transition(&store, HeaterState::Steady, on, c),
+                            );
+                        }
                     }
                 }
+                assert!(memo.hits() > 0);
             }
-            assert!(memo.hits() > 0);
         }
         let (heater, store) = models(2.0);
         let other = ThermalStore {
@@ -289,6 +315,7 @@ mod tests {
                     state,
                     true,
                     PoolConditions {
+                        source_depletion_kwh: 0.0,
                         water_c: *water,
                         ..c
                     },
@@ -305,6 +332,7 @@ mod tests {
             .chain([colliding[4], colliding[0]])
         {
             let c = PoolConditions {
+                source_depletion_kwh: 0.0,
                 water_c: water,
                 ..c
             };
@@ -328,6 +356,7 @@ mod tests {
                 HeaterState::OffUnobserved,
                 on,
                 PoolConditions {
+                    source_depletion_kwh: 0.0,
                     water_c: 31.0,
                     ..conditions()
                 },

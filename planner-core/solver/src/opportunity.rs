@@ -142,6 +142,7 @@ impl Table {
             m.pool_stop_c = None;
             m.initial.pool_c = None;
             m.initial.pool_pending_heat_kwh = None;
+            m.initial.pool_source_depletion_kwh = None;
             m.initial.heater_state = None;
             m.targets.pool_c = None;
             m.end_credit.pool = None;

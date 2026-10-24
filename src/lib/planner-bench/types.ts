@@ -59,6 +59,7 @@ export interface BenchSeries {
   poolC: (number | null)[];
   /** Heat awaiting the measured water response at each quarter end, kWh; null without a pool. */
   poolPendingHeatKwh: (number | null)[];
+  poolSourceDepletionKwh: (number | null)[];
   /** Net grid cost of the quarter, SEK (import cost minus export revenue). */
   costSek: number[];
   /** Battery wear per quarter, on what it discharged, SEK. Absent on a result from before the bill, which awaits recomputing. */

@@ -846,7 +846,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 12,
+            abi: 13,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -910,6 +910,7 @@ pub(crate) mod tests {
                 },
             }),
             heater: Some(Heater {
+                source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 0.0,
                 heat_w: 12000.0,
@@ -917,6 +918,7 @@ pub(crate) mod tests {
             }),
             pool_stop_c: None,
             initial: Initial {
+                pool_source_depletion_kwh: None,
                 battery_kwh: Some(5.0),
                 ev_kwh: Some(10.0),
                 pool_c: Some(30.0),

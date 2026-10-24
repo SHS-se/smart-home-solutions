@@ -1,4 +1,4 @@
-import { assertAlmostEquals, assertEquals, assertRejects } from '@std/assert';
+import { assertThrows, assertAlmostEquals, assertEquals, assertRejects } from '@std/assert';
 import { baselineFixture } from './fixture.ts';
 import { prepareHomeBaseline } from './model.ts';
 import { compareModels } from './model-comparison.ts';
@@ -56,11 +56,26 @@ Deno.test('a requested October seed cannot silently move to November when prereq
 
 Deno.test('pool continuation preserves pending response independently for each operator', () => {
   const input = prepareHomeBaseline(baselineFixture());
-  const state = { poolC: 29.2, pendingHeatKwh: 6.4, heaterState: { kind: 'off' as const, seconds: 900 } };
+  const state = { poolC: 29.2, pendingHeatKwh: 6.4, sourceDepletionKwh: 8.2, heaterState: { kind: 'off' as const, seconds: 900 } };
+  input.problem.heater!.source = {recovery_rate_per_h: .1, heat_loss_per_kwh: .02};
   const problem = withPoolState(input.problem, state);
+  assertEquals(problem.initial.pool_source_depletion_kwh, 8.2);
   assertEquals(problem.initial.pool_pending_heat_kwh, 6.4);
   assertEquals(problem.initial.heater_state, state.heaterState);
-  const quarter = { pool_c: state.poolC, pool_pending_heat_kwh: state.pendingHeatKwh, heater_state: state.heaterState } as Parameters<typeof quarterPool>[0];
+  const quarter = { pool_c: state.poolC, pool_pending_heat_kwh: state.pendingHeatKwh, pool_source_depletion_kwh: state.sourceDepletionKwh, heater_state: state.heaterState } as Parameters<typeof quarterPool>[0];
   assertEquals(quarterPool(quarter), state);
   assertEquals(seedPool({ month: '2026-10', temperatureC: 29, hash: 'a'.repeat(64) }).initial.baseline.pendingHeatKwh, 0);
+});
+
+Deno.test('source continuation refuses an unmeasured fresh source and accepts a measured seed', () => {
+  const input = prepareHomeBaseline(baselineFixture());
+  input.problem.heater!.source = {recovery_rate_per_h:.1,heat_loss_per_kwh:.02};
+  const seed = {month:'2026-10',temperatureC:29,hash:'a'.repeat(64)};
+  const unobserved = seedPool(seed).initial.baseline;
+  assertEquals(unobserved.sourceDepletionKwh,null);
+  assertThrows(()=>withPoolState(input.problem,unobserved),Error,'measured initial source');
+  const response = {at:'2026-10-01T00:00:00Z',pending_heat_kwh:2,source_depletion_kwh:9};
+  const measured = withPoolState(input.problem,seedPool(seed,response).initial.baseline);
+  assertEquals(measured.initial.pool_source_depletion_kwh,9);
+  assertEquals(measured.initial.pool_pending_heat_kwh,2);
 });

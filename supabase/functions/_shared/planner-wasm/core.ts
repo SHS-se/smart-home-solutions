@@ -47,6 +47,7 @@ const quarter = z.object({
   ev_kwh: z.number().finite().nullable(),
   pool_c: z.number().finite().nullable(),
   pool_pending_heat_kwh: z.number().finite().nonnegative().nullable(),
+  pool_source_depletion_kwh: z.number().finite().nonnegative().nullable(),
   heater_state: age.nullable(),
   pool_start: z.object({
     off_seconds: z.number().finite().nonnegative().nullable(),

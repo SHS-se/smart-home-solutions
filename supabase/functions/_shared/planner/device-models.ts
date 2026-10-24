@@ -108,7 +108,7 @@ export interface ThermalStoreModel {
 }
 
 /** Heat inferred to be in transit survives both shutdown and replanning. */
-export interface PoolThermalState { water_c: number; pending_heat_kwh: number }
+export interface PoolThermalState { water_c: number; pending_heat_kwh: number; source_depletion_kwh?: number }
 
 export const poolInventoryC = (store: ThermalStoreModel, waterC: number, pendingHeatKwh: number): number =>
   waterC + pendingHeatKwh / store.capacity_kwh_per_c;
@@ -138,7 +138,7 @@ function transferPoolHeat(store: ThermalStoreModel, state: PoolThermalState, hea
   const endWeight = x < 1e-4 ? x * (0.5 + x * (-1 / 6 + x * (1 / 24 - x / 120))) : 1 - released / x;
   const pending = tau > 0 ? state.pending_heat_kwh * (1 - released) + tau / 1_000 *
     (heatStartW * (released - endWeight) + (heatStartW + slopeWPerH * hours) * endWeight) : 0;
-  return { water_c: state.water_c + (state.pending_heat_kwh + supplied - pending) / store.capacity_kwh_per_c + coolingCPerH * hours,
+  return { ...state, water_c: state.water_c + (state.pending_heat_kwh + supplied - pending) / store.capacity_kwh_per_c + coolingCPerH * hours,
     pending_heat_kwh: pending };
 }
 
@@ -194,6 +194,7 @@ export interface OperatingPoint {
 }
 
 export interface HeatPumpModel {
+  source?: PoolSourceModel | null;
   /** What the setting counts, in words (the S1256 pool function: kW of heat asked for). */
   setting_unit: string;
   /** The machine's measured states, by rising setting and rising electricity. */
@@ -238,6 +239,7 @@ export type HeaterState =
 export interface HeaterStart { off_seconds: number | null }
 export interface PublishedHeater {
   compressor_w: number; auxiliary_w: number; heat_w: number; response: HeatPumpResponse;
+  source?: PoolSourceModel | null;
 }
 
 export function parseHeaterState(input: unknown): HeaterState {
@@ -251,12 +253,24 @@ export function parseHeaterState(input: unknown): HeaterState {
 }
 
 /** One immutable solver publication; missing dynamics never silently become steady. */
+export function validateHeaterSource(heater: Pick<PublishedHeater, 'source' | 'response' | 'compressor_w'>): void {
+  const source = heater.source;
+  if (!source) return;
+  const peakFraction = heater.response.kind === 'bergvarme' ? Math.max(1, ...heater.response.startup.map(p => p.electric_fraction)) : 1;
+  if (!finite(source.recovery_rate_per_h) || source.recovery_rate_per_h <= 0 || !finite(source.heat_loss_per_kwh) || source.heat_loss_per_kwh <= 0
+    || source.heat_loss_per_kwh * heater.compressor_w * peakFraction / 1000 >= source.recovery_rate_per_h) {
+    throw new DeviceModelError('A pool source needs positive recovery and positive steady heat at every published power');
+  }
+}
 export function publishHeater(model: HeatPumpModel): PublishedHeater {
   const run = operatingPoint(model, model.selected_setting);
-  return {
+  const heater = {
     compressor_w: run.electric_w, auxiliary_w: model.auxiliary_w, heat_w: run.heat_w,
+    ...(model.source ? { source: { ...model.source } } : {}),
     response: parseHeaterResponse(model.response),
   };
+  validateHeaterSource(heater);
+  return heater;
 }
 
 /** Electrical/thermal response and command events come from the same device step. */
@@ -321,6 +335,7 @@ function firstPoolStop(store: ThermalStoreModel, state: PoolThermalState, heatSt
 
 /** Hardware clips compressor time; heat already in transit keeps reaching water. */
 export function stepPool(store: ThermalStoreModel, heater: PublishedHeater, heaterState: HeaterState, on: boolean, conditions: PoolConditions): PoolTransition {
+  if (heater.source) return stepSourcePool(store, heater, heaterState, on, conditions);
   const { seconds, outdoor_c: outdoorC, stop_c: stopC } = conditions;
   if (store.response_time_constant_h === 0) return stepDirectPool(store, heater, heaterState, on,
     { ...conditions, water_c: poolInventoryC(store, conditions.water_c, conditions.pending_heat_kwh), pending_heat_kwh: 0 });
@@ -360,6 +375,63 @@ export function stepPool(store: ThermalStoreModel, heater: PublishedHeater, heat
   }
   return { electric_w: active.electric_w * share, compressor_w: active.compressor_w * share,
     auxiliary_w: active.auxiliary_w * share, heat_w: active.heat_w * share, ...thermal, next, start: active.start };
+}
+
+const sourceKernels = new WeakMap<PublishedHeater, WeakMap<ThermalStoreModel, PoolSourceKernel>>();
+function stepSourcePool(store: ThermalStoreModel, heater: PublishedHeater, state: HeaterState, on: boolean, conditions: PoolConditions): PoolTransition {
+  const source = heater.source!;
+  if (!finite(conditions.source_depletion_kwh) || conditions.source_depletion_kwh < 0 || source.heat_loss_per_kwh * conditions.source_depletion_kwh >= 1) throw new DeviceModelError('Pool source memory is missing');
+  let kernels = sourceKernels.get(heater);
+  if (!kernels) { kernels = new WeakMap(); sourceKernels.set(heater, kernels); }
+  let kernel = kernels.get(store);
+  if (!kernel) {
+    kernel = new PoolSourceKernel(store.capacity_kwh_per_c, store.response_time_constant_h, source, heater.heat_w / heater.compressor_w);
+    kernels.set(store, kernel);
+  }
+  const { seconds, outdoor_c: outdoor, stop_c: stop } = conditions;
+  let thermal = { water_c: store.response_time_constant_h === 0 ? poolInventoryC(store, conditions.water_c, conditions.pending_heat_kwh) : conditions.water_c,
+    pending_heat_kwh: store.response_time_constant_h === 0 ? 0 : conditions.pending_heat_kwh,
+    source_depletion_kwh: conditions.source_depletion_kwh };
+  const idle = (hours: number) => {
+    const next = stepPoolThermal(store, thermal, 0, 0, outdoor, hours);
+    thermal = { water_c: next.water_c, pending_heat_kwh: next.pending_heat_kwh,
+      source_depletion_kwh: thermal.source_depletion_kwh * sourceDecay(source.recovery_rate_per_h, hours) };
+  };
+  if (!on || stop !== null && thermal.water_c >= stop) {
+    idle(seconds / 3600);
+    return { ...stepHeater(heater, state, false, seconds), ...thermal };
+  }
+  const age = state.kind === 'steady' ? Infinity : state.kind === 'running' ? state.seconds : 0;
+  const curve = heater.response.kind === 'bergvarme' ? heater.response.startup : [];
+  const knots = [0, ...curve.map(p => p.elapsed_seconds - age).filter(t => t > 0 && t < seconds), seconds];
+  const fraction = (elapsed: number) => {
+    if (!curve.length || age === Infinity) return 1;
+    for (let i = 1; i < curve.length; i++) if (age + elapsed <= curve[i].elapsed_seconds) {
+      const a = curve[i - 1], b = curve[i];
+      return a.electric_fraction + (b.electric_fraction - a.electric_fraction) * (age + elapsed - a.elapsed_seconds) / (b.elapsed_seconds - a.elapsed_seconds);
+    }
+    return 1;
+  };
+  const cooling = idleCPerHour(store, thermal.water_c, outdoor);
+  let activeSeconds = seconds, heatKwh = 0;
+  for (let i = 0; i + 1 < knots.length; i++) {
+    const from = knots[i], to = knots[i + 1], hours = (to - from) / 3600;
+    const power = heater.compressor_w / 1000 * fraction(from);
+    const slope = heater.compressor_w / 1000 * (fraction(to) - fraction(from)) / hours;
+    const crossing = stop === null ? null : kernel.firstStop(thermal.water_c, thermal.pending_heat_kwh, thermal.source_depletion_kwh, power, slope, hours, cooling, stop);
+    const q = kernel.piece(thermal.water_c, thermal.pending_heat_kwh, thermal.source_depletion_kwh, power, slope, crossing ?? hours, cooling);
+    heatKwh += q.heat_kwh;
+    thermal = q;
+    if (crossing !== null) { activeSeconds = from + crossing * 3600; break; }
+  }
+  const active = stepHeater(heater, state, true, activeSeconds), share = activeSeconds / seconds;
+  let next = active.next;
+  if (activeSeconds < seconds) {
+    idle((seconds - activeSeconds) / 3600);
+    next = stepHeater(heater, next, false, seconds - activeSeconds).next;
+  }
+  return { ...active, electric_w: active.electric_w * share, compressor_w: active.compressor_w * share,
+    auxiliary_w: active.auxiliary_w * share, heat_w: heatKwh * 3_600_000 / seconds, ...thermal, next };
 }
 
 /** Direct-transfer stores keep their existing single-interval loss convention. */
@@ -565,7 +637,142 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
     if (heater.control !== "switch") fail("A heat pump the planner sets the power of is not modelled yet.");
     if (!finite(heater.auxiliary_w) || heater.auxiliary_w < 0) fail("A heat pump's auxiliary draw cannot be negative.");
     if (heater.response !== undefined) heater.response = parseHeaterResponse(heater.response);
+    if (heater.source) publishHeater(heater);
     operatingPoint(heater, heater.selected_setting);
   }
   return models;
+}
+
+/** A learned source reservoir, independent of compressor startup and water lag. */
+export interface PoolSourceModel {
+  recovery_rate_per_h: number;
+  heat_loss_per_kwh: number;
+}
+const N = 7;
+type Matrix = number[];
+const identity = (): Matrix => Array.from({ length: N * N }, (_, i) => i % (N + 1) === 0 ? 1 : 0);
+function multiply(a: Matrix, b: Matrix): Matrix {
+  const out = Array(N * N).fill(0);
+  for (let i = 0; i < N; i++) for (let k = 0; k < N; k++) for (let j = 0; j < N; j++) {
+    out[i * N + j] += a[i * N + k] * b[k * N + j];
+  }
+  return out;
+}
+function exponential(m: Matrix, hours: number): Matrix {
+  let scale = hours, squares = 0;
+  const norm = Math.max(...m.map(Math.abs));
+  while (norm * scale > .125) { scale /= 2; squares++; }
+  const a = m.map(v => v * scale), result = identity();
+  let term = identity();
+  for (let n = 1; n <= 16; n++) {
+    term = multiply(term, a).map(v => v / n);
+    for (let i = 0; i < result.length; i++) result[i] += term[i];
+  }
+  let out = result;
+  for (let i = 0; i < squares; i++) out = multiply(out, out);
+  return out;
+}
+/** Same finite exponential arithmetic as the native kernel. */
+export function sourceDecay(rate: number, hours: number): number {
+  let x = rate * hours, squares = 0;
+  if (x >= 40) return 0;
+  while (x > .125) { x /= 2; squares++; }
+  let term = -x, sum = term;
+  for (let n = 2; n <= 16; n++) { term *= -x / n; sum += term; }
+  let released = -sum;
+  for (let n = 0; n < squares; n++) released *= 2 - released;
+  return 1 - released;
+}
+
+/** Machine-precision exponential of the exact linear system for
+ * [D, P*D, P², P, 1, pending heat, supplied heat], with linear compressor P.
+ * Only immutable model/duration coefficients are cached; every caller owns D. */
+export class PoolSourceKernel {
+  private weights = new Map<string, Matrix>();
+  constructor(readonly capacity: number, readonly responseHours: number,
+    readonly source: PoolSourceModel, readonly cop: number) {}
+
+  private matrix(hours: number, slope: number): Matrix {
+    const key = `${hours}:${slope}`;
+    const cached = this.weights.get(key);
+    if (cached) return cached;
+    const m = Array(N * N).fill(0), rate = this.source.recovery_rate_per_h;
+    m[0] = -rate; m[3] = 1;
+    m[N] = slope; m[N + 1] = -rate; m[N + 2] = 1;
+    m[2 * N + 3] = 2 * slope;
+    m[3 * N + 4] = slope;
+    m[5 * N + 1] = -this.cop * this.source.heat_loss_per_kwh;
+    m[5 * N + 3] = this.cop;
+    m[5 * N + 5] = this.responseHours > 0 ? -1 / this.responseHours : 0;
+    m[6 * N + 1] = m[5 * N + 1]; m[6 * N + 3] = this.cop;
+    const out = exponential(m, hours);
+    if (this.weights.size === 512) this.weights.delete(this.weights.keys().next().value!);
+    this.weights.set(key, out);
+    return out;
+  }
+
+  piece(water: number, pending: number, depletion: number, powerKw: number,
+    slopeKwPerH: number, hours: number, cooling: number) {
+    const v = [depletion, powerKw * depletion, powerKw * powerKw, powerKw, 1, pending, 0];
+    const m = this.matrix(hours, slopeKwPerH), out = Array(N).fill(0);
+    for (const i of [0, 5, 6]) for (let j = 0; j < N; j++) out[i] += m[i * N + j] * v[j];
+    const next = this.responseHours > 0 ? out[5] : 0;
+    return { water_c: water + (pending + out[6] - next) / this.capacity + cooling * hours,
+      pending_heat_kwh: next, source_depletion_kwh: Math.max(0, out[0]), heat_kwh: out[6] };
+  }
+
+  /** Turning points of heat, pending response and water isolate the first stop.
+   * P*D is quadratic plus linear*exp(-rate*t); its third derivative has at
+   * most one zero. Integrating factors then isolate all pending/water roots. */
+  firstStop(water: number, pending: number, depletion: number, power: number,
+    slope: number, hours: number, cooling: number, stop: number): number | null {
+    if (water >= stop) return 0;
+    const at = (t: number) => this.piece(water, pending, depletion, power, slope, t, cooling);
+    const full = at(hours);
+    if (water + (pending + full.heat_kwh) / this.capacity + Math.max(0, cooling) * hours < stop) return null;
+    const rate = this.source.recovery_rate_per_h, beta = this.source.heat_loss_per_kwh;
+    const derivative = (t: number, order: number): number => {
+      const q = at(t), p = power + slope * t, d1 = p - rate * q.source_depletion_kwh;
+      const heat = this.cop * p * (1 - beta * q.source_depletion_kwh);
+      if (order === 1) return this.cop * (slope * (1 - beta * q.source_depletion_kwh) - beta * p * d1);
+      if (order === 2) return -this.cop * beta * (2 * slope * d1 + p * (slope - rate * d1));
+      if (order === 3) return heat - (this.responseHours > 0 ? q.pending_heat_kwh / this.responseHours : 0);
+      return this.responseHours > 0 ? q.pending_heat_kwh / this.responseHours / this.capacity + cooling
+        : heat / this.capacity + cooling;
+    };
+    const bisect = (fn: (t: number) => number, low: number, high: number) => {
+      let value = fn(low);
+      for (let i = 0; i < 48; i++) {
+        const mid = (low + high) / 2, next = fn(mid);
+        if (next === 0) return mid;
+        if (Math.sign(next) === Math.sign(value)) { low = mid; value = next; } else high = mid;
+      }
+      return (low + high) / 2;
+    };
+    const roots = (fn: (t: number) => number, boundaries: number[]) => {
+      const found = [0, hours];
+      for (let i = 0; i + 1 < boundaries.length; i++) {
+        const low = boundaries[i], high = boundaries[i + 1], a = fn(low), b = fn(high);
+        if (a === 0) found.push(low);
+        if (a * b < 0) found.push(bisect(fn, low, high));
+        if (b === 0) found.push(high);
+      }
+      return [...new Set(found)].sort((a, b) => a - b);
+    };
+    const turning = [0, hours];
+    if (rate > 0 && slope !== 0) {
+      const t = (3 * slope - rate * power) / (rate * slope);
+      if (t > 0 && t < hours) turning.splice(1, 0, t);
+    }
+    const heatSecond = roots(t => derivative(t, 2), turning);
+    const heatFirst = roots(t => derivative(t, 1), heatSecond);
+    const pendingTurning = this.responseHours > 0 ? roots(t => derivative(t, 3), heatFirst) : heatFirst;
+    const waterTurning = roots(t => derivative(t, 4), pendingTurning);
+    for (let i = 0; i + 1 < waterTurning.length; i++) {
+      const low = waterTurning[i], high = waterTurning[i + 1];
+      if (at(low).water_c >= stop) return low;
+      if (at(high).water_c >= stop) return bisect(t => at(t).water_c - stop, low, high);
+    }
+    return null;
+  }
 }

@@ -1,5 +1,7 @@
 //! Pure device transitions. No prices, policy, history, storage or clock.
+mod source;
 use serde::{Deserialize, Serialize};
+pub use source::{source_decay, SourceModel};
 use std::cell::Cell;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -251,15 +253,20 @@ pub struct PoolKernel<'a> {
     heater: &'a Heater,
     store: &'a ThermalStore,
     weights: Option<ReleaseMemo>,
+    source: Option<source::SourceKernel<'a>>,
 }
 impl<'a> PoolKernel<'a> {
-    pub const MAX_WEIGHT_MEMO_BYTES: usize =
-        ReleaseMemo::ENTRIES * std::mem::size_of::<Cell<ReleaseWeights>>();
+    pub const MAX_WEIGHT_MEMO_BYTES: usize = ReleaseMemo::ENTRIES
+        * std::mem::size_of::<Cell<ReleaseWeights>>()
+        + source::SourceKernel::MAX_MEMO_BYTES;
 
     pub fn new(heater: &'a Heater, store: &'a ThermalStore) -> Self {
         Self {
             heater,
             store,
+            source: heater
+                .source
+                .map(|_| source::SourceKernel::new(heater, store, true)),
             weights: (store.response_time_constant_h > 0.0)
                 .then(|| ReleaseMemo::new(store.response_time_constant_h)),
         }
@@ -270,6 +277,9 @@ impl<'a> PoolKernel<'a> {
         on: bool,
         conditions: PoolConditions,
     ) -> PoolTransition {
+        if let Some(source) = &self.source {
+            return source.transition(state, on, conditions);
+        }
         self.heater.pool_transition_with_transfer(
             ThermalTransfer {
                 store: self.store,
@@ -410,6 +420,7 @@ fn integral(points: &[StartupPoint], age: f64, seconds: f64, heat: bool) -> f64 
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Heater {
+    pub source: Option<SourceModel>,
     pub compressor_w: f64,
     pub auxiliary_w: f64,
     pub heat_w: f64,
@@ -417,6 +428,25 @@ pub struct Heater {
 }
 impl Heater {
     pub fn validate_response(&self) -> Result<(), &'static str> {
+        let peak_fraction = match &self.response {
+            Response::Steady => 1.0,
+            Response::Bergvarme { startup } => startup
+                .iter()
+                .map(|p| p.electric_fraction)
+                .fold(1.0, f64::max),
+        };
+        if self.source.is_some_and(|s| {
+            !s.recovery_rate_per_h.is_finite()
+                || s.recovery_rate_per_h <= 0.0
+                || !s.heat_loss_per_kwh.is_finite()
+                || s.heat_loss_per_kwh <= 0.0
+                || s.heat_loss_per_kwh * self.compressor_w * peak_fraction
+                    / 1000.0
+                    / s.recovery_rate_per_h
+                    >= 1.0
+        }) {
+            return Err("invalid_pool_source");
+        }
         if let Response::Bergvarme { startup } = &self.response {
             if startup.len() < 2
                 || startup[0].elapsed_seconds != 0.0
@@ -509,6 +539,7 @@ impl Heater {
 /// Hardware thermostat clips delivered electricity and heat, never the published permit.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct PoolConditions {
+    pub source_depletion_kwh: f64,
     pub water_c: f64,
     pub pending_heat_kwh: f64,
     pub outdoor_c: f64,
@@ -517,6 +548,7 @@ pub struct PoolConditions {
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct PoolTransition {
+    pub source_depletion_kwh: f64,
     pub electric_w: f64,
     pub compressor_w: f64,
     pub auxiliary_w: f64,
@@ -534,6 +566,9 @@ impl Heater {
         on: bool,
         conditions: PoolConditions,
     ) -> PoolTransition {
+        if self.source.is_some() {
+            return source::SourceKernel::new(self, store, false).transition(state, on, conditions);
+        }
         self.pool_transition_with_transfer(
             ThermalTransfer {
                 store,
@@ -559,6 +594,7 @@ impl Heater {
                 state,
                 on,
                 PoolConditions {
+                    source_depletion_kwh: 0.0,
                     water_c: store.inventory_c(conditions.water_c, conditions.pending_heat_kwh),
                     pending_heat_kwh: 0.0,
                     ..conditions
@@ -566,6 +602,7 @@ impl Heater {
             );
         }
         let PoolConditions {
+            source_depletion_kwh: _,
             water_c,
             pending_heat_kwh,
             outdoor_c,
@@ -584,6 +621,7 @@ impl Heater {
                 seconds / 3600.0,
             );
             return PoolTransition {
+                source_depletion_kwh: 0.0,
                 electric_w: 0.0,
                 compressor_w: 0.0,
                 auxiliary_w: 0.0,
@@ -679,6 +717,7 @@ impl Heater {
             active.next
         };
         PoolTransition {
+            source_depletion_kwh: 0.0,
             electric_w: active.electric_w * share,
             compressor_w: (active.electric_w - self.auxiliary_w) * share,
             auxiliary_w: self.auxiliary_w * share,
@@ -698,6 +737,7 @@ impl Heater {
         conditions: PoolConditions,
     ) -> PoolTransition {
         let PoolConditions {
+            source_depletion_kwh: _,
             water_c,
             pending_heat_kwh: _,
             outdoor_c,
@@ -736,6 +776,7 @@ impl Heater {
         };
         if active_seconds == 0.0 {
             return PoolTransition {
+                source_depletion_kwh: 0.0,
                 electric_w: 0.0,
                 compressor_w: 0.0,
                 auxiliary_w: 0.0,
@@ -762,6 +803,7 @@ impl Heater {
             active.next
         };
         PoolTransition {
+            source_depletion_kwh: 0.0,
             electric_w: active.electric_w * fraction,
             compressor_w: (active.electric_w - self.auxiliary_w) * fraction,
             auxiliary_w: self.auxiliary_w * fraction,
@@ -896,6 +938,7 @@ mod tests {
     #[test]
     fn memoized_kernel_preserves_transition_bits_across_models_and_thermostat_roots() {
         let heater = Heater {
+            source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,
             heat_w: 12000.0,
@@ -966,6 +1009,7 @@ mod tests {
                         _ => HeaterState::Steady,
                     };
                     let conditions = PoolConditions {
+                        source_depletion_kwh: 0.0,
                         water_c,
                         pending_heat_kwh: if i % 3 == 0 {
                             -0.0
@@ -1021,9 +1065,10 @@ mod tests {
         );
         assert_eq!(
             memo.cells.len() * std::mem::size_of::<Cell<ReleaseWeights>>(),
-            PoolKernel::MAX_WEIGHT_MEMO_BYTES
+            PoolKernel::MAX_WEIGHT_MEMO_BYTES - source::SourceKernel::MAX_MEMO_BYTES
         );
         let heater = Heater {
+            source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,
             heat_w: 0.0,
@@ -1040,6 +1085,7 @@ mod tests {
         let kernel = PoolKernel::new(&heater, &store);
         for seconds in [1.0, 17.0, 900.0, 4000.0] {
             let c = PoolConditions {
+                source_depletion_kwh: 0.0,
                 water_c: 29.0,
                 pending_heat_kwh: 0.0,
                 outdoor_c: 20.0,
@@ -1104,6 +1150,11 @@ mod tests {
                 ("heat", q.heat_w, v.expected.heat_w),
                 ("water", q.water_c, v.expected.water_c),
                 ("pending", q.pending_heat_kwh, v.expected.pending_heat_kwh),
+                (
+                    "source",
+                    q.source_depletion_kwh,
+                    v.expected.source_depletion_kwh,
+                ),
             ] {
                 assert!(
                     (actual - expected).abs() < 1e-9,
@@ -1183,6 +1234,7 @@ mod tests {
         let fixture: VectorSet =
             serde_json::from_str(include_str!("../heater-transitions.json")).unwrap();
         let heater = Heater {
+            source: None,
             compressor_w: 3000.0,
             auxiliary_w: 0.0,
             heat_w: 12000.0,
@@ -1222,6 +1274,7 @@ mod tests {
         };
         for response in [Response::Steady, startup] {
             let heater = Heater {
+                source: None,
                 compressor_w: 3000.0,
                 auxiliary_w: 1000.0,
                 heat_w: 20000.0,
@@ -1241,6 +1294,7 @@ mod tests {
                     state,
                     true,
                     PoolConditions {
+                        source_depletion_kwh: 0.0,
                         water_c: 30.0,
                         pending_heat_kwh: 0.0,
                         outdoor_c: 20.0,
@@ -1274,6 +1328,7 @@ mod tests {
     #[test]
     fn startup_keeps_auxiliary_draw_and_distinct_heat_integral() {
         let h = Heater {
+            source: None,
             compressor_w: 3000.0,
             auxiliary_w: 764.0,
             heat_w: 12000.0,

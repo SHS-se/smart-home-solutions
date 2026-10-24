@@ -1,5 +1,5 @@
 {
-  "description": "Anonymized 288-quarter October regression: battery, EV, measured Bergvarme pool, and one hot-water device with four service windows. Only planner inputs are retained.",
+  "description": "Existing anonymized 288-quarter performance workload with independently specified synthetic source-recovery parameters and state. The response parameters are not a fitted household model.",
   "snapshot": {
     "grid": {
       "export_limit_w": 13200,
@@ -3600,7 +3600,42 @@
           "heat_flow_measured": false,
           "steady_compressor_w": 2990.5
         }
-      }
+      },
+      "thermal_dynamics": {
+        "version": 2,
+        "response_time_constant_h": 0.5,
+        "heat_c_per_kwh": 0.07,
+        "source": {
+          "recovery_rate_per_h": 0.125,
+          "heat_loss_c_per_kwh_per_kwh": 0.00035
+        },
+        "idle_c_per_h": -0.03,
+        "reference_c": 30,
+        "sample_count": 0,
+        "rmse_c": 0,
+        "instantaneous_rmse_c": null,
+        "constant_gain_rmse_c": 0,
+        "recovery_evidence": {
+          "restarts": 0,
+          "shortest_off_h": null,
+          "longest_off_h": null,
+          "steady_heat_fraction_at_observed_peak": null,
+          "profile": [],
+          "minimum_at_search_boundary": false
+        },
+        "initial_state": {
+          "at": "2000-01-01T00:00:00.000Z",
+          "pending_heat_kwh": 1,
+          "source_depletion_kwh": 10
+        },
+        "state": {
+          "at": "2000-01-01T00:00:00.000Z",
+          "pending_heat_kwh": 1,
+          "source_depletion_kwh": 10
+        }
+      },
+      "pending_heat_kwh": 1,
+      "source_depletion_kwh": 10
     },
     "captured_at": "2026-10-14T11:14:12.651362+00:00",
     "snapshot_id": "00000000-0000-4000-8000-000000000001",

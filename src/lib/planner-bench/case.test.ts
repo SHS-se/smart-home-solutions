@@ -48,7 +48,7 @@ Deno.test('a replay becomes a test case: the moment is kept, another planner\'s 
   // Devices the household plans (pool heater, car) leave the load; the rest fold into it, by key not category.
   assertEquals(data.base_load_forecast_w[0], 600);
   assertEquals(Object.keys(data.other_devices_w).sort(), ['sensor.hot_water_energy', 'sensor.pool_room_floor_heater_energy']);
-  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, pool_heater: { kind: "off_unobserved" }, ev: { soc: 0.8, target_soc: 0.8 } });
+  assertEquals(data.start_state, { battery_soc: 0.4, pool_water_c: 29.6, pool_heater: { kind: "off_unobserved" }, pool_source_depletion_kwh: null, ev: { soc: 0.8, target_soc: 0.8 } });
   assertEquals(data.start_state_unread, undefined);
   assert(!/frozen|previous|another planner|value_curves/.test(JSON.stringify(data)));
 });

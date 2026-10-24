@@ -88,7 +88,11 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
               const month = localDay(period.start, pinned.snapshot.timezone).slice(0, 7);
               if (month < seed.month) throw new Error(`Pool history starts in ${seed.month}`);
               if (Date.parse(pinned.earliestStart) > Date.parse(period.start)) throw new Error(`Pool model needs history for ${month}`);
-              if (month === seed.month) pool = seedPool(seed);
+              if (month === seed.month) {
+                const dynamics = pinned.snapshot.pool_model?.thermal_dynamics;
+                const initialResponse = dynamics ? [dynamics.initial_state, dynamics.state].find(s => Date.parse(s.at) === Date.parse(period.start)) ?? null : null;
+                pool = seedPool(seed, initialResponse);
+              }
               else {
                 const priorBounds = homeMonthBounds(period.start, -1, pinned.snapshot.timezone);
                 const priorMonth = localDay(new Date(priorBounds.startMs).toISOString(), pinned.snapshot.timezone).slice(0, 7);

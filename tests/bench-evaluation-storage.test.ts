@@ -199,3 +199,20 @@ Deno.test('case revision follows content, ignores capture metadata, and fences b
     assertEquals(await observed(db), source);
   } finally { await db.close(); }
 });
+
+Deno.test('case v3 roll-forward keeps an unknown source explicit and changes the revision once', async () => {
+  const db = await database();
+  try {
+    await db.exec("UPDATE bench_scenarios SET dataset=jsonb_set(dataset,'{version}','2') #- '{start_state,pool_source_depletion_kwh}'");
+    const read = async () => (await db.query<{dataset: typeof c; revision: string}>('SELECT dataset,revision FROM bench_scenarios')).rows[0];
+    const old = await read();
+    const schema = await Deno.readTextFile('bench/schema.sql');
+    await db.exec(schema);
+    const upgraded = await read();
+    assertEquals(upgraded.dataset.version,3);
+    assertEquals(upgraded.dataset.start_state.pool_source_depletion_kwh,null);
+    assert(upgraded.revision !== old.revision);
+    await db.exec(schema);
+    assertEquals(await read(),upgraded);
+  } finally { await db.close(); }
+});

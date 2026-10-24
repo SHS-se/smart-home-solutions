@@ -13,7 +13,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 12,
+    abi: 13,
     ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -63,7 +63,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       battery_kwh: 5,
       ev_kwh: 10,
       pool_c: 28,
-      pool_pending_heat_kwh: 0,
+      pool_pending_heat_kwh: 0, pool_source_depletion_kwh: null,
       heater_state: { kind: "off_unobserved" },
     },
     targets: { pool_c: 30, ev_km: 200, ev_limit_kwh: 45 },

@@ -352,11 +352,14 @@ Deno.test("physical startup and measured thermal loss match the independent exis
 });
 
 Deno.test("delayed pool response carries startup heat through stops and matches the shared kernel", () => {
+  for (const source of [null, {recovery_rate_per_h:.15,heat_loss_per_kwh:.02}]) {
   for (const stop of [null, 30]) {
     const p = problem();
     p.pool_store = { capacity_kwh_per_c: 5, response_time_constant_h: .675,
       loss: { kind: "measured", points: [{ at_c: 30, c_per_h: -.02 }] } };
     p.pool_stop_c = stop;
+    p.heater.source = source;
+    p.initial.pool_source_depletion_kwh = source ? 9 : null;
     p.initial.pool_c = 29.7;
     p.initial.pool_pending_heat_kwh = 1.5;
     p.heater.response = { kind: "bergvarme", startup: [
@@ -366,25 +369,29 @@ Deno.test("delayed pool response carries startup heat through stops and matches 
     const commands = p.slots.map((_, i) => command(i === 0 || i === 3));
     const native = core.project(p, commands).outcome;
     assert(native.kind === "projected");
+    let depletion = p.initial.pool_source_depletion_kwh;
     let water = p.initial.pool_c;
     let pending = p.initial.pool_pending_heat_kwh;
     let state = p.initial.heater_state;
     for (const [i, slot] of p.slots.entries()) {
       const expected = stepPool(p.pool_store, p.heater, state, commands[i].pool_on,
-        { water_c: water, pending_heat_kwh: pending, outdoor_c: slot.outdoor_c,
+        { water_c: water, pending_heat_kwh: pending, source_depletion_kwh: depletion ?? undefined, outdoor_c: slot.outdoor_c,
           seconds: slot.hours * 3600, stop_c: stop });
       const q = native.quarters[i];
       assertAlmostEquals(q.pool_c!, expected.water_c, 1e-10);
+      assertAlmostEquals(q.pool_source_depletion_kwh ?? 0, expected.source_depletion_kwh ?? 0, 1e-10);
       assertAlmostEquals(q.pool_pending_heat_kwh!, expected.pending_heat_kwh, 1e-10);
       assertAlmostEquals(q.pool_w, expected.electric_w, 1e-7);
       assertAlmostEquals(q.pool_heat_w, expected.heat_w, 1e-7);
       water = expected.water_c;
       pending = expected.pending_heat_kwh;
+      depletion = expected.source_depletion_kwh ?? null;
       state = expected.next;
     }
     assertEquals(native.quarters[1].pool_w, 0);
     assert(native.quarters[1].pool_c! > native.quarters[0].pool_c!);
     assert(native.quarters[1].pool_pending_heat_kwh! < native.quarters[0].pool_pending_heat_kwh!);
+  }
   }
 });
 

@@ -31,7 +31,10 @@ reservoir.pool_store.response_time_constant_h = .675;
 reservoir.initial.pool_pending_heat_kwh = 1.5;
 reservoir.initial.pool_c = 29.7;
 reservoir.accepted = reservoir.slots.filter(s => s.start_seconds < 3600).map((_, i) => command(i === 0 || i === 3));
-for (const input of [base, committed, reservoir, forecastProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
+const recovering = structuredClone(reservoir);
+recovering.heater.source = {recovery_rate_per_h:.15,heat_loss_per_kwh:.02};
+recovering.initial.pool_source_depletion_kwh = 9;
+for (const input of [base, committed, reservoir, recovering, forecastProblem(), readyProblem(causalCase(), HOUSEHOLD)]) {
   input.work_grant = recipe.work_grant;
   input.recipe = builderRecipe(recipe);
   const process = new Deno.Command(

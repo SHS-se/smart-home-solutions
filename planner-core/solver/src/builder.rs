@@ -125,6 +125,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     label.state.heater,
                     false,
                     shs_planner_models::PoolConditions {
+                        source_depletion_kwh: label.state.pool_source_depletion_kwh,
                         water_c: label.state.pool,
                         pending_heat_kwh: label.state.pool_pending_heat_kwh,
                         outdoor_c: s.outdoor_c,
@@ -154,6 +155,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                     label.state.heater,
                     on,
                     shs_planner_models::PoolConditions {
+                        source_depletion_kwh: label.state.pool_source_depletion_kwh,
                         water_c: label.state.pool,
                         pending_heat_kwh: label.state.pool_pending_heat_kwh,
                         outdoor_c: s.outdoor_c,

@@ -1,5 +1,5 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
-import { parseDeviceModels, poolInventoryC, stepPool, stepPoolThermal, type HeaterState, type PoolConditions, type PoolTransition, type PublishedHeater, type ThermalStoreModel } from "./device-models.ts";
+import { PoolSourceKernel, validateHeaterSource, parseDeviceModels, poolInventoryC, stepPool, stepPoolThermal, type HeaterState, type PoolConditions, type PoolTransition, type PublishedHeater, type ThermalStoreModel } from "./device-models.ts";
 
 const store: ThermalStoreModel = { capacity_kwh_per_c: 63.965, response_time_constant_h: 0.675,
   loss: { kind: "measured", points: [{ at_c: 29, c_per_h: -0.0409231 }] } };
@@ -138,7 +138,59 @@ Deno.test("TypeScript matches shared pool-thermal transition vectors", () => {
     for (const field of ["electric_w", "compressor_w", "auxiliary_w", "heat_w", "water_c", "pending_heat_kwh"] as const) {
       assertAlmostEquals(q[field], vector.expected[field], 1e-10, `${vector.name}: ${field}`);
     }
+    assertAlmostEquals(q.source_depletion_kwh ?? 0, vector.expected.source_depletion_kwh ?? 0, 1e-10);
     assertEquals(q.next, vector.expected.next);
     assertEquals(q.start, vector.expected.start);
   }
+});
+
+Deno.test("continuous source transition agrees with independent ODE integration and composes", () => {
+  for (let i = 0; i < 24; i++) {
+    const capacity = 64, tau = [.1,.5,1,2][i%4], rate = [.05,.5,2][i%3], beta = .01, cop = 4.2;
+    const hours = .25+(i%5)*.3, power = i%4, slope = (3-power)/hours;
+    const initial = [30,1+i%4,i%3*5], dt = hours/2000;
+    const kernel = new PoolSourceKernel(capacity,tau,{recovery_rate_per_h:rate,heat_loss_per_kwh:beta},cop);
+    const q = kernel.piece(...initial as [number,number,number],power,slope,hours,-.01);
+    const first = kernel.piece(...initial as [number,number,number],power,slope,hours*.37,-.01);
+    const split = kernel.piece(first.water_c,first.pending_heat_kwh,first.source_depletion_kwh,power+slope*hours*.37,slope,hours*.63,-.01);
+    let z = initial;
+    const derivative = (v: number[], t: number) => {
+      const p=power+slope*t, heat=cop*p*(1-beta*v[2]);
+      return [v[1]/tau/capacity-.01,heat-v[1]/tau,p-rate*v[2]];
+    };
+    for(let step=0;step<2000;step++) {
+      const t=step*dt,k1=derivative(z,t),k2=derivative(z.map((v,j)=>v+dt*k1[j]/2),t+dt/2),
+        k3=derivative(z.map((v,j)=>v+dt*k2[j]/2),t+dt/2),k4=derivative(z.map((v,j)=>v+dt*k3[j]),t+dt);
+      z=z.map((v,j)=>v+dt*(k1[j]+2*k2[j]+2*k3[j]+k4[j])/6);
+    }
+    for(const [j,field] of ['water_c','pending_heat_kwh','source_depletion_kwh'].entries()) {
+      assertAlmostEquals(q[field as keyof typeof q],z[j],1e-9);
+      assertAlmostEquals(q[field as keyof typeof q],split[field as keyof typeof split],1e-10);
+    }
+  }
+});
+
+Deno.test("a short source stop preserves depletion and restarting cannot reset it", () => {
+  const v=vectors.find(v=>v.name==='source off recovery')!;
+  const off=stepPool(v.store,v.heater,v.state,false,v.conditions);
+  assert(off.source_depletion_kwh! > v.conditions.source_depletion_kwh!*.95);
+  const next=stepPool(v.store,v.heater,off.next,true,{...v.conditions,water_c:off.water_c,pending_heat_kwh:off.pending_heat_kwh,source_depletion_kwh:off.source_depletion_kwh});
+  assert(next.source_depletion_kwh! > off.source_depletion_kwh!);
+  assertThrows(()=>stepPool(v.store,v.heater,v.state,true,{...v.conditions,source_depletion_kwh:undefined}),Error,'source memory');
+});
+
+Deno.test("source hardware stop detects a peak even when a complete interval would end below the threshold", () => {
+  const v=vectors.find(v=>v.name==='source interior threshold')!;
+  const unclipped=stepPool(v.store,v.heater,v.state,true,{...v.conditions,stop_c:null});
+  assert(unclipped.water_c < v.conditions.stop_c!);
+  const clipped=stepPool(v.store,v.heater,v.state,true,v.conditions);
+  assert(clipped.compressor_w < unclipped.compressor_w);
+  assert(clipped.next.kind==='off');
+});
+
+Deno.test("source gain remains positive at startup overshoot power", () => {
+  const source = {recovery_rate_per_h:.1,heat_loss_per_kwh:.02};
+  const published = {...heater,compressor_w:3000,source,response:{kind:'bergvarme' as const,startup:[
+    {elapsed_seconds:0,electric_fraction:2,heat_fraction:1}, {elapsed_seconds:900,electric_fraction:1,heat_fraction:1}]}};
+  assertThrows(()=>validateHeaterSource(published),Error,'every published power');
 });

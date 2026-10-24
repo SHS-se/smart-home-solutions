@@ -27,7 +27,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(12),
+  abi: z.literal(13),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -88,6 +88,7 @@ export const readyProblemSchema = z.object({
     ]),
   }).nullable(),
   heater: z.object({
+    source: z.object({ recovery_rate_per_h: number.positive(), heat_loss_per_kwh: number.positive() }).nullable().optional(),
     compressor_w: number,
     auxiliary_w: number,
     heat_w: number,
@@ -109,6 +110,7 @@ export const readyProblemSchema = z.object({
     ev_kwh: number.nullable(),
     pool_c: number.nullable(),
     pool_pending_heat_kwh: number.nonnegative().nullable(),
+    pool_source_depletion_kwh: number.nonnegative().nullable(),
     heater_state: age.nullable(),
   }),
   targets: z.object({

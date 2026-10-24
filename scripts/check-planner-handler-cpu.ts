@@ -43,6 +43,7 @@ const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> 
 /** Plan once in this process, failing on an incomplete plan. */
 async function planSample(): Promise<Sample> {
   const input = cpuPlanningInput();
+  assert(input.problem.heater?.source && input.problem.initial.pool_source_depletion_kwh !== null, "CPU gate must exercise measured source recovery");
   let response!: Response, body!: { result: { plan: { status: string; plans: { priority: { slots: unknown[] } } } } };
   const sample = await measure(async () => {
     response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {

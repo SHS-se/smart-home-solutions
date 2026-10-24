@@ -8,6 +8,7 @@ pub(crate) struct State {
     pub ev: f64,
     pub pool: f64,
     pub pool_pending_heat_kwh: f64,
+    pub pool_source_depletion_kwh: f64,
     pub heater: HeaterState,
     pub charging: crate::charging::Activity,
     /// Quarters of the pool run this plan started, while it is on; None for
@@ -46,6 +47,7 @@ pub(crate) fn initial(p: &Problem) -> State {
         ev: p.initial.ev_kwh.unwrap_or(0.0),
         pool: p.initial.pool_c.unwrap_or(0.0),
         pool_pending_heat_kwh: p.initial.pool_pending_heat_kwh.unwrap_or(0.0),
+        pool_source_depletion_kwh: p.initial.pool_source_depletion_kwh.unwrap_or(0.0),
         heater: p.initial.heater_state.unwrap_or(HeaterState::OffUnobserved),
         charging: Default::default(),
         pool_run_quarters: None,
@@ -105,6 +107,7 @@ fn transition(
                 state.heater,
                 command.pool_on,
                 shs_planner_models::PoolConditions {
+                    source_depletion_kwh: state.pool_source_depletion_kwh,
                     water_c: state.pool,
                     pending_heat_kwh: state.pool_pending_heat_kwh,
                     outdoor_c: s.outdoor_c,
@@ -208,6 +211,7 @@ fn transition(
     if let Some(h) = &pool {
         state.pool = h.water_c;
         state.pool_pending_heat_kwh = h.pending_heat_kwh;
+        state.pool_source_depletion_kwh = h.source_depletion_kwh;
         state.heater = h.next;
     }
     if let Some(car) = &p.car {
@@ -237,6 +241,10 @@ fn transition(
         ev_kwh: p.car.as_ref().map(|_| state.ev),
         pool_c: p.heater.as_ref().map(|_| state.pool),
         pool_pending_heat_kwh: p.heater.as_ref().map(|_| state.pool_pending_heat_kwh),
+        pool_source_depletion_kwh: p
+            .heater
+            .as_ref()
+            .and_then(|h| h.source.map(|_| state.pool_source_depletion_kwh)),
         heater_state: p.heater.as_ref().map(|_| state.heater),
         pool_start: pool.and_then(|h| h.start),
         cost,
@@ -408,6 +416,7 @@ fn projection_prefix(
             ev: q.ev_kwh.unwrap_or(0.0),
             pool: q.pool_c.unwrap_or(0.0),
             pool_pending_heat_kwh: q.pool_pending_heat_kwh.unwrap_or(0.0),
+            pool_source_depletion_kwh: q.pool_source_depletion_kwh.unwrap_or(0.0),
             heater: q.heater_state.unwrap_or(HeaterState::OffUnobserved),
             charging: crate::charging::Activity::observed(
                 &commands[prefix.len() - 1],
@@ -610,40 +619,50 @@ mod refinement_tests {
 
     #[test]
     fn reservoir_survives_shutdown_and_projection_prefix_reuse() {
-        let mut p = crate::witnesses::tests::problem(6);
-        let store = p.pool_store.as_mut().unwrap();
-        store.capacity_kwh_per_c = 5.0;
-        store.response_time_constant_h = 2.0;
-        store.loss = StandingLoss::Linear {
-            kw_per_c: 0.0,
-            surroundings_c: None,
-        };
-        p.initial.pool_pending_heat_kwh = Some(3.0);
-        let commands: Vec<_> = (0..6)
-            .map(|i| Command {
-                pool_on: i == 0,
-                ev_amps: 0,
-                battery: Operation::Hold,
-                charge_limit_w: 1000.0,
-                discharge_limit_w: 0.0,
-            })
-            .collect();
-        let direct = projection(&p, &commands).unwrap();
-        assert!(direct[0].pool_pending_heat_kwh.unwrap() > 3.0);
-        assert_eq!(direct[1].pool_heat_w, 0.0);
-        assert!(direct[1].pool_c.unwrap() > direct[0].pool_c.unwrap());
-        assert!(
-            direct[1].pool_pending_heat_kwh.unwrap() < direct[0].pool_pending_heat_kwh.unwrap()
-        );
-        for prefix in [1, 3, 5] {
-            let resumed = projection_prefix(
-                &p,
-                &commands,
-                &direct[..prefix],
-                |_, h, s, state, on, conditions| h.pool_transition(s, state, on, conditions),
-            )
-            .unwrap();
-            assert_eq!(resumed, direct);
+        for source in [
+            None,
+            Some(shs_planner_models::SourceModel {
+                recovery_rate_per_h: 0.15,
+                heat_loss_per_kwh: 0.02,
+            }),
+        ] {
+            let mut p = crate::witnesses::tests::problem(6);
+            p.heater.as_mut().unwrap().source = source;
+            p.initial.pool_source_depletion_kwh = source.map(|_| 9.0);
+            let store = p.pool_store.as_mut().unwrap();
+            store.capacity_kwh_per_c = 5.0;
+            store.response_time_constant_h = 2.0;
+            store.loss = StandingLoss::Linear {
+                kw_per_c: 0.0,
+                surroundings_c: None,
+            };
+            p.initial.pool_pending_heat_kwh = Some(3.0);
+            let commands: Vec<_> = (0..6)
+                .map(|i| Command {
+                    pool_on: i == 0,
+                    ev_amps: 0,
+                    battery: Operation::Hold,
+                    charge_limit_w: 1000.0,
+                    discharge_limit_w: 0.0,
+                })
+                .collect();
+            let direct = projection(&p, &commands).unwrap();
+            assert!(direct[0].pool_pending_heat_kwh.unwrap() > 3.0);
+            assert_eq!(direct[1].pool_heat_w, 0.0);
+            assert!(direct[1].pool_c.unwrap() > direct[0].pool_c.unwrap());
+            assert!(
+                direct[1].pool_pending_heat_kwh.unwrap() < direct[0].pool_pending_heat_kwh.unwrap()
+            );
+            for prefix in [1, 3, 5] {
+                let resumed = projection_prefix(
+                    &p,
+                    &commands,
+                    &direct[..prefix],
+                    |_, h, s, state, on, conditions| h.pool_transition(s, state, on, conditions),
+                )
+                .unwrap();
+                assert_eq!(resumed, direct);
+            }
         }
     }
 
@@ -972,7 +991,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 12;
+        p.abi = 13;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

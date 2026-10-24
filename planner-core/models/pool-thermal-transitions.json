@@ -49,7 +49,8 @@
       "pending_heat_kwh": 0,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": null
+      "stop_c": null,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 2441.4814814814813,
@@ -64,7 +65,8 @@
       },
       "start": {
         "off_seconds": 2000
-      }
+      },
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -117,7 +119,8 @@
       "pending_heat_kwh": 5,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": null
+      "stop_c": null,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 2441.4814814814813,
@@ -132,7 +135,8 @@
       },
       "start": {
         "off_seconds": 120
-      }
+      },
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -185,7 +189,8 @@
       "pending_heat_kwh": 2,
       "outdoor_c": 12,
       "seconds": 1800,
-      "stop_c": null
+      "stop_c": null,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 3005.1006711409395,
@@ -198,7 +203,8 @@
         "kind": "running",
         "seconds": 2400
       },
-      "start": null
+      "start": null,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -251,7 +257,8 @@
       "pending_heat_kwh": 8.1,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": null
+      "stop_c": null,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 0,
@@ -264,7 +271,8 @@
       },
       "start": null,
       "water_c": 29.694253142032846,
-      "pending_heat_kwh": 2.6664632012440346
+      "pending_heat_kwh": 2.6664632012440346,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -316,7 +324,8 @@
       "pending_heat_kwh": 8.1,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": 29.5
+      "stop_c": 29.5,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 0,
@@ -329,7 +338,8 @@
       },
       "start": null,
       "water_c": 29.694253142032846,
-      "pending_heat_kwh": 2.6664632012440346
+      "pending_heat_kwh": 2.6664632012440346,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -381,7 +391,8 @@
       "pending_heat_kwh": 8.1,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": 29.67
+      "stop_c": 29.67,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 284.40719641373533,
@@ -396,7 +407,8 @@
       },
       "start": {
         "off_seconds": null
-      }
+      },
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -431,7 +443,8 @@
       "pending_heat_kwh": 1,
       "outdoor_c": 12,
       "seconds": 10800,
-      "stop_c": 29.4
+      "stop_c": 29.4,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 0.2575342696881955,
@@ -444,7 +457,8 @@
         "kind": "off",
         "seconds": 10243.725977473498
       },
-      "start": null
+      "start": null,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -497,7 +511,8 @@
       "pending_heat_kwh": 0,
       "outdoor_c": 12,
       "seconds": 2700,
-      "stop_c": 29.67
+      "stop_c": 29.67,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 1004.6879779146886,
@@ -512,7 +527,8 @@
       },
       "start": {
         "off_seconds": 20
-      }
+      },
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -565,7 +581,8 @@
       "pending_heat_kwh": 6.3965000000000005,
       "outdoor_c": 12,
       "seconds": 900,
-      "stop_c": 29.7
+      "stop_c": 29.7,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 0,
@@ -578,7 +595,8 @@
       },
       "start": null,
       "water_c": 29.729769225000002,
-      "pending_heat_kwh": 0
+      "pending_heat_kwh": 0,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -631,7 +649,8 @@
       "pending_heat_kwh": 2.381572,
       "outdoor_c": 12,
       "seconds": 1271.271,
-      "stop_c": 29.69271
+      "stop_c": 29.69271,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 2746.6551820905293,
@@ -644,7 +663,8 @@
         "kind": "running",
         "seconds": 1789.394
       },
-      "start": null
+      "start": null,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -697,7 +717,8 @@
       "pending_heat_kwh": 0.372737,
       "outdoor_c": 12,
       "seconds": 137.127,
-      "stop_c": 29.71
+      "stop_c": 29.71,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 0,
@@ -710,7 +731,8 @@
       },
       "start": null,
       "water_c": 29.644268407394716,
-      "pending_heat_kwh": 1.5807969822034807e-14
+      "pending_heat_kwh": 1.5807969822034807e-14,
+      "source_depletion_kwh": 0
     }
   },
   {
@@ -762,7 +784,8 @@
       "pending_heat_kwh": 76.72871,
       "outdoor_c": 12,
       "seconds": 1836.373,
-      "stop_c": 29.641738
+      "stop_c": 29.641738,
+      "source_depletion_kwh": 0
     },
     "expected": {
       "electric_w": 2047.1349992621326,
@@ -777,7 +800,297 @@
       },
       "start": {
         "off_seconds": null
+      },
+      "source_depletion_kwh": 0
+    }
+  },
+  {
+    "name": "source startup",
+    "store": {
+      "capacity_kwh_per_c": 10,
+      "response_time_constant_h": 0.7,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.04
+          }
+        ]
       }
+    },
+    "heater": {
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 12000,
+      "response": {
+        "kind": "bergvarme",
+        "startup": [
+          {
+            "elapsed_seconds": 0,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 335,
+            "electric_fraction": 0,
+            "heat_fraction": 0
+          },
+          {
+            "elapsed_seconds": 1080,
+            "electric_fraction": 1,
+            "heat_fraction": 1
+          }
+        ]
+      },
+      "source": {
+        "recovery_rate_per_h": 0.15,
+        "heat_loss_per_kwh": 0.02
+      }
+    },
+    "state": {
+      "kind": "off",
+      "seconds": 900
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 3,
+      "source_depletion_kwh": 9,
+      "outdoor_c": 0,
+      "seconds": 2700,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 2293.8888888888887,
+      "compressor_w": 2213.8888888888887,
+      "auxiliary_w": 80,
+      "heat_w": 7226.687695022819,
+      "water_c": 29.33631823679592,
+      "pending_heat_kwh": 4.75683340330791,
+      "source_depletion_kwh": 9.634997631199091,
+      "next": {
+        "kind": "running",
+        "seconds": 2700
+      },
+      "start": {
+        "off_seconds": 900
+      }
+    }
+  },
+  {
+    "name": "source off recovery",
+    "store": {
+      "capacity_kwh_per_c": 10,
+      "response_time_constant_h": 0.7,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.04
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 12000,
+      "response": {
+        "kind": "steady"
+      },
+      "source": {
+        "recovery_rate_per_h": 0.15,
+        "heat_loss_per_kwh": 0.02
+      }
+    },
+    "state": {
+      "kind": "running",
+      "seconds": 7200
+    },
+    "on": false,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 3,
+      "source_depletion_kwh": 9,
+      "outdoor_c": 0,
+      "seconds": 900,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 0,
+      "compressor_w": 0,
+      "auxiliary_w": 0,
+      "heat_w": 0,
+      "water_c": 29.08009823878746,
+      "pending_heat_kwh": 2.0990176121253907,
+      "source_depletion_kwh": 8.668749759487396,
+      "next": {
+        "kind": "off",
+        "seconds": 900
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "source equal rates",
+    "store": {
+      "capacity_kwh_per_c": 10,
+      "response_time_constant_h": 2,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.04
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 12000,
+      "response": {
+        "kind": "steady"
+      },
+      "source": {
+        "recovery_rate_per_h": 0.5,
+        "heat_loss_per_kwh": 0.02
+      }
+    },
+    "state": {
+      "kind": "steady"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 3,
+      "source_depletion_kwh": 9,
+      "outdoor_c": 0,
+      "seconds": 7200,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 3080,
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 10104.873197643437,
+      "water_c": 29.84854682646003,
+      "pending_heat_kwh": 13.924278130686599,
+      "source_depletion_kwh": 7.103638323514338,
+      "next": {
+        "kind": "steady"
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "source direct water",
+    "store": {
+      "capacity_kwh_per_c": 10,
+      "response_time_constant_h": 0,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.04
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 12000,
+      "response": {
+        "kind": "steady"
+      },
+      "source": {
+        "recovery_rate_per_h": 0.15,
+        "heat_loss_per_kwh": 0.02
+      }
+    },
+    "state": {
+      "kind": "steady"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 0,
+      "source_depletion_kwh": 9,
+      "outdoor_c": 0,
+      "seconds": 7200,
+      "stop_c": null
+    },
+    "expected": {
+      "electric_w": 3080,
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 9480.799658000884,
+      "water_c": 30.81615993160018,
+      "pending_heat_kwh": 0,
+      "source_depletion_kwh": 11.850999572501108,
+      "next": {
+        "kind": "steady"
+      },
+      "start": null
+    }
+  },
+  {
+    "name": "source interior threshold",
+    "store": {
+      "capacity_kwh_per_c": 10,
+      "response_time_constant_h": 0.5,
+      "loss": {
+        "kind": "measured",
+        "points": [
+          {
+            "at_c": 29,
+            "c_per_h": -0.6
+          }
+        ]
+      }
+    },
+    "heater": {
+      "compressor_w": 3000,
+      "auxiliary_w": 80,
+      "heat_w": 12000,
+      "response": {
+        "kind": "steady"
+      },
+      "source": {
+        "recovery_rate_per_h": 0.2,
+        "heat_loss_per_kwh": 0.04
+      }
+    },
+    "state": {
+      "kind": "steady"
+    },
+    "on": true,
+    "conditions": {
+      "water_c": 29,
+      "pending_heat_kwh": 5,
+      "source_depletion_kwh": 10,
+      "outdoor_c": 0,
+      "seconds": 57600,
+      "stop_c": 29.03
+    },
+    "expected": {
+      "electric_w": 15.243196862938284,
+      "compressor_w": 14.847269671693134,
+      "auxiliary_w": 0.3959271912451502,
+      "heat_w": 35.53988676707576,
+      "water_c": 19.956863818827316,
+      "pending_heat_kwh": 7.131322475610769e-14,
+      "source_depletion_kwh": 0.417382442919283,
+      "next": {
+        "kind": "off",
+        "seconds": 57314.93242230349
+      },
+      "start": null
     }
   }
 ]

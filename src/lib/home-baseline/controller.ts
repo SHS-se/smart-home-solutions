@@ -61,7 +61,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
     const q = out.quarters[0];
     commands.push(command); quarters.push(q);
     if (heating && q.heater_state?.kind === 'off') heating = false;
-    initial = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c, pool_pending_heat_kwh: q.pool_pending_heat_kwh,
+    initial = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c, pool_pending_heat_kwh: q.pool_pending_heat_kwh, pool_source_depletion_kwh: q.pool_source_depletion_kwh,
       heater_state: q.heater_state as ReadyProblem['initial']['heater_state'] };
   }
   return { problem, commands, quarters };

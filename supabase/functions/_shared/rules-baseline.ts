@@ -34,7 +34,7 @@ export function projectRulesBaseline(core: Pick<ReturnType<typeof createWasmPlan
     const q = balanced.outcome.quarters[0];
     commands.push(balanced.command);
     initial = { battery_kwh: q.battery_kwh, ev_kwh: q.ev_kwh, pool_c: q.pool_c,
-      pool_pending_heat_kwh: q.pool_pending_heat_kwh,
+      pool_pending_heat_kwh: q.pool_pending_heat_kwh, pool_source_depletion_kwh: q.pool_source_depletion_kwh,
       heater_state: q.heater_state as ReadyProblem["initial"]["heater_state"] };
   }
   // Certify the complete command vector under the original problem, including

@@ -44,7 +44,7 @@ import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { PlanningTrace } from "../_shared/planning-trace.ts";
 import { parseHeaterResponse, WATER_KWH_PER_M3_K } from "../_shared/planner/device-models.ts";
 import { poolPhysics } from "../_shared/planner/pool-physics.ts";
-import { fitPoolDynamics, poolDynamicsAnchor, poolPartialElectricity, poolPendingHeatAt, type PoolDynamics, type PoolElectricalInterval } from "../_shared/pool-dynamics.ts";
+import { fitPoolDynamics, poolDynamicsAnchor, poolPartialElectricity, poolResponseStateAt, type PoolDynamics, type PoolElectricalInterval } from "../_shared/pool-dynamics.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
@@ -429,14 +429,14 @@ async function refitPoolModel(
       Number(row.temperature_c),
     ]),
   );
-  const heaterByStart = new Map<number, number>();
+  const heaterByStart = new Map<number, number>(), heaterCounts = new Map<number, number>();
   for (const row of deviceRows ?? []) {
-    const at = Date.parse(String(row.start_ts));
-    heaterByStart.set(
-      at,
-      (heaterByStart.get(at) ?? 0) + Number(row.energy_kwh),
-    );
+    const at = Date.parse(String(row.start_ts)), kwh = Number(row.energy_kwh);
+    if (row.energy_kwh == null || !Number.isFinite(at) || !Number.isFinite(kwh) || kwh < 0) continue;
+    heaterByStart.set(at, (heaterByStart.get(at) ?? 0) + kwh);
+    heaterCounts.set(at, (heaterCounts.get(at) ?? 0) + 1);
   }
+  for (const [at, count] of heaterCounts) if (count !== poolDeviceIds.length) heaterByStart.delete(at);
 
   const water = (waterRows ?? []).map((row: Record<string, unknown>) => ({
     at: Date.parse(String(row.start_ts)),
@@ -450,12 +450,12 @@ async function refitPoolModel(
     const next = water[index + 1];
     // Only consecutive quarters describe one slot's change. A gap would put an
     // hour of cooling into a fifteen-minute rate and bias the loss upward.
-    if (next.at - current.at !== SLOT_MS) continue;
+    if (next.at - current.at !== SLOT_MS || !heaterByStart.has(current.at)) continue;
     responseSamples.push({
       start_ms: current.at,
       water_temperature_c: current.c,
       next_water_temperature_c: next.c,
-      electrical_kwh: heaterByStart.get(current.at) ?? 0,
+      electrical_kwh: heaterByStart.get(current.at)!,
     });
     const air = outdoorByStart.get(current.at);
     if (air === undefined || !Number.isFinite(air)) continue;
@@ -464,7 +464,7 @@ async function refitPoolModel(
       water_temperature_c: current.c,
       next_water_temperature_c: next.c,
       outdoor_temperature_c: air,
-      electrical_kwh: heaterByStart.get(current.at) ?? 0,
+      electrical_kwh: heaterByStart.get(current.at)!,
     });
   }
 
@@ -514,6 +514,8 @@ async function refitPoolModel(
     ...("rejected" in dynamics ? ["pool_dynamics_" + dynamics.rejected] : []),
   ], ...( "fitted" in dynamics ? { thermal_response: {
     response_time_constant_h: dynamics.fitted.response_time_constant_h,
+    source: dynamics.fitted.source,
+    recovery_evidence: dynamics.fitted.recovery_evidence,
     rmse_c: dynamics.fitted.rmse_c,
     instantaneous_rmse_c: dynamics.fitted.instantaneous_rmse_c,
     sample_count: dynamics.fitted.sample_count,
@@ -527,10 +529,10 @@ async function refitPoolModel(
 /** Parameter learning is daily; response memory is reconstructed on EVERY
  * capture from actual compressor energy. It is never reset just because the
  * heater stopped or a new forecast was prepared. */
-async function capturedPoolPendingHeat(
+async function capturedPoolResponseState(
   // deno-lint-ignore no-explicit-any
   supabase: any, homeId: string, snapshot: OptimisationSnapshot, model: PoolDynamics,
-): Promise<number> {
+): Promise<PoolDynamics['state']> {
   const keys = poolHeaters(snapshot.device_models).map(d => d.key);
   const { data: devices, error } = await supabase.from("energy_optimisation_devices")
     .select("id").eq("home_id", homeId).in("device_key", keys);
@@ -541,22 +543,32 @@ async function capturedPoolPendingHeat(
     .select("start_ts, energy_kwh").eq("home_id", homeId).in("device_id", devices.map((d: { id: string }) => d.id))
     .gte("start_ts", anchor.at).lt("start_ts", new Date(boundary).toISOString())
     .order("start_ts").order("device_id").range(from, to)) : [];
-  const energy = new Map<number, number>();
+  const energy = new Map<number, number>(), counts = new Map<number, number>();
   let ignored = 0;
   for (const row of rows) {
     const start = Date.parse(String(row.start_ts)), kwh = Number(row.energy_kwh);
-    if (!Number.isFinite(start) || !Number.isFinite(kwh) || kwh < 0) { ignored++; continue; }
+    if (row.energy_kwh == null || !Number.isFinite(start) || !Number.isFinite(kwh) || kwh < 0) { ignored++; continue; }
     energy.set(start, (energy.get(start) ?? 0) + kwh);
+    counts.set(start, (counts.get(start) ?? 0) + 1);
   }
+  for (const [start, count] of counts) if (count !== devices.length) energy.delete(start);
   const history: PoolElectricalInterval[] = [...energy].map(([start_ms, electrical_kwh]) => ({ start_ms, electrical_kwh, hours: .25 }));
   const heater = poolPhysics(snapshot).heater;
   const partial = poolPartialElectricity(snapshot.pool!, heater.response, heater.compressor_w, at);
-  history.push(...partial.intervals);
+  if (partial.complete) {
+    let cursor = boundary;
+    for (const interval of partial.intervals) {
+      if (interval.start_ms > cursor) history.push({start_ms: cursor, hours: (interval.start_ms - cursor) / 3_600_000, electrical_kwh: 0});
+      history.push(interval);
+      cursor = interval.start_ms + interval.hours * 3_600_000;
+    }
+    if (at > cursor) history.push({start_ms: cursor, hours: (at - cursor) / 3_600_000, electrical_kwh: 0});
+  } else history.push(...partial.intervals);
   const expected = Math.max(0, Math.floor((boundary - Date.parse(anchor.at)) / SLOT_MS));
   console.info("[ENERGY-OPTIMISATION] pool response state", { home_id: homeId, observed_quarters: energy.size,
     missing_quarters: Math.max(0, expected - energy.size), ignored: ignored + partial.ignored,
     partial_quarter_source: partial.source, partial_quarter_complete: partial.complete });
-  return poolPendingHeatAt(model, snapshot.pool!.volume_m3 * WATER_KWH_PER_M3_K, history, at);
+  return poolResponseStateAt(model, snapshot.pool!.volume_m3 * WATER_KWH_PER_M3_K, history, at);
 }
 
 async function prepareThermalPlanning(
@@ -1733,7 +1745,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           };
           if (snapshot.pool_model?.thermal_dynamics) {
             try {
-              snapshot.pool_model.pending_heat_kwh = await capturedPoolPendingHeat(supabase, auth.homeId, snapshot, snapshot.pool_model.thermal_dynamics);
+              const state = await capturedPoolResponseState(supabase, auth.homeId, snapshot, snapshot.pool_model.thermal_dynamics);
+              snapshot.pool_model.pending_heat_kwh = state.pending_heat_kwh;
+              snapshot.pool_model.source_depletion_kwh = state.source_depletion_kwh;
             } catch (error) {
               console.error("[ENERGY-OPTIMISATION] pool response state unavailable", describeThrown(error));
               snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("pool_response_evidence", "pool",

@@ -2,7 +2,7 @@
   "provenance": "Anonymized physical problem from the failed 23 October 2026 night; no entity, home, user or plan identifiers. Accepted commands retain the first hour.",
   "night_quarters": 38,
   "problem": {
-    "abi": 12,
+    "abi": 13,
     "accepted": [
       {
         "battery": "self_consumption",
@@ -470,7 +470,8 @@
         "kind": "off_unobserved"
       },
       "pool_c": 30.14,
-      "pool_pending_heat_kwh": 6.956421309039703e-26
+      "pool_pending_heat_kwh": 6.956421309039703e-26,
+      "pool_source_depletion_kwh": null
     },
     "limits": {
       "battery_export_enabled": true,
