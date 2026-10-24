@@ -134,9 +134,7 @@ impl<'a> SourceKernel<'a> {
     }
     fn piece(
         &self,
-        water: f64,
-        pending: f64,
-        depletion: f64,
+        (water, pending, depletion): (f64, f64, f64),
         power: f64,
         slope: f64,
         hours: f64,
@@ -174,9 +172,7 @@ impl<'a> SourceKernel<'a> {
     }
     fn first_stop(
         &self,
-        water: f64,
-        pending: f64,
-        depletion: f64,
+        (water, pending, depletion): (f64, f64, f64),
         power: f64,
         slope: f64,
         hours: f64,
@@ -186,7 +182,7 @@ impl<'a> SourceKernel<'a> {
         if water >= stop {
             return Some(0.0);
         }
-        let at = |t| self.piece(water, pending, depletion, power, slope, t, cooling);
+        let at = |t| self.piece((water, pending, depletion), power, slope, t, cooling);
         let full = at(hours);
         if water + (pending + full.heat) / self.store.capacity_kwh_per_c + cooling.max(0.0) * hours
             < stop
@@ -325,13 +321,16 @@ impl<'a> SourceKernel<'a> {
                 self.heater.compressor_w / 1000.0 * (fraction(pair[1]) - fraction(pair[0])) / hours;
             let crossing = c.stop_c.and_then(|stop| {
                 self.first_stop(
-                    water, pending, depletion, power, slope, hours, cooling, stop,
+                    (water, pending, depletion),
+                    power,
+                    slope,
+                    hours,
+                    cooling,
+                    stop,
                 )
             });
             let q = self.piece(
-                water,
-                pending,
-                depletion,
+                (water, pending, depletion),
                 power,
                 slope,
                 crossing.unwrap_or(hours),
