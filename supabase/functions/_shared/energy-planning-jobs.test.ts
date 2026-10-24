@@ -21,6 +21,7 @@ const wire = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const connection = { url: "https://planner.test", planningSecret: "test-secret" };
 const context = { model_version: RULES_MODEL_VERSION, request_id: "request-1", integration_version: "test",
   reference_plan_id: null, fixed_revision: 0, observed_replan_request_id: null, replan_request_id: null,
+  planning_trigger: { source: "portal", forced: true, reason: { code: "manual_replan_button" } },
   completion_basis: "home_assistant_ack" as const, exchange: {} };
 
 Deno.test("only the exact TEST server origin completes on publication", () => {
@@ -109,6 +110,7 @@ Deno.test("durable owner solves and atomically publishes in one fenced exchange 
   assertEquals(current.generation_request_id, context.request_id);
   // A snapshot without an operating scope (schema 8) records no control modes.
   assertEquals((state.publication()!.run as { summary: { operating_modes: unknown } }).summary.operating_modes, null);
+  assertEquals((state.publication()!.run as { summary: { planning_trigger: unknown } }).summary.planning_trigger, context.planning_trigger);
   assertEquals(state.calls.filter(call => call.name === "read_energy_planning_job").length, 1,
     "Verified omitted-plan publication returns the locally computed exact plan");
   assert(!state.calls.some(call => call.name.includes("batch")));

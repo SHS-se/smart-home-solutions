@@ -45,6 +45,7 @@ export interface PlanningContext {
   observed_replan_request_id: string | null;
   replan_request_id: string | null;
   execution_replan?: ExecutionReplan | null;
+  planning_trigger?: Record<string, unknown>;
   completion_basis: PlanningCompletionBasis;
   exchange: Record<string, unknown>;
 }
@@ -182,7 +183,7 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         // Which devices SHS was actually controlling when this plan was made. The
         // savings track record counts only months under control; nothing else records it.
-        summary: { ...compactPlanSummary(generated), operating_modes: snapshot.operating_scope?.modes ?? null },
+        summary: { ...compactPlanSummary(generated), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, operating_modes: snapshot.operating_scope?.modes ?? null },
         validation_errors: generated.validation_errors };
       for (const warning of generated.planning_warnings ?? []) {
         const evidence = {job_id:job.id,plan_id:generated.plan_id,...warning};
@@ -191,11 +192,11 @@ export class PlanningJobs {
       }
       publication = { current, run };
     } catch (error) {
-      return deliver(await this.computeFailure(owner, error));
+      return deliver(await this.computeFailure(owner, error, loaded.context.planning_trigger));
     }
     const assembledAt = performance.now();
     const published = await this.writeRecovering("publish_energy_planning_job", { ...owner, ...publication }, homeId, job.id, generated);
-    console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state,
+    console.info("[ENERGY-PLANNING-JOB] rules publication response", { ...owner, state: published?.state, planning_trigger: loaded.context.planning_trigger,
       read_ms: Math.round(readAt - started), claim_ms: Math.round(claimAt - readAt),
       load_ms: Math.round(loadAt - claimAt), solve_ms: Math.round(assembledAt - loadAt),
       publication_ms: Math.round(performance.now() - assembledAt),
@@ -211,10 +212,10 @@ export class PlanningJobs {
   }
 
   private async computeFailure(owner: { job_id: string; home_id: string; fence: number },
-    error: unknown): Promise<PlanningReceipt | null> {
+    error: unknown, planningTrigger: Record<string, unknown> | undefined): Promise<PlanningReceipt | null> {
     const detail = describeThrown(error);
     const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";
-    console.error("[ENERGY-PLANNING-JOB] failed", { ...owner, code, detail });
+    console.error("[ENERGY-PLANNING-JOB] failed", { ...owner, code, detail, planning_trigger: planningTrigger });
     return this.writeRecovering("fail_energy_planning_job", { ...owner, code, detail }, owner.home_id, owner.job_id);
   }
 

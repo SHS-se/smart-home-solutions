@@ -79,6 +79,7 @@ const idle: ReplanColumns = {
  * next read returns, which is the whole behaviour being checked.
  */
 interface MockPlanState {
+  audit?: Array<Record<string, unknown>>;
   accuracy?: Record<string, unknown>;
   inputAccuracy?: Record<string, unknown>;
   client?: { integration_version: string | null; app_version: string | null };
@@ -228,6 +229,8 @@ async function mockBackend(context: BrowserContext, replan: MockPlanState, plan 
       : table === 'energy_optimisation_current'
       // User-requested replay downloads read the source snapshot separately from sync.
       ? [{ snapshot: planSnapshot, plan: shown }]
+      : table === 'energy_replan_events'
+      ? replan.audit ?? []
       : table === 'energy_optimisation_pool_slots'
       ? replan.poolHistory ?? []
       : table === 'energy_optimisation_thermal_slots'
@@ -261,6 +264,22 @@ test.describe('requesting a replan', () => {
     await page.fill('#password', 'mock-password');
     await page.getByRole('button', { name: 'Logga in' }).click();
     await page.waitForURL(url => !url.pathname.endsWith('/login'));
+  });
+
+  test('replanning history opens with the keyboard and explains sustained battery errors', async ({page}) => {
+    replan.audit = [{id:'audit-1',occurred_at:CAPTURED_AT,event:'failed',source:'execution',
+      reason:{changes:[{owner:'$battery',cause:'battery_energy_shortfall',magnitude:.225,persistence_ms:120000}]},
+      details:{detail:'Solver could not complete'}}];
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const disclosure=page.getByText(/Omplaneringshistorik|Replanning history/, {exact:true});
+    await disclosure.focus();
+    await page.keyboard.press('Enter');
+    const history=page.getByRole('list',{name:/Senaste omplaneringshändelser|Recent replanning events/});
+    await expect(history).toContainText('0.225 kWh (2 min)');
+    await expect(history).toContainText(/Misslyckades|Failed/);
+    await expect(history).toContainText('Solver could not complete');
+    await page.keyboard.press('Enter');
+    await expect(history).toHaveCount(0);
   });
 
   test('a full ROI month completes with bounded native projection memory', async ({ context, page }) => {

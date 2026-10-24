@@ -33,3 +33,16 @@ Capture producers, backend readers and strict API schemas roll forward together.
 The retained overnight physical problem previously scheduled zero overnight EV energy and its first charge the following evening. Continuous readiness schedules the first charge at 23:45 Stockholm, immediately after the preserved accepted-command hour, and buys 13.8 kWh overnight: projected SOC rises from 48% to approximately 64.1%. That satisfies the existing readiness band; the 80% vehicle cap is not an unconditional completion target.
 
 Tests cover exact magnitude/time boundaries, interrupted crossings, clearing hysteresis, clock rollback, persisted restart state, multiple unavailable sources, a five-second pool blip, small recorded battery errors, sustained battery/pool errors, failed delivery and healthy equipment remaining available during scoped correction. Existing continuity tests remain unchanged.
+
+
+## Forced-replan audit
+
+Every execution correction and explicit request is recorded separately from its current pending-work journal. Clearing an error, recovery, accepting a request or replacing a plan cannot erase its audit reason. The recent local history retains 100 requests in `forced_replanning`, including immutable owner/cause/interval/magnitude/persistence evidence, reference plan, request identity, snapshot/job/resulting-plan identities, timestamped transitions and error details. It is persisted across restarts, included in controller diagnostic downloads under `current.readiness.forced_replanning`, and written to the app/core log at INFO level. Diagnostic retention never trims operational evidence or pending delivery.
+
+A requested capture is not a completed replan. The history distinguishes capture/submission failures, submission recovery, cloud admission, pending computation, publication, local validation/rejection, and confirmed acknowledgement. The same recovered submission retains its request identity. A later new solve attempt gets its own identity and preserves the original error evidence.
+
+The cloud commits `energy_replan_events` in the same transaction as request/job/acknowledgement changes. It records initial planning and price-release planning separately with `forced=false`; configuration recommendations alone never become forced-replan records. The cloud audit outlives pruning of solver jobs. Subscribers may read their own household's events but cannot write them. The portal's expandable Replanning history shows recent forced events and reasons; plan-run summaries also retain the frozen trigger and job ID.
+
+Explicit requests record their actual origin: portal button and authenticated actor ID, app button, controller-source selection, changed configuration, or a configuration change still pending at startup. App/integration versions and exchange IDs accompany device-origin requests. A startup request must not be described as a human click or inferred to be a deployment. Direct fixed-schedule changes and unattributed database writes are labeled separately. Historical attribution absent before this feature remains explicitly unknown; it cannot be reconstructed from timestamps.
+
+The API's `ManualReplanRequest` requires a nonempty `reason`. App, integration, backend endpoints and the database migration roll forward together; no legacy request alias is retained.

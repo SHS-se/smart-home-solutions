@@ -1600,6 +1600,8 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     const pendingManual = accepted?.replan_request_id && !accepted.replan_error &&
       accepted.replan_request_id !== accepted.replan_completed_request_id && snapshot &&
       portalReplanId === accepted.replan_request_id;
+    const planningTrigger = { source: accepted?.plan ? "price_release" : "initial_plan", forced: false,
+      reason: { code: accepted?.plan ? "new_published_prices" : "no_accepted_plan" } };
     const admitSnapshot = snapshot !== null && shouldAdmitPlanningSnapshot({
       hasAcceptedPlan: !!accepted?.plan, pendingManual: !!pendingManual,
       newPublishedPrices: hasNewPublishedPrices(accepted?.snapshot ?? null, snapshot), executionReplan,
@@ -1774,7 +1776,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
             request_id: requestId, integration_version: integrationVersion,
             reference_plan_id: fixedState?.reference_plan_id ?? null, fixed_revision: fixedRevision,
             observed_replan_request_id: accepted?.replan_request_id ?? null,
-            replan_request_id: portalReplanId, execution_replan: executionReplan,
+            replan_request_id: portalReplanId, execution_replan: executionReplan, planning_trigger: planningTrigger,
             completion_basis: planningCompletionBasis(Deno.env.get("SUPABASE_URL") ?? ""),
             exchange: {
               planning_warnings: uploadedActuals.warnings,

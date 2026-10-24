@@ -73,6 +73,8 @@ serve(withTrafficMetrics("energy-optimisation-replan", async (request, traffic) 
       global: { headers: { Authorization: authorization }, fetch: traffic.fetch },
       auth: { persistSession: false },
     });
+    const { data: { user }, error: userError } = await asCaller.auth.getUser();
+    if (userError || !user) return json({ error: "unauthorized" }, 401);
     const { data: readable, error: readError } = await asCaller
       .from("energy_optimisation_current")
       .select("home_id")
@@ -98,7 +100,7 @@ serve(withTrafficMetrics("energy-optimisation-replan", async (request, traffic) 
     // twice with the same measurements.
     const { data: queuedId, error: queueError } = await service.rpc(
       "request_energy_optimisation_replan",
-      { p_home_id: homeId },
+      { p_home_id: homeId, p_origin: { source: "portal", reason: "manual_replan_button", actor_id: user.id } },
     );
     if (queueError) {
       console.error("[ENERGY-REPLAN] queue failed", queueError);

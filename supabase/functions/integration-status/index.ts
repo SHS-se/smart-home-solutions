@@ -85,9 +85,10 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
         return json({ error: "invalid_body" }, 400);
       }
       if (body?.request_replan === true) {
-        if (body.api_version !== HA_API_VERSION) return json({ error: "invalid_body" }, 400);
+        if (body.api_version !== HA_API_VERSION || typeof body.reason !== "string" || !body.reason) return json({ error: "invalid_body" }, 400);
         const { data: queuedId, error } = await supabase.rpc("request_energy_optimisation_replan", {
           p_home_id: auth.homeId,
+          p_origin: { source: "integration", reason: body.reason, exchange_request_id: requestId, client: reportedClient(req.headers) },
         });
         if (error) return json({ error: "storage_failed" }, 500);
         return json({ api_version: HA_API_VERSION, replan_request_id: queuedId }, 202);

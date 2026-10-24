@@ -2615,6 +2615,66 @@ export type Database = {
           },
         ]
       }
+      energy_replan_events: {
+        Row: {
+          id: string
+          sequence: number
+          home_id: string
+          customer_id: string
+          event_key: string
+          occurred_at: string
+          request_id: string | null
+          job_id: string | null
+          snapshot_id: string | null
+          reference_plan_id: string | null
+          plan_id: string | null
+          event: string
+          source: string
+          forced: boolean
+          actor_id: string | null
+          reason: Json
+          details: Json
+        }
+        Insert: {
+          id?: string
+          sequence?: never
+          home_id: string
+          customer_id: string
+          event_key: string
+          occurred_at?: string
+          request_id?: string | null
+          job_id?: string | null
+          snapshot_id?: string | null
+          reference_plan_id?: string | null
+          plan_id?: string | null
+          event: string
+          source: string
+          forced: boolean
+          actor_id?: string | null
+          reason: Json
+          details?: Json
+        }
+        Update: {
+          id?: string
+          sequence?: never
+          home_id?: string
+          customer_id?: string
+          event_key?: string
+          occurred_at?: string
+          request_id?: string | null
+          job_id?: string | null
+          snapshot_id?: string | null
+          reference_plan_id?: string | null
+          plan_id?: string | null
+          event?: string
+          source?: string
+          forced?: boolean
+          actor_id?: string | null
+          reason?: Json
+          details?: Json
+        }
+        Relationships: []
+      }
       energy_optimisation_plan_runs: {
         Row: {
           customer_id: string
@@ -5174,7 +5234,7 @@ export type Database = {
         Returns: undefined
       }
       request_energy_optimisation_replan: {
-        Args: { p_home_id: string }
+        Args: { p_home_id: string; p_origin: Json }
         Returns: string
       }
       record_energy_parse_failure: {

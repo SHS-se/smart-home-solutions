@@ -795,3 +795,118 @@ Deno.test('real planner preparation freezes the execution envelope accepted by t
     assertEquals(frozen.execution_replan, execution);
   } finally { await db.close(); }
 });
+
+
+async function auditedDatabase() {
+  const db = await oneShotDatabase();
+  await db.exec(await migration(executionMigration));
+  await db.exec(`CREATE FUNCTION can_access_energy_billing_customer(uuid) RETURNS boolean LANGUAGE sql AS
+    $$ SELECT $1=NULLIF(current_setting('test.customer',true),'')::uuid $$;`);
+  await db.exec(await migration('20261024183000_audit_planning_triggers'));
+  return db;
+}
+type AuditEvent = { event: string; source: string; forced: boolean; actor_id: string | null;
+  reason: Record<string, unknown>; job_id: string | null; plan_id: string | null; details: Record<string, unknown> };
+const auditEvents = async (db: PGlite) => (await db.query<AuditEvent>(
+  'SELECT * FROM energy_replan_events ORDER BY sequence')).rows;
+
+Deno.test('planning audit attributes explicit requests and records publication separately from exact HA acceptance', async () => {
+  const db = await auditedDatabase();
+  try {
+    await insertCurrent(db);
+    const origin = { source: 'portal', reason: 'manual_replan_button', actor_id: home };
+    const queue = async () => (await db.query<{id:string}>(
+      'SELECT request_energy_optimisation_replan($1,$2) id', [home, origin])).rows[0].id;
+    const id = await queue();
+    assertEquals(await queue(), id);
+    assertEquals((await auditEvents(db)).length, 1);
+    const args = rulesSubmission(snapshot, { reference_plan_id: other, observed_replan_request_id: id,
+      replan_request_id: id, completion_basis: 'home_assistant_ack' });
+    const receipt = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    await rpc(db, 'accept_energy_planning_job', args);
+    const owner = (await attemptClaim(db, receipt.job_id))!;
+    const loaded = await attemptLoad(db, owner);
+    assertEquals(loaded!.context.planning_trigger, {source:'portal', forced:true, actor_id:home, reason:origin});
+    const publish = { ...attemptIdentity(owner), current: currentRow(), run: runRow() };
+    await assertRejects(() => rpc(db, 'publish_energy_planning_job', { ...publish, run: {...runRow(),status:'invalid'} }), Error, 'check constraint');
+    assertEquals((await auditEvents(db)).map(e=>e.event), ['requested','admitted','solving']);
+    await rpc(db, 'publish_energy_planning_job', publish);
+    await rpc(db, 'publish_energy_planning_job', publish);
+    assertEquals((await auditEvents(db)).map(e=>e.event), ['requested','admitted','solving','published']);
+    await db.query('SELECT acknowledge_energy_optimisation_plan($1,$2,$3,9::smallint,$4,now(),$5,$6,$7)',
+      [home, plan, snapshot, 'accepted', 'test', 'audit-ack', null]);
+    const events = await auditEvents(db);
+    assertEquals(events.map(e=>e.event), ['requested','admitted','solving','published','accepted']);
+    for (const e of events) { assertEquals(e.reason, origin); assertEquals(e.actor_id, home); }
+    assertEquals(events.at(-1)!.plan_id, plan);
+    // Retiring the large solve input cannot erase the audit.
+    await db.query('DELETE FROM private.energy_planning_jobs WHERE id=$1', [receipt.job_id]);
+    assertEquals((await auditEvents(db)).length, 5);
+    await db.exec(`SET ROLE authenticated; SET test.customer='${other}'`);
+    assertEquals(await auditEvents(db), []);
+    await db.exec(`SET test.customer='${home}'`);
+    assertEquals((await auditEvents(db)).length, 5);
+    await assertRejects(()=>db.exec('DELETE FROM energy_replan_events'), Error, 'permission denied');
+  } finally { await db.close(); }
+});
+
+Deno.test('execution audit preserves quantitative evidence through retry, failure and supersession', async () => {
+  const db = await auditedDatabase();
+  try {
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify(currentRow())]);
+    await db.exec("UPDATE energy_optimisation_current SET ha_ack_status='accepted',ha_acknowledged_at=now()");
+    const evidence = { request_id: manual, accepted_plan_id: plan, observed_at: '2026-10-24T10:00:00Z', changes: [
+      {owner:'$battery',status:'plan_deviation',cause:'battery_energy_shortfall',magnitude:0.225,persistence_ms:120000,
+       affected_intervals:[{start:'2026-10-24T10:00:00Z',end:'2026-10-24T10:15:00Z'}]}] };
+    const args = { ...rulesSubmission(other,{reference_plan_id:plan, execution_replan:evidence}), input:{execution_replan:evidence} };
+    const receipt = await rpc<Receipt>(db,'accept_energy_planning_job',args);
+    await rpc(db,'accept_energy_planning_job',args);
+    const owner = (await attemptClaim(db,receipt.job_id))!;
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=now()-interval '1 minute' WHERE id=$1",[owner.id]);
+    const retry = (await attemptClaim(db,receipt.job_id))!;
+    await rpc(db,'fail_energy_planning_job',{...attemptIdentity(retry),code:'solver_error',detail:'Cannot solve'});
+    const events = await auditEvents(db);
+    assertEquals(events.map(e=>e.event),['admitted','solving','solving','failed']);
+    for (const e of events) { assertEquals(e.reason,evidence); assertEquals(e.source,'execution'); assert(e.forced); }
+    assertEquals(events.at(-1)!.details.detail,'Cannot solve');
+    // An unrelated normal price release has its own provenance and is not a forced replan.
+    const normal = await rpc<Receipt>(db,'accept_energy_planning_job',rulesSubmission(snapshot,{reference_plan_id:plan,
+      planning_trigger:{source:'price_release',forced:false,reason:{code:'new_published_prices'}}}));
+    await db.query("UPDATE private.energy_planning_jobs SET state='superseded' WHERE id=$1",[normal.job_id]);
+    const last=(await auditEvents(db)).at(-1)!;
+    assertEquals(last.event,'superseded'); assertEquals(last.source,'price_release'); assertEquals(last.forced,false);
+  } finally { await db.close(); }
+});
+
+Deno.test('configuration and fixed schedule requests are attributed; pre-solve errors are durable', async () => {
+  const db = await auditedDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('SELECT request_energy_optimisation_replan($1,$2)',[home,
+      {source:'integration',reason:'controller_source_selected',client:{version:'test'}}]);
+    await db.exec("UPDATE energy_optimisation_current SET replan_error='Missing required inputs'");
+    assertEquals((await auditEvents(db)).map(e=>[e.event,e.reason.reason]),
+      [['requested','controller_source_selected'],['request_failed','controller_source_selected']]);
+    await db.query('SELECT set_fixed_energy_plan($1,0,$2,NULL)',[home,other]);
+    const fixed=(await auditEvents(db)).at(-1)!;
+    assertEquals(fixed.source,'fixed_schedule'); assertEquals(fixed.reason.reason,'fixed_schedule_changed');
+    await db.exec('SET ROLE anon');
+    await assertRejects(()=>auditEvents(db),Error,'permission denied');
+  } finally {await db.close();}
+});
+
+Deno.test('audit migration lets an already admitted job finish while retaining honest historical attribution', async () => {
+  const db=await oneShotDatabase();
+  try {
+    const receipt=await rpc<Receipt>(db,'accept_energy_planning_job',rulesSubmission());
+    await db.exec(`CREATE FUNCTION can_access_energy_billing_customer(uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT false $$`);
+    await db.exec(await migration('20261024183000_audit_planning_triggers'));
+    const owner=(await attemptClaim(db,receipt.job_id))!;
+    await rpc(db,'fail_energy_planning_job',{...attemptIdentity(owner),code:'test',detail:'test failure'});
+    const rows=await auditEvents(db);
+    assertEquals(rows.map(e=>e.event),['solving','failed']);
+    assertEquals(rows[0].source,'unknown');
+    assertEquals(rows[0].reason,{code:'job_predates_audit'});
+    await assertRejects(()=>rpc(db,'accept_energy_planning_job',rulesSubmission(other)),Error,'explicit audit reason');
+  } finally {await db.close();}
+});

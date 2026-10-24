@@ -3444,7 +3444,8 @@
         "type": "object",
         "required": [
           "api_version",
-          "request_replan"
+          "request_replan",
+          "reason"
         ],
         "additionalProperties": false,
         "properties": {
@@ -3454,6 +3455,11 @@
           "request_replan": {
             "type": "boolean",
             "const": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why this client requested replanning: manual action, configuration change, pending startup configuration, or controller-source selection."
           }
         }
       },
