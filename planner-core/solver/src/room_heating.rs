@@ -61,12 +61,14 @@ struct RoomBounds {
     committed_peak: f64,
     committed_next: f64,
 }
+#[derive(Clone, Copy)]
 struct CachedAction {
     next: f64,
     peak: f64,
     watts: f64,
     future: FutureRead,
 }
+#[derive(Clone, Copy)]
 struct FutureRead {
     indices: [usize; 4],
     tf: f64,
@@ -188,9 +190,6 @@ impl Grid {
             df: dp - di as f64,
         }
     }
-    fn future(&self, table: Option<&[f64]>, state: State) -> f64 {
-        self.lookup(state).read(table)
-    }
 }
 struct RelayChoice {
     on: Vec<bool>,
@@ -210,6 +209,7 @@ struct Search<'a> {
     projection: Projection,
     committed: Projection,
     targets: Vec<f64>,
+    native_targets: Vec<Vec<f64>>,
     first: Vec<i64>,
     last: Vec<i64>,
     indices: Vec<i64>,
@@ -230,15 +230,36 @@ fn js_round(value: f64) -> f64 {
 impl<'a> Search<'a> {
     fn new(thermostats: &'a [Thermostat], payload_limit: usize) -> Self {
         let n = thermostats.len();
+        // Cache native command conversion, never quantize a new command.
+        // Oversized ranges use identical arithmetic only when visited.
+        let native_targets: Vec<Vec<f64>> = thermostats
+            .iter()
+            .map(|t| {
+                let count = (((t.maximum_c - t.minimum_c) / t.step_c + 1e-9).floor() as usize)
+                    .saturating_add(1);
+                if count > payload_limit / std::mem::size_of::<f64>() / n.max(1) {
+                    Vec::new()
+                } else {
+                    (0..count)
+                        .map(|i| js_round((t.minimum_c + i as f64 * t.step_c) * 1e9) / 1e9)
+                        .collect()
+                }
+            })
+            .collect();
+        let target_bytes = native_targets
+            .iter()
+            .map(|v| v.len() * std::mem::size_of::<f64>())
+            .sum::<usize>();
         Self {
             memo: ProjectionMemo {
-                payload_limit,
+                payload_limit: payload_limit.saturating_sub(target_bytes),
                 ..ProjectionMemo::default()
             },
             thermostats,
             projection: Projection::new(n),
             committed: Projection::new(n),
             targets: vec![0.; n],
+            native_targets,
             first: vec![0; n],
             last: vec![0; n],
             indices: vec![0; n],
@@ -341,12 +362,19 @@ impl<'a> Search<'a> {
             // Only targets vary inside this loop. Reuse requires an exact
             // proof of every minute's latch decision, never similar outcomes.
             let mut projected = false;
+            let mut evaluation: Option<(CachedAction, Option<f64>)> = None;
             self.indices.copy_from_slice(&self.first);
             loop {
                 for (j, t) in self.thermostats.iter().enumerate() {
                     // JavaScript Math.round rounds ties towards positive infinity.
                     self.targets[j] = q.fixed_targets_c[j].unwrap_or_else(|| {
-                        js_round((t.minimum_c + self.indices[j] as f64 * t.step_c) * 1e9) / 1e9
+                        self.native_targets[j]
+                            .get(self.indices[j] as usize)
+                            .copied()
+                            .unwrap_or_else(|| {
+                                js_round((t.minimum_c + self.indices[j] as f64 * t.step_c) * 1e9)
+                                    / 1e9
+                            })
                     });
                 }
                 if !projected || !self.projection.reproduces_targets(&self.targets) {
@@ -359,33 +387,40 @@ impl<'a> Search<'a> {
                         &mut self.projection,
                     );
                     projected = true;
+                    let action = CachedAction {
+                        next: self.projection.state.temperature,
+                        peak: self.projection.peak,
+                        watts: relay.watts + self.projection.power.iter().sum::<f64>(),
+                        future: grid.lookup(self.projection.state),
+                    };
+                    let value = score(
+                        q,
+                        RoomBounds {
+                            passive,
+                            committed_peak: self.committed.peak,
+                            committed_next: self.committed.state.temperature,
+                        },
+                        action.next,
+                        action.peak,
+                        action.watts,
+                        action.future.read(table),
+                    );
+                    evaluation = Some((action, value));
                 }
-                let next = self.projection.state.temperature;
-                let watts = relay.watts + self.projection.power.iter().sum::<f64>();
+                // The trace proves the complete physical outcome is identical.
+                // Evaluate that outcome once while retaining every target action
+                // and the original tie-breaking/order below.
+                let (action, value) =
+                    evaluation.expect("a room action must have a projected trajectory");
+                let watts = action.watts;
                 if capture {
                     if self.memo.actions.len() < memo_limit {
-                        self.memo.actions.push(CachedAction {
-                            next,
-                            peak: self.projection.peak,
-                            watts,
-                            future: grid.lookup(self.projection.state),
-                        });
+                        self.memo.actions.push(action);
                     } else {
                         memo_complete = false;
                     }
                 }
-                if let Some(value) = score(
-                    q,
-                    RoomBounds {
-                        passive,
-                        committed_peak: self.committed.peak,
-                        committed_next: self.committed.state.temperature,
-                    },
-                    next,
-                    self.projection.peak,
-                    watts,
-                    grid.future(table, self.projection.state),
-                ) {
+                if let Some(value) = value {
                     if best_score == f64::INFINITY
                         || value < best_score - 1e-9
                         || (value - best_score).abs() <= 1e-9 && watts < best_watts
@@ -640,6 +675,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn native_target_cache_is_bounded_and_retains_commands() {
+        let mut thermostats = vec![Thermostat {
+            minimum_c: 1.0000000005,
+            maximum_c: 2.0000000005,
+            step_c: 0.5,
+            power_w: 800.,
+            sensor_offset_c: 0.,
+            hvac_action: "idle".into(),
+        }];
+        let search = Search::new(&thermostats, 128);
+        assert_eq!(
+            search.native_targets[0],
+            vec![1.000000001, 1.500000001, 2.000000001]
+        );
+        assert_eq!(
+            search.memo.payload_limit,
+            128 - 3 * std::mem::size_of::<f64>()
+        );
+        let uncached = Search::new(&thermostats, 0);
+        assert!(uncached.native_targets[0].is_empty());
+        thermostats[0].step_c = 1e-12;
+        let oversized = Search::new(&thermostats, 128);
+        assert!(oversized.native_targets[0].is_empty());
+        assert_eq!(oversized.memo.payload_limit, 128);
     }
 
     #[test]
