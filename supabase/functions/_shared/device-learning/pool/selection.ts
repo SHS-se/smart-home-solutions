@@ -56,6 +56,7 @@ function projection(
         model.heat_c_per_kwh,
     }, model.heat_c_per_kwh * capacity)
     : null;
+  const sourceStep = kernel?.preparePiece(.25, 0);
   let state: PoolThermalState = {
     water_c: samples[0].water_temperature_c,
     pending_heat_kwh: model.state.pending_heat_kwh,
@@ -72,14 +73,12 @@ function projection(
     const s = samples[i],
       power = s.electrical_kwh / .25,
       heat = power * model.heat_c_per_kwh * capacity * 1000;
-    state = kernel
-      ? kernel.piece(
+    state = sourceStep
+      ? sourceStep(
         state.water_c,
         state.pending_heat_kwh,
         state.source_depletion_kwh!,
         power,
-        0,
-        .25,
         model.idle_c_per_h,
       )
       : stepPoolThermal(store, state, heat, heat, 0, .25);

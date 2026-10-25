@@ -711,14 +711,38 @@ export class PoolSourceKernel {
     return out;
   }
 
+  /** Bind immutable interval coefficients once when projecting a chronology. */
+  preparePiece(hours: number, slopeKwPerH: number) {
+    const m = this.matrix(hours, slopeKwPerH);
+    return (water: number, pending: number, depletion: number, powerKw: number, cooling: number) =>
+      this.project(m, water, pending, depletion, powerKw, hours, cooling);
+  }
+
+  private project(m: Matrix, water: number, pending: number, depletion: number,
+    powerKw: number, hours: number, cooling: number) {
+    const powerDepletion = powerKw * depletion, powerSquared = powerKw * powerKw;
+    // Keep all seven multiply/add operations in the original order, including
+    // zero terms. Only the temporary vectors and repeated cache lookup vanish.
+    const row = (offset: number) => {
+      let value = 0;
+      value += m[offset] * depletion;
+      value += m[offset + 1] * powerDepletion;
+      value += m[offset + 2] * powerSquared;
+      value += m[offset + 3] * powerKw;
+      value += m[offset + 4] * 1;
+      value += m[offset + 5] * pending;
+      value += m[offset + 6] * 0;
+      return value;
+    };
+    const source = row(0), delayed = row(5 * N), heat = row(6 * N);
+    const next = this.responseHours > 0 ? delayed : 0;
+    return { water_c: water + (pending + heat - next) / this.capacity + cooling * hours,
+      pending_heat_kwh: next, source_depletion_kwh: Math.max(0, source), heat_kwh: heat };
+  }
+
   piece(water: number, pending: number, depletion: number, powerKw: number,
     slopeKwPerH: number, hours: number, cooling: number) {
-    const v = [depletion, powerKw * depletion, powerKw * powerKw, powerKw, 1, pending, 0];
-    const m = this.matrix(hours, slopeKwPerH), out = Array(N).fill(0);
-    for (const i of [0, 5, 6]) for (let j = 0; j < N; j++) out[i] += m[i * N + j] * v[j];
-    const next = this.responseHours > 0 ? out[5] : 0;
-    return { water_c: water + (pending + out[6] - next) / this.capacity + cooling * hours,
-      pending_heat_kwh: next, source_depletion_kwh: Math.max(0, out[0]), heat_kwh: out[6] };
+    return this.project(this.matrix(hours, slopeKwPerH), water, pending, depletion, powerKw, hours, cooling);
   }
 
   /** Turning points of heat, pending response and water isolate the first stop.

@@ -412,6 +412,10 @@ jobs:
             deno task deploy:planner-probe
             deno task probe:planner-handler
           fi
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-device-learning-probe "* ]]; then
+            deno task deploy:learning-probe
+            deno task probe:learning-hosted
+          fi
           # Research uses a TEST-only credential and never joins production deployments.
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-research "* ]]; then
             supabase functions deploy energy-market-research --project-ref "$SUPABASE_PROJECT_REF" --yes
@@ -420,7 +424,7 @@ jobs:
             deno task deploy:market-archive
           fi
           for name in $FUNCTIONS; do
-            if [ "$name" = energy-planner-probe ]; then
+            if [ "$name" = energy-planner-probe ] || [ "$name" = energy-device-learning-probe ]; then
               continue
             elif [ "$name" = energy-market-research ]; then
               continue

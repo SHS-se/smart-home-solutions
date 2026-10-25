@@ -24,6 +24,7 @@ async function database() {
       rejection text,hardware jsonb,sample_count integer DEFAULT 0);
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -136,5 +137,30 @@ Deno.test("removing an owner fences its running fit and stops retrying without d
     assert(await publish(db, resumed, 0, fitted()));
     await db.query("SELECT request_energy_device_learning($1,$1,'[]'::jsonb)", [home]);
     assertEquals((await db.query("SELECT * FROM energy_optimisation_zone_models")).rows.length, 1);
+  } finally { await db.close(); }
+});
+
+Deno.test("pool learning keeps the daily cadence when a fresh model has no hardware epoch", async () => {
+  const db = await database();
+  try {
+    const cases = [
+      { name: "fresh model, absent epoch", attempted: "now()-interval '1 hour'", epoch: "NULL", method: "pool_interval_mean_v1", due: 0 },
+      { name: "fresh model, older epoch", attempted: "now()-interval '1 hour'", epoch: "now()-interval '2 hours'", method: "pool_interval_mean_v1", due: 0 },
+      { name: "hardware changed after fit", attempted: "now()-interval '1 hour'", epoch: "now()", method: "pool_interval_mean_v1", due: 1 },
+      { name: "daily fit is due", attempted: "now()-interval '25 hours'", epoch: "NULL", method: "pool_interval_mean_v1", due: 1 },
+      { name: "no prior attempt", attempted: "NULL", epoch: "NULL", method: "pool_interval_mean_v1", due: 1 },
+      { name: "learning method changed", attempted: "now()-interval '1 hour'", epoch: "NULL", method: "prior_method", due: 1 },
+    ];
+    for (const scenario of cases) {
+      await db.exec("DELETE FROM private.energy_learning_jobs; DELETE FROM net.wakes; DELETE FROM energy_optimisation_pool_model");
+      await db.query(`INSERT INTO energy_optimisation_pool_model(home_id,customer_id,last_attempted_at,heat_pump_epoch_start,last_fit_attempt)
+        VALUES($1,$1,${scenario.attempted},${scenario.epoch},$2::jsonb)`,
+      [home, JSON.stringify({ learning: { method: scenario.method } })]);
+      assertEquals(await request(db, "pool", "pool"), scenario.due, scenario.name);
+      assertEquals(await request(db, "pool", "pool"), 0, `${scenario.name}: identical input coalesces`);
+      assertEquals((await db.query("SELECT * FROM net.wakes")).rows.length, scenario.due, scenario.name);
+    }
+    await db.exec("DELETE FROM private.energy_learning_jobs; DELETE FROM energy_optimisation_pool_model");
+    assertEquals(await request(db, "pool", "pool"), 1, "missing model still schedules a first fit");
   } finally { await db.close(); }
 });

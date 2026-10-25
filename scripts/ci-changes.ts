@@ -75,9 +75,12 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
       graph.add("scripts/deploy-energy-planning.sh");
       graph.add("scripts/configure-device-learning.ts");
     }
-    if (name === "energy-planner-probe") {
-      graph.add("scripts/deploy-planner-probe.ts");
+    if (name === "energy-planner-probe" || name === "energy-device-learning-probe") {
+      graph.add(name === "energy-planner-probe" ? "scripts/deploy-planner-probe.ts" : "scripts/deploy-device-learning-probe.ts");
+      graph.add("scripts/deploy-test-probe.ts");
       graph.add("scripts/planner-probe-auth.ts");
+      const qualification = name === "energy-planner-probe" ? "scripts/probe-planner-handler.ts" : "scripts/probe-device-learning-hosted.ts";
+      for (const dependency of reach(tree, [qualification])) graph.add(dependency);
     }
     if (name === "energy-market-archive" || name === "energy-price-experiment") {
       graph.add("scripts/deploy-market-archive.ts");

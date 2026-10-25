@@ -260,6 +260,7 @@ function responseCandidate(
     recovery_rate_per_h: rate,
     heat_loss_per_kwh: 1,
   }, 1);
+  const sourceStep = kernel?.preparePiece(HOURS, 0);
   const a = tau ? sourceDecay(1 / tau, HOURS) : 0;
   const constantMean = observation === "quarter_mean"
     ? new PoolMeanObservation(HOURS, 1, tau, 1, 0, null) : null;
@@ -283,23 +284,19 @@ function responseCandidate(
       const next = tau ? pending * a + power * tau * (1 - a) : 0;
       released += pending + sample.electrical_kwh - next;
       pending = next;
-      if (kernel) {
-        raw = kernel.piece(
+      if (sourceStep) {
+        raw = sourceStep(
           raw.water_c,
           raw.pending_heat_kwh,
           raw.source_depletion_kwh,
           power,
           0,
-          HOURS,
-          0,
         );
-        initial = kernel.piece(
+        initial = sourceStep(
           initial.water_c,
           initial.pending_heat_kwh,
           initial.source_depletion_kwh,
           power,
-          0,
-          HOURS,
           0,
         );
       }

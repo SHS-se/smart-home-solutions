@@ -10,7 +10,7 @@ interface LearningClaim {
 }
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
-export async function handleDeviceLearning(request: Request, db: any): Promise<Response> {
+export async function handleDeviceLearning(request: Request, db: any, now: () => number = Date.now): Promise<Response> {
   if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405 });
   const { data: authorized, error: authError } = await db.rpc("verify_energy_learning_token", {
     p_token: request.headers.get("x-energy-learning-token") ?? "",
@@ -30,8 +30,8 @@ export async function handleDeviceLearning(request: Request, db: any): Promise<R
     const models = await captureDeviceModels(db, claim.home_id);
     const previous = claim.owner_kind === "room" ? models.rooms.find(row => row.room_key === claim!.owner_key) : models.pool;
     const row = claim.owner_kind === "room"
-      ? await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null)
-      : await fitStoredPool(db, claim.customer_id, claim.home_id, claim.input.volume_m3!, claim.input.device_keys!);
+      ? await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
+      : await fitStoredPool(db, claim.customer_id, claim.home_id, claim.input.volume_m3!, claim.input.device_keys!, now());
     if (!row) throw new Error("Learning did not produce an attempt");
     const publication = await db.rpc("publish_energy_device_learning", {
       p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence,

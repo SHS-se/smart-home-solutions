@@ -5,7 +5,7 @@ import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 import { PlanningTrace } from "./planning-trace.ts";
 
-export const MAX_PLANNING_BODY_BYTES = 16_000_000;
+import { MAX_PLANNING_BODY_BYTES } from "./planning-transport-limits.ts";
 /** Internal endpoint: each explicit stage receives a fresh hosted CPU budget. */
 export async function handleEnergyPlanningStep(request: Request, planningSecret: string): Promise<Response> {
   const requestId = request.headers.get("x-request-id");

@@ -8,8 +8,9 @@ export async function fitStoredRoom(
   // deno-lint-ignore no-explicit-any
   db: any, homeId: string, customerId: string, roomKey: string,
   location: { latitude: number; longitude: number } | null,
+  now: number = Date.now(),
 ): Promise<Record<string, unknown>> {
-  const trainingTo = new Date().toISOString();
+  const trainingTo = new Date(now).toISOString();
   const trainingFrom = new Date(Date.parse(trainingTo) - TRAINING_WINDOW_DAYS * 86_400_000).toISOString();
   if (location) {
     const points = await irradiancePoints({ supabase: db, ...location });

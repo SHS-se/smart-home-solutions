@@ -61,6 +61,9 @@ wakes and expired leases. Read failures remain retriable job failures, rather
 than fabricated statistical rejections. Failed statistical attempts retain the
 previous usable parameters. Publication validates the owner's fence and model
 revision in one transaction and cannot write pool hardware or electrical fields.
+An absent pool hardware epoch does not make a fresh fit due. Database contracts
+exercise SQL NULL semantics alongside daily, method-change and hardware-change
+triggers so repeated telemetry cannot silently bypass the calibration cadence.
 
 Model capture reads all room and pool records in one PostgreSQL statement. Job
 provenance records the exact local revisions. Current equipment and preferences
@@ -216,3 +219,19 @@ Pool calibration prepares each candidate's fixed observation coefficients once
 and shares the identical constant-family search prefix when comparing families.
 The candidate grid, chronological validation, selection and diagnostics remain
 unchanged; complete-fit parity and the existing CPU budget guard this reuse.
+
+Pool source projections also prepare the fixed-duration observation weights once
+per candidate and evaluate them in the original arithmetic order. Qualification
+exercises the entire cold learning handler, including paginated history decoding,
+candidate selection and model publication into an inert database adapter. Its
+independently generated 21-day history uses an RK4 plant, not the production
+kernel, so generating the fixture cannot warm the code being measured.
+Before TEST runtime deployment, an authenticated TEST-only diagnostic runs that
+same handler with inert captured responses and compares the complete publication
+against local execution. Selected parameters, state and selection scores must
+match exactly. Only the documented profile diagnostics allow two floating-point
+ULPs across runtimes; rejection tests enforce that narrow exception. Repeated
+execution on one runtime must retain the exact publication hash. The diagnostic
+cannot publish models or operate devices. The
+first request follows diagnostic deployment; repeated requests additionally check
+determinism. A successful retry does not excuse a failed hosted qualification.

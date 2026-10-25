@@ -18,8 +18,9 @@ import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/ru
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
-import { selectPoolDynamics } from "../supabase/functions/_shared/device-learning/pool/selection.ts";
-import { syntheticPoolMeanHistory, SYNTHETIC_POOL_CAPACITY } from "../supabase/functions/_shared/pool-model-selection.fixture.ts";
+import { createDeviceLearningReplay } from "../supabase/functions/_shared/device-learning-replay.ts";
+import { handleDeviceLearning } from "../supabase/functions/_shared/device-learning-worker.ts";
+import { syntheticPoolLearningReplay } from "../tests/device-learning-cpu.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the
 // hosted two-second CPU ceiling for host differences and transport. The native
@@ -60,13 +61,25 @@ async function planSample(): Promise<Sample> {
   return sample;
 }
 
-/** Daily calibration uses independent synthetic chronology, including held-out selection. */
+/** Full cold learning handler: paginated JSON, all fits, selection and publication. */
 async function calibrationSample(): Promise<Sample> {
-  const samples = syntheticPoolMeanHistory(true);
-  return await measure(() => {
-    const fit = selectPoolDynamics(samples, SYNTHETIC_POOL_CAPACITY, "quarter_mean");
-    assert("fitted" in fit && fit.selection.selected === "recovering_source");
+  const now = Math.floor(Date.now() / 900_000) * 900_000;
+  const replay = createDeviceLearningReplay(syntheticPoolLearningReplay(now));
+  const sample = await measure(async () => {
+    const response = await handleDeviceLearning(new Request("https://cpu.test/learn", {
+      method: "POST", headers: { "x-energy-learning-token": "synthetic" },
+      body: JSON.stringify({ job_id: "synthetic-learning" }),
+    }), replay.db, () => now);
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { published: true });
   });
+  assertEquals(replay.failures, []);
+  assertEquals(replay.publications.length, 1);
+  assertEquals(replay.reads.filter(read => read.from !== undefined).length, 12);
+  const model = replay.publications[0].p_model as { thermal_dynamics: { recovery_evidence: unknown }; last_fit_attempt: { recovery_selection: { selected: string } } };
+  assert(model.thermal_dynamics.recovery_evidence);
+  assertEquals(model.last_fit_attempt.recovery_selection.selected, "recovering_source");
+  return sample;
 }
 
 /** Cold preparation handler, including transport encoding, with nine rooms. */

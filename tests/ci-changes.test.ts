@@ -41,9 +41,14 @@ Deno.test("a function importing website code redeploys with it", () => {
   assert(classify(root, ["src/lib/ecb-rate-core.ts"]).functions.includes("fetch-ecb-exchange-rate"));
 });
 
-Deno.test("probe credential and deployment changes redeploy only the private probe", () => {
-  for (const path of ["scripts/deploy-planner-probe.ts", "scripts/planner-probe-auth.ts"]) {
-    assertEquals(classify(root, [path]).functions, ["energy-planner-probe"]);
+Deno.test("probe credential and deployment changes select the private qualification lanes", () => {
+  assertEquals(classify(root, ["scripts/deploy-planner-probe.ts"]).functions, ["energy-planner-probe"]);
+  assertEquals(classify(root, ["scripts/deploy-device-learning-probe.ts"]).functions, ["energy-device-learning-probe"]);
+  for (const path of ["scripts/deploy-test-probe.ts", "scripts/planner-probe-auth.ts"]) {
+    assertEquals(classify(root, [path]).functions, ["energy-device-learning-probe", "energy-planner-probe"]);
+  }
+  for (const path of ["scripts/probe-device-learning-hosted.ts", "tests/device-learning-cpu.fixture.ts"]) {
+    assertEquals(classify(root, [path]).functions, ["energy-device-learning-probe"]);
   }
 });
 

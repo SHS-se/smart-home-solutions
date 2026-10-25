@@ -1,7 +1,8 @@
 import { builderRecipe } from "./ready-problem.ts";
 import { createWasmPlanner } from "./core.ts";
 import { readyProblemSchema } from "./ready-schema.ts";
-import { handleEnergyPlanningStep, MAX_PLANNING_BODY_BYTES } from "../energy-planning-worker.ts";
+import { handleEnergyPlanningStep } from "../energy-planning-worker.ts";
+import { readPrivateTestProbe } from "../private-test-probe.ts";
 import { RULES_PLANNING_PROTOCOL } from "../rules-planning-client.ts";
 
 interface Build {
@@ -32,52 +33,9 @@ export function createPlannerProbe(
     | undefined;
   return async (request: Request): Promise<Response> => {
     const started = performance.now();
-    // This lane may run only on TEST. Auth is service-to-service; not a portal API.
-    if (new URL(projectUrl).hostname !== "vxqpgbzseckgceopitpm.supabase.co") {
-      return Response.json({ error: "test_lane_only" }, { status: 403 });
-    }
-    if (
-      !secret || request.headers.get("authorization") !== `Bearer ${secret}`
-    ) {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
-    }
-    if (request.method !== "POST") {
-      return Response.json({ error: "post_required" }, { status: 405 });
-    }
-    // Match the worker transport so full multi-room prepared captures can be
-    // qualified here. This is an operational bound, not forecast validity.
-    const reader = request.body?.getReader();
-    if (!reader) {
-      return Response.json({ error: "ready_problem_required" }, {
-        status: 400,
-      });
-    }
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_PLANNING_BODY_BYTES) {
-        await reader.cancel();
-        return Response.json({ error: "probe_payload_too_large" }, {
-          status: 413,
-        });
-      }
-      chunks.push(value);
-    }
-    const body = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      body.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(new TextDecoder().decode(body));
-    } catch {
-      return Response.json({ error: "invalid_ready_json" }, { status: 400 });
-    }
+    const body = await readPrivateTestProbe(request, secret, projectUrl);
+    if (body instanceof Response) return body;
+    const raw = body.payload;
     if (raw && typeof raw === "object" && "mode" in raw && raw.mode === "handler") {
       const payload = raw as { protocol?: number; stage?: "prepare" | "solve"; input?: unknown };
       if (payload.protocol !== RULES_PLANNING_PROTOCOL || !payload.input || !["prepare", "solve"].includes(payload.stage ?? "")) {
@@ -194,7 +152,7 @@ export function createPlannerProbe(
         cold: wasCold,
         solve_elapsed_ms,
         handler_elapsed_ms: performance.now() - started,
-        body_bytes: size,
+        body_bytes: body.bytes,
         wasm_memory_bytes,
         input_bytes,
         output_bytes,

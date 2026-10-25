@@ -46,7 +46,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 27;
+export const REFEREE_VERSION = 28;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;

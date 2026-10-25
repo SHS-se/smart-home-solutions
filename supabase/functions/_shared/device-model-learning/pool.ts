@@ -12,8 +12,8 @@ export async function fitStoredPool(
   homeId: string,
   volumeM3: number,
   poolDeviceKeys: string[],
+  now: number = Date.now(),
 ): Promise<Record<string, unknown> | null> {
-  const now = Date.now();
   const { data: existing, error: existingError } = await supabase
     .from("energy_optimisation_pool_model")
     .select("*")

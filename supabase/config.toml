@@ -134,6 +134,10 @@ verify_jwt = false
 [functions.energy-planner-probe]
 verify_jwt = false
 
+# Nonpublishing full learning-worker qualification; same private TEST-only auth.
+[functions.energy-device-learning-probe]
+verify_jwt = false
+
 # TEST-only collector verifies its private database cron token in the handler.
 [functions.energy-market-archive]
 verify_jwt = false
