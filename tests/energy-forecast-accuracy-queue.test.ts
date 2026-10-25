@@ -30,6 +30,7 @@ async function database() {
     CREATE FUNCTION private.sweep_energy_accuracy() RETURNS void LANGUAGE sql AS $$ SELECT $$;
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261018204000_event_driven_forecast_accuracy.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261026005000_bound_forecast_accuracy_dispatch.sql"));
   return db;
 }
 
@@ -99,6 +100,75 @@ Deno.test("the sweep posts only jobs whose bucket has closed and keeps two days 
     assert(Date.parse(posts[0].body.scheduled_at) <= Date.now());
     assertEquals((await db.query("SELECT 1 FROM public.energy_forecast_accuracy_reports")).rows.length, 1);
     assertEquals((await db.query("SELECT 1 FROM pg_proc WHERE proname='energy_accuracy_due'")).rows.length, 0);
+  } finally {
+    await db.close();
+  }
+});
+
+const OTHER = "44444444-4444-4444-8444-444444444444";
+const posted = async (db: PGlite) => (await db.query<{ body: { home_id: string; scheduled_at: string } }>(
+  "SELECT body FROM net.posts ORDER BY body->>'home_id'",
+)).rows.map(row => [row.body.home_id, Date.parse(row.body.scheduled_at)]);
+
+Deno.test("a backlog posts only each home's newest closed job and drops the jobs it supersedes", async () => {
+  const db = await database();
+  try {
+    await db.exec(`
+      DELETE FROM private.energy_accuracy_jobs;
+      INSERT INTO private.energy_accuracy_jobs(home_id,customer_id,scheduled_at,timezone)
+        SELECT '${PLANNED}','${CUSTOMER}',date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01')-i*interval '15 minutes','Europe/Stockholm'
+          FROM generate_series(0,40) i;
+      INSERT INTO private.energy_accuracy_jobs(home_id,customer_id,scheduled_at,timezone) VALUES
+        ('${OTHER}','${CUSTOMER}',date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01')-interval '1 hour','Europe/Stockholm'),
+        ('${PLANNED}','${CUSTOMER}',date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01')+interval '5 minutes','Europe/Stockholm');
+    `);
+    await db.exec("SELECT private.sweep_energy_accuracy()");
+    const newest = (await db.query<{ at: Date }>(
+      `SELECT date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01') AS at`,
+    )).rows[0].at.getTime();
+    assertEquals((await posted(db)).length, 2);
+    assertEquals((await posted(db)).find(([home]) => home === PLANNED)?.[1], newest);
+    // The newest closed job, the other home's job and the still-open bucket remain.
+    assertEquals((await jobs(db)).length, 3);
+  } finally {
+    await db.close();
+  }
+});
+
+Deno.test("a home with a calculation in flight is not posted again, even for a newer job", async () => {
+  const db = await database();
+  try {
+    await db.exec(`
+      DELETE FROM private.energy_accuracy_jobs;
+      INSERT INTO private.energy_accuracy_jobs(home_id,customer_id,scheduled_at,timezone,lease_until) VALUES
+        ('${PLANNED}','${CUSTOMER}',date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01')-interval '5 minutes','Europe/Stockholm',clock_timestamp()+interval '1 minute'),
+        ('${PLANNED}','${CUSTOMER}',date_bin('5 minutes',clock_timestamp(),timestamptz '2000-01-01'),'Europe/Stockholm',NULL);
+    `);
+    await db.exec("SELECT private.sweep_energy_accuracy()");
+    assertEquals(await posted(db), []);
+    assertEquals((await jobs(db)).length, 2, "a leased job is never superseded under its owner");
+  } finally {
+    await db.close();
+  }
+});
+
+Deno.test("repeated failures of one job back off up to thirty minutes", async () => {
+  const db = await database();
+  try {
+    await db.exec(`
+      DELETE FROM private.energy_accuracy_jobs;
+      INSERT INTO private.energy_accuracy_jobs(home_id,customer_id,scheduled_at,timezone,fence)
+        VALUES('${PLANNED}','${CUSTOMER}','2026-10-25 04:30+00','Europe/Stockholm',0);
+    `);
+    const waits: number[] = [];
+    for (const fence of [1, 2, 3, 6, 242]) {
+      await db.exec(`UPDATE private.energy_accuracy_jobs SET fence=${fence}`);
+      await db.query("SELECT public.fail_energy_accuracy_job($1,'2026-10-25 04:30+00',$2,'statement timeout')", [PLANNED, fence]);
+      waits.push(Number((await db.query<{ m: number }>(
+        "SELECT round(extract(epoch FROM lease_until-clock_timestamp())/60) AS m FROM private.energy_accuracy_jobs",
+      )).rows[0].m));
+    }
+    assertEquals(waits, [1, 2, 4, 30, 30]);
   } finally {
     await db.close();
   }

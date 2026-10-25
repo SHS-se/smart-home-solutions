@@ -33,7 +33,9 @@ interface AccuracyJob {home_id: string; scheduled_at: string; timezone: string; 
 export async function handleForecastAccuracy(request: Request, db: SupabaseClient): Promise<Response> {
   if (request.method !== 'POST') return Response.json({error: 'method_not_allowed'}, {status: 405});
   const {data: authorized, error: authError} = await db.rpc('verify_energy_accuracy_token', {p_token: request.headers.get('x-energy-accuracy-token')});
-  if (authError || authorized !== true) return Response.json({error: 'unauthorized'}, {status: 401});
+  // An unreachable database is not a bad token: the job stays queued for the next sweep.
+  if (authError) return Response.json({error: 'unavailable'}, {status: 503});
+  if (authorized !== true) return Response.json({error: 'unauthorized'}, {status: 401});
   let job: AccuracyJob | null = null;
   try {
     const body = await request.json();
@@ -76,7 +78,9 @@ export async function handleForecastAccuracy(request: Request, db: SupabaseClien
       scheduled_at: owner.scheduled_at, ...device}));
     return Response.json({completed});
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    // PostgREST errors are plain objects; String() would record "[object Object]".
+    const detail = error instanceof Error ? error.message
+      : typeof (error as {message?: unknown})?.message === 'string' ? (error as {message: string}).message : String(error);
     console.error('[FORECAST-ACCURACY] calculation failed', {home_id: job?.home_id, detail});
     if (job) await db.rpc('fail_energy_accuracy_job', {p_home_id: job.home_id, p_scheduled_at: job.scheduled_at, p_fence: job.fence, p_error: detail});
     return Response.json({error: 'accuracy_calculation_failed'}, {status: 500});
