@@ -1,6 +1,6 @@
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
-import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/thermal-model.ts";
+import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { heatingMask, isThermostat, nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
 import { MAX_ROOM_RELAYS, planRoomHeating, type RoomQuarter } from "./room-heating-schedule.ts";

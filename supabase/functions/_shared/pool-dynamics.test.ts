@@ -1,13 +1,14 @@
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import history from "./pool-response-history.fixture.json" with { type: "json" };
 import startup from "../../../src/lib/planner-bench/pool-heater-response.json" with { type: "json" };
-import { fitPoolDynamics, poolPartialElectricity, poolResponseStateAt, type PoolDynamics } from "./pool-dynamics.ts";
+import { fitPoolDynamics, type PoolDynamics } from "./device-learning/pool/response.ts";
+import { poolPartialElectricity, poolResponseStateAt } from "./planner/models/pool/state.ts";
 import { stepPool, stepPoolThermal, parseHeaterResponse, type HeaterState } from "./planner/device-models.ts";
 import { poolPhysics } from "./planner/pool-physics.ts";
 import { PoolSourceKernel } from "./planner/device-models.ts";
 import { poolHeatGain } from "./planner/pool-response.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import type { PoolResponseSample } from "./pool-training.ts";
+import type { PoolResponseSample } from "./device-learning/pool/thermal.ts";
 
 // These reservoir tests explicitly supply observed OFF intervals between the
 // stated heating intervals. The production reconstructor never invents them.

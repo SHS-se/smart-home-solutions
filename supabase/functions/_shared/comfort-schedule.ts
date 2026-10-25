@@ -1,11 +1,4 @@
-import {
-  backgroundRateForSlot,
-  projectZoneTemperature,
-  type RoomState,
-  roomTransition,
-  stepRoom,
-  type ThermalZoneModel,
-} from "./planner/thermal-model.ts";
+import { backgroundRateForSlot, projectZoneTemperature, type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 export const COMFORT_MODES = ["off", "low-temp", "high-temp"] as const;
 export type ComfortMode = (typeof COMFORT_MODES)[number];

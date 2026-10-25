@@ -25,6 +25,17 @@ Keep this command aligned with `.github/workflows/ci-deploy.yml`. The separate
 # Planner changes
 
 Follow [the constraint requirements](docs/energy-optimisation/constraint-requirements.md).
+Read [component ownership and behavioral contracts](docs/energy-optimisation/planner-component-boundaries.md)
+before changing planner, model, transport or execution code. EV departure concepts
+are deliberately absent; cable connection must never gate future EV planning.
+Do not add either as part of a fix or refactor.
+
+Behavioral contracts in `tests/planner-contracts` are independent requirements,
+not generated snapshots. Run `deno task test:planner-contracts` for planner work.
+A failing accepted contract is not permission to rewrite its expectation,
+widen its tolerance, alter the historical-contract runner or skip its CI gate.
+Identify the explicit user-authorized requirement change before changing one.
+
 Do not invent or restore arbitrary validity constraints, including prediction
 bounds or source-timestamp event ordering, unless the user explicitly requires them.
 

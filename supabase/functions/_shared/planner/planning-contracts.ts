@@ -9,7 +9,7 @@ import type { BatteryCommand, BatteryOperation } from "./battery-command.ts";
 import type { BatteryDemand, BatteryInstruction } from "./battery-instruction.ts";
 import type { LevelBasis, WindDay, StoredPriceRow } from "./energy-price-shape.ts";
 import type { DemandDay } from "./demand-outlook.ts";
-import type { ThermalZoneModel } from "./thermal-model.ts";
+import type { ThermalZoneModel } from "./models/room/thermal.ts";
 import type { DeviceCommand } from "./device-commands.ts";
 import type { ThermostatInput } from "./thermostat.ts";
 import type { UtilityCurve } from "./store-value.ts";
@@ -1033,7 +1033,7 @@ export interface ThermalPlanningProjection {
  planned_total_power_w:number[];unplanned_total_power_w:number[];
  zones:{key:string;name:string;
  /** The room's device models, whose owners' operating modes say whether it is controlled. */
- device_keys?:string[];control_type:"switch_schedule"|"setpoint";load_type:"duty_cycle"|"inverter";
+ device_keys?:string[];control_type:"switch_schedule"|"setpoint"|"mixed";load_type:DeviceLoadType|"mixed";
  priority:number;rated_power_w:number;comfort_min_c:number[];target_c:number[];comfort_max_c:number[];
  planned_temperature_c:number[];unplanned_temperature_c:number[];planned_power_w:number[];unplanned_power_w:number[]}[];
 }

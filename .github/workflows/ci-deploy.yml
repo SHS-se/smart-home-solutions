@@ -48,6 +48,7 @@ jobs:
       actions: read # to find the last successful run
     outputs:
       deploy: ${{ steps.base.outputs.deploy }}
+      contract_base: ${{ steps.base.outputs.contract_base }}
       code: ${{ steps.detect.outputs.code }}
       frontend: ${{ steps.detect.outputs.frontend }}
       migrations: ${{ steps.detect.outputs.migrations }}
@@ -76,11 +77,13 @@ jobs:
           deploy=false
           if [ "$EVENT" != pull_request ] && { [ "$BRANCH" = main ] || [ "$BRANCH" = dev ]; }; then deploy=true; fi
           case "$EVENT" in
-            pull_request) sha="$PR_BASE" ;;
-            workflow_dispatch) sha="" ;; # deploy everything
-            *) sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-deploy.yml/runs?branch=$BRANCH&status=success&per_page=30" \
+            pull_request) contract_base="$PR_BASE" ;;
+            *) contract_base=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-deploy.yml/runs?branch=$BRANCH&status=success&per_page=30" \
                  --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")][0].head_sha // ""') ;;
           esac
+          sha="$contract_base"
+          if [ "$EVENT" = workflow_dispatch ]; then sha=""; fi # deploy everything, retain accepted contracts
+          echo "contract_base=$contract_base" >> "$GITHUB_OUTPUT"
           echo "Base: ${sha:-none (everything)}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
@@ -138,6 +141,25 @@ jobs:
 
       - name: Unit tests
         run: deno task test --shard ${{ matrix.shard }}/4
+
+  planner-contracts:
+    name: Accepted planner behavior
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.8
+      - name: Run current and previously accepted contracts against this planner
+        env:
+          CONTRACT_BASE: ${{ needs.changes.outputs.contract_base }}
+        run: deno task test:planner-contracts --base "${CONTRACT_BASE:?Cannot find an accepted revision for planner contracts}"
 
   planner-rust:
     name: Rust planner & Wasm parity
@@ -237,7 +259,7 @@ jobs:
 
   ci:
     name: Lint, test & build
-    needs: [changes, quality, unit, planner-rust, frontend]
+    needs: [changes, quality, unit, planner-rust, planner-contracts, frontend]
     # Run the gate even after a failed dependency, so its required status fails
     # explicitly. Frontend validation may skip only when no frontend changed.
     if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
@@ -248,12 +270,14 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           PLANNER_RUST_RESULT: ${{ needs.planner-rust.result }}
+          PLANNER_CONTRACTS_RESULT: ${{ needs.planner-contracts.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
         run: |
           test "$QUALITY_RESULT" = success
           test "$UNIT_RESULT" = success
           test "$PLANNER_RUST_RESULT" = success
+          test "$PLANNER_CONTRACTS_RESULT" = success
           if [ "$FRONTEND_CHANGED" = true ]; then
             test "$FRONTEND_RESULT" = success
           else

@@ -2,7 +2,8 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { WATER_KWH_PER_M3_K } from "./planner/device-models.ts";
 import { poolHeaters } from "./planner/pool-devices.ts";
-import { poolDynamicsAnchor, poolPartialElectricity, poolResponseStateAt, type PoolDynamics, type PoolElectricalInterval } from "./pool-dynamics.ts";
+import { poolDynamicsAnchor, poolPartialElectricity, poolResponseStateAt, type PoolElectricalInterval } from "./planner/models/pool/state.ts";
+import type { PoolDynamics } from "./planner/pool-response.ts";
 import { readPagedRows } from "./read-paged-rows.ts";
 const SLOT_MS = 900_000;
 

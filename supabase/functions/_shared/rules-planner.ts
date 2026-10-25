@@ -6,6 +6,7 @@ import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_
 import { demandLevel } from "./planner/demand-outlook.ts";
 import { preparePoolService, type PoolService } from "./rules-pool-service.ts";
 import { prepareRoomServices, type RoomServices } from "./rules-room-services.ts";
+import { roomProjectionControl } from "./planner/models/room/control.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
@@ -345,12 +346,12 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
   };
   problem.end_credit = problemEndCredit(problem);
-  return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
+  return structuredClone({ snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
     members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
     boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
     boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
-    boiler_shortfall_minutes: {}, base_w: baseW };
+    boiler_shortfall_minutes: {}, base_w: baseW });
 }
 
 function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number): Record<string, DeviceCommand> {
@@ -485,6 +486,7 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): OptimisationResult {
   if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
+  input = { ...input, snapshot: { ...input.snapshot } };
   const core = nativePlanner(trace);
   const solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
   if (solved.kind === "failed") {
@@ -563,7 +565,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     outdoor_temperature_c:snapshot.outdoor_temperature_c as number[],
     planned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.room_power[z.key][i]))),
     unplanned_total_power_w:snapshot.slots.map((_s,i)=>sum(modelledRooms.map(z=>input.rooms.unplanned_power[z.key][i]))),
-    zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,device_keys:z.device_keys,control_type:"setpoint",load_type:"duty_cycle",priority:i+1,
+    zones:modelledRooms.map((z,i)=>({key:z.key,name:z.name,device_keys:z.device_keys,...roomProjectionControl(snapshot, z.device_keys),priority:i+1,
       rated_power_w:z.rated_power_w,comfort_min_c:z.comfort_min_c,target_c:z.target_c,comfort_max_c:z.comfort_max_c,
       planned_temperature_c:input.rooms.temperature[z.key] as number[],unplanned_temperature_c:input.rooms.unplanned_temperature[z.key] as number[],
       planned_power_w:input.rooms.room_power[z.key],unplanned_power_w:input.rooms.unplanned_power[z.key]}))} : undefined;

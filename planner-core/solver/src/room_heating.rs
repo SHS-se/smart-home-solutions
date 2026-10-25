@@ -1,29 +1,14 @@
 //! Exact room Bellman search. Grid, action order and minute thermostat physics
 //! match the former TypeScript search; ingestion no longer pays for its JS heap.
 use serde::{Deserialize, Serialize};
+use shs_planner_models::room::{
+    project, temperature, Interval, Projection, State, Thermostat, Transition,
+};
 
-#[derive(Clone, Copy, Deserialize)]
-pub struct Transition {
-    decay: f64,
-    offset_c: f64,
-    delivered_gain_c_per_w: f64,
-    gain_c_per_w: f64,
-    carry: f64,
-}
-#[derive(Deserialize)]
-pub struct Thermostat {
-    minimum_c: f64,
-    maximum_c: f64,
-    step_c: f64,
-    power_w: f64,
-    sensor_offset_c: f64,
-    hvac_action: String,
-}
 #[derive(Deserialize)]
 pub struct Quarter {
-    hours: f64,
-    steps: usize,
-    step: Transition,
+    #[serde(flatten)]
+    physics: Interval,
     transition: Transition,
     required_c: f64,
     maximum_c: f64,
@@ -50,97 +35,6 @@ pub struct Plan {
     relays_on: Vec<Vec<bool>>,
     temperature_c: Vec<f64>,
     shortfall_c: Vec<f64>,
-}
-#[derive(Clone, Copy)]
-struct State {
-    temperature: f64,
-    delivered: f64,
-    mask: usize,
-}
-struct Projection {
-    state: State,
-    power: Vec<f64>,
-    peak: f64,
-}
-impl Projection {
-    fn new(count: usize) -> Self {
-        Self {
-            state: State {
-                temperature: 0.,
-                delivered: 0.,
-                mask: 0,
-            },
-            power: vec![0.; count],
-            peak: 0.,
-        }
-    }
-}
-fn temperature(s: Transition, state: State, watts: f64) -> f64 {
-    s.decay * state.temperature
-        + s.offset_c
-        + s.delivered_gain_c_per_w * state.delivered
-        + s.gain_c_per_w * watts
-}
-fn project(
-    q: &Quarter,
-    thermostats: &[Thermostat],
-    initial: State,
-    targets: &[f64],
-    relay: f64,
-    out: &mut Projection,
-) {
-    // The fixed-size iterator lets Wasm unroll the common single-thermostat
-    // inner loop; both cases compile from the same minute physics below.
-    if let [single] = thermostats {
-        project_kernel(q, [single], initial, targets, relay, out);
-    } else {
-        project_kernel(q, thermostats.iter(), initial, targets, relay, out);
-    }
-}
-fn project_kernel<'a, I>(
-    q: &Quarter,
-    thermostats: I,
-    initial: State,
-    targets: &[f64],
-    relay: f64,
-    out: &mut Projection,
-) where
-    I: IntoIterator<Item = &'a Thermostat> + Clone,
-{
-    out.state = initial;
-    out.power.fill(0.);
-    out.peak = relay;
-    let hours = if q.steps > 0 {
-        q.hours / q.steps as f64
-    } else {
-        0.
-    };
-    for _ in 0..q.steps {
-        let mut mask = 0;
-        let mut watts = relay;
-        for (j, t) in thermostats.clone().into_iter().enumerate() {
-            let own = out.state.temperature + t.sensor_offset_c;
-            let on = if own >= targets[j] - 1e-9 {
-                false
-            } else if targets[j] - own >= 0.5 - 1e-9 {
-                true
-            } else {
-                out.state.mask & (1 << j) != 0
-            };
-            if on {
-                mask += 1 << j;
-                watts += t.power_w;
-                out.power[j] += t.power_w * hours;
-            }
-        }
-        out.peak = out.peak.max(watts);
-        out.state.temperature = temperature(q.step, out.state, watts);
-        out.state.delivered = q.step.carry * out.state.delivered + (1. - q.step.carry) * watts;
-        out.state.mask = mask;
-    }
-    for w in &mut out.power {
-        *w = if q.hours > 0. { *w / q.hours } else { 0. };
-    }
 }
 // A kernel contains exact physical outcomes, not choices or scores. Only
 // adjacent, bit-identical quarter physics share it. The 32 MiB payload budget
@@ -191,13 +85,13 @@ impl FutureRead {
 }
 fn physics_key(q: &Quarter) -> Vec<u64> {
     let mut key = vec![
-        q.hours.to_bits(),
-        q.steps as u64,
-        q.step.decay.to_bits(),
-        q.step.offset_c.to_bits(),
-        q.step.delivered_gain_c_per_w.to_bits(),
-        q.step.gain_c_per_w.to_bits(),
-        q.step.carry.to_bits(),
+        q.physics.hours.to_bits(),
+        q.physics.steps as u64,
+        q.physics.step.decay.to_bits(),
+        q.physics.step.offset_c.to_bits(),
+        q.physics.step.delivered_gain_c_per_w.to_bits(),
+        q.physics.step.gain_c_per_w.to_bits(),
+        q.physics.step.carry.to_bits(),
         q.transition.decay.to_bits(),
         q.transition.offset_c.to_bits(),
         q.transition.delivered_gain_c_per_w.to_bits(),
@@ -248,14 +142,16 @@ fn score(
     {
         return None;
     }
-    let covered = watts.min(q.surplus_w.max(0.));
-    let energy = q.hours / 1000.
-        * (q.export_sek_per_kwh * covered + q.import_sek_per_kwh * (watts - covered));
     Some(
-        energy
-            + 10_000. * (q.required_c - next).max(0.)
-            + 1_000. * (next - q.maximum_c.max(passive)).max(0.)
-            + future,
+        crate::room_policy::RoomObjective {
+            hours: q.physics.hours,
+            surplus_w: q.surplus_w,
+            export_price: q.export_sek_per_kwh,
+            import_price: q.import_sek_per_kwh,
+            required: q.required_c,
+            maximum: q.maximum_c.max(passive),
+        }
+        .cost(next, watts, future),
     )
 }
 struct Grid {
@@ -428,7 +324,7 @@ impl<'a> Search<'a> {
             .any(|t| initial.temperature.min(passive) + t.sensor_offset_c < t.minimum_c);
         if has_commitment || minimum_can_heat {
             project(
-                q,
+                &q.physics,
                 self.thermostats,
                 initial,
                 &self.targets,
@@ -451,7 +347,7 @@ impl<'a> Search<'a> {
                     });
                 }
                 project(
-                    q,
+                    &q.physics,
                     self.thermostats,
                     initial,
                     &self.targets,

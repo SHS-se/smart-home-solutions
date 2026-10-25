@@ -15,17 +15,7 @@ pub(crate) struct State {
     /// one already running when the plan began, which has no run charge.
     pub pool_run_quarters: Option<u32>,
 }
-/// A planned pool start costs 10 kr with its wear. The scheduling part falls by
-/// 1 kr for each quarter the run lasts beyond four, to nothing at eleven, and
-/// is charged when the run ends, so a run's length is known before it is paid.
-const POOL_RUN_START_SEK: f64 = 7.0;
-const POOL_RUN_FREE_QUARTERS: u32 = 4;
-const POOL_RUN_SEK_PER_QUARTER: f64 = 1.0;
-pub(crate) fn pool_run_charge(quarters: u32) -> f64 {
-    (POOL_RUN_START_SEK
-        - POOL_RUN_SEK_PER_QUARTER * f64::from(quarters.saturating_sub(POOL_RUN_FREE_QUARTERS)))
-    .max(0.0)
-}
+use crate::policy::pool_run_charge;
 /// The run age a projection continues from: back through the quarters to the
 /// planned start of the run still on at the prefix's end.
 fn pool_run_age(prefix: &[Quarter]) -> Option<u32> {
@@ -72,7 +62,7 @@ pub(crate) fn pool_auxiliary_w(s: &Slot, on: bool, coupled_w: f64) -> f64 {
 /// interval. This is conservative for brief thermostat-limited runs.
 pub(crate) struct PoolDemand {
     pub average_w: f64,
-    pub admission_w: f64,
+    pub reservation_w: f64,
 }
 pub(crate) fn pool_demand(
     p: &Problem,
@@ -85,15 +75,8 @@ pub(crate) fn pool_demand(
     let auxiliary = pool_auxiliary_w(s, on, pool.map_or(0.0, |q| q.auxiliary_w));
     let active = on && p.pool_stop_c.is_none_or(|stop| water_c < stop);
     let full = p.heater.as_ref().map_or(0.0, |heater| {
-        let fraction = match &heater.response {
-            shs_planner_models::Response::Steady => 1.0,
-            shs_planner_models::Response::Bergvarme { startup } => startup
-                .iter()
-                .map(|point| point.electric_fraction)
-                .fold(1.0, f64::max),
-        };
         if active {
-            heater.compressor_w * fraction
+            heater.full_compressor_w()
         } else {
             0.0
         }
@@ -109,7 +92,7 @@ pub(crate) fn pool_demand(
     );
     PoolDemand {
         average_w: compressor + auxiliary,
-        admission_w: full + full_auxiliary,
+        reservation_w: full + full_auxiliary,
     }
 }
 
@@ -239,12 +222,12 @@ fn transition(
     } else {
         charge
     };
-    if pool_demand.admission_w > pool_w + 1e-7
+    if pool_demand.reservation_w > pool_w + 1e-7
         || admission_ev_w > ev_w + 1e-7
         || fixed_charge > charge + 1e-7
     {
         let reservation = BatteryLoad {
-            gross_w: s.base_w + pool_demand.admission_w + admission_ev_w,
+            gross_w: s.base_w + pool_demand.reservation_w + admission_ev_w,
             solar_w: s.solar_w,
             ev_w: admission_ev_w + s.base_ev_w,
         };

@@ -1,7 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { assertEquals, assertRejects } from "@std/assert";
 import { storePoolModelRow } from "./pool-training-persistence.ts";
-import { poolRefitIsDue } from "./pool-training.ts";
+import { poolRefitIsDue } from "./device-learning/pool/thermal.ts";
 
 Deno.test("pool refits preserve a usable fit and save failed-attempt evidence under the real SQL constraints", async () => {
   const db = new PGlite();

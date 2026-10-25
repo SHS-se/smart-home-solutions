@@ -18,7 +18,7 @@ import {
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { OptimisationSnapshot, ThermalZonePlanningInput } from "./planner/planning-contracts.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
-import { deliveredHeat, usesHouse } from "./planner/thermal-model.ts";
+import { deliveredHeat, usesHouse } from "./planner/models/room/thermal.ts";
 
 /** Current preferences and measurements, by room key. */
 export interface RoomEvidence {

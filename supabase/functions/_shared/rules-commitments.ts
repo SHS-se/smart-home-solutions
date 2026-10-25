@@ -3,7 +3,7 @@ import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 import type { NativeOwnerMask, NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import type { PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
 
-import { poolElectricalDemand } from "./planner/pool-physics.ts";
+import { poolElectricalDemand } from "./planner/models/pool/electrical.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 
 export type RetainedCommandSlot = Partial<PublishedCommandSlot> & { start: string };

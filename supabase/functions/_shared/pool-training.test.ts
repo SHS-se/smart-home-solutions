@@ -1,17 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@1";
-import {
-  COP_REFERENCE_AIR_C,
-  fitPoolLoss,
-  fitPoolModel,
-  fitPoolResponse,
-  type PoolResponseSample,
-  POOL_LOSS_SETTLE_QUARTERS,
-  type PoolLossSample,
-  type PoolTrainingSample,
-  poolRefitIsDue,
-  poolTrainingWindowStartMs,
-  SLOT_HOURS,
-} from "./pool-training.ts";
+import { COP_REFERENCE_AIR_C, fitPoolLoss, fitPoolModel, fitPoolResponse, type PoolResponseSample, POOL_LOSS_SETTLE_QUARTERS, type PoolLossSample, type PoolTrainingSample, poolRefitIsDue, poolTrainingWindowStartMs, SLOT_HOURS } from "./device-learning/pool/thermal.ts";
 import { WATER_KWH_PER_M3_K } from "./planner/device-models.ts";
 import { POOL_HISTORY_HEATER_KWH, POOL_HISTORY_START_MS, POOL_HISTORY_WATER_C } from "./pool-history.fixture.ts";
 

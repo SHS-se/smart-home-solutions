@@ -9,6 +9,7 @@ mod opportunity;
 mod physics;
 mod policy;
 pub mod room_heating;
+mod room_policy;
 mod witnesses;
 use serde::{Deserialize, Serialize};
 use shs_planner_models::{

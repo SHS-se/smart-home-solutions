@@ -1,12 +1,6 @@
-import {
-  fitThermalZone,
-  projectZoneTemperature,
-  quarterEnergyToWatts,
-  SLOT_HOURS,
-  solveLinearSystem,
-  type ThermalTrainingSample,
-  type ThermalZoneModel,
-} from '../../../supabase/functions/_shared/planner/thermal-model.ts';
+import { fitThermalZone, type ThermalTrainingSample } from "../../../supabase/functions/_shared/device-learning/room/regression.ts";
+import { projectZoneTemperature, quarterEnergyToWatts, SLOT_HOURS, type ThermalZoneModel } from "../../../supabase/functions/_shared/planner/models/room/thermal.ts";
+import { solveLinearSystem } from "../../../supabase/functions/_shared/device-learning/linear-algebra.ts";
 
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);

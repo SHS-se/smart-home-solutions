@@ -7,17 +7,9 @@
  * the explicitly fitted constant family retains its learned water lag.
  * This selects calibration complexity; it never gates household planning.
  */
-import {
-  fitPoolDynamics,
-  type PoolDynamics,
-  type PoolDynamicsFit,
-} from "./pool-dynamics.ts";
-import {
-  PoolSourceKernel,
-  type PoolThermalState,
-  stepPoolThermal,
-} from "./planner/device-models.ts";
-import type { PoolResponseSample } from "./pool-training.ts";
+import { fitPoolDynamics, type PoolDynamics, type PoolDynamicsFit } from "./response.ts";
+import { PoolSourceKernel, type PoolThermalState, stepPoolThermal } from "../../planner/device-models.ts";
+import type { PoolResponseSample } from "./thermal.ts";
 const SLOT = 900000;
 export interface SelectionEvidence {
   selected: "constant_gain" | "recovering_source";

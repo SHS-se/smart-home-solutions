@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { nativeTarget, supportedTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
-import { roomTransition, type ThermalZoneModel } from "./planner/thermal-model.ts";
+import { roomTransition, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 const thermostat: RoomThermostat = { entity_id: "climate.bathroom", minimum_c: 5, maximum_c: 90, step_c: 1,
   current_temperature_c: 21, target_temperature_c: 21, hvac_action: "idle", sensor_offset_c: 0, power_w: 686.3 };

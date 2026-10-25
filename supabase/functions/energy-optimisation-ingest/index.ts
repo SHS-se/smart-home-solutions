@@ -44,7 +44,7 @@ import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { PlanningTrace } from "../_shared/planning-trace.ts";
 import { parseHeaterResponse, WATER_KWH_PER_M3_K } from "../_shared/planner/device-models.ts";
 import { capturedPoolResponseState } from "../_shared/pool-capture.ts";
-import { selectPoolDynamics } from "../_shared/pool-model-selection.ts";
+import { selectPoolDynamics } from "../_shared/device-learning/pool/selection.ts";
 import { comfortTargets } from "../_shared/comfort-targets.ts";
 import { PlanningJobs, PlanningJobError, PLANNING_EXCHANGE_VERSION, planningCompletionBasis, type PlanningReceipt } from "../_shared/energy-planning-jobs.ts";
 import { buildPriceOutlook, type StoredPriceRow } from "../_shared/planner/energy-price-shape.ts";
@@ -53,7 +53,7 @@ import {
   REFIT_INTERVAL_HOURS,
   type ThermalQuarterRow,
   type ZoneFitAttempt,
-  zoneRefitIsDue,
+  roomRefitsDue,
   TRAINING_WINDOW_DAYS,
   zoneModelRows,
   storeZoneModelRows,
@@ -64,15 +64,7 @@ import { roomPlanningZones } from "../_shared/room-planning-zones.ts";
 import {
   resolveValueSettings,
 } from "../_shared/planner/value-curves.ts";
-import {
-  fitPoolLoss,
-  fitPoolModel,
-  fitPoolResponse,
-  type PoolLossSample,
-  type PoolResponseSample,
-  poolRefitIsDue,
-  poolTrainingWindowStartMs,
-} from "../_shared/pool-training.ts";
+import { fitPoolLoss, fitPoolModel, fitPoolResponse, type PoolLossSample, type PoolResponseSample, poolRefitIsDue, poolTrainingWindowStartMs } from "../_shared/device-learning/pool/thermal.ts";
 import { readPagedRows } from "../_shared/read-paged-rows.ts";
 import { storePoolModelRow } from "../_shared/pool-training-persistence.ts";
 import {
@@ -643,7 +635,8 @@ async function prepareThermalPlanning(
     .select("room_key, trained, last_attempted_at")
     .eq("home_id", homeId);
 
-  if (zoneRefitIsDue(now, (existing ?? []) as ZoneFitAttempt[], [...rooms.keys()])) {
+  const dueRooms = new Set(roomRefitsDue(now, (existing ?? []) as ZoneFitAttempt[], [...rooms.keys()]));
+  if (dueRooms.size) {
     const trainingFrom = new Date(
       now - TRAINING_WINDOW_DAYS * 86_400_000,
     ).toISOString();
@@ -674,7 +667,7 @@ async function prepareThermalPlanning(
       console.error("[ENERGY-OPTIMISATION] zone refit skipped", error);
     }
     if (quarters) {
-      const fits = fitRoomsFromQuarters(quarters);
+      const fits = fitRoomsFromQuarters(quarters.filter(row => dueRooms.has(row.room_key)));
       if (fits.length > 0) {
         try {
           await storeZoneModelRows(supabase, zoneModelRows(fits, {

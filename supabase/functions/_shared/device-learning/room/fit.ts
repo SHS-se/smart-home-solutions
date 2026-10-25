@@ -21,24 +21,9 @@
 // without a house temperature, or a room the house does not explain, keeps
 // what it had.
 
-import {
-  accumulateMoments,
-  fitThermalZoneFromMoments,
-  HEATED_SAMPLE_MIN_W,
-  MIN_HEATED_SAMPLES,
-  MIN_SOLAR_COVERAGE,
-  MIN_TRAINING_SAMPLES,
-  type RoomState,
-  roomTransition,
-  SLOT_HOURS,
-  solveLinearSystem,
-  stepRoom,
-  type ThermalFitRejection,
-  type ThermalFitResult,
-  type ThermalTrainingSample,
-  type ThermalZoneModel,
-  backgroundRateForSlot,
-} from "./thermal-model.ts";
+import { accumulateMoments, fitThermalZoneFromMoments, HEATED_SAMPLE_MIN_W, MIN_HEATED_SAMPLES, MIN_SOLAR_COVERAGE, MIN_TRAINING_SAMPLES, type ThermalFitRejection, type ThermalFitResult, type ThermalTrainingSample } from "./regression.ts";
+import { type RoomState, roomTransition, SLOT_HOURS, stepRoom, type ThermalZoneModel, backgroundRateForSlot } from "../../planner/models/room/thermal.ts";
+import { solveLinearSystem } from "../linear-algebra.ts";
 
 /** One measured quarter of a room. */
 export interface RoomTrainingQuarter {

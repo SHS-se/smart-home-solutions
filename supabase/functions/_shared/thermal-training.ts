@@ -3,16 +3,11 @@
 // Refitting on every 15-minute push would burn the same month of history over
 // and over for a model that moves imperceptibly between quarters. The fit runs
 // only when a plan is generated and the stored model has aged past
-// REFIT_INTERVAL_HOURS, so a home refits about once a day.
+// REFIT_INTERVAL_HOURS, so each trained room refits about once a day.
 
-import { fitRoom, type RoomTrainingQuarter } from "./planner/room-model-fit.ts";
-import {
-  fitThermalZoneFromMoments,
-  projectZoneTemperature,
-  type ThermalFitResult,
-  type ThermalMoments,
-  type ThermalZoneModel,
-} from "./planner/thermal-model.ts";
+import { fitRoom, type RoomTrainingQuarter } from "./device-learning/room/fit.ts";
+import { fitThermalZoneFromMoments, type ThermalFitResult, type ThermalMoments } from "./device-learning/room/regression.ts";
+import { projectZoneTemperature, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 export const REFIT_INTERVAL_HOURS = 24;
 /**
@@ -28,13 +23,15 @@ export interface ZoneFitAttempt {
   last_attempted_at: string | null;
 }
 
-/** Whether to refit the home's rooms now. */
-export function zoneRefitIsDue(nowMs: number, attempts: ZoneFitAttempt[], plannedRoomKeys: string[]): boolean {
-  const last = Math.max(0, ...attempts.map((attempt) => Date.parse(attempt.last_attempted_at ?? "") || 0));
-  if (nowMs - last > REFIT_INTERVAL_HOURS * 3_600_000) return true;
-  const trained = new Set(attempts.filter((attempt) => attempt.trained).map((attempt) => attempt.room_key));
-  return plannedRoomKeys.some((key) => !trained.has(key)) &&
-    nowMs - last > UNMODELLED_REFIT_INTERVAL_HOURS * 3_600_000;
+/** Each room owns its attempt clock. Learning another room cannot postpone it. */
+export function roomRefitsDue(nowMs: number, attempts: readonly ZoneFitAttempt[], plannedRoomKeys: readonly string[]): string[] {
+  const byRoom = new Map(attempts.map(attempt => [attempt.room_key, attempt]));
+  return plannedRoomKeys.filter(key => {
+    const attempt = byRoom.get(key);
+    const last = Date.parse(attempt?.last_attempted_at ?? "") || 0;
+    const hours = attempt?.trained ? REFIT_INTERVAL_HOURS : UNMODELLED_REFIT_INTERVAL_HOURS;
+    return nowMs - last > hours * 3_600_000;
+  });
 }
 /**
  * How far back a fit reads. Long enough to span several weather regimes so

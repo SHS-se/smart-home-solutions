@@ -18,7 +18,7 @@ import { PlanningTrace } from "../supabase/functions/_shared/planning-trace.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
-import { selectPoolDynamics } from "../supabase/functions/_shared/pool-model-selection.ts";
+import { selectPoolDynamics } from "../supabase/functions/_shared/device-learning/pool/selection.ts";
 import { syntheticPoolHistory, SYNTHETIC_POOL_CAPACITY } from "../supabase/functions/_shared/pool-model-selection.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the

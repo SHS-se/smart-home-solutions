@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { fitPoolDynamics } from "./pool-dynamics.ts";
-import { selectPoolDynamics } from "./pool-model-selection.ts";
+import { fitPoolDynamics } from "./device-learning/pool/response.ts";
+import { selectPoolDynamics } from "./device-learning/pool/selection.ts";
 import { syntheticPoolHistory as synthetic, SYNTHETIC_POOL_CAPACITY as CAPACITY } from "./pool-model-selection.fixture.ts";
 
 

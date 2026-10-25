@@ -1,6 +1,6 @@
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
-import { fitRoom, predictionError, type RoomTrainingQuarter } from "./room-model-fit.ts";
-import { type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./thermal-model.ts";
+import { fitRoom, predictionError, type RoomTrainingQuarter } from "./fit.ts";
+import { type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "../../planner/models/room/thermal.ts";
 
 /** A floor-heated room in a house that cools overnight, simulated from a known model. */
 const TRUTH: ThermalZoneModel = {

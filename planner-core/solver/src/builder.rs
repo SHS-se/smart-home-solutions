@@ -166,7 +166,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
             });
         let pool_demand = physics::pool_demand(p, s, on, label.state.pool, pool.as_ref());
         let household_w = s.base_w + pool_demand.average_w - s.solar_w;
-        let admission_w = s.base_w + pool_demand.admission_w - s.solar_w;
+        let admission_w = s.base_w + pool_demand.reservation_w - s.solar_w;
         for amps in ev_levels(p, index, i, label, admission_w) {
             let ev_w = p
                 .charger

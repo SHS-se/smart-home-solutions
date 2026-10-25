@@ -3,7 +3,7 @@ import { mixedModeSnapshot, rulesFixtureInput } from "../../../scripts/generate-
 import { compileCommitments, assertHeldCommands } from "./rules-commitments.ts";
 import { runRulesPlanner } from "./run-rules-planner.ts";
 import type { PublishedCommandReference } from "./rules-planner.ts";
-import { poolElectricalDemand } from "./planner/pool-physics.ts";
+import { poolElectricalDemand } from "./planner/models/pool/electrical.ts";
 
 // Synthetic command reservations constructed from the public generator.
 function house() {

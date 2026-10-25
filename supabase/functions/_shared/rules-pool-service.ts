@@ -1,6 +1,7 @@
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import { type PublishedHeater, type ThermalStoreModel } from "./planner/device-models.ts";
-import { poolPhysics, poolElectricalDemand } from "./planner/pool-physics.ts";
+import { poolPhysics } from "./planner/pool-physics.ts";
+import { poolElectricalDemand } from "./planner/models/pool/electrical.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
 import { commandOwner, unavailableOwner } from "./rules-commitments.ts";
 

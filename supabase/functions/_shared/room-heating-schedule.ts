@@ -1,5 +1,5 @@
 /** Finite native thermostat targets and whole-quarter relays, comfort before cost. */
-import type { RoomTransition } from "./planner/thermal-model.ts";
+import type { RoomTransition } from "./planner/models/room/thermal.ts";
 import type { RoomThermostat, ThermostatQuarter } from "./planner/thermostat.ts";
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { PlanningTrace } from "./planning-trace.ts";

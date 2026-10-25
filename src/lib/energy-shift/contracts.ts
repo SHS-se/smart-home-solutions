@@ -46,8 +46,8 @@ export interface ThermalZoneProjection {
   name: string;
   /** The room's device models; absent on plans made before rooms named them. */
   device_keys?: string[];
-  control_type: 'switch_schedule' | 'setpoint';
-  load_type: 'duty_cycle' | 'inverter';
+  control_type: 'switch_schedule' | 'setpoint' | 'mixed';
+  load_type: 'duty_cycle' | 'inverter' | 'fixed_full_load' | 'variable_full_load' | 'mixed';
   priority: number;
   rated_power_w: number;
   comfort_min_c: number[];

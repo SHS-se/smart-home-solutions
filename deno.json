@@ -18,7 +18,8 @@
     "research:prices:compare": "deno run --sloppy-imports --allow-read --allow-write scripts/price-forecast-research.ts compare",
     "research:generation:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/generation-forecast-report.ts",
     "deploy:market-archive": "deno run --allow-read --allow-write --allow-run=supabase scripts/deploy-market-archive.ts",
-    "research:prices:paired-report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-pair-report.ts"
+    "research:prices:paired-report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-pair-report.ts",
+    "test:planner-contracts": "deno run --allow-read --allow-write --allow-run scripts/check-planner-contracts.ts"
   },
   "imports": {
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.57.2",

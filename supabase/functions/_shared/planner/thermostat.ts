@@ -1,4 +1,4 @@
-import { type RoomState, type RoomTransition } from "./thermal-model.ts";
+import { type RoomState, type RoomTransition } from "./models/room/thermal.ts";
 
 /** Native observations at snapshot capture, independently of the room sensor. */
 export interface ThermostatInput {

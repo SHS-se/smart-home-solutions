@@ -1,29 +1,12 @@
 import type { OptimisationSnapshot } from "./planning-contracts.ts";
-import { DeviceModelError, validateHeaterSource, operatingPoint, parseHeaterResponse, publishHeater, WATER_KWH_PER_M3_K, type PublishedHeater, type ThermalStoreModel } from "./device-models.ts";
-import { deviceMembers, allocateDevicePower } from "./device-power-allocation.ts";
-import { poolHeaters } from "./pool-devices.ts";
+import { DeviceModelError, validateHeaterSource, parseHeaterResponse, publishHeater, WATER_KWH_PER_M3_K, type PublishedHeater, type ThermalStoreModel } from "./device-models.ts";
+import { poolElectricalDemand } from "./models/pool/electrical.ts";
 import { validatePoolDynamics } from "./pool-response.ts";
 
 type PoolFacts = Pick<OptimisationSnapshot, "pool" | "pool_model" | "device_models" | "device_physics">;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
 function fail(message: string): never { throw new DeviceModelError(message); }
-
-/** Supported ON electricity is a device fact, never a historical duty average. */
-export function poolElectricalDemand(snapshot: PoolFacts): { compressor_w: number; auxiliary_w: number; member_w: Record<string, number> } {
-  const members = snapshot.device_models.filter(m => m.planning_service === "pool");
-  const keys = new Set(poolHeaters(members).map(m => m.key));
-  const response = snapshot.pool_model?.heater_response;
-  const observed = response?.kind === "bergvarme" ? response.evidence?.steady_compressor_w : undefined;
-  const supplied = snapshot.device_physics?.pool?.heater;
-  const compressor = supplied ? operatingPoint(supplied, supplied.selected_setting).electric_w : (finite(observed) && observed > 0 ? observed
-    : sum(members.filter(m => keys.has(m.key)).map(m => m.active_power_w ?? 0)));
-  const auxiliary = supplied?.auxiliary_w ?? sum(members.filter(m => !keys.has(m.key)).map(m => m.active_power_w ?? 0));
-  const member_w: Record<string, number> = {};
-  allocateDevicePower(deviceMembers(members.filter(m => keys.has(m.key)), compressor), compressor, member_w);
-  allocateDevicePower(deviceMembers(members.filter(m => !keys.has(m.key)), auxiliary), auxiliary, member_w);
-  return { compressor_w: compressor, auxiliary_w: auxiliary, member_w };
-}
 
 /** One publication boundary for live, replay and browser models. No I/O or fit. */
 export function poolPhysics(snapshot: PoolFacts): { store: ThermalStoreModel; heater: PublishedHeater } {

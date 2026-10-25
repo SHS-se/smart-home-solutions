@@ -1,6 +1,6 @@
 # Requirements for planner and controller constraints
 
-User requirement, 24 October 2026: EV readiness counts immediately on every plan; no renewed grace period. Automatic replans require the explicit magnitude, persistence and execution criteria in [the replan error policy](replan-error-policy.md).
+User requirement, 24 October 2026: EV range shortfall counts immediately on every plan; no renewed grace period. Automatic replans require the explicit magnitude, persistence and execution criteria in [the replan error policy](replan-error-policy.md).
 
 User requirement, 24 October 2026: **EV departure time must not exist in the code.**
 Do not configure, discover, infer, parse, validate, serialize or schedule against
@@ -146,3 +146,10 @@ Keep EV, battery, independently owned circulation, pool-OFF slots, other loads
 and explicit bookings held. This grants no household-wide unlock, cross-owner
 release or retry with relaxed holds. If the remaining commands are infeasible,
 report the conflict without raising the grid limit.
+
+User clarification, 25 October 2026: device learning and device physics are
+separate responsibilities, specific to each device type. Thermal response and
+electrical demand must be distinct. Refactoring does not authorize restoring
+cable gating, EV departure concepts, or changing existing service priorities.
+Behavioral checks must exercise the published commands and projections against
+independent expectations. See [component boundaries and regression contracts](planner-component-boundaries.md).

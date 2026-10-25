@@ -18,11 +18,12 @@ This is an effective model of the observed response. The filtered thermometer
 cannot identify water mixing, sensor filtering and intermediate thermal storage
 separately. A flat reading does not prove the supplied heat disappeared.
 
-`pool-dynamics.ts` fits the time constant, steady temperature gain per compressor
+`device-learning/pool/response.ts` fits the time constant, steady temperature gain per compressor
 kWh and standing cooling jointly. Each contiguous history segment has a fitted
 nonnegative starting contribution, so an already-running first observation is
 not treated as a cold start. Both quarter and hourly temperature changes enter
 the fit; no fixed post-run settling exclusion is used in this dynamic fit.
+`planner/models/pool/state.ts` reconstructs captured state without fitting.
 The older bin fit remains separate evidence for homes without an identified
 dynamic model. Fit diagnostics do not gate household planning.
 

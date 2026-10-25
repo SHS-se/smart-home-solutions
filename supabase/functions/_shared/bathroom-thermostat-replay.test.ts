@@ -3,7 +3,7 @@ import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.
 import { prepareRoomServices } from "./rules-room-services.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import { nativeTarget, projectThermostatQuarter, type RoomThermostat, type ThermostatRoomState } from "./planner/thermostat.ts";
-import { roomTransition, backgroundRateForSlot } from "./planner/thermal-model.ts";
+import { roomTransition, backgroundRateForSlot } from "./planner/models/room/thermal.ts";
 import fixture from "./bathroom-thermostat-replay.fixture.json" with { type: "json" };
 
 const floor = fixture.devices.find(d => d.control_type === "setpoint")!.key;
