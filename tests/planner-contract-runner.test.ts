@@ -1,5 +1,21 @@
-import { assertEquals } from "@std/assert";
-import { bindCandidateImports } from "../scripts/check-planner-contracts.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { bindCandidateImports, transitionContract } from "../scripts/check-planner-contracts.ts";
+
+Deno.test("approved transitions replace only exact immutable test bodies and preserve every other historical assertion", () => {
+  const unchanged = 'const helper = 12;\n';
+  const oldTest = 'Deno.test("old pool", () => { check(true); });';
+  const newTest = 'Deno.test("retained pool", () => { check(null); });';
+  const other = '\nDeno.test("EV", () => { check(helper === 12); });';
+  const before = unchanged + oldTest + other, after = unchanged + newTest + other;
+  assertEquals(transitionContract(before, before, after, "old pool", "retained pool"), after);
+  const older = before.replace('helper = 12', 'helper = 15');
+  assertEquals(transitionContract(older, before, after, "old pool", "retained pool"), after.replace('helper = 12', 'helper = 15'));
+  assertEquals(transitionContract(after, before, after, "old pool", "retained pool"), after);
+  const different = before.replace('check(true)', 'check(false)');
+  assertEquals(transitionContract(different, before, after, "old pool", "retained pool"), different);
+  assertThrows(() => transitionContract(before, before, after.replace('helper === 12', 'helper === 5'), "old pool", "retained pool"), Error, 'unapproved assertions');
+  assertThrows(() => transitionContract(before, before, after.replace('helper = 12', 'helper = 5'), "old pool", "retained pool"), Error, 'unapproved assertions');
+});
 Deno.test("historical contract runner preserves old helpers and assertions while binding current production", () => {
   const source = `import { plan } from "../../supabase/functions/_shared/rules-planner.ts";
 import type { OptimisationPlan } from '../../supabase/functions/_shared/planner/planning-contracts.ts';

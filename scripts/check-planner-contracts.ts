@@ -6,6 +6,41 @@ import { pathToFileURL } from "node:url";
 import { specifiers } from "./module-graph.ts";
 
 export const CONTRACTS = "tests/planner-contracts";
+
+/** Replace only the explicitly reviewed test body, never a whole historical
+ * file or its helpers. Both bodies come from immutable commits, not today's
+ * expectations. Any other difference in the approval pair is an error. */
+export function transitionContract(contents: string, before: string, after: string,
+  oldName: string, newName: string): string {
+  const body = (source: string, name: string) => {
+    const marker = `Deno.test(${JSON.stringify(name)},`;
+    const start = source.indexOf(marker);
+    if (start < 0 || source.indexOf(marker, start + 1) >= 0) throw new Error(`Approved contract must occur exactly once: ${name}`);
+    const next = source.indexOf('\nDeno.test(', start + marker.length);
+    return source.slice(start, next < 0 ? source.length : next);
+  };
+  const oldBody = body(before, oldName), newBody = body(after, newName);
+  if (before.replace(oldBody, newBody) !== after) throw new Error('Contract transition changes unapproved assertions or helpers');
+  if (!contents.includes(oldBody)) return contents; // A newer/different historical oracle remains authoritative.
+  if (contents.indexOf(oldBody) !== contents.lastIndexOf(oldBody)) throw new Error('Ambiguous historical contract transition');
+  return contents.replace(oldBody, newBody);
+}
+
+interface ContractTransition {
+  requirement: string;
+  before: string;
+  after: string;
+  tests: Array<{ file: string; old_name: string; new_name: string }>;
+}
+
+async function approvedTransitions(repository: string): Promise<ContractTransition[]> {
+  try {
+    return JSON.parse(await Deno.readTextFile(join(repository, 'scripts/planner-contract-transitions.json')));
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return [];
+    throw error;
+  }
+}
 /** Historical helpers stay historical; production imports resolve to the candidate checkout. */
 export function bindCandidateImports(source: string, file: string, repository: string): string {
   for (const specifier of specifiers(source, { types: true })) {
@@ -44,10 +79,19 @@ export async function checkPlannerContracts(repository: string, base: string): P
     return;
   }
   if (!names.some(name => name.endsWith(".test.ts"))) throw new Error("Historical contract suite contains no tests");
+  const transitions = await approvedTransitions(repository);
   const temporary = await Deno.makeTempDir({ prefix: "shs-accepted-planner-contracts-" });
   try {
     for (const name of names) {
-      const contents = await git(repository, ["show", `${revision}:${name}`]);
+      let contents = await git(repository, ["show", `${revision}:${name}`]);
+      for (const transition of transitions) for (const entry of transition.tests) {
+        if (entry.file !== name) continue;
+        const before = await git(repository, ['show', `${transition.before}:${name}`]);
+        const after = await git(repository, ['show', `${transition.after}:${name}`]);
+        const updated = transitionContract(contents, before, after, entry.old_name, entry.new_name);
+        if (updated !== contents) console.log(`Approved requirement transition: ${entry.old_name} — ${transition.requirement}`);
+        contents = updated;
+      }
       const target = join(temporary, name);
       await Deno.mkdir(dirname(target), { recursive: true });
       await Deno.writeTextFile(target, name.endsWith(".ts") ? bindCandidateImports(contents, name, repository) : contents);

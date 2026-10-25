@@ -156,6 +156,15 @@ explicit review of the requirement they change. Repository tests cannot make
 their own CI configuration tamper-proof; branch protection/reviewer controls
 remain a repository administration concern.
 
+On 25 October 2026 the user explicitly approved the two-contract transition
+from missing-model all-ON permissions to accepted-schedule retention.
+`scripts/planner-contract-transitions.json` names the exact before/after commits
+and the two reviewed tests (POOL-2 and POOL-4's missing-model setup). The runner
+replaces only the matching historical test body with that immutable approved
+body. It rejects approval pairs that also change other assertions or helpers.
+Every other historical assertion still runs, and later edits to today's tests
+cannot change the approved bodies. No baseline, CI job or test is skipped.
+
 ## Completed lifecycle separation
 
 The existing execution order remains: room scheduling → native household

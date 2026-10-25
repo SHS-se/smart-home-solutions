@@ -1,0 +1,19 @@
+[
+  {
+    "requirement": "User approved the two-contract transition on 25 October 2026: missing pool evidence retains accepted instructions and never manufactures continuous heating. See docs/energy-optimisation/constraint-requirements.md.",
+    "before": "5f7ca478316f9f9eeccc62ec51f80661293625f0",
+    "after": "5c00f4782d4ebb540aa22de39329ba93bb6542ba",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT POOL-2: losing thermal evidence cannot turn full ON permission into average electrical draw",
+        "new_name": "CONTRACT POOL-2: missing thermal evidence retains accepted instructions without inventing continuous heating"
+      },
+      {
+        "file": "tests/planner-contracts/pool-electrical-ownership.test.ts",
+        "old_name": "CONTRACT POOL-4: a thermal calibration cannot replace authoritative 3600 W ON electricity with 1200 W",
+        "new_name": "CONTRACT POOL-4: a thermal calibration cannot replace authoritative 3600 W ON electricity with 1200 W"
+      }
+    ]
+  }
+]
