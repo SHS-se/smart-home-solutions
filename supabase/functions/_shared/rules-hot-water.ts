@@ -57,7 +57,7 @@ export function waterBatteryCommand(input: PreparedRulesInput, command: NativeCo
 
 /** One household solve followed by one water projection. Pool/EV choices stay
  * fixed. Battery ceilings use the same partition as HA's measured supply scope. */
-export function addHotWater(core: ReturnType<typeof createWasmPlanner>, input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
+export function addHotWater(core: Pick<ReturnType<typeof createWasmPlanner>, "project">, input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
   if (!input.boiler_services.length) return { input, selection: native };
   const p = input.problem;
   const other = p.slots.map((s, i) => s.base_w - input.boiler_w[i] + native.quarters[i].pool_w + native.quarters[i].ev_w);

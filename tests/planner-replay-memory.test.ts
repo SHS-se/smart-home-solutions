@@ -4,6 +4,34 @@ import { command, problem } from "./planner-wasm.fixture.ts";
 
 const bytes = await Deno.readFile(new URL("../supabase/functions/_shared/planner-wasm/solver.wasm", import.meta.url));
 
+Deno.test("solve request projection sessions share only their own allocator and preserve exact outputs", () => {
+  const core = createWasmPlanner(bytes);
+  const p = problem();
+  p.heater.source = { recovery_rate_per_h: .15, heat_loss_per_kwh: .02 };
+  p.initial.pool_source_depletion_kwh = 9;
+  p.pool_store.response_time_constant_h = .675;
+  const commands = p.slots.map((_, i) => ({ ...command(i % 3 !== 0), ev_amps: i % 2 ? 6 : 0 }));
+  const before = structuredClone({ p, commands });
+  const expected = core.project(p, commands).outcome;
+  assertEquals(expected.kind, "projected");
+  const native = WebAssembly.Instance;
+  let instances = 0;
+  try {
+    WebAssembly.Instance = new Proxy(native, { construct(target, args) {
+      instances++;
+      return Reflect.construct(target, args);
+    } });
+    const first = core.projectionSession(), second = core.projectionSession();
+    for (let i = 0; i < 20; i++) assertEquals(first.project(p, commands).outcome, expected);
+    assertEquals(instances, 1);
+    assertEquals(second.project(p, commands).outcome, expected);
+    assertEquals(instances, 2, "separate planning requests cannot retain the same native allocator");
+    assertEquals(first.project(p, commands).outcome, expected);
+    assertEquals(instances, 2);
+    assertEquals({ p, commands }, before);
+  } finally { WebAssembly.Instance = native; }
+});
+
 Deno.test("10,000 replay projections retain one bounded memory and match independent native calls", () => {
   const cases = [0, 1, 2].map(i => {
     const p = structuredClone(problem());

@@ -7,7 +7,7 @@ import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { captureRulesPlanningInput } from "../_shared/rules-planning-capture.ts";
 import { RULES_MODEL_VERSION } from "../_shared/rules-planner-identity.ts";
-import { captureDeviceModels, requestDeviceLearning, type DeviceModelBundle } from "../_shared/device-model-store.ts";
+import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, type DeviceModelBundle } from "../_shared/device-model-store.ts";
 import { recordTestPriceForecastGeneration, testPriceForecastContext } from "../_shared/price-estimate-evidence.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
@@ -42,7 +42,6 @@ import {
   type DevicePlanningRole,
   type OptimisationSnapshot,
 } from "../_shared/planner/planning-contracts.ts";
-import { poolHeaters } from "../_shared/planner/pool-devices.ts";
 import { PlanningTrace } from "../_shared/planning-trace.ts";
 import { parseHeaterResponse } from "../_shared/planner/device-models.ts";
 import { capturedPoolResponseState } from "../_shared/pool-capture.ts";
@@ -993,10 +992,9 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       }
       const unique = [...owners.values()].filter(owner => owner.requested).map(owner => ({ kind: owner.kind, key: owner.key,
         input: { ...owner.input, devices: owner.input.devices.sort((a, b) => a.key.localeCompare(b.key)) } }));
+      const poolOwner = poolLearningOwner(snapshot.pool, snapshot.device_models);
       const learning = requestDeviceLearning(supabase, auth.homeId, auth.customerId, [
-        ...unique, ...(snapshot.pool ? [{ kind: "pool" as const, key: "pool", input: {
-          volume_m3: snapshot.pool.volume_m3, device_keys: poolHeaters(snapshot.device_models).map(device => device.key),
-        } }] : []),
+        ...unique, ...(poolOwner ? [poolOwner] : []),
       ]).catch(error => console.error("[ENERGY-LEARNING] enqueue failed", describeThrown(error)));
       // Enqueue is a small durable transaction, not an in-request fit.
       await learning;

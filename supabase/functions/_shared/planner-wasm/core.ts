@@ -154,7 +154,15 @@ function plannerMemory(
 
 /** Fresh native memory per invocation for live planning and independent reference checks. */
 export function createWasmPlanner(bytes: Uint8Array) {
-  return createPlanner(bytes, false);
+  const module = new WebAssembly.Module(new Uint8Array(bytes));
+  return { ...createPlanner(module, false),
+    /** One solve request owns the allocator for its sequential postprocessing
+     * projections. No physical state or memory crosses request boundaries. */
+    projectionSession() {
+      const { project } = createPlanner(module, true);
+      return { project };
+    },
+  };
 }
 
 /** One monthly replay owns its projection memory; optimiser solves remain private.
@@ -163,11 +171,10 @@ export function createWasmPlanner(bytes: Uint8Array) {
  * return independently decoded JSON, so only the allocator is retained here.
  */
 export function createWasmReplayPlanner(bytes: Uint8Array) {
-  return createPlanner(bytes, true);
+  return createPlanner(new WebAssembly.Module(new Uint8Array(bytes)), true);
 }
 
-function createPlanner(bytes: Uint8Array, reuseProjections: boolean) {
-  const module = new WebAssembly.Module(new Uint8Array(bytes));
+function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
   let projectionInstance: WebAssembly.Instance | undefined;
   let projectionFailure: Error | undefined;
   function invoke<T>(

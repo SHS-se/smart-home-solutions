@@ -2,7 +2,7 @@
 //! match the former TypeScript search; ingestion no longer pays for its JS heap.
 use serde::{Deserialize, Serialize};
 use shs_planner_models::room::{
-    project, temperature, Interval, Projection, State, Thermostat, Transition,
+    project, project_traced, temperature, Interval, Projection, State, Thermostat, Transition,
 };
 
 #[derive(Deserialize)]
@@ -338,6 +338,9 @@ impl<'a> Search<'a> {
         let mut best_score = f64::INFINITY;
         let mut best_watts = f64::INFINITY;
         for relay in relays {
+            // Only targets vary inside this loop. Reuse requires an exact
+            // proof of every minute's latch decision, never similar outcomes.
+            let mut projected = false;
             self.indices.copy_from_slice(&self.first);
             loop {
                 for (j, t) in self.thermostats.iter().enumerate() {
@@ -346,14 +349,17 @@ impl<'a> Search<'a> {
                         js_round((t.minimum_c + self.indices[j] as f64 * t.step_c) * 1e9) / 1e9
                     });
                 }
-                project(
-                    &q.physics,
-                    self.thermostats,
-                    initial,
-                    &self.targets,
-                    relay.watts,
-                    &mut self.projection,
-                );
+                if !projected || !self.projection.reproduces_targets(&self.targets) {
+                    project_traced(
+                        &q.physics,
+                        self.thermostats,
+                        initial,
+                        &self.targets,
+                        relay.watts,
+                        &mut self.projection,
+                    );
+                    projected = true;
+                }
                 let next = self.projection.state.temperature;
                 let watts = relay.watts + self.projection.power.iter().sum::<f64>();
                 if capture {

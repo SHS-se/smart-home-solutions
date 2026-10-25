@@ -504,7 +504,8 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     }
     return fail(solved.issue);
   }
-  const refined = planningStage(trace, "hot_water_refinement", () => addHotWater(core, input, solved.selection));
+  const projections = core.projectionSession();
+  const refined = planningStage(trace, "hot_water_refinement", () => addHotWater(projections, input, solved.selection));
   input = refined.input;
   const selected = refined.selection;
   const p = input.problem;
@@ -519,7 +520,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   });
   materialized?.();
   const { commands: baselineCommands, outcome: baselineProjection } = planningStage(trace, "baseline_projection",
-    () => projectRulesBaseline(core, input, selected.commands, selected.quarters));
+    () => projectRulesBaseline(projections, input, selected.commands, selected.quarters));
   const assembled = trace?.start("plan_assemble");
   const baseline: BaselinePlan = baselineProjection.kind === "projected"
     ? scenario(input, baselineCommands, baselineProjection.quarters, "baseline", "Selected loads with self-consumption battery and EV load balancing").generated

@@ -195,3 +195,20 @@ reservation and room relay energy/temperature consistency. A copied JSON fixture
 alone is not integration qualification. Hosted TEST runs and a real replan are
 still needed to verify the deployed functions, model revisions and producer;
 local CPU checks cannot prove every workload avoids a hosted resource limit.
+
+Room electrical learning belongs to the HA producer, where actual actuator
+activity is available. Its operating mean uses configured fixed watts or power
+observations wholly covered by explicit thermostat heating / direct relay ON
+states. Capture-time standby watts, unconditional quarter averages and retained
+reservation peaks cannot substitute for this evidence. The existing
+`active_power_w` room input carries this operating mean; empirical forecasts and
+the gateway's conservative reservation remain separate. Missing operating
+evidence retains existing comfort intent and empirical estimates, with no
+invented thermal trajectory. This correction does not introduce a new native
+reservation policy or establish that a weakly excited thermal fit is accurate.
+
+Exact execution optimizations reuse a request's projection allocation, identical
+pool transition endpoints and room trajectories whose thermostat branch decisions
+are unchanged. They preserve action enumeration, scoring and tie order. Full
+preparation and plan comparisons, native threshold tests and hosted checks cover
+these optimizations; no search-budget reduction is used to meet CPU limits.

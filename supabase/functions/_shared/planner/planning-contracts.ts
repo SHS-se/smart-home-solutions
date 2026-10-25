@@ -228,6 +228,10 @@ export interface EmpiricalDeviceModelInput {
   load_type: DeviceLoadType;
   planning_role: "controllable";
   control_type: DeviceControlType;
+  /** Room heaters: configured or observed mean electrical draw during actual
+   * heating. Never an idle reading, duty-average forecast or reservation peak.
+   * Null denotes missing operating evidence; native admission owns its separate
+   * conservative electrical bound. */
   active_power_w: number | null;
   /** Native thermostat sensor, target, HVAC state and supported target grid. */
   thermostat?: ThermostatInput | null;

@@ -1,4 +1,5 @@
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
+import { poolHeaters, type PoolDevice } from "./planner/pool-devices.ts";
 /** Database capture owns calibration identity; forecasts and solvers cannot select it. */
 // deno-lint-ignore no-explicit-any
 export type ModelDatabase = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: any; error: { message: string } | null }> };
@@ -37,6 +38,13 @@ export interface LearningOwner {
   kind: "room" | "pool";
   key: string;
   input: Record<string, unknown>;
+}
+/** A pool fit needs mapped heater electricity; pool telemetry alone has no series to fit. */
+export function poolLearningOwner(pool: { volume_m3: number } | null | undefined,
+  devices: readonly (PoolDevice & { key: string })[]): LearningOwner | null {
+  if (!pool) return null;
+  const keys = poolHeaters(devices).map(device => device.key);
+  return keys.length ? { kind: "pool", key: "pool", input: { volume_m3: pool.volume_m3, device_keys: keys } } : null;
 }
 export async function requestDeviceLearning(db: ModelDatabase, homeId: string, customerId: string, owners: LearningOwner[]): Promise<void> {
   const { error } = await db.rpc("request_energy_device_learning", {

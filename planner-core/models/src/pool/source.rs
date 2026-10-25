@@ -75,6 +75,13 @@ struct Piece {
     depletion: f64,
     heat: f64,
 }
+#[derive(Clone, Copy)]
+struct PoweredInterval {
+    power: f64,
+    slope: f64,
+    hours: f64,
+    cooling: f64,
+}
 pub struct SourceKernel<'a> {
     heater: &'a Heater,
     store: &'a ThermalStore,
@@ -157,7 +164,10 @@ impl<'a> SourceKernel<'a> {
         ];
         let m = self.matrix(hours, slope);
         let mut out = [0.0; N];
-        for i in 0..N {
+        // The polynomial support rows are inputs to the exponential, but only
+        // depletion, pending heat and delivered energy are projected out.
+        // Keep each consumed row's products and additions in their exact order.
+        for i in [0, 5, 6] {
             for j in 0..N {
                 out[i] += m[i * N + j] * v[j];
             }
@@ -179,22 +189,43 @@ impl<'a> SourceKernel<'a> {
     fn first_stop(
         &self,
         (water, pending, depletion): (f64, f64, f64),
-        power: f64,
-        slope: f64,
-        hours: f64,
-        cooling: f64,
+        interval: PoweredInterval,
         stop: f64,
+        full: Piece,
     ) -> Option<f64> {
+        let PoweredInterval {
+            power,
+            slope,
+            hours,
+            cooling,
+        } = interval;
         if water >= stop {
             return Some(0.0);
         }
-        let at = |t| self.piece((water, pending, depletion), power, slope, t, cooling);
-        let full = at(hours);
         if water + (pending + full.heat) / self.store.capacity_kwh_per_c + cooling.max(0.0) * hours
             < stop
         {
             return None;
         }
+        // Every derivative bracket revisits its endpoints. Reuse their exact
+        // projections within this one physical interval, including the already
+        // evaluated full interval. Signed-zero times remain distinct.
+        let start = Cell::new(None);
+        let at = |t: f64| {
+            if t.to_bits() == hours.to_bits() {
+                full
+            } else if t.to_bits() == 0 {
+                if let Some(value) = start.get() {
+                    value
+                } else {
+                    let value = self.piece((water, pending, depletion), power, slope, t, cooling);
+                    start.set(Some(value));
+                    value
+                }
+            } else {
+                self.piece((water, pending, depletion), power, slope, t, cooling)
+            }
+        };
         let rate = self.source.recovery_rate_per_h;
         let beta = self.source.heat_loss_per_kwh;
         let tau = self.store.response_time_constant_h;
@@ -325,23 +356,23 @@ impl<'a> SourceKernel<'a> {
             let power = self.heater.compressor_w / 1000.0 * fraction(pair[0]);
             let slope =
                 self.heater.compressor_w / 1000.0 * (fraction(pair[1]) - fraction(pair[0])) / hours;
+            let full = self.piece((water, pending, depletion), power, slope, hours, cooling);
             let crossing = c.stop_c.and_then(|stop| {
                 self.first_stop(
                     (water, pending, depletion),
-                    power,
-                    slope,
-                    hours,
-                    cooling,
+                    PoweredInterval {
+                        power,
+                        slope,
+                        hours,
+                        cooling,
+                    },
                     stop,
+                    full,
                 )
             });
-            let q = self.piece(
-                (water, pending, depletion),
-                power,
-                slope,
-                crossing.unwrap_or(hours),
-                cooling,
-            );
+            let q = crossing.map_or(full, |at| {
+                self.piece((water, pending, depletion), power, slope, at, cooling)
+            });
             heat += q.heat;
             water = q.water;
             pending = q.pending;
@@ -383,8 +414,7 @@ impl<'a> SourceKernel<'a> {
 mod cache_tests {
     use super::*;
 
-    #[test]
-    fn common_interval_matrices_coexist_and_match_uncached_calculation() {
+    fn models() -> (Heater, ThermalStore) {
         let heater = Heater {
             compressor_w: 3000.0,
             auxiliary_w: 700.0,
@@ -405,6 +435,67 @@ mod cache_tests {
                 }],
             },
         };
+        (heater, store)
+    }
+
+    #[test]
+    fn consumed_state_rows_match_full_matrix_projection_bit_for_bit() {
+        let (mut heater, mut store) = models();
+        for rate in [0.0, 0.1, 3.0] {
+            heater.source.as_mut().unwrap().recovery_rate_per_h = rate;
+            for lag in [0.0, 0.675, 2.0] {
+                store.response_time_constant_h = lag;
+                let kernel = SourceKernel::new(&heater, &store, true);
+                for hours in [-0.0, 0.0, 0.00001, 0.125, 0.25, 2.0] {
+                    for slope in [-4.0, -0.0, 0.0, 2.0] {
+                        for (pending, depletion) in [(0.0, 0.0), (1.5, 9.0), (5.0, 25.0)] {
+                            let power = 3.0;
+                            let v = [
+                                depletion,
+                                power * depletion,
+                                power * power,
+                                power,
+                                1.0,
+                                pending,
+                                0.0,
+                            ];
+                            let matrix = kernel.matrix(hours, slope);
+                            let mut full = [0.0; N];
+                            for i in 0..N {
+                                for j in 0..N {
+                                    full[i] += matrix[i * N + j] * v[j];
+                                }
+                            }
+                            let next = if lag > 0.0 { full[5] } else { 0.0 };
+                            let expected = [
+                                30.0 + (pending + full[6] - next) / store.capacity_kwh_per_c
+                                    - 0.01 * hours,
+                                next,
+                                full[0].max(0.0),
+                                full[6],
+                            ];
+                            let actual = kernel.piece(
+                                (30.0, pending, depletion),
+                                power,
+                                slope,
+                                hours,
+                                -0.01,
+                            );
+                            assert_eq!(
+                                [actual.water, actual.pending, actual.depletion, actual.heat]
+                                    .map(f64::to_bits),
+                                expected.map(f64::to_bits)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn common_interval_matrices_coexist_and_match_uncached_calculation() {
+        let (heater, store) = models();
         let cached = SourceKernel::new(&heater, &store, true);
         let direct = SourceKernel::new(&heater, &store, false);
         for hours in [0.25, 0.125, 0.0625, 0.03125] {
