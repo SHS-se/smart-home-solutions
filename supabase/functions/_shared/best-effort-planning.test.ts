@@ -34,7 +34,7 @@ Deno.test("malformed optional pool physics becomes empirical service rather than
  const plan=runRulesPlanner(p).plan;
  assertEquals(plan.status,"ready");assertEquals(plan.pool!.planning_basis,"empirical");
  assert(plan.planning_warnings!.some(w=>w.code==="pool_physics_evidence"));
- assert(plan.plans.priority.slots.some(s=>s.pool_permitted));
+ assert(plan.plans.priority.slots.every(s=>s.pool_permitted===null && s.pool_command_w===undefined));
 });
 Deno.test("usable pool physics can allocate missing member ratings from the same physical service",()=>{
  const p=input(mixedModeSnapshot());for(const m of p.snapshot.device_models){m.active_power_w=null;m.forecast_w_by_slot.fill(0);}

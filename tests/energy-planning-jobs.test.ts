@@ -724,6 +724,27 @@ Deno.test('publication completion requires an explicit matching manual request a
 });
 
 const executionMigration = '20261023121000_scoped_execution_replans';
+Deno.test('retained pool reference carries its accepted target and explicit no-instruction intervals', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await db.exec(await migration('20261026006000_pool_retained_target'));
+    const pool = { planning_basis: 'empirical', stop_temperature_c: 30 };
+    const slots = [{ start: '2026-10-25T01:00:00Z', pool_permitted: false, pool_command_w: 0 },
+      { start: '2026-10-25T01:15:00Z', pool_permitted: null }];
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify({ ...currentRow(),
+      plan: { status: 'ready', pool, plans: { priority: { slots } } } })]);
+    await db.exec('GRANT SELECT ON energy_optimisation_current TO service_role; SET ROLE service_role');
+    const state = (await db.query<{ value: { published_commands: PublishedCommandReference } }>(
+      'SELECT get_energy_replan_state($1) value', [home])).rows[0].value;
+    assertEquals(state.published_commands.pool_stop_temperature_c, 30);
+    assertEquals(state.published_commands.pool_planning_basis, 'empirical');
+    assertEquals(state.published_commands.slots.map(q => q.pool_permitted), [false, null]);
+    assertEquals(state.published_commands.slots.map(q => q.pool_command_w), [0, null]);
+    await db.exec('RESET ROLE; SET ROLE authenticated');
+    await assertRejects(() => db.query('SELECT get_energy_replan_state($1)', [home]), Error, 'permission denied');
+  } finally { await db.close(); }
+});
+
 Deno.test('forced execution receipts are immutable, home scoped and require the exact HA-accepted reference', async () => {
   const db = await oneShotDatabase();
   try {

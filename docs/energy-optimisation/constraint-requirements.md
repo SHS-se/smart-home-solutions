@@ -1,5 +1,19 @@
 # Requirements for planner and controller constraints
 
+User requirement, 25 October 2026: missing wireless observations are normal and
+must be handled gracefully. A missing meter interval does not erase learned
+thermal parameters or a usable measured water temperature. If missing state
+evidence prevents pool rescheduling, retain the accepted pool schedule and its
+accepted temperature target for the intervals it actually covers; report the
+failed reschedule once. Never replace missing evidence with continuous heating.
+Uncovered intervals carry no new pool instruction: retain existing device
+settings and estimate electrical demand from the measured profile, without
+inventing a temperature trajectory. Retained ON permissions still reserve full
+equipment draw. Independently controlled circulation, existing execution-failure
+releases, explicit bookings and other owners retain their separate authority.
+When evidence returns, ordinary thermal planning resumes without requiring a
+new fit. This explicitly replaces the former POOL-2 all-ON empirical behavior.
+
 User requirement, 24 October 2026: EV range shortfall counts immediately on every plan; no renewed grace period. Automatic replans require the explicit magnitude, persistence and execution criteria in [the replan error policy](replan-error-policy.md).
 
 User requirement, 24 October 2026: **EV departure time must not exist in the code.**

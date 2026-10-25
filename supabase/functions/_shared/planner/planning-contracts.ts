@@ -531,7 +531,8 @@ export interface QuarterDecisionDiagnostic {
 export interface PlannedSlot {
   /** Forecast charging assumes a future cable connection; telemetry stays truthful. */
   ev_charging_conditional?: boolean;
-  pool_permitted?: boolean;
+  /** Null explicitly means no new instruction; forecast watts cannot grant permission. */
+  pool_permitted?: boolean | null;
   /** Hot water may use storage only with forecast replaceable surplus. */
   boiler_battery_allowed?: boolean;
   /** Physical time modelled after the effective planning timestamp. */

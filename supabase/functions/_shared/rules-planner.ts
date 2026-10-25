@@ -49,6 +49,7 @@ export interface PublishedCommandReference {
   hot_water_permissions?: string[];
   /** Provenance from the exact accepted publication, never inferred from its draw. */
   pool_planning_basis?: "thermal" | "empirical";
+  pool_stop_temperature_c?: number | null;
   slots: PublishedCommandSlot[];
 }
 export interface PreparedRulesInput {
@@ -104,7 +105,7 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
 function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapshot, nativePool = snapshot.capabilities.pool): NativeCommand {
   const battery = slot.battery_command;
   if (snapshot.capabilities.battery && !battery) return fail(`Committed battery command missing at ${slot.start}`);
-  if (snapshot.capabilities.pool && !finite(slot.pool_command_w)) return fail(`Committed native pool command missing at ${slot.start}`);
+  if (snapshot.capabilities.pool && slot.pool_permitted !== null && !finite(slot.pool_command_w)) return fail(`Committed native pool command missing at ${slot.start}`);
   if (snapshot.capabilities.ev && !finite(slot.ev_target_current_a)) return fail(`Committed native EV command missing at ${slot.start}`);
   // A schema 10 quarter keeps the exact candidate it was chosen as.
   const stated = slot.battery_instruction ? nativeBattery(slot.battery_instruction) : null;
@@ -183,7 +184,10 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, commitments.warnings);
   const retained = snapshot.slots.map((_slot, i) => commitments.retained[i] ?? {});
   const fixedByStart = new Map(input.fixed_plan?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
-  const poolService = preparePoolService(snapshot, snapshot.slots.map((s, i) => fixedByStart.get(Date.parse(s.start)) ?? retained[i]));
+  const priorByStart = new Map(reference?.slots.map(s => [Date.parse(s.start), s]) ?? []);
+  const poolService = preparePoolService(snapshot, snapshot.slots.map((s, i) =>
+    fixedByStart.get(Date.parse(s.start)) ?? commitments.retained[i] ?? priorByStart.get(Date.parse(s.start)) ?? {}),
+    reference?.pool_stop_temperature_c);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, poolService.warnings);
   const pool = poolService.physics;
   if (pool && snapshot.pool?.heating_running && !finite(snapshot.pool.heating_elapsed_seconds)) {
@@ -288,6 +292,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const baseW = snapshot.slots.map(s => s.base_load_forecast_w * (level?.factor ?? 1));
   const boilerW = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_expected_w ?? 0);
   const roomKeys=new Set(snapshot.thermal_zones?.flatMap(z=>z.device_keys)??[]);
+  // Retained pool instructions already consume headroom before rooms are planned.
+  Object.assign(passive, poolService.power);
   // Forecast solar left after every load fixed before the solve.
   const spare=snapshot.slots.map((slot,i)=>slot.pv_forecast_w*
     snapshot.pv_calibration.correction_factor_by_lead_day[Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length-1,
@@ -298,7 +304,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     import_sek_per_kwh: outlook.shadow_import_sek_per_kwh,
     export_sek_per_kwh: snapshot.slots.map((s, i) => s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread),
     surplus_w: spare }, trace);
-  Object.assign(passive, rooms.power, poolService.power);
+  Object.assign(passive, rooms.power);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
@@ -378,8 +384,8 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
     const committed = locked?.device_commands?.[model.key];
     const empiricalPool = input.pool_service.empirical && Object.prototype.hasOwnProperty.call(input.pool_service.power, model.key);
     const retained = committed?.type === model.control_type ? committed : undefined;
-    result[model.key] = retained ? structuredClone(retained) : input.rooms.commands[model.key]?.[i] ?? (empiricalPool && model.control_type === "switch_schedule"
-      ? { type: "switch_schedule", on_seconds: input.pool_service.permitted[i] ? 900 : 0 } : pool.has(model.key) ? model.control_type === "switch_schedule"
+    result[model.key] = retained ? structuredClone(retained) : input.rooms.commands[model.key]?.[i] ?? (empiricalPool
+      ? input.pool_service.commands[model.key][i] : pool.has(model.key) ? model.control_type === "switch_schedule"
       ? { type: "switch_schedule", on_seconds: command.pool_on ? 900 : 0 }
       : { type: "unavailable", reason: "Dedicated pool owner supplies the native enable command" }
       : ev.has(model.key) ? { type: "variable_power", value: command.ev_amps, unit: "A" }
@@ -442,8 +448,9 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       shadow_import_sek_per_kwh: f.import_price, shadow_export_sek_per_kwh: f.export_price,
       pool_w: input.pool_service.empirical ? input.pool_service.total_w[i] : q.pool_w,
       pool_permitted: input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on,
-      pool_command_w: locked?.pool_command_w ?? (input.pool_service.empirical ? input.pool_service.command_w[i]
-        : command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0),
+      ...(input.pool_service.empirical && input.pool_service.permitted[i] === null ? {} : {
+        pool_command_w: locked?.pool_command_w ?? (input.pool_service.empirical ? input.pool_service.command_w[i]!
+          : command.pool_on && p.heater ? p.heater.compressor_w + p.heater.auxiliary_w : 0) }),
       ...(q.pool_c === null ? {} : { pool_temperature_c: q.pool_c }),
       boiler_expected_w: input.boiler_w[i], boiler_permitted: input.boiler_permitted[i],
       ...(input.boiler_services.length ? { boiler_battery_allowed: input.boiler_battery_allowed[i] } : {}),

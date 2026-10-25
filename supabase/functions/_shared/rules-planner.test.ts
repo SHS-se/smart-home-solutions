@@ -162,10 +162,10 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   const result = generateRulesPlan(empirical).plan;
   assertEquals(result.status, "ready");
   assertEquals(result.pool?.planning_basis, "empirical");
-  assertEquals(result.plans.priority.slots[0].pool_permitted, true);
+  assertEquals(result.plans.priority.slots[0].pool_permitted, null);
   assertEquals(result.plans.priority.slots[0].device_loads_w.heater, 3000);
   const notes = actionablePlanningWarnings(result.planning_warnings ?? []);
-  assertEquals(notes.filter(w => w.scope === "pool").map(w => w.code), ["pool_projection_unavailable"]);
+  assertEquals(notes.filter(w => w.scope === "pool").map(w => w.code), ["pool_reschedule_failed"]);
   assert(!notes.some(w => w.code === "service_estimate" && ["heater", "pump"].includes(w.scope)),
     "pool service owns its members even when temperature projection fails");
   s.planning_warnings = [planningWarning("pool_response_evidence", "pool", "Synthetic missing measured quarter",
@@ -175,8 +175,9 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   assert(capturedNotes.find(w => w.scope === "pool")!.message.includes("Synthetic missing measured quarter"));
   s.planning_warnings = [];
   s.pool_model = undefined;
-  assert(!actionablePlanningWarnings(generateRulesPlan(prepare(s)).plan.planning_warnings ?? [])
-    .some(w => w.scope === "pool"), "normal absence of a learned calibration is not an operational banner");
+  assertEquals(actionablePlanningWarnings(generateRulesPlan(prepare(s)).plan.planning_warnings ?? [])
+    .filter(w => w.scope === "pool").map(w => w.code), ["pool_reschedule_failed"],
+    "inability to issue a pool schedule is distinct from routine fit-quality diagnostics");
 });
 Deno.test("rules commitment keeps charger commands while fresh above-target state changes physical draw", () => {
   const s = snapshot();

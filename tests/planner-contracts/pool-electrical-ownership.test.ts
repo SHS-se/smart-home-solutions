@@ -27,7 +27,10 @@ Deno.test("CONTRACT POOL-4: a thermal calibration cannot replace authoritative 3
     const empirical = structuredClone(s);
     empirical.pool_model!.rated_cop = null;
     empirical.pool_model!.loss_kw_per_k = null;
-    const permissions = preparePoolService(empirical);
+    // Missing thermal evidence now retains explicit accepted ON instructions;
+    // it cannot manufacture a permission merely to exercise electrical rating.
+    const permissions = preparePoolService(empirical, empirical.slots.map(slot => ({ start: slot.start,
+      pool_permitted: true, pool_command_w: 3600 })), 30);
     assert(permissions.empirical);
     assert(permissions.command_w.every(w => w === 3600));
   }

@@ -167,17 +167,31 @@ Deno.test("CONTRACT EV-4: the charge cap limits charging without invalidating a 
   assert(above.plans.priority.slots.every(q => q.ev_target_current_a === 0));
 });
 
-Deno.test("CONTRACT POOL-2: losing thermal evidence cannot turn full ON permission into average electrical draw", () => {
+Deno.test("CONTRACT POOL-2: missing thermal evidence retains accepted instructions without inventing continuous heating", () => {
   const s = withPool(); s.grid.import_limit_w = 500 + 3600 + 12 * 690;
+  const previous = plan(s);
+  // Explicit user change, 25 October 2026: keep the accepted pool schedule;
+  // with no accepted instruction, hold settings. This replaces the former
+  // assertion that no-reference/missing-model inputs must manufacture all-ON.
+  const reference: PublishedCommandReference = { plan_id: previous.plan_id, pool_planning_basis: "thermal",
+    pool_stop_temperature_c: 30, slots: previous.plans.priority.slots.slice(0, 16).map((q, i) => ({ ...q,
+      pool_permitted: i % 4 === 0, pool_command_w: i % 4 === 0 ? 3600 : 0,
+      device_loads_w: { synthetic_pool: i % 4 === 0 ? 3600 : 0 }, ev_target_current_a: 0,
+      device_commands: { synthetic_pool: { type: "switch_schedule", on_seconds: i % 4 === 0 ? 900 : 0 } },
+    })) };
   s.pool_model!.heater_response = undefined;
-  const p = plan(s);
+  const p = generateRulesPlan(prepare(s, reference)).plan;
   assertEquals(p.pool!.planning_basis, "empirical");
-  for (const q of p.plans.priority.slots) {
-    assertEquals(q.pool_permitted, true);
-    assertEquals(q.pool_command_w, 3600);
-    assertEquals(q.device_loads_w.synthetic_pool, 3600);
-    assert(q.ev_target_current_a <= 12, "thermal uncertainty must not grant additional electrical headroom");
+  for (const [i, q] of p.plans.priority.slots.entries()) {
+    assertEquals(q.pool_permitted, i < 16 ? i % 4 === 0 : null);
+    assertEquals(q.pool_command_w, i < 16 ? i % 4 === 0 ? 3600 : 0 : undefined);
+    assertEquals(q.device_loads_w.synthetic_pool, i < 16 ? i % 4 === 0 ? 3600 : 0 : 1000);
+    if (q.pool_permitted) assert(q.ev_target_current_a <= 12, "retained ON permission still reserves full electrical draw");
   }
+  assert(p.planning_warnings!.some(w => w.code === "pool_reschedule_failed"));
+  const cold = plan(s);
+  assert(cold.plans.priority.slots.every(q => q.pool_permitted === null && q.pool_command_w === undefined));
+  assert(cold.plans.priority.slots.every(q => q.device_commands!.synthetic_pool.type === "unavailable"));
 });
 
 Deno.test("CONTRACT EV-3: excluded departure concepts are absent from executable contracts", () => {

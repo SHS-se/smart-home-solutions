@@ -66,6 +66,9 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
   // requested repair still needs eligible destinations in the current held hour.
   for (const change of request?.changes ?? []) owners.add(change.owner);
   const slotOwners = original.map(() => new Set(owners));
+  // An explicit absence of a pool instruction is not an OFF commitment. Once
+  // evidence returns, the pool may plan again without unlocking other owners.
+  original.forEach((slot, i) => { if (slot.pool_permitted === null) slotOwners[i].add("$pool"); });
   const warnings: PlanningWarning[] = [];
   if (snapshot.capabilities.pool && (reference?.pool_planning_basis === "empirical" || reference?.pool_planning_basis === "thermal")) {
     const members = snapshot.device_models.filter(model => model.planning_service === "pool");

@@ -2,7 +2,7 @@
 import { assert, assertAlmostEquals, assertEquals, assertRejects } from "@std/assert";
 import { prepareActualUpload } from "../../supabase/functions/_shared/actual-upload.ts";
 import { capturedPoolResponseState } from "../../supabase/functions/_shared/pool-capture.ts";
-import { generateRulesPlan, prepareRulesPlanningInput } from "../../supabase/functions/_shared/rules-planner.ts";
+import { generateRulesPlan, prepareRulesPlanningInput, type PublishedCommandReference } from "../../supabase/functions/_shared/rules-planner.ts";
 import { resolveRulePolicy } from "../../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import type { OptimisationSnapshot } from "../../supabase/functions/_shared/planner/planning-contracts.ts";
 import type { PoolDynamics } from "../../supabase/functions/_shared/planner/pool-response.ts";
@@ -62,9 +62,9 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
   s.outdoor_temperature_c = s.slots.map(() => 10);
   s.pool_model = { thermal_dynamics: model, pending_heat_kwh: state.pending_heat_kwh, source_depletion_kwh: 0,
     loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null, heater_response: { kind: "steady" }, hardware: s.pool!.hardware! };
-  const run = () => generateRulesPlan(prepareRulesPlanningInput({ snapshot: s, now: s.captured_at, price_archive: [],
+  const run = (reference: PublishedCommandReference | null = null) => generateRulesPlan(prepareRulesPlanningInput({ snapshot: s, now: s.captured_at, price_archive: [],
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: .2,
-      shadow_import_sek_per_kwh: s.slots.map(slot => slot.import_price_sek_per_kwh!) } }, null, resolveRulePolicy())).plan;
+      shadow_import_sek_per_kwh: s.slots.map(slot => slot.import_price_sek_per_kwh!) } }, reference, resolveRulePolicy())).plan;
   const plan = run(), slots = plan.plans.priority.slots;
   assertEquals(plan.pool!.planning_basis, "thermal");
   assert(slots.every(q => Number.isFinite(q.pool_temperature_c)), "every graph point must carry a temperature");
@@ -72,6 +72,20 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
   assert(slots.some(q => q.pool_command_w > 0) && slots.some(q => q.pool_command_w === 0), "recovery must finish, not run continuously");
   assertEquals([...new Set(slots.filter(q => q.pool_command_w > 0).map(q => q.pool_command_w))], [3600]);
   assert(!plan.planning_warnings?.some(w => w.scope === "synthetic_pool" || w.scope === "pool"));
+  // A genuinely missing wireless meter quarter has the same capture symptom as
+  // the old upload omission. Keep parameters and measured water, retain the
+  // accepted instructions, and recover without relearning when data arrives.
+  const reference: PublishedCommandReference = { plan_id: plan.plan_id, pool_planning_basis: "thermal",
+    pool_stop_temperature_c: plan.pool!.stop_temperature_c, slots };
+  delete s.pool_model.pending_heat_kwh;
+  const retained = run(reference);
+  assertEquals(retained.pool!.water_temperature_c, s.pool!.water_temperature_c);
+  assertEquals(s.pool_model.thermal_dynamics, model);
+  assertEquals(retained.plans.priority.slots.map(q => q.pool_permitted), slots.map(q => q.pool_permitted));
+  assert(retained.plans.priority.slots.every(q => q.pool_temperature_c === undefined));
+  assertEquals(retained.planning_warnings?.filter(w => w.scope === "pool").length, 1);
+  s.pool_model.pending_heat_kwh = state.pending_heat_kwh;
+  assertEquals(run(reference).pool!.planning_basis, "thermal");
   return { scenario: "manual_pool_capture", observed_w: watts, pending_heat_kwh: state.pending_heat_kwh,
     temperature_points: slots.length, on_quarters: slots.filter(q => q.pool_command_w > 0).length };
 }
