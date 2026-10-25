@@ -74,11 +74,18 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
     power[m.key][i] = unavailableOwner(snapshot, "$pool", snapshot.slots[i].start) ? power[m.key][i]
       : permitted[i] ? rating(m.key) > 0 ? rating(m.key) : power[m.key][i] : 0;
   }
+  // Capture diagnostics explain missing evidence; this owner decides whether a
+  // temperature projection was actually possible. Publish one pool-level note,
+  // including failures after capture (for example an unusable source model).
+  const captured = snapshot.planning_warnings?.find(w => w.scope === "pool" && w.code === "pool_response_evidence");
+  const calibrated = snapshot.device_physics?.pool || snapshot.pool_model?.thermal_dynamics ||
+    snapshot.pool_model?.response?.length || (finite(snapshot.pool_model?.rated_cop) && finite(snapshot.pool_model?.loss_kw_per_k));
+  const detail = [...new Set([captured?.message, reason].filter(Boolean))].join(". ");
   return { physics: null, pending_heat_kwh: null, source_depletion_kwh: null, empirical: true, permitted, power,
     command_w: permitted.map(on => on ? running : 0),
     total_w: snapshot.slots.map((_s, i) => sum(Object.values(power).map(values => values[i]))),
     stop_c: finite(stop) ? stop : null,
-    warnings: [planningWarning("pool_empirical_service", "pool", reason + ".",
+    warnings: [planningWarning(captured?.code ?? (calibrated ? "pool_projection_unavailable" : "pool_empirical_service"), "pool", detail.replace(/\.+$/, "") + ".",
       "Pool thermostat permission remains active. Demand uses measured history; temperature projection is unavailable.")],
   };
 }

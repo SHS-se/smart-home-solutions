@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import tempfile
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 if sys.version_info < (3, 12):
@@ -112,18 +112,22 @@ def room_scenario(thermostat=False):
 
 class History:
     """A complete synthetic meter history: base500 W, pool quarter average1200 W."""
-    def __init__(self, room=False):
+    def __init__(self, room=False, pool_w=1200):
         self.room = room
+        self.pool_w = pool_w
 
     async def statistics(self, start, end, entities, period, units, kinds):
         assert period == "5minute"
         if kinds == {"mean"}:
+            if set(entities) == {"sensor.synthetic_soc"}:
+                return {"sensor.synthetic_soc": [{"start": (start+timedelta(minutes=5*i)).timestamp(), "mean": 5}
+                    for i in range(int((end-start).total_seconds()/300))]}
             assert units == {"power":"W"}
             # Two independently authored complete ON buckets, then low idle.
             return {"sensor.synthetic_room_power":[{"start":(end-timedelta(minutes=15)).timestamp(),"mean":1180},
                 {"start":(end-timedelta(minutes=10)).timestamp(),"mean":1220},
                 {"start":(end-timedelta(minutes=5)).timestamp(),"mean":3}]}
-        watts = {"sensor.synthetic_grid": 800 if self.room else 1700, "sensor.synthetic_pool": 1200,
+        watts = {"sensor.synthetic_grid": 800 if self.room else 500 + self.pool_w, "sensor.synthetic_pool": self.pool_w,
                  "sensor.synthetic_ev": 0, "sensor.synthetic_relay": 300}
         return {entity: [{"start": (start + timedelta(minutes=5*i)).timestamp(),
                           "change": watts.get(entity, 0)/12000}
@@ -131,6 +135,10 @@ class History:
                 for entity in entities}
 
     async def states(self, start, end, entities, *, with_attributes):
+        if "sensor.synthetic_pool" in entities:
+            attrs = {"unit_of_measurement": "kWh", "state_class": "total_increasing"}
+            return {"sensor.synthetic_pool": [(start, "100", attrs),
+                (end, str(100 + self.pool_w * (end-start).total_seconds()/3_600_000), attrs)]}
         if "climate.synthetic_room" in entities:
             assert with_attributes
             return {"climate.synthetic_room":[(start,"heat",{"hvac_action":"idle"}),
@@ -157,7 +165,7 @@ def tariff():
                     "export_credit": {"schedule": "swedish_winter_weekday_06_22_v1", "ore_per_kwh_ex_vat_by_area": {}}}}]}]}
 
 
-async def produce(amps, connected, room=False, electrical="retained"):
+async def produce(amps, connected, room=False, electrical="retained", manual_pool_w=None):
     assert electrical in ("retained", "missing", "configured")
     options, states, devices = room_scenario(room == "thermostat") if room else scenario(amps, connected)
     if electrical == "configured":
@@ -177,10 +185,12 @@ async def produce(amps, connected, room=False, electrical="retained"):
         return {key:device_power_bound(mapping, peaks,
                 getattr(states.get(mapping.get("power_setting_entity_id")), "state", None))
                 for key,mapping in mappings.items()}
+    captured = START if manual_pool_w is None else START + timedelta(minutes=7)
     ports = HouseholdPorts(home=lambda: HomeFacts(0, 0, "en", ZoneInfo("UTC")), options=lambda: deepcopy(options),
         admit=admit, read_state=states.get, entity_ids=lambda: set(states), entity_names=lambda: {}, area_names=lambda: {},
-        entity_areas=lambda: {}, inventory=inventory, battery_report=lambda _entity: None, history=History(room),
-        utcnow=lambda: START, recovering=lambda: False, repair=lambda *_args: None, publish=lambda: None, spawn=spawn,
+        entity_areas=lambda: {}, inventory=inventory, battery_report=lambda _entity: None,
+        history=History(room, 1200 if manual_pool_w is None else manual_pool_w),
+        utcnow=lambda: captured, recovering=lambda: False, repair=lambda *_args: None, publish=lambda: None, spawn=spawn,
         electrical_power_bounds=electrical_power_bounds)
     household = Household(ports, SimpleNamespace(), store=DurableRecord(Store(), json.dumps, json.loads),
                           battery_inputs_store=Store(), connection_store=Store(), control_authority=True)
@@ -198,10 +208,30 @@ async def produce(amps, connected, room=False, electrical="retained"):
         categories["pool_heating"] = []
         categories["ev_charging"] = []
         categories["heating"] = ["sensor.synthetic_relay"]
-    snapshot = await household._build_optimisation_snapshot(options, categories, [], {}, devices)
+    actuals = None
+    if manual_pool_w is None:
+        snapshot = await household._build_optimisation_snapshot(options, categories, [], {}, devices)
+    else:
+        # Exercise the exchange that previously omitted observations on manual
+        # requests. Only cloud/configuration side effects are inert; recorder
+        # aggregation, upload acquisition and snapshot production are real.
+        for category, entities in categories.items():
+            options["entities_" + category] = entities
+        household._optimisation_options = lambda: deepcopy(options)
+        household.async_report_runtime = AsyncMock()
+        household.async_battery_inputs_refresh = AsyncMock()
+        household._record_device_exchange = AsyncMock()
+        household.client.push_optimisation = AsyncMock(return_value={})
+        await household._store.async_save({"optimisation_actuals_accepted_until":
+            (START - timedelta(minutes=30)).isoformat(),
+            "optimisation_device_configuration": {device["key"]: deepcopy(device) for device in devices}})
+        await household.async_optimisation_push(force_plan=True, replan_request_id="synthetic-manual")
+        assert household.client.push_optimisation.await_count == 1, household.last_optimisation_error
+        actuals, snapshot = household.client.push_optimisation.call_args.args[:2]
+        assert snapshot is not None, household.last_optimisation_error
     return {"integration_version": INTEGRATION_VERSION,
             "app_version": json.loads((HA_REPO / "web/package.json").read_text())["version"], "provenance": "independently_generated_synthetic",
-            "snapshot": snapshot, "options": options}
+            "snapshot": snapshot, "options": options, **({"actuals": actuals} if actuals is not None else {})}
 
 
 class Operations:
@@ -290,6 +320,8 @@ async def main():
         result = await produce(12, True, room=True)
     elif sys.argv[2] == "produce-thermostat":
         result = await produce(12, True, room="thermostat")
+    elif sys.argv[2] == "produce-manual-pool":
+        result = await produce(12, True, manual_pool_w=float(sys.argv[3]))
     elif sys.argv[2] == "consume":
         result = await consume(json.load(sys.stdin))
     else:

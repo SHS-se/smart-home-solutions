@@ -27,6 +27,14 @@ planner then prepares and solves that captured input; server-owned comfort
 preferences and accepted thermal calibration are supplied at their normal
 boundary. No producer field is repaired by the test.
 
+The manual pool scenarios additionally execute `async_optimisation_push`, pass
+its actual outgoing meter observations through `prepareActualUpload`, and
+reconstruct thermal memory using the real database capture adapter before
+planning. Both measured zero and nonzero electricity are checked against an
+independent analytic state solution. Omitting the completed upload is a negative
+control: it must fail coverage. The resulting graph must contain every pool
+temperature point, respond to heat, and finish recovery rather than heat forever.
+
 The returned JSON is admitted by the actual HA `validate_plan_contract` and
 `scoped_plan`, encoded by `device_intent`, executed by `DeviceGateway` and
 `NativeExecutor`, and sent through the durable sqlite `CommandTransport`. Only

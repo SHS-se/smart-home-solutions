@@ -15,6 +15,7 @@ import {
 import { fitRoom } from "../supabase/functions/_shared/device-learning/room/fit.ts";
 import { roomObservations } from "../tests/planner-contracts/synthetic.ts";
 import type { OptimisationSnapshot } from "../supabase/functions/_shared/planner/planning-contracts.ts";
+import { qualifyPoolCapture } from "../tests/planner-integration/pool-capture.ts";
 
 const root = new URL("../", import.meta.url);
 const decoder = new TextDecoder();
@@ -91,6 +92,10 @@ assertEquals(
 );
 const bridge = new URL("tests/planner-integration/ha_bridge.py", root).pathname;
 const results: Record<string, unknown>[] = [];
+for (const watts of [0, 1200]) {
+  const produced = JSON.parse(await command(python, [bridge, haRepo, "produce-manual-pool", String(watts)]));
+  results.push(await qualifyPoolCapture(produced, watts));
+}
 for (const evidence of ["missing", "configured"]) {
   const produced = JSON.parse(
     await command(python, [

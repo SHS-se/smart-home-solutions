@@ -208,7 +208,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     const mode = owner ? snapshot.operating_scope?.modes[owner] : undefined;
     const isolatedOwner = snapshot.measurement_issues?.some(issue =>
       issue.device === "ev" && m.category === "ev_charging" || issue.device === "pool" && m.planning_service === "pool");
-    if (!isolatedOwner && !snapshot.thermal_zones?.some(z => z.device_keys.includes(m.key)) &&
+    if (!Object.prototype.hasOwnProperty.call(poolService.power, m.key) &&
+      !isolatedOwner && !snapshot.thermal_zones?.some(z => z.device_keys.includes(m.key)) &&
       (mode === "controlling" || mode === "control_verification" || (!snapshot.operating_scope && m.control_type === "setpoint"))) {
       snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("service_estimate", m.key,
         `${m.name}: no complete device service model is available.`,

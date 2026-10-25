@@ -3,6 +3,7 @@ import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import { generateRulesPlan, prepareRulesPlanningInput } from "./rules-planner.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
+import { actionablePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
 
 function snapshot(): OptimisationSnapshot {
   const s = dispatchedEvSnapshot();
@@ -153,6 +154,8 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   assertAlmostEquals(ready.problem.heater!.heat_w, .175 * 50 * 1.163 * 3000, 1e-8);
   assertEquals(ready.problem.pool_store!.loss, { kind: "measured", points: [{at_c:28,c_per_h:-.1},{at_c:30,c_per_h:-.2}] });
   assertEquals(ready.problem.slots[0].base_w, s.slots[0].base_load_forecast_w);
+  s.operating_scope = { modes: { $pool: "controlling", pump: "controlling" },
+    device_owners: { heater: "$pool", pump: "pump" }, external_demands: {} };
   s.pool_model.hardware = undefined;
   const empirical = prepare(s);
   assertEquals(empirical.pool_service.empirical, true);
@@ -161,6 +164,19 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   assertEquals(result.pool?.planning_basis, "empirical");
   assertEquals(result.plans.priority.slots[0].pool_permitted, true);
   assertEquals(result.plans.priority.slots[0].device_loads_w.heater, 3000);
+  const notes = actionablePlanningWarnings(result.planning_warnings ?? []);
+  assertEquals(notes.filter(w => w.scope === "pool").map(w => w.code), ["pool_projection_unavailable"]);
+  assert(!notes.some(w => w.code === "service_estimate" && ["heater", "pump"].includes(w.scope)),
+    "pool service owns its members even when temperature projection fails");
+  s.planning_warnings = [planningWarning("pool_response_evidence", "pool", "Synthetic missing measured quarter",
+    "Temperature memory could not be reconstructed")];
+  const capturedNotes = actionablePlanningWarnings(generateRulesPlan(prepare(s)).plan.planning_warnings ?? []);
+  assertEquals(capturedNotes.filter(w => w.scope === "pool").length, 1);
+  assert(capturedNotes.find(w => w.scope === "pool")!.message.includes("Synthetic missing measured quarter"));
+  s.planning_warnings = [];
+  s.pool_model = undefined;
+  assert(!actionablePlanningWarnings(generateRulesPlan(prepare(s)).plan.planning_warnings ?? [])
+    .some(w => w.scope === "pool"), "normal absence of a learned calibration is not an operational banner");
 });
 Deno.test("rules commitment keeps charger commands while fresh above-target state changes physical draw", () => {
   const s = snapshot();
