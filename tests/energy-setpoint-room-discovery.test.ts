@@ -6,8 +6,8 @@ import {
 const comfortTab = await Deno.readTextFile(
   "src/components/portal/energy/ComfortSchedulesTab.tsx",
 );
-const ingest = await Deno.readTextFile(
-  "supabase/functions/energy-optimisation-ingest/index.ts",
+const capture = await Deno.readTextFile(
+  "supabase/functions/_shared/room-model-capture.ts",
 );
 const migration = await Deno.readTextFile(
   "supabase/migrations/20260815113000_include_on_off_room_heaters.sql",
@@ -22,8 +22,8 @@ Deno.test("every Ready room control is visible regardless of actuator style", ()
     comfortTab,
     ".in('control_type_override', ['setpoint', 'switch_schedule'])",
   );
-  assertStringIncludes(ingest, 'model.control_type !== "switch_schedule"');
-  assert(!ingest.includes(
+  assertStringIncludes(capture, 'model.control_type !== "switch_schedule"');
+  assert(!capture.includes(
     'model.control_type === "setpoint" && model.category === "heating"',
   ));
   assert(!migration.includes("device.category = 'heating'"));

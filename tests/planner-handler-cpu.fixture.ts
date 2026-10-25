@@ -8,7 +8,7 @@ export function cpuPlanningInput() {
   return prepareRulesPlanningInput(cpuPlanningSource(), null, resolveRulePolicy());
 }
 
-/** Admission also owns room scheduling, which the original worker-only gate missed. */
+/** Preparation owns room scheduling, separately from the household solve request. */
 export function cpuPlanningSource(withRooms = false) {
   const snapshot = structuredClone(fixture.snapshot) as OptimisationSnapshot;
   if (withRooms) {

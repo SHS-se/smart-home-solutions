@@ -99,7 +99,9 @@ Deno.test('edge functions only name columns the migrations define', async () => 
       if (select) named.push(...select[1].split(',').map((column) =>
         column.trim().replace(/^[a-z_]+:/i, '').split('->')[0]));
       for (const filter of chain.matchAll(new RegExp(`\\.(?:${FILTERS})\\(\\s*"([^"]*)"`, 'g'))) {
-        named.push(filter[1]);
+        // PostgREST JSON-path filters name the stored base column, just as
+        // JSON-path projections above do. Object keys are not SQL columns.
+        named.push(filter[1].split('->')[0]);
       }
 
       for (const column of named) {

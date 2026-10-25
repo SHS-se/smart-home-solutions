@@ -2,7 +2,9 @@
 import { buildPriceOutlook } from "./planner/energy-price-shape.ts";
 import type { EnergyPlanningInput, OptimisationResult } from "./planner/planning-contracts.ts";
 import { resolveRulePolicy, type CriteriaOverrides } from "./planner-wasm/rule-policy.ts";
-import { generateRulesPlan, prepareRulesPlanningInput, type PublishedCommandReference } from "./rules-planner.ts";
+import type { PublishedCommandReference } from "./rules-planner.ts";
+import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
+import { executeRulesPlanning } from "./rules-planning-execution.ts";
 
 export function runRulesPlanner(input: EnergyPlanningInput, reference: PublishedCommandReference | null = null,
   criteria?: CriteriaOverrides): OptimisationResult {
@@ -15,5 +17,5 @@ export function runRulesPlanner(input: EnergyPlanningInput, reference: Published
       level_sek_per_kwh: resolved.levelSekPerKwh, shadow_import_sek_per_kwh: resolved.shadowImportSekPerKwh,
       ...(resolved.levelBasis ? { level_basis: resolved.levelBasis } : {}) };
   }
-  return generateRulesPlan(prepareRulesPlanningInput({ ...input, resolved_price_outlook: outlook }, reference, resolveRulePolicy(criteria)));
+  return executeRulesPlanning(captureRulesPlanningInput({ ...input, resolved_price_outlook: outlook }, reference, resolveRulePolicy(criteria)));
 }

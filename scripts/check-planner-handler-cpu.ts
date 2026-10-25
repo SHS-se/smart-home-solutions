@@ -12,20 +12,20 @@
 import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
 import { cpuPlanningInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
-import { prepareRulesPlanningInput } from "../supabase/functions/_shared/rules-planner.ts";
+import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
+import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
-import { PlanningTrace } from "../supabase/functions/_shared/planning-trace.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 
 import { selectPoolDynamics } from "../supabase/functions/_shared/device-learning/pool/selection.ts";
-import { syntheticPoolHistory, SYNTHETIC_POOL_CAPACITY } from "../supabase/functions/_shared/pool-model-selection.fixture.ts";
+import { syntheticPoolMeanHistory, SYNTHETIC_POOL_CAPACITY } from "../supabase/functions/_shared/pool-model-selection.fixture.ts";
 const RUNS = 3;
 // Budget in baseline-machine milliseconds. Reserve at least 500 ms below the
 // hosted two-second CPU ceiling for host differences and transport. The native
 // work and projection tests also bound work deterministically.
 const BUDGET_MS = 1500;
-// Admission still needs CPU for authentication, telemetry and database JSON.
+// Preserve the existing preparation budget after moving it into its own worker.
 const PREPARATION_BUDGET_MS = 1000;
 // Median reference CPU on the baseline machine (Apple M-series, 2026-10-14),
 // where the cold worker used ≈1,000 ms. Re-measure only with the reference.
@@ -50,7 +50,7 @@ async function planSample(): Promise<Sample> {
   const sample = await measure(async () => {
     response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
       method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-regression" },
-      body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, input }),
+      body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input }),
     }), "cpu-test");
     body = await response.json();
   });
@@ -62,31 +62,43 @@ async function planSample(): Promise<Sample> {
 
 /** Daily calibration uses independent synthetic chronology, including held-out selection. */
 async function calibrationSample(): Promise<Sample> {
-  const samples = syntheticPoolHistory(true);
+  const samples = syntheticPoolMeanHistory(true);
   return await measure(() => {
-    const fit = selectPoolDynamics(samples, SYNTHETIC_POOL_CAPACITY);
+    const fit = selectPoolDynamics(samples, SYNTHETIC_POOL_CAPACITY, "quarter_mean");
     assert("fitted" in fit && fit.selection.selected === "recovering_source");
   });
 }
 
-/** Cold admission preparation and its durable RPC encoding, with nine rooms. */
+/** Cold preparation handler, including transport encoding, with nine rooms. */
 async function preparationSample(mode: "household" | "mixed" | "varying" = "household"): Promise<Sample> {
   const source = mode === "mixed" ? cpuMixedRoomPlanningSource()
     : mode === "varying" ? cpuVaryingRoomPlanningSource() : cpuPlanningSource(true);
-  let input!: ReturnType<typeof prepareRulesPlanningInput>;
+  const capture = captureRulesPlanningInput(source, null, resolveRulePolicy());
+  let input!: PreparedRulesInput;
   let memory = 0;
-  const trace = new PlanningTrace("cpu-preparation", message => {
-    const event = JSON.parse(message);
+  const originalInfo = console.info;
+  console.info = (...messages: unknown[]) => {
+    if (typeof messages[0] !== "string" || !messages[0].startsWith("{")) return;
+    const event = JSON.parse(messages[0]);
     memory = Math.max(memory, event.wasm_memory_bytes ?? 0);
-  });
-  const sample = await measure(() => {
-    input = prepareRulesPlanningInput(JSON.parse(JSON.stringify(source)), null, resolveRulePolicy(), trace);
-    JSON.stringify({ input });
-  });
-  assertEquals(Object.keys(input.rooms.commands).length, mode === "mixed" ? 4 : 9);
-  assertEquals(input.problem.slots.length, 288);
-  assert(memory > 0 && memory < 128 * 1024 * 1024, `Native room memory exceeded the preparation budget: ${memory}`);
-  return { ...sample, wasm_memory_bytes: memory };
+  };
+  try {
+    const sample = await measure(async () => {
+      const response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
+        method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-preparation" },
+        body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "prepare", input: capture }),
+      }), "cpu-test");
+      const body = await response.json();
+      assertEquals(response.status, 200, JSON.stringify(body));
+      input = body.prepared;
+    });
+    assertEquals(Object.keys(input.rooms.commands).length, mode === "mixed" ? 4 : 9);
+    assertEquals(input.problem.slots.length, 288);
+    assert(memory > 0 && memory < 128 * 1024 * 1024, `Native room memory exceeded the preparation budget: ${memory}`);
+    return { ...sample, wasm_memory_bytes: memory };
+  } finally {
+    console.info = originalInfo;
+  }
 }
 
 /** Fixed single-threaded JIT work (allocation, sorting, JSON, float loops). */

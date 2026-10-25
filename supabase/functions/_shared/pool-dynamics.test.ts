@@ -225,6 +225,12 @@ Deno.test("capture reconstructs heat through shutdown, missing quarters and part
 Deno.test("shared publication uses the electric-trained response once and preserves startup draw", () => {
   const model = fitted(recorded), snapshot = dispatchedEvSnapshot();
   snapshot.pool = { water_temperature_c: 29.64, volume_m3: 55 };
+  // This thermal/startup assertion supplies equipment capability independently;
+  // thermal calibration no longer grants electrical permission to a missing device.
+  snapshot.device_models.push({ key: "synthetic-compressor", name: "Synthetic compressor", statistic_id: "sensor.synthetic_compressor",
+    category: "pool", suggested_load_type: "binary", load_type: "binary", planning_role: "controllable", control_type: "switch_schedule",
+    planning_service: "pool", pool_role: "heater", active_power_w: 3000, profile_sample_count: 100,
+    forecast_w_by_slot: snapshot.slots.map(() => 3000) });
   snapshot.pool_model = { thermal_dynamics: model, heater_response: parseHeaterResponse(startup), loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null };
   const physics = poolPhysics(snapshot);
   assertEquals(physics.store.response_time_constant_h, model.response_time_constant_h);

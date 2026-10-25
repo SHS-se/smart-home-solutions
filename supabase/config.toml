@@ -141,3 +141,6 @@ verify_jwt = false
 # TEST-only paired price research authenticates using the private archive token.
 [functions.energy-price-experiment]
 verify_jwt = false
+
+[functions.energy-device-learning]
+verify_jwt = false

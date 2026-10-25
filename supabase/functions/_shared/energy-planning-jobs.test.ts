@@ -2,7 +2,9 @@ import { assertEquals, assertRejects, assert } from "jsr:@std/assert@1";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { PlanningJobs, PlanningJobError, planningCompletionBasis, type PlanningReceipt } from "./energy-planning-jobs.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
-import { RULES_MODEL_VERSION, generateRulesPlan, prepareRulesPlanningInput } from "./rules-planner.ts";
+import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
+import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
+import { executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput, rulesFixturePlan } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
@@ -13,7 +15,7 @@ const snapshot = dispatchedEvSnapshot();
 snapshot.captured_at = snapshot.slots[0].start;
 snapshot.slots = snapshot.slots.slice(0, 8).map(s => ({ ...s, pv_forecast_w: 0 }));
 snapshot.comfort = {ev:{target_km:300}};
-const input = prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {
+const input = captureRulesPlanningInput({ snapshot, now: snapshot.captured_at, price_archive: [], resolved_price_outlook: {
   shaped: true, observed_days: 1, effective_days: 1, level_sek_per_kwh: 1.5,
   shadow_import_sek_per_kwh: snapshot.slots.map(() => 1.5),
 } }, null, resolveRulePolicy());
@@ -101,8 +103,8 @@ Deno.test("durable owner solves and atomically publishes in one fenced exchange 
     return realWorker(url, init);
   });
   assert(receipt?.state === "published");
-  assertEquals(workerCalls, 1);
-  const expected = generateRulesPlan(input);
+  assertEquals(workerCalls, 2);
+  const expected = executeRulesPlanning(input);
   assertEquals(wire(receipt.plan), wire(expected.plan));
   const current = state.publication()!.current as { plan: Parameters<typeof expandStoredPlan>[0]; ha_ack_status:string; generation_request_id:string };
   assertEquals(wire(expandStoredPlan(current.plan)), wire(expected.plan));
@@ -118,7 +120,8 @@ Deno.test("durable owner solves and atomically publishes in one fenced exchange 
 
 Deno.test("a published run records which devices SHS was controlling, for the savings track record", async () => {
   const mixed = mixedModeSnapshot();
-  const planningInput = rulesFixtureInput(mixed);
+  const planningInput = captureRulesPlanningInput({ snapshot: mixed, now: mixed.captured_at,
+    resolved_price_outlook: rulesFixtureInput(mixed).price_outlook }, null, resolveRulePolicy());
   const state = memoryJobs({ planningInput });
   const receipt = await state.jobs.advanceForHome(jobId, { jobId }, connection, realWorker);
   assert(receipt?.state === "published");
@@ -138,9 +141,9 @@ Deno.test("lost atomic publication reply recovers exact receipt and does not rec
   assert(!state.calls.some(call => call.name === "fail_energy_planning_job"));
   const delivered = await state.jobs.advanceForHome(jobId, { jobId }, connection, fetcher);
   assert(delivered?.state === "published");
-  assertEquals(workers, 1);
+  assertEquals(workers, 2);
   assertEquals(state.calls.filter(call => call.name === "publish_energy_planning_job").length, 1);
-  assertEquals(wire(delivered.plan), wire(generateRulesPlan(input).plan));
+  assertEquals(wire(delivered.plan), wire(executeRulesPlanning(input).plan));
 });
 
 Deno.test("an existing claimant and a different home never load or compute the job", async () => {

@@ -13,13 +13,13 @@ Deno.test("pipeline edits rerun all checks but deploy only changed service sourc
   assertEquals(classifyPipeline(root, "all", [pipeline]).functions, functionNames(root));
 });
 
-Deno.test("a live planner adapter change deploys the energy functions and runs the bench", () => {
+Deno.test("a solve implementation change deploys worker and probe without loading search into ingest", () => {
   const c = classify(root, ["supabase/functions/_shared/rules-planner.ts"]);
   assert(c.planner);
   // The live portal renders this published contract; the isolated comparison uses its own Wasm boundary.
   assert(!c.frontend);
   assert(c.functions.includes("energy-optimisation-plan-step"));
-  assert(c.functions.includes("energy-optimisation-ingest"));
+  assert(!c.functions.includes("energy-optimisation-ingest"));
   assert(c.functions.includes("energy-planner-probe"), "complete-handler hosted qualification must follow planner changes");
   assert(!c.functions.includes("energy-optimisation-planning-worker"));
   assert(!c.functions.includes("stripe-webhook"));
@@ -88,4 +88,15 @@ Deno.test("home baseline worker dependencies rebuild the preview without deployi
   assert(c.frontend);
   assertEquals([c.planner, c.bench, c.functions.length], [false, false, 0]);
   assert(classify(root, ["supabase/functions/_shared/planner-wasm/solver.wasm"]).frontend);
+});
+
+Deno.test("capture assembly changes deploy ingest while protocol identity changes deploy both sides", () => {
+  const capture = classify(root, ["supabase/functions/_shared/rules-planning-capture.ts"]);
+  assert(capture.functions.includes("energy-optimisation-ingest"));
+  assert(!capture.functions.includes("energy-optimisation-plan-step"));
+  const identity = classify(root, ["supabase/functions/_shared/rules-planner-identity.ts"]);
+  for (const endpoint of ["energy-optimisation-ingest", "energy-optimisation-plan-step", "energy-planner-probe"]) {
+    assert(identity.functions.includes(endpoint), endpoint);
+  }
+  assert(!identity.functions.includes("stripe-webhook"));
 });

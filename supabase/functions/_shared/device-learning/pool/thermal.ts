@@ -22,6 +22,7 @@
 // `rated_cop` / `cop_per_air_c` pair the planner's model already carries, so a
 // fit drops straight into it.
 
+import type { PoolObservation } from "./observations.ts";
 import { solveLinearSystem } from "../linear-algebra.ts";
 import { WATER_KWH_PER_M3_K } from "../../planner/device-models.ts";
 
@@ -54,6 +55,9 @@ export interface PoolTrainingSample {
   outdoor_temperature_c: number;
   /** Electrical energy into the heat pump during the slot, kWh. */
   electrical_kwh: number;
+  /** Required only for adjacent recorder-mean transitions. */
+  next_electrical_kwh?: number;
+  next_outdoor_temperature_c?: number;
 }
 
 export interface PoolFit {
@@ -87,6 +91,7 @@ export type PoolFitResult =
 export function fitPoolModel(
   samples: PoolTrainingSample[],
   volumeM3: number,
+  observation: PoolObservation = "interval_start",
 ): PoolFitResult {
   const capacityKwhPerK = volumeM3 * WATER_KWH_PER_M3_K;
   const usable = samples.filter((sample) =>
@@ -94,7 +99,8 @@ export function fitPoolModel(
     Number.isFinite(sample.next_water_temperature_c) &&
     Number.isFinite(sample.outdoor_temperature_c) &&
     Number.isFinite(sample.electrical_kwh) &&
-    sample.electrical_kwh >= 0
+    sample.electrical_kwh >= 0 && (observation === "interval_start" ||
+      (Number.isFinite(sample.next_electrical_kwh) && sample.next_electrical_kwh! >= 0 && Number.isFinite(sample.next_outdoor_temperature_c)))
   );
   const heated = usable.filter((sample) =>
     sample.electrical_kwh >= HEATED_SLOT_MIN_KWH
@@ -120,15 +126,21 @@ export function fitPoolModel(
   }
 
   const rows = usable.map((sample) => {
-    const powerKw = sample.electrical_kwh / SLOT_HOURS;
+    const means = observation === "quarter_mean";
+    const powerKw = means ? (sample.electrical_kwh + sample.next_electrical_kwh!) / (2 * SLOT_HOURS) : sample.electrical_kwh / SLOT_HOURS;
+    const airPower = means ? (sample.electrical_kwh * (sample.outdoor_temperature_c - COP_REFERENCE_AIR_C) +
+      sample.next_electrical_kwh! * (sample.next_outdoor_temperature_c! - COP_REFERENCE_AIR_C)) / (2 * SLOT_HOURS)
+      : powerKw * (sample.outdoor_temperature_c - COP_REFERENCE_AIR_C);
+    const difference = means ? (sample.water_temperature_c + sample.next_water_temperature_c -
+      sample.outdoor_temperature_c - sample.next_outdoor_temperature_c!) / 2 : sample.water_temperature_c - sample.outdoor_temperature_c;
     return {
       // °C per hour, the quantity being explained.
       rate: (sample.next_water_temperature_c - sample.water_temperature_c) /
         SLOT_HOURS,
       x: [
         powerKw,
-        powerKw * (sample.outdoor_temperature_c - COP_REFERENCE_AIR_C),
-        sample.water_temperature_c - sample.outdoor_temperature_c,
+        airPower,
+        difference,
         1,
       ],
     };
@@ -306,9 +318,14 @@ export type PoolLossFitResult =
 export function fitPoolLoss(
   samples: PoolLossSample[],
   volumeM3: number,
+  observation: PoolObservation = "interval_start",
 ): PoolLossFitResult {
   const capacityKwhPerK = volumeM3 * WATER_KWH_PER_M3_K;
   const ordered = samples
+    .filter(sample => observation === "interval_start" || (Number.isFinite(sample.next_electrical_kwh) && Number.isFinite(sample.next_outdoor_temperature_c)))
+    .map(sample => observation === "interval_start" ? sample : { ...sample,
+      electrical_kwh: (sample.electrical_kwh + sample.next_electrical_kwh!) / 2,
+      outdoor_temperature_c: (sample.outdoor_temperature_c + sample.next_outdoor_temperature_c!) / 2 })
     .filter((sample) =>
       Number.isFinite(sample.start_ms) &&
       Number.isFinite(sample.water_temperature_c) &&
@@ -345,7 +362,8 @@ export function fitPoolLoss(
     fallC += stretch[0].water_temperature_c -
       stretch[stretch.length - 1].next_water_temperature_c;
     exposureKh += stretch.reduce((total, sample) =>
-      total + (sample.water_temperature_c - sample.outdoor_temperature_c) * SLOT_HOURS, 0);
+      total + ((observation === "quarter_mean" ? (sample.water_temperature_c + sample.next_water_temperature_c) / 2
+        : sample.water_temperature_c) - sample.outdoor_temperature_c) * SLOT_HOURS, 0);
     quarters += stretch.length;
     runCount += 1;
   }
@@ -376,7 +394,7 @@ export const MIN_POOL_RESPONSE_HEATED_KWH = 3;
 
 export type PoolResponseSample = Pick<
   PoolLossSample,
-  "start_ms" | "water_temperature_c" | "next_water_temperature_c" | "electrical_kwh"
+  "start_ms" | "water_temperature_c" | "next_water_temperature_c" | "electrical_kwh" | "next_electrical_kwh"
 >;
 
 export interface PoolResponseBin {
@@ -410,8 +428,11 @@ export interface PoolResponseBin {
  * weighs what it should. The quarters just after a run, while the water is
  * still mixing, count toward the run's gain and not toward idle cooling.
  */
-export function fitPoolResponse(samples: PoolResponseSample[]): PoolResponseBin[] {
+export function fitPoolResponse(samples: PoolResponseSample[], observation: PoolObservation = "interval_start"): PoolResponseBin[] {
   const ordered = samples
+    .filter(sample => observation === "interval_start" || Number.isFinite(sample.next_electrical_kwh))
+    .map(sample => observation === "interval_start" ? sample : { ...sample,
+      electrical_kwh: (sample.electrical_kwh + sample.next_electrical_kwh!) / 2 })
     .filter((sample) =>
       Number.isFinite(sample.start_ms) &&
       Number.isFinite(sample.water_temperature_c) &&

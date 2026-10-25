@@ -1,3 +1,4 @@
+import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import { dispatchedEvSnapshot, rulesFixtureInput } from '../scripts/generate-ha-plan-fixture.ts';
@@ -1000,4 +1001,37 @@ Deno.test('healthy HA heartbeats are silent and unchanged runtime problems do no
       {state:'invalid',last_error:'Required grid sensor unavailable',reason:'Missing reading'}]);
     assertEquals((await logEntries(db)).length,2,'different problems retain separate explanations');
   } finally {await db.close();}
+});
+
+Deno.test('protocol 10 persists an unsolved capture and retains exact execution evidence fencing', async () => {
+  const db = await oneShotDatabase();
+  try {
+    await db.exec(await migration(executionMigration));
+    await db.exec(await migration('20261026001500_capture_before_planning_workers'));
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)', [JSON.stringify(currentRow())]);
+    await db.exec("UPDATE energy_optimisation_current SET ha_ack_status='accepted',ha_acknowledged_at=now()");
+    const raw = dispatchedEvSnapshot();
+    raw.captured_at = raw.slots[0].start;
+    const execution = { request_id: manual, accepted_plan_id: plan, observed_at: raw.captured_at,
+      changes: [{ owner: '$ev', status: 'temporarily_absent' as const, cause: 'cable_disconnected',
+        blocked_intervals: [{ start: raw.captured_at, end: new Date(Date.parse(raw.captured_at) + 900_000).toISOString() }] }] };
+    const reference: PublishedCommandReference = { plan_id: plan, slots: [] };
+    const captured = captureRulesPlanningInput({ snapshot: raw, now: raw.captured_at, execution_replan: execution,
+      resolved_price_outlook: rulesFixtureInput(raw).price_outlook }, reference, resolveRulePolicy());
+    const args = { ...rulesSubmission(nextManual, { reference_plan_id: plan, execution_replan: execution }),
+      protocol: 10, input: captured };
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args, protocol: 9 }), Error, 'Incomplete planning job');
+    await assertRejects(() => rpc(db, 'accept_energy_planning_job', { ...args,
+      input: { ...captured, execution_replan: null } }), Error, 'exact HA-accepted');
+    const receipt = await rpc<Receipt>(db, 'accept_energy_planning_job', args);
+    assertEquals((await rpc<Receipt>(db, 'accept_energy_planning_job', args)).job_id, receipt.job_id);
+    const claim = (await attemptClaim(db, receipt.job_id))!;
+    assertEquals(claim.protocol, 10);
+    const loaded = await attemptLoad(db, claim);
+    assertEquals(loaded!.input, JSON.parse(JSON.stringify(captured)));
+    assertEquals('problem' in loaded!.input, false);
+    assertEquals('rooms' in loaded!.input, false);
+    assertEquals(loaded!.context.execution_replan, execution);
+    assertEquals(await attemptLoad(db, { ...claim, fence: claim.fence + 1 }), null);
+  } finally { await db.close(); }
 });

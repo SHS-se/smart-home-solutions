@@ -1,5 +1,7 @@
+import { handleDeviceLearning } from "../supabase/functions/_shared/device-learning-worker.ts";
 import {
   assert,
+  assertEquals,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 
@@ -13,9 +15,10 @@ import {
 // requested. The first call after the season turned was the first call ever,
 // and it took the whole plan down with it rather than one refit.
 //
-// This function cannot be exercised without a database, so its type contract
-// is asserted against the migration text instead. That is weaker than running
-// it, and it is the only check available here.
+// The historical SQL type contract remains asserted against its migration.
+// Current observation behavior is exercised with PGlite in
+// room-training-observations-sql.test.ts; lifecycle publication/fencing is
+// exercised in device-learning-lifecycle.test.ts.
 
 const migration = await Deno.readTextFile(
   "supabase/migrations/20260830180000_fit_solar_gain_into_zone_models.sql",
@@ -100,24 +103,47 @@ Deno.test("the training quarters cast every numeric column they return", () => {
       "(COALESCE(energy.energy_kwh, 0) * 4000.0)::double precision",
     ]
   ) assertStringIncludes(body, column);
-  const ingest = Deno.readTextFileSync(
-    "supabase/functions/energy-optimisation-ingest/index.ts",
+  const learning = Deno.readTextFileSync(
+    "supabase/functions/_shared/device-model-learning/room.ts",
   );
   // Three weeks of quarters is more than one PostgREST page.
-  assertStringIncludes(ingest, '"get_energy_thermal_training_quarters"');
-  assertStringIncludes(ingest, "readPagedRows<ThermalQuarterRow>");
+  assertStringIncludes(learning, '"get_energy_thermal_training_quarters"');
+  assertStringIncludes(learning, "readPagedRows<ThermalQuarterRow>");
 });
 
-Deno.test("a failed refit is logged and stepped over, never thrown", () => {
-  // A refit is maintenance. Throwing turned "this zone could not be
-  // re-learned" into "this house gets no plan", which is how one type
-  // mismatch stopped a battery, a boiler, a pool and a car for a day.
-  const ingest = Deno.readTextFileSync(
-    "supabase/functions/energy-optimisation-ingest/index.ts",
-  );
-  assertStringIncludes(ingest, '"[ENERGY-OPTIMISATION] zone refit skipped"');
-  assert(
-    !ingest.includes("if (error) throw error;"),
-    "the training moments error must not be rethrown as a snapshot rejection",
-  );
+Deno.test("a failed training read belongs to its durable learning attempt and never publishes a rejection", async () => {
+  const calls: string[] = [];
+  const claim = { id: "synthetic-job", home_id: "synthetic-home", customer_id: "synthetic-customer",
+    owner_kind: "room", owner_key: "synthetic-room", generation: 2, fence: 3, input: { location: null } };
+  const db = {
+    rpc(name: string, args: Record<string, unknown>) {
+      calls.push(name);
+      if (name === "get_energy_thermal_training_quarters") return { eq: () => ({
+        range: () => Promise.resolve({ data: null, error: { message: "synthetic training read failure" } }),
+      }) };
+      if (name === "verify_energy_learning_token") return Promise.resolve({ data: true, error: null });
+      if (name === "claim_energy_device_learning") return Promise.resolve({ data: claim, error: null });
+      if (name === "capture_energy_device_models") return Promise.resolve({ data: {
+        rooms: [{ room_key: claim.owner_key, model_revision: 7, trained: true }], pool: null,
+      }, error: null });
+      if (name === "fail_energy_device_learning") {
+        assertEquals(args.p_generation, claim.generation);
+        assertEquals(args.p_fence, claim.fence);
+        assertStringIncludes(String(args.p_error), "synthetic training read failure");
+        return Promise.resolve({ data: null, error: null });
+      }
+      throw new Error(`Unexpected learning RPC ${name}`);
+    },
+    from(table: string) { throw new Error(`Unexpected model write ${table}`); },
+  };
+  const response = await handleDeviceLearning(new Request("https://learning.test", {
+    method: "POST", headers: { "x-energy-learning-token": "synthetic-token" }, body: JSON.stringify({ job_id: claim.id }),
+  }), db);
+  assertEquals(response.status, 500);
+  assertEquals(await response.json(), { error: "learning_failed" });
+  assertEquals(calls, ["verify_energy_learning_token", "claim_energy_device_learning", "capture_energy_device_models",
+    "get_energy_thermal_training_quarters", "fail_energy_device_learning"]);
+  // SQL retry/retained-model semantics are independently executed by
+  // tests/device-learning-lifecycle.test.ts. Ingest cannot import this worker
+  // or its fitting code: tests/planner-component-boundaries.test.ts enforces it.
 });

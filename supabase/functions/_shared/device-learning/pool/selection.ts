@@ -7,6 +7,7 @@
  * the explicitly fitted constant family retains its learned water lag.
  * This selects calibration complexity; it never gates household planning.
  */
+import { poolQuarterMean, type PoolObservation } from "./observations.ts";
 import { fitPoolDynamics, type PoolDynamics, type PoolDynamicsFit } from "./response.ts";
 import { PoolSourceKernel, type PoolThermalState, stepPoolThermal } from "../../planner/device-models.ts";
 import type { PoolResponseSample } from "./thermal.ts";
@@ -38,6 +39,7 @@ function projection(
   model: PoolDynamics,
   capacity: number,
   samples: readonly PoolResponseSample[],
+  observation: PoolObservation,
 ) {
   const store = {
     capacity_kwh_per_c: capacity,
@@ -59,7 +61,11 @@ function projection(
     pending_heat_kwh: model.state.pending_heat_kwh,
     source_depletion_kwh: model.state.source_depletion_kwh,
   };
-  let start = state.water_c, observed = start;
+  const meanReading = (power: number) => poolQuarterMean(state.water_c, state.pending_heat_kwh,
+    state.source_depletion_kwh ?? 0, power, .25, capacity, model.response_time_constant_h,
+    model.heat_c_per_kwh * capacity, model.idle_c_per_h, kernel?.source ?? null);
+  let start = observation === "quarter_mean" ? meanReading(samples[0].electrical_kwh / .25) : state.water_c;
+  let observed = samples[0].water_temperature_c;
   const errors: number[] = [];
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i],
@@ -76,11 +82,12 @@ function projection(
         model.idle_c_per_h,
       )
       : stepPoolThermal(store, state, heat, heat, 0, .25);
-    if ((i + 1) % 4 === 0) {
+    if ((i + 1) % 4 === 0 && (observation === "interval_start" || i + 1 < samples.length)) {
+      const reading = observation === "quarter_mean" ? meanReading(samples[i + 1].electrical_kwh / .25) : state.water_c;
       errors.push(
-        (state.water_c - start) - (s.next_water_temperature_c - observed),
+        (reading - start) - (s.next_water_temperature_c - observed),
       );
-      start = state.water_c;
+      start = reading;
       observed = s.next_water_temperature_c;
     }
   }
@@ -96,6 +103,7 @@ function projection(
 export function selectPoolDynamics(
   samples: readonly PoolResponseSample[],
   capacity: number,
+  observation: PoolObservation = "interval_start",
 ): SelectionFit {
   const usable = samples.filter((s) =>
     [
@@ -124,7 +132,7 @@ export function selectPoolDynamics(
     lower_mse_improvement: null,
   };
   const constant = (): SelectionFit => {
-    const fit = fitPoolDynamics(usable, capacity, "constant_gain");
+    const fit = fitPoolDynamics(usable, capacity, "constant_gain", observation);
     if ("rejected" in fit) e.reason = "unidentifiable";
     return { ...fit, selection: e };
   };
@@ -142,11 +150,11 @@ export function selectPoolDynamics(
     train.at(-1)!.start_ms + SLOT !== cut ||
     validation.some((s, i) => s.start_ms !== cut + i * SLOT)
   ) return constant();
-  const a = fitPoolDynamics(train, capacity, "constant_gain"),
-    b = fitPoolDynamics(train, capacity, "recovering_source");
+  const a = fitPoolDynamics(train, capacity, "constant_gain", observation),
+    b = fitPoolDynamics(train, capacity, "recovering_source", observation);
   if (!("fitted" in a) || !("fitted" in b)) return constant();
-  const pa = projection(a.fitted, capacity, validation),
-    pb = projection(b.fitted, capacity, validation);
+  const pa = projection(a.fitted, capacity, validation, observation),
+    pb = projection(b.fitted, capacity, validation, observation);
   // A short trailing day cannot receive the weight of a complete day. It
   // still advances measured state, but is excluded from paired inference.
   const hours = Math.floor(pa.errors.length / 24) * 24;

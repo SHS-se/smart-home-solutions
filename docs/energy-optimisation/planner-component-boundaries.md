@@ -26,6 +26,11 @@ refactor does not create a new priority or spending policy.
 | Rust `solver/{policy,room_policy}` | Existing economic/comfort preferences | Learning or physical response coefficients |
 | Rust `solver/room_heating` | Bellman search, action enumeration and memoization | Its own copy of thermostat physics |
 | `rules-planner.ts` | Existing ordered orchestration and publication | Fitting or mutating a caller's captured basis |
+| `rules-planning-capture.ts` | Detached unsolved observations, intent, accepted commands and policy | Search or fitting on admission |
+| `device-model-store.ts` | One atomic calibration bundle with per-model revisions | Weather caching or model selection |
+| `device-model-learning/{room,pool}.ts` | Per-owner database observations and fitting adapters | Planning, commitments or other owners' models |
+| `energy-device-learning` | One leased, fenced owner attempt | Whole-house learning or electrical capability writes |
+| `prepared-energy-forecasts.ts` | Prices, outdoor weather, irradiance and house temperature forecasts | Device inventory, calibration or comfort preferences |
 
 A room is a shared thermal plant. Each of its actuators has its own electrical
 capabilities and commands. This does not claim separate causal heater gains
@@ -41,20 +46,37 @@ not changed by this extraction.
 ### Capture and publication
 
 ```ts
-const basis = prepareRulesPlanningInput(input, acceptedReference, policy);
-// Subsequent caller edits cannot alter the captured model, policy or holds.
-const result = generateRulesPlan(basis);
-// Reusing a frozen basis gives the same result; publication warnings are private.
+const capture = captureRulesPlanningInput(input, acceptedReference, policy);
+// Admission persists capture without running room or household search.
+const result = await generateRemoteRulesPlan(capture, connection);
+// The authenticated worker prepares, then solves in a separate invocation.
+// Both operations use this one captured model, policy and commitment basis.
 ```
 
-Model learning is separated from the solve's dependency graph. Each room owns
-its own fit-attempt clock; only due rooms are fitted. Failed-attempt persistence
-retains the previous usable parameters under the existing contract.
+Model learning is separated from admission and the solve's dependency graph.
+Each room and the pool owns a durable coalesced job, attempt clock, generation
+and lease fence. A changed learning context supersedes an older in-flight job;
+identical telemetry cannot continually restart it. Database cron recovers missed
+wakes and expired leases. Read failures remain retriable job failures, rather
+than fabricated statistical rejections. Failed statistical attempts retain the
+previous usable parameters. Publication validates the owner's fence and model
+revision in one transaction and cannot write pool hardware or electrical fields.
+
+Model capture reads all room and pool records in one PostgreSQL statement. Job
+provenance records the exact local revisions. Current equipment and preferences
+are joined at admission; forecast schema 2 contains no model records, inventory,
+or old room schedules. A new calibration therefore becomes available without
+waiting for weather-cache expiry. Existing missing-evidence warning behavior is
+retained; this refactor does not invent a new statistical admission gate.
 
 Electrical reservation and expected consumption are different quantities.
 The native pool boundary names `average_w` and `reservation_w` separately.
 Reservation uses supported compressor ON draw, even when thermal evidence is
-unavailable. State reconstruction and a thermal refit cannot lower that draw.
+unavailable. The electrical boundary does not accept startup thermal-response
+evidence: a fitted steady-phase wattage cannot override the producer's supported
+ON capability. The integration captures that capability from the same retained,
+setting-specific electrical evidence used by its executor; instantaneous sensor
+watts and quarter-average consumption remain observations, not capability. State reconstruction and a thermal refit cannot lower that draw.
 The existing empirical pool estimate still uses full draw conservatively; this
 change does not invent a future thermostat duty fraction.
 
@@ -121,22 +143,55 @@ explicit review of the requirement they change. Repository tests cannot make
 their own CI configuration tamper-proof; branch protection/reviewer controls
 remain a repository administration concern.
 
-## Deliberate migration limits
+## Completed lifecycle separation
 
 The existing execution order remains: room scheduling → native household
-search → hot-water refinement → projection/publication. Full migration of that
-orchestration and all owner constraints into one native entry point is a
-separate migration; it has not happened in this change.
+search → hot-water refinement → projection/publication. Internal protocol 10
+runs preparation and solve in two authenticated worker invocations under one
+orchestrator and deadline. This separates hosted CPU budgets without changing
+search priorities, room ordering, holds, physical equations or price scoring.
+The durable job persists unsolved input and can rerun both deterministic stages.
+There is no compatibility path that treats protocol 9 prepared input as a new
+capture. Rust remains the sole search engine; a wholesale translation of the
+TypeScript orchestration would add unnecessary behavioral risk.
 
-Learning is still triggered by forecast preparation. Extraction alone does not
-move it out of the ingest request or provide durable learning jobs, model
-revision transactions or hosted CPU qualification. Those remain necessary
-lifecycle work, with separate cold-ingest/refit/worker resource measurements.
-The existing local CPU checks cover the documented synthetic workloads; passing
-them is not proof against every hosted HTTP 546.
+The architecture was compared independently using Claude and Codex. The chosen
+design combines immutable unsolved captures and per-owner durable learning with
+two separately budgeted worker operations. Whole-home learning jobs were rejected
+because unrelated rooms would share failure and CPU limits. Fitted timestamps
+were rejected as model identities; explicit locally generated revisions identify
+exactly which coefficients were captured. The existing numerical model ownership
+is retained rather than replacing it with a generic device framework.
 
-The structural extraction preserves formulas and priorities. The explicit
-behavior corrections are truthful room control metadata, immutable input
-handling, and per-room learning cadence. New model selection rules, new room
-peak reservations, different search budgets and new service priorities are
-not bundled into this refactor.
+## Observation semantics and integration qualification
+
+Home Assistant reports quarter-average room temperatures, not interval-start
+samples. The room learner uses an integrated mean observation operator, including
+both adjacent quarters' heater energy, and compares candidate families/delays on
+chronologically held-out measured transitions. Twelve-hour prediction error
+remains a reported diagnostic. It cannot alone select a model that fits passive
+background drift while explaining measured heater response poorly. Missing meter
+coverage remains unknown; only complete measured zero energy is an OFF sample.
+A changed learner method causes one new attempt, then the existing per-room
+cadence resumes. There is no weak-gain floor or new heater shutoff policy.
+
+The pool learner likewise distinguishes quarter means from interval starts. Its
+delayed/source response fit integrates the existing physical transition over the
+measurement interval; static COP/loss and empirical response fits align adjacent
+quarters' measured input with the change between their means. Thermal learning
+cannot write electrical capability. These observation corrections preserve the
+planner's physical transitions and continuity policy.
+
+Known-plant contracts cover quarter means, delayed heat, missing readings and
+sparse heater pulses against slow background drift. Existing interval-start
+physical contracts remain unchanged. Private captured replay validation stays
+outside the public repository and is not substituted for synthetic oracles.
+
+Qualification additionally runs the actual Python producer, current TypeScript /
+Rust planner and actual Python consumer, intent encoding, gateway and durable
+executor against inert I/O. It records both repository identities. It checks
+intermediate EV currents, cable-independent future schedules, full pool ON
+reservation and room relay energy/temperature consistency. A copied JSON fixture
+alone is not integration qualification. Hosted TEST runs and a real replan are
+still needed to verify the deployed functions, model revisions and producer;
+local CPU checks cannot prove every workload avoids a hosted resource limit.

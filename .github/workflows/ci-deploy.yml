@@ -199,6 +199,34 @@ jobs:
           cargo build --manifest-path planner-core/Cargo.toml --locked --release --bin shs-planner-core
           deno task test:planner-native-parity
 
+  planner-integration:
+    name: Real producer, planner and executor qualification
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node and dependencies
+        uses: ./.github/actions/node-deps
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.8
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Read reviewed integration revision
+        id: integration
+        run: echo "revision=$(node -p 'JSON.parse(require("fs").readFileSync("tests/planner-integration/ha-revision.json","utf8")).revision')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: SHS-se/shs-ha-integration
+          ref: ${{ steps.integration.outputs.revision }}
+          path: .qualification/ha
+      - name: Install pinned producer dependencies
+        run: python -m pip install -r .qualification/ha/app/requirements.txt
+      - name: Qualify actual producer and executor against candidate planner
+        run: deno run --no-check --sloppy-imports --allow-read --allow-run scripts/qualify-planner-integration.ts --ha-repo .qualification/ha --python python
+
   frontend:
     name: Build & browser tests (${{ matrix.shard }}/3)
     needs: changes
@@ -259,7 +287,7 @@ jobs:
 
   ci:
     name: Lint, test & build
-    needs: [changes, quality, unit, planner-rust, planner-contracts, frontend]
+    needs: [changes, quality, unit, planner-rust, planner-contracts, planner-integration, frontend]
     # Run the gate even after a failed dependency, so its required status fails
     # explicitly. Frontend validation may skip only when no frontend changed.
     if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
@@ -271,6 +299,7 @@ jobs:
           UNIT_RESULT: ${{ needs.unit.result }}
           PLANNER_RUST_RESULT: ${{ needs.planner-rust.result }}
           PLANNER_CONTRACTS_RESULT: ${{ needs.planner-contracts.result }}
+          PLANNER_INTEGRATION_RESULT: ${{ needs.planner-integration.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
           FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
         run: |
@@ -278,6 +307,7 @@ jobs:
           test "$UNIT_RESULT" = success
           test "$PLANNER_RUST_RESULT" = success
           test "$PLANNER_CONTRACTS_RESULT" = success
+          test "$PLANNER_INTEGRATION_RESULT" = success
           if [ "$FRONTEND_CHANGED" = true ]; then
             test "$FRONTEND_RESULT" = success
           else
@@ -396,7 +426,7 @@ jobs:
               continue
             elif [ "$name" = energy-market-archive ] || [ "$name" = energy-price-experiment ]; then
               continue
-            elif [ "$name" = energy-optimisation-plan-step ]; then
+            elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ]; then
               if [ "$planning_deployed" = false ]; then
                 bash scripts/deploy-energy-planning.sh "$SUPABASE_PROJECT_REF"
                 planning_deployed=true

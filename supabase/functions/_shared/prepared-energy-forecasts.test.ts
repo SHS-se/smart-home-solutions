@@ -102,7 +102,7 @@ Deno.test("prepared forecast read aligns by timestamp and unchanged published pr
   prepared.slots[1].import_price_sek_per_kwh = null;
   prepared.slots[2].import_price_sek_per_kwh = -0.0123456789;
   const original = structuredClone(prepared);
-  await storePreparedForecasts(db, "home-a", prepared, prices(), [room()]);
+  await storePreparedForecasts(db, "home-a", prepared, prices());
   assertEquals(prepared, original);
   assert(db.row);
   // Publication age is evidence, not a made-up expiration or event-order constraint.
@@ -124,7 +124,8 @@ Deno.test("prepared forecast read aligns by timestamp and unchanged published pr
   assertEquals(result.price_outlook.level_basis, "wind");
   assertEquals(result.snapshot.outdoor_temperature_c, [-4, -5]);
   assertEquals(result.snapshot.solar_irradiance_w_per_m2, [300, 200]);
-  assertEquals(result.rooms, [{ ...room(), maximum_power_w_by_slot: [800, 900] }]);
+  assertEquals("rooms" in result, false);
+  assertEquals("rooms" in db.row.forecast, false);
   // Planning zones are built from current preferences, never from the product.
   assertEquals(result.snapshot.thermal_zones, request.thermal_zones);
   assertEquals(request, requestBefore);
@@ -255,7 +256,7 @@ Deno.test("a corrected published price refreshes its forecast even with an earli
 Deno.test("forecast publication refuses misaligned data and read rejects malformed stored products", async () => {
   const db = new Store(), prepared = source();
   const invalid = await assertRejects(
-    () => storePreparedForecasts(db, "home-a", prepared, prices(), [{ ...room(), maximum_power_w_by_slot: [20] }]),
+    () => storePreparedForecasts(db, "home-a", prepared, { ...prices(), shadow_import_sek_per_kwh: [20] }),
     PreparedForecastError,
   );
   assertEquals(invalid.code, "prepared_forecast_invalid");
@@ -292,7 +293,7 @@ Deno.test("explicit absent server weather never adopts an incoming weather serie
   const result = await readPreparedForecasts(db, "home-a", request);
   assertEquals(result.snapshot.outdoor_temperature_c, undefined);
   assertEquals(result.snapshot.solar_irradiance_w_per_m2, null);
-  assertEquals(result.rooms, []);
+  assertEquals("rooms" in result, false);
   assertEquals(result.price_outlook.shadow_import_sek_per_kwh[0], 0);
 });
 
@@ -315,9 +316,9 @@ Deno.test("service forecast storage errors remain named failures", async () => {
 
 Deno.test("a forecast cache read failure still uses fresh prepared service data",async()=>{
  const db=new Store();db.readError={message:"temporarily unavailable"};const snapshot=source();
- const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at,rooms:[room()]};let prepared=0;
+ const ready={snapshot,price_outlook:prices(),issued_at:snapshot.captured_at};let prepared=0;
  const result=await readOrPrepareForecasts(db,"home-a",snapshot,async()=>{prepared++;return ready;});
- assertEquals(prepared,1);assertEquals(result.issued_at,ready.issued_at);assertEquals(result.price_outlook,ready.price_outlook);assertEquals(result.rooms.length,1);
+ assertEquals(prepared,1);assertEquals(result.issued_at,ready.issued_at);assertEquals(result.price_outlook,ready.price_outlook);assertEquals("rooms" in result,false);
 });
 
 Deno.test("an installation address edit cannot reuse weather cached for a different site",async()=>{
@@ -339,22 +340,77 @@ Deno.test("fresh preparation cannot erase resolved website settings or newer mea
   request.battery = {...request.battery!, soc: .7};
   delete older.value_settings;
   const result = await readOrPrepareForecasts(db, "home-a", request, async () => ({
-    snapshot: older, price_outlook: prices(), issued_at: request.captured_at, rooms: [room()],
+    snapshot: older, price_outlook: prices(), issued_at: request.captured_at,
   }));
   for (const key of ["value_settings", "comfort", "grid", "battery", "captured_at", "services", "device_models", "thermal_zones"] as const) {
     assertEquals(result.snapshot[key], request[key], key);
   }
-  assertEquals(result.rooms, [room()]);
+  assertEquals("rooms" in result, false);
 });
 
-Deno.test("a product published with finished zones still yields their room evidence, never their comfort", async () => {
+Deno.test("old products and injected calibration are rejected instead of selecting room models", async () => {
   const db = new Store();
-  await storePreparedForecasts(db, "home-a", source(), prices());
+  for (const forbidden of ["old_schema", "rooms", "thermal_zones"] as const) {
+    await storePreparedForecasts(db, "home-a", source(), prices());
+    assert(db.row);
+    const stored = db.row.forecast as unknown as Record<string, unknown>;
+    if (forbidden === "old_schema") delete stored.schema_version;
+    else stored[forbidden] = [room()];
+    const error = await assertRejects(() => readPreparedForecasts(db, "home-a", source()), PreparedForecastError);
+    assertEquals(error.code, "prepared_forecast_invalid");
+    let refreshed = 0;
+    const result = await readOrPrepareForecasts(db, "home-a", source(), async () => {
+      refreshed++;
+      await storePreparedForecasts(db, "home-a", source(), prices());
+    });
+    assertEquals(refreshed, 1);
+    assertEquals(db.row.forecast.schema_version, 2);
+    assertEquals("rooms" in result, false);
+    assertEquals("rooms" in db.row.forecast, false);
+  }
+});
+
+Deno.test("forecast publication cannot cache current calibration or equipment inventory", async () => {
+  const db = new Store(), snapshot = source();
+  const calibration = room();
+  snapshot.thermal_zones = [{ ...calibration, start_temperature_c: 20,
+    comfort_min_c: [21,21,21,21], target_c: [21,21,21,21], comfort_max_c: [22,22,22,22],
+    unplanned_power_w: [100,100,100,100] }];
+  await storePreparedForecasts(db, "home-a", snapshot, prices());
   assert(db.row);
-  // Before 20 October 2026 the product cached each room's Comfort routine and temperature.
-  db.row.forecast.thermal_zones = [{ ...room(), start_temperature_c: 20, comfort_min_c: [22, 22, 22, 22],
-    target_c: [22, 22, 22, 22], comfort_max_c: [22.5, 22.5, 22.5, 22.5], unplanned_power_w: [0, 0, 0, 0] }];
-  delete db.row.forecast.rooms;
-  const result = await readPreparedForecasts(db, "home-a", source());
-  assertEquals(result.rooms, [room()]);
+  for (const field of ["rooms", "thermal_zones", "device_models", "pool_model"]) {
+    assertEquals(field in db.row.forecast, false, field);
+  }
+  const fresh = structuredClone(snapshot);
+  fresh.thermal_zones![0].model!.gain_c_per_wh *= 2;
+  fresh.thermal_zones![0].rated_power_w = 1500;
+  const result = await readPreparedForecasts(db, "home-a", fresh);
+  assertEquals(result.snapshot.thermal_zones, fresh.thermal_zones);
+  assertEquals(result.snapshot.device_models, fresh.device_models);
+});
+
+Deno.test("fresh extended forecasts and cached reads align every forcing series identically", async () => {
+  const db = new Store(), request = source(), extended = structuredClone(request);
+  const last = extended.slots.at(-1)!;
+  for (let i = 1; i <= 4; i++) extended.slots.push({ ...last,
+    start: new Date(Date.parse(last.start) + i * 900_000).toISOString(), import_price_sek_per_kwh: null });
+  extended.outdoor_temperature_c = [-6,-5,-4,-3,-2,-1,0,1];
+  extended.solar_irradiance_w_per_m2 = [100,200,300,400,500,600,700,800];
+  extended.house_temperature_c = [20,21,22,23,24,25,26,27];
+  const outlook = { ...prices(), shadow_import_sek_per_kwh: [1.2,2.3,3.4,4.5,5,6,7,8] };
+  let preparations = 0;
+  const fresh = await readOrPrepareForecasts(db, "home-a", request, async () => {
+    preparations++;
+    await storePreparedForecasts(db, "home-a", extended, outlook);
+    return { snapshot: extended, price_outlook: prices(), issued_at: request.captured_at };
+  });
+  const cached = await readOrPrepareForecasts(db, "home-a", request, async () => { preparations++; });
+  assertEquals(preparations, 1);
+  for (const field of ["outdoor_temperature_c", "solar_irradiance_w_per_m2", "house_temperature_c"] as const) {
+    assertEquals(fresh.snapshot[field], extended[field]!.slice(0, request.slots.length), field);
+    assertEquals(cached.snapshot[field], fresh.snapshot[field], field);
+    assertEquals(fresh.snapshot[field]!.length, request.slots.length, field);
+  }
+  assertEquals(fresh.snapshot.slots, request.slots);
+  assertEquals(fresh.snapshot.device_models, request.device_models);
 });

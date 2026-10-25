@@ -1,5 +1,6 @@
-/** Published server forecasts. Admission only aligns this product; it never fits or fetches. */
+/** Cached forecast products only. Device evidence is captured separately from the model store. */
 import { z } from "zod";
+import type { ThermalZoneModel } from "./planner/models/room/thermal.ts";
 import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
 import type {
   OptimisationPlan,
@@ -12,39 +13,17 @@ const timestamp = z.string().refine(
   (value) => Number.isFinite(Date.parse(value)),
   "Invalid timestamp",
 );
-const roomModel = z.object({
-    gain_c_per_wh: finite,
-    cooling_constant_per_h: finite,
-    background_gain_c_per_h: finite,
-    solar_gain_c_per_h_per_wm2: finite.nullable().optional(),
-    solar_mean_w_per_m2: finite.nullable().optional(),
-    thermal_capacity_wh_per_c: finite,
-    heat_loss_w_per_c: finite,
-    time_constant_h: finite,
-    heating_rate_c_per_h: finite.nullable(),
-    r2: finite,
-    sample_count: finite,
-    residual_std_c: finite,
-    heat_lag_h: finite.nullable().optional(),
-    house_coupling_per_h: finite.nullable().optional(),
-    prediction_error_c: finite.nullable().optional(),
-  }).nullable();
-/**
- * What the product knows about a room: who heats it, how it responds and how
- * much it may draw. Comfort temperatures are the owner's choice and the room's
- * temperature is a measurement, so neither is cached here; both are read when
- * a plan is made (room-planning-zones.ts).
- */
-const room = z.object({
-  key: z.string(),
-  name: z.string(),
-  device_keys: z.string().array(),
-  model: roomModel,
-  rated_power_w: finite,
-  maximum_power_w_by_slot: finite.array(),
-});
-export type PreparedRoom = z.infer<typeof room>;
+/** Current inventory joined to a captured model; never stored in the forecast product. */
+export interface PreparedRoom {
+  key: string;
+  name: string;
+  device_keys: string[];
+  model: ThermalZoneModel | null;
+  rated_power_w: number;
+  maximum_power_w_by_slot: number[];
+}
 const forecastSchema = z.object({
+  schema_version: z.literal(2),
   planner_location: z.object({latitude:finite,longitude:finite}).nullable(),
   planning_warnings: z.object({ code: z.string(), scope: z.string(), severity: z.enum(["warning", "error"]),
     message: z.string(), consequence: z.string(), evidence: z.record(z.union([z.string(), finite, z.null()])).optional(),
@@ -63,10 +42,7 @@ const forecastSchema = z.object({
   outdoor_temperature_c: finite.nullable().array().nullable(),
   solar_irradiance_w_per_m2: finite.nullable().array().nullable(),
   house_temperature_c: finite.nullable().array().nullable().optional(),
-  rooms: room.array().optional(),
-  /** Products published before 20 October 2026 cached finished zones; their room evidence is still usable. */
-  thermal_zones: room.passthrough().array().optional(),
-});
+}).strict();
 export type PreparedEnergyForecast = z.infer<typeof forecastSchema>;
 interface StoredForecast {
   home_id: string;
@@ -101,9 +77,6 @@ export class PreparedForecastError extends Error {
 function invalid(detail: string): never {
   throw new PreparedForecastError("prepared_forecast_invalid", detail);
 }
-const roomsOf = (forecast: PreparedEnergyForecast): PreparedRoom[] =>
-  forecast.rooms ?? (forecast.thermal_zones ?? []).map(({ key, name, device_keys, model, rated_power_w, maximum_power_w_by_slot }) =>
-    ({ key, name, device_keys, model, rated_power_w, maximum_power_w_by_slot }));
 
 function parseForecast(raw: unknown): PreparedEnergyForecast {
   const parsed = forecastSchema.safeParse(raw);
@@ -129,9 +102,6 @@ function parseForecast(raw: unknown): PreparedEnergyForecast {
   coverage(forecast.outdoor_temperature_c, "outdoor temperature");
   coverage(forecast.solar_irradiance_w_per_m2, "irradiance");
   coverage(forecast.house_temperature_c ?? null, "house temperature");
-  for (const prepared of roomsOf(forecast)) {
-    coverage(prepared.maximum_power_w_by_slot, `room ${prepared.key}.maximum_power_w_by_slot`);
-  }
   return forecast;
 }
 
@@ -141,9 +111,9 @@ export async function storePreparedForecasts(
   homeId: string,
   preparedSnapshot: OptimisationSnapshot,
   resolvedOutlook: OptimisationPlan["price_outlook"],
-  rooms: PreparedRoom[] = [],
 ): Promise<void> {
   const forecast = parseForecast({
+    schema_version: 2,
     planning_warnings: preparedSnapshot.planning_warnings ?? [],
     planner_location: preparedSnapshot.location ?? null,
     slot_starts: preparedSnapshot.slots.map((slot) => slot.start),
@@ -153,7 +123,6 @@ export async function storePreparedForecasts(
     solar_irradiance_w_per_m2: preparedSnapshot.solar_irradiance_w_per_m2 ??
       null,
     house_temperature_c: preparedSnapshot.house_temperature_c ?? null,
-    rooms,
   });
   const { error } = await db.from(PREPARED_FORECAST_TABLE).upsert({
     home_id: homeId,
@@ -168,6 +137,28 @@ export async function storePreparedForecasts(
   }
 }
 
+/** Align a fresh forecast product without importing its calibration, inventory or measured state. */
+export function alignPreparedForecastSnapshot(snapshot: OptimisationSnapshot,
+  prepared: OptimisationSnapshot): OptimisationSnapshot {
+  const byTime = new Map(prepared.slots.map((slot, index) => [Date.parse(slot.start), index]));
+  const indices = snapshot.slots.map(slot => {
+    const index = byTime.get(Date.parse(slot.start));
+    if (index === undefined) throw new PreparedForecastError("prepared_forecast_coverage_missing",
+      `Prepared server forecast does not cover ${slot.start}`);
+    return index;
+  });
+  const align = <T>(values: readonly T[] | null | undefined) =>
+    values == null ? values : indices.map(index => values[index]);
+  return {
+    ...snapshot,
+    outdoor_temperature_c: align(prepared.outdoor_temperature_c) ?? undefined,
+    solar_irradiance_w_per_m2: align(prepared.solar_irradiance_w_per_m2),
+    house_temperature_c: align(prepared.house_temperature_c) ?? null,
+    sources: { ...snapshot.sources, outdoor_temperature: prepared.sources.outdoor_temperature },
+    planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, prepared.planning_warnings),
+  };
+}
+
 /**
  * Only exchanges that keep the accepted plan publish a forecast. A home whose
  * exchanges all plan, on a manual request or on prices newer than its plan, has
@@ -180,7 +171,7 @@ export async function readOrPrepareForecasts(
   db: PreparedForecastDatabase,
   homeId: string,
   snapshot: OptimisationSnapshot,
-  prepare: () => Promise<void | { snapshot: OptimisationSnapshot; price_outlook: OptimisationPlan["price_outlook"]; issued_at: string; rooms: PreparedRoom[] }>,
+  prepare: () => Promise<void | { snapshot: OptimisationSnapshot; price_outlook: OptimisationPlan["price_outlook"]; issued_at: string }>,
 ): ReturnType<typeof readPreparedForecasts> {
   try {
     return await readPreparedForecasts(db, homeId, snapshot);
@@ -199,17 +190,7 @@ export async function readOrPrepareForecasts(
   if (fresh) return {
     issued_at: fresh.issued_at,
     price_outlook: fresh.price_outlook,
-    rooms: fresh.rooms,
-    snapshot: {
-      ...snapshot,
-      // Preparation owns forecast fields, never current measurements, equipment,
-      // or the website's resolved comfort, wear, grid and operating choices.
-      outdoor_temperature_c: fresh.snapshot.outdoor_temperature_c,
-      solar_irradiance_w_per_m2: fresh.snapshot.solar_irradiance_w_per_m2,
-      house_temperature_c: fresh.snapshot.house_temperature_c ?? null,
-      sources: {...snapshot.sources, outdoor_temperature: fresh.snapshot.sources.outdoor_temperature},
-      planning_warnings: mergePlanningWarnings(snapshot.planning_warnings, fresh.snapshot.planning_warnings),
-    },
+    snapshot: alignPreparedForecastSnapshot(snapshot, fresh.snapshot),
   };
   return await readPreparedForecasts(db, homeId, snapshot);
 }
@@ -223,8 +204,6 @@ export async function readPreparedForecasts(
   snapshot: OptimisationSnapshot;
   price_outlook: OptimisationPlan["price_outlook"];
   issued_at: string;
-  /** Room evidence aligned to the snapshot; its planning zones are built from current preferences. */
-  rooms: PreparedRoom[];
 }> {
   const { data, error } = await db.from(PREPARED_FORECAST_TABLE).select(
     "issued_at,forecast",
@@ -287,10 +266,6 @@ export async function readPreparedForecasts(
   }
   return {
     issued_at: row.data.issued_at,
-    rooms: roomsOf(forecast).map((prepared) => ({
-      ...prepared,
-      maximum_power_w_by_slot: align(prepared.maximum_power_w_by_slot),
-    })),
     price_outlook: {
       ...forecast.price_outlook,
       shadow_import_sek_per_kwh: shadow,

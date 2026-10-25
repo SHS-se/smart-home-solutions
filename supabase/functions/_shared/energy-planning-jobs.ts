@@ -2,7 +2,8 @@ import { recordPlanningActivity } from './planning-log.ts';
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import type { ExecutionReplan } from "./execution-replan.ts";
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
-import { RULES_MODEL_VERSION, type PreparedRulesInput } from "./rules-planner.ts";
+import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
+import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, EnergyPlanningError } from "./rules-planning-client.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
@@ -41,6 +42,8 @@ export type PlanningReceipt = ReceiptIdentity & (
 export interface PlanningContext {
   request_id: string;
   integration_version: string | null;
+  model_capture_status?: "captured" | "unavailable";
+  model_revisions?: { rooms: Record<string, number>; pool: number | null };
   reference_plan_id: string | null;
   fixed_revision: number;
   observed_replan_request_id: string | null;
@@ -52,14 +55,14 @@ export interface PlanningContext {
 }
 interface PreparedPlanningJob {
   homeId: string; customerId: string; snapshotId: string; sourceHash: string;
-  input: PreparedRulesInput; context: PlanningContext;
+  input: CapturedRulesInput; context: PlanningContext;
 }
 interface ClaimedJob {
   id: string; home_id: string; customer_id: string; snapshot_id: string;
   protocol: number; fence: number;
 }
 interface LoadedJob {
-  input: PreparedRulesInput;
+  input: CapturedRulesInput;
   context: PlanningContext & { model_version: string };
 }
 export class PlanningJobError extends Error {
@@ -184,7 +187,7 @@ export class PlanningJobs {
         issued_at: generated.issued_at, status: generated.status, model_version: generated.model_version,
         // Which devices SHS was actually controlling when this plan was made. The
         // savings track record counts only months under control; nothing else records it.
-        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, operating_modes: snapshot.operating_scope?.modes ?? null },
+        summary: { ...compactPlanSummary(generated), calculation_ms: Math.round(performance.now() - loadAt), planning_trigger: loaded.context.planning_trigger, planning_job_id: job.id, model_revisions: loaded.context.model_revisions, model_capture_status: loaded.context.model_capture_status, operating_modes: snapshot.operating_scope?.modes ?? null },
         validation_errors: generated.validation_errors };
       for (const warning of generated.planning_warnings ?? []) {
         const evidence = {job_id:job.id,plan_id:generated.plan_id,...warning};

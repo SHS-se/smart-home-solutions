@@ -63,3 +63,16 @@ Deno.test("EV departure concepts remain absent from executable planner and trans
     assert(!/\b(?:departure|depart_at|departure_target_soc)\b/i.test(tree.read(p)!), `Forbidden EV departure concept in ${p}`);
   }
 });
+
+Deno.test("ingest and model capture cannot reach fitting or planning kernels", () => {
+  const entries = ["supabase/functions/energy-optimisation-ingest/index.ts", shared + "room-model-capture.ts",
+    shared + "device-model-store.ts", shared + "rules-planning-capture.ts"];
+  const forbidden = (path: string) => path.startsWith(learning) || path.startsWith(shared + "device-model-learning/") ||
+    /(?:rules-planner\.ts|rules-room-services\.ts|room-heating-schedule\.ts|planner-wasm\/(?:runtime|core|solver-bytes)\.ts)$/.test(path);
+  assertEquals([...reach(tree, entries)].filter(forbidden), []);
+  for (const accidental of ["./device-learning/room/fit.ts", "./rules-planner.ts"]) {
+    const infected = { ...tree, read: (p: string) => tree.read(p) + (p === shared + "room-model-capture.ts"
+      ? `\nimport "${accidental}";` : "") };
+    assert([...reach(infected, entries)].some(forbidden));
+  }
+});

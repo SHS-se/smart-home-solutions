@@ -29,13 +29,13 @@ Deno.test("worker traces cold and warm Rust solves separately from surrounding w
   const snapshot = dispatchedEvSnapshot();
   snapshot.slots = snapshot.slots.slice(0, 8);
   const input = rulesFixtureInput(snapshot);
-  const body = JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, input });
+  const body = JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input });
   const cold = await captureWorker(body);
   const warm = await captureWorker(body);
   const expected = JSON.parse(JSON.stringify(generateRulesPlan(input)));
   for (const { response, stages, messages } of [cold, warm]) {
     assertEquals(response.status, 200);
-    assertEquals(await response.json(), { protocol: RULES_PLANNING_PROTOCOL, request_id: "trace-request", result: expected });
+    assertEquals(await response.json(), { protocol: RULES_PLANNING_PROTOCOL, stage: "solve", request_id: "trace-request", result: expected });
     const active: string[] = [];
     for (const [i, event] of stages.entries()) {
       assertEquals(event.request_id, "trace-request");
@@ -75,7 +75,7 @@ Deno.test("worker records the active failing stage and preserves its error respo
   const snapshot = dispatchedEvSnapshot();
   snapshot.slots = snapshot.slots.slice(0, 8);
   const input = { ...rulesFixtureInput(snapshot), model_version: "obsolete" };
-  const rejected = await captureWorker(JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, input }));
+  const rejected = await captureWorker(JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input }));
   assertEquals(rejected.response.status, 400);
   assertEquals((await rejected.response.json()).detail, "Prepared rules planner version changed");
   assertEquals(rejected.stages.at(-1)?.stage, "plan_generation");

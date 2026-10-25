@@ -12,11 +12,8 @@ import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 /** One prepared household, one native selection, one authoritative publication.
  * This boundary has no database, history, source fetching or model fitting API.
  */
-import { sha256 } from "@noble/hashes/sha2.js";
-const hash = (value: string | Uint8Array) => Array.from(sha256(typeof value === "string" ? new TextEncoder().encode(value) : value), b => b.toString(16).padStart(2, "0")).join("");
-import artifact from "./planner-wasm/artifact.json" with { type: "json" };
 import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
-const { recipe, policy_manifest: policyManifest } = runtime;
+const { recipe } = runtime;
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter } from "./planner-wasm/core.ts";
 import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
@@ -39,7 +36,8 @@ import { assertHeldCommands, commandOwner, compileCommitments, unavailableOwner,
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
 
-export const RULES_MODEL_VERSION = `rules-planner-v20:${hash(JSON.stringify({ artifact, recipe, policyManifest }))}`;
+import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
+export { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -125,7 +123,14 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const effective = Date.parse(input.snapshot.captured_at);
   if (!finite(effective)) return fail("Invalid planning capture time");
   if (input.execution_replan && input.execution_replan.accepted_plan_id !== reference?.plan_id) return fail("Execution replan must name the retained accepted plan");
-  const isolated = isolateMeasurements(structuredClone(input.snapshot));
+  // Own the supplied basis once. All derived schedules belong to this call;
+  // copying them again at publication adds work without further isolation.
+  // The resolved outlook is authoritative here; the archive is not consumed.
+  ({ input, reference, approved } = structuredClone({ input: {
+    snapshot: input.snapshot, now: input.now, fixed_plan: input.fixed_plan,
+    execution_replan: input.execution_replan, resolved_price_outlook: input.resolved_price_outlook,
+  }, reference, approved }));
+  const isolated = isolateMeasurements(input.snapshot);
   const availability = new Map(parseExecutionChanges(isolated.execution_availability ?? []).map(change => [change.owner, change]));
   for (const change of input.execution_replan?.changes ?? []) {
     if (change.status === "recovered") availability.delete(change.owner);
@@ -145,8 +150,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   const count = snapshot.slots.length;
   if (Date.parse(snapshot.slots[0].start) > effective) return fail("Planning input must cover its capture interval");
-  const outlook = { ...input.resolved_price_outlook,
-    shadow_import_sek_per_kwh: input.resolved_price_outlook.shadow_import_sek_per_kwh.slice(offset) };
+  const outlook = { ...input.resolved_price_outlook!,
+    shadow_import_sek_per_kwh: input.resolved_price_outlook!.shadow_import_sek_per_kwh.slice(offset) };
   if (outlook.shadow_import_sek_per_kwh.length !== count || !outlook.shadow_import_sek_per_kwh.every(finite)) return fail("Resolved prices must cover every planning interval");
   const battery = snapshot.capabilities.battery ? snapshot.device_physics?.battery ?? snapshot.battery : null;
   if (snapshot.capabilities.battery && !battery) return fail("Battery capability requires a physical model and state");
@@ -346,12 +351,12 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
   };
   problem.end_credit = problemEndCredit(problem);
-  return structuredClone({ snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
+  return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
     members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
     boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
     boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
-    boiler_shortfall_minutes: {}, base_w: baseW });
+    boiler_shortfall_minutes: {}, base_w: baseW };
 }
 
 function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number): Record<string, DeviceCommand> {

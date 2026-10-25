@@ -5,7 +5,7 @@
 // only when a plan is generated and the stored model has aged past
 // REFIT_INTERVAL_HOURS, so each trained room refits about once a day.
 
-import { fitRoom, type RoomTrainingQuarter } from "./device-learning/room/fit.ts";
+import { fitRoomMeans, type RoomMeanQuarter, type RoomLearningEvidence } from "./device-learning/room/mean-observations.ts";
 import { fitThermalZoneFromMoments, type ThermalFitResult, type ThermalMoments } from "./device-learning/room/regression.ts";
 import { projectZoneTemperature, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
@@ -40,24 +40,7 @@ export function roomRefitsDue(nowMs: number, attempts: readonly ZoneFitAttempt[]
  */
 export const TRAINING_WINDOW_DAYS = 21;
 
-/** Nullable statistical evidence never removes the room's comfort service. */
-export function readThermalModel(row: Record<string, unknown> | undefined): ThermalZoneModel | null {
-  if (!row) return null;
-  const number = (key: string) => row[key] == null ? NaN : Number(row[key]);
-  const optional = (key: string) => row[key] == null ? null : Number(row[key]);
-  const model: ThermalZoneModel = {
-    gain_c_per_wh: number("gain_c_per_wh"), cooling_constant_per_h: number("cooling_constant_per_h"),
-    background_gain_c_per_h: number("background_gain_c_per_h"),
-    thermal_capacity_wh_per_c: number("thermal_capacity_wh_per_c"), heat_loss_w_per_c: number("heat_loss_w_per_c"),
-    time_constant_h: number("time_constant_h"), heating_rate_c_per_h: optional("heating_rate_c_per_h"),
-    solar_gain_c_per_h_per_wm2: optional("solar_gain_c_per_h_per_wm2"), solar_mean_w_per_m2: optional("solar_mean_w_per_m2"),
-    r2: number("r2"), sample_count: number("sample_count"), residual_std_c: number("residual_std_c"),
-    heat_lag_h: optional("heat_lag_h"), house_coupling_per_h: optional("house_coupling_per_h"),
-    prediction_error_c: optional("prediction_error_c"),
-  };
-  return Object.values(model).every(v => v === null || Number.isFinite(v)) && model.gain_c_per_wh > 0
-    && model.cooling_constant_per_h >= 0 ? model : null;
-}
+export { readThermalModel } from "./planner/models/room/read-model.ts";
 
 /** One row of `get_energy_thermal_training_moments`. */
 export interface ThermalMomentRow extends ThermalMoments {
@@ -69,7 +52,7 @@ export interface ThermalMomentRow extends ThermalMoments {
 export interface ZoneFit {
   room_key: string;
   room_name: string;
-  result: ThermalFitResult;
+  result: ThermalFitResult & { learning_evidence?: RoomLearningEvidence };
 }
 
 export const fitZones = (rows: ThermalMomentRow[]): ZoneFit[] =>
@@ -96,9 +79,9 @@ export interface ThermalQuarterRow {
 const reading = (value: unknown): number | null =>
   value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
 
-/** Fit every room from its quarters: the house shape where it predicts better. */
+/** Recorder temperatures are interval means; select each room by held-out transitions. */
 export function fitRoomsFromQuarters(rows: ThermalQuarterRow[]): ZoneFit[] {
-  const rooms = new Map<string, { name: string; power: number | null; quarters: RoomTrainingQuarter[] }>();
+  const rooms = new Map<string, { name: string; power: number | null; quarters: RoomMeanQuarter[] }>();
   for (const row of rows) {
     const start = Date.parse(row.start_ts);
     if (!Number.isFinite(start)) continue;
@@ -106,12 +89,12 @@ export function fitRoomsFromQuarters(rows: ThermalQuarterRow[]): ZoneFit[] {
       { name: row.room_name, power: reading(row.active_power_w), quarters: [] };
     room.quarters.push({ start_ms: start, room_c: reading(row.room_temperature_c),
       outdoor_c: reading(row.outdoor_temperature_c), house_c: reading(row.house_temperature_c),
-      solar_w_per_m2: reading(row.solar_w_per_m2), heat_w: Math.max(0, reading(row.heat_w) ?? 0),
+      solar_w_per_m2: reading(row.solar_w_per_m2), heat_w: reading(row.heat_w),
       cooling: row.cooling === true });
     rooms.set(row.room_key, room);
   }
   return [...rooms].map(([key, room]) => ({ room_key: key, room_name: room.name,
-    result: fitRoom(room.quarters, room.power) }));
+    result: fitRoomMeans(room.quarters, room.power) }));
 }
 
 /** Rows ready for `energy_optimisation_zone_models`. */
@@ -138,7 +121,8 @@ export const zoneModelRows = (
         trained: false,
         rejection_reason: result.reason,
         last_attempted_at: new Date().toISOString(),
-        last_fit_attempt: { status: "unidentified", issues: [result.reason] },
+        last_fit_attempt: { status: "unidentified", issues: [result.reason],
+          ...(result.learning_evidence ? { learning: result.learning_evidence } : {}) },
         gain_c_per_wh: null,
         cooling_constant_per_h: null,
         background_gain_c_per_h: null,
@@ -167,7 +151,8 @@ export const zoneModelRows = (
       trained: true,
       rejection_reason: null,
       last_attempted_at: new Date().toISOString(),
-      last_fit_attempt: { status: result.warnings?.length ? "limited" : "fitted", issues: result.warnings ?? [] },
+      last_fit_attempt: { status: result.warnings?.length ? "limited" : "fitted", issues: result.warnings ?? [],
+        ...(result.learning_evidence ? { learning: result.learning_evidence } : {}) },
       gain_c_per_wh: result.model.gain_c_per_wh,
       cooling_constant_per_h: result.model.cooling_constant_per_h,
       background_gain_c_per_h: result.model.background_gain_c_per_h,

@@ -1,6 +1,8 @@
+import { cpuMixedRoomPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
 import { assertEquals, assertRejects } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
-import { prepareRulesPlanningInput } from "./rules-planner.ts";
+import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
+import { prepareCapturedRulesInput, executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
@@ -15,11 +17,11 @@ function input() {
   snapshot.slots = snapshot.slots.slice(0, 8);
   snapshot.captured_at = snapshot.slots[0].start;
   snapshot.comfort = { ev: { target_km: 300 } };
-  return prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at,
+  return captureRulesPlanningInput({ snapshot, now: snapshot.captured_at,
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1,
       level_sek_per_kwh: 1, shadow_import_sek_per_kwh: snapshot.slots.map(() => 1) } }, null, resolveRulePolicy());
 }
-Deno.test("one-shot transport returns the complete rules plan in one authenticated worker call", async () => {
+Deno.test("transport prepares and solves the same capture in separate authenticated worker calls", async () => {
   let calls = 0;
   const fetcher: typeof fetch = (url, init) => {
     calls++;
@@ -28,7 +30,8 @@ Deno.test("one-shot transport returns the complete rules plan in one authenticat
   };
   const prepared = input();
   const result = await generateRemoteRulesPlan(prepared, connection, fetcher);
-  assertEquals(calls, 1);
+  assertEquals(calls, 2);
+  assertEquals(result, JSON.parse(JSON.stringify(executeRulesPlanning(prepared))));
   assertEquals(result.plan.snapshot_id, prepared.snapshot.snapshot_id);
   assertEquals(result.plan.plans.priority.slots.length, 8);
 });
@@ -62,14 +65,69 @@ Deno.test("private TEST probe executes the complete handler and returns an outpu
   const probe = createPlannerProbe(SOLVER_BASE64, artifact, runtime.recipe, "private", "https://vxqpgbzseckgceopitpm.supabase.co");
   const response = await probe(new Request("https://probe.test", { method: "POST",
     headers: { authorization: "Bearer private" },
-    body: JSON.stringify({ mode: "handler", protocol: RULES_PLANNING_PROTOCOL, input: input() }) }));
+    body: JSON.stringify({ mode: "handler", stage: "solve", protocol: RULES_PLANNING_PROTOCOL, input: prepareCapturedRulesInput(input()) }) }));
   assertEquals(response.status, 200);
   const result = await response.json();
   assertEquals(result.slots, 8);
   assertEquals(result.build, artifact);
   const local = await handleEnergyPlanningStep(new Request("https://probe.test/plan", { method: "POST",
     headers: { "x-shs-planning-secret": "private", "x-request-id": "handler-probe" },
-    body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, input: input() }) }), "private");
+    body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input: prepareCapturedRulesInput(input()) }) }), "private");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify((await local.json()).result)));
   assertEquals(result.result_sha256, Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join(""));
+});
+
+Deno.test("transport rejects crossed stage responses and never solves a different capture", async () => {
+  for (const corrupt of ["stage", "snapshot", "model"] as const) {
+    let calls = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      calls++;
+      const response = await handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
+      const body = await response.json();
+      if (corrupt === "stage") body.stage = "solve";
+      else if (corrupt === "snapshot") body.prepared.snapshot.snapshot_id = "other";
+      else body.prepared.model_version = "other";
+      return Response.json(body);
+    };
+    await assertRejects(() => generateRemoteRulesPlan(input(), connection, fetcher), Error,
+      corrupt === "stage" ? "mismatch" : "invalid prepared input");
+    assertEquals(calls, 1);
+  }
+});
+
+Deno.test("transport shares its deadline across preparation and solve without publishing partial work", async () => {
+  let calls = 0;
+  const deadline = performance.now() + 30;
+  const fetcher: typeof fetch = async (url, init) => {
+    calls++;
+    const response = await handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
+    // A valid but delayed prepare reply cannot renew the request's deadline.
+    await new Promise(resolve => setTimeout(resolve, 40));
+    return response;
+  };
+  await assertRejects(() => generateRemoteRulesPlan(input(), { ...connection, deadline }, fetcher), Error, "deadline");
+  assertEquals(calls, 1);
+});
+
+Deno.test("separate worker stages preserve mixed-room, household and hot-water ordering exactly", async () => {
+  const source = cpuMixedRoomPlanningSource();
+  const capture = captureRulesPlanningInput(source, null, resolveRulePolicy());
+  const before = structuredClone(capture);
+  const expected = executeRulesPlanning(capture);
+  const phases: string[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    const submitted = JSON.parse(String(init?.body));
+    phases.push(submitted.stage);
+    if (submitted.stage === "prepare") {
+      assertEquals("problem" in submitted.input, false);
+      assertEquals("rooms" in submitted.input, false);
+    } else {
+      assertEquals(Object.keys(submitted.input.rooms.commands).length, 4);
+    }
+    return await handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
+  };
+  const result = await generateRemoteRulesPlan(capture, connection, fetcher);
+  assertEquals(phases, ["prepare", "solve"]);
+  assertEquals(result, JSON.parse(JSON.stringify(expected)));
+  assertEquals(capture, before);
 });

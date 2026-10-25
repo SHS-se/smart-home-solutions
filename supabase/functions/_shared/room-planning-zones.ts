@@ -1,11 +1,6 @@
-// Each room's planning input, built when a plan is made.
-//
-// The prepared forecast caches what changes slowly about a room: which
-// devices heat it, its fitted model and how much it may draw. What the owner
-// wants (the Comfort routine and its temperatures) and where the room is now
-// (its temperature, and the heat its floor still holds) are read at planning
-// time instead. A cached Comfort temperature planned a bathroom toward 22 °C
-// for a plan made seconds after its owner had lowered it to 21 °C.
+// Each room's planning input joins one captured model revision to current
+// equipment, comfort settings, measured temperature and retained heat. Forecast
+// caches supply weather and house forcing; they never choose a room model.
 
 import {
   buildComfortForecast,

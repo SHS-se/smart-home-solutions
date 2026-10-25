@@ -17,6 +17,9 @@ PY
   supabase secrets set --project-ref "$PROJECT_REF" --env-file "$SECRET_DIR/env"
 fi
 
+supabase functions deploy energy-device-learning --project-ref "$PROJECT_REF" --use-api --yes
+deno run --allow-run=supabase --allow-net scripts/configure-device-learning.ts "$PROJECT_REF"
+
 supabase functions deploy energy-optimisation-plan-step --project-ref "$PROJECT_REF" --use-api --yes
 
 # The retired checkpoint endpoint must disappear from existing deployments too.

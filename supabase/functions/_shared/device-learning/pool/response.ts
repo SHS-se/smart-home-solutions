@@ -1,6 +1,7 @@
 // Learn the response of the WATER READING to compressor electricity. The
 // reservoir is an effective delayed contribution: these observations cannot
 // distinguish water mixing, intermediate thermal storage and sensor filtering.
+import { poolQuarterMean, type PoolObservation } from "./observations.ts";
 import { solveLinearSystem } from "../linear-algebra.ts";
 import type { PoolResponseSample } from "./thermal.ts";
 import { type PoolDynamics } from "../../planner/pool-response.ts";
@@ -234,6 +235,7 @@ function responseCandidate(
   groups: PoolResponseSample[][],
   tau: number,
   rate: number | null,
+  observation: PoolObservation,
 ): Candidate | null {
   const kernel = rate === null ? null : new PoolSourceKernel(1, tau, {
     recovery_rate_per_h: rate,
@@ -244,9 +246,19 @@ function responseCandidate(
     let pending = 0, released = 0;
     let raw = { water_c: 0, pending_heat_kwh: 0, source_depletion_kwh: 0 };
     let initial = { water_c: 0, pending_heat_kwh: 0, source_depletion_kwh: 1 };
-    const releases = [[0, 0, 0]], decays = [tau ? 1 : 0];
+    const releases = observation === "quarter_mean" ? [] : [[0, 0, 0]], decays: number[] = observation === "quarter_mean" ? [] : [tau ? 1 : 0];
+    let initialDecay = tau ? 1 : 0;
     for (const sample of samples) {
       const power = sample.electrical_kwh / HOURS;
+      if (observation === "quarter_mean") {
+        const mean = poolQuarterMean(released, pending, 0, power, HOURS, 1, tau, 1, 0, null);
+        const rawMean = kernel ? poolQuarterMean(raw.water_c, raw.pending_heat_kwh, raw.source_depletion_kwh,
+          power, HOURS, 1, tau, 1, 0, kernel.source) : 0;
+        const initialMean = kernel ? poolQuarterMean(initial.water_c, initial.pending_heat_kwh, initial.source_depletion_kwh,
+          power, HOURS, 1, tau, 1, 0, kernel.source) : 0;
+        releases.push([mean, kernel ? mean - rawMean : 0, kernel ? rawMean - initialMean : 0]);
+        decays.push(tau ? initialDecay * tau / HOURS * (1 - a) : 0);
+      }
       const next = tau ? pending * a + power * tau * (1 - a) : 0;
       released += pending + sample.electrical_kwh - next;
       pending = next;
@@ -270,16 +282,17 @@ function responseCandidate(
           0,
         );
       }
-      releases.push([
+      if (observation === "interval_start") releases.push([
         released,
         kernel ? released - raw.water_c : 0,
         kernel ? raw.water_c - initial.water_c : 0,
       ]);
-      decays.push(decays.at(-1)! * a);
+      initialDecay *= a;
+      if (observation === "interval_start") decays.push(initialDecay);
     }
     const rows: Row[] = [];
     for (const width of [1, 4]) {
-      for (let i = 0; i + width <= samples.length; i++) {
+      for (let i = 0; i + width < releases.length; i++) {
         const v = releases[i + width].map((x, j) => x - releases[i][j]);
         rows.push({
           x: [v[0], -v[1], -width * HOURS],
@@ -301,7 +314,7 @@ function responseCandidate(
       sourceDecay: rate === null
         ? 0
         : sourceDecay(rate, samples.length * HOURS),
-      decay: decays.at(-1)!,
+      decay: initialDecay,
       initial: 0,
       initialSource: 0,
     };
@@ -349,6 +362,7 @@ export function fitPoolDynamics(
   samples: readonly PoolResponseSample[],
   capacityKwhPerC: number,
   hypothesis: "recovering_source" | "constant_gain" = "recovering_source",
+  observation: PoolObservation = "interval_start",
 ): PoolDynamicsFit {
   const groups = segments(samples),
     count = groups.reduce((n, g) => n + g.length, 0);
@@ -372,7 +386,7 @@ export function fitPoolDynamics(
     const key = `${tau}:${rate}`;
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const fit = responseCandidate(groups, tau, rate);
+    const fit = responseCandidate(groups, tau, rate, observation);
     cache.set(key, fit?.mse ?? Infinity);
     if (fit && (!best || fit.mse < best.mse - 1e-18)) best = fit;
     return fit?.mse ?? Infinity;
@@ -471,7 +485,7 @@ export function fitPoolDynamics(
   const profiles = (hypothesis === "constant_gain" ? [] : rates).map((rate) => ({
     recovery_rate_per_h: rate,
     rmse_c: Math.sqrt(
-      responseCandidate(groups, fit.tau, rate)?.mse ?? Infinity,
+      responseCandidate(groups, fit.tau, rate, observation)?.mse ?? Infinity,
     ),
   })).filter((p) => Number.isFinite(p.rmse_c));
   return {
