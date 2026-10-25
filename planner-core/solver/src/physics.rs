@@ -47,6 +47,17 @@ pub(crate) fn projected_hours(s: &Slot) -> f64 {
     s.hours + s.start_seconds.min(0.0) / 3600.0
 }
 
+fn pool_conditions(p: &Problem, i: usize, state: &State) -> PoolConditions {
+    PoolConditions {
+        source_depletion_kwh: state.pool_source_depletion_kwh,
+        water_c: state.pool,
+        pending_heat_kwh: state.pool_pending_heat_kwh,
+        outdoor_c: p.slots[i].outdoor_c,
+        seconds: projected_hours(&p.slots[i]) * 3600.0,
+        stop_c: p.pool_stop_c,
+    }
+}
+
 /// An independently commanded auxiliary keeps drawing when the thermal owner
 /// is off. Thermal state and compressor startup remain owned by the pool model.
 pub(crate) fn pool_auxiliary_w(s: &Slot, on: bool, coupled_w: f64) -> f64 {
@@ -112,7 +123,6 @@ fn transition(
     }
     let s = &p.slots[i];
     let hours = projected_hours(s);
-    let seconds = hours * 3600.0;
     if command.charge_limit_w < 0.0 || command.discharge_limit_w < 0.0 {
         return Err("negative_native_power_limit".into());
     }
@@ -135,14 +145,7 @@ fn transition(
                 store,
                 state.heater,
                 command.pool_on,
-                shs_planner_models::PoolConditions {
-                    source_depletion_kwh: state.pool_source_depletion_kwh,
-                    water_c: state.pool,
-                    pending_heat_kwh: state.pool_pending_heat_kwh,
-                    outdoor_c: s.outdoor_c,
-                    seconds,
-                    stop_c: p.pool_stop_c,
-                },
+                pool_conditions(p, i, state),
             )
         });
     let pool_auxiliary_w = pool_auxiliary_w(
@@ -596,6 +599,19 @@ impl<'p> Projector<'p> {
                     .transition(state, on, conditions)
             },
         )
+    }
+    /// Proposals and their subsequent candidate steps use the same physical
+    /// inputs and exact memo. This grants no permission or scoring authority.
+    pub(crate) fn pool_transition(
+        &mut self,
+        i: usize,
+        state: &State,
+        on: bool,
+    ) -> Option<PoolTransition> {
+        let conditions = pool_conditions(self.problem, i, state);
+        self.pool
+            .as_mut()
+            .map(|pool| pool.transition(state.heater, on, conditions))
     }
     #[cfg(test)]
     pub(crate) fn thermal_hits(&self) -> usize {

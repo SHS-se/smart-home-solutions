@@ -97,7 +97,25 @@ fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f
     levels.dedup();
     levels
 }
-fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> {
+fn actions(
+    p: &Problem,
+    index: &Index,
+    i: usize,
+    label: &Label,
+    projector: &mut physics::Projector,
+) -> Vec<Command> {
+    actions_with_pool(p, index, i, label, |on| {
+        projector.pool_transition(i, &label.state, on)
+    })
+}
+
+fn actions_with_pool(
+    p: &Problem,
+    index: &Index,
+    i: usize,
+    label: &Label,
+    mut pool_step: impl FnMut(bool) -> Option<shs_planner_models::PoolTransition>,
+) -> Vec<Command> {
     if let Some(command) = commitments::hold(p, i).full() {
         return vec![command.clone()];
     }
@@ -117,24 +135,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
                 .max(1)
                 .min(p.slots.len() - i) as f64;
         policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && p.heater
-                .as_ref()
-                .unwrap()
-                .pool_transition(
-                    store,
-                    label.state.heater,
-                    false,
-                    shs_planner_models::PoolConditions {
-                        source_depletion_kwh: label.state.pool_source_depletion_kwh,
-                        water_c: label.state.pool,
-                        pending_heat_kwh: label.state.pool_pending_heat_kwh,
-                        outdoor_c: s.outdoor_c,
-                        seconds: h * 3600.0,
-                        stop_c: p.pool_stop_c,
-                    },
-                )
-                .water_c
-                < pool_goal + coast
+            && pool_step(false).unwrap().water_c < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut out = Vec::new();
@@ -145,25 +146,7 @@ fn actions(p: &Problem, index: &Index, i: usize, label: &Label) -> Vec<Command> 
         {
             continue;
         }
-        let pool = p
-            .heater
-            .as_ref()
-            .zip(p.pool_store.as_ref())
-            .map(|(heater, store)| {
-                heater.pool_transition(
-                    store,
-                    label.state.heater,
-                    on,
-                    shs_planner_models::PoolConditions {
-                        source_depletion_kwh: label.state.pool_source_depletion_kwh,
-                        water_c: label.state.pool,
-                        pending_heat_kwh: label.state.pool_pending_heat_kwh,
-                        outdoor_c: s.outdoor_c,
-                        seconds: h * 3600.0,
-                        stop_c: p.pool_stop_c,
-                    },
-                )
-            });
+        let pool = pool_step(on);
         let pool_demand = physics::pool_demand(p, s, on, label.state.pool, pool.as_ref());
         let household_w = s.base_w + pool_demand.average_w - s.solar_w;
         let admission_w = s.base_w + pool_demand.reservation_w - s.solar_w;
@@ -305,7 +288,7 @@ fn construct(
             if !work.spend(work.unit_cost * (2 * 5 * 7)) {
                 return Err("work_grant_cannot_complete_construction".into());
             }
-            for c in actions(p, index, i, l) {
+            for c in actions(p, index, i, l, &mut projector) {
                 if !work.spend(work.unit_cost + 128) {
                     return Err("work_grant_cannot_complete_construction".into());
                 }
@@ -1369,13 +1352,91 @@ mod forecast_tests {
             s.base_w = 1000.0;
         }
         let index = policy::index(&p, &mut work(&p)).unwrap();
-        let choices = actions(&p, &index, 0, &initial_label(&p));
+        let choices = actions(
+            &p,
+            &index,
+            0,
+            &initial_label(&p),
+            &mut physics::Projector::new(&p),
+        );
         assert_eq!(choices.len(), p.recipe.max_actions);
         for pool_on in [false, true] {
             assert!(choices
                 .iter()
                 .any(|c| c.pool_on == pool_on
                     && c.ev_amps == p.charger.as_ref().unwrap().max_current_a));
+        }
+    }
+    #[test]
+    fn action_memo_preserves_direct_choices_at_thermostat_and_startup_boundaries() {
+        use shs_planner_models::{PoolConditions, Response, SourceModel, StartupPoint};
+        for source in [false, true] {
+            for delayed in [false, true] {
+                let mut p = witnesses::tests::problem(24);
+                p.targets.ev_km = Some(250.0);
+                p.slots[0].start_seconds = -300.0;
+                p.slots[0].base_w = 1000.0;
+                p.pool_stop_c = Some(30.0001);
+                p.pool_store.as_mut().unwrap().response_time_constant_h =
+                    if delayed { 0.7 } else { 0.0 };
+                if source {
+                    p.heater.as_mut().unwrap().source = Some(SourceModel {
+                        recovery_rate_per_h: 0.15,
+                        heat_loss_per_kwh: 0.02,
+                    });
+                }
+                for startup in [false, true] {
+                    p.heater.as_mut().unwrap().response = if startup {
+                        Response::Bergvarme {
+                            startup: vec![
+                                StartupPoint {
+                                    elapsed_seconds: 0.0,
+                                    electric_fraction: 0.0,
+                                    heat_fraction: 0.0,
+                                },
+                                StartupPoint {
+                                    elapsed_seconds: 600.0,
+                                    electric_fraction: 1.0,
+                                    heat_fraction: 1.0,
+                                },
+                            ],
+                        }
+                    } else {
+                        Response::Steady
+                    };
+                    let index = policy::index(&p, &mut work(&p)).unwrap();
+                    let mut projector = physics::Projector::new(&p);
+                    for _ in 0..2 {
+                        for water in [29.0, 30.0, 30.0001, 30.001] {
+                            let mut label = initial_label(&p);
+                            label.state.pool = water;
+                            label.state.pool_pending_heat_kwh = 0.3;
+                            label.state.pool_source_depletion_kwh = 3.0;
+                            let direct = actions_with_pool(&p, &index, 0, &label, |on| {
+                                Some(p.heater.as_ref().unwrap().pool_transition(
+                                    p.pool_store.as_ref().unwrap(),
+                                    label.state.heater,
+                                    on,
+                                    PoolConditions {
+                                        source_depletion_kwh: 3.0,
+                                        water_c: water,
+                                        pending_heat_kwh: 0.3,
+                                        outdoor_c: p.slots[0].outdoor_c,
+                                        seconds: 600.0,
+                                        stop_c: Some(30.0001),
+                                    },
+                                ))
+                            });
+                            let cached = actions(&p, &index, 0, &label, &mut projector);
+                            assert_eq!(
+                                serde_json::to_vec(&cached).unwrap(),
+                                serde_json::to_vec(&direct).unwrap()
+                            );
+                        }
+                    }
+                    assert!(projector.thermal_hits() > 0);
+                }
+            }
         }
     }
     #[test]
@@ -1442,7 +1503,13 @@ mod forecast_tests {
                 _ => 14,
             };
             let index = policy::index(&p, &mut work(&p)).unwrap();
-            let choices = actions(&p, &index, 0, &initial_label(&p));
+            let choices = actions(
+                &p,
+                &index,
+                0,
+                &initial_label(&p),
+                &mut physics::Projector::new(&p),
+            );
             assert!(choices.len() <= p.recipe.max_actions);
             let c = choices
                 .iter()
@@ -1543,10 +1610,16 @@ mod forecast_tests {
         p.slots[0].base_w = 1000.0;
         p.targets.ev_km = Some(100.0);
         let index = policy::index(&p, &mut work(&p)).unwrap();
-        let mut c = actions(&p, &index, 0, &initial_label(&p))
-            .into_iter()
-            .find(|c| !c.pool_on && c.ev_amps == 6 && c.battery == Operation::SelfConsumption)
-            .unwrap();
+        let mut c = actions(
+            &p,
+            &index,
+            0,
+            &initial_label(&p),
+            &mut physics::Projector::new(&p),
+        )
+        .into_iter()
+        .find(|c| !c.pool_on && c.ev_amps == 6 && c.battery == Operation::SelfConsumption)
+        .unwrap();
         assert_eq!(c.discharge_limit_w, 4000.0);
         assert_eq!(
             physics::projection(&p, &[c.clone()]).unwrap()[0].discharge_w,

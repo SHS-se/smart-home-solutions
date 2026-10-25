@@ -234,6 +234,11 @@ pool transition endpoints and room trajectories whose thermostat branch decision
 are unchanged. They preserve action enumeration, scoring and tie order. Full
 preparation and plan comparisons, native threshold tests and hosted checks cover
 these optimizations; no search-budget reduction is used to meet CPU limits.
+Construction proposals and their candidate transitions use the same
+construction-owned physical projector and identical pool conditions. This avoids
+recomputing source recovery while proposing intermediate EV currents. Exact
+action-boundary tests and complete native-output comparisons preserve candidate
+order, work counters and scores; final certification still uses the direct model.
 Pool calibration prepares each candidate's fixed observation coefficients once
 and shares the identical constant-family search prefix when comparing families.
 The candidate grid, chronological validation, selection and diagnostics remain
