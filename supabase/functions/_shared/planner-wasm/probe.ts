@@ -1,7 +1,7 @@
 import { builderRecipe } from "./ready-problem.ts";
 import { createWasmPlanner } from "./core.ts";
 import { readyProblemSchema } from "./ready-schema.ts";
-import { handleEnergyPlanningStep } from "../energy-planning-worker.ts";
+import { handleEnergyPlanningStep, MAX_PLANNING_BODY_BYTES } from "../energy-planning-worker.ts";
 import { RULES_PLANNING_PROTOCOL } from "../rules-planning-client.ts";
 
 interface Build {
@@ -44,7 +44,8 @@ export function createPlannerProbe(
     if (request.method !== "POST") {
       return Response.json({ error: "post_required" }, { status: 405 });
     }
-    // Operational bounds for this diagnostic fixture lane, not forecast validity.
+    // Match the worker transport so full multi-room prepared captures can be
+    // qualified here. This is an operational bound, not forecast validity.
     const reader = request.body?.getReader();
     if (!reader) {
       return Response.json({ error: "ready_problem_required" }, {
@@ -57,7 +58,7 @@ export function createPlannerProbe(
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 256_000) {
+      if (size > MAX_PLANNING_BODY_BYTES) {
         await reader.cancel();
         return Response.json({ error: "probe_payload_too_large" }, {
           status: 413,

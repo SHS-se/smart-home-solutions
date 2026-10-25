@@ -50,3 +50,26 @@ export function roomExecution(
   );
   return temperature;
 }
+
+/** Independent idle-thermostat fixture: 1180/1220 W while heating; 3 W idle,
+ * 300 W unconditional consumption and a separate 4800 W reservation spike. */
+export function roomOperatingPower(model: {
+  active_power_w: number | null;
+  forecast_w_by_slot: number[];
+  thermostat?: { hvac_action: string };
+  inference: {
+    on_power?: { expected_w: number | null; intervals: number; source: string };
+  };
+}) {
+  assertAlmostEquals(
+    model.active_power_w!,
+    1200,
+    1e-6,
+    "room physics must receive measured ON mean",
+  );
+  assertEquals(model.thermostat?.hvac_action, "idle");
+  assert(model.forecast_w_by_slot.every((w) => Math.abs(w - 300) < 1e-6));
+  assertAlmostEquals(model.inference.on_power!.expected_w!, 1200, 1e-6);
+  assertEquals(model.inference.on_power!.intervals, 2);
+  assertEquals(model.inference.on_power!.source, "recorded_on_intervals");
+}

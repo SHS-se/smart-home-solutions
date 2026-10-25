@@ -10,6 +10,7 @@ import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/ru
 import {
   electricalOpening,
   roomExecution,
+  roomOperatingPower,
 } from "../tests/planner-contracts/integration-oracles.ts";
 import { fitRoom } from "../supabase/functions/_shared/device-learning/room/fit.ts";
 import { roomObservations } from "../tests/planner-contracts/synthetic.ts";
@@ -285,6 +286,85 @@ for (const amps of [12, 15]) {
     executed_quarters: consumed.relay_states.length,
     final_temperature_c: temperature,
     native_command_count: consumed.commands.length,
+  });
+}
+{
+  const produced = JSON.parse(
+    await command(python, [bridge, haRepo, "produce-thermostat"]),
+  );
+  const snapshot: OptimisationSnapshot = produced.snapshot;
+  const heater = snapshot.device_models[0];
+  roomOperatingPower(heater as Parameters<typeof roomOperatingPower>[0]);
+  const fit = fitRoom(roomObservations(), 1200);
+  assert(fit.ok);
+  snapshot.outdoor_temperature_c = snapshot.slots.map(() => 10);
+  snapshot.thermal_zones = [{
+    key: "synthetic_room",
+    name: "Synthetic room",
+    device_keys: [heater.key],
+    model: fit.model,
+    start_temperature_c: 18,
+    rated_power_w: heater.active_power_w!,
+    comfort_min_c: snapshot.slots.map(() => 20),
+    target_c: snapshot.slots.map(() => 20),
+    comfort_max_c: snapshot.slots.map(() => 20.5),
+    maximum_power_w_by_slot: snapshot.slots.map(() => heater.active_power_w!),
+    unplanned_power_w: heater.forecast_w_by_slot,
+  }];
+  const plan = generateRulesPlan(
+    prepareRulesPlanningInput(
+      {
+        snapshot,
+        now: snapshot.captured_at,
+        price_archive: [],
+        resolved_price_outlook: {
+          shaped: true,
+          observed_days: 1,
+          effective_days: 1,
+          level_sek_per_kwh: .2,
+          shadow_import_sek_per_kwh: snapshot.slots.map((s) =>
+            s.import_price_sek_per_kwh!
+          ),
+        },
+      },
+      null,
+      resolveRulePolicy(),
+    ),
+  ).plan;
+  const consumed = JSON.parse(
+    await command(python, [bridge, haRepo, "consume"], {
+      plan,
+      options: produced.options,
+      room: "thermostat",
+    }),
+  );
+  assertEquals(consumed.admitted, true);
+  assert(
+    consumed.commands.some((c: { domain: string; service: string }) =>
+      c.domain === "climate" && c.service === "set_temperature"
+    ),
+  );
+  const scheduled =
+    plan.execution_plan!.plans.priority.slots[0].device_commands[heater.key];
+  assert(scheduled.type === "setpoint");
+  assertEquals(
+    consumed.commands.find((c: { domain: string; service: string }) =>
+      c.domain === "climate" && c.service === "set_temperature"
+    ).value,
+    scheduled.target_c,
+  );
+  const projection = plan.execution_plan!.thermal_projection!.zones[0];
+  assert(
+    projection.planned_temperature_c.at(-1)! >= 20,
+    "idle-at-capture synthetic heater must recover comfort",
+  );
+  assert(projection.planned_power_w.some((w) => w > 300));
+  assert(projection.planned_power_w.every((w) => w >= 0 && w <= 1200 + 1e-6));
+  results.push({
+    scenario: "idle_thermostat",
+    observed_on_w: heater.active_power_w,
+    final_temperature_c: projection.planned_temperature_c.at(-1),
+    native_commands: consumed.commands,
   });
 }
 console.log(

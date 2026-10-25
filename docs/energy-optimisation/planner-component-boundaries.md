@@ -212,3 +212,7 @@ pool transition endpoints and room trajectories whose thermostat branch decision
 are unchanged. They preserve action enumeration, scoring and tie order. Full
 preparation and plan comparisons, native threshold tests and hosted checks cover
 these optimizations; no search-budget reduction is used to meet CPU limits.
+Pool calibration prepares each candidate's fixed observation coefficients once
+and shares the identical constant-family search prefix when comparing families.
+The candidate grid, chronological validation, selection and diagnostics remain
+unchanged; complete-fit parity and the existing CPU budget guard this reuse.

@@ -88,7 +88,7 @@ def scenario(amps, connected):
     return options, states, devices
 
 
-def room_scenario():
+def room_scenario(thermostat=False):
     options, states, devices = scenario(12, True)
     options.update(ev_enabled=False, pool_enabled=False, device_modes={"synthetic_relay": "controlling"})
     options["device_control_mappings"] = {"synthetic_relay": {"control_type": "switch_schedule",
@@ -100,6 +100,13 @@ def room_scenario():
     states["sensor.synthetic_house_power"].state = "800"
     relay = {**devices[0], "key": "synthetic_relay", "name": "Synthetic relay", "statistic_id": "sensor.synthetic_relay",
         "category": "heating"}
+    if thermostat:
+        options["device_control_mappings"]["synthetic_relay"].update(control_type="setpoint",
+            actuator_entity_ids=["climate.synthetic_room"], power="sensor.synthetic_room_power")
+        relay["control_type"] = "setpoint"
+        states["sensor.synthetic_room_power"] = state(3, unit_of_measurement="W")
+        states["climate.synthetic_room"] = state("heat", hvac_action="idle", temperature=16,
+            current_temperature=18, min_temp=5, max_temp=30, target_temp_step=.5)
     return options, states, [relay]
 
 
@@ -110,6 +117,12 @@ class History:
 
     async def statistics(self, start, end, entities, period, units, kinds):
         assert period == "5minute"
+        if kinds == {"mean"}:
+            assert units == {"power":"W"}
+            # Two independently authored complete ON buckets, then low idle.
+            return {"sensor.synthetic_room_power":[{"start":(end-timedelta(minutes=15)).timestamp(),"mean":1180},
+                {"start":(end-timedelta(minutes=10)).timestamp(),"mean":1220},
+                {"start":(end-timedelta(minutes=5)).timestamp(),"mean":3}]}
         watts = {"sensor.synthetic_grid": 800 if self.room else 1700, "sensor.synthetic_pool": 1200,
                  "sensor.synthetic_ev": 0, "sensor.synthetic_relay": 300}
         return {entity: [{"start": (start + timedelta(minutes=5*i)).timestamp(),
@@ -118,6 +131,11 @@ class History:
                 for entity in entities}
 
     async def states(self, start, end, entities, *, with_attributes):
+        if "climate.synthetic_room" in entities:
+            assert with_attributes
+            return {"climate.synthetic_room":[(start,"heat",{"hvac_action":"idle"}),
+                (end-timedelta(minutes=15),"heat",{"hvac_action":"heating"}),
+                (end-timedelta(minutes=5),"heat",{"hvac_action":"idle"})]}
         return {entity: [(start, "on", {})] if entity == "switch.synthetic_pool" else [] for entity in entities}
 
     async def hourly_forecast(self, _entity):
@@ -141,7 +159,7 @@ def tariff():
 
 async def produce(amps, connected, room=False, electrical="retained"):
     assert electrical in ("retained", "missing", "configured")
-    options, states, devices = room_scenario() if room else scenario(amps, connected)
+    options, states, devices = room_scenario(room == "thermostat") if room else scenario(amps, connected)
     if electrical == "configured":
         options["device_control_mappings"]["synthetic_pool"]["power"] = 3600
     async def admit(_old, _new):
@@ -155,7 +173,7 @@ async def produce(amps, connected, room=False, electrical="retained"):
         from shs_core.grid_capacity import device_power_bound
         # Independently specified 3.6 kW compressor, measured at full ON in
         # retained electrical evidence. Current and quarter mean are 1.2 kW.
-        peaks = {"sensor.synthetic_pool_power":3600} if electrical == "retained" else {}
+        peaks = {"sensor.synthetic_pool_power":3600, "sensor.synthetic_room_power":4800} if electrical == "retained" else {}
         return {key:device_power_bound(mapping, peaks,
                 getattr(states.get(mapping.get("power_setting_entity_id")), "state", None))
                 for key,mapping in mappings.items()}
@@ -216,7 +234,7 @@ async def consume(payload):
     plan = payload["plan"]
     validate_plan_contract(plan, START)
     room = payload.get("room", False)
-    options, states, _devices = room_scenario() if room else scenario(payload["amps"], payload["connected"])
+    options, states, _devices = room_scenario(room == "thermostat") if room else scenario(payload["amps"], payload["connected"])
     assert options == payload["options"], "consumer uses the exact producer configuration"
     states["switch.synthetic_pool"].state = "off"
     # Force both physical paths to emit a command, including a disconnected EV.
@@ -224,9 +242,12 @@ async def consume(payload):
     calls = []
     async def send(domain, service, data):
         entity = data["entity_id"]
-        value = data.get("value", data.get("option", service.removeprefix("turn_")))
+        value = data.get("value", data.get("temperature", data.get("option", service.removeprefix("turn_"))))
         calls.append({"domain": domain, "service": service, "entity": entity, "value": value})
-        states[entity].state = str(value)
+        if domain == "climate" and service == "set_temperature":
+            states[entity].attributes["temperature"] = data["temperature"]
+        else:
+            states[entity].state = str(value)
     with tempfile.TemporaryDirectory(prefix="shs-synthetic-execution-") as directory:
         journal = CommandJournal(Path(directory) / "commands.sqlite").open("synthetic-qualification")
         executor = NativeExecutor(CommandTransport(journal, asyncio.to_thread), states.get, lambda: "°C", send)
@@ -241,7 +262,7 @@ async def consume(payload):
             for device in (("device:synthetic_relay",) if room else ("pool", "ev")):
                 selected = scoped_plan(plan, options, device)
                 assert selected is not None
-                slots = selected["plans"]["priority"]["slots"] if room else selected["plans"]["priority"]["slots"][:1]
+                slots = selected["plans"]["priority"]["slots"] if room is True else selected["plans"]["priority"]["slots"][:1]
                 for slot in slots:
                     ScenarioClock.current = datetime.fromisoformat(slot["start"].replace("Z", "+00:00")) + timedelta(seconds=30)
                     intent = device_intent(device, "apply", selected, slot, configuration_revision=1, policy_revision=1)
@@ -267,6 +288,8 @@ async def main():
         result = await produce(int(sys.argv[3]), sys.argv[4] == "connected", electrical=sys.argv[5] if len(sys.argv) > 5 else "retained")
     elif sys.argv[2] == "produce-room":
         result = await produce(12, True, room=True)
+    elif sys.argv[2] == "produce-thermostat":
+        result = await produce(12, True, room="thermostat")
     elif sys.argv[2] == "consume":
         result = await consume(json.load(sys.stdin))
     else:

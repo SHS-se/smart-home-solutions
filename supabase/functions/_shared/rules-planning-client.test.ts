@@ -5,7 +5,7 @@ import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
 import { prepareCapturedRulesInput, executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
-import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
+import { handleEnergyPlanningStep, MAX_PLANNING_BODY_BYTES } from "./energy-planning-worker.ts";
 import { createPlannerProbe } from "./planner-wasm/probe.ts";
 import { SOLVER_BASE64 } from "./planner-wasm/solver-bytes.ts";
 import artifact from "./planner-wasm/artifact.json" with { type: "json" };
@@ -75,6 +75,21 @@ Deno.test("private TEST probe executes the complete handler and returns an outpu
     body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input: prepareCapturedRulesInput(input()) }) }), "private");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify((await local.json()).result)));
   assertEquals(result.result_sha256, Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join(""));
+});
+
+Deno.test("private TEST probe accepts worker-sized captures and bounds the streamed body", async () => {
+  const probe = createPlannerProbe(SOLVER_BASE64, artifact, runtime.recipe, "private", "https://vxqpgbzseckgceopitpm.supabase.co");
+  const body = JSON.stringify({ mode: "handler", stage: "solve", protocol: RULES_PLANNING_PROTOCOL,
+    input: prepareCapturedRulesInput(input()) });
+  const request = (value: string) => new Request("https://probe.test", { method: "POST",
+    headers: { authorization: "Bearer private" }, body: value });
+  // JSON whitespace tests transport size independently of planner complexity.
+  const response = await probe(request(body + " ".repeat(600_000)));
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).slots, 8);
+  const oversized = await probe(request(" ".repeat(MAX_PLANNING_BODY_BYTES + 1)));
+  assertEquals(oversized.status, 413);
+  assertEquals(await oversized.json(), { error: "probe_payload_too_large" });
 });
 
 Deno.test("transport rejects crossed stage responses and never solves a different capture", async () => {

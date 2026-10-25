@@ -1,7 +1,7 @@
 // Learn the response of the WATER READING to compressor electricity. The
 // reservoir is an effective delayed contribution: these observations cannot
 // distinguish water mixing, intermediate thermal storage and sensor filtering.
-import { poolQuarterMean, type PoolObservation } from "./observations.ts";
+import { PoolMeanObservation, type PoolObservation } from "./observations.ts";
 import { solveLinearSystem } from "../linear-algebra.ts";
 import type { PoolResponseSample } from "./thermal.ts";
 import { type PoolDynamics } from "../../planner/pool-response.ts";
@@ -77,18 +77,36 @@ function nonnegativeResponseFit(series: Segment[]): number[] | null {
     const gram = [[0, 0], [0, 0]], rhs = [0, 0], link = [[0, 0, 0], [0, 0, 0]];
     for (const r of s.rows) {
       rows++;
-      for (let i = 0; i < GLOBALS; i++) {
-        target[i] += r.x[i] * r.y;
-        for (let j = 0; j < GLOBALS; j++) global[i][j] += r.x[i] * r.x[j];
-      }
-      for (let i = 0; i < 2; i++) {
-        rhs[i] += r.z[i] * r.y;
-        for (let j = 0; j < 2; j++) gram[i][j] += r.z[i] * r.z[j];
-        for (let j = 0; j < GLOBALS; j++) link[i][j] += r.z[i] * r.x[j];
-      }
+      // Fixed three global coefficients and two local memories. Preserve each
+      // accumulator's sample order; symmetric raw products are identical.
+      const [a, b, c] = r.x, [u, v] = r.z;
+      target[0] += a * r.y;
+      target[1] += b * r.y;
+      target[2] += c * r.y;
+      global[0][0] += a * a;
+      global[0][1] += a * b;
+      global[0][2] += a * c;
+      global[1][1] += b * b;
+      global[1][2] += b * c;
+      global[2][2] += c * c;
+      rhs[0] += u * r.y;
+      rhs[1] += v * r.y;
+      gram[0][0] += u * u;
+      gram[0][1] += u * v;
+      gram[1][1] += v * v;
+      link[0][0] += u * a;
+      link[0][1] += u * b;
+      link[0][2] += u * c;
+      link[1][0] += v * a;
+      link[1][1] += v * b;
+      link[1][2] += v * c;
     }
+    gram[1][0] = gram[0][1];
     return { gram, rhs, link };
   });
+  global[1][0] = global[0][1];
+  global[2][0] = global[0][2];
+  global[2][1] = global[1][2];
   const norms = [
     ...target.map((_, i) => Math.sqrt(global[i][i])),
     ...blocks.flatMap((b) => b.rhs.map((_, i) => Math.sqrt(b.gram[i][i]))),
@@ -236,12 +254,17 @@ function responseCandidate(
   tau: number,
   rate: number | null,
   observation: PoolObservation,
+  peak: number,
 ): Candidate | null {
   const kernel = rate === null ? null : new PoolSourceKernel(1, tau, {
     recovery_rate_per_h: rate,
     heat_loss_per_kwh: 1,
   }, 1);
   const a = tau ? sourceDecay(1 / tau, HOURS) : 0;
+  const constantMean = observation === "quarter_mean"
+    ? new PoolMeanObservation(HOURS, 1, tau, 1, 0, null) : null;
+  const sourceMean = observation === "quarter_mean" && kernel
+    ? new PoolMeanObservation(HOURS, 1, tau, 1, 0, kernel.source) : null;
   const series: Segment[] = groups.map((samples) => {
     let pending = 0, released = 0;
     let raw = { water_c: 0, pending_heat_kwh: 0, source_depletion_kwh: 0 };
@@ -251,11 +274,9 @@ function responseCandidate(
     for (const sample of samples) {
       const power = sample.electrical_kwh / HOURS;
       if (observation === "quarter_mean") {
-        const mean = poolQuarterMean(released, pending, 0, power, HOURS, 1, tau, 1, 0, null);
-        const rawMean = kernel ? poolQuarterMean(raw.water_c, raw.pending_heat_kwh, raw.source_depletion_kwh,
-          power, HOURS, 1, tau, 1, 0, kernel.source) : 0;
-        const initialMean = kernel ? poolQuarterMean(initial.water_c, initial.pending_heat_kwh, initial.source_depletion_kwh,
-          power, HOURS, 1, tau, 1, 0, kernel.source) : 0;
+        const mean = constantMean!.read(released, pending, 0, power);
+        const rawMean = sourceMean?.read(raw.water_c, raw.pending_heat_kwh, raw.source_depletion_kwh, power) ?? 0;
+        const initialMean = sourceMean?.read(initial.water_c, initial.pending_heat_kwh, initial.source_depletion_kwh, power) ?? 0;
         releases.push([mean, kernel ? mean - rawMean : 0, kernel ? rawMean - initialMean : 0]);
         decays.push(tau ? initialDecay * tau / HOURS * (1 - a) : 0);
       }
@@ -293,10 +314,10 @@ function responseCandidate(
     const rows: Row[] = [];
     for (const width of [1, 4]) {
       for (let i = 0; i + width < releases.length; i++) {
-        const v = releases[i + width].map((x, j) => x - releases[i][j]);
+        const from = releases[i], to = releases[i + width];
         rows.push({
-          x: [v[0], -v[1], -width * HOURS],
-          z: [decays[i] - decays[i + width], -v[2]],
+          x: [to[0] - from[0], -(to[1] - from[1]), -width * HOURS],
+          z: [decays[i] - decays[i + width], -(to[2] - from[2])],
           y: samples[i + width - 1].next_water_temperature_c -
             samples[i].water_temperature_c,
         });
@@ -321,9 +342,6 @@ function responseCandidate(
   });
   const c = nonnegativeResponseFit(series);
   if (!c || !(c[0] > 0)) return null;
-  const peak = Math.max(
-    ...groups.flatMap((g) => g.map((s) => s.electrical_kwh / HOURS)),
-  );
   if (rate !== null && c[1] > 0 && !(c[0] > c[1] * peak / rate)) return null;
   if (c[1] === 0 && series.some((_s, i) => c[GLOBALS + 2 * i + 1] > 0)) {
     return null;
@@ -364,15 +382,41 @@ export function fitPoolDynamics(
   hypothesis: "recovering_source" | "constant_gain" = "recovering_source",
   observation: PoolObservation = "interval_start",
 ): PoolDynamicsFit {
+  return fitDynamics(samples, capacityKwhPerC, hypothesis, observation);
+}
+
+/** Both families share the identical constant candidate search prefix. The
+ * comparison owns this one invocation; no samples or fits escape into a cache. */
+export function fitPoolDynamicsPair(
+  samples: readonly PoolResponseSample[],
+  capacityKwhPerC: number,
+  observation: PoolObservation = "interval_start",
+): { constant: PoolDynamicsFit; recovery: PoolDynamicsFit } {
+  let constant: PoolDynamicsFit | undefined;
+  const recovery = fitDynamics(samples, capacityKwhPerC, "recovering_source", observation,
+    fit => { constant = fit; });
+  if (!constant) throw new Error("Pool comparison did not produce its constant candidate");
+  return { constant, recovery };
+}
+
+function fitDynamics(
+  samples: readonly PoolResponseSample[],
+  capacityKwhPerC: number,
+  hypothesis: "recovering_source" | "constant_gain" = "recovering_source",
+  observation: PoolObservation = "interval_start",
+  captureConstant?: (fit: PoolDynamicsFit) => void,
+): PoolDynamicsFit {
   const groups = segments(samples),
     count = groups.reduce((n, g) => n + g.length, 0);
-  const rejected = (): PoolDynamicsFit => ({
-    rejected: "unidentifiable",
-    sample_count: count,
-  });
+  const rejected = (): PoolDynamicsFit => {
+    const failure = { rejected: "unidentifiable" as const, sample_count: count };
+    captureConstant?.(failure);
+    return failure;
+  };
   if (!count || !Number.isFinite(capacityKwhPerC) || !(capacityKwhPerC > 0)) {
     return rejected();
   }
+  const peak = Math.max(...groups.flatMap(g => g.map(s => s.electrical_kwh / HOURS)));
   const maximum = Math.max(...groups.map((g) => g.length * HOURS)),
     minimum = HOURS / 32;
   const steps = Math.max(1, Math.ceil(Math.log2(maximum / minimum) * 4));
@@ -386,7 +430,7 @@ export function fitPoolDynamics(
     const key = `${tau}:${rate}`;
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
-    const fit = responseCandidate(groups, tau, rate, observation);
+    const fit = responseCandidate(groups, tau, rate, observation, peak);
     cache.set(key, fit?.mse ?? Infinity);
     if (fit && (!best || fit.mse < best.mse - 1e-18)) best = fit;
     return fit?.mse ?? Infinity;
@@ -435,6 +479,7 @@ export function fitPoolDynamics(
     constant = best as Candidate;
   }
   const rates = grid.slice().reverse().map((t) => 1 / t); // Slow recovery wins numerical ties.
+  captureConstant?.(finish(constant, []));
   for (const rate of hypothesis === "constant_gain" ? [] : rates) {
     for (const tau of new Set([0, constant.tau, HOURS])) {
       consider(tau, rate);
@@ -449,74 +494,79 @@ export function fitPoolDynamics(
     const current = best as Candidate;
     refine(current.rate!, rates, (rate) => consider(current.tau, rate));
   }
-  const fit = best as Candidate, last = fit.segments.at(-1)!;
-  const source = fit.sensitivity > 0 && fit.rate !== null
-    ? {
-      recovery_rate_per_h: fit.rate,
-      heat_loss_c_per_kwh_per_kwh: fit.sensitivity,
-    }
-    : null;
-  const state = (s: Segment, initial: boolean) => ({
-    at: new Date(
-      initial ? s.samples[0].start_ms : s.samples.at(-1)!.start_ms + SLOT_MS,
-    ).toISOString(),
-    pending_heat_kwh: capacityKwhPerC *
-      (initial
-        ? s.initial
-        : s.pending * fit.gain - s.sourcePending * fit.sensitivity -
-          s.initialSourcePending * s.initialSource + s.initial * s.decay),
-    source_depletion_kwh: source
-      ? (initial
-        ? s.initialSource / fit.sensitivity
-        : s.depletion + s.sourceDecay * s.initialSource / fit.sensitivity)
-      : 0,
-  });
-  const rests: number[] = [];
-  for (const group of groups) {
-    let idle = 0, seen = false;
-    for (const s of group) {
-      if (s.electrical_kwh > 0) {
-        if (seen && idle) rests.push(idle);
-        seen = true;
-        idle = 0;
-      } else if (seen) idle += HOURS;
-    }
-  }
+  const fit = best as Candidate;
   const profiles = (hypothesis === "constant_gain" ? [] : rates).map((rate) => ({
     recovery_rate_per_h: rate,
     rmse_c: Math.sqrt(
-      responseCandidate(groups, fit.tau, rate, observation)?.mse ?? Infinity,
+      responseCandidate(groups, fit.tau, rate, observation, peak)?.mse ?? Infinity,
     ),
   })).filter((p) => Number.isFinite(p.rmse_c));
-  return {
-    fitted: {
-      version: 2,
-      response_time_constant_h: fit.tau,
-      heat_c_per_kwh: fit.gain,
-      source,
-      idle_c_per_h: -fit.cooling,
-      reference_c:
-        groups.flat().reduce((n, s) => n + s.water_temperature_c, 0) / count,
-      sample_count: count,
-      rmse_c: Math.sqrt(fit.mse),
-      instantaneous_rmse_c: Number.isFinite(direct) ? Math.sqrt(direct) : null,
-      constant_gain_rmse_c: Math.sqrt(constant.mse),
-      recovery_evidence: {
-        restarts: rests.length,
-        shortest_off_h: rests.length ? Math.min(...rests) : null,
-        longest_off_h: rests.length ? Math.max(...rests) : null,
-        steady_heat_fraction_at_observed_peak: source
-          ? 1 - fit.sensitivity * Math.max(
-                ...groups.flat().map((s) => s.electrical_kwh / HOURS),
-              ) /
-              (fit.gain * source.recovery_rate_per_h)
-          : null,
-        profile: profiles,
-        minimum_at_search_boundary: source !== null &&
-          (fit.rate === rates[0] || fit.rate === rates.at(-1)),
+  return finish(fit, profiles);
+
+  function finish(fit: Candidate, profiles: { recovery_rate_per_h: number; rmse_c: number }[]): PoolDynamicsFit {
+    const last = fit.segments.at(-1)!;
+    const source = fit.sensitivity > 0 && fit.rate !== null
+      ? {
+        recovery_rate_per_h: fit.rate,
+        heat_loss_c_per_kwh_per_kwh: fit.sensitivity,
+      }
+      : null;
+    const state = (s: Segment, initial: boolean) => ({
+      at: new Date(
+        initial ? s.samples[0].start_ms : s.samples.at(-1)!.start_ms + SLOT_MS,
+      ).toISOString(),
+      pending_heat_kwh: capacityKwhPerC *
+        (initial
+          ? s.initial
+          : s.pending * fit.gain - s.sourcePending * fit.sensitivity -
+            s.initialSourcePending * s.initialSource + s.initial * s.decay),
+      source_depletion_kwh: source
+        ? (initial
+          ? s.initialSource / fit.sensitivity
+          : s.depletion + s.sourceDecay * s.initialSource / fit.sensitivity)
+        : 0,
+    });
+    const rests: number[] = [];
+    for (const group of groups) {
+      let idle = 0, seen = false;
+      for (const s of group) {
+        if (s.electrical_kwh > 0) {
+          if (seen && idle) rests.push(idle);
+          seen = true;
+          idle = 0;
+        } else if (seen) idle += HOURS;
+      }
+    }
+    return {
+      fitted: {
+        version: 2,
+        response_time_constant_h: fit.tau,
+        heat_c_per_kwh: fit.gain,
+        source,
+        idle_c_per_h: -fit.cooling,
+        reference_c:
+          groups.flat().reduce((n, s) => n + s.water_temperature_c, 0) / count,
+        sample_count: count,
+        rmse_c: Math.sqrt(fit.mse),
+        instantaneous_rmse_c: Number.isFinite(direct) ? Math.sqrt(direct) : null,
+        constant_gain_rmse_c: Math.sqrt(constant.mse),
+        recovery_evidence: {
+          restarts: rests.length,
+          shortest_off_h: rests.length ? Math.min(...rests) : null,
+          longest_off_h: rests.length ? Math.max(...rests) : null,
+          steady_heat_fraction_at_observed_peak: source
+            ? 1 - fit.sensitivity * Math.max(
+                  ...groups.flat().map((s) => s.electrical_kwh / HOURS),
+                ) /
+                (fit.gain * source.recovery_rate_per_h)
+            : null,
+          profile: profiles,
+          minimum_at_search_boundary: source !== null &&
+            (fit.rate === rates[0] || fit.rate === rates.at(-1)),
+        },
+        initial_state: state(fit.segments[0], true),
+        state: state(last, false),
       },
-      initial_state: state(fit.segments[0], true),
-      state: state(last, false),
-    },
-  };
+    };
+  }
 }

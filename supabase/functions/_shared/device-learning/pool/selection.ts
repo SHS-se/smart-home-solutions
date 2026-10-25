@@ -7,8 +7,8 @@
  * the explicitly fitted constant family retains its learned water lag.
  * This selects calibration complexity; it never gates household planning.
  */
-import { poolQuarterMean, type PoolObservation } from "./observations.ts";
-import { fitPoolDynamics, type PoolDynamics, type PoolDynamicsFit } from "./response.ts";
+import { PoolMeanObservation, type PoolObservation } from "./observations.ts";
+import { fitPoolDynamics, fitPoolDynamicsPair, type PoolDynamics, type PoolDynamicsFit } from "./response.ts";
 import { PoolSourceKernel, type PoolThermalState, stepPoolThermal } from "../../planner/device-models.ts";
 import type { PoolResponseSample } from "./thermal.ts";
 const SLOT = 900000;
@@ -61,9 +61,10 @@ function projection(
     pending_heat_kwh: model.state.pending_heat_kwh,
     source_depletion_kwh: model.state.source_depletion_kwh,
   };
-  const meanReading = (power: number) => poolQuarterMean(state.water_c, state.pending_heat_kwh,
-    state.source_depletion_kwh ?? 0, power, .25, capacity, model.response_time_constant_h,
+  const mean = new PoolMeanObservation(.25, capacity, model.response_time_constant_h,
     model.heat_c_per_kwh * capacity, model.idle_c_per_h, kernel?.source ?? null);
+  const meanReading = (power: number) => mean.read(state.water_c, state.pending_heat_kwh,
+    state.source_depletion_kwh ?? 0, power);
   let start = observation === "quarter_mean" ? meanReading(samples[0].electrical_kwh / .25) : state.water_c;
   let observed = samples[0].water_temperature_c;
   const errors: number[] = [];
@@ -150,8 +151,7 @@ export function selectPoolDynamics(
     train.at(-1)!.start_ms + SLOT !== cut ||
     validation.some((s, i) => s.start_ms !== cut + i * SLOT)
   ) return constant();
-  const a = fitPoolDynamics(train, capacity, "constant_gain", observation),
-    b = fitPoolDynamics(train, capacity, "recovering_source", observation);
+  const { constant: a, recovery: b } = fitPoolDynamicsPair(train, capacity, observation);
   if (!("fitted" in a) || !("fitted" in b)) return constant();
   const pa = projection(a.fitted, capacity, validation, observation),
     pb = projection(b.fitted, capacity, validation, observation);

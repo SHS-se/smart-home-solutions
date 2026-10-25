@@ -1,5 +1,9 @@
 import { assertThrows } from "@std/assert";
-import { electricalOpening, roomExecution } from "./integration-oracles.ts";
+import {
+  electricalOpening,
+  roomExecution,
+  roomOperatingPower,
+} from "./integration-oracles.ts";
 
 Deno.test("integration electrical oracle rejects endpoint-only EV and averaged pool substitutes", () => {
   const slot = {
@@ -33,4 +37,23 @@ Deno.test("integration room oracle rejects a graph with heat commands and flat t
       planned_temperature_c: Array(288).fill(18),
     })
   );
+});
+
+Deno.test("integration room electrical oracle rejects idle, duty-average and reservation substitutes", () => {
+  const model = {
+    active_power_w: 1200,
+    forecast_w_by_slot: [300, 300],
+    thermostat: { hvac_action: "idle" },
+    inference: {
+      on_power: {
+        expected_w: 1200,
+        intervals: 2,
+        source: "recorded_on_intervals",
+      },
+    },
+  };
+  roomOperatingPower(model);
+  for (const watts of [3, 300, 4800, null]) {
+    assertThrows(() => roomOperatingPower({ ...model, active_power_w: watts }));
+  }
 });
