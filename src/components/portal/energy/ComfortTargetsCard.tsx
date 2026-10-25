@@ -1,7 +1,7 @@
 // What the household wants from its pool and its car: one number each.
 //
 // These are the only comfort inputs for the two stores. The planner works out
-// what a degree or a kilometre is worth from them and from each plan's prices,
+// what a degree or a percent of charge is worth from them and from each plan's prices,
 // solar and weather, so there is nothing about money to set here.
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -15,32 +15,32 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 
 /** What a home that has never set its targets is planned for. */
-const DEFAULT_TARGETS = { pool_target_c: 30, ev_target_km: 300 };
-const LIMITS = { pool_target_c: [10, 40], ev_target_km: [0, 1000] } as const;
+const DEFAULT_TARGETS = { pool_target_c: 30, ev_target_soc: 80 };
+const LIMITS = { pool_target_c: [10, 40], ev_target_soc: [0, 100] } as const;
 
 type Targets = typeof DEFAULT_TARGETS;
 
 const ComfortTargetsCard: React.FC<{ customerId: string; homeId: string }> = ({ customerId, homeId }) => {
   const { t } = useLanguage();
   const [stored, setStored] = useState<Targets | null>(null);
-  const [draft, setDraft] = useState<Record<keyof Targets, string>>({ pool_target_c: '', ev_target_km: '' });
+  const [draft, setDraft] = useState<Record<keyof Targets, string>>({ pool_target_c: '', ev_target_soc: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const show = (targets: Targets) => {
     setStored(targets);
-    setDraft({ pool_target_c: String(targets.pool_target_c), ev_target_km: String(targets.ev_target_km) });
+    setDraft({ pool_target_c: String(targets.pool_target_c), ev_target_soc: String(targets.ev_target_soc) });
   };
 
   const load = useCallback(async () => {
     const { data, error: readError } = await supabase
       .from('energy_optimisation_comfort_targets')
-      .select('pool_target_c, ev_target_km')
+      .select('pool_target_c, ev_target_soc')
       .eq('home_id', homeId)
       .maybeSingle();
     if (readError) { setError(readError.message); return; }
     setError(null);
-    show(data ? { pool_target_c: Number(data.pool_target_c), ev_target_km: Number(data.ev_target_km) } : DEFAULT_TARGETS);
+    show(data ? { pool_target_c: Number(data.pool_target_c), ev_target_soc: Number(data.ev_target_soc) } : DEFAULT_TARGETS);
   }, [homeId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -49,14 +49,14 @@ const ComfortTargetsCard: React.FC<{ customerId: string; homeId: string }> = ({ 
     const [low, high] = LIMITS[key];
     return draft[key].trim() !== '' && Number.isFinite(value) && value >= low && value <= high ? value : null;
   };
-  const pool = parsed('pool_target_c'), car = parsed('ev_target_km');
+  const pool = parsed('pool_target_c'), car = parsed('ev_target_soc');
   const valid = pool !== null && car !== null;
-  const changed = stored !== null && valid && (pool !== stored.pool_target_c || car !== stored.ev_target_km);
+  const changed = stored !== null && valid && (pool !== stored.pool_target_c || car !== stored.ev_target_soc);
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
-    const next = { pool_target_c: pool, ev_target_km: car };
+    const next = { pool_target_c: pool, ev_target_soc: car };
     const { error: writeError } = await supabase
       .from('energy_optimisation_comfort_targets')
       .upsert({ home_id: homeId, customer_id: customerId, ...next, updated_at: new Date().toISOString() }, { onConflict: 'home_id' });
@@ -72,8 +72,8 @@ const ComfortTargetsCard: React.FC<{ customerId: string; homeId: string }> = ({ 
         <CardTitle className="text-base">{t('Pool och elbil', 'Pool and car')}</CardTitle>
         <p className="text-sm text-muted-foreground">
           {t(
-            'Ange vad du vill ha: poolens temperatur och bilens räckvidd. Planeraren håller dem så billigt som möjligt och räknar själv ut vad det är värt vid dagens priser, sol och väder. Ändringen gäller från nästa plan.',
-            'Say what you want: the pool’s temperature and the car’s range. The planner holds them as cheaply as it can and works out for itself what that is worth at the day’s prices, sun and weather. A change applies from the next plan.',
+            'Ange vad du vill ha: poolens temperatur och bilbatteriets laddnivå. Planeraren håller dem så billigt som möjligt och räknar själv ut vad det är värt vid dagens priser, sol och väder. Ändringen gäller från nästa plan.',
+            'Say what you want: the pool’s temperature and the car’s battery charge level. The planner holds them as cheaply as it can and works out for itself what that is worth at the day’s prices, sun and weather. A change applies from the next plan.',
           )}
         </p>
       </CardHeader>
@@ -90,12 +90,12 @@ const ComfortTargetsCard: React.FC<{ customerId: string; homeId: string }> = ({ 
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="comfort-target-car">{t('Bilens räckvidd', 'Car range')}</Label>
+            <Label htmlFor="comfort-target-car">{t('Bilbatteriets laddnivå', 'Car battery SOC')}</Label>
             <div className="flex items-center gap-2">
-              <Input id="comfort-target-car" inputMode="decimal" className="w-24" value={draft.ev_target_km} disabled={stored === null || saving}
-                aria-invalid={draft.ev_target_km !== '' && car === null}
-                onChange={event => setDraft(current => ({ ...current, ev_target_km: event.target.value }))} />
-              <span className="text-sm text-muted-foreground">km</span>
+              <Input id="comfort-target-car" inputMode="decimal" className="w-24" value={draft.ev_target_soc} disabled={stored === null || saving}
+                aria-invalid={draft.ev_target_soc !== '' && car === null}
+                onChange={event => setDraft(current => ({ ...current, ev_target_soc: event.target.value }))} />
+              <span className="text-sm text-muted-foreground">%</span>
             </div>
           </div>
           <Button disabled={!changed || saving} onClick={() => void save()}>
@@ -104,7 +104,7 @@ const ComfortTargetsCard: React.FC<{ customerId: string; homeId: string }> = ({ 
         </div>
         {stored !== null && !valid && (
           <p role="alert" className="mt-2 text-sm text-destructive">
-            {t('Ange 10–40 °C och 0–1000 km.', 'Enter 10–40 °C and 0–1000 km.')}
+            {t('Ange 10–40 °C och 0–100 %.', 'Enter 10–40 °C and 0–100 %.')}
           </p>
         )}
       </CardContent>

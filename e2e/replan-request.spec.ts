@@ -1351,17 +1351,17 @@ test.describe('requesting a replan', () => {
     const save = card.getByRole('button', { name: /^(Spara|Save)$/ });
     // The defaults stand until the household says otherwise, and there is nothing to save.
     await expect(pool).toHaveValue('30');
-    await expect(car).toHaveValue('300');
+    await expect(car).toHaveValue('80');
     await expect(save).toBeDisabled();
     // An impossible value cannot be saved.
     await pool.fill('55');
     await expect(save).toBeDisabled();
     await expect(card.getByRole('alert')).toBeVisible();
     await pool.fill('29,5');
-    await car.fill('350');
+    await car.fill('90');
     await save.click();
     await expect.poll(() => stored).not.toBeNull();
-    expect(stored).toMatchObject({ home_id: HOME_ID, customer_id: CUSTOMER_ID, pool_target_c: 29.5, ev_target_km: 350 });
+    expect(stored).toMatchObject({ home_id: HOME_ID, customer_id: CUSTOMER_ID, pool_target_c: 29.5, ev_target_soc: 90 });
     await expect(save).toBeDisabled();
     await page.reload();
     await expect(card.locator('#comfort-target-pool')).toHaveValue('29.5');
