@@ -39,6 +39,15 @@ export function commandOwner(snapshot: OptimisationSnapshot, model: Optimisation
     (model.category === "ev_charging" ? "$ev" : model.planning_service === "pool" ? "$pool" : model.key);
 }
 
+/** The name a person knows a command owner by, never its internal key alone. */
+export function ownerLabel(snapshot: OptimisationSnapshot, owner: string): string {
+  if (owner === "$battery") return "Battery";
+  if (owner === "$pool") return "Pool";
+  if (owner === "$ev") return snapshot.ev_battery?.name || "EV charging";
+  const names = snapshot.device_models.filter(model => commandOwner(snapshot, model) === owner).map(model => model.name);
+  return names.length ? names.join(", ") : owner;
+}
+
 export function unavailableOwner(snapshot: OptimisationSnapshot, owner: string, start: string): boolean {
   const at = Date.parse(start), end = at + QUARTER;
   return (snapshot.execution_availability ?? []).some(change => change.owner === owner &&

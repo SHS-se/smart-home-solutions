@@ -1,6 +1,7 @@
 import type { Json } from '@/integrations/supabase/types';
 
 type Translate = (sv: string, en: string) => string;
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const object = (value: Json): Record<string, Json | undefined> => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export function replanAuditReason(value: Json, t: Translate): string {
@@ -18,7 +19,12 @@ export function replanAuditReason(value: Json, t: Translate): string {
     if (cause === 'vehicle_disconnected') return t('Bilen var urkopplad när laddning var planerad.', 'Car was unplugged when charging was scheduled.');
     if (cause === 'required_source_unavailable') return t(`En nödvändig sensor för ${owner} saknades i minst 15 minuter.`, `A required sensor for ${owner} was unavailable for at least 15 minutes.`);
     if (cause === 'execution_recovered') return t(`Tidigare blockerat arbete för ${owner} kan återupptas.`, `Previously blocked work for ${owner} can resume.`);
-    return t(`Planerat arbete för ${owner} blockerades av ett styrfel.`, `Scheduled work for ${owner} was blocked by a control error.`);
+    // A measured shortfall is not a control error; the device did as asked.
+    if (cause === 'observed_state_cannot_meet_target') return t(`Uppmätt nivå för ${owner} kan inte längre nå planens mål i tid.`, `Measured level of ${owner} can no longer reach the planned target in time.`);
+    if (cause === 'shortfall_without_recovery_authority') return t(`${capital(owner)} ligger efter planen utan tillåten återhämtning.`, `${capital(owner)} fell behind the plan with no permitted recovery.`);
+    return row.status === 'faulted'
+      ? t(`Planerat arbete för ${owner} blockerades av ett styrfel (${cause}).`, `Scheduled work for ${owner} was blocked by a control error (${cause}).`)
+      : t(`Planerat arbete för ${owner} kunde inte utföras (${cause}).`, `Scheduled work for ${owner} could not execute (${cause}).`);
   }).join(' ');
   const code = String(reason.reason ?? reason.code ?? 'unknown');
   const labels: Record<string, [string, string]> = {

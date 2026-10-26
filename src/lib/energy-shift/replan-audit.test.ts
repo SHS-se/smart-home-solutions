@@ -16,3 +16,11 @@ Deno.test('audit labels retain measured shortfall and persistence and identify a
   assertStringIncludes(replanAuditReason({changes:[{owner:'$ev',cause:'vehicle_disconnected'}]},en),'when charging was scheduled');
   assertStringIncludes(replanAuditReason({changes:[{owner:'$pool',cause:'required_source_unavailable'}]},en),'pool was unavailable for at least 15 minutes');
 });
+Deno.test('audit labels keep measured battery shortfalls apart from control errors and name unknown causes', () => {
+  const shortfall = replanAuditReason({changes:[{owner:'$battery',status:'temporarily_absent',cause:'observed_state_cannot_meet_target'}]},en);
+  assertEquals(shortfall, 'Measured level of home battery can no longer reach the planned target in time.');
+  assertEquals(replanAuditReason({changes:[{owner:'sensor.floor_heater_energy',status:'faulted',cause:'GatewayRejected'}]},en),
+    'Scheduled work for sensor.floor_heater_energy was blocked by a control error (GatewayRejected).');
+  assertEquals(replanAuditReason({changes:[{owner:'$pool',status:'temporarily_absent',cause:'pool_offline'}]},en),
+    'Scheduled work for pool could not execute (pool_offline).');
+});

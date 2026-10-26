@@ -3,6 +3,7 @@ import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput } from "../.
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 import { runRulesPlanner } from "./run-rules-planner.ts";
 import { type PublishedCommandReference } from "./rules-planner.ts";
+import { ownerLabel } from "./rules-commitments.ts";
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 
@@ -55,7 +56,19 @@ Deno.test("faulted battery remains modelled without projected charging, while he
   assert(result.battery, "the unresolved objective must retain its measured battery state");
   assert(result.plans.priority.slots.every(slot => slot.battery_charge_w === 0 && slot.battery_discharge_w === 0));
   for (let i = 0; i < 4; i++) assertEquals(result.plans.priority.slots[i].ev_target_current_a, reference.slots[i].ev_target_current_a);
-  assert(result.planning_warnings!.some(warning => warning.code === "execution_unavailable"));
+  assertEquals(result.planning_warnings!.find(warning => warning.code === "execution_unavailable")?.message,
+    "Battery: scheduled work could not execute (actuator_unavailable).");
+});
+
+Deno.test("execution notes name the device that could not execute", () => {
+  const snapshot = mixedModeSnapshot();
+  assertEquals(ownerLabel(snapshot, "$battery"), "Battery");
+  assertEquals(ownerLabel(snapshot, "$pool"), "Pool");
+  assertEquals(ownerLabel({...snapshot, ev_battery: null}, "$ev"), "EV charging");
+  assertEquals(ownerLabel(dispatchedEvSnapshot(), "$ev"), dispatchedEvSnapshot().ev_battery!.name);
+  const model = snapshot.device_models.find(m => m.key === "pool_pump")!;
+  assertEquals(ownerLabel({...snapshot, device_models: [{...model, name: "Pool pump"}]}, "pool_pump"), "Pool pump");
+  assertEquals(ownerLabel(snapshot, "sensor.removed_device"), "sensor.removed_device");
 });
 
 Deno.test("a delayed absence capture still releases EV destinations after its missed source quarter", () => {

@@ -17,3 +17,9 @@ Deno.test('log shows concise batches, warnings and large calculations while reta
   assertStringIncludes(plan.text,'Calculation: 42 s.');
   assertEquals(planningLogText(entry({reason:{code:'new_published_prices'}}),en).text,'New electricity prices.');
 });
+Deno.test('a planning run is recorded as a new plan, including an execution replan',()=>{
+  const replan=planningLogText(entry({reason:{changes:[{owner:'$battery',status:'temporarily_absent',
+    cause:'observed_state_cannot_meet_target',blocked_intervals:[]}]}}),en);
+  assertEquals(replan.title,'New plan · Accepted by home');
+  assertStringIncludes(replan.text,'home battery can no longer reach the planned target');
+});

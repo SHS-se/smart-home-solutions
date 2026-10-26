@@ -32,7 +32,7 @@ import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./plan
 import { allocatedBatteryCommand } from "./planner-wasm/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { planningStage, type PlanningTrace } from "./planning-trace.ts";
-import { assertHeldCommands, commandOwner, compileCommitments, unavailableOwner, type RetainedCommandSlot } from "./rules-commitments.ts";
+import { assertHeldCommands, commandOwner, compileCommitments, ownerLabel, unavailableOwner, type RetainedCommandSlot } from "./rules-commitments.ts";
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
 
@@ -143,7 +143,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     isolated.device_physics=parseDeviceModels(electrical);
     if(pool) try { isolated.device_physics.pool=parseDeviceModels({pool}).pool; }
     catch(error) { isolated.planning_warnings=mergePlanningWarnings(isolated.planning_warnings,[planningWarning(
-      "pool_physics_evidence","pool",String(error),"Pool service continues using empirical demand and known comfort targets.")]); }
+      "pool_physics_evidence","pool",`Pool: ${String(error)}`,"Pool service continues using empirical demand and known comfort targets.")]); }
   }
   const { snapshot, offset } = alignedSnapshot(isolated, effective);
   validateExecutionAvailability(snapshot);
@@ -562,7 +562,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   for (const change of snapshot.execution_availability ?? []) {
     if (change.status === "plan_deviation") continue;
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
-      "execution_unavailable", change.owner, `Scheduled work could not execute: ${change.cause}.`,
+      "execution_unavailable", change.owner, `${ownerLabel(snapshot, change.owner)}: scheduled work could not execute (${change.cause}).`,
       "The replacement accounts for current state and outstanding service. Other loads retain their accepted next-hour commands.",
       { status: change.status, blocked_intervals: JSON.stringify(change.blocked_intervals) })]);
   }

@@ -30,6 +30,7 @@ export function planningLogText(row: PlanningLogEntry, t: Translate): {title: st
     ? t(` Beräkning: ${Math.round(details.calculation_ms / 1000)} s.`, ` Calculation: ${Math.round(details.calculation_ms / 1000)} s.`) : '';
   const failure = typeof details.detail === 'string' ? details.detail : '';
   const rejection = logObject(details.error ?? {}).message;
-  return { title: replanAuditState(row.state, t, basis), text: short(description + seconds),
+  // Every planning row is one planning run; say so rather than only its state.
+  return { title: `${t('Ny plan', 'New plan')} · ${replanAuditState(row.state, t, basis)}`, text: short(description + seconds),
     detail: [description + seconds, failure, rejection].filter(Boolean).join(' ') };
 }
