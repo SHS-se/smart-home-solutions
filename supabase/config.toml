@@ -146,9 +146,5 @@ verify_jwt = false
 [functions.energy-price-experiment]
 verify_jwt = false
 
-# Independent TEST residual-correction study, using the private archive cron token.
-[functions.energy-price-correction-experiment]
-verify_jwt = false
-
 [functions.energy-device-learning]
 verify_jwt = false

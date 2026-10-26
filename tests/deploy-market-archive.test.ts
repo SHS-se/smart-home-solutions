@@ -41,7 +41,7 @@ fi
     const invocations = await Deno.readTextFile(calls);
     assertStringIncludes(invocations, '--agent no --output json');
     assertStringIncludes(invocations, 'functions deploy energy-price-experiment --project-ref vxqpgbzseckgceopitpm --use-api');
-    assertStringIncludes(invocations, 'functions deploy energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --use-api');
+    assertStringIncludes(invocations, 'functions deploy energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --use-api --no-verify-jwt');
     assertEquals(invocations.includes('oosxndduqzhvrorgogaw'), false);
     const rejected = await run(['another-project']);
     assertEquals(rejected.code !== 0, true);

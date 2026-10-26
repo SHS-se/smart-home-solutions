@@ -105,6 +105,9 @@ The migration is dormant. The explicit TEST deployment command enables a separat
 six-hour schedule at minute 37 UTC, after generation acquisition at minute 17,
 and requests the first run. Endpoint, private configuration and deployment guards
 restrict it to `vxqpgbzseckgceopitpm`. Ordinary production deployment excludes it.
+Its private-token authentication is configured explicitly with `--no-verify-jwt`
+in that TEST-only deployment command, without editing the global function config
+and selecting unrelated household services for redeployment.
 No household replan is requested.
 
 Synthetic tests cover residual arithmetic, the unchanged baseline, no clipping,

@@ -44,7 +44,9 @@ try {
   console.log('Deployed the TEST collector.');
   await cli(['functions', 'deploy', 'energy-price-experiment', '--project-ref', TEST, '--use-api', '--yes']);
   console.log('Deployed the TEST paired price worker.');
-  await cli(['functions', 'deploy', 'energy-price-correction-experiment', '--project-ref', TEST, '--use-api', '--yes']);
+  // Keep authentication configuration local to this TEST deployment. A global
+  // config edit selects unrelated household functions for redeployment.
+  await cli(['functions', 'deploy', 'energy-price-correction-experiment', '--project-ref', TEST, '--use-api', '--no-verify-jwt', '--yes']);
   console.log('Deployed the TEST residual correction worker.');
   const homes = await query('SELECT home_id FROM public.energy_optimisation_current ORDER BY home_id;');
   if (homes.length !== 1 || typeof homes[0].home_id !== 'string' || !/^[0-9a-f-]{36}$/.test(homes[0].home_id)) {
