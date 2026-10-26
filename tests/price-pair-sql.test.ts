@@ -1,3 +1,4 @@
+import { priceExperimentDb } from "./helpers/price-experiment-db.ts";
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
 import { assertEquals, assertRejects } from "@std/assert";
 
@@ -5,26 +6,11 @@ const HOME = "11111111-1111-4111-8111-111111111111";
 const MIX = "21111111-1111-4111-8111-111111111111";
 const OTHER_MIX = "31111111-1111-4111-8111-111111111111";
 const START = Math.ceil(Date.now() / 3_600_000) * 3_600_000 + 5 * 86_400_000;
-const migration = "supabase/migrations/20261022230000_test_paired_price_experiment.sql";
-async function setup() {
-  const db = new PGlite();
-  await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
-    CREATE SCHEMA private; CREATE SCHEMA cron; CREATE SCHEMA net;
-    CREATE TABLE homes(id uuid PRIMARY KEY,name text DEFAULT 'TEST home'); INSERT INTO homes(id) VALUES('${HOME}');
-    CREATE TABLE private.test_market_archive_config(singleton boolean PRIMARY KEY,token uuid NOT NULL,function_url text NOT NULL);
-    INSERT INTO private.test_market_archive_config VALUES(true,gen_random_uuid(),'https://vxqpgbzseckgceopitpm.supabase.co/functions/v1/energy-market-archive');
-    CREATE TABLE energy_optimisation_price_slots(home_id uuid,start_ts timestamptz,import_price_sek_per_kwh numeric NOT NULL,export_price_sek_per_kwh numeric NOT NULL DEFAULT 0,source text NOT NULL DEFAULT 'integration',received_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(home_id,start_ts));
-    CREATE TABLE energy_generation_forecast_runs(id uuid PRIMARY KEY,zone text,origin timestamptz,algorithm text,source_refs jsonb,forecast jsonb,recorded_at timestamptz DEFAULT clock_timestamp());
-    CREATE TABLE cron.jobs(name text PRIMARY KEY,schedule text,command text);
-    CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$INSERT INTO cron.jobs VALUES($1,$2,$3) ON CONFLICT(name) DO UPDATE SET schedule=$2,command=$3;SELECT 1;$$;
-    CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$SELECT 1::bigint;$$;`);
-  await db.exec(await Deno.readTextFile(migration));
-  await db.exec(`CREATE SCHEMA auth;
-    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
-    CREATE FUNCTION public.is_staff(uuid) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$SELECT $1='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid$$;`);
-  await db.exec(await Deno.readTextFile('supabase/migrations/20261022233000_test_price_pair_comparison_ui.sql'));
+const setup = async () => {
+  const db = await priceExperimentDb(HOME);
+  await db.exec(await Deno.readTextFile('supabase/migrations/20261026100000_test_price_residual_correction.sql'));
   return db;
-}
+};
 async function enable(db: PGlite) { await db.query("SELECT private.enable_test_price_experiment($1)", [HOME]); }
 async function price(db: PGlite, start: number, value: number) {
   await db.query("INSERT INTO energy_optimisation_price_slots(home_id,start_ts,import_price_sek_per_kwh,received_at) VALUES($1,$2,$3,'2000-01-01T00:00Z') ON CONFLICT(home_id,start_ts) DO UPDATE SET import_price_sek_per_kwh=excluded.import_price_sek_per_kwh,received_at=excluded.received_at", [HOME, new Date(start).toISOString(), value]);

@@ -82,7 +82,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
       const qualification = name === "energy-planner-probe" ? "scripts/probe-planner-handler.ts" : "scripts/probe-device-learning-hosted.ts";
       for (const dependency of reach(tree, [qualification])) graph.add(dependency);
     }
-    if (name === "energy-market-archive" || name === "energy-price-experiment") {
+    if (name === "energy-market-archive" || name === "energy-price-experiment" || name === "energy-price-correction-experiment") {
       graph.add("scripts/deploy-market-archive.ts");
     }
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));

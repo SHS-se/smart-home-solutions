@@ -54,7 +54,7 @@ Deno.test("probe credential and deployment changes select the private qualificat
 
 Deno.test("market archive setup changes select its TEST-only deployment lane", () => {
   const changes = classify(root, ["scripts/deploy-market-archive.ts"]);
-  assertEquals(changes.functions, ["energy-market-archive", "energy-price-experiment"]);
+  assertEquals(changes.functions, ["energy-market-archive", "energy-price-correction-experiment", "energy-price-experiment"]);
   assert(!changes.frontend && !changes.planner && !changes.migrations);
 });
 

@@ -37,7 +37,7 @@ export interface PricePairComparison {
   updated_at: string;
   home_name?: string;
   report: { truth_cutoff: number; pair_count: number; scores: PricePairScore[]; pairs: PricePairSummary[] };
-  selected: (Omit<PricePairSummary, 'scored_count'> & { reason: string | null; training_quarters: number | null }) | null;
+  selected: (Omit<PricePairSummary, 'scored_count'> & { reason: string | null; training_quarters: number | null; baseline_generated_at?: string }) | null;
   targets: PricePairTarget[];
 }
 export interface PricePairDay {

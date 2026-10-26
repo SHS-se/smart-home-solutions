@@ -420,7 +420,7 @@ jobs:
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-research "* ]]; then
             supabase functions deploy energy-market-research --project-ref "$SUPABASE_PROJECT_REF" --yes
           fi
-          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" energy-market-archive "* ]] || [[ " $FUNCTIONS " == *" energy-price-experiment "* ]]; }; then
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" energy-market-archive "* ]] || [[ " $FUNCTIONS " == *" energy-price-experiment "* ]] || [[ " $FUNCTIONS " == *" energy-price-correction-experiment "* ]]; }; then
             deno task deploy:market-archive
           fi
           for name in $FUNCTIONS; do
@@ -428,7 +428,7 @@ jobs:
               continue
             elif [ "$name" = energy-market-research ]; then
               continue
-            elif [ "$name" = energy-market-archive ] || [ "$name" = energy-price-experiment ]; then
+            elif [ "$name" = energy-market-archive ] || [ "$name" = energy-price-experiment ] || [ "$name" = energy-price-correction-experiment ]; then
               continue
             elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ]; then
               if [ "$planning_deployed" = false ]; then

@@ -10,6 +10,13 @@ export const PRICE_PAIR_GENERATION_MODELS = [
   { psrType: 'B14', model: 'nuclear_ratio' }, { psrType: 'B16', model: 'weather' },
   { psrType: 'B19', model: 'weather' }, { psrType: 'B20', model: 'calendar' },
 ] as const satisfies readonly { psrType: string; model: GenerationModel }[];
+/** The fixed prospective production candidates shared by both research studies. */
+export function priceGenerationFeatures(hour: GenerationMixForecast['hours'][number] | undefined): (number | null)[] {
+  return PRICE_PAIR_GENERATION_MODELS.map(({ psrType, model }) => {
+    const prediction = hour?.byPsr[psrType]?.[model];
+    return prediction?.status === 'predicted' && Number.isFinite(prediction.mw) ? prediction.mw : null;
+  });
+}
 const REDUCED_FEATURES = ['local_quarter_sin_1', 'local_quarter_cos_1', 'local_quarter_sin_2', 'local_quarter_cos_2',
   'weekend', 'price_utc_lag_168h', 'price_local_day_mean_d4', 'price_local_day_mean_d7'];
 export interface PricePairInput {
@@ -111,10 +118,7 @@ export function buildPricePair(input: PricePairInput): PricePairForecast {
     if (!reduced) { target.reason = 'Missing exact UTC weekly price lag or complete Stockholm D-4/D-7 price day.'; continue; }
     target.reduced = predictRidge(reducedFit, reduced);
     const hour = forecastHours.get(Math.floor(at / HOUR) * HOUR);
-    const mix = PRICE_PAIR_GENERATION_MODELS.map(({ psrType, model }) => {
-      const prediction = hour?.byPsr[psrType]?.[model];
-      return prediction?.status === 'predicted' && Number.isFinite(prediction.mw) ? prediction.mw : null;
-    });
+    const mix = priceGenerationFeatures(hour);
     const missing = PRICE_PAIR_GENERATION_MODELS.filter((_, index) => mix[index] === null);
     if (missing.length) {
       target.reason = `Missing prospective generation MW: ${missing.map(row => `${row.psrType}/${row.model}`).join(', ')}.`;

@@ -363,7 +363,7 @@ const Bench: React.FC = () => {
       <TabsList className="h-auto max-w-full flex-wrap justify-start">
         <TabsTrigger id="bench-tab-bench" value="bench" className="min-h-9">{t('Planerarbänk', 'Planner bench')}</TabsTrigger>
         <TabsTrigger id="bench-tab-prices" value="prices" className="min-h-9">{t('Prisuppskattningens träffsäkerhet', 'Price estimate accuracy')}</TabsTrigger>
-        {TEST_PRICE_STUDY && <TabsTrigger id="bench-tab-generation-mix" value="generation-mix" className="min-h-11">{t('Produktionsmix', 'Generation mix')}</TabsTrigger>}
+        {TEST_PRICE_STUDY && <TabsTrigger id="bench-tab-generation-mix" value="generation-mix" className="min-h-11">{t('Prisexperiment', 'Price experiments')}</TabsTrigger>}
       </TabsList>
       <TabsContent value="bench" className="mt-0 space-y-5">
       {loadError && (isMissingTable(loadError)

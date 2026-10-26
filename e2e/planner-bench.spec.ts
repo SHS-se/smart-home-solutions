@@ -356,6 +356,34 @@ async function expectGenerationMixAvailability(page: Page): Promise<boolean> {
 }
 
 test.describe('planner bench', () => {
+  test('TEST residual correction compares the real forecast and keeps studies separate in navigation', async ({ context, page }) => {
+    await mockBackend(context);
+    let correctionRequests = 0, mixRequests = 0;
+    await context.route('**/rest/v1/rpc/get_test_price_correction_comparison', async route => {
+      correctionRequests++;
+      const data = mixComparison(true);
+      data.selected!.baseline_generated_at = '2026-10-22T20:15Z';
+      await route.fulfill({ json: data });
+    });
+    await context.route('**/rest/v1/rpc/get_test_price_pair_comparison', async route => {
+      mixRequests++; await route.fulfill({ json: mixComparison() });
+    });
+    await login(page);
+    await page.goto('/portal/planner-bench?tab=generation-mix&study=correction');
+    if (!await expectGenerationMixAvailability(page)) { expect(correctionRequests).toBe(0); return; }
+    const view = page.getByTestId('generation-mix-comparison');
+    await expect(view).toContainText(/Can market data improve|Kan marknadsdata förbättra/);
+    await expect(view).toContainText(/Original household forecast|Ursprunglig hushållsprognos/);
+    await expect(view.getByTestId('mix-score-2')).toContainText(/Correction has lower|Korrigeringen har lägre/);
+    expect(mixRequests).toBe(0);
+    await view.locator('#mix-pair-select').click(); await page.getByRole('option').last().click();
+    await expect(page).toHaveURL(/pair=/);
+    await view.locator('#price-study-select').click(); await page.getByRole('option', { name: /Generation mix model|Produktionsmixmodell/ }).click();
+    await expect(page).toHaveURL(/study=mix/); await expect(page).not.toHaveURL(/pair=/);
+    await expect(view).toContainText(/Does the generation mix|Blir prisprognosen/);
+    expect(mixRequests).toBeGreaterThan(0);
+  });
+
   test('TEST generation mix shows pending pairs, scores arriving prices and corrections, and keeps pair selection in the URL', async ({ context, page }) => {
     await mockBackend(context);
     let published = false, corrected = false, fail = false, studyRequests = 0;
