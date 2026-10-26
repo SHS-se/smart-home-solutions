@@ -46,6 +46,7 @@ export function world(spec: WorldSpec = {}): BenchCase {
       ev: { soc: spec.start?.ev?.soc ?? 0.7, target_soc: spec.start?.ev?.target_soc ?? 0.8 },
     },
     comfort: { ...TARGETS, ...spec.comfort },
+    grid_import_limit_w: 17_200,
     recorded: {
       prices: { import_sek_per_kwh: buy, export_sek_per_kwh: sell },
       outdoor_temperature_c: quarters(spec.air ?? (() => 30)),

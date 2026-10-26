@@ -124,6 +124,7 @@ export function causalCase(): BenchCase {
     base_load_forecast_w: all(500),
     other_devices_w: {},
     comfort: { pool_c: 30, ev_km: 300 },
+    grid_import_limit_w: 17_200,
     start_state: {
       battery_soc: .5,
       pool_water_c: 30,

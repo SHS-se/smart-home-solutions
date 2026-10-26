@@ -55,9 +55,10 @@ import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
 import { canonicalJson, caseTargets, hasMeasuredOutcome, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
 import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { HOUSEHOLD } from "../src/lib/planner-bench/household.ts";
+import { HOUSEHOLD, caseHousehold } from "../src/lib/planner-bench/household.ts";
 import { plannerRuleInputsCurrent } from "../src/lib/planner-bench/score.ts";
 import { homeComfortTargets } from "./comfort.ts";
+import { homeImportLimitW } from "./grid-limit.ts";
 import { BASE_LANE, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { completeScores, rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
 import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
@@ -109,7 +110,7 @@ const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =
 /** Identity of everything a planner generation is given for a case under one lane. */
 function inputHash(c: BenchCase, generation: string, lane: LaneId, rules: Awaited<ReturnType<BenchStore["rules"]>>): Promise<string> {
   const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: HOUSEHOLD, adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation.startsWith("ready-wasm-") ? { planner_rules: rules } : {}) }));
+  return sha256(canonicalJson({ dataset, recorded, household: caseHousehold(c), adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation.startsWith("ready-wasm-") ? { planner_rules: rules } : {}) }));
 }
 
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
@@ -134,7 +135,7 @@ async function worker(sha: string, root: string) {
       try {
         console.log(`  START ${scenario.name} ${lane}`);
         const started = performance.now();
-        const { record, cpuMs } = planner.plan(toldCase(c, lane), HOUSEHOLD, laneParts(lane).scale, rules);
+        const { record, cpuMs } = planner.plan(toldCase(c, lane), caseHousehold(c), laneParts(lane).scale, rules);
         // Whatever the planner was told, its plan is judged on the case as it really was.
         const solved = performance.now();
         const evaluation = evaluate(c, record, rules, lane);
@@ -174,7 +175,9 @@ async function historySource(): Promise<HistorySource | null> {
 async function prepareCases(bench: BenchStore) {
   const source = await historySource();
   const targets = source ? await homeComfortTargets(source) : null;
+  const importLimitW = source ? await homeImportLimitW(source) : null;
   if (targets) console.log(`Home ${source!.homeId}: pool target ${targets.pool_c} °C, car target ${targets.ev_km} km.`);
+  if (importLimitW !== null) console.log(`Home ${source!.homeId}: grid import limit ${importLimitW / 1000} kW.`);
   for (const scenario of await bench.scenarios(args.scenario)) {
     let dataset = scenario.dataset;
     if (!dataset) {
@@ -184,12 +187,13 @@ async function prepareCases(bench: BenchStore) {
       await bench.saveDataset(scenario.id, dataset);
       console.log(`${scenario.name}: converted from its replay.`);
     }
-    if (targets && canonicalJson(dataset.comfort) !== canonicalJson(targets)) {
-      dataset = { ...dataset, comfort: targets };
+    if (targets && (canonicalJson(dataset.comfort) !== canonicalJson(targets) || dataset.grid_import_limit_w !== importLimitW)) {
+      dataset = { ...dataset, comfort: targets, grid_import_limit_w: importLimitW };
       await bench.saveDataset(scenario.id, dataset);
-      console.log(`${scenario.name}: current home comfort preferences captured.`);
+      console.log(`${scenario.name}: current home comfort preferences and grid import limit captured.`);
     }
     caseTargets(dataset);
+    caseHousehold(dataset);
     if (scenario.recorded && (!hasMeasuredOutcome(scenario.recorded)
       || (args.rerecord && dataset.origin?.kind !== "history"))) {
       scenario.recorded = null;

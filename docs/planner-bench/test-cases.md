@@ -22,7 +22,7 @@ saved comfort preferences before each planning run.
 |---|---|---|
 | **Test case** | `src/lib/planner-bench/case.ts`, `bench_scenarios.dataset` + `.recorded` | 288 quarters of what a planner is told, plus what was recorded for the same window afterwards. |
 | **Household** | `src/lib/planner-bench/household.ts` | The devices planned in every case and their physics. |
-| **Comfort** | `energy_optimisation_comfort_targets`, `bench/comfort.ts` | The history home’s saved pool temperature and car range, captured in each case before planning. No money. |
+| **Home settings** | `energy_optimisation_comfort_targets`, home-profile answers, `bench/comfort.ts`, `bench/grid-limit.ts` | The history home’s saved pool temperature, car range and grid import limit, captured in each case before planning. |
 | **Adapter** | `bench/adapter.ts` | Builds a planner version's input from case + household, and reads its plan back as decisions. The only bench code that knows planner schemas. |
 | **Referee** | `src/lib/planner-bench/referee.ts` | Carries the battery, pool and car forward with the household's physics, through the load and solar the home measured, and prices every quarter at what electricity really cost. |
 
@@ -147,7 +147,9 @@ the planner was told.
 Devices, in `HOUSEHOLD`, as numbers only: battery 18.08 kWh (8.8 kW in, 9.6 kW
 out, 95 % each way, 5–100 %); car 75.6 kWh, 0.16 kWh/km, 92 %, charged at whole
 amps from 5 to 16 on three phases; pool 55 m³ with the home's ground-source
-heat pump and a 764 W circulation pump; site limits 13.2 kW each way, SE3. What
+heat pump and a 764 W circulation pump; export limit 13.2 kW, SE3. The import
+limit is captured from the history home's profile, including its chosen limit
+below the main fuse rating. What
 a device does with its numbers is the planner's own device models
 (`planner/device-models.ts`), which the referee steps for every planner version
 alike ([design](device-models-design.md)).
@@ -186,7 +188,13 @@ for every selected case. These are the same settings edited in the home’s
 Comfort preferences card. Every planner and the referee use those captured
 targets. A change alters the input hash and replans the affected results.
 There are no internal default targets or case overrides in database runs.
-Local case files must supply both comfort targets explicitly.
+The runner also reads the home profile's main fuse and chosen import limit,
+using the same resolution as the live planner, and saves `grid_import_limit_w`
+in each case. Planning, the referee and opportunity checks use that captured
+limit. A changed limit changes the case revision and input hash, requiring new
+plans; old decisions cannot be rescored against changed inputs. Missing home
+configuration or failed reads stop preparation instead of using a fixed limit.
+Local case files must supply both comfort targets and `grid_import_limit_w` explicitly.
 
 The home is selected by `BENCH_HOME_ID`, or by the most recent recorded outdoor
 quarter when it is unset, as for history. Missing saved preferences fail the run.

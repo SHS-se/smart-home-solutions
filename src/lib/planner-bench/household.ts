@@ -13,6 +13,7 @@
 // by the runner and captured in each case. Adding a test case changes neither.
 
 import poolHeaterResponse from './pool-heater-response.json' with { type: 'json' };
+import { caseImportLimitW, type BenchScenarioData } from './case';
 import { parseDeviceModels, parseHeaterResponse, type DeviceModels } from '../../../supabase/functions/_shared/planner/device-models';
 
 export interface Household extends DeviceModels {
@@ -40,6 +41,7 @@ export interface Household extends DeviceModels {
 
 export const HOUSEHOLD: Household = {
   site: {
+    // Synthetic/reference equipment basis. Executable bench cases use caseHousehold's captured limit.
     market_area: "SE3", import_limit_w: 17_200, export_limit_w: 13_200,
     ev_battery_supply_allowed: false,
     battery_export_enabled: true, battery_export_reserve_soc: 0.8, battery_export_min_price_sek_per_kwh: 2.5,
@@ -80,6 +82,11 @@ export const HOUSEHOLD: Household = {
     },
   }),
 };
+
+/** Planning, refereeing and opportunity checks share the case's captured grid limit. */
+export function caseHousehold(data: Pick<BenchScenarioData, 'grid_import_limit_w'>): Household {
+  return { ...HOUSEHOLD, site: { ...HOUSEHOLD.site, import_limit_w: caseImportLimitW(data) } };
+}
 
 /** No category totals or aliases: only a complete set of the boiler's own meters. */
 export function boilerDemand(series: Record<string, number[]> | undefined, boiler: Pick<Household['hot_water'], 'meter_keys'>): number[] | null {

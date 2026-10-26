@@ -38,9 +38,18 @@ export function gridImportLimitW(fuseA: number, chosenKw: unknown): number {
   return Number.isFinite(chosen) && chosen > 0 ? Math.min(fuse, Math.round(chosen)) : fuse;
 }
 
-interface StoredAnswer { question_id: string; answer_value: unknown; answer_text: string | null }
-const stored = (answer: StoredAnswer | undefined): unknown =>
+export interface GridLimitQuestion { id: string; semantic_key: string }
+export interface StoredGridLimitAnswer { question_id: string; answer_value: unknown; answer_text: string | null }
+const stored = (answer: StoredGridLimitAnswer | undefined): unknown =>
   answer?.answer_value ?? (answer?.answer_text ? answer.answer_text : null);
+
+/** Resolve the same home-profile answers for live planning and benchmark capture. */
+export function homeGridImportLimitW(questions: GridLimitQuestion[], answers: StoredGridLimitAnswer[]): number | null {
+  const ids = new Map(questions.map(q => [q.semantic_key, q.id]));
+  const byQuestion = new Map(answers.map(a => [a.question_id, a]));
+  const fuse = mainFuseA(stored(byQuestion.get(ids.get(MAIN_FUSE_KEY) ?? "")));
+  return fuse === null ? null : gridImportLimitW(fuse, stored(byQuestion.get(ids.get(GRID_IMPORT_LIMIT_KEY) ?? "")));
+}
 
 /** Null when the home has not said what its main fuse is. */
 export async function readHomeGridImportLimitW(
@@ -56,8 +65,5 @@ export async function readHomeGridImportLimitW(
   const { data: answers, error: answerError } = await db.from("home_answers")
     .select("question_id, answer_value, answer_text").eq("home_id", homeId).in("question_id", [...ids.values()]);
   if (answerError) throw new Error(answerError.message);
-  const byQuestion = new Map<string, StoredAnswer>((answers ?? []).map((a: StoredAnswer) => [a.question_id, a]));
-  const fuse = mainFuseA(stored(byQuestion.get(ids.get(MAIN_FUSE_KEY)!)));
-  if (fuse === null) return null;
-  return gridImportLimitW(fuse, stored(byQuestion.get(ids.get(GRID_IMPORT_LIMIT_KEY) ?? "")));
+  return homeGridImportLimitW(questions ?? [], answers ?? []);
 }

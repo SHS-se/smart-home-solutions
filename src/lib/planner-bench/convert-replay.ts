@@ -125,6 +125,7 @@ export function caseFromReplay(raw: unknown, detail = 'replay'): ConvertedReplay
     },
     ...(unread.length ? { start_state_unread: unread } : {}),
     comfort: null,
+    grid_import_limit_w: null,
   };
   try {
     parseScenarioData(data);

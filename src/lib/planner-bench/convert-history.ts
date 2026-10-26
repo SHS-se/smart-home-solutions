@@ -150,6 +150,7 @@ export function caseFromHourlyHistory(
     other_devices_w: folded,
     start_state: history.start_state,
     comfort: null,
+    grid_import_limit_w: null,
   };
   const recorded: BenchRecorded = {
     prices: { import_sek_per_kwh: buy as number[], export_sek_per_kwh: sell as number[] },

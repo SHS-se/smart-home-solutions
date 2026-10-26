@@ -60,6 +60,8 @@ export interface BenchScenarioData {
   start_state_unread?: ('battery_soc' | 'pool_water_c' | 'ev_soc')[];
   /** Home's targets captured by the runner; null until the first planning run. */
   comfort: Partial<Targets> | null;
+  /** Home-profile import limit captured before planning; null until prepared. */
+  grid_import_limit_w: number | null;
 }
 
 /** Prices before the start, oldest first, one row per quarter. */
@@ -138,6 +140,15 @@ export function caseTargets(data: Pick<BenchScenarioData, 'comfort'>): Targets {
     throw new CaseFormatError('Comfort targets are missing. Run the bench with the home settings; local cases must supply comfort.pool_c and comfort.ev_km.');
   }
   return { pool_c: data.comfort.pool_c, ev_km: data.comfort.ev_km };
+}
+
+/** No fixed bench limit may replace the captured home setting. */
+export function caseImportLimitW(data: Pick<BenchScenarioData, 'grid_import_limit_w'>): number {
+  const limit = data.grid_import_limit_w;
+  if (!finite(limit) || limit <= 0) {
+    throw new CaseFormatError('Grid import limit is missing or invalid. Run the bench with the home settings; local cases must supply grid_import_limit_w.');
+  }
+  return limit;
 }
 
 function series(value: unknown, name: string, nullable = false): void {

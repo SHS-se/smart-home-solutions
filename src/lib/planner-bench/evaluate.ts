@@ -4,7 +4,7 @@
 // scorer changes.
 
 import { caseTargets, type BenchCase } from './case';
-import { HOUSEHOLD } from './household';
+import { caseHousehold } from './household';
 import { BASE_LANE, type LaneId } from './lanes';
 import { auditOpportunities } from './opportunities';
 import { referee, REFEREE_VERSION, type Outcome } from './referee';
@@ -29,7 +29,8 @@ export function evaluate(c: BenchCase, record: PlanRecord, criteria: CriteriaOve
   const targets = caseTargets(c);
   // Checked first, so a case with unusable criteria is not replayed at all.
   const guard = serviceGuard(criteria);
-  const { series, ...outcome } = referee(c, HOUSEHOLD, targets, record.decisions, believed);
-  series.audit = auditOpportunities(c, HOUSEHOLD, targets, record.decisions, lane, guard);
+  const household = caseHousehold(c);
+  const { series, ...outcome } = referee(c, household, targets, record.decisions, believed);
+  series.audit = auditOpportunities(c, household, targets, record.decisions, lane, guard);
   return { series, stats: planStats(series), outcome, score: storedScore(series, criteria), referee_version: REFEREE_VERSION };
 }

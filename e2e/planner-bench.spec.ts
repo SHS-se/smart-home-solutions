@@ -178,6 +178,7 @@ const dataset = (start: string): BenchScenarioData => ({
   solar_forecast_w: [], base_load_forecast_w: [], other_devices_w: {},
   start_state: { battery_soc: 0.5, pool_water_c: 29.5, pool_heater: { kind: 'off_unobserved' }, ev: { soc: 0.6, target_soc: 0.8 } },
   comfort: { pool_c: 30.5, ev_km: 300 },
+  grid_import_limit_w: 15_000,
 });
 
 const record = (reference: number): PlanRecord => ({
