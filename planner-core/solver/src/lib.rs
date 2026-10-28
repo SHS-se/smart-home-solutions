@@ -200,8 +200,8 @@ pub struct Quarter {
 pub struct Account {
     /// The plan's score, a point a krona: points − (cash + wear − credit).
     pub score_sek: f64,
-    /// What the rules took and gave, in whole kronor.
-    pub points: i32,
+    /// What the rules took and gave, in kronor.
+    pub points: f64,
     pub cash_sek: f64,
     pub wear_sek: f64,
     /// Scheduling preference; never a bill item or physical equipment wear.
@@ -209,7 +209,7 @@ pub struct Account {
     /// The energy left in the stores, each up to its cap.
     pub credit_sek: f64,
     /// Contributions retain individual signs, including net-zero quarters.
-    pub contributions: Vec<Vec<i32>>,
+    pub contributions: Vec<Vec<f64>>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Selection {

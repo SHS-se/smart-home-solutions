@@ -2,7 +2,7 @@
 
 Settled implementation, 24 October 2026. Supersedes any generic “error or recovery means replan” rule.
 
-EV readiness is ongoing from the current quarter, including when the initial range is low. No new plan grants another day of grace. There is no departure time, trip deadline or readiness episode clock. The household range preference and existing range bands determine readiness; the vehicle charge limit remains a physical cap. The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. An unreachable preference remains valid input and is reported honestly; it does not invalidate the household or extend a clock. The independent bench uses the same continuous EV exposure under scorer version 37; archived scorer-36 results retain their identity.
+EV readiness is ongoing from the current quarter, including when the initial range is low. No new plan grants another day of grace. There is no departure time, trip deadline or readiness episode clock. The household range preference and existing range bands determine readiness; within a band the deduction grows with the square of the shortfall (scorer 39), so a few kilometres short is nearly free until cheap power comes; the vehicle charge limit remains a physical cap. The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. An unreachable preference remains valid input and is reported honestly; it does not invalidate the household or extend a clock. The independent bench uses the same continuous EV exposure under scorer version 37; archived scorer-36 results retain their identity.
 
 ## Admission thresholds
 

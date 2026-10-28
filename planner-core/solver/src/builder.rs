@@ -7,7 +7,7 @@ use crate::*;
 struct Label {
     state: State,
     parent: usize,
-    points: i32,
+    points: f64,
     cash: f64,
     wear: f64,
     continuity: f64,
@@ -254,14 +254,14 @@ fn rank(opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
     // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
     let cost = l.cash + l.wear + l.continuity + future.cost;
-    (f64::from(l.points) + future.points - cost, cost)
+    (l.points + future.points - cost, cost)
 }
 
 fn initial_label(p: &Problem) -> Label {
     Label {
         state: physics::initial(p),
         parent: usize::MAX,
-        points: 0,
+        points: 0.0,
         cash: 0.0,
         wear: 0.0,
         continuity: 0.0,
@@ -381,7 +381,7 @@ fn construct(
             .collect();
     }
     let finished = |l: &Label| {
-        f64::from(l.points) - (l.cash + l.wear + l.continuity)
+        l.points - (l.cash + l.wear + l.continuity)
             + policy::end_credit(
                 p,
                 l.state.battery,

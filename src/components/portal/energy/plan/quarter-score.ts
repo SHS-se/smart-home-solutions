@@ -2,4 +2,5 @@
 
 // The palette runs −2…+2; anything beyond takes the darkest shade.
 export const scoreColour = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(score))})`;
-export const signedPoints = (value: number, digits = 0) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
+// Car range deductions are fractional; whole points stay whole.
+export const signedPoints = (value: number, digits = Number.isInteger(value) ? 0 : 2) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;

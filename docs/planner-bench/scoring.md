@@ -31,9 +31,16 @@ add into a run score.
 | Pool below target | More than 1 °C below | −1 | No |
 | Pool far below target | More than 2 °C below | −1 | Yes |
 | Pool overheated | Target +2 °C | −1 | No |
-| Car short of range | More than 50 km short | −1 | No |
-| Car far short of range | More than 100 km short | −1 | Yes |
+| Car short of range | More than 50 km short | Up to −1, by depth | No |
+| Car far short of range | More than 100 km short | Up to −1, by depth | Yes |
 | Boiler permission shortfall | Fewer than 10 allowed quarters per 24-hour sample period | −1 per missing quarter | No |
+
+A car check's deduction grows with the square of how far the car is into a
+band as wide as its threshold, below its line: 5 km under the 50 km line costs
+(5/50)² = 0.01 a quarter, 25 km under costs 0.25, 50 km or more costs all −1.
+A car just under a line is nearly free to leave until cheap power comes; a car
+far under it is as urgent as before. Scorer 39 and the kernel (`policy::depth`)
+share this shape. The pool checks keep whole points.
 
 The two shortfall tiers stack. A level starts counting only when full power
 from the initial state could have reached it, followed by 24 hours to choose

@@ -118,12 +118,18 @@ Deno.test('comfort is scored from the target: a point per level missed, per stor
   // On target: nothing fires.
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 300)).sum, 0);
   // Exactly 1 °C below and exactly 50 km short are still fine; just past them lose a point each.
+  // The car's points grow with the square of how far into the 50 km band it is.
   assertEquals(scoreQuarters(comfortSeries(() => 29, () => 250)).sum, 0);
   const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 249));
-  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'], deductions: { pool_low: -1, ev_low: -1 } });
+  const sliver = -((1 / 50) ** 2);
+  assertEquals(slipping.quarters[0], { score: -1 + sliver, fired: ['pool_low', 'ev_low'], deductions: { pool_low: -1, ev_low: sliver } });
   // More than 2 °C below and more than 100 km short lose a second point each; a store never loses more than two.
+  // 199 km is a whole ev_low band under its line and a sliver into ev_short's 100 km band.
   const far = scoreQuarters(comfortSeries(() => 27.9, () => 199));
-  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], deductions: { pool_low: -1, pool_cold: -1, ev_low: -1, ev_short: -1 } });
+  const shortSliver = -((1 / 100) ** 2);
+  assertEquals(far.quarters[0], { score: -3 + shortSliver, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], deductions: { pool_low: -1, pool_cold: -1, ev_low: -1, ev_short: shortSliver } });
+  // Half a band under costs a quarter of the points.
+  assertEquals(scoreQuarters(comfortSeries(() => 30, () => 225)).quarters[0].deductions, { ev_low: -0.25 });
   assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
   assertEquals(far.passed, false);
   // A car above its target loses nothing.

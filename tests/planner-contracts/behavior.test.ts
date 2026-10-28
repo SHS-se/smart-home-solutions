@@ -38,6 +38,8 @@ Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charg
 
 for (const amps of [12, 15]) Deno.test(`CONTRACT EV-2: ${amps} A fits beside full pool power and is selected`, () => {
   const s = withPool(); s.grid.import_limit_w = 500 + 3600 + 3 * 230 * amps;
+  // A car a little short and a cheap opening half hour: both loads want quarter 0.
+  s.ev_battery!.soc = .5; s.slots.forEach((slot, i) => { if (i >= 2) slot.import_price_sek_per_kwh = 1; });
   const check = (p: OptimisationPlan) => {
     const q = p.plans.priority.slots[0];
     assertEquals(q.pool_w, 3600);
