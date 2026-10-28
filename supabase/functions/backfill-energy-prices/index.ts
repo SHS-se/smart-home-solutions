@@ -28,9 +28,10 @@ import {
   parseSpotPriceIntervals,
 } from "../_shared/energy-supplier-pricing.ts";
 
-import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice } from "../_shared/historical-electricity-prices.ts";
+import { historicalElectricityPrices, historicalPriceRange, type ArchivedPrice, type SupplierVersion } from "../_shared/historical-electricity-prices.ts";
 import { mapConcurrent } from "../_shared/map-concurrent.ts";
-import { roiSupplierVersion } from "../_shared/roi-supplier-terms.ts";
+import { ROI_SUPPLIER_TERMS, roiSupplierVersion } from "../_shared/roi-supplier-terms.ts";
+import { roiGridCatalogue } from "../_shared/roi-grid-pricing.ts";
 import { actualContractPrices, type PriceInvoice } from '../_shared/actual-contract-prices.ts';
 
 const corsHeaders = {
@@ -178,7 +179,7 @@ serve(async (req) => {
       answerValue(answersByQuestion.get(question.id)),
     ]));
 
-    const supplierKey = typeof values.electricity_supplier === "string"
+    const supplierKey = currentSupplier ? ROI_SUPPLIER_TERMS.provider : typeof values.electricity_supplier === "string"
       ? values.electricity_supplier.trim().toLowerCase()
       : "";
     const area = typeof values.electricity_price_area === "string"
@@ -192,21 +193,25 @@ serve(async (req) => {
       return json({ error: "missing_inputs", missing_inputs: missingInputs }, 422);
     }
 
-    const { data: profile, error: profileError } = await supabase
-      .from("energy_supplier_profiles")
-      .select("id")
-      .eq("provider_key", supplierKey)
-      .maybeSingle();
-    if (profileError) throw profileError;
-    if (!profile) return json({ error: "supplier_not_supported" }, 422);
-    const { data: supplierVersions, error: supplierVersionError } = await supabase
-      .from("energy_supplier_versions")
-      .select("revision, valid_from, valid_to, definition")
-      .eq("profile_id", profile.id)
-      .order("valid_from", { ascending: true });
-    if (supplierVersionError) throw supplierVersionError;
-    if (!supplierVersions?.length) {
-      return json({ error: "supplier_terms_not_published" }, 422);
+    let supplierVersions: SupplierVersion[];
+    if (currentSupplier) {
+      supplierVersions = [roiSupplierVersion()];
+    } else {
+      const { data: profile, error: profileError } = await supabase
+        .from("energy_supplier_profiles")
+        .select("id")
+        .eq("provider_key", supplierKey)
+        .maybeSingle();
+      if (profileError) throw profileError;
+      if (!profile) return json({ error: "supplier_not_supported" }, 422);
+      const { data: versions, error: supplierVersionError } = await supabase
+        .from("energy_supplier_versions")
+        .select("revision, valid_from, valid_to, definition")
+        .eq("profile_id", profile.id)
+        .order("valid_from", { ascending: true });
+      if (supplierVersionError) throw supplierVersionError;
+      if (!versions?.length) return json({ error: "supplier_terms_not_published" }, 422);
+      supplierVersions = versions;
     }
 
     // ── Grid catalogue ───────────────────────────────────────────────────────
@@ -276,10 +281,10 @@ serve(async (req) => {
         if (error) throw error;
         return (data ?? []) as (ArchivedPrice & { source: string })[];
       })).flat();
-      // Current-contract replay ignores archived all-in prices: they embed older
-      // supplier charges. Historical spot/grid prices remain dated, and no rows are written.
-      const versions = currentSupplier ? [roiSupplierVersion(supplierKey)] : supplierVersions;
-      const prices = await historicalElectricityPrices(starts, currentSupplier ? [] : archive, catalogue, versions, async day => {
+      // Current-equipment replay keeps today's supplier and fuse. Historical
+      // spot prices and tariff versions remain dated; actual receipts stay separate.
+      const pricingCatalogue = currentSupplier ? roiGridCatalogue(catalogue) : catalogue;
+      const prices = await historicalElectricityPrices(starts, currentSupplier ? [] : archive, pricingCatalogue, supplierVersions, async day => {
         const response = await fetch(spotUrl(day, area), { signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error(`Historical market prices unavailable for ${day}: ${response.status}`);
         return response.json();
@@ -293,7 +298,7 @@ serve(async (req) => {
       if (invoiceError) throw invoiceError;
       if (homesError) throw homesError;
       const actualPrices = actualContractPrices(prices, homes?.length === 1 ? invoices as PriceInvoice[] : [], homes?.length === 1 ? archive : [], catalogue.timezone!);
-      return json({ prices, actualPrices, area, catalogue });
+      return json({ prices, actualPrices, area, catalogue: pricingCatalogue });
     }
 
     // ── Walk the window ──────────────────────────────────────────────────────
@@ -326,7 +331,7 @@ serve(async (req) => {
       }));
 
       for (const result of responses) {
-        if ("error" in result) {
+        if (result.error !== undefined) {
           skipped.push({ date: result.localDate, reason: result.error });
           continue;
         }

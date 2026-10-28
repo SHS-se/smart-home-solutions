@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import runtime from '../../../supabase/functions/_shared/planner-wasm/runtime-config.json' with { type: 'json' };
 import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supplier-terms.ts';
+import { ROI_GRID_POLICY } from '../../../supabase/functions/_shared/roi-grid-pricing.ts';
 import { z } from 'zod';
 import { REPLAY_ENGINE, REPLAY_PROTOCOL } from './scheduler-replay.ts';
 import artifact from '../../../supabase/functions/_shared/planner-wasm/artifact.json' with { type: 'json' };
@@ -16,7 +17,7 @@ import type { SimulationCheckpoint } from './simulation-state.ts';
 // Pin the host model sources as well as the binary: pool physics and ready-input
 // changes can alter results while producing identical Wasm bytes.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v8:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, source: artifact.source_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, solar: 'published-pre-installation-v1', continuation: 'all-stores-v1', lookahead: 'observed-72h-tail-v1', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v8:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, source: artifact.source_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, grid: ROI_GRID_POLICY, solar: 'published-pre-installation-v1', continuation: 'all-stores-v1', lookahead: 'observed-72h-tail-v1', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),

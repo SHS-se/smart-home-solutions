@@ -16,7 +16,6 @@ export const ROI_SUPPLIER_TERMS = {
 };
 
 /** One explicitly selected current contract for the entire historical replay. */
-export function roiSupplierVersion(provider: string) {
-  if (provider !== ROI_SUPPLIER_TERMS.provider) throw new Error(`Current ROI supplier terms unavailable for ${provider}`);
+export function roiSupplierVersion() {
   return { revision: ROI_SUPPLIER_TERMS.revision, valid_from: '0001-01-01', valid_to: null, definition: ROI_SUPPLIER_TERMS.definition };
 }

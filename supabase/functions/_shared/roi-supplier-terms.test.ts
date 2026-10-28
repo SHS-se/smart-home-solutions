@@ -1,4 +1,4 @@
-import { assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
+import { assertAlmostEquals, assertEquals } from '@std/assert';
 import fixture from './grid-price-parity.fixture.json' with { type: 'json' };
 import { currentGridPrices, type GridTariffCatalogue } from './energy-grid-pricing.ts';
 import { historicalElectricityPrices, historicalPriceRange } from './historical-electricity-prices.ts';
@@ -16,11 +16,11 @@ Deno.test('ROI uses published VAT-inclusive Tibber charges, with no monthly fee 
   assertAlmostEquals(price.supplier_import_price_sek_per_kwh, -.8 * 1.25 + .075 + .044);
   assertEquals(price.supplier_export_price_sek_per_kwh, -.8);
   assertEquals(ROI_SUPPLIER_TERMS.definition.monthly_fee_sek_in_vat, 49);
-  assertThrows(() => roiSupplierVersion('unknown'), Error, 'unavailable');
+  assertEquals(roiSupplierVersion().revision, ROI_SUPPLIER_TERMS.revision);
 });
 
 Deno.test('all twelve replay months use the same current contract and dated signed spot/grid prices', async () => {
-  const terms = roiSupplierVersion('tibber'), before = JSON.stringify(terms);
+  const terms = roiSupplierVersion(), before = JSON.stringify(terms);
   for (let i = 0; i < 12; i++) {
     const start = new Date(Date.UTC(2025, 10 + i, 4)).toISOString(), end = new Date(Date.parse(start) + 900_000).toISOString();
     const market = [{ time_start: start, time_end: end, SEK_per_kWh: i % 2 ? -.8 : .8 }];
