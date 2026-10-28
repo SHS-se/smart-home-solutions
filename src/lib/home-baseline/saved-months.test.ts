@@ -128,31 +128,51 @@ Deno.test('server month eviction removes stale local save hashes before an uncac
   } finally { source.dispose(); }
 });
 
-Deno.test('concurrent graph and month captures consume canonical report receipts in save order', async () => {
+for (const firstMonth of ['2026-09', '2026-10']) Deno.test(`concurrent graph and month captures consume canonical report receipts with ${firstMonth} saving first`, async () => {
   const stored: SavedReport = { ...report(), months: {} };
-  const releases: (() => void)[] = [], started: string[] = [];
+  const months = ['2026-09', '2026-10'];
+  const generated = months.map(() => Promise.withResolvers<void>());
+  const entered = months.map(() => Promise.withResolvers<void>());
+  const releases = months.map(() => Promise.withResolvers<void>());
+  const started: string[] = [];
   const store: MonthStore = {
     read: () => Promise.resolve(structuredClone(stored)), pin: () => Promise.resolve(structuredClone(stored)),
     save: async (_, __, value, inputHash, expectedHash) => {
+      const index = started.length;
       started.push(value.month);
-      await new Promise<void>(resolve => { releases.push(resolve); });
+      entered[index].resolve();
+      await releases[index].promise;
       assertEquals(expectedHash, stored.months[value.month]?.inputHash ?? null);
       stored.months[value.month] = { ledger: value, inputHash, computedAt: new Date(now).toISOString() };
       return structuredClone(stored);
     },
   };
   const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),
-    generate: (_, __, period) => Promise.resolve({ ...capture, input: { ...capture.input, timeZone: 'UTC', start: period.start, end: period.end } }) });
+    generate: async (_, __, period) => {
+      await generated[months.indexOf(period.start.slice(0, 7))].promise;
+      return { ...capture, input: { ...capture.input, timeZone: 'UTC', start: period.start, end: period.end } };
+    } });
+  const pending = months.map((month, index) => source.capture({ view: 'month', start: `${month}-01T00:00:00.000Z`,
+    end: index === 0 ? '2026-10-01T00:00:00.000Z' : '2026-11-01T00:00:00.000Z' }, new AbortController().signal));
+  const completed = Promise.all(pending);
+  // Observe failures immediately, including when an assertion exits before a save is released.
+  const settled = Promise.allSettled(pending);
+  const first = months.indexOf(firstMonth), second = 1 - first;
   try {
-    const september = source.capture({ view: 'month', start: '2026-09-01T00:00:00.000Z', end: '2026-10-01T00:00:00.000Z' }, new AbortController().signal);
-    const october = source.capture({ view: 'month', start: '2026-10-01T00:00:00.000Z', end: '2026-11-01T00:00:00.000Z' }, new AbortController().signal);
-    while (!releases.length) await new Promise(resolve => setTimeout(resolve, 0));
-    assertEquals(started, ['2026-09']);
-    releases[0](); await september;
-    while (releases.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
-    assertEquals(started, ['2026-09', '2026-10']);
-    releases[1](); await october;
+    generated[first].resolve();
+    await Promise.race([entered[0].promise, completed]);
+    assertEquals(started, [firstMonth]);
+    generated[second].resolve();
+    releases[0].resolve(); await pending[first];
+    await Promise.race([entered[1].promise, completed]);
+    assertEquals(started, [firstMonth, months[second]]);
+    releases[1].resolve(); await completed;
     assertEquals(source.saved('2026-09'), stored.months['2026-09']);
     assertEquals(source.saved('2026-10'), stored.months['2026-10']);
-  } finally { source.dispose(); }
+  } finally {
+    generated.forEach(gate => gate.resolve());
+    releases.forEach(gate => gate.resolve());
+    await settled;
+    source.dispose();
+  }
 });
