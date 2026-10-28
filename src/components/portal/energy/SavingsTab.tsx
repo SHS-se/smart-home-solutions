@@ -28,6 +28,11 @@ import { RoiNumberField } from './roi/RoiFields';
 import { sek } from './roi/format';
 import { fetchRoiInstallations } from '@/lib/home-baseline/installations';
 import { POOL_TARGET_RANGE_C, poolTarget, withPoolTarget } from '@/lib/home-baseline/pool-target';
+import { createEquipmentTrial } from '@/lib/home-baseline/equipment-trial';
+import { equipmentBenefit, type EquipmentTrial } from '@/lib/home-baseline/equipment';
+import { homePhysics } from '@/lib/home-baseline/home-physics';
+import EquipmentAssumptions from './roi/EquipmentAssumptions';
+import EquipmentComparison from './roi/EquipmentComparison';
 import { ROI_SUPPLIER_TERMS } from '../../../../supabase/functions/_shared/roi-supplier-terms';
 
 const settingsSchema = z.object({ from: z.string(), to: z.string(), subscription: z.string() });
@@ -53,6 +58,15 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
   }, [customerId, homeId]);
   useEffect(() => () => { baseline.viewer.dispose(); baseline.savings.dispose(); baseline.source.dispose(); }, [baseline]);
+  const [equipmentRequest, setEquipmentRequest] = useState<{ homeId: string; value: EquipmentTrial } | null>(null);
+  const selectedEquipment = equipmentRequest?.homeId === homeId ? equipmentRequest.value : null;
+  const trial = useMemo(() => {
+    if (!homeId || !selectedEquipment) return null;
+    const source = createEquipmentTrial({ customerId, homeId }, baseline.source, selectedEquipment);
+    return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
+  }, [customerId, homeId, baseline, selectedEquipment]);
+  useEffect(() => () => { trial?.viewer.dispose(); trial?.savings.dispose(); trial?.source.dispose(); }, [trial]);
+  const active = trial ?? baseline;
   const storageKey = `shs-savings-v1:${customerId}`;
   const [settings, setSettings] = useState<Settings>(() => {
     try {
@@ -69,15 +83,22 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   const earliest = anchor.data ? localDay(anchor.data.earliestStart, anchor.data.snapshot.timezone).slice(0, 7) : '';
   const twelveBack = latest ? shiftMonth(latest, -11) : '';
   const from = settings.from || (earliest > twelveBack ? earliest : twelveBack), to = settings.to || latest;
-  const state = useSyncExternalStore(baseline.savings.subscribe, baseline.savings.snapshot);
+  const referenceState = useSyncExternalStore(baseline.savings.subscribe, baseline.savings.snapshot);
+  const state = useSyncExternalStore(active.savings.subscribe, active.savings.snapshot);
   useEffect(() => {
     if (!from || !to || !homeId) return;
     baseline.savings.setRange(from, to); void baseline.savings.calculate();
     return () => baseline.savings.cancel();
   }, [baseline, from, to, homeId]);
+  useEffect(() => {
+    if (!trial || !from || !to) return;
+    trial.savings.setRange(from, to); void trial.savings.calculate();
+    return () => trial.savings.cancel();
+  }, [trial, from, to]);
   const oreIncVat = (sekPerKwhExVat: number) => `${(sekPerKwhExVat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t('öre/kWh', 'öre/kWh')}`;
   const errors = [...new Set([anchor.isError ? anchor.error.message : null, state.error].filter((message): message is string => !!message))];
   const displayState = state.rangeKey === `${from}|${to}` ? state : { ...state, rows: [], error: null };
+  const referenceMonths = referenceState.rangeKey === `${from}|${to}` ? referenceState.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
   const months = state.rangeKey === `${from}|${to}` ? state.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
   // Deployment retries can add bills while this tab is open. Refresh only invoice
   // evidence: saved baseline/scheduler ledgers and their generation stay untouched.
@@ -93,19 +114,19 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   // What an imported kWh costs in the months of the estimate, for putting a price on past changes.
   const boughtKwh = months.reduce((n, m) => n + m.recorded.importKwh, 0);
   const sekPerKwh = boughtKwh > 0 ? months.reduce((n, m) => n + m.recorded.importCostSek, 0) / boughtKwh : null;
-  const check = modelCheck(months, bills, invoiceMonths);
+  const check = modelCheck(referenceMonths, bills, invoiceMonths);
   // Which of these months SHS actually controlled, from the modes each planning run recorded.
-  const controlRange = months.length && anchor.data ? { from: months[0].start, to: months[months.length - 1].end, timeZone: anchor.data.snapshot.timezone } : null;
+  const controlRange = referenceMonths.length && anchor.data ? { from: referenceMonths[0].start, to: referenceMonths[referenceMonths.length - 1].end, timeZone: anchor.data.snapshot.timezone } : null;
   const control = useQuery({ queryKey: ['energy-control-months', customerId, homeId, controlRange?.from, controlRange?.to],
     queryFn: () => fetchControlMonths({ customerId, homeId: homeId! }, controlRange!.from, controlRange!.to, controlRange!.timeZone),
     enabled: !!homeId && !!controlRange, retry: false, staleTime: 15 * 60 * 1000 });
   const capabilities = anchor.data?.snapshot.capabilities;
   const scheduled = capabilities ? (['battery', 'pool', 'ev'] as const).filter(device => capabilities[device]).map(device => `$${device}`) : [];
-  const track = control.data ? trackRecord(months, control.data, scheduled) : null;
+  const track = control.data ? trackRecord(referenceMonths, control.data, scheduled) : null;
   const record = useMemo(() => billedRecord(displayState.rows.map(row => row.month), bills), [displayState.rows, bills]);
   const monthName = (key: string) => new Intl.DateTimeFormat(language === 'sv' ? 'sv-SE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${key}-01T00:00:00Z`));
   const [graphOpen, setGraphOpen] = useState(false);
-  useEffect(() => { setGraphOpen(false); }, [homeId]);
+  useEffect(() => { setGraphOpen(false); }, [homeId, trial]);
   // The saved report states the pool temperature it was calculated with; a request not yet pinned wins.
   const [poolRequest, setPoolRequest] = useState<{ homeId: string; targetC: number } | null>(null);
   const pinnedPoolC = anchor.data ? poolTarget(anchor.data.snapshot) : null;
@@ -118,11 +139,15 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   const applyPool = (targetC: number) => {
     if (!homeId) return;
     poolPin.current = { homeId, targetC }; setPoolRequest(poolPin.current);
-    setGraphOpen(false); void baseline.savings.calculate(true);
+    setEquipmentRequest(null); setGraphOpen(false); void baseline.savings.calculate(true);
   };
   const celsius = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
   const poolAssumption = poolC === null ? null : t(`Poolen hålls vid ${celsius(poolC)} °C alla månader`, `Pool kept at ${celsius(poolC)} °C every month`);
-  const assumptions = [t('Din nuvarande utrustning', 'Your current equipment'),
+  const currentBattery = anchor.data ? homePhysics(anchor.data.snapshot).battery : null;
+  const benefit = selectedEquipment ? equipmentBenefit(referenceMonths, months) : null;
+  const assumptions = [selectedEquipment ? t('Vald utrustning · simulering', 'Selected equipment · simulation') : t('Din nuvarande utrustning', 'Your current equipment'),
+    ...(selectedEquipment?.solar ? [`${selectedEquipment.solar.proposed.arrayKwp} kWp · ${selectedEquipment.solar.proposed.inverterKw} kW AC`] : []),
+    ...(selectedEquipment?.batteryKwh !== null && selectedEquipment?.batteryKwh !== undefined ? [t(`Batteri ${selectedEquipment.batteryKwh} kWh`, `Battery ${selectedEquipment.batteryKwh} kWh`)] : []),
     ...(from && to ? [t(`Väder, förbrukning och priser från ${monthName(from)} – ${monthName(to)}`, `Weather, consumption and prices from ${monthName(from)} – ${monthName(to)}`)] : []),
     ...(poolAssumption ? [poolAssumption] : [])];
   const installations = useQuery({ queryKey: ['roi-installations', customerId, homeId],
@@ -152,16 +177,17 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       {ready && <p className="mt-4 text-xs text-muted-foreground">{forecast.rows.length}/{state.rows.length} {t('månader beräknade', 'months calculated')}</p>}
     </section>
     <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Månad för månad', 'Month by month')}</CardTitle>
-      {state.running ? <Button variant="outline" onClick={baseline.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
-        : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void baseline.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
+      {state.running ? <Button variant="outline" onClick={active.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
+        : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void active.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
-      <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void baseline.viewer.showMonth(month); }} />
+      <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void active.viewer.showMonth(month); }} />
       <p className="text-xs text-muted-foreground">{t('Ingen av kolumnerna innehåller effektavgiften.', 'Neither column includes the demand charge.')}</p>
       {track ? <p className="text-sm" data-testid="track-record">{t(
         `Facit: under de ${track.rows.length} ${track.rows.length === 1 ? 'månad' : 'månader'} SHS styrde huset blev den uppmätta besparingen ${sek(track.measuredSek)}, mot ${sek(track.estimatedSek)} uppskattat för samma månader${track.realised !== null ? ` (${Math.round(track.realised * 100)} %)` : ''}.`,
         `Track record: in the ${track.rows.length} ${track.rows.length === 1 ? 'month' : 'months'} SHS controlled the home, the measured saving was ${sek(track.measuredSek)}, against ${sek(track.estimatedSek)} estimated for the same months${track.realised !== null ? ` (${Math.round(track.realised * 100)}%)` : ''}.`)}</p>
         : control.isSuccess && <p className="text-xs text-muted-foreground" data-testid="track-record-pending">{t('Facit: börjar med den första hela månaden SHS styr huset.', 'Track record: starts with the first full month SHS controls the home.')}</p>}
     </CardContent></Card>
+    {selectedEquipment && <EquipmentComparison benefit={benefit} totalMonths={displayState.rows.length} solarChanged={!!selectedEquipment.solar} />}
     <HomeChangesCard customerId={customerId} sekPerKwh={sekPerKwh} />
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
@@ -177,6 +203,10 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       </div>
     </details>
     <details className="rounded-xl border bg-card px-5" data-testid="comparison-settings"><summary className="cursor-pointer py-4 text-sm font-medium">{t('Antaganden och priser', 'Assumptions and prices')}</summary>
+      {anchor.data && homeId && <EquipmentAssumptions key={homeId} solar={anchor.data.solarSizing ?? null} battery={currentBattery} selected={selectedEquipment}
+        busy={state.running || referenceState.running} onApply={value => { setGraphOpen(false); setEquipmentRequest({ homeId, value }); }}
+        onReset={() => { setGraphOpen(false); setEquipmentRequest(null); }} />}
+      {selectedEquipment && <p className="pb-4 text-sm text-muted-foreground">{t('En ändring av poolmålet avslutar utrustningsförsöket så att jämförelsen använder samma poolmål.', 'Changing the pool target ends the equipment trial so the comparison uses the same pool target.')}</p>}
       {poolC !== null && <div className="space-y-2 pb-5" data-testid="roi-pool">
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-full max-w-xs"><RoiNumberField id="roi-pool-target" label={t('Pooltemperatur (°C)', 'Pool temperature (°C)')} min={POOL_TARGET_RANGE_C[0]} max={POOL_TARGET_RANGE_C[1]} value={poolDraft} onChange={setPoolDraft} /></div>
@@ -195,8 +225,8 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
         <RoiNumberField id="roi-subscription" label={t('SHS-abonnemang (kr/månad)', 'SHS subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
       </div>
     </details>
-    {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId} onClick={() => { setGraphOpen(true); void baseline.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
-    {graphOpen && <HomeBaselineViewer session={baseline.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
+    {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId} onClick={() => { setGraphOpen(true); void active.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
+    {graphOpen && <HomeBaselineViewer session={active.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
   </div>;
 }
 export default function SavingsTab(props: SavingsTabProps) { return <SavingsEstimate key={props.customerId} {...props} />; }

@@ -356,6 +356,85 @@ test.describe('requesting a replan', () => {
     expect(Number.isFinite(month.modeled.schedulerBill.totalSek)).toBe(true);
   });
 
+  test('equipment trials rerun solar, inverter and battery physics without replacing the saved home report', async ({ context, page }, testInfo) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-09', to: '2026-09' });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(1/1)');
+    const installedReport = JSON.stringify(history.saved());
+    const currentTotal = await page.getByTestId('scheduler-totals').textContent();
+    const reads = history.reads();
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    await expect(page.getByTestId('roi-equipment')).toContainText(/nameplate sizes are missing|storlek saknas/);
+    await expect(page.getByTestId('roi-equipment-apply')).toBeDisabled();
+    await page.locator('#roi-currentArray').fill('4');
+    await page.locator('#roi-currentInverter').fill('3');
+    await page.locator('#roi-array').fill('8');
+    await page.locator('#roi-inverter').fill('0.3');
+    await page.locator('#roi-battery').fill('-1');
+    await expect(page.getByTestId('roi-equipment-apply')).toBeDisabled();
+    await page.locator('#roi-battery').fill('0.2');
+    await page.getByTestId('roi-equipment-apply').click();
+    await expect(page.getByTestId('savings-assumptions')).toContainText('8 kWp · 0.3 kW AC');
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/1\/1/);
+    await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/history cannot quantify|inte går att beräkna/);
+    expect(history.reads()).toBe(reads);
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+    await page.getByTestId('scheduler-month-2026-09').getByRole('button', { name: /View graph|Visa graf/ }).click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    const downloadReady = page.waitForEvent('download');
+    await page.getByRole('button', { name: /Export model|Exportera modell/ }).click();
+    const exported = JSON.parse(readFileSync((await (await downloadReady).path())!, 'utf8'));
+    expect(exported.input.equipment).toEqual({ solar: { current: { arrayKwp: 4, inverterKw: 3 }, proposed: { arrayKwp: 8, inverterKw: .3 } }, batteryKwh: .2 });
+    expect(exported.input.problem.battery.capacity_kwh).toBe(.2);
+    expect(Math.max(...exported.result.series.solarW)).toBe(300);
+    expect(exported.input.recorded.ledger).toEqual(history.saved()!.months['2026-09'].ledger.recorded);
+    // An unapplied draft never relabels the totals or their graphs.
+    await page.locator('#roi-array').fill('20');
+    await expect(page.getByTestId('savings-assumptions')).toContainText('8 kWp');
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.getByTestId('roi-equipment').screenshot({ path: testInfo.outputPath('equipment-assumptions-mobile.png') });
+    await page.getByTestId('roi-equipment-reset').click();
+    await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
+    await expect(page.getByTestId('scheduler-totals')).toHaveText(currentTotal!);
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+    // Trials are session-only; a reload always shows the saved reference.
+    await page.reload();
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
+  });
+
+  test('equipment sizing reads published nameplates and supports zero solar and battery', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-09', to: '2026-09' });
+    await context.route('**/rest/v1/energy_roi_solar_profiles*', route => route.fulfill({ json: {
+      profile_hash: 'a'.repeat(64), peak_kw: 8, inverter_kw: 5,
+      start_ts: '2026-04-01T00:00:00.000Z', end_ts: '2026-04-01T01:00:00.000Z',
+    } }));
+    await context.route('**/rest/v1/energy_roi_solar_hours*', route => route.fulfill({ json: [] }));
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(1/1)');
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    await expect(page.locator('#roi-currentArray')).toHaveCount(0);
+    await expect(page.locator('#roi-array')).toHaveValue('8');
+    await expect(page.locator('#roi-inverter')).toHaveValue('5');
+    await page.locator('#roi-array').fill('0');
+    await page.locator('#roi-inverter').fill('0');
+    await page.locator('#roi-battery').fill('0');
+    await page.getByTestId('roi-equipment-apply').click();
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('savings-assumptions')).toContainText('0 kWp · 0 kW AC');
+    await expect(page.getByTestId('savings-assumptions')).toContainText(/Battery 0 kWh|Batteri 0 kWh/);
+    expect(history.saved()!.model.capabilities.battery).toBe(true);
+    expect(history.saved()!.model.device_physics!.battery!.capacity_kwh).toBe(.1);
+  });
+
   test('Savings displays a shared report failure only once', async ({ context, page }) => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
     let pinRequests = 0;

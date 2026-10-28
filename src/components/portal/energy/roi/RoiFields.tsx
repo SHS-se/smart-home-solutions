@@ -5,16 +5,16 @@ import { useLanguage } from '@/contexts/LanguageContext';
 
 import { numericInput } from '@/lib/contract-roi';
 
-export function RoiNumberField({ id, label, value, onChange, min, max, hint }: {
+export function RoiNumberField({ id, label, value, onChange, min, max, hint, optional = false, disabled = false }: {
   id: string; label: string; value: string; onChange: (value: string) => void;
-  min?: number; max?: number; hint?: string;
+  min?: number; max?: number; hint?: string; optional?: boolean; disabled?: boolean;
 }) {
   const { t } = useLanguage();
   const number = numericInput(value);
-  const invalid = number === null || (min !== undefined && number < min) || (max !== undefined && number > max);
+  const invalid = !(optional && value === '') && (number === null || (min !== undefined && number < min) || (max !== undefined && number > max));
   return <div className="space-y-2">
     <Label htmlFor={id}>{label}</Label>
-    <Input id={id} type="number" inputMode="decimal" step="any" min={min} max={max} value={value}
+    <Input id={id} type="number" inputMode="decimal" step="any" disabled={disabled} min={min} max={max} value={value}
       onChange={e => onChange(e.target.value)} className="h-11 tabular-nums" aria-invalid={invalid}
       aria-describedby={invalid || hint ? `${id}-help` : undefined} />
     {(invalid || hint) && <p id={`${id}-help`} className={`text-sm ${invalid ? 'text-destructive' : 'text-muted-foreground'}`}>

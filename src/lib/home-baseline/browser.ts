@@ -10,8 +10,12 @@ export interface BaselineCapture extends BaselineResponse { input: BaselineInput
 
 export interface ComparisonCapture extends BaselineCapture { scheduler: SchedulerReplay; modeled: ModelComparison }
 export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal, pool: PoolStart | null): Promise<ComparisonCapture> {
-  const input = await loadHomeBaseline(ref, anchor, period, signal);
-  input.pool = pool;
+  return projectHomeBaseline(await loadHomeBaseline(ref, anchor, period, signal), signal, pool);
+}
+
+/** Shared worker boundary for the pinned home and equipment trials. */
+export async function projectHomeBaseline(prepared: BaselineInput, signal: AbortSignal, pool: PoolStart | null): Promise<ComparisonCapture> {
+  const input = { ...prepared, pool };
   input.problem = withPoolState(input.problem, pool?.initial.baseline);
   const projected = await new Promise<Omit<ComparisonCapture, 'input'>>((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }

@@ -8,6 +8,7 @@ import { ROI_SUPPLIER_TERMS } from '../../../supabase/functions/_shared/roi-supp
 import { mapConcurrent } from '../../../supabase/functions/_shared/map-concurrent';
 
 import type { SolarHour, SolarProfile } from './solar';
+import { solarSizing } from './equipment';
 import type { PoolSeed } from './pool-carry';
 
 export interface HomeRef { customerId: string; homeId: string }
@@ -33,14 +34,14 @@ export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): 
     read<{ start_ts: string } | null>(scoped(ref, 'energy_roi_history_hours').select('start_ts').order('start_ts').limit(1).abortSignal(signal).maybeSingle()),
     read<{ start_ts: string } | null>(scoped(ref, 'energy_roi_history_hours').select('start_ts').lt('start_ts', new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString())
       .order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()),
-    read<{ profile_hash: string } | null>(scoped(ref, 'energy_roi_solar_profiles').select('profile_hash').abortSignal(signal).maybeSingle()),
+    read<{ profile_hash: string; peak_kw?: unknown; inverter_kw?: unknown } | null>(scoped(ref, 'energy_roi_solar_profiles').select('profile_hash,peak_kw:provenance->config->pv->peak_kw,inverter_kw:provenance->config->pv->inverter_kw').abortSignal(signal).maybeSingle()),
     read<{ seed: PoolSeed } | null>(scoped(ref, 'energy_roi_pool_seeds').select('seed').abortSignal(signal).maybeSingle()),
   ]);
   signal.throwIfAborted();
   if (!snapshot) throw new Error('Current home physical model is unavailable');
   if ((!latest || !first) && (!recoveredFirst || !recoveredLast)) throw new Error('No completed historical energy readings are available for this home');
   homePhysics(snapshot);
-  return { snapshot: { ...snapshot, criteria, roi_solar_profile: solar?.profile_hash ?? null, roi_pool_seed: poolSeed?.seed ?? null }, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
+  return { solarSizing: solarSizing(solar), snapshot: { ...snapshot, criteria, roi_solar_profile: solar?.profile_hash ?? null, roi_pool_seed: poolSeed?.seed ?? null }, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
     latestEnd: new Date(Math.max(...[latest ? Date.parse(latest.start_ts) + QUARTER_MS : null, recoveredLast ? Date.parse(recoveredLast.start_ts) + 3_600_000 : null].filter((t): t is number => t !== null))).toISOString() };
 }
 
