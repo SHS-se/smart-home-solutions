@@ -21,7 +21,6 @@ export const monthStore: MonthStore = {
   async save(ref, generation, ledger, inputHash, expectedHash, signal) {
     const row = checked(await db.rpc('save_energy_roi_month', { p_home_id: ref.homeId, p_customer_id: ref.customerId,
       p_generation: generation, p_version: CALCULATION_VERSION, p_ledger: ledger, p_input_hash: inputHash, p_expected_hash: expectedHash }).abortSignal(signal));
-    const report = parseSavedReport(row);
-    return report.months[ledger.month];
+    return parseSavedReport(row);
   },
 };

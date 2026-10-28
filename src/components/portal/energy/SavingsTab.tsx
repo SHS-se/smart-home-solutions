@@ -28,6 +28,7 @@ import { RoiNumberField } from './roi/RoiFields';
 import { sek } from './roi/format';
 import { fetchRoiInstallations } from '@/lib/home-baseline/installations';
 import { POOL_TARGET_RANGE_C, poolTarget, withPoolTarget } from '@/lib/home-baseline/pool-target';
+import { readEquipmentSelection, writeEquipmentSelection } from '@/lib/home-baseline/equipment-selection';
 import { createEquipmentTrial } from '@/lib/home-baseline/equipment-trial';
 import { equipmentBenefit, type EquipmentTrial } from '@/lib/home-baseline/equipment';
 import { homePhysics } from '@/lib/home-baseline/home-physics';
@@ -58,8 +59,15 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     return { source, viewer: createBaselineSession(source), savings: createSavingsRun(source) };
   }, [customerId, homeId]);
   useEffect(() => () => { baseline.viewer.dispose(); baseline.savings.dispose(); baseline.source.dispose(); }, [baseline]);
-  const [equipmentRequest, setEquipmentRequest] = useState<{ homeId: string; value: EquipmentTrial } | null>(null);
+  const [equipmentRequest, setEquipmentRequest] = useState<{ homeId: string; value: EquipmentTrial } | null>(() => {
+    if (!homeId) return null;
+    const value = readEquipmentSelection(localStorage, { customerId, homeId });
+    return value ? { homeId, value } : null;
+  });
   const selectedEquipment = equipmentRequest?.homeId === homeId ? equipmentRequest.value : null;
+  useEffect(() => {
+    if (homeId) writeEquipmentSelection(localStorage, { customerId, homeId }, selectedEquipment);
+  }, [customerId, homeId, selectedEquipment]);
   const trial = useMemo(() => {
     if (!homeId || !selectedEquipment) return null;
     const source = createEquipmentTrial({ customerId, homeId }, baseline.source, selectedEquipment);
@@ -229,4 +237,4 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     {graphOpen && <HomeBaselineViewer session={active.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
   </div>;
 }
-export default function SavingsTab(props: SavingsTabProps) { return <SavingsEstimate key={props.customerId} {...props} />; }
+export default function SavingsTab(props: SavingsTabProps) { return <SavingsEstimate key={`${props.customerId}:${props.homeId}`} {...props} />; }

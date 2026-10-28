@@ -18,6 +18,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
   const summaryListeners = new Set<(ledger: MonthLedger) => void>();
   let anchorPromise: Promise<BaselineAnchor> | null = null;
   let report: SavedReport | null = null, hydration: Promise<SavedReport | null> | null = null;
+  let writes: Promise<unknown> = Promise.resolve();
   const hydrate = (): Promise<SavedReport | null> => {
     if (!hydration) hydration = (!ref || !dependencies.store ? Promise.resolve<SavedReport | null>(null) : dependencies.store.read(ref, lifetime.signal)).then(saved => {
       report = saved;
@@ -121,9 +122,21 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
                   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
                   controller.signal.throwIfAborted();
                   if (dependencies.store) {
-                    const saved = await dependencies.store.save(ref, capturedReport!.generation, ledger, hash, capturedReport!.months[ledger.month]?.inputHash ?? null, controller.signal);
-                    controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
-                    report!.months[ledger.month] = saved; ledger = saved.ledger;
+                    // One source consumes save receipts in write order, even when
+                    // a graph and the monthly run generate different months together.
+                    const saved = writes.then(async () => {
+                      controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+                      if (report !== capturedReport) throw new Error('ROI model changed; reload the report');
+                      const receipt = await dependencies.store!.save(ref, capturedReport!.generation, ledger, hash, capturedReport!.months[ledger.month]?.inputHash ?? null, controller.signal);
+                      controller.signal.throwIfAborted(); lifetime.signal.throwIfAborted();
+                      // The database owns the bounded window and descendant invalidation.
+                      report!.months = receipt.months; report!.checkpoints = receipt.checkpoints;
+                      return receipt.months[ledger.month].ledger;
+                    });
+                    // Each caller still receives its own error; a failed write does
+                    // not prevent unrelated queued work from reaching the database.
+                    writes = saved.then(() => undefined, () => undefined);
+                    ledger = await saved;
                   }
                   if (ledger.pool && ledger.coverage === 1) {
                     const previous = checkpoints.get(ledger.month);

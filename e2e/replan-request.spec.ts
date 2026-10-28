@@ -381,7 +381,7 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
     await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/1\/1/);
     await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/history cannot quantify|inte går att beräkna/);
-    expect(history.reads()).toBe(reads);
+    expect(history.reads()).toBeGreaterThan(reads);
     expect(JSON.stringify(history.saved())).toBe(installedReport);
     await page.getByTestId('scheduler-month-2026-09').getByRole('button', { name: /View graph|Visa graf/ }).click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -402,7 +402,55 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
     await expect(page.getByTestId('scheduler-totals')).toHaveText(currentTotal!);
     expect(JSON.stringify(history.saved())).toBe(installedReport);
-    // Trials are session-only; a reload always shows the saved reference.
+    // Explicit reset removes the saved selection, so reload shows the reference.
+    await page.reload();
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
+  });
+
+  test('reloaded equipment trials never save reference months and retain sizes through calculation failure and reload', async ({ context, page }) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-09', to: '2026-09' });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(1/1)');
+    const installedReport = JSON.stringify(history.saved());
+    // Reload hydrates saved totals without any in-memory reference captures.
+    await page.reload();
+    await expectRoiMonths(page, '(1/1)');
+    let unexpectedSaves = 0;
+    await context.route('**/rest/v1/rpc/save_energy_roi_month*', route => {
+      unexpectedSaves++;
+      return route.fulfill({ status: 409, json: { message: 'ROI month changed in another session; reload the report' } });
+    });
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    await page.locator('#roi-battery').fill('0.2');
+    await page.getByTestId('roi-equipment-apply').click();
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    expect(unexpectedSaves).toBe(0);
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+    // Recalculating the selected scenario must also be a read-only operation.
+    await page.getByTestId('scheduler-calculate').click();
+    await expectRoiMonths(page, '(1/1)');
+    expect(unexpectedSaves).toBe(0);
+    // A genuine worker failure must not discard the selected equipment.
+    let failWorker = true;
+    await context.route('**/assets/worker-*.js', route => failWorker
+      ? route.fulfill({ status: 404, contentType: 'text/html', body: 'Unavailable' }) : route.fallback());
+    await page.getByTestId('scheduler-calculate').click();
+    await expect(page.getByTestId('scheduler-month-2026-09')).toContainText('Reload the page to load the current version.');
+    await expect(page.locator('#roi-battery')).toHaveValue('0.2');
+    failWorker = false;
+    await page.reload();
+    await expectRoiMonths(page, '(1/1)');
+    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('savings-assumptions')).toContainText(/Battery 0.2 kWh|Batteri 0.2 kWh/);
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    await expect(page.locator('#roi-battery')).toHaveValue('0.2');
+    expect(unexpectedSaves).toBe(0);
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+    await page.getByTestId('roi-equipment-reset').click();
     await page.reload();
     await expectRoiMonths(page, '(1/1)');
     await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);

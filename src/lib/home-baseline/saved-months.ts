@@ -52,7 +52,7 @@ export interface SavedReport { generation: number; version: string; model: HomeM
 export interface MonthStore {
   read(ref: HomeRef, signal: AbortSignal): Promise<SavedReport | null>;
   pin(ref: HomeRef, model: HomeModelCapture, expectedGeneration: number | null, signal: AbortSignal): Promise<SavedReport>;
-  save(ref: HomeRef, generation: number, ledger: MonthLedger, inputHash: string, expectedHash: string | null, signal: AbortSignal): Promise<SavedMonth>;
+  save(ref: HomeRef, generation: number, ledger: MonthLedger, inputHash: string, expectedHash: string | null, signal: AbortSignal): Promise<SavedReport>;
 }
 
 /** Persist physical equipment only, never forecasts, plans or chart series. */

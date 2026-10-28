@@ -32,7 +32,7 @@ Deno.test('saved complete months hydrate without anchor/history/native work, whi
   let anchors = 0, generates = 0, writes = 0;
   const stored = report();
   const store: MonthStore = { read: () => Promise.resolve(stored), pin: () => { throw new Error('Unexpected repin'); },
-    save: (_, generation, value) => { assertEquals(generation, 1); writes++; return Promise.resolve({ ...saved(), ledger: value }); } };
+    save: (_, generation, value) => { assertEquals(generation, 1); writes++; return Promise.resolve({ ...stored, months: { ...stored.months, [value.month]: { ...saved(), ledger: value } } }); } };
   const source = createCaptureSource(ref, { store, now: () => now, resolveAnchor: () => { anchors++; return Promise.resolve(anchor); },
     generate: (_, pinned) => { generates++; assertEquals(pinned.snapshot, model); return Promise.resolve(capture); } });
   const run = createSavingsRun(source); run.setRange('2026-09', '2026-09'); await run.calculate();
@@ -47,7 +47,7 @@ Deno.test('partial freshness prevents needless modelling, then forces a new capt
   let clock = now, generates = 0, fail = false;
   const stored = report(); stored.months['2026-09'].ledger = { ...ledger, coverage: .5 };
   const store: MonthStore = { read: () => Promise.resolve(stored), pin: () => Promise.resolve(stored),
-    save: (_, __, value) => fail ? Promise.reject(new Error('Save unavailable')) : Promise.resolve({ ledger: value, inputHash: hash, computedAt: new Date(clock).toISOString() }) };
+    save: (_, __, value) => fail ? Promise.reject(new Error('Save unavailable')) : Promise.resolve({ ...stored, months: { ...stored.months, [value.month]: { ledger: value, inputHash: hash, computedAt: new Date(clock).toISOString() } } }) };
   const source = createCaptureSource(ref, { store, now: () => clock, resolveAnchor: () => Promise.resolve(anchor),
     generate: () => { generates++; return Promise.resolve(capture); } });
   const run = createSavingsRun(source); run.setRange('2026-09', '2026-09'); await run.calculate(); assertEquals(generates, 0);
@@ -65,7 +65,7 @@ Deno.test('durability failures do not publish a new graph or ledger and explicit
   }, save: (_, generation, value) => {
     assertEquals(generation, stored!.generation);
     if (fail) return Promise.reject(new Error('Save unavailable'));
-    const entry = { ...saved(), ledger: value }; stored!.months[value.month] = entry; return Promise.resolve(entry);
+    const entry = { ...saved(), ledger: value }; stored!.months[value.month] = entry; return Promise.resolve(stored!);
   } };
   const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor), generate: () => Promise.resolve(capture) });
   const period = { view: 'month' as const, start: ledger.start, end: ledger.end };
@@ -81,7 +81,7 @@ Deno.test('a calculation finishing after repin cannot save against the newer mod
   const store: MonthStore = { read: () => Promise.resolve(stored), pin: (_, model) => {
     stored = { generation: stored.generation + 1, version: CALCULATION_VERSION, model: compactModel(model), months: {}, checkpoints: {} };
     return Promise.resolve(stored);
-  }, save: () => { writes++; return Promise.resolve(saved()); } };
+  }, save: () => { writes++; return Promise.resolve(stored); } };
   const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),
     generate: () => new Promise(resolve => { finish = resolve; }) });
   const work = source.capture({ view: 'month', start: ledger.start, end: ledger.end }, new AbortController().signal);
@@ -92,4 +92,67 @@ Deno.test('a calculation finishing after repin cannot save against the newer mod
   await rejected;
   assertEquals(writes,0);assertEquals(source.summary({ view:'month',start:ledger.start,end:ledger.end }),undefined);
   source.dispose();
+});
+
+Deno.test('server month eviction removes stale local save hashes before an uncached month is calculated again', async () => {
+  // Synthetic receipts reproduce the SQL's twelve-month retention contract.
+  let stored: SavedReport = { ...report(), months: {} }, sequence = 0;
+  const store: MonthStore = {
+    read: () => Promise.resolve(structuredClone(stored)),
+    pin: () => Promise.resolve(structuredClone(stored)),
+    save: (_, generation, value, inputHash, expectedHash) => {
+      assertEquals(generation, stored.generation);
+      assertEquals(expectedHash, stored.months[value.month]?.inputHash ?? null, 'A pruned server month must not retain a local compare-and-swap hash');
+      stored.months[value.month] = { ledger: value, inputHash, computedAt: new Date(now + sequence++ * 1000).toISOString() };
+      const newest = Object.entries(stored.months).sort((a, b) => b[1].computedAt.localeCompare(a[1].computedAt)).slice(0, 12);
+      stored = { ...stored, months: Object.fromEntries(newest) };
+      return Promise.resolve(structuredClone(stored));
+    },
+  };
+  const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve({ ...anchor, earliestStart: '2025-09-01T00:00:00.000Z' }),
+    generate: (_, __, period) => Promise.resolve({ ...capture, input: { ...capture.input, timeZone: 'UTC', start: period.start, end: period.end },
+      result: { ...capture.result, ledger: { ...capture.result.ledger, costSek: sequence } } }) });
+  try {
+    const months = Array.from({ length: 13 }, (_, index) => {
+      const start = new Date(Date.UTC(2025, 8 + index, 1)).toISOString();
+      const end = new Date(Date.UTC(2025, 9 + index, 1)).toISOString();
+      // This test's timestamps are UTC calendar months, with a matching synthetic timezone.
+      return { view: 'month' as const, start, end };
+    });
+    for (const period of months) await source.capture(period, new AbortController().signal);
+    assertEquals(Object.keys(stored.months).length, 12);
+    assertEquals(source.saved('2025-09'), undefined);
+    assertEquals(source.cached(months[0]), undefined);
+    await source.capture(months[0], new AbortController().signal);
+    assertEquals(source.saved('2025-09')?.inputHash, stored.months['2025-09'].inputHash);
+  } finally { source.dispose(); }
+});
+
+Deno.test('concurrent graph and month captures consume canonical report receipts in save order', async () => {
+  const stored: SavedReport = { ...report(), months: {} };
+  const releases: (() => void)[] = [], started: string[] = [];
+  const store: MonthStore = {
+    read: () => Promise.resolve(structuredClone(stored)), pin: () => Promise.resolve(structuredClone(stored)),
+    save: async (_, __, value, inputHash, expectedHash) => {
+      started.push(value.month);
+      await new Promise<void>(resolve => { releases.push(resolve); });
+      assertEquals(expectedHash, stored.months[value.month]?.inputHash ?? null);
+      stored.months[value.month] = { ledger: value, inputHash, computedAt: new Date(now).toISOString() };
+      return structuredClone(stored);
+    },
+  };
+  const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),
+    generate: (_, __, period) => Promise.resolve({ ...capture, input: { ...capture.input, timeZone: 'UTC', start: period.start, end: period.end } }) });
+  try {
+    const september = source.capture({ view: 'month', start: '2026-09-01T00:00:00.000Z', end: '2026-10-01T00:00:00.000Z' }, new AbortController().signal);
+    const october = source.capture({ view: 'month', start: '2026-10-01T00:00:00.000Z', end: '2026-11-01T00:00:00.000Z' }, new AbortController().signal);
+    while (!releases.length) await new Promise(resolve => setTimeout(resolve, 0));
+    assertEquals(started, ['2026-09']);
+    releases[0](); await september;
+    while (releases.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    assertEquals(started, ['2026-09', '2026-10']);
+    releases[1](); await october;
+    assertEquals(source.saved('2026-09'), stored.months['2026-09']);
+    assertEquals(source.saved('2026-10'), stored.months['2026-10']);
+  } finally { source.dispose(); }
 });
