@@ -135,7 +135,7 @@ export function toEnergyTariffSeriesDocuments(
     consumptionKwh: calculation.grid_import_kwh,
     exportedKwh: calculation.grid_export_kwh,
     peakDemandKw: calculation.peak_demand_kw,
-    totalAmountSek: calculation.total_amount_sek,
+    periodCostSek: calculation.total_amount_sek,
     lineItems: parseComponents(calculation.components).map((component) => ({
       category: component.category,
       amountSek: component.amount_sek,

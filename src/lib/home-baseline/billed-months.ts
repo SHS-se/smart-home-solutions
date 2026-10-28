@@ -3,7 +3,7 @@ import { buildEnergyBillingSeries, type EnergyBillingDocumentForSeries } from '.
 export interface BilledMonth {
   month: string; electricitySek: number | null; gridSek: number | null; totalSek: number | null;
   importKwh: number | null; documentIds: string[]; allocated: boolean;
-  reason: 'missing' | 'partial' | 'overlap' | 'multiple_homes' | null;
+  reason: 'missing' | 'partial' | 'overlap' | 'multiple_homes' | 'unknown_cost' | null;
 }
 
 /** Original imported bills only. Metered or tariff estimates never become Actual. */
@@ -20,7 +20,8 @@ export function billedMonths(documents: EnergyBillingDocumentForSeries[], homeCo
     const members = documents.filter(d => d.periodStart.slice(0, 7) <= m.monthKey && d.periodEnd.slice(0, 7) >= m.monthKey);
     const reason = homeCount !== 1 ? 'multiple_homes' : overlaps.has(m.monthKey) ? 'overlap'
       : m.electricityCoverage === 'missing' || m.gridCoverage === 'missing' ? 'missing'
-      : m.electricityCoverage !== 'complete' || m.gridCoverage !== 'complete' ? 'partial' : null;
+      : m.electricityCoverage !== 'complete' || m.gridCoverage !== 'complete' ? 'partial'
+      : m.electricityCostSek === null || m.gridCostSek === null ? 'unknown_cost' : null;
     return [m.monthKey, { month: m.monthKey, electricitySek: m.electricityCostSek, gridSek: m.gridCostSek,
       totalSek: reason === null ? m.totalCostSek : null, importKwh: m.consumptionKwh, documentIds: members.map(d => d.id),
       allocated: members.some(d => d.periodStart.slice(0, 7) !== d.periodEnd.slice(0, 7)), reason }];

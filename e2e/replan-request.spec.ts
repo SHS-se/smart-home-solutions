@@ -628,11 +628,18 @@ test.describe('requesting a replan', () => {
   test('ROI reloads durable monthly totals without fetching history or generating charts', async ({ context, page }) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    history.setActualPricesAvailable(false);
     let billsAvailable = false;
     await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: billsAvailable ? ['electricity', 'grid'].map(kind => ({
       id: `new:${kind}`, customer_id: CUSTOMER_ID, document_kind: kind,
-      period_start: '2026-09-01', period_end: '2026-09-30', total_amount_sek: kind === 'electricity' ? 123 : 456,
-      consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [],
+      parser_id: kind === 'electricity' ? 'tibber_quarterly' : 'ellevio_flat_transfer',
+      period_start: '2026-09-01', period_end: '2026-09-30', total_amount_sek: kind === 'electricity' ? -77 : 456,
+      consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null,
+      // Synthetic: 123 SEK current charges minus a 200 SEK earlier credit.
+      energy_billing_line_items: kind === 'electricity' ? [
+        ['spot_energy', 90], ['markup', 4], ['variable_fee', 4.4], ['vat', 24.6], ['fixed_fee', 20], ['discount', -20],
+      ].map(([category, amount_sek], sort_order) => ({ id: `charge-${sort_order}`, category, amount_sek, sort_order,
+        period_start: '2026-09-01', period_end: '2026-09-30' })) : [],
     })) : [] }));
     await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
     await page.goto('/portal/energy-modeling?tab=savings');
@@ -669,14 +676,24 @@ test.describe('requesting a replan', () => {
     // A deployment adds missing invoices; polling updates Actual without repinning
     // the equipment or rerunning any completed baseline/scheduler projections.
     await expect(billed.getByTestId('roi-amount')).toHaveText('—');
+    await row.getByRole('button', { name: /View graph|Visa graf/ }).click();
+    await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
+    await page.getByTestId('comparison-graph-actual').click();
+    await expect(page.getByTestId('actual-prices-incomplete')).toBeVisible();
+    const energyReadsBeforeBills = history.windows.length;
     const savedBeforeBills = JSON.stringify(history.saved());
     const modelCells = await Promise.all([0, 1, 2].map(index => row.locator('td').nth(index).textContent()));
     const readsBeforeBills = history.reads();
-    billsAvailable = true;
+    history.setActualPricesAvailable(true); billsAvailable = true;
     await expect(billed.getByTestId('roi-amount')).toHaveText('579,00 SEK', { timeout: 45_000 });
     expect(await Promise.all([0, 1, 2].map(index => row.locator('td').nth(index).textContent()))).toEqual(modelCells);
     expect(JSON.stringify(history.saved())).toBe(savedBeforeBills);
-    expect(history.reads()).toBe(readsBeforeBills);
+    await expect(page.getByTestId('actual-prices-incomplete')).toHaveCount(0);
+    const chart = page.getByTestId('roi-baseline').getByRole('group', { name: /power flows|effektflöden/i }).first();
+    await chart.focus(); await chart.press('ArrowRight'); await chart.press('Enter');
+    await expect(page.getByTestId('baseline-quarter')).toContainText('2,00 SEK');
+    expect(history.reads()).toBe(readsBeforeBills + 1);
+    expect(history.windows.length).toBe(energyReadsBeforeBills);
     await page.getByTestId('scheduler-calculate').click();
     await expect.poll(() => history.saved()?.generation).toBe(2);
     await expect.poll(() => Object.keys(history.saved()!.months).length, { timeout: 240_000 }).toBe(2);
@@ -867,7 +884,9 @@ test.describe('requesting a replan', () => {
     await expect(actualCells.nth(1).locator('td').nth(1)).toHaveText(kwh(Math.max(0, capture.input.recorded.rows.reduce((sum: number, row: { solarW: number | null }) => sum + (row.solarW ?? 0) / 4000, 0) - capture.input.recorded.ledger.exportKwh)));
     await expect(actualCells.nth(2).locator('td').nth(1)).toHaveText(kwh(capture.input.recorded.ledger.exportKwh));
     await expect(actualCells.last().locator('td').nth(1)).toHaveText('579,00 SEK');
-    await expect(actualCells.last().locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
+    await expect(actualCells.last().locator('td').nth(2)).toHaveText('—');
+    await expect(actualCells.nth(3).locator('td').nth(1)).toHaveText(display(capture.input.recorded.ledger.costSek + capture.modeled.baselineBill.supplierFixedSek + capture.modeled.baselineBill.gridFixedSek));
+    await expect(actualCells.nth(3).locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     const windows = history.windows.filter(w => w.start >= capture.input.start && w.end <= capture.input.end).sort((a,b) => a.start.localeCompare(b.start));
     expect(windows[0].start).toBe(capture.input.start); expect(windows.at(-1)!.end).toBe(capture.input.end);
     // Planning tails can overlap execution reads; their union must cover every execution quarter.
@@ -889,12 +908,12 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('baseline-quarter')).toContainText('2,00 SEK');
     await page.getByTestId('comparison-graph-default').click();
     await expect(chart).toContainText(/BASELINE MODEL|BASMODELL/);
-    expect(history.reads()).toBe(reads);
+    expect(history.reads()).toBe(reads + 1);
     await page.getByTestId('baseline-previous').click();
     await expect(page.getByTestId('baseline-frame')).toContainText(/August|augusti/);
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toHaveText(display(capture.modeled.baselineBill.totalSek));
-    expect(history.reads()).toBe(reads);
+    expect(history.reads()).toBe(reads + 1);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.getByTestId('contract-roi').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.getByTestId('contract-roi').screenshot({ path: testInfo.outputPath('monthly-roi-mobile.png') });

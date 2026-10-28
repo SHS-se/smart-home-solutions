@@ -19,7 +19,7 @@ export interface EnergyBillingDocumentForSeries {
   consumptionKwh: number | null;
   exportedKwh: number | null;
   peakDemandKw: number | null;
-  totalAmountSek: number;
+  periodCostSek: number | null;
   lineItems: EnergyBillingLineForSeries[];
 }
 
@@ -70,6 +70,7 @@ interface DateInterval {
 interface MutableMonth extends EnergyBillingMonth {
   gridCoverageIntervals: DateInterval[];
   electricityCoverageIntervals: DateInterval[];
+  unknownCostKinds: Set<EnergyDocumentKind>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -178,6 +179,7 @@ function emptyMonth(date: Date): MutableMonth {
     exportNetSek: 0,
     gridCoverageIntervals: [],
     electricityCoverageIntervals: [],
+    unknownCostKinds: new Set(),
   };
 }
 
@@ -300,19 +302,20 @@ export function buildEnergyBillingSeries(
       0,
     ));
     const allocateCostFromLines = document.lineItems.length > 0
-      && lineItemTotal === round(document.totalAmountSek);
+      && document.periodCostSek !== null && lineItemTotal === round(document.periodCostSek);
     const allocations = monthAllocations(documentStart, documentEnd, monthsByKey);
     for (const allocation of allocations) {
       const coverageIntervals = document.documentKind === 'grid'
         ? allocation.month.gridCoverageIntervals
         : allocation.month.electricityCoverageIntervals;
       coverageIntervals.push(allocation.overlap);
+      if (document.periodCostSek === null) allocation.month.unknownCostKinds.add(document.documentKind);
 
       if (document.documentKind === 'grid') {
-        if (!allocateCostFromLines) {
+        if (!allocateCostFromLines && document.periodCostSek !== null) {
           allocation.month.gridCostSek = addNullable(
             allocation.month.gridCostSek,
-            document.totalAmountSek * allocation.ratio,
+            document.periodCostSek * allocation.ratio,
           );
         }
         if (document.consumptionKwh !== null && consumptionLines.length === 0) {
@@ -323,10 +326,10 @@ export function buildEnergyBillingSeries(
           );
         }
       } else {
-        if (!allocateCostFromLines) {
+        if (!allocateCostFromLines && document.periodCostSek !== null) {
           allocation.month.electricityCostSek = addNullable(
             allocation.month.electricityCostSek,
-            document.totalAmountSek * allocation.ratio,
+            document.periodCostSek * allocation.ratio,
           );
         }
         if (document.consumptionKwh !== null && consumptionLines.length === 0) {
@@ -454,7 +457,9 @@ export function buildEnergyBillingSeries(
       month.exportedKwh = 0;
     }
 
-    if (month.gridCostSek !== null || month.electricityCostSek !== null) {
+    if (month.unknownCostKinds.has('grid')) month.gridCostSek = null;
+    if (month.unknownCostKinds.has('electricity')) month.electricityCostSek = null;
+    if (month.unknownCostKinds.size === 0 && (month.gridCostSek !== null || month.electricityCostSek !== null)) {
       month.totalCostSek = round(
         (month.gridCostSek ?? 0) + (month.electricityCostSek ?? 0),
       );
@@ -462,6 +467,7 @@ export function buildEnergyBillingSeries(
 
     delete (month as Partial<MutableMonth>).gridCoverageIntervals;
     delete (month as Partial<MutableMonth>).electricityCoverageIntervals;
+    delete (month as Partial<MutableMonth>).unknownCostKinds;
   }
 
   return months;

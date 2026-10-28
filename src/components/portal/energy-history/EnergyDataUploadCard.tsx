@@ -91,6 +91,7 @@ function issueLabel(
       'En eller flera obligatoriska avgifter kunde inte läsas.',
       'One or more required charges could not be read.',
     ),
+    unrecognized_charge: t('En avgift kunde inte tolkas. Ingen kostnad har uppskattats.', 'A charge could not be interpreted. No cost has been estimated.'),
     invalid_service_period: t('Fakturaperioden är ogiltig.', 'The billing period is invalid.'),
     partial_service_period: t(
       'Dokumentet täcker bara en del av månaden.',

@@ -58,12 +58,12 @@ Deno.test('HA days require full price coverage and use local DST length', () => 
 });
 const invoice: EnergyBillingDocumentForSeries = {
   id: 'bill', documentKind: 'electricity', periodStart: '2026-01-01', periodEnd: '2026-01-31', consumptionKwh: 1000,
-  exportedKwh: 100, peakDemandKw: null, totalAmountSek: 400,
+  exportedKwh: 100, peakDemandKw: null, periodCostSek: 400,
   lineItems: [{ category: 'spot_energy', amountSek: 500, quantity: 1000, periodStart: null, periodEnd: null },
     { category: 'export_credit', amountSek: -100, periodStart: null, periodEnd: null }],
 };
 Deno.test('bills preserve import kWh and billed charges, exclude export credits and grid bills', () => {
-  const history = invoiceRoiHistory([invoice, { ...invoice, id: 'grid', documentKind: 'grid', totalAmountSek: 9999 }]);
+  const history = invoiceRoiHistory([invoice, { ...invoice, id: 'grid', documentKind: 'grid', periodCostSek: 9999 }]);
   assertEquals(history.months[0].importCostSek, 500);
   assertEquals(history.months[0].importKwh, 1000);
   assertEquals(history.excluded, 0);

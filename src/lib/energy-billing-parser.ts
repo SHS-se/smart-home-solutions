@@ -1,3 +1,5 @@
+import { energyBillingCost } from './energy-billing-cost.ts';
+
 export const ENERGY_DOCUMENT_KINDS = ['grid', 'electricity'] as const;
 export type EnergyDocumentKind = (typeof ENERGY_DOCUMENT_KINDS)[number];
 
@@ -25,6 +27,7 @@ export type EnergyParserIssueCode =
   | 'missing_consumption'
   | 'missing_total'
   | 'missing_required_charges'
+  | 'unrecognized_charge'
   | 'invalid_service_period'
   | 'partial_service_period';
 
@@ -87,6 +90,7 @@ interface ParsedFields {
   totalAmountSek: number | null;
   lineItems: ParsedEnergyLineItem[];
   requiredChargeCategories: EnergyChargeCategory[];
+  unrecognizedCharges?: boolean;
 }
 
 const SWEDISH_MONTHS: Record<string, number> = {
@@ -865,6 +869,7 @@ function parseTibber(text: string): ParsedFields {
     text,
     new RegExp(`(?:Totalt att betala|Att betala)\\s+(${NUMBER_PATTERN})\\s+kr`, 'i'),
   );
+  const chargeRows = [...text.matchAll(new RegExp(`\\bför\\s+${TIBBER_PERIOD_PATTERN}\\s+${NUMBER_PATTERN}\\s+kr`, 'gi'))].length;
 
   return {
     invoiceNumber: firstCapture(text, /Fakturanummer:\s*(\d{5,})/i),
@@ -880,7 +885,8 @@ function parseTibber(text: string): ParsedFields {
     vatSek: vatMatch ? parseEnergyNumber(vatMatch[1]) : null,
     totalAmountSek: parseCapturedNumber(transferAmount ?? payableAmount),
     lineItems,
-    requiredChargeCategories: ['spot_energy', 'fixed_fee'],
+    requiredChargeCategories: [], // The shared accounting boundary validates this layout's charges.
+    unrecognizedCharges: chargeRows !== lineItems.filter(line => line.category !== 'vat').length,
   };
 }
 
@@ -979,7 +985,7 @@ const PARSERS: ParserDefinition[] = [
   },
   {
     id: 'tibber_quarterly',
-    version: 2,
+    version: 3,
     label: 'Tibber quarterly-price invoice',
     documentKind: 'electricity',
     providerKey: 'tibber',
@@ -1083,6 +1089,7 @@ export function parseEnergyBillingDocument(
   }
   if (fields.consumptionKwh === null) errors.push('missing_consumption');
   if (fields.totalAmountSek === null) errors.push('missing_total');
+  if (fields.unrecognizedCharges) errors.push('unrecognized_charge');
   if (
     fields.requiredChargeCategories.some(
       (category) => !fields.lineItems.some((lineItem) => lineItem.category === category),
@@ -1090,6 +1097,9 @@ export function parseEnergyBillingDocument(
   ) {
     errors.push('missing_required_charges');
   }
+  if (parser.id === 'tibber_quarterly' && fields.totalAmountSek !== null
+    && energyBillingCost({ parserId: parser.id, settlementSek: fields.totalAmountSek, exportedKwh: fields.exportedKwh, lineItems: fields.lineItems }).kind === 'unavailable'
+    && !errors.includes('missing_required_charges')) errors.push('missing_required_charges');
 
   return {
     formatRecognized: true,

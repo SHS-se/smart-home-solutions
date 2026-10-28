@@ -16,7 +16,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   const catalogue = testTariff();
   const plans = catalogue.profiles[0].versions[0].definition.plans as Record<string, Record<string, unknown>>;
   plans.three_phase.demand = { top_n: 3, distinct_local_days: true, night_start_hour: 22, night_end_hour: 6, night_factor: .5, rate_sek_per_kw_ex_vat: 65 };
-  let reads = 0, priceError = false;
+  let reads = 0, priceError = false, actualPricesAvailable = true;
   let reportedIntervals: import('../../src/lib/home-baseline/reported-energy-intervals').ReportedEnergyInterval[] = [];
   let report: SavedReport | null = null;
   await context.route('**/rest/v1/homes*', route => route.fulfill({ json: [{ id: homeId, name: 'Test home', customer_id: customerId, is_primary: true }] }));
@@ -76,7 +76,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     }
     const prices = baselineFixture({ start: body.start, end: body.end }).prices;
     prices.forEach(p => { p.source = 'reconstructed'; p.supplier_revision = ROI_SUPPLIER_TERMS.revision; });
-    await route.fulfill({ json: { prices, actualPrices: prices.map(p => ({ start_ts: p.start_ts, import_price_sek_per_kwh: 2, export_price_sek_per_kwh: .3, source: 'invoice' })), area: 'SE3', catalogue } });
+    await route.fulfill({ json: { prices, actualPrices: prices.map(p => ({ start_ts: p.start_ts, import_price_sek_per_kwh: actualPricesAvailable ? 2 : null, export_price_sek_per_kwh: actualPricesAvailable ? .3 : null, source: actualPricesAvailable ? 'invoice' : 'unavailable' })), area: 'SE3', catalogue } });
   });
   await context.route('**/rest/v1/energy_optimisation_*', async route => {
     const url = new URL(route.request().url()), table = url.pathname.split('/').pop(), select = url.searchParams.get('select') ?? '';
@@ -117,7 +117,8 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     rows.filter(row => row.start_ts >= '2026-08-31T22:00:00.000Z' && row.start_ts < '2026-09-30T22:00:00.000Z').forEach(row => { delete row.device_energy_kwh['heater-id']; row.device_energy_kwh['household-id'] = .25; });
     await route.fulfill({ json: rows });
   });
-  return { fixture, windows, reads: () => reads, saved: () => report, failPrices: () => { priceError = true; }, correctIntervals: (intervals: typeof reportedIntervals) => { reportedIntervals = intervals; } };
+  return { fixture, windows, reads: () => reads, saved: () => report, failPrices: () => { priceError = true; },
+    setActualPricesAvailable: (available: boolean) => { actualPricesAvailable = available; }, correctIntervals: (intervals: typeof reportedIntervals) => { reportedIntervals = intervals; } };
 }
 
 /** Six real monthly projections can exceed a single-control wait on CI's shared CPUs. */

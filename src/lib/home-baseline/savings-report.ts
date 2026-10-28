@@ -1,6 +1,6 @@
 import type { MonthLedger } from './savings';
 import type { BilledMonth } from './billed-months';
-import { monthlyBillAmounts, roundedSek } from './roi-pricing';
+import { monthlyBillAmounts, recordedModeledCost, roundedSek } from './roi-pricing';
 import type { EnergyBillingMonth } from '../energy-billing-series';
 import type { ControlMonth } from './control-months';
 
@@ -49,7 +49,7 @@ export function modelCheck(months: readonly MonthLedger[], bills: ReadonlyMap<st
     const gridBeforeVat = (invoice.gridCostSek ?? 0) - invoice.gridVatSek;
     const gridVatRate = invoice.gridVatSek > 0 && gridBeforeVat > 0 ? invoice.gridVatSek / gridBeforeVat : 0;
     const billedSek = bill.totalSek - invoice.gridPeakSek * (1 + gridVatRate);
-    const pricedSek = ledger.recorded.costSek + ledger.modeled.baselineBill.supplierFixedSek + ledger.modeled.baselineBill.gridFixedSek;
+    const pricedSek = recordedModeledCost(ledger.recorded, ledger.modeled.baselineBill);
     return [{ month: ledger.month, pricedSek, billedSek, differenceSek: pricedSek - billedSek }];
   });
   if (!rows.length) return null;

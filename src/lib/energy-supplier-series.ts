@@ -98,7 +98,7 @@ export function toSupplierSeriesDocuments(
     consumptionKwh: month.importKwh,
     exportedKwh: month.exportKwh,
     peakDemandKw: null,
-    totalAmountSek: month.totalAmountSek,
+    periodCostSek: month.totalAmountSek,
     lineItems: [
       {
         category: 'spot_energy',

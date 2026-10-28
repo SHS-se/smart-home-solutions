@@ -116,6 +116,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   // Deployment retries can add bills while this tab is open. Refresh only invoice
   // evidence: saved baseline/scheduler ledgers and their generation stay untouched.
   const invoices = useQuery({ queryKey: ['energy-billing-documents', customerId], queryFn: () => fetchEnergyBillingDocuments(customerId), retry: false, refetchInterval: 30_000 });
+  const invoiceRevision = useMemo(() => invoices.data ? JSON.stringify(invoices.data) : null, [invoices.data]);
   const bills = useMemo(() => billedMonths(toEnergyBillingSeriesDocuments(invoices.data ?? []), homeCount), [invoices.data, homeCount]);
   // The same invoices, itemised, so the model check can take the demand charge out of them.
   const invoiceMonths = useMemo(() => new Map(buildEnergyBillingSeries(toEnergyBillingSeriesDocuments(invoices.data ?? [])).map(m => [m.monthKey, m])), [invoices.data]);
@@ -212,7 +213,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     </summary>
       <div className="space-y-3 pb-5">
         <BilledMonthsTable record={record} check={check} installations={installations.data ?? []} />
-        <p className="text-xs text-muted-foreground">{t('Fakturorna innehåller alla avgifter på el- och nätfakturorna, även effektavgiften, och speglar den utrustning du hade då. Saknade fakturor visas som —.', 'Bills include every charge on the electricity and grid invoices, including the demand charge, and reflect the equipment you had at the time. Missing bills show —.')}</p>
+        <p className="text-xs text-muted-foreground">{t('Periodkostnaderna innehåller fakturornas avgifter, även effektavgiften, och speglar den utrustning du hade då. Tibbers poster summeras utan tidigare saldon och betalningsavrundning. Saknade eller ofullständiga kostnader visas som —.', 'Period costs include invoice charges, including demand charges, and reflect the equipment you had at the time. Tibber’s itemised charges exclude previous balances and payment rounding. Missing or incomplete costs show —.')}</p>
         {check && <p className="text-xs text-muted-foreground">{t('Modellens pris är din uppmätta förbrukning prissatt som i uppskattningen. Den jämförs med fakturan utan effektavgift, som uppskattningen också utelämnar, och bara för månader med minst 99 % uppmätt och där fakturan specificerar effektavgiften.', 'The model’s price is your metered use priced the way the estimate prices it. It is compared with the bill without the demand charge, which the estimate also leaves out, and only for months at least 99% metered whose invoice itemises the demand charge.')}</p>}
       </div>
     </details>
@@ -240,7 +241,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       </div>
     </details>
     {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId || preparingReference} onClick={() => { setGraphOpen(true); void active.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
-    {graphOpen && <HomeBaselineViewer session={active.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
+    {graphOpen && <HomeBaselineViewer session={active.viewer} customerId={customerId} homeId={homeId} bills={bills} invoiceRevision={invoiceRevision} onClose={() => setGraphOpen(false)} />}
   </div>;
 }
 export default function SavingsTab(props: SavingsTabProps) { return <SavingsEstimate key={`${props.customerId}:${props.homeId}`} {...props} />; }

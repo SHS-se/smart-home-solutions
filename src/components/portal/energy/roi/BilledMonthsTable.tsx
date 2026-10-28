@@ -10,8 +10,8 @@ export default function BilledMonthsTable({ record, check, installations }: { re
   const checked = new Map(check?.rows.map(row => [row.month, row]) ?? []);
   const head = 'whitespace-nowrap p-2 font-medium';
   return <div className="overflow-x-auto"><table className="w-full text-right text-sm tabular-nums" data-testid="billed-months">
-    <caption className="sr-only">{t('Fakturerat per månad', 'Billed per month')}</caption>
-    <thead><tr className="border-b"><th scope="col" className="whitespace-nowrap p-2 text-left font-medium">{t('Månad', 'Month')}</th><th scope="col" className={head}>{t('Fakturerat', 'Billed')}</th>
+    <caption className="sr-only">{t('Faktisk periodkostnad per månad', 'Actual period cost per month')}</caption>
+    <thead><tr className="border-b"><th scope="col" className="whitespace-nowrap p-2 text-left font-medium">{t('Månad', 'Month')}</th><th scope="col" className={head}>{t('Periodkostnad', 'Period cost')}</th>
       {check && <><th scope="col" className={head}>{t('Utan effektavgift', 'Without demand charge')}</th><th scope="col" className={head}>{t('Modellens pris', 'Model’s price')}</th></>}</tr></thead>
     <tbody>{record.rows.map(row => <tr key={row.month} data-testid={`billed-month-${row.month}`} className="border-b align-top">
       <th scope="row" className="p-2 text-left font-normal whitespace-nowrap">{row.month}

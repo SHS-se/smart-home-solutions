@@ -1,6 +1,7 @@
 import { PLAN_COLOURS } from '../charts/palette';
 import { ownerColour } from '@/lib/energy-shift/device-colours';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -18,8 +19,10 @@ import { modeledCosts, cumulativeModeledCost, roiComparisonExport } from '@/lib/
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import type { BilledMonth } from '@/lib/home-baseline/billed-months';
 import { localDay } from '../../../../../supabase/functions/_shared/planner-wasm/calendar';
+import { loadHistoricalPricing } from '@/lib/home-baseline/history';
+import { repriceMeasuredTimeline } from '@/lib/energy-shift/energy-timeline';
 
-export default function HomeBaselineViewer({ session, homeId, bills, onClose }: { session: BaselineSession; homeId: string | null; bills: ReadonlyMap<string, BilledMonth>; onClose: () => void }) {
+export default function HomeBaselineViewer({ session, customerId, homeId, bills, invoiceRevision, onClose }: { session: BaselineSession; customerId: string; homeId: string | null; bills: ReadonlyMap<string, BilledMonth>; invoiceRevision: string | null; onClose: () => void }) {
   const { t } = useLanguage(), homeTimeZone = useHomeTimeZone();
   const { view, period, capture, busy, error, timeZone: sessionTimeZone, canPrevious, canNext } = useSyncExternalStore(session.subscribe, session.snapshot);
   const [graphMode, setGraphMode] = useState<'default' | 'scheduler' | 'actual'>('default');
@@ -30,6 +33,12 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
   const amount = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const partialMonth = period?.view === 'month' && Date.parse(period.end) < homeMonthBounds(period.start, 0, timeZone).endMs;
   const input = capture?.input, result = capture?.result, p = input?.problem;
+  const actualPricing = useQuery({
+    queryKey: ['roi-actual-prices', customerId, homeId, input?.start, input?.end, invoiceRevision],
+    queryFn: ({ signal }) => loadHistoricalPricing({ customerId, homeId: homeId! }, { start: input!.start, end: input!.end }, signal),
+    enabled: graphMode === 'actual' && !!input && !!homeId && invoiceRevision !== null, retry: false, staleTime: Infinity,
+  });
+  const actualRows = useMemo(() => input ? repriceMeasuredTimeline(input.recorded.rows, actualPricing.data?.actualPrices ?? []) : [], [input, actualPricing.data]);
   const costs = useMemo(() => capture ? modeledCosts(capture.modeled) : null, [capture]);
   const monthBounds = input ? homeMonthBounds(input.start, 0, input.timeZone) : null;
   const actualSek = input && monthBounds && Date.parse(input.start) === monthBounds.startMs && Date.parse(input.end) === monthBounds.endMs
@@ -37,12 +46,12 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
   const quarter = selected === null || !result || selected >= result.series.start.length ? null : selected;
   const chart = useMemo(() => {
     if (!capture) return null;
-    if (graphMode === 'actual') return projectPlanChart({ rows: capture.input.recorded.rows, devices: capture.input.recorded.devices,
-      range: { from: 0, to: capture.input.recorded.rows.length }, timeZone: capture.input.timeZone, prices: { kind: 'actual' } });
+    if (graphMode === 'actual') return projectPlanChart({ rows: actualRows, devices: capture.input.recorded.devices,
+      range: { from: 0, to: actualRows.length }, timeZone: capture.input.timeZone, prices: { kind: 'actual' } });
     const { series } = graphMode === 'scheduler' ? capture.scheduler : capture.result;
     return projectPlanChart({ ...modelChartData(series), devices: series.devices,
       range: { from: 0, to: series.start.length }, timeZone: capture.input.timeZone });
-  }, [capture, graphMode]);
+  }, [capture, graphMode, actualRows]);
 
   return <Card data-testid="roi-baseline"><CardHeader className="flex-row items-center justify-between"><CardTitle>{t('Grafer', 'Graphs')}</CardTitle><Button variant="ghost" className="min-h-11" onClick={onClose}>{t('Stäng graf', 'Close graph')}</Button></CardHeader>
     <CardContent className="space-y-5" aria-busy={busy}>
@@ -73,6 +82,9 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
           <Button variant={graphMode === 'scheduler' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'scheduler'} onClick={() => setGraphMode('scheduler')} data-testid="comparison-graph-scheduler">SHS Energy Scheduler</Button>
           <Button variant={graphMode === 'actual' ? 'default' : 'outline'} className="min-h-11" aria-pressed={graphMode === 'actual'} onClick={() => setGraphMode('actual')} data-testid="comparison-graph-actual">{t('Faktisk förbrukning', 'Actual consumption')}</Button>
         </div>
+        {graphMode === 'actual' && actualPricing.isFetching && <p role="status" className="text-sm text-muted-foreground">{t('Hämtar priser från fakturorna…', 'Loading invoice prices…')}</p>}
+        {graphMode === 'actual' && actualPricing.isError && <p role="alert" className="text-sm text-destructive">{actualPricing.error.message}</p>}
+        {graphMode === 'actual' && actualPricing.isSuccess && actualRows.some(row => row.importPriceSekPerKwh === null || row.exportPriceSekPerKwh === null) && <p className="text-sm text-muted-foreground" data-testid="actual-prices-incomplete">{t('Fakturorna saknar tillräckliga prisuppgifter för delar av perioden. Okända priser visas som luckor.', 'The invoices do not provide enough price information for parts of this period. Unknown prices appear as gaps.')}</p>}
         <EnergyChart colours={{
           pool: ownerColour(input.recorded.devices.map(device => ({ device_key: device.key, colour: device.colour })), input.members.heater.map(member => member.key), PLAN_COLOURS.pool),
           ev: ownerColour(input.recorded.devices.map(device => ({ device_key: device.key, colour: device.colour })), input.members.ev.map(member => member.key), PLAN_COLOURS.ev),
@@ -86,7 +98,7 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
             values: graphMode === 'actual' ? chart.rows.map(row => row.cumulativeCostSek)
               : cumulativeModeledCost(costs[graphMode === 'scheduler' ? 'scheduler' : 'baseline'], chart.rows.map(row => row.cumulativeCostSek)) }]}
           scoreDetail={quarter === null ? null : <div data-testid="baseline-quarter" className="text-sm">
-            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {graphMode === 'actual' && input.recorded.rows[quarter].costSek === null ? '—' : `${amount(graphMode === 'actual' ? input.recorded.rows[quarter].costSek! : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK`}
+            {stamp(result.series.start[quarter])} · {t('Elkostnad', 'Electricity cost')}: {graphMode === 'actual' && actualRows[quarter].costSek === null ? '—' : `${amount(graphMode === 'actual' ? actualRows[quarter].costSek! : (graphMode === 'scheduler' ? capture.scheduler : result).series.costSek[quarter])} SEK`}
             {graphMode === 'default' && p.car && <> · {t('Körbehov', 'Driving demand')}: {amount(input.evDemandKwh[quarter])} kWh</>}
           </div>} />
         <BaselineModelDetails capture={capture} />
@@ -95,7 +107,8 @@ export default function HomeBaselineViewer({ session, homeId, bills, onClose }: 
         <Button className="min-h-11" onClick={() => session.generate()} disabled={busy || !homeId} data-testid="baseline-generate">
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('Generera modell', 'Generate model')}
         </Button>
-        {capture && <Button variant="outline" className="min-h-11" onClick={() => downloadJson(`default-model-${capture.input.start.slice(0, 10)}.json`, roiComparisonExport(capture))}>{t('Exportera modell', 'Export model')}</Button>}
+        {capture && <Button variant="outline" className="min-h-11" onClick={() => downloadJson(`default-model-${capture.input.start.slice(0, 10)}.json`, roiComparisonExport(actualPricing.isSuccess
+          ? { ...capture, input: { ...capture.input, recorded: { ...capture.input.recorded, rows: actualRows } } } : capture))}>{t('Exportera modell', 'Export model')}</Button>}
       </div>
     </CardContent>
   </Card>;

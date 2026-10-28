@@ -49,7 +49,7 @@ function invoice(
     consumptionKwh: 100,
     exportedKwh: null,
     peakDemandKw: null,
-    totalAmountSek: 500,
+    periodCostSek: 500,
     lineItems: [],
   };
 }

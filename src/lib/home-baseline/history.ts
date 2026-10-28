@@ -16,6 +16,23 @@ export interface HomeRef { customerId: string; homeId: string }
 const db = supabase as unknown as SupabaseClient;
 const scoped = (ref: HomeRef, table: string) => db.from(table).select('*').eq('customer_id', ref.customerId).eq('home_id', ref.homeId);
 
+/** Invoice prices can change after a simulation is captured; reading them never runs the planner. */
+export async function loadHistoricalPricing(ref: HomeRef, period: Pick<BaselinePeriod, 'start' | 'end'>, signal: AbortSignal) {
+  const { data, error } = await supabase.functions.invoke('backfill-energy-prices', {
+    body: { home_id: ref.homeId, mode: 'read', pricing_basis: 'roi', start: period.start, end: period.end }, signal,
+  });
+  if (error) {
+    const response = 'context' in error && error.context instanceof Response ? error.context : null;
+    const body = response ? await response.json().catch(() => null) : null;
+    throw new Error(body?.message ?? error.message);
+  }
+  if (!Array.isArray(data?.prices) || !data?.area) throw new Error('Historical electricity prices unavailable');
+  if (data.prices.some((row: PriceRow) => row.supplier_revision !== ROI_SUPPLIER_TERMS.revision)) throw new Error('ROI supplier terms changed; reload the page');
+  if (!Array.isArray(data.actualPrices)) throw new Error('Actual historical price evidence unavailable');
+  if (!data.catalogue) throw new Error('Monthly grid tariff definitions unavailable');
+  return data as { prices: PriceRow[]; actualPrices: import('../../../supabase/functions/_shared/actual-contract-prices').ActualPrice[]; area: string; catalogue: import('../../../supabase/functions/_shared/energy-grid-pricing').GridTariffCatalogue };
+}
+
 async function read<T>(request: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T> {
   const { data, error } = await request;
   if (error) throw new Error(error.message);
@@ -97,19 +114,7 @@ async function loadHistoricalPeriod(ref: HomeRef, anchor: BaselineAnchor, period
     facts.poolStore ? read<PoolRow[]>(window('energy_optimisation_pool_slots', 'start_ts,water_temperature_c', prior, start, 1)) : Promise.resolve([]),
     facts.car ? read<EvInitialRow | null>(scoped(ref, 'energy_optimisation_actual_slots').select('start_ts,ev_soc')
       .lte('start_ts', prior).not('ev_soc', 'is', null).order('start_ts', { ascending: false }).limit(1).abortSignal(signal).maybeSingle()) : Promise.resolve(null),
-    (async () => {
-      const { data, error } = await supabase.functions.invoke('backfill-energy-prices', { body: { home_id: ref.homeId, mode: 'read', pricing_basis: 'roi', start, end }, signal });
-      if (error) {
-        const response = 'context' in error && error.context instanceof Response ? error.context : null;
-        const body = response ? await response.json().catch(() => null) : null;
-        throw new Error(body?.message ?? error.message);
-      }
-      if (!Array.isArray(data?.prices) || !data?.area) throw new Error('Historical electricity prices unavailable');
-      if (data.prices.some((row: PriceRow) => row.supplier_revision !== ROI_SUPPLIER_TERMS.revision)) throw new Error('ROI supplier terms changed; reload the page');
-      if (!Array.isArray(data.actualPrices)) throw new Error('Actual historical price evidence unavailable');
-      if (!data.catalogue) throw new Error('Monthly grid tariff definitions unavailable');
-      return data as { prices: PriceRow[]; actualPrices: import('../../../supabase/functions/_shared/actual-contract-prices').ActualPrice[]; area: string; catalogue: import('../../../supabase/functions/_shared/energy-grid-pricing').GridTariffCatalogue };
-    })(),
+    loadHistoricalPricing(ref, period, signal),
   ]);
   signal.throwIfAborted();
   return prepareHomeBaseline(mergeHourlyHistory({ snapshot, solar: solarProfile ? { profile: solarProfile, hours: [...new Map(batches.flatMap(b => b.solarHours).map(h => [h.start_ts, h])).values()] } : undefined, start, end, devices, pool: [...pool, ...batches.flatMap(b => b.pool)], evInitial,

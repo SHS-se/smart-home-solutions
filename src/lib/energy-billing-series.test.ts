@@ -22,7 +22,7 @@ function document(
     consumptionKwh: null,
     exportedKwh: null,
     peakDemandKw: null,
-    totalAmountSek: 0,
+    periodCostSek: 0,
     lineItems: [],
     ...overrides,
   };
@@ -36,7 +36,7 @@ Deno.test('billing series keeps missing months explicit and does not double-coun
       periodStart: '2026-01-01',
       periodEnd: '2026-01-31',
       consumptionKwh: 1000,
-      totalAmountSek: 1500,
+      periodCostSek: 1500,
     }),
     document({
       id: 'electricity-jan',
@@ -44,7 +44,7 @@ Deno.test('billing series keeps missing months explicit and does not double-coun
       periodStart: '2026-01-01',
       periodEnd: '2026-01-31',
       consumptionKwh: 1000,
-      totalAmountSek: 800,
+      periodCostSek: 800,
     }),
     document({
       id: 'grid-mar',
@@ -52,7 +52,7 @@ Deno.test('billing series keeps missing months explicit and does not double-coun
       periodStart: '2026-03-01',
       periodEnd: '2026-03-31',
       consumptionKwh: 700,
-      totalAmountSek: 1200,
+      periodCostSek: 1200,
     }),
   ];
 
@@ -77,7 +77,7 @@ Deno.test('split supplier invoices combine to complete monthly coverage', () => 
       periodEnd: '2026-06-30',
       consumptionKwh: 35,
       exportedKwh: 337,
-      totalAmountSek: 1144,
+      periodCostSek: 1144,
     }),
     document({
       id: 'supplier-a',
@@ -86,7 +86,7 @@ Deno.test('split supplier invoices combine to complete monthly coverage', () => 
       periodEnd: '2026-06-15',
       consumptionKwh: 22,
       exportedKwh: 190,
-      totalAmountSek: -82.5,
+      periodCostSek: -82.5,
     }),
     document({
       id: 'supplier-b',
@@ -95,7 +95,7 @@ Deno.test('split supplier invoices combine to complete monthly coverage', () => 
       periodEnd: '2026-06-30',
       consumptionKwh: 13,
       exportedKwh: 146.58,
-      totalAmountSek: -85,
+      periodCostSek: -85,
     }),
   ]);
 
@@ -118,7 +118,7 @@ Deno.test('cost breakdown intentionally ignores unclassified invoice rounding', 
       periodEnd: '2025-09-30',
       consumptionKwh: 1323,
       peakDemandKw: 5.35,
-      totalAmountSek: 2158,
+      periodCostSek: 2158,
       lineItems: [
         { category: 'fixed_fee', amountSek: 915, periodStart: null, periodEnd: null },
         { category: 'energy_transfer', amountSek: 82.66, periodStart: null, periodEnd: null },
@@ -150,7 +150,7 @@ Deno.test('grid VAT remains separate from electricity supplier fees', () => {
       documentKind: 'grid',
       periodStart: '2026-06-01',
       periodEnd: '2026-06-30',
-      totalAmountSek: 625,
+      periodCostSek: 625,
       lineItems: [
         { category: 'fixed_fee', amountSek: 500, periodStart: null, periodEnd: null },
         { category: 'vat', amountSek: 125, periodStart: null, periodEnd: null },
@@ -170,7 +170,7 @@ Deno.test('partial coverage is retained as partial data rather than zero or miss
       periodStart: '2026-06-16',
       periodEnd: '2026-06-30',
       consumptionKwh: 13,
-      totalAmountSek: -85,
+      periodCostSek: -85,
     }),
   ]);
 
@@ -188,7 +188,7 @@ Deno.test('multi-month invoices use dated line quantities instead of prorating c
       periodStart: '2021-03-13',
       periodEnd: '2021-05-31',
       consumptionKwh: 60,
-      totalAmountSek: 90,
+      periodCostSek: 90,
       lineItems: [
         {
           category: 'fixed_fee',

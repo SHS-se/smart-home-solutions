@@ -1,5 +1,6 @@
 import type { ComparisonCapture } from './browser.ts';
 import type { ModelComparison } from './model-comparison.ts';
+import type { ElectricityLedger } from './ledger.ts';
 
 export const ROI_PRICING_POLICY = 'energy-and-fixed-fees-v1' as const;
 export interface ModeledCost {
@@ -17,6 +18,11 @@ export interface ModeledCosts {
 
 const money = new Intl.NumberFormat('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const roundedSek = (amount: number) => Number(money.format(amount));
+
+/** Recorded flows on the estimate's tariff and fixed fees, excluding demand charges. */
+export function recordedModeledCost(recorded: Pick<ElectricityLedger, 'costSek'>, fixed: Pick<ModeledCost, 'supplierFixedSek' | 'gridFixedSek'>) {
+  return recorded.costSek + fixed.supplierFixedSek + fixed.gridFixedSek;
+}
 
 /** All report arithmetic uses the monthly amounts the customer can see. */
 export function monthlyBillAmounts(modeled: Pick<ModelComparison, 'baselineBill' | 'schedulerBill'>) {

@@ -8,6 +8,7 @@ import type {
 import type { EnergyBillingDocumentForSeries } from '@/lib/energy-billing-series';
 import { resolvedEnergyFileMimeType } from '@/lib/energy-import-file-storage';
 import { fetchAllRows } from '@/lib/fetch-all-rows';
+import { recordedBillingCost } from './energy-billing-cost';
 
 export const ENERGY_BILLING_BUCKET = 'energy-billing-documents';
 
@@ -121,7 +122,7 @@ export function toEnergyBillingSeriesDocuments(
     consumptionKwh: record.consumption_kwh,
     exportedKwh: record.exported_kwh,
     peakDemandKw: record.peak_demand_kw,
-    totalAmountSek: record.total_amount_sek,
+    periodCostSek: recordedBillingCost(record).periodCostSek,
     lineItems: record.lineItems.map((lineItem) => ({
       category: lineItem.category as EnergyChargeCategory,
       amountSek: lineItem.amount_sek,

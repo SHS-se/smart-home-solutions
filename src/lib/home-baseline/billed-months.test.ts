@@ -1,8 +1,8 @@
 import { assertEquals } from '@std/assert';
 import { billedMonths } from './billed-months';
 import type { EnergyBillingDocumentForSeries as Bill } from '../energy-billing-series';
-const bill = (id: string, documentKind: Bill['documentKind'], totalAmountSek: number, periodStart = '2026-06-01', periodEnd = '2026-06-30'): Bill =>
-  ({ id, documentKind, totalAmountSek, periodStart, periodEnd, consumptionKwh: 100, exportedKwh: null, peakDemandKw: null, lineItems: [] });
+const bill = (id: string, documentKind: Bill['documentKind'], periodCostSek: number, periodStart = '2026-06-01', periodEnd = '2026-06-30'): Bill =>
+  ({ id, documentKind, periodCostSek, periodStart, periodEnd, consumptionKwh: 100, exportedKwh: null, peakDemandKw: null, lineItems: [] });
 Deno.test('Actual sums original electricity and grid bills including a mid-month supplier change', () => {
   const docs = [bill('old', 'electricity', -82.5, '2026-06-01', '2026-06-15'), bill('new', 'electricity', -85, '2026-06-16'), bill('grid', 'grid', 1144)];
   const m = billedMonths(docs, 1).get('2026-06')!;

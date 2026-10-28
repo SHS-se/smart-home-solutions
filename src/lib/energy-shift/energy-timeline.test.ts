@@ -9,6 +9,7 @@ import {
   SLOT_MS,
   summariseTimeline,
   unpricedMeasuredQuarters,
+  repriceMeasuredTimeline,
 } from './energy-timeline.ts';
 
 const assertEquals = (actual: unknown, expected: unknown, message: string) => {
@@ -319,4 +320,19 @@ Deno.test('upcoming shows the remaining published plan without measured history'
   const past = buildEnergyTimeline({ actuals: [actual(NOW - SLOT_MS)], planSlots: [], deviceActuals: [],
     deviceKeyById: new Map(), prices: [], nowMs: NOW });
   assertEquals(dayWindowRange(past, 'upcoming', NOW, TZ), { from: past.length, to: past.length }, 'no future invented');
+});
+
+Deno.test('new invoice prices reprice captured measured flows without mutating them or the plan', () => {
+  const at = NOW - SLOT_MS;
+  const rows = buildEnergyTimeline({ actuals: [actual(at)], planSlots: [planned(NOW)], deviceActuals: [],
+    deviceKeyById: new Map(), prices: [], nowMs: NOW });
+  const before = JSON.stringify(rows);
+  const refreshed = repriceMeasuredTimeline(rows, [{ start_ts: new Date(at).toISOString(),
+    import_price_sek_per_kwh: -1, export_price_sek_per_kwh: .5 }]);
+  assertEquals(refreshed[0].costSek, -.2, '0.1 kWh purchased at -1 and 0.2 kWh sold at 0.5');
+  assertEquals(refreshed[0].importPriceSekPerKwh, -1, 'historical contract quote reaches the chart');
+  assertEquals(refreshed[0].gridImportW, 400, 'measured energy is unchanged');
+  assertEquals(refreshed[1], rows[1], 'planned prices and commands are unchanged');
+  assertEquals(JSON.stringify(rows), before, 'the original capture is unchanged');
+  assertEquals(repriceMeasuredTimeline(refreshed, [])[0].costSek, null, 'removed evidence cannot retain an old priced cost');
 });

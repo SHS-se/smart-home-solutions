@@ -91,7 +91,7 @@ Deno.test('authoritative invoices and HA estimates remain available for comparis
     consumptionKwh: 500,
     exportedKwh: 25,
     peakDemandKw: null,
-    totalAmountSek: 700,
+    periodCostSek: 700,
     lineItems: [],
   };
 
@@ -114,7 +114,7 @@ Deno.test('an imported grid invoice replaces the calculation for every month it 
     consumptionKwh: 600,
     exportedKwh: 0,
     peakDemandKw: null,
-    totalAmountSek: 900,
+    periodCostSek: 900,
     lineItems: [],
   };
 
@@ -139,7 +139,7 @@ Deno.test('an electricity invoice does not hide a grid calculation', () => {
     consumptionKwh: 500,
     exportedKwh: 25,
     peakDemandKw: null,
-    totalAmountSek: 400,
+    periodCostSek: 400,
     lineItems: [],
   };
 
@@ -178,7 +178,7 @@ Deno.test('the comparison carries the ratio the caution thresholds on', () => {
     consumptionKwh: 500,
     exportedKwh: 25,
     peakDemandKw: null,
-    totalAmountSek: 700,
+    periodCostSek: 700,
     lineItems: [],
   };
 

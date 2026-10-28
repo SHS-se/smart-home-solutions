@@ -129,6 +129,21 @@ const quarterFloor = (ms: number) => Math.floor(ms / SLOT_MS) * SLOT_MS;
 const watts = (kwh: number | null | undefined) =>
   kwh === null || kwh === undefined ? null : kwh * QUARTER_W_TO_KWH;
 
+function measuredPrice(bought: number | null | undefined, sold: number | null | undefined, price: PriceRow | undefined) {
+  const purchase = bought === 0 ? 0 : bought == null || price?.import_price_sek_per_kwh == null ? null : bought * price.import_price_sek_per_kwh;
+  const income = sold === 0 ? 0 : sold == null || price?.export_price_sek_per_kwh == null ? null : sold * price.export_price_sek_per_kwh;
+  return { costSek: purchase === null || income === null ? null : purchase - income,
+    importPriceSekPerKwh: price?.import_price_sek_per_kwh ?? null, exportPriceSekPerKwh: price?.export_price_sek_per_kwh ?? null };
+}
+
+/** Refresh invoice evidence on measured flows without changing the captured simulation. */
+export function repriceMeasuredTimeline(rows: readonly TimelineRow[], prices: readonly PriceRow[]): TimelineRow[] {
+  const byStart = new Map(prices.map(price => [quarterFloor(Date.parse(price.start_ts)), price]));
+  return rows.map(row => !row.measured || row.missing ? row : { ...row, ...measuredPrice(
+    row.gridImportW === null ? null : row.gridImportW / QUARTER_W_TO_KWH,
+    row.gridExportW === null ? null : -row.gridExportW / QUARTER_W_TO_KWH, byStart.get(row.startMs)) });
+}
+
 /**
  * Midnight-to-midnight bounds at the home for a day relative to today. Built
  * from calendar fields rather than millisecond arithmetic so a DST change keeps
@@ -186,10 +201,6 @@ export const buildEnergyTimeline = ({
     }
     const loadW = watts(slot.total_load_kwh);
     const price = priceByStart.get(startMs);
-    const importCost = slot.grid_import_kwh === 0 ? 0 : price?.import_price_sek_per_kwh == null || slot.grid_import_kwh == null
-      ? null : slot.grid_import_kwh * price.import_price_sek_per_kwh;
-    const exportCredit = slot.grid_export_kwh === 0 ? 0 : price?.export_price_sek_per_kwh == null || slot.grid_export_kwh == null
-      ? null : slot.grid_export_kwh * price.export_price_sek_per_kwh;
     rows.set(startMs, {
       startMs,
       start: new Date(startMs).toISOString(),
@@ -209,12 +220,10 @@ export const buildEnergyTimeline = ({
       batterySoc: slot.battery_soc ?? null,
       evSoc: slot.ev_soc ?? null,
       deviceW,
-      costSek: importCost === null || exportCredit === null ? null : importCost - exportCredit,
+      ...measuredPrice(slot.grid_import_kwh, slot.grid_export_kwh, price),
       // A measured quarter's price is the archived all-in figure, which is a
       // real price rather than a forecast — so it never feeds the modelled
       // series.
-      importPriceSekPerKwh: price?.import_price_sek_per_kwh ?? null,
-      exportPriceSekPerKwh: price?.export_price_sek_per_kwh ?? null,
       shadowImportSekPerKwh: null,
       shadowExportSekPerKwh: null,
       poolC: poolByStart.get(startMs) ?? null,
