@@ -356,6 +356,21 @@ test.describe('requesting a replan', () => {
     expect(Number.isFinite(month.modeled.schedulerBill.totalSek)).toBe(true);
   });
 
+  test('Savings displays a shared report failure only once', async ({ context, page }) => {
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID);
+    let pinRequests = 0;
+    await context.route('**/rest/v1/rpc/pin_energy_roi_report*', route => {
+      pinRequests++;
+      return route.fulfill({ status: 400, json: { message: 'Invalid compact ROI model' } });
+    });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expect(page.getByRole('alert').filter({ hasText: 'Invalid compact ROI model' })).toHaveCount(1);
+    await expect(page.getByTestId('scheduler-calculate')).toBeEnabled();
+    expect(pinRequests).toBeGreaterThan(0);
+    await expect(page.getByText('Invalid compact ROI model', { exact: true })).toHaveCount(1);
+  });
+
   test('a missing deployed ROI worker gives reload guidance', async ({ context, page }) => {
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-07', to: '2026-07' });
     let requests = 0;

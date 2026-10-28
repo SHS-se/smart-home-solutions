@@ -76,6 +76,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
     return () => baseline.savings.cancel();
   }, [baseline, from, to, homeId]);
   const oreIncVat = (sekPerKwhExVat: number) => `${(sekPerKwhExVat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t('öre/kWh', 'öre/kWh')}`;
+  const errors = [...new Set([anchor.isError ? anchor.error.message : null, state.error].filter((message): message is string => !!message))];
   const displayState = state.rangeKey === `${from}|${to}` ? state : { ...state, rows: [], error: null };
   const months = state.rangeKey === `${from}|${to}` ? state.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
   // Deployment retries can add bills while this tab is open. Refresh only invoice
@@ -135,8 +136,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       <span className="pb-3 text-sm text-muted-foreground">{t('Högst 12 månader', 'Up to 12 months')} · {t('inkl. moms', 'incl. VAT')}</span>
     </div>
     {!homeId && <p>{t('Välj ett hem.', 'Select a home.')}</p>}
-    {anchor.isError && <p role="alert" className="text-sm text-destructive">{anchor.error.message}</p>}
-    {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+    {errors.map(message => <p key={message} role="alert" className="text-sm text-destructive">{message}</p>)}
     {invalid && <p role="alert" className="text-sm text-destructive">{t('Kontrollera beloppen i inställningarna.', 'Check the amounts in settings.')}</p>}
     <section className={`rounded-xl border p-5 sm:p-6 ${ready && forecast.netSek < 0 ? 'border-amber-200 bg-amber-50' : 'bg-energy/20'}`} data-testid="roi-hero" aria-label={t('Uppskattad besparing', 'Estimated saving')}>
       <p className="text-sm font-medium">{t('Uppskattad besparing efter SHS-abonnemang', 'Estimated saving after the SHS subscription')}</p>
