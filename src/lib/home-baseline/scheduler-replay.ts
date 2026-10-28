@@ -13,7 +13,7 @@ import { finalSimulationState, simulationProblem } from './simulation-state.ts';
 import { quarterPool } from './pool-carry.ts';
 
 export type ReplayEngine = Pick<ReturnType<typeof createWasmPlanner>, 'solve' | 'project'>;
-export const REPLAY_PROTOCOL = 'continuous-stores-72h-ev-observed-presence-v5';
+export const REPLAY_PROTOCOL = 'continuous-stores-72h-refined-battery-v6';
 export const REPLAY_ENGINE = `${runtime.recipe.version}:${runtime.policy_manifest.version}:${artifact.wasm_sha256}`;
 
 /** Current optimizer, isolated from live planning/dispatch. Trips are external physical withdrawals. */

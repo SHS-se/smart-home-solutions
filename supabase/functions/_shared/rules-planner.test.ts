@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from './planner/battery-physics.fixture.ts';
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
@@ -104,7 +105,7 @@ Deno.test("the execution plan is the displayed schedule whatever each device's m
   s.schema_version = 9;
   s.capabilities.battery = true;
   s.value_settings = {battery_degradation_sek_per_kwh:.05,vehicle_fallback_sek_per_km:null};
-  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000, charge_efficiency: .95, discharge_efficiency: .95 };
+  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000, charge_efficiency: .95, discharge_efficiency: .95 , conversion: syntheticIdentityConversion()};
   s.operating_scope = { modes: { $battery: "controlling", $pool: "monitoring", $ev: "control_verification" }, device_owners: {}, external_demands: {} };
   s.device_models = [{ key: "ev", name: "EV", statistic_id: "ev", category: "ev_charging", suggested_load_type: "variable_full_load",
     load_type: "variable_full_load", planning_role: "controllable", control_type: "variable_power", active_power_w: 11040,
@@ -240,7 +241,7 @@ Deno.test("schema9 without optional execution feedback publishes native authorit
   s.schema_version = 9;
   s.capabilities.battery = true;
   s.value_settings = {battery_degradation_sek_per_kwh:.05,vehicle_fallback_sek_per_km:null};
-  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000, charge_efficiency: .95, discharge_efficiency: .95 };
+  s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000, charge_efficiency: .95, discharge_efficiency: .95 , conversion: syntheticIdentityConversion()};
   s.operating_scope = { modes: { $battery: "controlling", $pool: "monitoring", $ev: "control_verification" }, device_owners: {}, external_demands: {} };
   const result = generateRulesPlan(prepare(s));
   assertEquals(result.plan.status, "ready");
@@ -335,7 +336,7 @@ Deno.test("a clipped retained grid purchase reports a conflict without releasing
   s.capabilities.battery = true;
   s.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
   s.battery = { capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: .9, charge_max_w: 3000, discharge_max_w: 3000,
-    charge_efficiency: .95, discharge_efficiency: .95 };
+    charge_efficiency: .95, discharge_efficiency: .95 , conversion: syntheticIdentityConversion()};
   s.ev_battery!.connected = false;
   const prior = generateRulesPlan(prepare(s)).plan;
   const locked = prior.plans.priority.slots.map(slot => ({ ...slot, ev_target_current_a: 0,

@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from './battery-physics.fixture.ts';
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/assert";
 import {
   carryOut, chargerLevels, cop, DeviceModelError, electricKwhPerDegree, heatPumpLevels, idleCPerHour, operatingPoint,
@@ -43,7 +44,7 @@ const heater = {
 };
 const store = { response_time_constant_h: 0, capacity_kwh_per_c: 63.965, loss: { kind: "linear" as const, kw_per_c: 0.13, surroundings_c: 13.5 } };
 const models = () => structuredClone({
-  battery: { capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1, charge_max_w: 8_800, discharge_max_w: 9_600, charge_efficiency: 0.95, discharge_efficiency: 0.95 },
+  battery: { capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1, charge_max_w: 8_800, discharge_max_w: 9_600, charge_efficiency: 0.95, discharge_efficiency: 0.95 , conversion: syntheticIdentityConversion()},
   car: { battery: { capacity_kwh: 75.6, kwh_per_km: 0.16, charge_efficiency: 0.92 }, charger },
   pool: { store, heater },
 });

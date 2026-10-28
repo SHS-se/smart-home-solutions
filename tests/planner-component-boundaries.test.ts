@@ -19,7 +19,7 @@ Deno.test("production planning and captured state cannot reach device learning",
 });
 
 Deno.test("each device learner sees only its own learning, numerical algebra and pure models", () => {
-  const pure = new Set(["models/room/thermal.ts", "device-models.ts", "pool-response.ts"]
+  const pure = new Set(["models/room/thermal.ts", "device-models.ts", "pool-response.ts", "battery-conversion.ts"]
     .map(p => `${shared}planner/${p}`));
   for (const family of ["room", "pool"]) {
     const entries = files(`${learning}${family}/`).filter(p => p.endsWith(".ts") && !p.endsWith(".test.ts"));
@@ -32,7 +32,7 @@ Deno.test("each device learner sees only its own learning, numerical algebra and
 
 Deno.test("pure TS physics has no runtime import of learning, search, persistence or UI", () => {
   const entries = files(`${shared}planner/models/`).filter(p => p.endsWith(".ts"));
-  const physicalDependencies = new Set(["pool-devices.ts", "device-power-allocation.ts", "device-models.ts", "pool-response.ts"]
+  const physicalDependencies = new Set(["pool-devices.ts", "device-power-allocation.ts", "device-models.ts", "pool-response.ts", "battery-conversion.ts"]
     .map(p => `${shared}planner/${p}`));
   const violations = (source: typeof tree) => [...reach(source, entries)].flatMap(p => [
     ...(!entries.includes(p) && !physicalDependencies.has(p) ? [p] : []),

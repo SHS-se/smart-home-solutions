@@ -35,6 +35,7 @@
 // Bump OPPORTUNITY_AUDIT_VERSION (and SCORER_VERSION, score.ts) when the
 // search or its guards change.
 
+import { chargeAcPower, chargeDcPower, dischargeDcPower, convertedFlows, outputPower } from '../../../supabase/functions/_shared/planner/battery-conversion';
 import { QUARTERS, publishedQuarters, type BenchCase, type Targets } from './case';
 import { poolInventoryC, thermalTimeConstantH } from '../../../supabase/functions/_shared/planner/device-models';
 import type { Household } from './household';
@@ -43,7 +44,7 @@ import { assertDecisions, evLevels, evLimitKwh, evMaxW, HOURS, householdSeries, 
 import { stepMove } from './step-moves';
 import { DEFAULT_SERVICE_GUARD, serviceExposure, serviceNotWorse, type Comfort, type ServiceExposure, type ServiceGuard } from './service';
 
-export const OPPORTUNITY_AUDIT_VERSION = 16;
+export const OPPORTUNITY_AUDIT_VERSION = 17;
 
 /** Quarters edited together: one hour. */
 const BLOCK = 4;
@@ -335,7 +336,6 @@ export function findOpportunities(
   const last = QUARTERS - 1;
   const published = laneParts(lane).prices === 'oracle' ? QUARTERS : publishedQuarters(c);
   const wearRate = h.site.battery_degradation_sek_per_kwh;
-  const etaC = h.battery.charge_efficiency, etaD = h.battery.discharge_efficiency;
   const batteryMinKwh = h.battery.min_soc * h.battery.capacity_kwh, batteryMaxKwh = h.battery.max_soc * h.battery.capacity_kwh;
   const carLevels = evLevels(h), carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
   // The heat pump is on at its setting or off, so pool heat moves in whole quarters of it.
@@ -438,23 +438,49 @@ export function findOpportunities(
     // Battery: one side stores more, the other less, the same energy on both.
     const room = rangeMin(q => batteryMaxKwh - sim.batteryKwh[q]);
     const stored = rangeMin(q => sim.batteryKwh[q] - batteryMinKwh);
-    const side: Record<BatterySide, { offers: Offer[][]; perKwh: number }> = {
-      chargeAdd: { offers: offersOf(q => h.battery.charge_max_w - d.battery_charge_w[q], 1), perKwh: etaC },
-      dischargeCut: { offers: offersOf(q => d.battery_discharge_w[q], 1), perKwh: 1 / etaD },
-      dischargeAdd: { offers: offersOf(q => h.battery.discharge_max_w - d.battery_discharge_w[q], -1), perKwh: 1 / etaD },
-      chargeCut: { offers: offersOf(q => d.battery_charge_w[q], -1), perKwh: etaC },
+    const batteryOffers = (which: BatterySide) => {
+      const charging = which.startsWith('charge'), sign = which.endsWith('Add') ? 1 : -1;
+      const cap = (q: number) => {
+        const gross = sim.baseW[q] + sim.poolW[q] + sim.evW[q];
+        const before = charging ? sim.chargeW[q] : sim.dischargeW[q];
+        if (sign < 0) return before;
+        const maximum = charging ? chargeAcPower(h.battery.conversion, h.battery.charge_max_w, world.solarW[q], gross)
+          : outputPower(h.battery.conversion.discharge, h.battery.discharge_max_w);
+        return maximum - before;
+      };
+      return offersOf(cap, (charging ? sign : -sign) as 1 | -1).map(list => list.map(o => {
+        let storedKwh = 0, dSek = 0;
+        for (let k = 0; k < BLOCK; k++) {
+          const q = o.block * BLOCK + k, gross = sim.baseW[q] + sim.poolW[q] + sim.evW[q];
+          const ac = charging ? sim.chargeW[q] : sim.dischargeW[q];
+          const before = charging ? chargeDcPower(h.battery.conversion, ac, world.solarW[q], gross)
+            : dischargeDcPower(h.battery.conversion, ac);
+          const after = charging ? chargeDcPower(h.battery.conversion, Math.max(0, ac + sign * o.w[k]), world.solarW[q], gross)
+            : dischargeDcPower(h.battery.conversion, Math.max(0, ac + sign * o.w[k]));
+          storedKwh += Math.abs(after - before) * KWH *
+            (charging ? h.battery.charge_efficiency : 1 / h.battery.discharge_efficiency);
+          const charge = charging ? after : chargeDcPower(h.battery.conversion, sim.chargeW[q], world.solarW[q], gross);
+          const discharge = charging ? dischargeDcPower(h.battery.conversion, sim.dischargeW[q]) : after;
+          const f = convertedFlows(h.battery.conversion, charge, discharge, world.solarW[q], gross);
+          const net = gross - world.solarW[q] + f.charge - f.discharge + f.idle;
+          dSek += gridCost(q, net) - gridCost(q, sim.netW[q]);
+        }
+        return { ...o, storedKwh, dSek };
+      }).filter(o => o.storedKwh >= MIN_KWH));
     };
+    const side = { chargeAdd: batteryOffers('chargeAdd'), dischargeCut: batteryOffers('dischargeCut'),
+      dischargeAdd: batteryOffers('dischargeAdd'), chargeCut: batteryOffers('chargeCut') };
     for (const { kind, up, down } of BATTERY_KINDS) {
       for (let u = 0; u < BLOCKS; u++) {
-        if (!side[up].offers[u].length) continue;
+        if (!side[up][u].length) continue;
         for (let v = 0; v < BLOCKS; v++) {
-          if (!side[down].offers[v].length || (u === v && kind !== 'cycle_cut')) continue;
+          if (!side[down][v].length || (u === v && kind !== 'cycle_cut')) continue;
           // Between the two the battery holds more (stored first) or less (released first).
           const limit = u === v ? Infinity : u < v ? room[u * BLOCKS + v - 1] : stored[v * BLOCKS + u - 1];
-          for (const a of side[up].offers[u]) for (const b of side[down].offers[v]) {
-            const kwh = Math.min(a.kwh * side[up].perKwh, b.kwh * side[down].perKwh, limit);
+          for (const a of side[up][u]) for (const b of side[down][v]) {
+            const kwh = Math.min(a.storedKwh, b.storedKwh, limit);
             if (kwh < MIN_KWH) continue;
-            const fa = kwh / (a.kwh * side[up].perKwh), fb = kwh / (b.kwh * side[down].perKwh);
+            const fa = kwh / (a.storedKwh), fb = kwh / (b.storedKwh);
             const discharged = (down === 'dischargeAdd' ? b.kwh * fb : 0) - (up === 'dischargeCut' ? a.kwh * fa : 0);
             offer(kind, a, b, fa, fb, -(a.dSek * fa + b.dSek * fb) - wearRate * discharged);
           }
@@ -522,11 +548,6 @@ export function findOpportunities(
 
   type Attempt = { d: Decisions; sim: Simulation; grid: number; wear: number; saving: number; cand: Candidate; fromQ: number[]; toQ: number[]; kwh: number; toShare: number };
 
-  const shift = (values: number[], o: Offer, scale: number, sign: 1 | -1) => {
-    const out = [...values];
-    for (let k = 0; k < BLOCK; k++) if (o.w[k] > 0) out[o.block * BLOCK + k] = Math.max(0, out[o.block * BLOCK + k] + sign * o.w[k] * scale);
-    return out;
-  };
   const quartersOf = (o: Offer) => o.w.map((w, k) => w > 0 ? o.block * BLOCK + k : -1).filter(q => q >= 0);
 
   const attemptBattery = (cand: Candidate, scale: number): Attempt | null => {
@@ -534,7 +555,20 @@ export function findOpportunities(
     const d = { ...plan.d };
     const apply = (which: BatterySide, o: Offer, f: number) => {
       const field = which.startsWith('charge') ? 'battery_charge_w' : 'battery_discharge_w';
-      d[field] = shift(d[field], o, f * scale, which.endsWith('Add') ? 1 : -1);
+      const charging = which.startsWith('charge'), sign = which.endsWith('Add') ? 1 : -1;
+      d[field] = [...d[field]];
+      for (let k = 0; k < BLOCK; k++) {
+        if (o.w[k] <= 0) continue;
+        const q = o.block * BLOCK + k, gross = plan.sim.baseW[q] + plan.sim.poolW[q] + plan.sim.evW[q];
+        const ac = charging ? plan.sim.chargeW[q] : plan.sim.dischargeW[q];
+        const before = charging ? chargeDcPower(h.battery.conversion, ac, world.solarW[q], gross)
+          : dischargeDcPower(h.battery.conversion, ac);
+        const full = charging ? chargeDcPower(h.battery.conversion, Math.max(0, ac + sign * o.w[k]), world.solarW[q], gross)
+          : dischargeDcPower(h.battery.conversion, Math.max(0, ac + sign * o.w[k]));
+        const dc = before + (full - before) * f * scale;
+        d[field][q] = charging ? chargeAcPower(h.battery.conversion, dc, world.solarW[q], gross)
+          : outputPower(h.battery.conversion.discharge, dc);
+      }
     };
     apply(kind.up, cand.a, cand.fa);
     apply(kind.down, cand.b, cand.fb);

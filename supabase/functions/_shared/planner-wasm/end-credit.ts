@@ -19,6 +19,7 @@
 
 import type { BatteryModel, CarBatteryModel, ThermalStoreModel } from "../planner/device-models.ts";
 import type { ReadyProblem } from "./ready-problem.ts";
+import { gridKwhPerStoredKwh } from '../planner/battery-conversion.ts';
 
 /** One store's credit terms. The unit is kWh stored, or °C for the pool. */
 export interface StoreTerm {
@@ -68,7 +69,7 @@ export function endCreditTerms(input: {
   const { battery, pool, car } = input;
   return {
     reference_sek_per_kwh: referencePrice(input.import_sek_per_kwh),
-    battery: battery && { cap: battery.max_soc * battery.capacity_kwh, grid_kwh_per_unit: 1 / battery.charge_efficiency },
+    battery: battery && { cap: battery.max_soc * battery.capacity_kwh, grid_kwh_per_unit: gridKwhPerStoredKwh(battery) },
     // A degree of water costs its heat over what the heat pump gives per watt drawn (electricKwhPerDegree, device-models.ts).
     pool: pool && { cap: pool.target_c, grid_kwh_per_unit: pool.store.capacity_kwh_per_c * pool.draw_w / pool.heat_w },
     ev: car && {

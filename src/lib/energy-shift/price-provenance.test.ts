@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from "../../../supabase/functions/_shared/planner/battery-physics.fixture.ts";
 import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-planner.ts";
 // The chart must draw the numbers the planner actually reasoned with.
 //
@@ -93,7 +94,7 @@ const snapshot = (): OptimisationSnapshot => {
     battery: {
       capacity_kwh: 18.08, soc: 0.5, min_soc: 0.05, max_soc: 1,
       charge_max_w: 8_800, discharge_max_w: 9_600,
-      charge_efficiency: 0.95, discharge_efficiency: 0.95,
+      charge_efficiency: 0.95, discharge_efficiency: 0.95, conversion: syntheticIdentityConversion(),
     },
     ev_battery: null,
     pool: null,

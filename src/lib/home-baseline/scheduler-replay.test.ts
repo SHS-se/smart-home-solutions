@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from '../../../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import { baselineFixture } from './fixture';
 import { prepareHomeBaseline, projectBaseline } from './model';
@@ -14,7 +15,7 @@ function batteryOnly(capacityKwh: number) {
  const input=prepareHomeBaseline(baselineFixture({start:'2026-01-30T00:00:00Z',end:'2026-02-02T00:00:00Z'}));
  input.timeZone='UTC';input.idlePumpW=0;input.members={heater:[],auxiliary:[],ev:[]};input.evDemandKwh.fill(0);
  input.problem={...input.problem,car:null,charger:null,pool_store:null,heater:null,pool_stop_c:null,rules:[],
-  battery:{capacity_kwh:capacityKwh,min_soc:0,max_soc:1,charge_max_w:5000,discharge_max_w:5000,charge_efficiency:.9,discharge_efficiency:.9},
+  battery:{capacity_kwh:capacityKwh,min_soc:0,max_soc:1,charge_max_w:5000,discharge_max_w:5000,charge_efficiency:.9,discharge_efficiency:.9, conversion: syntheticIdentityConversion()},
   initial:{battery_kwh:0,ev_kwh:null,pool_c:null,pool_pending_heat_kwh:null,pool_source_depletion_kwh:null,heater_state:null},
   targets:{pool_c:null,ev_km:null,ev_limit_kwh:null},limits:{...input.problem.limits,import_w:50000,export_w:50000,wear_per_kwh:.05,battery_export_enabled:false},
   slots:input.problem.slots.map((slot,i)=>({...slot,local_month:i<192?1:2,base_w:i<192?0:2000,base_ev_w:0,solar_w:0,import_price:i<192?.2:2,export_price:0,ev_available:false}))};
@@ -84,6 +85,14 @@ for (const operation of ['grid_charge', 'export'] as const) for (const remaining
    discharge_limit_w:i>=4&&i<8&&operation==='export'?battery.discharge_max_w:0}));
   const projected=engine.project(p,commands).outcome;
   assert(projected.kind==='projected');
+  // Model a selected native candidate: scored requests are normalized integer AC
+  // allocations; realized power can remain fractional at a storage boundary.
+  for (let i=4;i<8;i++) {
+   const q=projected.quarters[i], watts=operation==='grid_charge'?q.charge_w:q.discharge_w;
+   commands[i]={...commands[i],battery:watts>0?operation:'idle',
+    charge_limit_w:operation==='grid_charge'?Math.ceil(watts):0,
+    discharge_limit_w:operation==='export'?Math.ceil(watts):0};
+  }
   allocated=operation==='grid_charge'?projected.quarters[7].charge_w:projected.quarters[7].discharge_w;
   assertAlmostEquals(allocated,remaining*4000*(operation==='grid_charge'?1/battery.charge_efficiency:battery.discharge_efficiency),1e-7);
   assert(allocated<(operation==='grid_charge'?battery.charge_max_w:battery.discharge_max_w));
@@ -96,7 +105,7 @@ for (const operation of ['grid_charge', 'export'] as const) for (const remaining
  assertEquals(committed.battery,allocated===0?'idle':operation);
  assertEquals(r.commands[0].battery,'hold');
  assertEquals(r.commands[0].charge_limit_w,battery.charge_max_w);
- assertAlmostEquals(operation==='grid_charge'?committed.charge_limit_w:committed.discharge_limit_w,allocated);
+ assertAlmostEquals(operation==='grid_charge'?committed.charge_limit_w:committed.discharge_limit_w,Math.ceil(allocated));
  assertAlmostEquals(operation==='grid_charge'?r.series.batteryChargeW[7]:r.series.batteryDischargeW[7],allocated);
 });
 Deno.test('current native scheduler executes its own commands, carries state and withdraws recorded trips without charging gains',()=>{

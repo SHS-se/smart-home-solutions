@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from './planner/battery-physics.fixture.ts';
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
@@ -25,7 +26,7 @@ function chargingHouse() {
   snapshot.captured_at = snapshot.slots[0].start;
   snapshot.ev_battery!.soc = .48;
   snapshot.battery = {capacity_kwh: 18.08, soc: .5, min_soc: .05, max_soc: 1,
-    charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95};
+    charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95, conversion: syntheticIdentityConversion()};
   snapshot.capabilities.battery = true;
   const plan = runRulesPlanner(input(snapshot)).plan;
   const slots = plan.plans.priority.slots.map((slot, i): PlannedSlot => ({...slot,

@@ -5,13 +5,13 @@ import {
 } from "./battery-action-domain.ts";
 import {
   type Conversion,
-  conversionSchema,
   convertedFlows,
   gridPower,
   inputPower,
   outputPower,
   solarCapacity,
 } from "./planner/battery-conversion.ts";
+import { conversionSchema } from './planner/battery-conversion-schema.ts';
 /** Executable, bounded finite bridge/suffix family. No native writes or continuous-optimum claim. */
 import {
   batterySupplyScopeSchema,

@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from './battery-physics.fixture.ts';
 /** Shared snapshots and helpers for the planner behaviour tests. */
 import { type OptimisationPlan, type OptimisationSnapshot } from "./planning-contracts.ts";
 
@@ -94,7 +95,7 @@ export const input = (
       charge_max_w: 5_000,
       discharge_max_w: 5_000,
       charge_efficiency: 0.95,
-      discharge_efficiency: 0.95,
+      discharge_efficiency: 0.95, conversion: syntheticIdentityConversion(),
     },
     ev_battery: null,
     grid: { import_limit_w: 10_000, export_limit_w: 10_000 },

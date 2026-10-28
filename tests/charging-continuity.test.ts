@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from '../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { createWasmPlanner } from "../supabase/functions/_shared/planner-wasm/core.ts";
 import type { NativeCommand, ReadyProblem } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
@@ -11,7 +12,7 @@ function competition(): ReadyProblem {
   p.work_grant = 100_000_000;
   p.heater = p.pool_store = null;
   p.initial.pool_c = p.initial.pool_pending_heat_kwh = p.initial.heater_state = p.targets.pool_c = null;
-  p.battery = { capacity_kwh: 6, min_soc: 0, max_soc: 1, charge_max_w: 4000, discharge_max_w: 4000, charge_efficiency: 1, discharge_efficiency: 1 };
+  p.battery = { capacity_kwh: 6, min_soc: 0, max_soc: 1, charge_max_w: 4000, discharge_max_w: 4000, charge_efficiency: 1, discharge_efficiency: 1 , conversion: syntheticIdentityConversion()};
   p.car = { capacity_kwh: 10, kwh_per_km: .2, charge_efficiency: 1 };
   p.charger = { voltage_v: 230, phase_count: 3, min_current_a: 5, max_current_a: 6, current_step_a: 1 };
   p.initial.battery_kwh = p.initial.ev_kwh = 0;
@@ -71,7 +72,7 @@ Deno.test("a worthwhile price gap can still interrupt charging", () => {
 Deno.test("active EV currents group into blocks instead of alternating with battery headroom", () => {
   const p = activeCurrentCompetition();
   // Isolate current smoothing from the separate ongoing-readiness preference.
-  // This regression retains its original active evening demand and all bounds.
+  // This synthetic scenario retains its active-block demand and all bounds.
   p.rules = p.rules.filter(rule => rule.key !== 'ev_low' && rule.key !== 'ev_short');
   const result = selected(p);
   const evening = result.commands.slice(25, 44).map(c => c.ev_amps);

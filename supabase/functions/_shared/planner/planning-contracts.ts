@@ -1,7 +1,7 @@
 import type { HouseholdProblem, HouseholdCandidate } from "./household-case.ts";
 /** Shared planning inputs and published commands; no planner implementation. */
 import type { PlanningWarning } from "./planning-warnings.ts";
-import type { HeatPumpResponse, DeviceModels } from "./device-models.ts";
+import type { HeatPumpResponse, DeviceModels, BatteryModel } from "./device-models.ts";
 import type { ExecutionFeedback, BatteryExecutionContract } from "./battery-plan-execution.ts";
 import type { OperatingScope } from "./operating-scope.ts";
 import type { MeasurementIssue } from "./measurement-isolation.ts";
@@ -71,15 +71,8 @@ export interface ForecastSlotInput {
   export_price_sek_per_kwh: number | null;
 }
 
-export interface BatteryInput {
-  capacity_kwh: number;
+export interface BatteryInput extends BatteryModel {
   soc: number;
-  min_soc: number;
-  max_soc: number;
-  charge_max_w: number;
-  discharge_max_w: number;
-  charge_efficiency: number;
-  discharge_efficiency: number;
 }
 
 export interface PoolHardwareInput {
@@ -287,7 +280,7 @@ export interface OptimisationSnapshot {
    * devices (see `isolateMeasurements`).
    */
   measurement_issues?: MeasurementIssue[];
-  schema_version: 5 | 6 | 7 | 8 | 9 | 10;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -529,6 +522,8 @@ export interface QuarterDecisionDiagnostic {
 }
 
 export interface PlannedSlot {
+  /** Installation overhead already included in total load_w. */
+  battery_idle_w?: number;
   /** Forecast charging assumes a future cable connection; telemetry stays truthful. */
   ev_charging_conditional?: boolean;
   /** Null explicitly means no new instruction; forecast watts cannot grant permission. */
@@ -685,7 +680,7 @@ export interface OptimisationPlan {
   /** Daily curve evidence for the conditional battery verification branch. */
   battery_verification_value_curve?: BatteryValueCurveDiagnostic | null;
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
-  schema_version: 5 | 6 | 7 | 8 | 9 | 10;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;
@@ -999,6 +994,11 @@ export interface BatteryProjectionRow {
   device_loads_w: Record<string, number>;
   charge_w: number;
   discharge_w: number;
+  charge_dc_w: number;
+  discharge_dc_w: number;
+  battery_idle_w: number;
+  /** Exact native stored-energy endpoint, never reconstructed from AC flows. */
+  stored_end_kwh: number | null;
   export_w: number;
   curtailed_w: number;
   unserved_w: number;

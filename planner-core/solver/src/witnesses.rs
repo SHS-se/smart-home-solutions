@@ -169,7 +169,7 @@ fn set_discharge(c: &mut Command, power: f64, export: bool, battery: &Battery) {
     c.discharge_limit_w = if power > EPS { power } else { 0.0 };
     // House supply remains an automatic operation: fresh surplus is capturable.
     c.charge_limit_w = if c.battery == Operation::SupplyHouse {
-        battery.charge_max_w
+        battery.maximum_charge_ac_w()
     } else {
         0.0
     };
@@ -331,48 +331,37 @@ fn enumerate(p: &Problem, commands: &[Command], q: &[Quarter], cap: usize) -> Ve
                     q[from].charge_w * dest_surplus,
                 );
             }
-            if from < to
-                && dest_import > EPS
-                && p.slots[to].import_price
-                    > p.slots[from].import_price
-                        / (model.charge_efficiency * model.discharge_efficiency)
-            {
+            // Affine overhead depends on both powers and source mix. Prices alone
+            // cannot exclude a profitable transfer; exact native scoring certifies it.
+            if from < to && dest_import > EPS {
                 battery(
                     5,
                     Transfer::AddCycle,
                     (p.slots[to].import_price - p.slots[from].import_price) * dest_import,
                 );
             }
-            if q[from].discharge_w > EPS
-                && dest_import > EPS
-                && p.slots[to].import_price > p.slots[from].import_price
-            {
+            if q[from].discharge_w > EPS && dest_import > EPS {
                 battery(
                     if to > from { 6 } else { 4 },
                     Transfer::DischargeMove,
                     (p.slots[to].import_price - p.slots[from].import_price) * dest_import,
                 );
             }
-            if q[from].charge_w > EPS && delta > 0.0 {
+            if q[from].charge_w > EPS {
                 battery(5, Transfer::ChargeMove, delta * q[from].charge_w);
             }
             if p.limits.battery_export_enabled
                 && p.slots[to].export_price >= p.limits.battery_export_min_price
             {
-                if p.slots[to].export_price
-                    > p.slots[from].import_price
-                        / (model.charge_efficiency * model.discharge_efficiency)
-                {
+                if from < to {
                     battery(
                         EXPORT,
                         Transfer::AddCycle,
                         (p.slots[to].export_price - p.slots[from].import_price)
-                            * model.discharge_max_w,
+                            * model.maximum_discharge_ac_w(),
                     );
                 }
-                if q[from].discharge_w > EPS
-                    && p.slots[to].export_price > p.slots[from].import_price
-                {
+                if q[from].discharge_w > EPS {
                     battery(
                         EXPORT,
                         Transfer::DischargeMove,
@@ -493,29 +482,40 @@ fn battery_edit(
     let hb = projected_hours(&p.slots[b]);
     let ce = battery.charge_efficiency;
     let de = battery.discharge_efficiency;
-    let charge_room = |i: usize| {
-        if q[i].discharge_w > EPS {
-            0.0
-        } else {
-            (battery.charge_max_w - q[i].charge_w)
-                .min((p.limits.import_w - q[i].net_w).max(0.0))
-                .max(0.0)
+    let load = |i: usize| {
+        let slot = &p.slots[i];
+        physics::BatteryLoad {
+            gross_w: slot.base_w + q[i].pool_w + q[i].ev_w,
+            solar_w: slot.solar_w,
+            ev_w: slot.base_ev_w + q[i].ev_w,
         }
     };
-    let discharge_room = |i: usize| {
-        if q[i].charge_w > EPS {
-            0.0
-        } else {
-            let slot = &p.slots[i];
-            let load = physics::BatteryLoad {
-                gross_w: slot.base_w + q[i].pool_w + q[i].ev_w,
-                solar_w: slot.solar_w,
-                ev_w: slot.base_ev_w + q[i].ev_w,
-            };
-            (battery.discharge_max_w - q[i].discharge_w)
-                .min(load.discharge_bound(p, export) - q[i].discharge_w)
-                .max(0.0)
+    // Rooms are terminal DC increments. AC allocations are inverted only after
+    // adding/removing the complete stored-energy transfer at the endpoint.
+    let charge_room = |i: usize| {
+        if q[i].discharge_dc_w > EPS {
+            return 0.0;
         }
+        let l = load(i);
+        let ac = battery.charge_grid_room_w(
+            (p.limits.import_w - l.net_w()).max(0.0),
+            l.solar_w,
+            l.gross_w,
+        );
+        (battery
+            .charge_dc_w(ac, l.solar_w, l.gross_w)
+            .min(battery.charge_max_w)
+            - q[i].charge_dc_w)
+            .max(0.0)
+    };
+    let discharge_room = |i: usize| {
+        if q[i].charge_dc_w > EPS {
+            return 0.0;
+        }
+        let ac = load(i)
+            .discharge_bound(p, export)
+            .min(battery.maximum_discharge_ac_w());
+        (battery.discharge_dc_w(ac).min(battery.discharge_max_w) - q[i].discharge_dc_w).max(0.0)
     };
     let (mut energy, increase_between) = match kind {
         Transfer::AddCycle => (
@@ -523,15 +523,15 @@ fn battery_edit(
             a < b,
         ),
         Transfer::CutCycle => (
-            (q[a].charge_w * ha * ce).min(q[b].discharge_w * hb / de) / 1000.0,
+            (q[a].charge_dc_w * ha * ce).min(q[b].discharge_dc_w * hb / de) / 1000.0,
             a > b,
         ),
         Transfer::ChargeMove => (
-            (q[a].charge_w * ha * ce).min(charge_room(b) * hb * ce) / 1000.0,
+            (q[a].charge_dc_w * ha * ce).min(charge_room(b) * hb * ce) / 1000.0,
             a > b,
         ),
         Transfer::DischargeMove => (
-            (q[a].discharge_w * ha / de).min(discharge_room(b) * hb / de) / 1000.0,
+            (q[a].discharge_dc_w * ha / de).min(discharge_room(b) * hb / de) / 1000.0,
             a < b,
         ),
     };
@@ -550,26 +550,42 @@ fn battery_edit(
         Transfer::AddCycle => (
             Flow::Charge,
             Flow::Discharge,
-            q[a].charge_w + energy * 1000.0 / (ha * ce),
-            q[b].discharge_w + energy * 1000.0 * de / hb,
+            battery.charge_ac_w(
+                q[a].charge_dc_w + energy * 1000.0 / (ha * ce),
+                load(a).solar_w,
+                load(a).gross_w,
+            ),
+            battery.discharge_ac_w(q[b].discharge_dc_w + energy * 1000.0 * de / hb),
         ),
         Transfer::CutCycle => (
             Flow::Charge,
             Flow::Discharge,
-            q[a].charge_w - energy * 1000.0 / (ha * ce),
-            q[b].discharge_w - energy * 1000.0 * de / hb,
+            battery.charge_ac_w(
+                (q[a].charge_dc_w - energy * 1000.0 / (ha * ce)).max(0.0),
+                load(a).solar_w,
+                load(a).gross_w,
+            ),
+            battery.discharge_ac_w((q[b].discharge_dc_w - energy * 1000.0 * de / hb).max(0.0)),
         ),
         Transfer::ChargeMove => (
             Flow::Charge,
             Flow::Charge,
-            q[a].charge_w - energy * 1000.0 / (ha * ce),
-            q[b].charge_w + energy * 1000.0 / (hb * ce),
+            battery.charge_ac_w(
+                (q[a].charge_dc_w - energy * 1000.0 / (ha * ce)).max(0.0),
+                load(a).solar_w,
+                load(a).gross_w,
+            ),
+            battery.charge_ac_w(
+                q[b].charge_dc_w + energy * 1000.0 / (hb * ce),
+                load(b).solar_w,
+                load(b).gross_w,
+            ),
         ),
         Transfer::DischargeMove => (
             Flow::Discharge,
             Flow::Discharge,
-            q[a].discharge_w - energy * 1000.0 * de / ha,
-            q[b].discharge_w + energy * 1000.0 * de / hb,
+            battery.discharge_ac_w((q[a].discharge_dc_w - energy * 1000.0 * de / ha).max(0.0)),
+            battery.discharge_ac_w(q[b].discharge_dc_w + energy * 1000.0 * de / hb),
         ),
     };
     for (i, flow, value) in [(a, af, av), (b, bf, bv)] {
@@ -846,7 +862,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 13,
+            abi: 14,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -888,6 +904,22 @@ pub(crate) mod tests {
                 discharge_max_w: 4000.0,
                 charge_efficiency: 1.0,
                 discharge_efficiency: 1.0,
+                conversion: shs_planner_models::Conversion {
+                    revision: "synthetic-identity".into(),
+                    grid_charge: shs_planner_models::Curve {
+                        gain: 1.0,
+                        overhead_w: 0.0,
+                    },
+                    surplus_charge: shs_planner_models::Curve {
+                        gain: 1.0,
+                        overhead_w: 0.0,
+                    },
+                    discharge: shs_planner_models::Curve {
+                        gain: 1.0,
+                        overhead_w: 0.0,
+                    },
+                    idle_loss_w: 0.0,
+                },
             }),
             car: Some(CarBattery {
                 capacity_kwh: 60.0,

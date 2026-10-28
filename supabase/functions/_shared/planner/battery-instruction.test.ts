@@ -10,17 +10,18 @@ const MODELS = [
 const quarter = (charge_w = 0, discharge_w = 0) => ({ charge_w, discharge_w });
 
 Deno.test("each native candidate is stated as the instruction HA executes", () => {
-  // Capture, 17 October 2026: an 864 W inventory move kept import under 15 kW.
-  const sized = instructionFor({ battery: "supply_house", charge_limit_w: 8800, discharge_limit_w: 864.13 }, quarter(0, 864), "p", LIMITS);
+  // Independent synthetic allocations retain the scored integer request, even
+  // when inventory saturation produces a slightly smaller reference flow.
+  const sized = instructionFor({ battery: "supply_house", charge_limit_w: 8800, discharge_limit_w: 865 }, quarter(0, 864), "p", LIMITS);
   assertEquals(sized, { kind: "supply", profile_id: "p", charge_ac_limit_w: 8800, discharge_ac_limit_w: 9600,
-    response: { mode: "fixed", discharge_ac_w: 864, import_target_w: 15000 } });
+    response: { mode: "fixed", discharge_ac_w: 865, import_target_w: 15000 } });
   assertEquals(instructionFor({ battery: "shave_import", charge_limit_w: 8800, discharge_limit_w: 9600 }, quarter(0, 600), "p", LIMITS),
     { kind: "supply", profile_id: "p", charge_ac_limit_w: 8800, discharge_ac_limit_w: 9600,
       response: { mode: "import_target", import_target_w: 15000 } });
   // Automatic supply follows demand even when the forecast says it discharges nothing.
   assertEquals(instructionFor({ battery: "self_consumption", charge_limit_w: 8800, discharge_limit_w: 9600 }, quarter(), "p", LIMITS).kind, "supply");
-  assertEquals(instructionFor({ battery: "grid_charge", charge_limit_w: 8800, discharge_limit_w: 0 }, quarter(6000.7), "p", LIMITS),
-    { kind: "grid_charge", charge_ac_w: 6000 });
+  assertEquals(instructionFor({ battery: "grid_charge", charge_limit_w: 6001, discharge_limit_w: 0 }, quarter(6000.7), "p", LIMITS),
+    { kind: "grid_charge", charge_ac_w: 6001 });
   assertEquals(instructionFor({ battery: "export", charge_limit_w: 0, discharge_limit_w: 9600 }, quarter(), "p", LIMITS), { kind: "idle" });
 });
 

@@ -180,10 +180,9 @@ impl Table {
                 .charger
                 .as_ref()
                 .map_or(0.0, |c| c.watts(c.max_current_a).unwrap()),
-            Device::Battery => p
-                .battery
-                .as_ref()
-                .map_or(0.0, |b| b.charge_max_w.max(b.discharge_max_w)),
+            Device::Battery => p.battery.as_ref().map_or(0.0, |b| {
+                (b.maximum_charge_ac_w() + b.conversion.idle_loss_w).max(b.maximum_discharge_ac_w())
+            }),
         };
         for s in &m.slots {
             m.limits.import_w = m.limits.import_w.max(s.base_w + own);
@@ -298,17 +297,21 @@ fn tables(p: &Problem) -> Vec<Table> {
             idle(),
             Command {
                 battery: Operation::Hold,
-                charge_limit_w: b.charge_max_w,
+                charge_limit_w: b.maximum_charge_ac_w(),
                 ..idle()
             },
             Command {
                 battery: Operation::SelfConsumption,
-                charge_limit_w: b.charge_max_w,
-                discharge_limit_w: b.discharge_max_w,
+                charge_limit_w: b.maximum_charge_ac_w(),
+                discharge_limit_w: b.maximum_discharge_ac_w(),
                 ..idle()
             },
         ];
-        for watts in [b.charge_max_w * 0.25, b.charge_max_w * 0.5, b.charge_max_w] {
+        for watts in [
+            b.maximum_charge_ac_w() * 0.25,
+            b.maximum_charge_ac_w() * 0.5,
+            b.maximum_charge_ac_w(),
+        ] {
             options.push(Command {
                 battery: Operation::GridCharge,
                 charge_limit_w: watts,
@@ -318,7 +321,7 @@ fn tables(p: &Problem) -> Vec<Table> {
         if p.limits.battery_export_enabled {
             options.push(Command {
                 battery: Operation::Export,
-                discharge_limit_w: b.discharge_max_w,
+                discharge_limit_w: b.maximum_discharge_ac_w(),
                 ..idle()
             });
         }

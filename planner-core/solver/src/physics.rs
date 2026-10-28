@@ -43,6 +43,11 @@ pub(crate) fn initial(p: &Problem) -> State {
         pool_run_quarters: None,
     }
 }
+/// A published one-watt AC request represents the exact clipped allocation
+/// whose ceiling produced it. This is command resolution, not a physics tolerance.
+pub(crate) fn quantized_allocation(request: f64, actual: f64) -> bool {
+    request.fract() == 0.0 && actual > 0.0 && actual.ceil() == request
+}
 pub(crate) fn projected_hours(s: &Slot) -> f64 {
     s.hours + s.start_seconds.min(0.0) / 3600.0
 }
@@ -199,11 +204,21 @@ fn transition(
     {
         return Err("export_without_permission".into());
     }
-    let (charge, discharge) = battery_flows(p, command, load, state.battery, hours);
-    let (net, curtailed_w) = grid_flow(p, demand, s.solar_w, charge, discharge);
+    let battery_flow = battery_flows(p, command, load, state.battery, hours);
+    let charge = battery_flow.charge_ac_w;
+    let discharge = battery_flow.discharge_ac_w;
+    let (net, curtailed_w) = grid_flow(
+        p,
+        demand + battery_flow.idle_ac_w,
+        s.solar_w,
+        charge,
+        discharge,
+    );
     // An imperfect uncontrollable-load forecast cannot make the home
     // unplannable. Keep the excess visible; no added command may worsen it.
-    let unavoidable_import = (s.base_w - s.solar_w).max(0.0);
+    let unavoidable_import = (s.base_w - s.solar_w
+        + p.battery.as_ref().map_or(0.0, |b| b.conversion.idle_loss_w))
+    .max(0.0);
     if !within_grid(p, net) && !(net >= 0.0 && net <= unavoidable_import + 1e-7) {
         return Err("shared_grid_limit".into());
     }
@@ -217,11 +232,15 @@ fn transition(
         0.0
     };
     let fixed_charge = if command.battery == Operation::GridCharge && held_battery {
-        command.charge_limit_w.min(
-            p.battery
-                .as_ref()
-                .map_or(0.0, |battery| battery.charge_max_w),
-        )
+        if quantized_allocation(command.charge_limit_w, charge) {
+            charge
+        } else {
+            command
+                .charge_limit_w
+                .min(p.battery.as_ref().map_or(0.0, |battery| {
+                    battery.charge_ac_w(battery.charge_max_w, load.solar_w, load.gross_w)
+                }))
+        }
     } else {
         charge
     };
@@ -234,8 +253,9 @@ fn transition(
             solar_w: s.solar_w,
             ev_w: admission_ev_w + s.base_ev_w,
         };
-        let (reserved_charge, reserved_discharge) =
-            battery_flows(p, command, reservation, state.battery, hours);
+        let reserved_flow = battery_flows(p, command, reservation, state.battery, hours);
+        let reserved_charge = reserved_flow.charge_ac_w;
+        let reserved_discharge = reserved_flow.discharge_ac_w;
         // Published grid-charge is a fixed figure, not a peak-time reduction.
         let reserved_charge = if command.battery == Operation::GridCharge {
             fixed_charge
@@ -245,13 +265,13 @@ fn transition(
         // Export is published as a fixed allocation. Only automatic house
         // supply may increase its discharge when pool demand rises.
         let reserved_discharge = if command.battery == Operation::Export && !held_battery {
-            reserved_discharge.min(discharge.floor())
+            reserved_discharge.min(discharge)
         } else {
             reserved_discharge
         };
         let (reserved_net, _) = grid_flow(
             p,
-            reservation.net_w(),
+            reservation.net_w() + reserved_flow.idle_ac_w,
             s.solar_w,
             reserved_charge,
             reserved_discharge,
@@ -305,9 +325,7 @@ fn transition(
     if let Some(car) = &p.car {
         state.ev += ev_w * hours / 1000.0 * car.charge_efficiency;
     }
-    if let Some(battery) = &p.battery {
-        state.battery = battery.step(state.battery, charge, discharge, hours);
-    }
+    state.battery = battery_flow.stored_end_kwh;
     Ok(Quarter {
         pool_command_w: if command.pool_on {
             p.heater
@@ -323,6 +341,9 @@ fn transition(
         ev_w,
         charge_w: charge,
         discharge_w: discharge,
+        charge_dc_w: battery_flow.charge_dc_w,
+        discharge_dc_w: battery_flow.discharge_dc_w,
+        battery_idle_w: battery_flow.idle_ac_w,
         net_w: net,
         curtailed_w,
         battery_kwh: p.battery.as_ref().map(|_| state.battery),
@@ -369,7 +390,12 @@ impl BatteryLoad {
     pub(crate) fn discharge_bound(self, p: &Problem, export: bool) -> f64 {
         let house = self.house_supply_bound(p);
         if export && (p.ev_battery_supply_allowed || self.ev_w == 0.0 || self.net_w() <= 0.0) {
-            (p.limits.export_w + self.net_w()).max(0.0)
+            (p.limits.export_w
+                + self.net_w()
+                + p.battery
+                    .as_ref()
+                    .map_or(0.0, |b| b.conversion.discharge_idle_w()))
+            .max(0.0)
         } else {
             house
         }
@@ -384,41 +410,57 @@ pub(crate) fn battery_flows(
     load: BatteryLoad,
     battery_kwh: f64,
     hours: f64,
-) -> (f64, f64) {
+) -> shs_planner_models::BatteryFlow {
     let Some(battery) = &p.battery else {
-        return (0.0, 0.0);
+        return shs_planner_models::BatteryFlow {
+            charge_ac_w: 0.0,
+            discharge_ac_w: 0.0,
+            charge_dc_w: 0.0,
+            discharge_dc_w: 0.0,
+            idle_ac_w: 0.0,
+            stored_end_kwh: battery_kwh,
+        };
     };
     let demand = load.net_w();
-    let room = battery.available_charge_w(battery_kwh, hours);
+    let room = battery.available_charge_w(battery_kwh, hours, load.solar_w, load.gross_w);
     let stored = battery.available_discharge_w(battery_kwh, hours);
     let charge_cap = command.charge_limit_w.min(room);
     let discharge_cap = command.discharge_limit_w.min(stored);
     let solar = (-demand).max(0.0).min(charge_cap);
-    match command.battery {
+    let active_idle = battery.conversion.discharge_idle_w();
+    let (charge, discharge) = match command.battery {
         Operation::Idle => (0.0, 0.0),
         Operation::Hold | Operation::SolarCharge => (solar, 0.0),
         Operation::SelfConsumption => (solar, load.house_supply_bound(p).min(discharge_cap)),
-        // The same law HA applies: a fixed figure, raised to keep import at
-        // the limit, and peak shaving that supplies only the excess.
         Operation::SupplyHouse => {
-            let need = (demand - p.limits.import_w).max(0.0).min(stored);
+            let need = (demand + active_idle - p.limits.import_w)
+                .max(0.0)
+                .min(stored);
             (
                 solar,
                 load.house_supply_bound(p).min(discharge_cap.max(need)),
             )
         }
         Operation::ShaveImport => {
-            let need = (demand - p.limits.import_w).max(0.0);
+            let need = (demand + active_idle - p.limits.import_w).max(0.0);
             (
                 solar,
                 load.house_supply_bound(p).min(discharge_cap).min(need),
             )
         }
-        Operation::GridCharge => (charge_cap.min((p.limits.import_w - demand).max(0.0)), 0.0),
+        Operation::GridCharge => (
+            charge_cap.min(battery.charge_grid_room_w(
+                (p.limits.import_w - demand).max(0.0),
+                load.solar_w,
+                load.gross_w,
+            )),
+            0.0,
+        ),
         Operation::Export => {
-            let reserve = (battery_kwh - p.limits.battery_export_reserve_kwh).max(0.0) * 1000.0
-                / hours
-                * battery.discharge_efficiency;
+            let reserve = battery.discharge_for_inventory_w(
+                (battery_kwh - p.limits.battery_export_reserve_kwh).max(0.0),
+                hours,
+            );
             (
                 0.0,
                 discharge_cap
@@ -426,8 +468,17 @@ pub(crate) fn battery_flows(
                     .min(load.discharge_bound(p, true)),
             )
         }
-    }
+    };
+    battery.project_ac(
+        battery_kwh,
+        hours,
+        charge,
+        discharge,
+        load.solar_w,
+        load.gross_w,
+    )
 }
+
 fn grid_cost(s: &Slot, net: f64, hours: f64) -> f64 {
     (net.max(0.0) * s.import_price - (-net).max(0.0) * s.export_price) * hours / 1000.0
 }
@@ -461,8 +512,16 @@ pub(crate) fn carry(
     battery_kwh: f64,
 ) -> CarriedQuarter {
     let hours = projected_hours(s);
-    let (charge, discharge) = battery_flows(p, command, load, battery_kwh, hours);
-    let (net, _curtailed) = grid_flow(p, load.net_w(), load.solar_w, charge, discharge);
+    let flow = battery_flows(p, command, load, battery_kwh, hours);
+    let charge = flow.charge_ac_w;
+    let discharge = flow.discharge_ac_w;
+    let (net, _curtailed) = grid_flow(
+        p,
+        load.net_w() + flow.idle_ac_w,
+        load.solar_w,
+        charge,
+        discharge,
+    );
     CarriedQuarter {
         charge,
         discharge,
@@ -470,9 +529,7 @@ pub(crate) fn carry(
         #[cfg(test)]
         curtailed: _curtailed,
         cost: grid_cost(s, net, hours) + discharge * hours / 1000.0 * p.limits.wear_per_kwh,
-        battery_kwh: p.battery.as_ref().map_or(battery_kwh, |battery| {
-            battery.step(battery_kwh, charge, discharge, hours)
-        }),
+        battery_kwh: flow.stored_end_kwh,
     }
 }
 #[cfg(test)]
@@ -485,6 +542,21 @@ fn projection_prefix(
     p: &Problem,
     commands: &[Command],
     prefix: &[Quarter],
+    pool_step: impl FnMut(
+        usize,
+        &Heater,
+        &ThermalStore,
+        HeaterState,
+        bool,
+        PoolConditions,
+    ) -> PoolTransition,
+) -> Result<Vec<Quarter>, String> {
+    projection_prefix_with(p, commands, prefix, pool_step, |_, _, _| None)
+}
+fn projection_prefix_with(
+    p: &Problem,
+    commands: &[Command],
+    prefix: &[Quarter],
     mut pool_step: impl FnMut(
         usize,
         &Heater,
@@ -493,6 +565,7 @@ fn projection_prefix(
         bool,
         PoolConditions,
     ) -> PoolTransition,
+    mut normalized: impl FnMut(usize, &Command, &Quarter) -> Option<Command>,
 ) -> Result<Vec<Quarter>, String> {
     if commands.len() != p.slots.len() {
         return Err("projection_coverage".into());
@@ -517,14 +590,24 @@ fn projection_prefix(
     let mut quarters = Vec::with_capacity(commands.len());
     quarters.extend_from_slice(prefix);
     for (i, c) in commands.iter().enumerate().skip(prefix.len()) {
-        quarters.push(transition(
-            p,
-            i,
-            c,
-            &mut state,
-            false,
-            |h, s, state, on, conditions| pool_step(i, h, s, state, on, conditions),
-        )?);
+        let forced = matches!(c.battery, Operation::GridCharge | Operation::Export)
+            && !commitments::hold(p, i).has(commitments::Owner::Battery);
+        let before = forced.then(|| state.clone());
+        let mut q = transition(p, i, c, &mut state, false, |h, s, state, on, conditions| {
+            pool_step(i, h, s, state, on, conditions)
+        })?;
+        if let Some(command) = normalized(i, c, &q) {
+            state = before.expect("normalisation changes only free forced allocations");
+            q = transition(
+                p,
+                i,
+                &command,
+                &mut state,
+                false,
+                |h, s, state, on, conditions| pool_step(i, h, s, state, on, conditions),
+            )?;
+        }
+        quarters.push(q);
     }
     Ok(quarters)
 }
@@ -552,6 +635,88 @@ pub(crate) fn project_metered_prefix(
         h.pool_transition(s, state, on, conditions)
     })
     .ok()
+}
+
+/// Integer AC requests are part of the scored plan. Positive terminal movement
+/// retains its role even below the converter's AC zero crossing. Physical caps
+/// still govern the resulting allocation; held and booked requests stay exact.
+fn integer_allocation(p: &Problem, i: usize, c: &Command, q: &Quarter) -> Option<Command> {
+    if commitments::hold(p, i).has(commitments::Owner::Battery) {
+        return None;
+    }
+    let mut normalized = c.clone();
+    match c.battery {
+        Operation::GridCharge => {
+            normalized.charge_limit_w = if q.charge_dc_w > 0.0 {
+                q.charge_w.ceil().max(1.0)
+            } else {
+                0.0
+            };
+            normalized.discharge_limit_w = 0.0;
+            if normalized.charge_limit_w == 0.0 {
+                normalized.battery = Operation::Idle;
+            }
+        }
+        Operation::Export => {
+            normalized.charge_limit_w = 0.0;
+            normalized.discharge_limit_w = if q.discharge_dc_w > 0.0 {
+                q.discharge_w.ceil().max(1.0)
+            } else {
+                0.0
+            };
+            if normalized.discharge_limit_w == 0.0 {
+                normalized.battery = Operation::Idle;
+            }
+        }
+        _ => return None,
+    }
+    (normalized != *c).then_some(normalized)
+}
+fn meter_normalized_projection(p: &Problem, commands: &[Command], work: &mut Work) -> bool {
+    let forced = commands
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| {
+            matches!(c.battery, Operation::GridCharge | Operation::Export)
+                && !commitments::hold(p, *i).has(commitments::Owner::Battery)
+        })
+        .count() as u64;
+    let cost = (p.slots.len() as u64 * 2 + forced) * work.unit_cost;
+    if !work.spend(cost) {
+        return false;
+    }
+    work.evaluations += 1;
+    true
+}
+#[cfg(test)]
+pub(crate) fn project_normalized_metered_prefix(
+    p: &Problem,
+    commands: &mut [Command],
+    work: &mut Work,
+    prefix: &[Quarter],
+) -> Option<Vec<Quarter>> {
+    if !meter_normalized_projection(p, commands, work) {
+        return None;
+    }
+    let mut changed = Vec::new();
+    let quarters = projection_prefix_with(
+        p,
+        commands,
+        prefix,
+        |_, h, s, state, on, conditions| h.pool_transition(s, state, on, conditions),
+        |i, c, q| {
+            let normalized = integer_allocation(p, i, c, q);
+            if let Some(c) = &normalized {
+                changed.push((i, c.clone()));
+            }
+            normalized
+        },
+    )
+    .ok()?;
+    for (i, c) in changed {
+        commands[i] = c;
+    }
+    Some(quarters)
 }
 
 fn meter_projection(p: &Problem, work: &mut Work) -> bool {
@@ -617,6 +782,42 @@ impl<'p> Projector<'p> {
     pub(crate) fn thermal_hits(&self) -> usize {
         self.pool.as_ref().map_or(0, PoolMemo::hits)
     }
+    pub(crate) fn project_normalized_metered_prefix(
+        &mut self,
+        commands: &mut [Command],
+        work: &mut Work,
+        prefix: &[Quarter],
+    ) -> Option<Vec<Quarter>> {
+        if !meter_normalized_projection(self.problem, commands, work) {
+            return None;
+        }
+        let pool = &mut self.pool;
+        let mut changed = Vec::new();
+        let p = self.problem;
+        let quarters = projection_prefix_with(
+            p,
+            commands,
+            prefix,
+            |_, _, _, state, on, conditions| {
+                pool.as_mut()
+                    .expect("projector owns the pool model")
+                    .transition(state, on, conditions)
+            },
+            |i, c, q| {
+                let normalized = integer_allocation(p, i, c, q);
+                if let Some(c) = &normalized {
+                    changed.push((i, c.clone()));
+                }
+                normalized
+            },
+        )
+        .ok()?;
+        for (i, c) in changed {
+            commands[i] = c;
+        }
+        Some(quarters)
+    }
+    #[cfg(test)]
     pub(crate) fn project_metered_prefix(
         &mut self,
         commands: &[Command],
@@ -683,6 +884,120 @@ mod refinement_tests {
         }
     }
 
+    #[test]
+    fn scored_integer_allocations_reproject_actual_flows_and_preserve_held_values() {
+        let mut p = crate::witnesses::tests::problem(3);
+        p.car = None;
+        p.charger = None;
+        p.initial.ev_kwh = None;
+        p.targets.ev_km = None;
+        p.targets.ev_limit_kwh = None;
+        let battery = p.battery.as_mut().unwrap();
+        battery.conversion.grid_charge.gain = 0.9;
+        battery.conversion.grid_charge.overhead_w = 90.0;
+        battery.conversion.discharge.gain = 0.96;
+        battery.conversion.discharge.overhead_w = 120.0;
+        battery.conversion.idle_loss_w = 150.0;
+        battery.discharge_max_w = 1703.4;
+        for s in &mut p.slots {
+            s.base_w = 1000.0;
+        }
+        p.limits.import_w = 1350.25;
+        let grid = Command {
+            pool_on: false,
+            ev_amps: 0,
+            battery: Operation::GridCharge,
+            charge_limit_w: 900.5,
+            discharge_limit_w: 0.0,
+        };
+        let export = Command {
+            battery: Operation::Export,
+            charge_limit_w: 0.0,
+            discharge_limit_w: 4000.0,
+            ..grid.clone()
+        };
+        let mut commands = vec![grid.clone(), export, grid.clone()];
+        let mut w = work();
+        let mut projector = Projector::new(&p);
+        let q = projector
+            .project_normalized_metered_prefix(&mut commands, &mut w, &[])
+            .unwrap();
+        assert_eq!(commands[0].charge_limit_w, 301.0);
+        assert_eq!(q[0].net_w, p.limits.import_w);
+        assert_eq!(commands[1].discharge_limit_w, 1516.0);
+        assert!((q[1].discharge_dc_w - 1703.4).abs() < 1e-8);
+        assert_eq!(q, projection(&p, &commands).unwrap());
+        p.limits.import_w = 3000.0;
+        p.accepted = Some(vec![grid.clone()]);
+        p.locked_through_seconds = 900.0;
+        let mut commands = vec![grid.clone(); 3];
+        let mut w = work();
+        let q = project_normalized_metered_prefix(&p, &mut commands, &mut w, &[]).unwrap();
+        assert_eq!(commands[0], grid);
+        assert_eq!(q, projection(&p, &commands).unwrap());
+    }
+    #[test]
+    fn affine_installation_conditional_carry_is_the_complete_projection() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.car = None;
+        p.charger = None;
+        p.initial.ev_kwh = None;
+        p.targets.ev_km = None;
+        p.targets.ev_limit_kwh = None;
+        let b = p.battery.as_mut().unwrap();
+        b.conversion=serde_json::from_value(serde_json::json!({"revision":"synthetic-carry","grid_charge":{"gain":0.9,"overhead_w":90.0},"surplus_charge":{"gain":0.95,"overhead_w":95.0},"discharge":{"gain":0.96,"overhead_w":120.0},"idle_loss_w":150.0})).unwrap();
+        b.charge_efficiency = 0.98;
+        b.discharge_efficiency = 0.97;
+        p.slots[0].start_seconds = -300.0;
+        for pv in [0.0, 1050.0, 2000.0, 8000.0] {
+            p.slots[0].base_w = 1000.0;
+            p.slots[0].solar_w = pv;
+            for operation in [
+                Operation::Idle,
+                Operation::Hold,
+                Operation::SolarCharge,
+                Operation::SelfConsumption,
+                Operation::GridCharge,
+                Operation::SupplyHouse,
+                Operation::Export,
+                Operation::ShaveImport,
+            ] {
+                let c = Command {
+                    pool_on: false,
+                    ev_amps: 0,
+                    battery: operation,
+                    charge_limit_w: 1200.0,
+                    discharge_limit_w: 800.0,
+                };
+                let q = projection(&p, std::slice::from_ref(&c)).unwrap().remove(0);
+                let flow = carry(
+                    &p,
+                    &p.slots[0],
+                    &c,
+                    BatteryLoad {
+                        gross_w: 1000.0,
+                        solar_w: pv,
+                        ev_w: 0.0,
+                    },
+                    p.initial.battery_kwh.unwrap(),
+                );
+                assert_eq!(flow.net, q.net_w);
+                assert_eq!(flow.charge, q.charge_w);
+                assert_eq!(flow.discharge, q.discharge_w);
+                assert_eq!(flow.battery_kwh, q.battery_kwh.unwrap());
+                assert_eq!(flow.cost, q.cost + q.wear);
+                assert!(
+                    (q.battery_kwh.unwrap()
+                        - p.initial.battery_kwh.unwrap()
+                        - (q.charge_dc_w * 0.98 - q.discharge_dc_w / 0.97)
+                            * projected_hours(&p.slots[0])
+                            / 1000.0)
+                        .abs()
+                        < 1e-8
+                );
+            }
+        }
+    }
     #[test]
     fn repeated_intervals_reuse_physics_while_prices_and_partial_quarters_stay_independent() {
         let mut p = crate::witnesses::tests::problem(128);
@@ -1092,7 +1407,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 13;
+        p.abi = 14;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

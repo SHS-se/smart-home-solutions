@@ -43,23 +43,31 @@ impl Context<'_> {
         let b = p.battery.as_ref().unwrap();
         let s = &p.slots[i];
         let hours = physics::projected_hours(s);
-        let demand = self.demand(i).net_w();
-        let house = self.demand(i).house_supply_bound(p).min(b.discharge_max_w);
+        let load = self.demand(i);
+        let demand = load.net_w();
+        let house = self
+            .demand(i)
+            .house_supply_bound(p)
+            .min(b.maximum_discharge_ac_w());
         let charge = b
-            .available_charge_w(kwh, hours)
-            .min((p.limits.import_w - demand).max(0.0));
+            .available_charge_w(kwh, hours, load.solar_w, load.gross_w)
+            .min(b.charge_grid_room_w(
+                (p.limits.import_w - demand).max(0.0),
+                load.solar_w,
+                load.gross_w,
+            ));
         let supply = b
             .available_discharge_w(kwh, hours)
-            .min(demand.max(0.0))
+            .min((demand + b.conversion.discharge_idle_w()).max(0.0))
             .min(house);
         let export = if p.limits.battery_export_enabled
             && s.export_price >= p.limits.battery_export_min_price
         {
             b.available_discharge_w(kwh, hours)
-                .min(
-                    (kwh - p.limits.battery_export_reserve_kwh).max(0.0) * 1000.0 / hours
-                        * b.discharge_efficiency,
-                )
+                .min(b.discharge_for_inventory_w(
+                    (kwh - p.limits.battery_export_reserve_kwh).max(0.0),
+                    hours,
+                ))
                 .min(self.demand(i).discharge_bound(p, true))
         } else {
             0.0
@@ -79,15 +87,19 @@ impl Context<'_> {
         // retain their deliberate partial power limits.
         add(
             Operation::SelfConsumption,
-            b.charge_max_w,
-            b.discharge_max_w,
+            b.maximum_charge_ac_w(),
+            b.maximum_discharge_ac_w(),
         );
-        add(Operation::SelfConsumption, 0.0, b.discharge_max_w);
+        add(Operation::SelfConsumption, 0.0, b.maximum_discharge_ac_w());
         // Holding would breach the house import limit: supply only the excess.
-        if demand > p.limits.import_w + 1e-7 {
-            add(Operation::ShaveImport, b.charge_max_w, b.discharge_max_w);
+        if demand + b.conversion.idle_loss_w > p.limits.import_w + 1e-7 {
+            add(
+                Operation::ShaveImport,
+                b.maximum_charge_ac_w(),
+                b.maximum_discharge_ac_w(),
+            );
         }
-        add(Operation::Hold, b.charge_max_w, 0.0);
+        add(Operation::Hold, b.maximum_charge_ac_w(), 0.0);
         add(Operation::Idle, 0.0, 0.0);
         add(
             self.commands[i].battery,
@@ -110,9 +122,13 @@ impl Context<'_> {
         };
         purchase(charge);
         purchase((-demand).max(0.0).min(charge));
+        purchase(
+            b.charge_grid_room_w((-demand).max(0.0), load.solar_w, load.gross_w)
+                .min(charge),
+        );
         for &target in &self.axes[i + 1] {
             if target > kwh {
-                purchase((target - kwh) * 1000.0 / hours / b.charge_efficiency);
+                purchase(b.charge_for_inventory_w(target - kwh, hours, load.solar_w, load.gross_w));
             }
         }
         if export > 0.0 {
@@ -122,18 +138,23 @@ impl Context<'_> {
             if target >= kwh {
                 continue;
             }
-            let power = (kwh - target) * 1000.0 / hours * b.discharge_efficiency;
+            let power = b.discharge_for_inventory_w(kwh - target, hours);
             if power <= supply + 1e-7 {
                 // A sized inventory move is a fixed figure, not demand following.
-                add(Operation::SupplyHouse, b.charge_max_w, power.min(supply));
+                add(
+                    Operation::SupplyHouse,
+                    b.maximum_charge_ac_w(),
+                    power.min(supply),
+                );
             }
             if power <= export + 1e-7 {
                 add(Operation::Export, 0.0, power.min(export));
             }
         }
         // Net zero is the tariff kink for a sale that first supplies the house.
-        if demand > 0.0 && demand < export {
-            add(Operation::Export, 0.0, demand);
+        let zero_net = demand + b.conversion.discharge_idle_w();
+        if zero_net > 0.0 && zero_net < export {
+            add(Operation::Export, 0.0, zero_net);
         }
         out.retain(|c| commitments::available_command(p, i, c));
         out
@@ -177,7 +198,12 @@ impl Context<'_> {
             let reach = |energy: f64| ((energy / step).ceil() as u64).saturating_add(4).min(size);
             let charging = reach(b.charge_max_w * hours / 1000.0 * b.charge_efficiency);
             let supplying = reach(
-                b.discharge_max_w.min(demand.max(0.0)) * hours / 1000.0 / b.discharge_efficiency,
+                b.discharge_dc_w(
+                    b.maximum_discharge_ac_w()
+                        .min((demand + b.conversion.discharge_idle_w()).max(0.0)),
+                ) * hours
+                    / 1000.0
+                    / b.discharge_efficiency,
             );
             let exporting = if p.limits.battery_export_enabled
                 && s.export_price >= p.limits.battery_export_min_price
@@ -186,7 +212,7 @@ impl Context<'_> {
             } else {
                 0
             };
-            let actions = 11 + charging + supplying + exporting;
+            let actions = 12 + charging + supplying + exporting;
             let row = size.checked_mul(
                 actions
                     .checked_mul(CARRY_COST + points + 24)?
@@ -386,8 +412,8 @@ impl Allocation {
                     let b = p.battery.as_ref().unwrap();
                     let mut full_supply = command.clone();
                     full_supply.battery = Operation::SelfConsumption;
-                    full_supply.charge_limit_w = b.charge_max_w;
-                    full_supply.discharge_limit_w = b.discharge_max_w;
+                    full_supply.charge_limit_w = b.maximum_charge_ac_w();
+                    full_supply.discharge_limit_w = b.maximum_discharge_ac_w();
                     options.push(full_supply);
                 }
                 let size = self.axes[i + 1].len() as u64;

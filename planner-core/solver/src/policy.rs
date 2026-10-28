@@ -499,14 +499,14 @@ mod service_tests {
         // 95 km: 55 km under ev_low's line (all of its band), 5 under ev_short's.
         assert_eq!(
             account(&p, &q, &index).contributions[0],
-            [-1.0, -1.0, 0.0, -1.0, -0.05]
+            [-1.0, -1.0, 0.0, -1.0, -0.05_f64.powi(2)]
         );
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
         assert_eq!(
             account(&p, &q, &index).contributions[0],
-            [0.0, 0.0, -1.0, -1.0, -0.05]
+            [0.0, 0.0, -1.0, -1.0, -0.05_f64.powi(2)]
         );
     }
     #[test]
@@ -527,12 +527,12 @@ mod service_tests {
         let ev = |q: &[Quarter]| account(&p, q, &index).contributions[0][3..].to_vec();
         // 330.5 km is 2.5 km under ev_low's 333 km line.
         q[0].ev_kwh = Some(66.1);
-        assert_eq!(ev(&q), [-0.05, 0.0]);
+        assert_eq!(ev(&q), [-0.05_f64.powi(2), 0.0]);
         q[0].ev_kwh = Some(66.6);
         assert_eq!(ev(&q), [0.0, 0.0]);
         // 233 km: a whole band under ev_low, half of ev_short's band.
         q[0].ev_kwh = Some(46.6);
-        assert_eq!(ev(&q), [-1.0, -0.5]);
+        assert_eq!(ev(&q), [-1.0, -0.25]);
     }
     #[test]
     fn unreachable_pool_keeps_grace_but_ev_readiness_counts_immediately() {

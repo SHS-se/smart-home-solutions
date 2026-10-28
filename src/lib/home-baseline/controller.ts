@@ -4,6 +4,7 @@ import { addElectricity, emptyElectricityLedger, type ElectricityLedger } from '
 import { withdrawTrip } from './trip-ledger.ts';
 import { chargerLevels } from '../../../supabase/functions/_shared/planner/device-models.ts';
 import { projectLoadBalancedEv } from '../../../supabase/functions/_shared/planner-wasm/load-balanced-ev.ts';
+import { batteryAcCeilings } from '../../../supabase/functions/_shared/planner/battery-conversion.ts';
 export type { ElectricityLedger } from './ledger.ts';
 
 export interface DefaultSettings { poolStartC: number; poolStopC: number; idlePumpW: number; batterySuppliesEv: boolean }
@@ -27,6 +28,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
   let initial = problem.initial;
   let heating = ['running', 'steady'].includes(initial.heater_state?.kind ?? ''), charging = false;
   const commands: NativeCommand[] = [], quarters: NativeQuarter[] = [];
+  const batteryCeilings = problem.battery ? batteryAcCeilings(problem.battery) : { charge_w: 0, discharge_w: 0 };
   const chargingLevels = problem.charger ? [...chargerLevels(problem.charger)].reverse().map(level => level.setting) : [0];
   for (let i = 0; i < problem.slots.length; i++) {
     if (problem.car) {
@@ -40,7 +42,7 @@ export function projectDefaultProblem(source: ReadyProblem, start: string, timeZ
     if (!problem.car || initial.ev_kwh! >= problem.targets.ev_limit_kwh! - 1e-9) charging = false;
     const command: NativeCommand = { pool_on: heating, ev_amps: 0,
       battery: problem.battery ? 'self_consumption' : 'idle',
-      charge_limit_w: problem.battery?.charge_max_w ?? 0, discharge_limit_w: problem.battery?.discharge_max_w ?? 0 };
+      charge_limit_w: batteryCeilings.charge_w, discharge_limit_w: batteryCeilings.discharge_w };
     const quarter = { ...problem, initial, slots: [{ ...problem.slots[i], start_seconds: 0 }] };
     // Reactive charger load balancing: highest supported current that fits the
     // home's supply. Prices and forecasts never select this default command.

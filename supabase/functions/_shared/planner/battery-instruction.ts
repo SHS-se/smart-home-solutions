@@ -68,9 +68,10 @@ export function instructionFor(
     case "idle": return { kind: "idle" };
     case "hold": return { kind: "hold", charge_ac_limit_w: w(command.charge_limit_w) };
     case "solar_charge": return { kind: "solar_charge", charge_ac_limit_w: w(command.charge_limit_w) };
-    // A purchase or sale is the power that survived native saturation.
-    case "grid_charge": return w(quarter.charge_w) ? { kind: "grid_charge", charge_ac_w: w(quarter.charge_w) } : { kind: "idle" };
-    case "export": return w(quarter.discharge_w) ? { kind: "export", profile_id, discharge_ac_w: w(quarter.discharge_w) } : { kind: "idle" };
+    // Native scored integer requests retain their identity when DC/SOC/grid
+    // saturation produces a smaller fractional physical reference flow.
+    case "grid_charge": return quarter.charge_w > 0 ? { kind: "grid_charge", charge_ac_w: w(command.charge_limit_w) } : { kind: "idle" };
+    case "export": return quarter.discharge_w > 0 ? { kind: "export", profile_id, discharge_ac_w: w(command.discharge_limit_w) } : { kind: "idle" };
     case "self_consumption":
       return { kind: "supply", profile_id, charge_ac_limit_w: w(command.charge_limit_w),
         discharge_ac_limit_w: w(command.discharge_limit_w), response: { mode: "follow_demand" } };

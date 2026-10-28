@@ -184,6 +184,9 @@ pub struct Quarter {
     pub ev_w: f64,
     pub charge_w: f64,
     pub discharge_w: f64,
+    pub charge_dc_w: f64,
+    pub discharge_dc_w: f64,
+    pub battery_idle_w: f64,
     pub net_w: f64,
     pub curtailed_w: f64,
     pub battery_kwh: Option<f64>,
@@ -234,7 +237,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 13 || p.slots.is_empty() {
+    if p.abi != 14 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -295,6 +298,7 @@ fn validate(p: &Problem) -> Result<(), String> {
             || b.min_soc >= b.max_soc
             || b.charge_max_w <= 0.0
             || b.discharge_max_w <= 0.0
+            || !b.conversion.valid()
         {
             return bad("invalid_model_parameters");
         }

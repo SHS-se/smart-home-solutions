@@ -5,14 +5,20 @@ import { rulesFixtureInput, batterySnapshot } from "../../../scripts/generate-ha
 
 import { buildBatteryExecutionContract } from "./planner/battery-plan-execution.ts";
 
-function source() {
+function source(soc?: number) {
   const snapshot = batterySnapshot();
+  if (soc !== undefined) snapshot.battery!.soc = soc;
   const prepared = rulesFixtureInput(snapshot);
   const result = runRulesPlanner({ snapshot: prepared.snapshot, now: prepared.now, price_archive: [], resolved_price_outlook: prepared.price_outlook });
   return { plan: result.plan, rows: result.plan.plans.priority.slots.map(s => ({
     start: s.start, end: new Date(Date.parse(s.start) + s.duration_hours * 3_600_000).toISOString(),
-    house_w: s.load_w, residual_w: s.load_w, device_loads_w: s.device_loads_w,
+    house_w: s.load_w - (s.battery_idle_w ?? 0), residual_w: s.load_w - (s.battery_idle_w ?? 0), device_loads_w: s.device_loads_w,
     charge_w: s.battery_charge_w, discharge_w: s.battery_discharge_w, export_w: s.grid_export_w,
+    // This synthetic fixture has identity AC/DC conversion. Published SOC
+    // carries the native stored endpoint; no state is reconstructed from AC.
+    charge_dc_w: s.battery_charge_w, discharge_dc_w: s.battery_discharge_w,
+    battery_idle_w: s.battery_idle_w ?? 0,
+    stored_end_kwh: s.battery_soc * result.plan.battery!.capacity_kwh,
     curtailed_w: s.curtailed_w, unserved_w: s.unserved_w,
   })), pv_w: result.plan.plans.priority.slots.map(s => s.pv_w),
     mode: "controlling" as const, scope_revision: "whole-house",
@@ -123,9 +129,9 @@ Deno.test("live responsibilities retain identity and explicitly amend changed ta
   const input = source();
   const old = buildBatteryExecutionContract(input);
   const first = old.objectives[0];
-  input.plan.battery!.soc += 0.01;
+  const amended = source(input.plan.battery!.soc + .01);
   for (const responsibility of ["outstanding", "retained"]) {
-    const revised = buildBatteryExecutionContract({ ...input, feedback: {
+    const revised = buildBatteryExecutionContract({ ...amended, feedback: {
       generation: 1, source_receipt: 10, previous_contract_id: old.id,
       objectives: [{ objective: first, responsibility, outcome: "pending" }],
     }});
@@ -156,10 +162,9 @@ Deno.test("incorporated windows that return get a new lifetime identity", () => 
   const disposition = revised.dispositions.find((d) => d.objective_id === first.id)!;
   assertEquals(disposition.outcome, "incorporated");
   assert(disposition.replacement_id !== first.id);
-  input.plan.battery!.soc += 0.01;
   // Compact feedback contains all current responsibilities, but not the
   // original permission that was incorporated into the later window.
-  const revivedInput = { ...input, feedback: {
+  const revivedInput = { ...source(input.plan.battery!.soc + .01), feedback: {
     generation: 2, source_receipt: 20, previous_contract_id: revised.id,
     objectives: revised.objectives.map((objective) => ({ objective,
       responsibility: "outstanding", outcome: "open" })),
@@ -193,31 +198,27 @@ Deno.test("only an uncapped supply ceiling follows house demand", () => {
   assertEquals(buildBatteryExecutionContract(input).intervals[i].follows_demand, true);
 });
 
-Deno.test("a stated role carries no flow in the direction it forbids", () => {
-  // Capture, 19 October 2026: an idle quarter carried 0.004 W of solver charge,
-  // which the instruction floors away but the reference stated as 1 mWh, and HA
-  // rejected the whole contract as contradicting its own role.
+Deno.test("a reference rejects physical flow in a direction its stated role forbids", () => {
+  // Refined-model requirement: normalize executable commands before native
+  // projection; reference construction must never edit authoritative flows or
+  // invent a different stored trajectory to hide a contradictory role.
   const input = source();
   const i = input.rows.findIndex((row) => row.charge_w === 0 && row.discharge_w === 0);
-  // Every other quarter may supply and store, so only quarter i's role is tested.
   for (const s of input.plan.plans.priority.slots) {
     s.battery_instruction = { kind: "supply", profile_id: "base+loads", charge_ac_limit_w: 5000,
       discharge_ac_limit_w: 5000, response: { mode: "follow_demand" } };
   }
   const slot = input.plan.plans.priority.slots[i];
-  slot.battery_instruction = { kind: "idle" };
-  input.rows[i].charge_w = 0.004;
   const demand = { loads: [], profiles: [{ id: "base+loads", include_base: true, eligible_keys: [] }] };
-  const row = buildBatteryExecutionContract({ ...input, demand }).intervals[i];
-  assertEquals([row.charge_ac_mwh, row.discharge_ac_mwh, row.target_kind, row.stored_end_mwh - row.stored_start_mwh],
-    [0, 0, "permission", 0]);
-  for (const [kind, forbidden] of [["hold", "discharge_ac_mwh"], ["export", "charge_ac_mwh"]] as const) {
+  slot.battery_instruction = { kind: "idle" };
+  input.rows[i].charge_w = .004;
+  assertThrows(() => buildBatteryExecutionContract({ ...input, demand }), Error,
+    "role contradicts authoritative physical flows");
+  for (const kind of ["hold", "export"] as const) {
     slot.battery_instruction = kind === "hold" ? { kind, charge_ac_limit_w: 0 }
       : { kind, profile_id: "base+loads", discharge_ac_w: 1000 };
-    Object.assign(input.rows[i], { charge_w: 0.004, discharge_w: 0.004 });
-    const stated = buildBatteryExecutionContract({ ...input, demand }).intervals[i];
-    assertEquals(stated[forbidden], 0);
-    assertEquals(stated.pv_mwh + stated.import_mwh + stated.discharge_ac_mwh, stated.load_mwh - stated.unserved_mwh
-      + stated.charge_ac_mwh + stated.export_mwh + stated.curtailed_mwh + stated.rounding_mwh);
+    Object.assign(input.rows[i], { charge_w: .004, discharge_w: .004 });
+    assertThrows(() => buildBatteryExecutionContract({ ...input, demand }), Error,
+      "role contradicts authoritative physical flows");
   }
 });

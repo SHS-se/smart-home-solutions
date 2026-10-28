@@ -8,5 +8,8 @@ export function allocatedBatteryCommand(
   if (command.battery !== 'grid_charge' && command.battery !== 'export') return command;
   return { ...command,
     battery: quarter.charge_w === 0 && quarter.discharge_w === 0 ? 'idle' : command.battery,
-    charge_limit_w: quarter.charge_w, discharge_limit_w: quarter.discharge_w };
+    // Native scoring already quantized the feasible request. Saturation can
+    // leave a fractional physical flow; it is not another command to floor.
+    charge_limit_w: command.battery === 'grid_charge' ? command.charge_limit_w : 0,
+    discharge_limit_w: command.battery === 'export' ? command.discharge_limit_w : 0 };
 }

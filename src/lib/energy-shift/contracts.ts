@@ -93,9 +93,9 @@ export function isOptimisationPlan(value: unknown): value is PortalOptimisationP
   const plan = value as Partial<OptimisationPlan>;
   // Stored plans leave out an `execution_plan` identical to their top level
   // (see `storedPlan`); one that is present must still be a valid schema 8 plan.
-  if ((plan.schema_version === 9 || plan.schema_version === 10) && (!plan.operating_scope?.modes || (plan.execution_plan !== undefined
+  if ((plan.schema_version === 9 || plan.schema_version === 10 || plan.schema_version === 11) && (!plan.operating_scope?.modes || (plan.execution_plan !== undefined
     && (plan.execution_plan?.schema_version !== 8 || !isOptimisationPlan(plan.execution_plan))))) return false;
-  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7 || plan.schema_version === 8 || plan.schema_version === 9 || plan.schema_version === 10)
+  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7 || plan.schema_version === 8 || plan.schema_version === 9 || plan.schema_version === 10 || plan.schema_version === 11)
     && plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'

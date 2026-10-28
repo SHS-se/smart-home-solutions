@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
@@ -110,6 +111,23 @@ def room_scenario(thermostat=False):
     return options, states, [relay]
 
 
+class SyntheticBatteryModel:
+    """Invented plant and real feedback-account capture; no physical I/O."""
+    async def async_planning_physics(self, _options):
+        return {"conversion": {"revision": "synthetic-qualification-affine-v1",
+            "grid_charge": {"gain": .8, "overhead_w": 80},
+            "surplus_charge": {"gain": .9, "overhead_w": 45},
+            "discharge": {"gain": .75, "overhead_w": 75}, "idle_loss_w": 60},
+            "charge_efficiency": .9, "discharge_efficiency": .8}
+
+    async def capture_feedback(self, stored_mwh, source, at_ms):
+        from shs_core import plan_execution as execution
+        from shs_core.battery_runtime import plan_scope
+        account = execution.observe_state(execution.Account(), execution.StateObservation(at_ms, stored_mwh, source))
+        feedback = execution.planner_feedback(execution.request_replan(account), at_ms)
+        return {**feedback, "scope_revision": plan_scope(self.options), "reason": None, "pending_effects": []}
+
+
 class History:
     """A complete synthetic meter history: base500 W, pool quarter average1200 W."""
     def __init__(self, room=False, pool_w=1200):
@@ -165,9 +183,21 @@ def tariff():
                     "export_credit": {"schedule": "swedish_winter_weekday_06_22_v1", "ore_per_kwh_ex_vat_by_area": {}}}}]}]}
 
 
-async def produce(amps, connected, room=False, electrical="retained", manual_pool_w=None):
+async def produce(amps, connected, room=False, electrical="retained", manual_pool_w=None, battery=False):
     assert electrical in ("retained", "missing", "configured")
     options, states, devices = room_scenario(room == "thermostat") if room else scenario(amps, connected)
+    if battery:
+        options.update(battery_enabled=True, ev_enabled=False, pool_enabled=False,
+            device_modes={"$battery": "controlling"}, device_control_mappings={},
+            battery_soc_entity="sensor.synthetic_pack_soc", battery_capacity_kwh=10,
+            battery_target_soc=.8, battery_target_is_hard=False, terminal_soc_min=.1,
+            terminal_energy_value_sek_per_kwh=1, battery_export_reserve_soc=.9,
+            battery_export_min_price_sek_per_kwh=100,
+            battery_charge_max_w=4000, battery_discharge_max_w=5000, battery_min_soc=.1,
+            grid_import_limit_w=10000, grid_export_limit_w=10000)
+        states["sensor.synthetic_pack_soc"] = state(50, unit_of_measurement="%")
+        states["sensor.synthetic_house_power"].state = "500"
+        devices = []
     if electrical == "configured":
         options["device_control_mappings"]["synthetic_pool"]["power"] = 3600
     async def admit(_old, _new):
@@ -189,11 +219,16 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
     ports = HouseholdPorts(home=lambda: HomeFacts(0, 0, "en", ZoneInfo("UTC")), options=lambda: deepcopy(options),
         admit=admit, read_state=states.get, entity_ids=lambda: set(states), entity_names=lambda: {}, area_names=lambda: {},
         entity_areas=lambda: {}, inventory=inventory, battery_report=lambda _entity: None,
-        history=History(room, 1200 if manual_pool_w is None else manual_pool_w),
+        history=History(room, 0 if battery else 1200 if manual_pool_w is None else manual_pool_w),
         utcnow=lambda: captured, recovering=lambda: False, repair=lambda *_args: None, publish=lambda: None, spawn=spawn,
         electrical_power_bounds=electrical_power_bounds)
     household = Household(ports, SimpleNamespace(), store=DurableRecord(Store(), json.dumps, json.loads),
                           battery_inputs_store=Store(), connection_store=Store(), control_authority=True)
+    if battery:
+        physical = SyntheticBatteryModel()
+        physical.options = options
+        household.battery_model_runtime = physical
+        household.battery_runtime = physical
     household.tariff_catalog = tariff()
     household.supplier_prices = {"schema_version": 1, "configuration": {"supplier": "synthetic", "price_area": "SE3"},
         "issued_at": START.isoformat(), "missing_inputs": [], "forecast": [
@@ -208,9 +243,16 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
         categories["pool_heating"] = []
         categories["ev_charging"] = []
         categories["heating"] = ["sensor.synthetic_relay"]
+    if battery:
+        categories["pool_heating"] = []
+        categories["ev_charging"] = []
+        for i, row in enumerate(household.supplier_prices["forecast"]):
+            price = .2 if i % 96 < 24 else 3 if i % 96 < 48 else 1
+            row["spot_price_sek_per_kwh"] = row["supplier_import_price_sek_per_kwh"] = price
     actuals = None
     if manual_pool_w is None:
-        snapshot = await household._build_optimisation_snapshot(options, categories, [], {}, devices)
+        snapshot = await household._build_optimisation_snapshot(options, categories, [],
+            {"home_planning_configuration": {"battery": {"included": True}}} if battery else {}, devices)
     else:
         # Exercise the exchange that previously omitted observations on manual
         # requests. Only cloud/configuration side effects are inert; recorder
@@ -313,6 +355,55 @@ async def consume(payload):
                 "ev_condition": outcomes["ev"].get("execution_condition")}
 
 
+async def consume_battery(payload):
+    from shs_core.battery_conversion import Conversion
+    from shs_core.battery_runtime import plan_contract
+    from shs_core.plan_execution import (Account, LiveState, StateObservation,
+        admit_plan, assess_execution, contract_wire, read_contract, observe_state, request_replan)
+    plan, native = payload["plan"], payload["quarters"]
+    contract = plan_contract(plan)
+    assert contract_wire(read_contract(plan["battery_execution"])) == plan["battery_execution"]
+    assert contract.wire_schema == "battery-plan-execution-v3"
+    battery, rows = plan["battery"], []
+    conversion = Conversion.read(battery["conversion"])
+    first = contract.intervals[0]
+    observation = StateObservation(first.start_ms, first.stored_start_mwh, "planning_snapshot_soc")
+    requested = request_replan(observe_state(Account(), observation))
+    account = admit_plan(requested, contract, first.start_ms, observation)
+    for interval, quarter, slot in zip(contract.intervals, native, plan["plans"]["priority"]["slots"], strict=True):
+        # The real controller observes the native physical state and device load;
+        # no observation error, corrective recovery or external command is added.
+        house = slot["load_w"] - quarter["battery_idle_w"]
+        pv = slot["pv_w"]
+        live = LiveState(interval.start_ms, interval.stored_start_mwh, house, pv, house,
+            battery["charge_max_w"], battery["discharge_max_w"],
+            plan["grid"]["import_limit_w"], plan["grid"]["export_limit_w"],
+            minimum_mwh=contract.minimum_mwh, export_allowed=False)
+        assessment = assess_execution(account, live, conversion)
+        # Native quarters report period-average power. A physical controller
+        # delivers an integer terminal request until its exact storage stop.
+        fraction = min(interval.end_ms, assessment.valid_until_ms) - interval.start_ms
+        fraction /= interval.end_ms - interval.start_ms
+        for field in ("charge_dc_w", "discharge_dc_w"):
+            delivered = getattr(assessment, field) * fraction
+            assert abs(delivered - quarter[field]) <= 1.000001, (field, assessment, quarter)
+        charge = sum(conversion.charge_inputs(quarter["charge_dc_w"], pv, house))
+        discharge = conversion.discharge.output(quarter["discharge_dc_w"])
+        net = conversion.net_grid(quarter["charge_dc_w"], quarter["discharge_dc_w"], pv, house)
+        installation = net - house + pv - charge + discharge
+        assert abs(installation - quarter["battery_idle_w"]) < 1e-7
+        assert abs(installation * slot["duration_hours"] * 1000 - interval.installation_mwh) <= .500001
+        # One whole-watt controller quantization bounds the stored endpoint error.
+        duration_ms = (interval.end_ms - interval.start_ms) * fraction
+        endpoint = interval.stored_start_mwh + duration_ms / 3600 * (
+            assessment.charge_dc_w * .9 - assessment.discharge_dc_w / .8)
+        tolerance_mwh = (interval.end_ms - interval.start_ms) / 3600 / .8 + .500001
+        assert abs(endpoint - interval.stored_end_mwh) <= tolerance_mwh
+        rows.append({**asdict(assessment), "charge_ac_w": charge, "discharge_ac_w": discharge,
+            "battery_idle_w": installation, "net_w": net})
+    return {"admitted": True, "storage": asdict(contract.storage), "rows": rows}
+
+
 async def main():
     if sys.argv[2] == "produce":
         result = await produce(int(sys.argv[3]), sys.argv[4] == "connected", electrical=sys.argv[5] if len(sys.argv) > 5 else "retained")
@@ -322,6 +413,10 @@ async def main():
         result = await produce(12, True, room="thermostat")
     elif sys.argv[2] == "produce-manual-pool":
         result = await produce(12, True, manual_pool_w=float(sys.argv[3]))
+    elif sys.argv[2] == "produce-battery":
+        result = await produce(12, True, battery=True)
+    elif sys.argv[2] == "consume-battery":
+        result = await consume_battery(json.load(sys.stdin))
     elif sys.argv[2] == "consume":
         result = await consume(json.load(sys.stdin))
     else:

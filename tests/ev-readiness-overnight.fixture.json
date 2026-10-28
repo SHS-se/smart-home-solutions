@@ -1,6061 +1,1521 @@
 {
-  "provenance": "Anonymized physical problem from the failed 23 October 2026 night; no entity, home, user or plan identifiers. Accepted commands retain the first hour.",
+  "provenance": "Independently invented synthetic equipment, mathematical demand/solar/price shapes and explicit held commands. No household measurements or anonymized capture.",
+  "generated_by": "scripts/ev-readiness-synthetic.fixture.ts",
   "night_quarters": 38,
   "problem": {
-    "abi": 13,
-    "accepted": [
-      {
-        "battery": "self_consumption",
-        "charge_limit_w": 8800,
-        "discharge_limit_w": 9600,
-        "ev_amps": 0,
-        "pool_on": false
-      },
-      {
-        "battery": "self_consumption",
-        "charge_limit_w": 8800,
-        "discharge_limit_w": 728,
-        "ev_amps": 0,
-        "pool_on": false
-      },
-      {
-        "battery": "self_consumption",
-        "charge_limit_w": 8800,
-        "discharge_limit_w": 849,
-        "ev_amps": 0,
-        "pool_on": false
-      },
-      {
-        "battery": "self_consumption",
-        "charge_limit_w": 8800,
-        "discharge_limit_w": 786,
-        "ev_amps": 0,
-        "pool_on": false
-      },
-      {
-        "battery": "self_consumption",
-        "charge_limit_w": 8800,
-        "discharge_limit_w": 9600,
-        "ev_amps": 0,
-        "pool_on": false
-      }
-    ],
-    "battery": {
-      "capacity_kwh": 18.08,
-      "charge_efficiency": 0.95,
-      "charge_max_w": 8800,
-      "discharge_efficiency": 0.95,
-      "discharge_max_w": 9600,
-      "max_soc": 1,
-      "min_soc": 0.05,
-      "soc": 0.05
-    },
-    "car": {
-      "capacity_kwh": 78.625,
-      "charge_efficiency": 0.92,
-      "kwh_per_km": 0.16
-    },
-    "charger": {
-      "current_step_a": 1,
-      "max_current_a": 16,
-      "min_current_a": 5,
-      "phase_count": 3,
-      "type": "discrete_current",
-      "voltage_v": 230
-    },
+    "abi": 14,
     "end_credit": {
+      "reference_sek_per_kwh": 1,
       "battery": {
-        "cap": 18.08,
+        "cap": 7.6,
         "grid_kwh_per_unit": 1.0526315789473684
       },
+      "pool": null,
       "ev": {
-        "cap": 57.6,
+        "cap": 40,
         "grid_kwh_per_unit": 1.0869565217391304
-      },
-      "pool": {
-        "cap": 30.5,
-        "grid_kwh_per_unit": 23.93435989418994
-      },
-      "reference_sek_per_kwh": 1.03212
+      }
     },
     "ev_battery_supply_allowed": false,
-    "fixed_commands": [
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null
-    ],
-    "heater": {
-      "auxiliary_w": 760,
-      "compressor_w": 2990.5,
-      "heat_w": 10023.277562490228,
-      "response": {
-        "evidence": {
-          "heat_basis": "supply_return_delta_proxy",
-          "heat_flow_measured": false,
-          "observed_start": "2026-10-03T19:30:01.634000+00:00",
-          "sample_count": 1,
-          "source": "power_and_supply_return_temperature",
-          "steady_compressor_w": 2990.5,
-          "steady_delta_c": 6.800000000000004
-        },
-        "kind": "bergvarme",
-        "startup": [
-          {
-            "elapsed_seconds": 0,
-            "electric_fraction": 0,
-            "heat_fraction": 0
-          },
-          {
-            "elapsed_seconds": 335,
-            "electric_fraction": 0,
-            "heat_fraction": 0
-          },
-          {
-            "elapsed_seconds": 336,
-            "electric_fraction": 0.29226,
-            "heat_fraction": 0.39641700963210375
-          },
-          {
-            "elapsed_seconds": 400,
-            "electric_fraction": 0.32302,
-            "heat_fraction": 0.4379517611238149
-          },
-          {
-            "elapsed_seconds": 464,
-            "electric_fraction": 0.32469,
-            "heat_fraction": 0.44002733975932107
-          },
-          {
-            "elapsed_seconds": 528,
-            "electric_fraction": 0.64939,
-            "heat_fraction": 0.8796909983356386
-          },
-          {
-            "elapsed_seconds": 592,
-            "electric_fraction": 0.93663,
-            "heat_fraction": 1.2682542873157157
-          },
-          {
-            "elapsed_seconds": 656,
-            "electric_fraction": 0.95536,
-            "heat_fraction": 1.2930608798164278
-          },
-          {
-            "elapsed_seconds": 720,
-            "electric_fraction": 0.96606,
-            "heat_fraction": 1.3069819299968695
-          },
-          {
-            "elapsed_seconds": 784,
-            "electric_fraction": 0.97743,
-            "heat_fraction": 1.3217966021738181
-          },
-          {
-            "elapsed_seconds": 848,
-            "electric_fraction": 0.98479,
-            "heat_fraction": 1.3311775971133508
-          },
-          {
-            "elapsed_seconds": 912,
-            "electric_fraction": 0.98746,
-            "heat_fraction": 1.334213116591607
-          },
-          {
-            "elapsed_seconds": 976,
-            "electric_fraction": 0.98947,
-            "heat_fraction": 1.3363541540683563
-          },
-          {
-            "elapsed_seconds": 1080,
-            "electric_fraction": 1,
-            "heat_fraction": 1.3496317469513914
-          },
-          {
-            "elapsed_seconds": 39600,
-            "electric_fraction": 1,
-            "heat_fraction": 1
-          }
-        ]
-      }
-    },
-    "initial": {
-      "battery_kwh": 0.9039999999999999,
-      "ev_kwh": 37.74,
-      "heater_state": {
-        "kind": "off_unobserved"
-      },
-      "pool_c": 30.14,
-      "pool_pending_heat_kwh": 6.956421309039703e-26,
-      "pool_source_depletion_kwh": null
-    },
-    "limits": {
-      "battery_export_enabled": true,
-      "battery_export_min_price": 2.5,
-      "battery_export_reserve_kwh": 14.463999999999999,
-      "battery_start_preference_sek": 0.25,
-      "ev_start_preference_sek": 0.25,
-      "export_w": 13200,
-      "import_w": 15000,
-      "pool_start_cost_sek": 3,
-      "wear_per_kwh": 0.05
-    },
-    "locked_through_seconds": 3600,
-    "pool_stop_c": 34,
-    "pool_store": {
-      "capacity_kwh_per_c": 63.965,
-      "loss": {
-        "kind": "measured",
-        "points": [
-          {
-            "at_c": 30.374362959284987,
-            "c_per_h": -0.040295228807539586
-          }
-        ]
-      },
-      "response_time_constant_h": 0.549225053158366
-    },
+    "work_grant": 1520000000,
     "recipe": {
-      "beam_width": 16,
-      "finalists": 4,
-      "max_actions": 32,
-      "repair_trials": 24,
-      "witness_trials": 96
-    },
-    "released": [
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      }
-    ],
-    "rules": [
-      {
-        "key": "pool_low",
-        "points": -1,
-        "required": false,
-        "threshold": 1
-      },
-      {
-        "key": "pool_cold",
-        "points": -1,
-        "required": true,
-        "threshold": 2
-      },
-      {
-        "key": "pool_hot",
-        "points": -1,
-        "required": false,
-        "threshold": 2
-      },
-      {
-        "key": "ev_low",
-        "points": -1,
-        "required": false,
-        "threshold": 50
-      },
-      {
-        "key": "ev_short",
-        "points": -1,
-        "required": true,
-        "threshold": 100
-      }
-    ],
-    "service_guard": {
-      "ev": [
-        50,
-        100
-      ],
-      "pool": [
-        1,
-        2
-      ]
+      "beam_width": 8,
+      "max_actions": 24,
+      "finalists": 3,
+      "witness_trials": 32,
+      "repair_trials": 4
     },
     "slots": [
       {
-        "base_ev_w": 0,
-        "base_w": 2406.12,
-        "ev_available": true,
-        "export_price": 0.51567,
+        "local_month": 2,
+        "start_seconds": -450,
         "hours": 0.25,
-        "import_price": 1.43959,
-        "local_month": 10,
-        "outdoor_c": 7.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
+        "base_w": 600,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": -661.534
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1285.3,
-        "ev_available": true,
-        "export_price": 0.45072,
-        "hours": 0.25,
-        "import_price": 1.3584,
-        "local_month": 10,
-        "outdoor_c": 7.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1029.82,
-        "ev_available": true,
-        "export_price": 0.51456,
-        "hours": 0.25,
-        "import_price": 1.4382,
-        "local_month": 10,
-        "outdoor_c": 7.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 1138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 940.36,
-        "ev_available": true,
-        "export_price": 0.48164,
-        "hours": 0.25,
-        "import_price": 1.39705,
-        "local_month": 10,
-        "outdoor_c": 7.175,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 2038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2609.7,
-        "ev_available": true,
-        "export_price": 0.47263,
-        "hours": 0.25,
-        "import_price": 1.38579,
-        "local_month": 10,
-        "outdoor_c": 7.15,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 2938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3243.91,
-        "ev_available": true,
-        "export_price": 0.42292,
-        "hours": 0.25,
-        "import_price": 1.32365,
-        "local_month": 10,
-        "outdoor_c": 7.125,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 3838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3097.4700000000003,
-        "ev_available": true,
-        "export_price": 0.42225,
-        "hours": 0.25,
-        "import_price": 1.32281,
-        "local_month": 10,
-        "outdoor_c": 7.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 4738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3199.69,
-        "ev_available": true,
-        "export_price": 0.34173,
-        "hours": 0.25,
-        "import_price": 1.22216,
-        "local_month": 10,
-        "outdoor_c": 7.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 5638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1501.92,
-        "ev_available": true,
-        "export_price": 0.30481,
-        "hours": 0.25,
-        "import_price": 1.17601,
-        "local_month": 10,
-        "outdoor_c": 7.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 6538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1679.69,
-        "ev_available": true,
-        "export_price": 0.29068,
-        "hours": 0.25,
-        "import_price": 1.15835,
-        "local_month": 10,
-        "outdoor_c": 7.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 7438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1663.12,
-        "ev_available": true,
-        "export_price": 0.31971,
-        "hours": 0.25,
-        "import_price": 1.19464,
-        "local_month": 10,
-        "outdoor_c": 7.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 8338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1719.66,
-        "ev_available": true,
-        "export_price": 0.29369,
-        "hours": 0.25,
-        "import_price": 1.16211,
-        "local_month": 10,
-        "outdoor_c": 7.074999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 9238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2760.52,
-        "ev_available": true,
-        "export_price": 0.28801,
-        "hours": 0.25,
-        "import_price": 1.15501,
-        "local_month": 10,
-        "outdoor_c": 7.05,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 10138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1769.44,
-        "ev_available": true,
-        "export_price": 0.22762,
-        "hours": 0.25,
-        "import_price": 1.07952,
-        "local_month": 10,
-        "outdoor_c": 7.025,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 11038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1124.98,
-        "ev_available": true,
-        "export_price": 0.27289,
-        "hours": 0.25,
-        "import_price": 1.13611,
-        "local_month": 10,
-        "outdoor_c": 7,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 11938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1740.1,
-        "ev_available": true,
-        "export_price": 0.23652,
-        "hours": 0.25,
-        "import_price": 1.09065,
-        "local_month": 10,
-        "outdoor_c": 6.975,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 12838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1782.77,
-        "ev_available": true,
-        "export_price": 0.2383,
-        "hours": 0.25,
-        "import_price": 1.09288,
-        "local_month": 10,
-        "outdoor_c": 6.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 13738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2534.76,
-        "ev_available": true,
-        "export_price": 0.23385,
-        "hours": 0.25,
-        "import_price": 1.08731,
-        "local_month": 10,
-        "outdoor_c": 6.925000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 14638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1740.1,
-        "ev_available": true,
-        "export_price": 0.19849,
-        "hours": 0.25,
-        "import_price": 1.04311,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 15538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1629.8899999999999,
-        "ev_available": true,
-        "export_price": 0.21762,
-        "hours": 0.25,
-        "import_price": 1.06702,
-        "local_month": 10,
-        "outdoor_c": 6.875,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 16438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2312.2,
-        "ev_available": true,
-        "export_price": 0.22051,
-        "hours": 0.25,
-        "import_price": 1.07064,
-        "local_month": 10,
-        "outdoor_c": 6.85,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 17338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1466.9499999999998,
-        "ev_available": true,
-        "export_price": 0.2274,
-        "hours": 0.25,
-        "import_price": 1.07925,
-        "local_month": 10,
-        "outdoor_c": 6.825,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 18238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3660.98,
-        "ev_available": true,
-        "export_price": 0.22707,
-        "hours": 0.25,
-        "import_price": 1.07884,
-        "local_month": 10,
-        "outdoor_c": 6.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 19138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1604.6599999999999,
-        "ev_available": true,
-        "export_price": 0.20449,
-        "hours": 0.25,
-        "import_price": 1.05061,
-        "local_month": 10,
-        "outdoor_c": 6.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 20038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2134.44,
-        "ev_available": true,
-        "export_price": 0.20861,
-        "hours": 0.25,
-        "import_price": 1.05576,
-        "local_month": 10,
-        "outdoor_c": 6.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 20938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1653.03,
-        "ev_available": true,
-        "export_price": 0.20416,
-        "hours": 0.25,
-        "import_price": 1.0502,
-        "local_month": 10,
-        "outdoor_c": 6.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 21838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2438.8999999999996,
-        "ev_available": true,
-        "export_price": 0.1897,
-        "hours": 0.25,
-        "import_price": 1.03212,
-        "local_month": 10,
-        "outdoor_c": 6.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 22738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 4085,
-        "ev_available": true,
-        "export_price": 0.2026,
-        "hours": 0.25,
-        "import_price": 1.04825,
-        "local_month": 10,
-        "outdoor_c": 6.85,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 23638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2344.55,
-        "ev_available": true,
-        "export_price": 0.24019,
-        "hours": 0.25,
-        "import_price": 1.09524,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 24538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2017.94,
-        "ev_available": true,
-        "export_price": 0.27923,
-        "hours": 0.25,
-        "import_price": 1.14404,
-        "local_month": 10,
-        "outdoor_c": 6.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 25438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 5361.36,
-        "ev_available": true,
-        "export_price": 0.14455,
-        "hours": 0.25,
-        "import_price": 0.97569,
-        "local_month": 10,
-        "outdoor_c": 7,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 26338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 5011.4,
-        "ev_available": true,
-        "export_price": 0.14844,
-        "hours": 0.25,
-        "import_price": 0.98055,
-        "local_month": 10,
-        "outdoor_c": 6.975,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 27238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2338.2599999999998,
-        "ev_available": true,
-        "export_price": 0.2651,
-        "hours": 0.25,
-        "import_price": 1.12637,
-        "local_month": 10,
-        "outdoor_c": 6.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 28138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1729.79,
-        "ev_available": true,
-        "export_price": 0.33139,
-        "hours": 0.25,
-        "import_price": 1.20924,
-        "local_month": 10,
-        "outdoor_c": 6.925000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 29038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2380.16,
-        "ev_available": true,
-        "export_price": 0.28212,
-        "hours": 0.25,
-        "import_price": 1.14765,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 29938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1528.03,
-        "ev_available": true,
-        "export_price": 0.36664,
-        "hours": 0.25,
-        "import_price": 1.2533,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 30838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1546.29,
-        "ev_available": true,
-        "export_price": 0.36175,
-        "hours": 0.25,
-        "import_price": 1.24719,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 31738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1589.27,
-        "ev_available": true,
-        "export_price": 0.36219,
-        "hours": 0.25,
-        "import_price": 1.24774,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 32638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2187.88,
-        "ev_available": true,
-        "export_price": 0.37432,
-        "hours": 0.25,
-        "import_price": 1.2629,
-        "local_month": 10,
-        "outdoor_c": 6.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 97.1499,
-        "start_seconds": 33538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1516.64,
-        "ev_available": true,
-        "export_price": 0.44472,
-        "hours": 0.25,
-        "import_price": 1.3509,
-        "local_month": 10,
-        "outdoor_c": 7.075,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 171.7068,
-        "start_seconds": 34438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1278.3600000000001,
-        "ev_available": true,
-        "export_price": 0.45061,
-        "hours": 0.25,
-        "import_price": 1.35826,
-        "local_month": 10,
-        "outdoor_c": 7.25,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 231.2017,
-        "start_seconds": 35338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1397.3,
-        "ev_available": true,
-        "export_price": 0.52345,
-        "hours": 0.25,
-        "import_price": 1.44931,
-        "local_month": 10,
-        "outdoor_c": 7.425,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 282.4125,
-        "start_seconds": 36238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1430.09,
-        "ev_available": true,
-        "export_price": 0.45917,
-        "hours": 0.25,
-        "import_price": 1.36896,
-        "local_month": 10,
-        "outdoor_c": 7.6,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 321.5737,
-        "start_seconds": 37138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1149.06,
-        "ev_available": true,
-        "export_price": 0.45628,
-        "hours": 0.25,
-        "import_price": 1.36535,
-        "local_month": 10,
-        "outdoor_c": 7.85,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 346.426,
-        "start_seconds": 38038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1267.4,
-        "ev_available": true,
-        "export_price": 0.4485,
-        "hours": 0.25,
-        "import_price": 1.35562,
-        "local_month": 10,
-        "outdoor_c": 8.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 372.0314,
-        "start_seconds": 38938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 947.24,
-        "ev_available": true,
-        "export_price": 0.44805,
-        "hours": 0.25,
-        "import_price": 1.35506,
-        "local_month": 10,
-        "outdoor_c": 8.35,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 390.1058,
-        "start_seconds": 39838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 934.57,
-        "ev_available": true,
-        "export_price": 0.46529,
-        "hours": 0.25,
-        "import_price": 1.37661,
-        "local_month": 10,
-        "outdoor_c": 8.6,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 400.6492,
-        "start_seconds": 40738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1177.46,
-        "ev_available": true,
-        "export_price": 0.4416,
-        "hours": 0.25,
-        "import_price": 1.347,
-        "local_month": 10,
-        "outdoor_c": 8.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 404.4147,
-        "start_seconds": 41638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1032.85,
-        "ev_available": true,
-        "export_price": 0.37532,
-        "hours": 0.25,
-        "import_price": 1.26415,
-        "local_month": 10,
-        "outdoor_c": 9.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 406.674,
-        "start_seconds": 42538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1018.35,
-        "ev_available": true,
-        "export_price": 0.29246,
-        "hours": 0.25,
-        "import_price": 1.16057,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 378.0562,
-        "start_seconds": 43438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1160.58,
-        "ev_available": true,
-        "export_price": 0.40946,
-        "hours": 0.25,
-        "import_price": 1.30682,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 356.2163,
-        "start_seconds": 44338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1085.51,
-        "ev_available": true,
-        "export_price": 0.37343,
-        "hours": 0.25,
-        "import_price": 1.26179,
-        "local_month": 10,
         "outdoor_c": 10,
-        "pool_auxiliary_dispatch": null,
+        "import_price": 0.2,
+        "export_price": 0.05,
         "published": true,
-        "solar_w": 341.9074,
-        "start_seconds": 45238.466
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1393.91,
-        "ev_available": true,
-        "export_price": 0.33272,
+        "local_month": 2,
+        "start_seconds": 450,
         "hours": 0.25,
-        "import_price": 1.2109,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 380.3155,
-        "start_seconds": 46138.466
-      },
-      {
+        "base_w": 613.0806258460286,
         "base_ev_w": 0,
-        "base_w": 1104.15,
-        "ev_available": true,
-        "export_price": 0.27089,
-        "hours": 0.25,
-        "import_price": 1.13361,
-        "local_month": 10,
-        "outdoor_c": 10.4,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 470.6875,
-        "start_seconds": 47038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1165.9,
-        "ev_available": true,
-        "export_price": 0.32939,
-        "hours": 0.25,
-        "import_price": 1.20674,
-        "local_month": 10,
-        "outdoor_c": 10.6,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 587.418,
-        "start_seconds": 47938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1033.03,
-        "ev_available": true,
-        "export_price": 0.30336,
-        "hours": 0.25,
-        "import_price": 1.1742,
-        "local_month": 10,
-        "outdoor_c": 10.65,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 680.0493,
-        "start_seconds": 48838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 935.64,
-        "ev_available": true,
-        "export_price": 0.31248,
-        "hours": 0.25,
-        "import_price": 1.1856,
-        "local_month": 10,
-        "outdoor_c": 10.7,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 699.6299,
-        "start_seconds": 49738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 890.36,
-        "ev_available": true,
-        "export_price": 0.3444,
-        "hours": 0.25,
-        "import_price": 1.2255,
-        "local_month": 10,
-        "outdoor_c": 10.75,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 666.4935,
-        "start_seconds": 50638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 903.64,
-        "ev_available": true,
-        "export_price": 0.27945,
-        "hours": 0.25,
-        "import_price": 1.14431,
-        "local_month": 10,
-        "outdoor_c": 10.8,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 606.9986,
-        "start_seconds": 51538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2429.91,
-        "ev_available": true,
-        "export_price": 0.3196,
-        "hours": 0.25,
-        "import_price": 1.1945,
-        "local_month": 10,
-        "outdoor_c": 10.875,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 535.4541,
-        "start_seconds": 52438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 870.04,
-        "ev_available": true,
-        "export_price": 0.35163,
-        "hours": 0.25,
-        "import_price": 1.23454,
-        "local_month": 10,
-        "outdoor_c": 10.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 489.515,
-        "start_seconds": 53338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2607.01,
-        "ev_available": true,
-        "export_price": 0.38877,
-        "hours": 0.25,
-        "import_price": 1.28096,
-        "local_month": 10,
-        "outdoor_c": 11.025,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 442.8228,
-        "start_seconds": 54238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 908.13,
-        "ev_available": true,
-        "export_price": 0.31281,
-        "hours": 0.25,
-        "import_price": 1.18601,
-        "local_month": 10,
-        "outdoor_c": 11.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 405.9209,
-        "start_seconds": 55138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 905.46,
-        "ev_available": true,
-        "export_price": 0.32861,
-        "hours": 0.25,
-        "import_price": 1.20576,
-        "local_month": 10,
-        "outdoor_c": 11.075,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 358.4756,
-        "start_seconds": 56038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 903.97,
-        "ev_available": true,
-        "export_price": 0.31237,
-        "hours": 0.25,
-        "import_price": 1.18546,
-        "local_month": 10,
-        "outdoor_c": 11.05,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 320.8206,
-        "start_seconds": 56938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 917.46,
-        "ev_available": true,
-        "export_price": 0.32927,
-        "hours": 0.25,
-        "import_price": 1.20659,
-        "local_month": 10,
-        "outdoor_c": 11.025,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 282.4125,
-        "start_seconds": 57838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 860.59,
-        "ev_available": true,
-        "export_price": 0.34384,
-        "hours": 0.25,
-        "import_price": 1.2248,
-        "local_month": 10,
-        "outdoor_c": 11,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 244.0044,
-        "start_seconds": 58738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 835.75,
-        "ev_available": true,
-        "export_price": 0.30525,
-        "hours": 0.25,
-        "import_price": 1.17656,
-        "local_month": 10,
-        "outdoor_c": 10.975,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 204.8432,
-        "start_seconds": 59638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1194.79,
-        "ev_available": true,
-        "export_price": 0.36609,
-        "hours": 0.25,
-        "import_price": 1.25261,
-        "local_month": 10,
-        "outdoor_c": 10.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 175.4723,
-        "start_seconds": 60538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 987.22,
-        "ev_available": true,
-        "export_price": 0.35641,
-        "hours": 0.25,
-        "import_price": 1.24051,
-        "local_month": 10,
-        "outdoor_c": 10.925,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 146.1014,
-        "start_seconds": 61438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1228.87,
-        "ev_available": true,
-        "export_price": 0.34907,
-        "hours": 0.25,
-        "import_price": 1.23134,
-        "local_month": 10,
-        "outdoor_c": 10.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 116.73049999999999,
-        "start_seconds": 62338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1768.73,
-        "ev_available": true,
-        "export_price": 0.36319,
-        "hours": 0.25,
-        "import_price": 1.24899,
-        "local_month": 10,
-        "outdoor_c": 10.825,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 87.3596,
-        "start_seconds": 63238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1959.9799999999998,
-        "ev_available": true,
-        "export_price": 0.32827,
-        "hours": 0.25,
-        "import_price": 1.20534,
-        "local_month": 10,
-        "outdoor_c": 10.75,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 49.7046,
-        "start_seconds": 64138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1057.89,
-        "ev_available": true,
-        "export_price": 0.41102,
-        "hours": 0.25,
-        "import_price": 1.30877,
-        "local_month": 10,
-        "outdoor_c": 10.675,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 19.5806,
-        "start_seconds": 65038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1891.8,
-        "ev_available": true,
-        "export_price": 0.39278,
-        "hours": 0.25,
-        "import_price": 1.28598,
-        "local_month": 10,
-        "outdoor_c": 10.6,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
         "solar_w": 0,
-        "start_seconds": 65938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1082.96,
-        "ev_available": true,
-        "export_price": 0.46896,
-        "hours": 0.25,
-        "import_price": 1.3812,
-        "local_month": 10,
-        "outdoor_c": 10.525,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 66838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1134.45,
-        "ev_available": true,
-        "export_price": 0.49977,
-        "hours": 0.25,
-        "import_price": 1.41971,
-        "local_month": 10,
-        "outdoor_c": 10.45,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 67738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1358.0900000000001,
-        "ev_available": true,
-        "export_price": 0.46407,
-        "hours": 0.25,
-        "import_price": 1.37509,
-        "local_month": 10,
-        "outdoor_c": 10.375,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 68638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1457.08,
-        "ev_available": true,
-        "export_price": 0.7054,
-        "hours": 0.25,
-        "import_price": 1.67675,
-        "local_month": 10,
-        "outdoor_c": 10.3,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 69538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1136.68,
-        "ev_available": true,
-        "export_price": 0.51534,
-        "hours": 0.25,
-        "import_price": 1.43918,
-        "local_month": 10,
-        "outdoor_c": 10.275,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 70438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2764.34,
-        "ev_available": true,
-        "export_price": 0.35463,
-        "hours": 0.25,
-        "import_price": 1.23829,
-        "local_month": 10,
-        "outdoor_c": 10.25,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 71338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2032.05,
-        "ev_available": true,
-        "export_price": 0.22585,
-        "hours": 0.25,
-        "import_price": 1.07731,
-        "local_month": 10,
-        "outdoor_c": 10.225,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 72238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1326.71,
-        "ev_available": true,
-        "export_price": 0.64401,
-        "hours": 0.25,
-        "import_price": 1.60001,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 73138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1403.42,
-        "ev_available": true,
-        "export_price": 0.40401,
-        "hours": 0.25,
-        "import_price": 1.30001,
-        "local_month": 10,
-        "outdoor_c": 10.225,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 74038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2543.7,
-        "ev_available": true,
-        "export_price": 0.25543,
-        "hours": 0.25,
-        "import_price": 1.11429,
-        "local_month": 10,
-        "outdoor_c": 10.25,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 74938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1299.21,
-        "ev_available": true,
-        "export_price": 0.16635,
-        "hours": 0.25,
-        "import_price": 1.00294,
-        "local_month": 10,
-        "outdoor_c": 10.275,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 75838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1336.08,
-        "ev_available": true,
-        "export_price": 0.40446,
-        "hours": 0.25,
-        "import_price": 1.30057,
-        "local_month": 10,
-        "outdoor_c": 10.3,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 76738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1462.43,
-        "ev_available": true,
-        "export_price": 0.25899,
-        "hours": 0.25,
-        "import_price": 1.11874,
-        "local_month": 10,
-        "outdoor_c": 10.25,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 77638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2117.91,
-        "ev_available": true,
-        "export_price": 0.15456,
-        "hours": 0.25,
-        "import_price": 0.9882,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 78538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1624.81,
-        "ev_available": true,
-        "export_price": 0.15155,
-        "hours": 0.25,
-        "import_price": 0.98444,
-        "local_month": 10,
-        "outdoor_c": 10.15,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 79438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1325.77,
-        "ev_available": true,
-        "export_price": 0.17013,
-        "hours": 0.25,
-        "import_price": 1.00766,
-        "local_month": 10,
-        "outdoor_c": 10.1,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 80338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1278.36,
-        "ev_available": true,
-        "export_price": 0.13543,
-        "hours": 0.25,
-        "import_price": 0.96429,
-        "local_month": 10,
-        "outdoor_c": 10.05,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 81238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1230.16,
-        "ev_available": true,
-        "export_price": 0.12598,
-        "hours": 0.25,
-        "import_price": 0.95247,
-        "local_month": 10,
         "outdoor_c": 10,
-        "pool_auxiliary_dispatch": null,
+        "import_price": 0.2,
+        "export_price": 0.05,
         "published": true,
-        "solar_w": 0,
-        "start_seconds": 82138.466
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1306.8,
-        "ev_available": true,
-        "export_price": 0.10106,
+        "local_month": 2,
+        "start_seconds": 1350,
         "hours": 0.25,
-        "import_price": 0.92132,
-        "local_month": 10,
-        "outdoor_c": 9.95,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
+        "base_w": 626.1052384440103,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 83038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1184.35,
-        "ev_available": true,
-        "export_price": 0.11029,
-        "hours": 0.25,
-        "import_price": 0.93286,
-        "local_month": 10,
-        "outdoor_c": 9.9,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 83938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 983.84,
-        "ev_available": true,
-        "export_price": 0.11029,
-        "hours": 0.25,
-        "import_price": 0.93286,
-        "local_month": 10,
-        "outdoor_c": 9.825,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 84838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 811.25,
-        "ev_available": true,
-        "export_price": 0.09739,
-        "hours": 0.25,
-        "import_price": 0.91674,
-        "local_month": 10,
-        "outdoor_c": 9.75,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 85738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 704.45,
-        "ev_available": true,
-        "export_price": 0.09272,
-        "hours": 0.25,
-        "import_price": 0.9109,
-        "local_month": 10,
-        "outdoor_c": 9.675,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 86638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2540.9700000000003,
-        "ev_available": true,
-        "export_price": 0.0776,
-        "hours": 0.25,
-        "import_price": 0.892,
-        "local_month": 10,
-        "outdoor_c": 9.6,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 87538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2395.4700000000003,
-        "ev_available": true,
-        "export_price": 0.06748,
-        "hours": 0.25,
-        "import_price": 0.87935,
-        "local_month": 10,
-        "outdoor_c": 9.55,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 88438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2607.65,
-        "ev_available": true,
-        "export_price": 0.06425,
-        "hours": 0.25,
-        "import_price": 0.87531,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 89338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2606.8,
-        "ev_available": true,
-        "export_price": 0.05847,
-        "hours": 0.25,
-        "import_price": 0.86809,
-        "local_month": 10,
-        "outdoor_c": 9.45,
-        "pool_auxiliary_dispatch": null,
-        "published": true,
-        "solar_w": 0,
-        "start_seconds": 90238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1393.19,
-        "ev_available": true,
-        "export_price": -0.006809999999999872,
-        "hours": 0.25,
-        "import_price": 0.86809,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 91138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1629.65,
-        "ev_available": true,
-        "export_price": -0.05594679155292315,
-        "hours": 0.25,
-        "import_price": 0.8189532084470768,
-        "local_month": 10,
-        "outdoor_c": 9.425,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 92038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 785.2,
-        "ev_available": true,
-        "export_price": -0.07560637529380665,
-        "hours": 0.25,
-        "import_price": 0.7992936247061933,
-        "local_month": 10,
-        "outdoor_c": 9.45,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 92938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1679.01,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.475,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 93838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3265.24,
-        "ev_available": true,
-        "export_price": -0.09736837280497701,
-        "hours": 0.25,
-        "import_price": 0.7775316271950229,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 94738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1008.54,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 95638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1750.57,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 96538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 945.23,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 97438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1675.8899999999999,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 98338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3232.86,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.575,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 99238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1704.35,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.65,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 100138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2529.25,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.725000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 101038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3315.89,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 101938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3232.86,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.850000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 102838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1558.25,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 103738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2103.15,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 104638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1623.46,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
         "outdoor_c": 10,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 105538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2321.63,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 106438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1631.81,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 107338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2159.59,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.850000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 108238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1359,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 109138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2301.55,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 110038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2120.6800000000003,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 110938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1517.3600000000001,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 111838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1796.0900000000001,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 112738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1896.9499999999998,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.775,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 113638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2917.99,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.75,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 114538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2784.93,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.725,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 115438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3245.5299999999997,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 116338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3442.7299999999996,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 117238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2539.45,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 118138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1926.32,
-        "ev_available": true,
-        "export_price": -0.06166074271379984,
-        "hours": 0.25,
-        "import_price": 0.8132392572862001,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 119038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2796.41,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 26.124,
-        "start_seconds": 119938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1511.86,
-        "ev_available": true,
-        "export_price": -0.07107965097737345,
-        "hours": 0.25,
-        "import_price": 0.8038203490226264,
-        "local_month": 10,
-        "outdoor_c": 9.725,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 40.3056,
-        "start_seconds": 120838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1660.96,
-        "ev_available": true,
-        "export_price": -0.05465499844580779,
-        "hours": 0.25,
-        "import_price": 0.8202450015541921,
-        "local_month": 10,
-        "outdoor_c": 9.75,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 55.98,
-        "start_seconds": 121738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1515.85,
-        "ev_available": true,
-        "export_price": -0.03450278605764601,
-        "hours": 0.25,
-        "import_price": 0.8403972139423539,
-        "local_month": 10,
-        "outdoor_c": 9.775,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 89.568,
-        "start_seconds": 122638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1622.4,
-        "ev_available": true,
-        "export_price": -0.04849708678463838,
-        "hours": 0.25,
-        "import_price": 0.8264029132153615,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 124.6488,
-        "start_seconds": 123538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2090.37,
-        "ev_available": true,
-        "export_price": -0.06264485816550669,
-        "hours": 0.25,
-        "import_price": 0.8122551418344932,
-        "local_month": 10,
-        "outdoor_c": 9.875,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 167.1936,
-        "start_seconds": 124438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2847.95,
-        "ev_available": true,
-        "export_price": -0.0631574103126068,
-        "hours": 0.25,
-        "import_price": 0.8117425896873931,
-        "local_month": 10,
-        "outdoor_c": 9.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 202.27439999999999,
-        "start_seconds": 125338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1298.39,
-        "ev_available": true,
-        "export_price": -0.07892551209229892,
-        "hours": 0.25,
-        "import_price": 0.795974487907701,
-        "local_month": 10,
-        "outdoor_c": 10.025,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 226.9056,
-        "start_seconds": 126238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1247.58,
-        "ev_available": true,
-        "export_price": -0.09953694077861586,
-        "hours": 0.25,
-        "import_price": 0.775363059221384,
-        "local_month": 10,
-        "outdoor_c": 10.1,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 244.8192,
-        "start_seconds": 127138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1075.78,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.125,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 279.9,
-        "start_seconds": 128038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2711.75,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.149999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 346.32959999999997,
-        "start_seconds": 128938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 905.22,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.174999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 452.3184,
-        "start_seconds": 129838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 869.22,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 576.9671999999999,
-        "start_seconds": 130738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1001.68,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.225,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 681.4631999999999,
-        "start_seconds": 131638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 903.54,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.25,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 744.9072,
-        "start_seconds": 132538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 957.68,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.275,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 753.8639999999999,
-        "start_seconds": 133438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1039.89,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.3,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 737.4431999999999,
-        "start_seconds": 134338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1147.62,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.375,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 708.3335999999999,
-        "start_seconds": 135238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1450.65,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.45,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 671.0136,
-        "start_seconds": 136138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1179.15,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.525,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 628.4688,
-        "start_seconds": 137038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1164.38,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.6,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 585.924,
-        "start_seconds": 137938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1014.6,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.55,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 541.8864,
-        "start_seconds": 138838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 897,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 496.356,
-        "start_seconds": 139738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 808.32,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.45,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 459.7824,
-        "start_seconds": 140638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2511.54,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 432.912,
-        "start_seconds": 141538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 777.65,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 10.175,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 395.592,
-        "start_seconds": 142438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 811.13,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 338.1192,
-        "start_seconds": 143338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 908.67,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.725,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 291.096,
-        "start_seconds": 144238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 850.68,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 223.92,
-        "start_seconds": 145138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 923,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.275,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 176.89679999999998,
-        "start_seconds": 146038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2479.64,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.05,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 131.3664,
-        "start_seconds": 146938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 847.44,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.825,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 85.08959999999999,
-        "start_seconds": 147838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 689.64,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.6,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 50.008799999999994,
-        "start_seconds": 148738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 785.94,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.575,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 23.8848,
-        "start_seconds": 149638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1022.65,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.55,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 6.717599999999999,
-        "start_seconds": 150538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 960.84,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.525,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 3.7319999999999998,
-        "start_seconds": 151438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1902.8899999999999,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 152338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1785.6499999999999,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.425,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 153238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2575.91,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.35,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 154138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2014.0699999999997,
-        "ev_available": true,
-        "export_price": -0.029810113101611302,
-        "hours": 0.25,
-        "import_price": 0.8450898868983886,
-        "local_month": 10,
-        "outdoor_c": 8.274999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 155038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2394.77,
-        "ev_available": true,
-        "export_price": -0.04571172957551106,
-        "hours": 0.25,
-        "import_price": 0.8291882704244888,
-        "local_month": 10,
-        "outdoor_c": 8.2,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 155938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1223.39,
-        "ev_available": true,
-        "export_price": 0.04088900059318479,
-        "hours": 0.25,
-        "import_price": 0.9157890005931847,
-        "local_month": 10,
-        "outdoor_c": 8.25,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 156838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1314.16,
-        "ev_available": true,
-        "export_price": 0.09683731576711108,
-        "hours": 0.25,
-        "import_price": 0.971737315767111,
-        "local_month": 10,
-        "outdoor_c": 8.3,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 157738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1373.44,
-        "ev_available": true,
-        "export_price": 0.12026919394486213,
-        "hours": 0.25,
-        "import_price": 0.995169193944862,
-        "local_month": 10,
-        "outdoor_c": 8.35,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 158638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1640.31,
-        "ev_available": true,
-        "export_price": 0.18471465330752224,
-        "hours": 0.25,
-        "import_price": 1.0596146533075221,
-        "local_month": 10,
-        "outdoor_c": 8.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 159538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1305.06,
-        "ev_available": true,
-        "export_price": 0.17663747179560818,
-        "hours": 0.25,
-        "import_price": 1.051537471795608,
-        "local_month": 10,
-        "outdoor_c": 8.475,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 160438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1440.14,
-        "ev_available": true,
-        "export_price": 0.12371598975906495,
-        "hours": 0.25,
-        "import_price": 0.9986159897590648,
-        "local_month": 10,
-        "outdoor_c": 8.55,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 161338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1300.3600000000001,
-        "ev_available": true,
-        "export_price": 0.09898107859261918,
-        "hours": 0.25,
-        "import_price": 0.9738810785926191,
-        "local_month": 10,
-        "outdoor_c": 8.625,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 162238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1423.54,
-        "ev_available": true,
-        "export_price": 0.22789478394092677,
-        "hours": 0.25,
-        "import_price": 1.1027947839409267,
-        "local_month": 10,
-        "outdoor_c": 8.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 163138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1628.39,
-        "ev_available": true,
-        "export_price": 0.15420098791223136,
-        "hours": 0.25,
-        "import_price": 1.0291009879122313,
-        "local_month": 10,
-        "outdoor_c": 8.774999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 164038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2023.25,
-        "ev_available": true,
-        "export_price": 0.09739971576443884,
-        "hours": 0.25,
-        "import_price": 0.9722997157644387,
-        "local_month": 10,
-        "outdoor_c": 8.85,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 164938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1361.06,
-        "ev_available": true,
-        "export_price": 0.04800102336586498,
-        "hours": 0.25,
-        "import_price": 0.9229010233658649,
-        "local_month": 10,
-        "outdoor_c": 8.925,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 165838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1436.98,
-        "ev_available": true,
-        "export_price": 0.12959172191196588,
-        "hours": 0.25,
-        "import_price": 1.0044917219119658,
-        "local_month": 10,
-        "outdoor_c": 9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 166738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1524.8400000000001,
-        "ev_available": true,
-        "export_price": 0.07834737778843648,
-        "hours": 0.25,
-        "import_price": 0.9532473777884364,
-        "local_month": 10,
-        "outdoor_c": 8.975,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 167638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2023.3799999999999,
-        "ev_available": true,
-        "export_price": 0.024918760795963446,
-        "hours": 0.25,
-        "import_price": 0.8998187607959633,
-        "local_month": 10,
-        "outdoor_c": 8.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 168538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1531.3500000000001,
-        "ev_available": true,
-        "export_price": -0.038862864933354,
-        "hours": 0.25,
-        "import_price": 0.8360371350666459,
-        "local_month": 10,
-        "outdoor_c": 8.925,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 169438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1167.45,
-        "ev_available": true,
-        "export_price": 0.02732854317425193,
-        "hours": 0.25,
-        "import_price": 0.9022285431742518,
-        "local_month": 10,
-        "outdoor_c": 8.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 170338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1151.06,
-        "ev_available": true,
-        "export_price": -0.030857000562872217,
-        "hours": 0.25,
-        "import_price": 0.8440429994371277,
-        "local_month": 10,
-        "outdoor_c": 8.925,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 171238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1204.95,
-        "ev_available": true,
-        "export_price": -0.09894490128056932,
-        "hours": 0.25,
-        "import_price": 0.7759550987194306,
-        "local_month": 10,
-        "outdoor_c": 8.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 172138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1137.19,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 8.975,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 173038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 989.88,
-        "ev_available": true,
-        "export_price": -0.08375727081354445,
-        "hours": 0.25,
-        "import_price": 0.7911427291864555,
-        "local_month": 10,
-        "outdoor_c": 9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 173938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 754.85,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.1,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 174838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2378.96,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.2,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 175738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2360.68,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.3,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 176638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2450.52,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 177538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2396.35,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.525,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 178438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3267.33,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.65,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 179338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3229.67,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.775,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 180238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2357.13,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 181138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3134.07,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.85,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 182038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1426.7,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 182938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 916.76,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.75,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 183838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1562.76,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 184738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1613.73,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 185638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1682.01,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 186538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1594.87,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 187438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 913.31,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 188338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2172.1299999999997,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 189238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2173.3199999999997,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 190138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2922.74,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 191038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2356.85,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.7,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 191938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3060.91,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.625,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 192838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2439.99,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.55,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 193738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2139.87,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.475,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 194638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2469.71,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 195538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1006.19,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 196438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2107.31,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 197338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2123.94,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 198238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1525.13,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 199138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1516.52,
-        "ev_available": true,
-        "export_price": -0.11000999999999994,
-        "hours": 0.25,
-        "import_price": 0.76489,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 200038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1477.28,
-        "ev_available": true,
-        "export_price": -0.04821961761960891,
-        "hours": 0.25,
-        "import_price": 0.826680382380391,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 200938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2017.89,
-        "ev_available": true,
-        "export_price": 0.0631903931087554,
-        "hours": 0.25,
-        "import_price": 0.9380903931087553,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 201838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2843.77,
-        "ev_available": true,
-        "export_price": -0.03854006838243207,
-        "hours": 0.25,
-        "import_price": 0.8363599316175678,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 202738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1997.94,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
         "ev_available": true,
-        "export_price": 0.10295594484894832,
-        "hours": 0.25,
-        "import_price": 0.9778559448489482,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 203638.466
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1497.82,
-        "ev_available": true,
-        "export_price": 0.2592326048267478,
+        "local_month": 2,
+        "start_seconds": 2250,
         "hours": 0.25,
-        "import_price": 1.1341326048267477,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 0,
-        "start_seconds": 204538.466
-      },
-      {
+        "base_w": 639.0180644032257,
         "base_ev_w": 0,
-        "base_w": 1595.81,
-        "ev_available": true,
-        "export_price": 0.39009806428960225,
-        "hours": 0.25,
-        "import_price": 1.2649980642896022,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
         "solar_w": 0,
-        "start_seconds": 205438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3251.5,
-        "ev_available": true,
-        "export_price": 0.32656369410058506,
-        "hours": 0.25,
-        "import_price": 1.201463694100585,
-        "local_month": 10,
-        "outdoor_c": 9.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 67.2894,
-        "start_seconds": 206338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1507.77,
-        "ev_available": true,
-        "export_price": 0.42925880185696663,
-        "hours": 0.25,
-        "import_price": 1.3041588018569665,
-        "local_month": 10,
-        "outdoor_c": 9.425,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 127.98179999999999,
-        "start_seconds": 207238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1514.88,
-        "ev_available": true,
-        "export_price": 0.485589477355188,
-        "hours": 0.25,
-        "import_price": 1.3604894773551879,
-        "local_month": 10,
-        "outdoor_c": 9.45,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 191.313,
-        "start_seconds": 208138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1560.32,
-        "ev_available": true,
-        "export_price": 0.529076212761583,
-        "hours": 0.25,
-        "import_price": 1.403976212761583,
-        "local_month": 10,
-        "outdoor_c": 9.475,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 255.96359999999999,
-        "start_seconds": 209038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1584.95,
-        "ev_available": true,
-        "export_price": 0.5563520954685605,
-        "hours": 0.25,
-        "import_price": 1.4312520954685604,
-        "local_month": 10,
-        "outdoor_c": 9.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 322.5933,
-        "start_seconds": 209938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 3083.84,
-        "ev_available": true,
-        "export_price": 0.5108706151645844,
-        "hours": 0.25,
-        "import_price": 1.3857706151645843,
-        "local_month": 10,
-        "outdoor_c": 9.625,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 390.5424,
-        "start_seconds": 210838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1051.1,
-        "ev_available": true,
-        "export_price": 0.5179504783486047,
-        "hours": 0.25,
-        "import_price": 1.3928504783486046,
-        "local_month": 10,
-        "outdoor_c": 9.75,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 451.8945,
-        "start_seconds": 211738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1055.71,
-        "ev_available": true,
-        "export_price": 0.47345014512237393,
-        "hours": 0.25,
-        "import_price": 1.3483501451223738,
-        "local_month": 10,
-        "outdoor_c": 9.875,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 506.64959999999996,
-        "start_seconds": 212638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1200.79,
-        "ev_available": true,
-        "export_price": 0.5154894304663297,
-        "hours": 0.25,
-        "import_price": 1.3903894304663296,
-        "local_month": 10,
         "outdoor_c": 10,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 554.1479999999999,
-        "start_seconds": 213538.466
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1027.71,
-        "ev_available": true,
-        "export_price": 0.48764743565326285,
+        "local_month": 2,
+        "start_seconds": 3150,
         "hours": 0.25,
-        "import_price": 1.3625474356532628,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 596.3688,
-        "start_seconds": 214438.466
-      },
-      {
+        "base_w": 651.7638090205041,
         "base_ev_w": 0,
-        "base_w": 1043.41,
-        "ev_available": true,
-        "export_price": 0.42147262212195324,
-        "hours": 0.25,
-        "import_price": 1.2963726221219531,
-        "local_month": 10,
-        "outdoor_c": 10.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 622.0971,
-        "start_seconds": 215338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 884.28,
-        "ev_available": true,
-        "export_price": 0.3538584346887427,
-        "hours": 0.25,
-        "import_price": 1.2287584346887426,
-        "local_month": 10,
-        "outdoor_c": 10.600000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 641.2284,
-        "start_seconds": 216238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 853.3,
-        "ev_available": true,
-        "export_price": 0.40840922938257507,
-        "hours": 0.25,
-        "import_price": 1.283309229382575,
-        "local_month": 10,
-        "outdoor_c": 10.8,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 658.3806,
-        "start_seconds": 217138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2599.65,
-        "ev_available": true,
-        "export_price": 0.3415484672576251,
-        "hours": 0.25,
-        "import_price": 1.216448467257625,
-        "local_month": 10,
-        "outdoor_c": 10.850000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 708.5178,
-        "start_seconds": 218038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 856.8,
-        "ev_available": true,
-        "export_price": 0.3022114773993355,
-        "hours": 0.25,
-        "import_price": 1.1771114773993354,
-        "local_month": 10,
-        "outdoor_c": 10.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 749.4191999999999,
-        "start_seconds": 218938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 925.64,
-        "ev_available": true,
-        "export_price": 0.23762144688398223,
-        "hours": 0.25,
-        "import_price": 1.1125214468839821,
-        "local_month": 10,
-        "outdoor_c": 10.95,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 773.8281,
-        "start_seconds": 219838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1032.14,
-        "ev_available": true,
-        "export_price": 0.28713824346592187,
-        "hours": 0.25,
-        "import_price": 1.1620382434659218,
-        "local_month": 10,
-        "outdoor_c": 11,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 798.8966999999999,
-        "start_seconds": 220738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1033.18,
-        "ev_available": true,
-        "export_price": 0.22742040916449102,
-        "hours": 0.25,
-        "import_price": 1.102320409164491,
-        "local_month": 10,
-        "outdoor_c": 11.075,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 835.1801999999999,
-        "start_seconds": 221638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1384.24,
-        "ev_available": true,
-        "export_price": 0.19185100144170664,
-        "hours": 0.25,
-        "import_price": 1.0667510014417065,
-        "local_month": 10,
-        "outdoor_c": 11.15,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 917.6427,
-        "start_seconds": 222538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1165.48,
-        "ev_available": true,
-        "export_price": 0.1673884641698561,
-        "hours": 0.25,
-        "import_price": 1.042288464169856,
-        "local_month": 10,
-        "outdoor_c": 11.225000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1066.0752,
-        "start_seconds": 223438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1202.37,
-        "ev_available": true,
-        "export_price": 0.19744998234822309,
-        "hours": 0.25,
-        "import_price": 1.072349982348223,
-        "local_month": 10,
-        "outdoor_c": 11.3,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1248.8120999999999,
-        "start_seconds": 224338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1654.6599999999999,
-        "ev_available": true,
-        "export_price": 0.1661021681550986,
-        "hours": 0.25,
-        "import_price": 1.0410021681550985,
-        "local_month": 10,
-        "outdoor_c": 11.350000000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1400.5430999999999,
-        "start_seconds": 225238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1523.27,
-        "ev_available": true,
-        "export_price": 0.16393002042776195,
-        "hours": 0.25,
-        "import_price": 1.0388300204277618,
-        "local_month": 10,
-        "outdoor_c": 11.4,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1461.2355,
-        "start_seconds": 226138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1441.69,
-        "ev_available": true,
-        "export_price": 0.16467618070635137,
-        "hours": 0.25,
-        "import_price": 1.0395761807063513,
-        "local_month": 10,
-        "outdoor_c": 11.45,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1411.0982999999999,
-        "start_seconds": 227038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1509.4,
-        "ev_available": true,
-        "export_price": 0.14112325017770744,
-        "hours": 0.25,
-        "import_price": 1.0160232501777073,
-        "local_month": 10,
-        "outdoor_c": 11.5,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1307.5254,
-        "start_seconds": 227938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1271.0300000000002,
-        "ev_available": true,
-        "export_price": 0.1513746931674319,
-        "hours": 0.25,
-        "import_price": 1.0262746931674318,
-        "local_month": 10,
-        "outdoor_c": 11.391666666666666,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1208.5703999999998,
-        "start_seconds": 228838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1435.6599999999999,
-        "ev_available": true,
-        "export_price": 0.14981494102441262,
-        "hours": 0.25,
-        "import_price": 1.0247149410244125,
-        "local_month": 10,
-        "outdoor_c": 11.283333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1158.4332,
-        "start_seconds": 229738.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2491.37,
-        "ev_available": true,
-        "export_price": 0.15949674843085282,
-        "hours": 0.25,
-        "import_price": 1.0343967484308527,
-        "local_month": 10,
-        "outdoor_c": 11.175,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1172.2868999999998,
-        "start_seconds": 230638.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1505.2599999999998,
-        "ev_available": true,
-        "export_price": 0.14685575283045715,
-        "hours": 0.25,
-        "import_price": 1.021755752830457,
-        "local_month": 10,
-        "outdoor_c": 11.066666666666666,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1201.9733999999999,
-        "start_seconds": 231538.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1518.6,
-        "ev_available": true,
-        "export_price": 0.1760974496444795,
-        "hours": 0.25,
-        "import_price": 1.0509974496444794,
-        "local_month": 10,
-        "outdoor_c": 10.958333333333332,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1206.5912999999998,
-        "start_seconds": 232438.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 2445.33,
-        "ev_available": true,
-        "export_price": 0.20969577305417297,
-        "hours": 0.25,
-        "import_price": 1.0845957730541729,
-        "local_month": 10,
-        "outdoor_c": 10.85,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1143.9198,
-        "start_seconds": 233338.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 974.71,
-        "ev_available": true,
-        "export_price": 0.2660772841914264,
-        "hours": 0.25,
-        "import_price": 1.1409772841914263,
-        "local_month": 10,
-        "outdoor_c": 10.741666666666667,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 1015.2783,
-        "start_seconds": 234238.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1330.77,
-        "ev_available": true,
-        "export_price": 0.24315501486560864,
-        "hours": 0.25,
-        "import_price": 1.1180550148656085,
-        "local_month": 10,
-        "outdoor_c": 10.633333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 849.6936,
-        "start_seconds": 235138.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 749.66,
-        "ev_available": true,
-        "export_price": 0.29122897069572484,
-        "hours": 0.25,
-        "import_price": 1.1661289706957247,
-        "local_month": 10,
-        "outdoor_c": 10.524999999999999,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 697.9626,
-        "start_seconds": 236038.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1009.86,
-        "ev_available": true,
-        "export_price": 0.38918280259139915,
-        "hours": 0.25,
-        "import_price": 1.264082802591399,
-        "local_month": 10,
-        "outdoor_c": 10.416666666666666,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 527.76,
-        "start_seconds": 236938.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 923.43,
-        "ev_available": true,
-        "export_price": 0.494028885971045,
-        "hours": 0.25,
-        "import_price": 1.368928885971045,
-        "local_month": 10,
-        "outdoor_c": 10.308333333333334,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
-        "solar_w": 121.38479999999998,
-        "start_seconds": 237838.466
-      },
-      {
-        "base_ev_w": 0,
-        "base_w": 1043.92,
-        "ev_available": true,
-        "export_price": 0.42194217362393716,
-        "hours": 0.25,
-        "import_price": 1.296842173623937,
-        "local_month": 10,
-        "outdoor_c": 10.2,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
         "solar_w": 0,
-        "start_seconds": 238738.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 903.43,
-        "ev_available": true,
-        "export_price": 0.5495863206511228,
+        "local_month": 2,
+        "start_seconds": 4050,
         "hours": 0.25,
-        "import_price": 1.4244863206511227,
-        "local_month": 10,
-        "outdoor_c": 10.091666666666667,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 664.2878930606323,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 239638.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 967.01,
-        "ev_available": true,
-        "export_price": 0.685920868914032,
+        "local_month": 2,
+        "start_seconds": 4950,
         "hours": 0.25,
-        "import_price": 1.560820868914032,
-        "local_month": 10,
-        "outdoor_c": 9.983333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 676.536686473018,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 240538.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 885.55,
-        "ev_available": true,
-        "export_price": 0.8189032883309223,
+        "local_month": 2,
+        "start_seconds": 5850,
         "hours": 0.25,
-        "import_price": 1.6938032883309222,
-        "local_month": 10,
-        "outdoor_c": 9.875,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 688.4577380438002,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 241438.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1052.52,
-        "ev_available": true,
-        "export_price": 0.788816889924055,
+        "local_month": 2,
+        "start_seconds": 6750,
         "hours": 0.25,
-        "import_price": 1.6637168899240549,
-        "local_month": 10,
-        "outdoor_c": 9.766666666666666,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 700,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 242338.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1087.35,
-        "ev_available": true,
-        "export_price": 0.9182407266085294,
+        "local_month": 2,
+        "start_seconds": 7650,
         "hours": 0.25,
-        "import_price": 1.7931407266085293,
-        "local_month": 10,
-        "outdoor_c": 9.658333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 711.1140466039204,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 243238.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1132.59,
-        "ev_available": true,
-        "export_price": 1.0035988459266525,
+        "local_month": 2,
+        "start_seconds": 8550,
         "hours": 0.25,
-        "import_price": 1.8784988459266523,
-        "local_month": 10,
-        "outdoor_c": 9.55,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 721.7522858017442,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 244138.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1195.97,
-        "ev_available": true,
-        "export_price": 1.0368457164605251,
+        "local_month": 2,
+        "start_seconds": 9450,
         "hours": 0.25,
-        "import_price": 1.911745716460525,
-        "local_month": 10,
-        "outdoor_c": 9.441666666666666,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 731.8691630200137,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 245038.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1468.81,
-        "ev_available": true,
-        "export_price": 1.0673239348917756,
+        "local_month": 2,
+        "start_seconds": 10350,
         "hours": 0.25,
-        "import_price": 1.9422239348917754,
-        "local_month": 10,
-        "outdoor_c": 9.333333333333334,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 741.4213562373095,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 245938.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1123.94,
-        "ev_available": true,
-        "export_price": 1.0868067443154366,
+        "local_month": 2,
+        "start_seconds": 11250,
         "hours": 0.25,
-        "import_price": 1.9617067443154366,
-        "local_month": 10,
-        "outdoor_c": 9.225,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 750.3679614957955,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 246838.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1324.47,
-        "ev_available": true,
-        "export_price": 1.0466899224894903,
+        "local_month": 2,
+        "start_seconds": 12150,
         "hours": 0.25,
-        "import_price": 1.9215899224894901,
-        "local_month": 10,
-        "outdoor_c": 9.116666666666667,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 758.670668058247,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 247738.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1163.84,
-        "ev_available": true,
-        "export_price": 1.0045833335823278,
+        "local_month": 2,
+        "start_seconds": 13050,
         "hours": 0.25,
-        "import_price": 1.8794833335823278,
-        "local_month": 10,
-        "outdoor_c": 9.008333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 766.2939224605091,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 248638.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1284.24,
-        "ev_available": true,
-        "export_price": 1.104370689686895,
+        "local_month": 2,
+        "start_seconds": 13950,
         "hours": 0.25,
-        "import_price": 1.9792706896868948,
-        "local_month": 10,
-        "outdoor_c": 8.9,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 773.2050807568877,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 249538.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1344.5,
-        "ev_available": true,
-        "export_price": 1.0205723366849826,
+        "local_month": 2,
+        "start_seconds": 14850,
         "hours": 0.25,
-        "import_price": 1.8954723366849824,
-        "local_month": 10,
-        "outdoor_c": 8.854166666666668,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 779.3745483065377,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 250438.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1923.19,
-        "ev_available": true,
-        "export_price": 0.9271849673426918,
+        "local_month": 2,
+        "start_seconds": 15750,
         "hours": 0.25,
-        "import_price": 1.8020849673426917,
-        "local_month": 10,
-        "outdoor_c": 8.808333333333334,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 784.7759065022574,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 251338.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1302.65,
-        "ev_available": true,
-        "export_price": 0.853203902555033,
+        "local_month": 2,
+        "start_seconds": 16650,
         "hours": 0.25,
-        "import_price": 1.7281039025550329,
-        "local_month": 10,
-        "outdoor_c": 8.762500000000001,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 789.3860258990211,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 252238.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1408.47,
-        "ev_available": true,
-        "export_price": 0.9128802674597737,
+        "local_month": 2,
+        "start_seconds": 17550,
         "hours": 0.25,
-        "import_price": 1.7877802674597736,
-        "local_month": 10,
-        "outdoor_c": 8.716666666666667,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 793.1851652578137,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 253138.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1504.1200000000001,
-        "ev_available": true,
-        "export_price": 0.8245516157050304,
+        "local_month": 2,
+        "start_seconds": 18450,
         "hours": 0.25,
-        "import_price": 1.6994516157050303,
-        "local_month": 10,
-        "outdoor_c": 8.670833333333334,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 796.157056080646,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 254038.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1610.68,
-        "ev_available": true,
-        "export_price": 0.7184203934650971,
+        "local_month": 2,
+        "start_seconds": 19350,
         "hours": 0.25,
-        "import_price": 1.593320393465097,
-        "local_month": 10,
-        "outdoor_c": 8.625,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 798.288972274762,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 254938.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1355.16,
-        "ev_available": true,
-        "export_price": 0.5943687636852436,
+        "local_month": 2,
+        "start_seconds": 20250,
         "hours": 0.25,
-        "import_price": 1.4692687636852435,
-        "local_month": 10,
-        "outdoor_c": 8.579166666666667,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 799.5717846477207,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 255838.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1134.6,
-        "ev_available": true,
-        "export_price": 0.7274374568114365,
+        "local_month": 2,
+        "start_seconds": 21150,
         "hours": 0.25,
-        "import_price": 1.6023374568114364,
-        "local_month": 10,
-        "outdoor_c": 8.533333333333333,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 800,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 256738.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       },
       {
-        "base_ev_w": 0,
-        "base_w": 1162.38,
-        "ev_available": true,
-        "export_price": 0.619969448538045,
+        "local_month": 2,
+        "start_seconds": 22050,
         "hours": 0.25,
-        "import_price": 1.494869448538045,
-        "local_month": 10,
-        "outdoor_c": 8.4875,
-        "pool_auxiliary_dispatch": null,
-        "published": false,
+        "base_w": 799.5717846477207,
+        "base_ev_w": 0,
         "solar_w": 0,
-        "start_seconds": 257638.466
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 22950,
+        "hours": 0.25,
+        "base_w": 798.288972274762,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 23850,
+        "hours": 0.25,
+        "base_w": 796.157056080646,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 24750,
+        "hours": 0.25,
+        "base_w": 793.1851652578137,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 25650,
+        "hours": 0.25,
+        "base_w": 789.3860258990212,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 26550,
+        "hours": 0.25,
+        "base_w": 784.7759065022574,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 27450,
+        "hours": 0.25,
+        "base_w": 779.3745483065377,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 28350,
+        "hours": 0.25,
+        "base_w": 773.2050807568878,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 29250,
+        "hours": 0.25,
+        "base_w": 766.2939224605091,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 30150,
+        "hours": 0.25,
+        "base_w": 758.670668058247,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 31050,
+        "hours": 0.25,
+        "base_w": 750.3679614957955,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 31950,
+        "hours": 0.25,
+        "base_w": 741.4213562373095,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 32850,
+        "hours": 0.25,
+        "base_w": 731.8691630200137,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.2,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 33750,
+        "hours": 0.25,
+        "base_w": 721.7522858017442,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 34650,
+        "hours": 0.25,
+        "base_w": 711.1140466039205,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 35550,
+        "hours": 0.25,
+        "base_w": 700,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 36450,
+        "hours": 0.25,
+        "base_w": 688.4577380438003,
+        "base_ev_w": 0,
+        "solar_w": 235.24113679094546,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 37350,
+        "hours": 0.25,
+        "base_w": 676.536686473018,
+        "base_ev_w": 0,
+        "solar_w": 468.2167728387078,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 38250,
+        "hours": 0.25,
+        "base_w": 664.2878930606323,
+        "base_ev_w": 0,
+        "solar_w": 696.6832254107096,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 39150,
+        "hours": 0.25,
+        "base_w": 651.7638090205043,
+        "base_ev_w": 0,
+        "solar_w": 918.4402376762155,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 40050,
+        "hours": 0.25,
+        "base_w": 639.0180644032256,
+        "base_ev_w": 0,
+        "solar_w": 1131.3521683823944,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 40950,
+        "hours": 0.25,
+        "base_w": 626.1052384440104,
+        "base_ev_w": 0,
+        "solar_w": 1333.3685592470451,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 41850,
+        "hours": 0.25,
+        "base_w": 613.0806258460286,
+        "base_ev_w": 0,
+        "solar_w": 1522.5438819927492,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 42750,
+        "hours": 0.25,
+        "base_w": 600,
+        "base_ev_w": 0,
+        "solar_w": 1697.056274847714,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 43650,
+        "hours": 0.25,
+        "base_w": 586.9193741539714,
+        "base_ev_w": 0,
+        "solar_w": 1855.2250880705687,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 44550,
+        "hours": 0.25,
+        "base_w": 573.8947615559896,
+        "base_ev_w": 0,
+        "solar_w": 1995.5270695261086,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 45450,
+        "hours": 0.25,
+        "base_w": 560.9819355967744,
+        "base_ev_w": 0,
+        "solar_w": 2116.611034436052,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 46350,
+        "hours": 0.25,
+        "base_w": 548.2361909794959,
+        "base_ev_w": 0,
+        "solar_w": 2217.310878027088,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 47250,
+        "hours": 0.25,
+        "base_w": 535.7121069393677,
+        "base_ev_w": 0,
+        "solar_w": 2296.6568057573013,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 48150,
+        "hours": 0.25,
+        "base_w": 523.4633135269821,
+        "base_ev_w": 0,
+        "solar_w": 2353.884672967753,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 49050,
+        "hours": 0.25,
+        "base_w": 511.5422619561997,
+        "base_ev_w": 0,
+        "solar_w": 2388.4433440132725,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 49950,
+        "hours": 0.25,
+        "base_w": 500.00000000000006,
+        "base_ev_w": 0,
+        "solar_w": 2400,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 50850,
+        "hours": 0.25,
+        "base_w": 488.8859533960796,
+        "base_ev_w": 0,
+        "solar_w": 2388.4433440132725,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 51750,
+        "hours": 0.25,
+        "base_w": 478.24771419825584,
+        "base_ev_w": 0,
+        "solar_w": 2353.884672967753,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 52650,
+        "hours": 0.25,
+        "base_w": 468.13083697998627,
+        "base_ev_w": 0,
+        "solar_w": 2296.6568057573013,
+        "outdoor_c": 10,
+        "import_price": 1.8,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 53550,
+        "hours": 0.25,
+        "base_w": 458.5786437626906,
+        "base_ev_w": 0,
+        "solar_w": 2217.310878027088,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 54450,
+        "hours": 0.25,
+        "base_w": 449.63203850420456,
+        "base_ev_w": 0,
+        "solar_w": 2116.6110344360523,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 55350,
+        "hours": 0.25,
+        "base_w": 441.329331941753,
+        "base_ev_w": 0,
+        "solar_w": 1995.527069526109,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 56250,
+        "hours": 0.25,
+        "base_w": 433.70607753949093,
+        "base_ev_w": 0,
+        "solar_w": 1855.225088070569,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 57150,
+        "hours": 0.25,
+        "base_w": 426.7949192431123,
+        "base_ev_w": 0,
+        "solar_w": 1697.0562748477141,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 58050,
+        "hours": 0.25,
+        "base_w": 420.6254516934623,
+        "base_ev_w": 0,
+        "solar_w": 1522.5438819927492,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 58950,
+        "hours": 0.25,
+        "base_w": 415.2240934977426,
+        "base_ev_w": 0,
+        "solar_w": 1333.3685592470451,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 59850,
+        "hours": 0.25,
+        "base_w": 410.6139741009789,
+        "base_ev_w": 0,
+        "solar_w": 1131.352168382395,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 60750,
+        "hours": 0.25,
+        "base_w": 406.81483474218635,
+        "base_ev_w": 0,
+        "solar_w": 918.4402376762157,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 61650,
+        "hours": 0.25,
+        "base_w": 403.84294391935396,
+        "base_ev_w": 0,
+        "solar_w": 696.6832254107097,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 62550,
+        "hours": 0.25,
+        "base_w": 401.71102772523795,
+        "base_ev_w": 0,
+        "solar_w": 468.21677283870866,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 63450,
+        "hours": 0.25,
+        "base_w": 400.42821535227927,
+        "base_ev_w": 0,
+        "solar_w": 235.24113679094597,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 64350,
+        "hours": 0.25,
+        "base_w": 400,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 65250,
+        "hours": 0.25,
+        "base_w": 400.42821535227927,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 66150,
+        "hours": 0.25,
+        "base_w": 401.7110277252379,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 67050,
+        "hours": 0.25,
+        "base_w": 403.8429439193539,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 67950,
+        "hours": 0.25,
+        "base_w": 406.81483474218635,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 68850,
+        "hours": 0.25,
+        "base_w": 410.61397410097885,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 69750,
+        "hours": 0.25,
+        "base_w": 415.2240934977426,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 70650,
+        "hours": 0.25,
+        "base_w": 420.6254516934623,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 71550,
+        "hours": 0.25,
+        "base_w": 426.7949192431123,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 72450,
+        "hours": 0.25,
+        "base_w": 433.70607753949093,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 73350,
+        "hours": 0.25,
+        "base_w": 441.32933194175286,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 74250,
+        "hours": 0.25,
+        "base_w": 449.63203850420456,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 75150,
+        "hours": 0.25,
+        "base_w": 458.5786437626905,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 76050,
+        "hours": 0.25,
+        "base_w": 468.13083697998627,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 76950,
+        "hours": 0.25,
+        "base_w": 478.24771419825584,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 77850,
+        "hours": 0.25,
+        "base_w": 488.8859533960794,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 78750,
+        "hours": 0.25,
+        "base_w": 499.9999999999999,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 79650,
+        "hours": 0.25,
+        "base_w": 511.5422619561997,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 80550,
+        "hours": 0.25,
+        "base_w": 523.4633135269821,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 81450,
+        "hours": 0.25,
+        "base_w": 535.7121069393677,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 82350,
+        "hours": 0.25,
+        "base_w": 548.2361909794956,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 83250,
+        "hours": 0.25,
+        "base_w": 560.9819355967743,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 84150,
+        "hours": 0.25,
+        "base_w": 573.8947615559897,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
+      },
+      {
+        "local_month": 2,
+        "start_seconds": 85050,
+        "hours": 0.25,
+        "base_w": 586.9193741539715,
+        "base_ev_w": 0,
+        "solar_w": 0,
+        "outdoor_c": 10,
+        "import_price": 0.9,
+        "export_price": 0.05,
+        "published": true,
+        "ev_available": true,
+        "pool_auxiliary_dispatch": null
       }
     ],
-    "targets": {
-      "ev_km": 360,
-      "ev_limit_kwh": 62.900000000000006,
-      "pool_c": 30.5
+    "battery": {
+      "capacity_kwh": 8,
+      "min_soc": 0.1,
+      "max_soc": 0.95,
+      "charge_max_w": 2000,
+      "discharge_max_w": 2500,
+      "charge_efficiency": 0.95,
+      "discharge_efficiency": 0.9,
+      "conversion": {
+        "revision": "synthetic-identity-conversion-v1",
+        "grid_charge": {
+          "gain": 1,
+          "overhead_w": 0
+        },
+        "surplus_charge": {
+          "gain": 1,
+          "overhead_w": 0
+        },
+        "discharge": {
+          "gain": 1,
+          "overhead_w": 0
+        },
+        "idle_loss_w": 0
+      }
     },
-    "unavailable": [
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
-      },
-      {
-        "battery": false,
-        "ev": false,
-        "pool": false
+    "car": {
+      "capacity_kwh": 50,
+      "kwh_per_km": 0.2,
+      "charge_efficiency": 0.92
+    },
+    "charger": {
+      "voltage_v": 230,
+      "phase_count": 3,
+      "min_current_a": 5,
+      "max_current_a": 16,
+      "current_step_a": 1
+    },
+    "pool_store": null,
+    "heater": null,
+    "pool_stop_c": null,
+    "initial": {
+      "battery_kwh": 3,
+      "ev_kwh": 5,
+      "pool_c": null,
+      "pool_pending_heat_kwh": null,
+      "pool_source_depletion_kwh": null,
+      "heater_state": null
+    },
+    "targets": {
+      "pool_c": null,
+      "ev_km": 200,
+      "ev_limit_kwh": 40
+    },
+    "limits": {
+      "import_w": 10000,
+      "export_w": 5000,
+      "battery_export_enabled": false,
+      "battery_export_reserve_kwh": 6,
+      "battery_export_min_price": 4,
+      "wear_per_kwh": 0.03,
+      "ev_start_preference_sek": 0.25,
+      "battery_start_preference_sek": 0.25,
+      "pool_start_cost_sek": 3
+    },
+    "rules": [
+      {
+        "key": "pool_low",
+        "threshold": 1,
+        "points": -1,
+        "required": false
+      },
+      {
+        "key": "pool_cold",
+        "threshold": 2,
+        "points": -1,
+        "required": true
+      },
+      {
+        "key": "pool_hot",
+        "threshold": 2,
+        "points": -1,
+        "required": false
+      },
+      {
+        "key": "ev_low",
+        "threshold": 50,
+        "points": -1,
+        "required": false
+      },
+      {
+        "key": "ev_short",
+        "threshold": 100,
+        "points": -1,
+        "required": true
       }
     ],
-    "work_grant": 1520000000
+    "service_guard": {
+      "pool": [
+        1,
+        2
+      ],
+      "ev": [
+        50,
+        100
+      ]
+    },
+    "accepted": [
+      {
+        "pool_on": false,
+        "ev_amps": 0,
+        "battery": "hold",
+        "charge_limit_w": 2000,
+        "discharge_limit_w": 0
+      },
+      {
+        "pool_on": false,
+        "ev_amps": 0,
+        "battery": "hold",
+        "charge_limit_w": 2000,
+        "discharge_limit_w": 0
+      },
+      {
+        "pool_on": false,
+        "ev_amps": 0,
+        "battery": "hold",
+        "charge_limit_w": 2000,
+        "discharge_limit_w": 0
+      },
+      {
+        "pool_on": false,
+        "ev_amps": 0,
+        "battery": "hold",
+        "charge_limit_w": 2000,
+        "discharge_limit_w": 0
+      },
+      {
+        "pool_on": false,
+        "ev_amps": 0,
+        "battery": "hold",
+        "charge_limit_w": 2000,
+        "discharge_limit_w": 0
+      }
+    ],
+    "released": null,
+    "unavailable": null,
+    "locked_through_seconds": 3600
   }
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RULE_KEYS } from "./ready-problem.ts";
+import { conversionSchema } from '../planner/battery-conversion-schema.ts';
 
 const number = z.number().finite();
 const storeTerm = z.object({ cap: number, grid_kwh_per_unit: number.nonnegative() }).strict();
@@ -27,7 +28,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(13),
+  abi: z.literal(14),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -59,6 +60,7 @@ export const readyProblemSchema = z.object({
     discharge_max_w: number,
     charge_efficiency: number,
     discharge_efficiency: number,
+    conversion: conversionSchema,
   }).nullable(),
   car: z.object({
     capacity_kwh: number,

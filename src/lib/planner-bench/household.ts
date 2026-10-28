@@ -53,7 +53,8 @@ export const HOUSEHOLD: Household = {
   ...parseDeviceModels({
     battery: {
       capacity_kwh: 18.08, min_soc: 0.05, max_soc: 1,
-      charge_max_w: 8_800, discharge_max_w: 9_600, charge_efficiency: 0.95, discharge_efficiency: 0.95,
+      charge_max_w: 8_800, discharge_max_w: 9_600, charge_efficiency: 0.95, discharge_efficiency: 0.95, conversion: { revision: 'synthetic-bench-identity-v1', grid_charge: { gain: 1, overhead_w: 0 },
+        surplus_charge: { gain: 1, overhead_w: 0 }, discharge: { gain: 1, overhead_w: 0 }, idle_loss_w: 0 },
     },
     car: {
       battery: { capacity_kwh: 75.6, kwh_per_km: 0.16, charge_efficiency: 0.92 },

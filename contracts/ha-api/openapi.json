@@ -13,7 +13,8 @@
       7,
       8,
       9,
-      10
+      10,
+      11
     ],
     "supported_plan_schema_versions": [
       5,
@@ -21,7 +22,8 @@
       7,
       8,
       9,
-      10
+      10,
+      11
     ],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5,
@@ -1214,9 +1216,13 @@
             "type": "object"
           },
           "battery": {
-            "type": [
-              "object",
-              "null"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RefinedBatteryInput"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "ev_battery": {
@@ -1412,6 +1418,9 @@
               },
               {
                 "$ref": "#/components/schemas/SnapshotV10"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV11"
               }
             ]
           },
@@ -2372,6 +2381,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanV10"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV11"
               }
             ]
           },
@@ -3566,6 +3578,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanV10"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV11"
               }
             ]
           },
@@ -3638,7 +3653,7 @@
                 "$ref": "#/components/schemas/PlanV8"
               },
               "battery_execution": {
-                "$ref": "#/components/schemas/BatteryExecutionContractV2"
+                "$ref": "#/components/schemas/BatteryExecutionContractV3"
               },
               "battery_demand": {
                 "$ref": "#/components/schemas/BatteryDemandV1"
@@ -4215,6 +4230,360 @@
             }
           }
         }
+      },
+      "SnapshotV11": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 11
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "battery_execution_feedback": {
+                "$ref": "#/components/schemas/BatteryExecutionFeedbackV1"
+              }
+            }
+          }
+        ]
+      },
+      "PlanV11": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope",
+              "execution_plan"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 11
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "execution_plan": {
+                "$ref": "#/components/schemas/PlanV8"
+              },
+              "battery_execution": {
+                "$ref": "#/components/schemas/BatteryExecutionContractV3"
+              },
+              "battery_demand": {
+                "$ref": "#/components/schemas/BatteryDemandV1"
+              }
+            }
+          }
+        ]
+      },
+      "BatteryExecutionReferenceIntervalV3": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start_ms",
+          "end_ms",
+          "stored_start_mwh",
+          "stored_end_mwh",
+          "target_kind",
+          "charge_ac_mwh",
+          "discharge_ac_mwh",
+          "pv_mwh",
+          "load_mwh",
+          "import_mwh",
+          "export_mwh",
+          "curtailed_mwh",
+          "unserved_mwh",
+          "rounding_mwh",
+          "instruction",
+          "installation_mwh"
+        ],
+        "properties": {
+          "start_ms": {
+            "type": "integer"
+          },
+          "end_ms": {
+            "type": "integer"
+          },
+          "stored_start_mwh": {
+            "type": "integer"
+          },
+          "stored_end_mwh": {
+            "type": "integer"
+          },
+          "target_kind": {
+            "type": "string"
+          },
+          "charge_ac_mwh": {
+            "type": "integer"
+          },
+          "discharge_ac_mwh": {
+            "type": "integer"
+          },
+          "pv_mwh": {
+            "type": "integer"
+          },
+          "load_mwh": {
+            "type": "integer"
+          },
+          "import_mwh": {
+            "type": "integer"
+          },
+          "export_mwh": {
+            "type": "integer"
+          },
+          "curtailed_mwh": {
+            "type": "integer"
+          },
+          "unserved_mwh": {
+            "type": "integer"
+          },
+          "rounding_mwh": {
+            "type": "integer"
+          },
+          "instruction": {
+            "$ref": "#/components/schemas/BatteryInstructionV1"
+          },
+          "installation_mwh": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "BatteryExecutionContractV3": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "id",
+          "plan_id",
+          "generation",
+          "mode",
+          "scope_revision",
+          "model_revision",
+          "energy_basis",
+          "capacity_mwh",
+          "minimum_mwh",
+          "maximum_mwh",
+          "export_reserve_mwh",
+          "valid_until_ms",
+          "source_receipt",
+          "previous_contract_id",
+          "intervals",
+          "objectives",
+          "recovery",
+          "dispositions",
+          "demand",
+          "storage"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "controlling",
+              "control_verification"
+            ]
+          },
+          "scope_revision": {
+            "type": "string"
+          },
+          "model_revision": {
+            "type": "string"
+          },
+          "energy_basis": {
+            "const": "stored_energy_mwh"
+          },
+          "capacity_mwh": {
+            "type": "integer"
+          },
+          "minimum_mwh": {
+            "type": "integer"
+          },
+          "maximum_mwh": {
+            "type": "integer"
+          },
+          "export_reserve_mwh": {
+            "type": "integer"
+          },
+          "valid_until_ms": {
+            "type": "integer"
+          },
+          "source_receipt": {
+            "type": "integer"
+          },
+          "previous_contract_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intervals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionReferenceIntervalV3"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionObjective"
+            }
+          },
+          "recovery": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionRecovery"
+            }
+          },
+          "dispositions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatteryExecutionDisposition"
+            }
+          },
+          "schema": {
+            "const": "battery-plan-execution-v3"
+          },
+          "demand": {
+            "$ref": "#/components/schemas/BatteryDemandV1"
+          },
+          "storage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "charge_efficiency",
+              "discharge_efficiency"
+            ],
+            "properties": {
+              "charge_efficiency": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              },
+              "discharge_efficiency": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1
+              }
+            }
+          }
+        }
+      },
+      "BatteryConversionCurve": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gain",
+          "overhead_w"
+        ],
+        "properties": {
+          "gain": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "overhead_w": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        }
+      },
+      "BatteryConversion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "grid_charge",
+          "surplus_charge",
+          "discharge",
+          "idle_loss_w"
+        ],
+        "properties": {
+          "revision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "idle_loss_w": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "grid_charge": {
+            "$ref": "#/components/schemas/BatteryConversionCurve"
+          },
+          "surplus_charge": {
+            "$ref": "#/components/schemas/BatteryConversionCurve"
+          },
+          "discharge": {
+            "$ref": "#/components/schemas/BatteryConversionCurve"
+          }
+        }
+      },
+      "RefinedBatteryInput": {
+        "type": "object",
+        "required": [
+          "capacity_kwh",
+          "soc",
+          "min_soc",
+          "max_soc",
+          "charge_max_w",
+          "discharge_max_w",
+          "charge_efficiency",
+          "discharge_efficiency",
+          "conversion"
+        ],
+        "properties": {
+          "capacity_kwh": {
+            "type": "number"
+          },
+          "soc": {
+            "type": "number"
+          },
+          "min_soc": {
+            "type": "number"
+          },
+          "max_soc": {
+            "type": "number"
+          },
+          "charge_max_w": {
+            "type": "number"
+          },
+          "discharge_max_w": {
+            "type": "number"
+          },
+          "charge_efficiency": {
+            "type": "number"
+          },
+          "discharge_efficiency": {
+            "type": "number"
+          },
+          "conversion": {
+            "$ref": "#/components/schemas/BatteryConversion"
+          }
+        },
+        "description": "Power ratings are terminal DC. Efficiency ratios are terminal/stored only. Directional AC conversion and installation overhead are required."
       }
     }
   }

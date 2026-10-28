@@ -47,7 +47,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 13;
+  abi: 14;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;

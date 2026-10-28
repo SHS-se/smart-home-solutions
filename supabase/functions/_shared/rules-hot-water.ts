@@ -5,6 +5,7 @@ import type { NativeCommand } from "./planner-wasm/ready-problem.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { scheduleHotWater } from "./hot-water-opportunities.ts";
 import { nativeOwnerHeld } from "./rules-commitments.ts";
+import { chargeDcPower, dischargeDcPower, outputPower } from './planner/battery-conversion.ts';
 
 type Selection = Extract<SolveOutcome, { kind: "selected" }>["selection"];
 
@@ -15,18 +16,28 @@ export function hotWaterSurplusPermissions(input: PreparedRulesInput, baseline: 
   const p = input.problem, battery = p.battery;
   const allowed = water.map(() => false);
   if (!battery) return allowed;
-  const refill = baseline.map((q, i) => ({ i, wh: q.discharge_w === 0 && q.battery_kwh! >= battery.max_soc * battery.capacity_kwh - 1e-6
-    ? Math.max(0, -q.net_w) * p.slots[i].hours * battery.charge_efficiency * battery.discharge_efficiency : 0 })).filter(r => r.wh > 0);
+  const refill = baseline.map((q, i) => {
+    const s = p.slots[i], hours = s.hours + Math.min(0, s.start_seconds) / 3600;
+    const house = s.base_w + q.pool_w + q.ev_w;
+    const possibleDc = Math.min(battery.charge_max_w,
+      chargeDcPower(battery.conversion, q.charge_w + Math.max(0, -q.net_w), s.solar_w, house));
+    return { i, wh: q.discharge_w === 0 && q.battery_kwh! >= battery.max_soc * battery.capacity_kwh - 1e-6
+      ? Math.max(0, possibleDc - q.charge_dc_w) * hours * battery.charge_efficiency : 0 };
+  }).filter(r => r.wh > 0);
   const spent = baseline.map(() => 0);
   for (let i = input.locked_slots.length; i < water.length; i++) {
     if (input.fixed_slots[i]) continue;
     if (water[i] <= 0) continue;
     const hours = p.slots[i].hours + Math.min(0, p.slots[i].start_seconds) / 3600;
-    const wh = Math.max(0, water[i] - Math.max(0, p.slots[i].solar_w - (p.slots[i].base_w + baseline[i].pool_w + baseline[i].ev_w))) * hours;
+    const extraAc = Math.max(0, water[i] - Math.max(0, p.slots[i].solar_w - (p.slots[i].base_w + baseline[i].pool_w + baseline[i].ev_w)));
+    const totalDc = dischargeDcPower(battery.conversion, baseline[i].discharge_w + extraAc);
+    if (totalDc > battery.discharge_max_w + 1e-7
+      || outputPower(battery.conversion.discharge, totalDc) + 1e-7 < baseline[i].discharge_w + extraAc) continue;
+    const wh = Math.max(0, totalDc - baseline[i].discharge_dc_w) / battery.discharge_efficiency * hours;
     const next = refill.find(r => r.i > i && r.wh >= wh);
     if (!next || wh <= 0) continue;
     const room = Math.min(...baseline.slice(i, next.i).map((q, j) =>
-      (q.battery_kwh! - battery.min_soc * battery.capacity_kwh) * 1000 * battery.discharge_efficiency - spent[i + j]));
+      (q.battery_kwh! - battery.min_soc * battery.capacity_kwh) * 1000 - spent[i + j]));
     if (room + 1e-6 < wh) continue;
     allowed[i] = true;
     next.wh -= wh;

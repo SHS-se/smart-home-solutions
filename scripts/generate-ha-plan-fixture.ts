@@ -1,3 +1,4 @@
+import { syntheticIdentityConversion } from '../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 import type { OperatingScope } from "../supabase/functions/_shared/planner/operating-scope.ts";
 import {
   type OptimisationSnapshotV6,
@@ -176,7 +177,7 @@ export function batterySnapshot(): OptimisationSnapshotV8 {
     ev_battery: null, services: [],
     policy: {...snapshot.policy, battery_end_of_solar_target_soc: .8, terminal_soc_min: .2, battery_export_reserve_soc: .8},
     battery: {capacity_kwh: 18.08, soc: .5, min_soc: .05, max_soc: 1,
-      charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95},
+      charge_max_w: 8800, discharge_max_w: 9600, charge_efficiency: .95, discharge_efficiency: .95, conversion: syntheticIdentityConversion()},
     sources: {...snapshot.sources, battery: {...snapshot.sources.base_load,
       entity_ids: ["sensor.sigen_plant_battery_state_of_charge"]}},
     slots: snapshot.slots.map((slot, index) => ({...slot,

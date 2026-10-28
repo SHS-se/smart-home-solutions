@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 13,
+    abi: 14,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -221,7 +221,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 13 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 14 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(

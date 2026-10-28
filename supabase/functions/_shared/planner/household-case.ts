@@ -1,4 +1,4 @@
-import { conversionSchema } from "./battery-conversion.ts";
+import { conversionSchema } from "./battery-conversion-schema.ts";
 /** Closed resolved-model input for scoring and projections, not an HA plan schema. */
 import { z } from "zod";
 import { validateCurve } from "./store-value.ts";
