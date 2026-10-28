@@ -66,26 +66,42 @@ Deno.test('trial sizes and missing battery characteristics fail explicitly; name
   assertEquals(solarSizing({ peak_kw: 8, inverter_kw: 5 }), current);
   assertThrows(() => solarSizing({ peak_kw: -1, inverter_kw: 5 }), Error, 'Invalid installed');
 });
-Deno.test('equipment benefit matches exact periods, excludes demand fees and balances stored energy without annualising', () => {
+Deno.test('equipment benefit matches displayed monthly costs and ignores stored-energy valuations', () => {
   const source = input();
   const original = comparisonMonthLedger(captureStub({ input: source, result: projectBaseline(source, engine, false), engineHash: 'synthetic' }));
   const reference = structuredClone(original), selected = structuredClone(original);
   reference.modeled.schedulerBill = { totalSek: 500, supplierFixedSek: 20, gridFixedSek: 50, gridPeakSek: 100, peakKw: 2 };
   selected.modeled.schedulerBill = { totalSek: 600, supplierFixedSek: 20, gridFixedSek: 50, gridPeakSek: 300, peakKw: 6 };
+  reference.modeled.baselineBill = { totalSek: 700, supplierFixedSek: 20, gridFixedSek: 50, gridPeakSek: 80, peakKw: 2 };
+  selected.modeled.baselineBill = { totalSek: 660, supplierFixedSek: 20, gridFixedSek: 50, gridPeakSek: 120, peakKw: 3 };
   reference.modeled.schedulerService.endCreditSek = 0;
   selected.modeled.schedulerService.endCreditSek = -30;
   const benefit = equipmentBenefit([reference], [selected])!;
   assertEquals(benefit.rows.length, 1);
-  assertEquals(benefit.currentSek, 400);
-  assertEquals(benefit.selectedSek, 330);
-  assertEquals(benefit.savingSek, 70);
-  // A lower cash bill due solely to extra initial inventory is not an upgrade benefit.
-  selected.modeled.schedulerBill.totalSek = 670;
-  assertEquals(equipmentBenefit([reference], [selected])!.savingSek, 0);
+  assertEquals(benefit.withShs.currentSek, 400);
+  assertEquals(benefit.withShs.selectedSek, 300);
+  assertEquals(benefit.withShs.savingSek, 100);
+  assertEquals(benefit.withoutShs.currentSek, 620);
+  assertEquals(benefit.withoutShs.selectedSek, 540);
+  assertEquals(benefit.withoutShs.savingSek, 80);
+  // The user's financial comparison must not include hidden energy valuations.
+  reference.modeled.baselineService.endCreditSek = 500;
+  selected.modeled.baselineService.endCreditSek = -300;
+  reference.modeled.schedulerService.endCreditSek = 1000;
+  selected.modeled.schedulerService.endCreditSek = -900;
+  assertEquals(equipmentBenefit([reference], [selected]), benefit);
   selected.modeled.schedulerBill.totalSek = 700;
-  assertEquals(equipmentBenefit([reference], [selected])!.savingSek, -30);
+  assertEquals(equipmentBenefit([reference], [selected])!.withShs.savingSek, 0);
+  selected.modeled.schedulerBill.totalSek = 730;
+  assertEquals(equipmentBenefit([reference], [selected])!.withShs.savingSek, -30);
   for (const change of [{ end: '2026-09-01T00:00:00.000Z' }, { coverage: 1 }, { timeZone: 'UTC' }]) {
     assertEquals(equipmentBenefit([reference], [{ ...selected, ...change }]), null);
   }
   assertEquals(equipmentBenefit([], [selected]), null);
+  reference.modeled.schedulerBill.totalSek = 500.004;
+  selected.modeled.schedulerBill.totalSek = 600.995;
+  const displayed = equipmentBenefit([reference], [selected])!.withShs;
+  assertEquals(displayed.currentSek, 400);
+  assertEquals(displayed.selectedSek, 301);
+  assertEquals(displayed.savingSek, 99, 'Savings subtract the exact displayed costs, not hidden fractions of an öre');
 });

@@ -378,7 +378,7 @@ test.describe('requesting a replan', () => {
     await page.getByTestId('roi-equipment-apply').click();
     await expect(page.getByTestId('savings-assumptions')).toContainText('8 kWp · 0.3 kW AC');
     await expectRoiMonths(page, '(1/1)');
-    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('roi-equipment-saving-with-shs')).toContainText('SEK');
     await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/1\/1/);
     await expect(page.getByTestId('roi-equipment-comparison')).toContainText(/history cannot quantify|inte går att beräkna/);
     expect(history.reads()).toBeGreaterThan(reads);
@@ -392,12 +392,37 @@ test.describe('requesting a replan', () => {
     expect(exported.input.problem.battery.capacity_kwh).toBe(.2);
     expect(Math.max(...exported.result.series.solarW)).toBe(300);
     expect(exported.input.recorded.ledger).toEqual(history.saved()!.months['2026-09'].ledger.recorded);
+    const equipmentCosts = page.getByTestId('roi-equipment-costs-with-shs').locator('td');
+    const selectedCost = page.getByTestId('scheduler-totals').locator('td').nth(1);
+    await expect(equipmentCosts.nth(1)).toHaveText((await selectedCost.textContent())!);
+    const money = (amount: number) => `${amount.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} SEK`;
+    const differenceOfShown = (amounts: string[]) => {
+      const values = amounts.map(text => Number(text.replace(/[^0-9,-]/g, '').replace(',', '.')));
+      return money(values[0] - values[1]);
+    };
+    const installedBill = history.saved()!.months['2026-09'].ledger.modeled.schedulerBill;
+    const installedCost = installedBill.totalSek - installedBill.gridPeakSek;
+    await expect(equipmentCosts.nth(0)).toHaveText(money(installedCost));
+    await expect(equipmentCosts.nth(1)).toHaveText(money(exported.modeled.schedulerBill.totalSek));
+    await expect(page.getByTestId('roi-equipment-saving-with-shs')).toHaveText(differenceOfShown(await equipmentCosts.allTextContents()));
+
+    const equipmentWithout = page.getByTestId('roi-equipment-costs-without-shs').locator('td');
+    const selectedWithout = page.getByTestId('scheduler-totals').locator('td').nth(0);
+    const installedWithoutBill = history.saved()!.months['2026-09'].ledger.modeled.baselineBill;
+    const installedWithout = installedWithoutBill.totalSek - installedWithoutBill.gridPeakSek;
+    await expect(equipmentWithout.nth(0)).toHaveText(money(installedWithout));
+    await expect(equipmentWithout.nth(1)).toHaveText((await selectedWithout.textContent())!);
+    await expect(equipmentWithout.nth(1)).toHaveText(money(exported.modeled.baselineBill.totalSek));
+    await expect(page.getByTestId('roi-equipment-saving-without-shs')).toHaveText(differenceOfShown(await equipmentWithout.allTextContents()));
+
+    await page.getByTestId('roi-equipment-comparison').screenshot({ path: testInfo.outputPath('equipment-costs-desktop.png') });
     // An unapplied draft never relabels the totals or their graphs.
     await page.locator('#roi-array').fill('20');
     await expect(page.getByTestId('savings-assumptions')).toContainText('8 kWp');
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.getByTestId('roi-equipment').screenshot({ path: testInfo.outputPath('equipment-assumptions-mobile.png') });
+    await page.getByTestId('roi-equipment-comparison').screenshot({ path: testInfo.outputPath('equipment-costs-mobile.png') });
     await page.getByTestId('roi-equipment-reset').click();
     await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
     await expect(page.getByTestId('scheduler-totals')).toHaveText(currentTotal!);
@@ -427,7 +452,7 @@ test.describe('requesting a replan', () => {
     await page.locator('#roi-battery').fill('0.2');
     await page.getByTestId('roi-equipment-apply').click();
     await expectRoiMonths(page, '(1/1)');
-    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('roi-equipment-saving-with-shs')).toContainText('SEK');
     expect(unexpectedSaves).toBe(0);
     expect(JSON.stringify(history.saved())).toBe(installedReport);
     // Recalculating the selected scenario must also be a read-only operation.
@@ -444,7 +469,7 @@ test.describe('requesting a replan', () => {
     failWorker = false;
     await page.reload();
     await expectRoiMonths(page, '(1/1)');
-    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('roi-equipment-saving-with-shs')).toContainText('SEK');
     await expect(page.getByTestId('savings-assumptions')).toContainText(/Battery 0.2 kWh|Batteri 0.2 kWh/);
     await page.getByTestId('comparison-settings').locator('summary').click();
     await expect(page.locator('#roi-battery')).toHaveValue('0.2');
@@ -476,7 +501,7 @@ test.describe('requesting a replan', () => {
     await page.locator('#roi-battery').fill('0');
     await page.getByTestId('roi-equipment-apply').click();
     await expectRoiMonths(page, '(1/1)');
-    await expect(page.getByTestId('roi-equipment-saving')).toContainText('SEK');
+    await expect(page.getByTestId('roi-equipment-saving-with-shs')).toContainText('SEK');
     await expect(page.getByTestId('savings-assumptions')).toContainText('0 kWp · 0 kW AC');
     await expect(page.getByTestId('savings-assumptions')).toContainText(/Battery 0 kWh|Batteri 0 kWh/);
     expect(history.saved()!.model.capabilities.battery).toBe(true);

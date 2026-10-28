@@ -51,8 +51,8 @@ export function equipmentInput(input: BaselineInput, trial: EquipmentTrial): Bas
     problem: { ...input.problem, battery, initial, limits, slots } };
 }
 
-/** Compare common completed intervals; account for changed stored-energy inventory
- * using the simulator's existing end-credit terms, without annual extrapolation. */
+/** Compare both operating modes on the same bill basis as the monthly table.
+ * Stored-energy valuations are not electricity-bill savings. */
 export function equipmentBenefit(reference: readonly MonthLedger[], selected: readonly MonthLedger[]) {
   const byMonth = new Map(reference.map(month => [month.month, month]));
   const rows = selected.flatMap(month => {
@@ -60,15 +60,24 @@ export function equipmentBenefit(reference: readonly MonthLedger[], selected: re
     if (!current || current.start !== month.start || current.end !== month.end || current.timeZone !== month.timeZone
       || current.coverage !== month.coverage || current.solar.profileHash !== month.solar.profileHash
       || current.replay.engine !== month.replay.engine || current.replay.protocol !== month.replay.protocol) return [];
-    const currentSek = modeledCosts(current.modeled).scheduler.totalSek - current.modeled.schedulerService.endCreditSek;
-    const selectedSek = modeledCosts(month.modeled).scheduler.totalSek - month.modeled.schedulerService.endCreditSek;
-    return [{ month: month.month, currentSek, selectedSek, savingSek: currentSek - selectedSek,
-      currentImportKwh: current.scheduler.importKwh, selectedImportKwh: month.scheduler.importKwh,
-      currentExportKwh: current.scheduler.exportKwh, selectedExportKwh: month.scheduler.exportKwh }];
+    const currentCosts = modeledCosts(current.modeled), selectedCosts = modeledCosts(month.modeled);
+    const compare = (mode: 'baseline' | 'scheduler') => {
+      const currentSek = currentCosts[mode].totalSek, selectedSek = selectedCosts[mode].totalSek;
+      return { currentSek, selectedSek, savingSek: currentSek - selectedSek,
+        currentImportKwh: current[mode].importKwh, selectedImportKwh: month[mode].importKwh,
+        currentExportKwh: current[mode].exportKwh, selectedExportKwh: month[mode].exportKwh };
+    };
+    return [{ month: month.month, withoutShs: compare('baseline'), withShs: compare('scheduler') }];
   });
   if (!rows.length) return null;
-  const sum = (key: keyof Omit<typeof rows[number], 'month'>) => rows.reduce((n, row) => n + row[key], 0);
-  return { rows, currentSek: sum('currentSek'), selectedSek: sum('selectedSek'), savingSek: sum('savingSek'),
-    currentImportKwh: sum('currentImportKwh'), selectedImportKwh: sum('selectedImportKwh'),
-    currentExportKwh: sum('currentExportKwh'), selectedExportKwh: sum('selectedExportKwh') };
+  const displayedMoney = new Intl.NumberFormat('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const roundedSek = (amount: number) => Number(displayedMoney.format(amount));
+  const total = (mode: 'withoutShs' | 'withShs') => {
+    const sum = (key: keyof typeof rows[number][typeof mode]) => rows.reduce((n, row) => n + row[mode][key], 0);
+    const currentSek = roundedSek(sum('currentSek')), selectedSek = roundedSek(sum('selectedSek'));
+    return { currentSek, selectedSek, savingSek: roundedSek(currentSek - selectedSek),
+      currentImportKwh: sum('currentImportKwh'), selectedImportKwh: sum('selectedImportKwh'),
+      currentExportKwh: sum('currentExportKwh'), selectedExportKwh: sum('selectedExportKwh') };
+  };
+  return { rows, withoutShs: total('withoutShs'), withShs: total('withShs') };
 }
