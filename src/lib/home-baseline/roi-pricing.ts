@@ -15,6 +15,16 @@ export interface ModeledCosts {
   savingSek: number;
 }
 
+const money = new Intl.NumberFormat('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const roundedSek = (amount: number) => Number(money.format(amount));
+
+/** All report arithmetic uses the monthly amounts the customer can see. */
+export function monthlyBillAmounts(modeled: Pick<ModelComparison, 'baselineBill' | 'schedulerBill'>) {
+  const costs = modeledCosts(modeled);
+  const withoutSek = roundedSek(costs.baseline.totalSek), withSek = roundedSek(costs.scheduler.totalSek);
+  return { withoutSek, withSek, savingSek: roundedSek(withoutSek - withSek) };
+}
+
 /** Simulation receipts retain dated tariff evidence and stable pool identities.
  * Payable ROI model costs exclude demand charges; Actual remains invoice evidence. */
 export function modeledCosts(modeled: Pick<ModelComparison, 'baselineBill' | 'schedulerBill'>): ModeledCosts {

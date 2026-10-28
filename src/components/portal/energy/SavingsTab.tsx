@@ -93,18 +93,23 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
   const from = settings.from || (earliest > twelveBack ? earliest : twelveBack), to = settings.to || latest;
   const referenceState = useSyncExternalStore(baseline.savings.subscribe, baseline.savings.snapshot);
   const state = useSyncExternalStore(active.savings.subscribe, active.savings.snapshot);
+  const preparingReference = !!trial && referenceState.running;
   useEffect(() => {
     if (!from || !to || !homeId) return;
-    baseline.savings.setRange(from, to); void baseline.savings.calculate();
-    return () => baseline.savings.cancel();
-  }, [baseline, from, to, homeId]);
-  useEffect(() => {
-    if (!trial || !from || !to) return;
-    trial.savings.setRange(from, to); void trial.savings.calculate();
-    return () => trial.savings.cancel();
-  }, [trial, from, to]);
+    let cancelled = false;
+    baseline.savings.setRange(from, to);
+    trial?.savings.setRange(from, to);
+    // Finish refreshing the reference before fixing the trial's time boundary.
+    void baseline.savings.calculate().then(() => {
+      if (!cancelled && trial) void trial.savings.calculate();
+    });
+    return () => { cancelled = true; baseline.savings.cancel(); trial?.savings.cancel(); };
+  }, [baseline, trial, from, to, homeId]);
   const oreIncVat = (sekPerKwhExVat: number) => `${(sekPerKwhExVat * (1 + ROI_SUPPLIER_TERMS.definition.vat_rate) * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${t('öre/kWh', 'öre/kWh')}`;
-  const errors = [...new Set([anchor.isError ? anchor.error.message : null, state.error].filter((message): message is string => !!message))];
+  const errors = [...new Set([anchor.isError ? anchor.error.message : null, state.error,
+    ...(selectedEquipment ? [referenceState.error, ...referenceState.rows.flatMap(row => row.status === 'failed'
+      ? [`${t('Nuvarande utrustning', 'Current equipment')}, ${row.month}: ${row.error}`] : [])] : []),
+  ].filter((message): message is string => !!message))];
   const displayState = state.rangeKey === `${from}|${to}` ? state : { ...state, rows: [], error: null };
   const referenceMonths = referenceState.rangeKey === `${from}|${to}` ? referenceState.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
   const months = state.rangeKey === `${from}|${to}` ? state.rows.flatMap(row => row.status === 'done' ? [row.ledger] : []) : [];
@@ -185,17 +190,18 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
       {ready && <p className="mt-4 text-xs text-muted-foreground">{forecast.rows.length}/{state.rows.length} {t('månader beräknade', 'months calculated')}</p>}
     </section>
     <Card data-testid="comparison-monthly"><CardHeader className="flex-row flex-wrap items-center justify-between gap-3"><CardTitle className="text-lg">{t('Månad för månad', 'Month by month')}</CardTitle>
-      {state.running ? <Button variant="outline" onClick={active.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
+      {preparingReference ? <Button variant="outline" disabled data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Beräknar nuvarande utrustning…', 'Calculating current equipment…')}</Button>
+        : state.running ? <Button variant="outline" onClick={active.savings.cancel} data-testid="scheduler-calculate"><Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Avbryt', 'Cancel')}</Button>
         : <Button variant="outline" className="min-h-11" disabled={!homeId || !state.rows.length} onClick={() => { setGraphOpen(false); void active.savings.calculate(true); }} data-testid="scheduler-calculate">{t('Beräkna om', 'Recalculate')}</Button>}
     </CardHeader><CardContent className="space-y-3">
       <ForecastTable state={displayState} forecast={forecast} onOpenMonth={month => { setGraphOpen(true); void active.viewer.showMonth(month); }} />
-      <p className="text-xs text-muted-foreground">{t('Ingen av kolumnerna innehåller effektavgiften.', 'Neither column includes the demand charge.')}</p>
+      <p className="text-xs text-muted-foreground">{t('Beloppen innehåller köpt el, ersättning för såld el och fasta elhandels- och elnätsavgifter. Effektavgift och SHS-abonnemang ingår inte. Besparing är kostnaden utan SHS minus kostnaden med SHS, med samma utrustning.', 'Amounts include electricity purchases, export income and fixed supplier and grid fees. Demand charges and the SHS subscription are excluded. Saving is the cost without SHS minus the cost with SHS, using the same equipment.')}</p>
       {track ? <p className="text-sm" data-testid="track-record">{t(
         `Facit: under de ${track.rows.length} ${track.rows.length === 1 ? 'månad' : 'månader'} SHS styrde huset blev den uppmätta besparingen ${sek(track.measuredSek)}, mot ${sek(track.estimatedSek)} uppskattat för samma månader${track.realised !== null ? ` (${Math.round(track.realised * 100)} %)` : ''}.`,
         `Track record: in the ${track.rows.length} ${track.rows.length === 1 ? 'month' : 'months'} SHS controlled the home, the measured saving was ${sek(track.measuredSek)}, against ${sek(track.estimatedSek)} estimated for the same months${track.realised !== null ? ` (${Math.round(track.realised * 100)}%)` : ''}.`)}</p>
         : control.isSuccess && <p className="text-xs text-muted-foreground" data-testid="track-record-pending">{t('Facit: börjar med den första hela månaden SHS styr huset.', 'Track record: starts with the first full month SHS controls the home.')}</p>}
     </CardContent></Card>
-    {selectedEquipment && <EquipmentComparison benefit={benefit} totalMonths={displayState.rows.length} solarChanged={!!selectedEquipment.solar} />}
+    {selectedEquipment && <EquipmentComparison benefit={benefit} months={displayState.rows.map(row => row.month)} solarChanged={!!selectedEquipment.solar} />}
     <HomeChangesCard customerId={customerId} sekPerKwh={sekPerKwh} />
     {installations.isError && <p role="alert" className="text-sm text-destructive">{installations.error.message}</p>}
     {invoices.isError && <p role="alert" className="text-sm text-destructive">{invoices.error.message}</p>}
@@ -219,8 +225,8 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-full max-w-xs"><RoiNumberField id="roi-pool-target" label={t('Pooltemperatur (°C)', 'Pool temperature (°C)')} min={POOL_TARGET_RANGE_C[0]} max={POOL_TARGET_RANGE_C[1]} value={poolDraft} onChange={setPoolDraft} /></div>
           <Button variant="outline" className="min-h-11" data-testid="roi-pool-apply" onClick={() => applyPool(poolInput!)}
-            disabled={state.running || poolInput === null || poolInput < POOL_TARGET_RANGE_C[0] || poolInput > POOL_TARGET_RANGE_C[1] || poolInput === poolC}>{t('Använd och beräkna om', 'Apply and recalculate')}</Button>
-          {comfortPoolC !== null && comfortPoolC !== poolC && <Button variant="ghost" className="min-h-11" data-testid="roi-pool-comfort" disabled={state.running} onClick={() => applyPool(comfortPoolC)}>
+            disabled={state.running || preparingReference || poolInput === null || poolInput < POOL_TARGET_RANGE_C[0] || poolInput > POOL_TARGET_RANGE_C[1] || poolInput === poolC}>{t('Använd och beräkna om', 'Apply and recalculate')}</Button>
+          {comfortPoolC !== null && comfortPoolC !== poolC && <Button variant="ghost" className="min-h-11" data-testid="roi-pool-comfort" disabled={state.running || preparingReference} onClick={() => applyPool(comfortPoolC)}>
             {t(`Använd komfortmålet ${celsius(comfortPoolC)} °C`, `Use the Comfort target, ${celsius(comfortPoolC)} °C`)}</Button>}
         </div>
         <p className="text-xs text-muted-foreground">{t('Båda kolumnerna håller poolen vid den här temperaturen, alla månader. En ändring räknar om månaderna, vilket tar några minuter för ett helt år.', 'Both columns hold the pool at this temperature, every month. A change recalculates the months, which takes a few minutes for a full year.')}</p>
@@ -233,7 +239,7 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
         <RoiNumberField id="roi-subscription" label={t('SHS-abonnemang (kr/månad)', 'SHS subscription (SEK/month)')} min={0} value={settings.subscription} onChange={v => set('subscription', v)} />
       </div>
     </details>
-    {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId} onClick={() => { setGraphOpen(true); void active.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
+    {!graphOpen && <Button variant="outline" className="min-h-11" disabled={!homeId || preparingReference} onClick={() => { setGraphOpen(true); void active.viewer.generate(); }} data-testid="roi-view-graphs">{t('Visa grafer', 'View graphs')}</Button>}
     {graphOpen && <HomeBaselineViewer session={active.viewer} homeId={homeId} bills={bills} onClose={() => setGraphOpen(false)} />}
   </div>;
 }

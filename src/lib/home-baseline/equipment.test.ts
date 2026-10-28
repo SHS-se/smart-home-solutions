@@ -3,6 +3,7 @@ import { equipmentBenefit, equipmentInput, solarSizing, type EquipmentTrial } fr
 import { baselineFixture, captureStub } from './fixture.ts';
 import { prepareHomeBaseline, projectBaseline } from './model.ts';
 import { comparisonMonthLedger } from './savings.ts';
+import { savingsForecast } from './savings-report.ts';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 
 // Independently specified synthetic nameplates and AC generation, not household captures.
@@ -104,4 +105,27 @@ Deno.test('equipment benefit matches displayed monthly costs and ignores stored-
   assertEquals(displayed.currentSek, 400);
   assertEquals(displayed.selectedSek, 301);
   assertEquals(displayed.savingSek, 99, 'Savings subtract the exact displayed costs, not hidden fractions of an öre');
+});
+
+Deno.test('all twelve equipment months and both SHS modes reconcile to the displayed monthly amounts', () => {
+  // Independently generated synthetic prices expose fractional-öre aggregation errors.
+  const source = input();
+  const original = comparisonMonthLedger(captureStub({ input: source, result: projectBaseline(source, engine, false), engineHash: 'synthetic' }));
+  const reference = Array.from({ length: 12 }, (_, index) => {
+    const start = new Date(Date.UTC(2025, 10 + index, 1)).toISOString();
+    const end = new Date(Date.UTC(2025, 11 + index, 1)).toISOString();
+    const ledger = { ...structuredClone(original), month: start.slice(0, 7), start, end, timeZone: 'UTC', coverage: 1 };
+    ledger.modeled.baselineBill = { totalSek: 100.004, supplierFixedSek: 0, gridFixedSek: 0, gridPeakSek: 0, peakKw: 0 };
+    ledger.modeled.schedulerBill = { ...ledger.modeled.baselineBill, totalSek: 80.006 };
+    return ledger;
+  });
+  const selected = structuredClone(reference);
+  selected.forEach(month => { month.modeled.baselineBill.totalSek = 90.006; month.modeled.schedulerBill.totalSek = 75.004; });
+  const benefit = equipmentBenefit(reference, selected)!;
+  assertEquals(benefit.rows.length, 12);
+  const currentTable = savingsForecast(reference, 0), selectedTable = savingsForecast(selected, 0);
+  assertEquals([benefit.withoutShs.currentSek, benefit.withoutShs.selectedSek, benefit.withoutShs.savingSek], [1200, 1080.12, 119.88]);
+  assertEquals([benefit.withShs.currentSek, benefit.withShs.selectedSek, benefit.withShs.savingSek], [960.12, 900, 60.12]);
+  assertEquals([benefit.withoutShs.currentSek, benefit.withShs.currentSek], [currentTable.withoutSek, currentTable.withSek]);
+  assertEquals([benefit.withoutShs.selectedSek, benefit.withShs.selectedSek], [selectedTable.withoutSek, selectedTable.withSek]);
 });

@@ -481,6 +481,46 @@ test.describe('requesting a replan', () => {
     await expect(page.getByTestId('roi-equipment-comparison')).toHaveCount(0);
   });
 
+  test('equipment comparison keeps the in-progress month when newer readings arrive after the reference was saved', async ({ context, page }, testInfo) => {
+    test.setTimeout(300_000);
+    const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-09', to: '2026-10' });
+    await page.clock.setFixedTime(new Date(Date.parse(history.fixture.end) + 900_000));
+    await page.goto('/portal/energy-modeling?tab=savings');
+    await expectRoiMonths(page, '(2/2)');
+    const installedReport = JSON.stringify(history.saved());
+    const currentCosts = await page.getByTestId('scheduler-totals').locator('td').allTextContents();
+    const currentThrough = (await page.getByTestId('scheduler-month-2026-10').locator('th').textContent())!;
+    // A new completed quarter exists, but the freshly saved report remains valid.
+    // This reproduces the production 12:30 versus 12:45 cutoff mismatch.
+    await context.route('**/rest/v1/energy_optimisation_actual_slots*', route => {
+      const url = new URL(route.request().url());
+      return url.searchParams.get('select') === 'start_ts' && url.searchParams.get('order')?.includes('desc')
+        ? route.fulfill({ json: { start_ts: history.fixture.end } }) : route.fallback();
+    });
+    await page.reload();
+    await expectRoiMonths(page, '(2/2)');
+    await page.getByTestId('comparison-settings').locator('summary').click();
+    await page.locator('#roi-battery').fill('0.2');
+    await page.getByTestId('roi-equipment-apply').click();
+    await expectRoiMonths(page, '(2/2)');
+    const comparison = page.getByTestId('roi-equipment-comparison');
+    await expect(comparison).toContainText(/2\/2 (months compared|månader jämförda)/);
+    await expect(page.getByTestId('scheduler-month-2026-10').locator('th')).toHaveText(currentThrough);
+    const selectedCosts = await page.getByTestId('scheduler-totals').locator('td').allTextContents();
+    for (const [index, mode] of ['without-shs', 'with-shs'].entries()) {
+      const costs = page.getByTestId(`roi-equipment-costs-${mode}`).locator('td');
+      await expect(costs.nth(0)).toHaveText(currentCosts[index]);
+      await expect(costs.nth(1)).toHaveText(selectedCosts[index]);
+    }
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+    await comparison.screenshot({ path: testInfo.outputPath('equipment-matching-periods.png') });
+    await page.getByTestId('scheduler-calculate').click();
+    await expectRoiMonths(page, '(2/2)');
+    await expect(comparison).toContainText(/2\/2 (months compared|månader jämförda)/);
+    await expect(page.getByTestId('scheduler-month-2026-10').locator('th')).toHaveText(currentThrough);
+    expect(JSON.stringify(history.saved())).toBe(installedReport);
+  });
+
   test('equipment sizing reads published nameplates and supports zero solar and battery', async ({ context, page }) => {
     test.setTimeout(300_000);
     const history = await mockRoiHistory(context, CUSTOMER_ID, HOME_ID, { from: '2026-09', to: '2026-09' });

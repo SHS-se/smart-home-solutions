@@ -1,6 +1,6 @@
 import type { BaselineInput } from './model.ts';
 import type { MonthLedger } from './savings.ts';
-import { modeledCosts } from './roi-pricing.ts';
+import { monthlyBillAmounts, roundedSek } from './roi-pricing.ts';
 
 export interface SolarSizing { arrayKwp: number; inverterKw: number }
 export interface EquipmentTrial {
@@ -60,18 +60,18 @@ export function equipmentBenefit(reference: readonly MonthLedger[], selected: re
     if (!current || current.start !== month.start || current.end !== month.end || current.timeZone !== month.timeZone
       || current.coverage !== month.coverage || current.solar.profileHash !== month.solar.profileHash
       || current.replay.engine !== month.replay.engine || current.replay.protocol !== month.replay.protocol) return [];
-    const currentCosts = modeledCosts(current.modeled), selectedCosts = modeledCosts(month.modeled);
+    const currentCosts = monthlyBillAmounts(current.modeled), selectedCosts = monthlyBillAmounts(month.modeled);
     const compare = (mode: 'baseline' | 'scheduler') => {
-      const currentSek = currentCosts[mode].totalSek, selectedSek = selectedCosts[mode].totalSek;
-      return { currentSek, selectedSek, savingSek: currentSek - selectedSek,
+      const amount = mode === 'baseline' ? 'withoutSek' : 'withSek';
+      const currentSek = currentCosts[amount], selectedSek = selectedCosts[amount];
+      return { currentSek, selectedSek, savingSek: roundedSek(currentSek - selectedSek),
         currentImportKwh: current[mode].importKwh, selectedImportKwh: month[mode].importKwh,
         currentExportKwh: current[mode].exportKwh, selectedExportKwh: month[mode].exportKwh };
     };
-    return [{ month: month.month, withoutShs: compare('baseline'), withShs: compare('scheduler') }];
+    return [{ month: month.month, end: month.end, timeZone: month.timeZone, coverage: month.coverage,
+      withoutShs: compare('baseline'), withShs: compare('scheduler') }];
   });
   if (!rows.length) return null;
-  const displayedMoney = new Intl.NumberFormat('en-US', { useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const roundedSek = (amount: number) => Number(displayedMoney.format(amount));
   const total = (mode: 'withoutShs' | 'withShs') => {
     const sum = (key: keyof typeof rows[number][typeof mode]) => rows.reduce((n, row) => n + row[mode][key], 0);
     const currentSek = roundedSek(sum('currentSek')), selectedSek = roundedSek(sum('selectedSek'));

@@ -21,6 +21,11 @@ Deno.test('saved demand evidence is excluded from the forecast and the stored le
   assertEquals([f.withoutSek, f.withSek, f.savingSek, f.netSek], [600, 400, 200, 170]);
   assertEquals(JSON.stringify(saved), before);
 });
+Deno.test('forecast arithmetic adds visible monthly cents and subtracts the visible costs without hidden fractions', () => {
+  const f = savingsForecast([month('2026-06', 1, 100.004, 80.006), month('2026-07', .5, 100.004, 80.006)], 20.01);
+  assertEquals(f.rows.map(row => [row.withoutSek, row.withSek, row.savingSek]), [[100, 80.01, 19.99], [100, 80.01, 19.99]]);
+  assertEquals([f.withoutSek, f.withSek, f.savingSek, f.subscriptionSek, f.netSek], [200, 160.02, 39.98, 30.02, 9.96]);
+});
 Deno.test('a month in progress pays its share of the subscription, and no months means no monthly figure', () => {
   const f = savingsForecast([month('2026-06', 1, 600, 400), month('2026-07', .5, 300, 350)], 30);
   assertEquals([f.coverage, f.savingSek, f.subscriptionSek, f.netSek, f.monthlyNetSek], [1.5, 150, 45, 105, 70]);
