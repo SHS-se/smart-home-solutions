@@ -5,6 +5,7 @@ import { compareModels } from './model-comparison.ts';
 import { createWasmPlanner } from '../../../supabase/functions/_shared/planner-wasm/core.ts';
 import { createCaptureSource } from './source.ts';
 import { monthPeriod } from './period.ts';
+import { withSimulationBasis } from './simulation-state.ts';
 import { seedPool, quarterPool, withPoolState } from './pool-carry.ts';
 
 const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm', import.meta.url))));
@@ -12,6 +13,7 @@ const engine = createWasmPlanner(new Uint8Array(Deno.readFileSync(new URL('../..
 Deno.test('independent pool temperatures and native heater memory carry from October into November, and frames slice the same models', async () => {
   const fixture = baselineFixture({ start: '2025-09-30T22:00:00.000Z', end: '2025-11-30T23:00:00.000Z' });
   fixture.snapshot.roi_pool_seed = { month: '2025-10', temperatureC: 28.9, hash: 'a'.repeat(64) };
+  fixture.snapshot.roi_simulation_seed = { month: '2025-10', hash: 'b'.repeat(64) };
   fixture.snapshot.device_physics!.pool!.store = { response_time_constant_h: 0, capacity_kwh_per_c: 1, loss: { kind: 'linear', kw_per_c: 0, surroundings_c: 20 } };
   fixture.snapshot.device_physics!.battery!.capacity_kwh = .1;
   fixture.snapshot.comfort!.pool!.target_c = 29.5;
@@ -21,16 +23,18 @@ Deno.test('independent pool temperatures and native heater memory carry from Oct
     generate: (_, pinned, period, signal, pool) => {
       signal.throwIfAborted(); generated.push(period.start);
       const rows = baselineFixture(period); rows.snapshot = pinned.snapshot;
-      const input = prepareHomeBaseline(rows); input.pool = pool;
+      const input = withSimulationBasis(prepareHomeBaseline(rows), pool);
       return Promise.resolve({ input, ...compareModels(input, engine), engineHash: 'test' });
     } });
   try {
     const november = await source.capture(monthPeriod(anchor, '2025-11')!, new AbortController().signal);
     const october = source.cached(monthPeriod(anchor, '2025-10')!)!;
     assertEquals(generated, ['2025-09-30T22:00:00.000Z', '2025-10-31T23:00:00.000Z']);
-    assertEquals(october.input.pool, seedPool(fixture.snapshot.roi_pool_seed));
+    assertEquals(october.input.pool!.initial, seedPool(fixture.snapshot.roi_pool_seed).initial);
     assertEquals(november.input.pool!.initial.baseline, october.result.poolStates.at(-1));
     assertEquals(november.input.pool!.initial.scheduler, october.scheduler.poolStates.at(-1));
+    assertEquals(november.input.continuation!.initial.baseline, october.result.states.at(-1));
+    assertEquals(november.input.continuation!.initial.scheduler, october.scheduler.states.at(-1));
     // One 29.5 °C target, two operators: the thermostat heats back up to it, while the scheduler
     // accepts a pool this close to it. Each month starts from its own model's end state.
     assertAlmostEquals(november.input.pool!.initial.baseline.poolC, 29.5);
@@ -48,6 +52,7 @@ Deno.test('independent pool temperatures and native heater memory carry from Oct
 
 Deno.test('a requested October seed cannot silently move to November when prerequisite history is missing', async () => {
   const fixture = baselineFixture(); fixture.snapshot.roi_pool_seed = { month: '2025-10', temperatureC: 30, hash: 'a'.repeat(64) };
+  fixture.snapshot.roi_simulation_seed = { month: '2025-10', hash: 'b'.repeat(64) };
   const anchor = { snapshot: fixture.snapshot, earliestStart: '2025-10-31T23:00:00.000Z', latestEnd: fixture.end };
   const source = createCaptureSource({ homeId: 'home', customerId: 'customer' }, { resolveAnchor: () => Promise.resolve(anchor), generate: () => { throw new Error('Unexpected model'); } });
   try { await assertRejects(() => source.capture(monthPeriod(anchor, '2025-11')!, new AbortController().signal), Error, 'needs history for 2025-10'); }

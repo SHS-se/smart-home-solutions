@@ -1,3 +1,4 @@
+import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { homePhysics, type HomeModelCapture } from './home-physics';
@@ -41,12 +42,25 @@ export async function resolveBaselineAnchor(ref: HomeRef, signal: AbortSignal): 
   if (!snapshot) throw new Error('Current home physical model is unavailable');
   if ((!latest || !first) && (!recoveredFirst || !recoveredLast)) throw new Error('No completed historical energy readings are available for this home');
   homePhysics(snapshot);
-  return { solarSizing: solarSizing(solar), snapshot: { ...snapshot, criteria, roi_solar_profile: solar?.profile_hash ?? null, roi_pool_seed: poolSeed?.seed ?? null }, earliestStart: new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString(),
+  const earliestStart = new Date(Math.min(...[first, recoveredFirst].flatMap(r => r ? [Date.parse(r.start_ts)] : []))).toISOString();
+  const seedMonth = poolSeed?.seed.month ?? localDay(earliestStart, snapshot.timezone).slice(0, 7);
+  const seedBytes = new TextEncoder().encode(JSON.stringify({ month: seedMonth, first: earliestStart, pool: poolSeed?.seed ?? null }));
+  const seedHash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', seedBytes)), n => n.toString(16).padStart(2, '0')).join('');
+  return { solarSizing: solarSizing(solar), snapshot: { ...snapshot, criteria, roi_solar_profile: solar?.profile_hash ?? null, roi_pool_seed: poolSeed?.seed ?? null, roi_simulation_seed: { month: seedMonth, hash: poolSeed?.seed.hash ?? seedHash } }, earliestStart,
     latestEnd: new Date(Math.max(...[latest ? Date.parse(latest.start_ts) + QUARTER_MS : null, recoveredLast ? Date.parse(recoveredLast.start_ts) + 3_600_000 : null].filter((t): t is number => t !== null))).toISOString() };
 }
 
 /** Read a complete explicit period without exceeding the existing RPC or REST limits. */
 export async function loadHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal) {
+  const end = Math.min(Date.parse(anchor.latestEnd), Date.parse(period.end) + 72 * 3_600_000);
+  const [input, tail] = await Promise.all([
+    loadHistoricalPeriod(ref, anchor, period, signal),
+    end > Date.parse(period.end) ? loadHistoricalPeriod(ref, anchor, { ...period, start: period.end, end: new Date(end).toISOString() }, signal) : Promise.resolve(null),
+  ]);
+  return { ...input, planningTail: { slots: tail?.problem.slots ?? [], evDemandKwh: tail?.evDemandKwh ?? [] } };
+}
+
+async function loadHistoricalPeriod(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal) {
   const { snapshot } = anchor, { start, end } = period;
   const solarProfile = snapshot.roi_solar_profile ? await read<SolarProfile | null>(scoped(ref, 'energy_roi_solar_profiles')
     .select('profile_hash,start_ts,end_ts').eq('profile_hash', snapshot.roi_solar_profile).abortSignal(signal).maybeSingle()) : null;

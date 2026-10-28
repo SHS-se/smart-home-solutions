@@ -18,9 +18,9 @@ export function createEquipmentTrial(ref: HomeRef, reference: CaptureSource, tri
       // month. Replay the trial to that exact cutoff, even if new readings arrived.
       return saved ? { ...anchor, latestEnd: saved.ledger.end } : anchor;
     },
-    generate: async (home, anchor, period, signal, pool) => {
+    generate: async (home, anchor, period, signal, basis) => {
       const input = await loadHomeBaseline(home, anchor, period, signal);
-      return projectHomeBaseline(equipmentInput(input, pinned), signal, pool);
+      return projectHomeBaseline(equipmentInput(input, pinned), signal, basis);
     },
   });
 }

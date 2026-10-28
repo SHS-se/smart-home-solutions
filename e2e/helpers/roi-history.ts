@@ -1,6 +1,7 @@
 import { expect, type BrowserContext, type Page } from '../../playwright-fixture';
 import { CALCULATION_VERSION, type SavedReport } from '../../src/lib/home-baseline/saved-months';
 import { baselineFixture, testTariff } from '../../src/lib/home-baseline/fixture';
+import { homeMonthBounds } from '../../src/lib/energy-shift/home-time';
 import { ROI_SUPPLIER_TERMS } from '../../supabase/functions/_shared/roi-supplier-terms';
 
 /** Real native projection inputs, with sensor outages spanning May–August. */
@@ -25,7 +26,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
   await context.route('**/rest/v1/energy_billing_documents*', route => route.fulfill({ json: ['05','06','07','08','09'].flatMap(month => ['electricity','grid'].map(kind => ({ id: `${month}:${kind}`, customer_id: customerId, document_kind: kind, period_start: `2026-${month}-01`, period_end: `2026-${month}-${['06','09'].includes(month) ? '30' : '31'}`, total_amount_sek: kind === 'electricity' ? 123 : 456, consumption_kwh: 100, exported_kwh: null, peak_demand_kw: null, file_path: null, energy_billing_line_items: [] }))) }));
   await context.route('**/rest/v1/energy_roi_solar_profiles*', route => route.fulfill({ json: null }));
   await context.route('**/rest/v1/energy_roi_pool_seeds*', route => route.fulfill({ json: null }));
-  await context.route('**/rest/v1/energy_roi_pool_checkpoints*', route => route.fulfill({ json: [] }));
+  await context.route('**/rest/v1/energy_roi_checkpoints*', route => route.fulfill({ json: Object.entries(report?.checkpoints ?? {}).map(([month, checkpoint]) => ({ month, checkpoint })) }));
   await context.route('**/rest/v1/energy_roi_installations*', route => route.fulfill({ json: [
     { equipment: 'solar', installed_month: '2026-05' }, { equipment: 'battery', installed_month: '2026-05' },
     { equipment: 'bergvarme', installed_month: '2026-09' },
@@ -47,6 +48,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     const month = body.p_ledger.month, old = report!.months[month];
     expect(body.p_expected_hash).toBe(old?.inputHash ?? null);
     report!.months[month] = { ledger: body.p_ledger, inputHash: body.p_input_hash, computedAt: new Date(Date.parse(fixture.end) + 900_000).toISOString() };
+    if (body.p_ledger.continuation && body.p_ledger.coverage === 1) report!.checkpoints[month] = { ...body.p_ledger.continuation, month, start: body.p_ledger.start, end: body.p_ledger.end, inputHash: body.p_input_hash };
     await route.fulfill({ json: report });
   });
   await context.route('**/rest/v1/energy_roi_history_hours*', async route => {
@@ -90,7 +92,7 @@ export async function mockRoiHistory(context: BrowserContext, customerId: string
     expect(url.searchParams.get('home_id')).toBe(`eq.${homeId}`);
     const filters = url.searchParams.getAll('start_ts'), from = filters.find(v => v.startsWith('gte.'))?.slice(4), end = filters.find(v => v.startsWith('lt.'))?.slice(3), before = filters.find(v => v.startsWith('lte.'))?.slice(4);
     expect(Number(url.searchParams.get('limit'))).toBeLessThanOrEqual(1000);
-    if (select === 'start_ts') { await route.fulfill({ json: { start_ts: url.searchParams.get('order')?.includes('desc') ? fixture.actual.at(-1)!.start_ts : '2026-04-30T22:00:00.000Z' } }); return; }
+    if (select === 'start_ts') { await route.fulfill({ json: { start_ts: url.searchParams.get('order')?.includes('desc') ? fixture.actual.at(-1)!.start_ts : new Date(homeMonthBounds(`${range.from}-15T12:00:00.000Z`, 0, fixture.snapshot.timezone).startMs).toISOString() } }); return; }
     if (select === 'start_ts,ev_soc') { await route.fulfill({ json: before! < '2026-08-31T21:45:00.000Z' ? null : { start_ts: before, ev_soc: .79 } }); return; }
     if (table === 'energy_optimisation_pool_slots') { await route.fulfill({ json: from! < '2026-08-31T21:45:00.000Z' ? [] : [{ start_ts: from, water_temperature_c: 31 }] }); return; }
     const rows = baselineFixture({ start: new Date(Date.parse(from!) + 900_000).toISOString(), end: end! }).actual;
@@ -126,3 +128,6 @@ export async function expectRoiMonths(page: Page, expected: string, timeout = 36
     throw error;
   }
 }
+
+/** Parse the visible Swedish-locale SEK amount, including its minus sign. */
+export const readSek = (text: string) => Number(text.replace('−', '-').replace(/[^0-9,-]/g, '').replace(',', '.'));

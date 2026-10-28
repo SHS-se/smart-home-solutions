@@ -9,7 +9,7 @@ export const monthStore: MonthStore = {
     const row = checked(await db.from('energy_roi_reports').select('generation,version,model,months')
       .eq('home_id', ref.homeId).eq('customer_id', ref.customerId).eq('version', CALCULATION_VERSION).abortSignal(signal).maybeSingle());
     if (!row) return null;
-    const checkpoints = checked(await db.from('energy_roi_pool_checkpoints').select('month,checkpoint')
+    const checkpoints = checked(await db.from('energy_roi_checkpoints').select('month,checkpoint')
       .eq('home_id', ref.homeId).eq('customer_id', ref.customerId).eq('generation', row.generation).abortSignal(signal));
     return parseSavedReport({ ...row, checkpoints: Object.fromEntries((checkpoints ?? []).map(r => [r.month, r.checkpoint])) });
   },

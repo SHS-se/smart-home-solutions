@@ -1,9 +1,10 @@
 import type { OptimisationSnapshot, ServiceInput } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
 import { parseDeviceModels } from '../../../supabase/functions/_shared/planner/device-models.ts';
 import { poolPhysics } from '../../../supabase/functions/_shared/planner/pool-physics.ts';
+import type { SimulationSeed } from './simulation-state.ts';
 import type { PoolSeed } from './pool-carry.ts';
 
-export type HomeModelCapture = Pick<OptimisationSnapshot, 'captured_at' | 'timezone' | 'capabilities' | 'battery' | 'ev_battery' | 'pool' | 'device_physics' | 'pool_model' | 'grid' | 'value_settings' | 'device_models' | 'comfort' | 'policy'> & { roi_solar_profile: string | null; roi_pool_seed: PoolSeed | null; services: Pick<ServiceInput, 'device' | 'control'>[]; criteria?: import('../../../supabase/functions/_shared/planner-wasm/rule-policy.ts').CriteriaOverrides };
+export type HomeModelCapture = Pick<OptimisationSnapshot, 'captured_at' | 'timezone' | 'capabilities' | 'battery' | 'ev_battery' | 'pool' | 'device_physics' | 'pool_model' | 'grid' | 'value_settings' | 'device_models' | 'comfort' | 'policy'> & { roi_solar_profile: string | null; roi_pool_seed: PoolSeed | null; roi_simulation_seed: SimulationSeed | null; services: Pick<ServiceInput, 'device' | 'control'>[]; criteria?: import('../../../supabase/functions/_shared/planner-wasm/rule-policy.ts').CriteriaOverrides };
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 function fail(message: string): never { throw new Error(message); }
 

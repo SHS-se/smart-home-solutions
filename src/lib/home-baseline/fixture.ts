@@ -11,7 +11,7 @@ import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/p
 import type { HistoricalRows } from './model.ts';
 
 export function baselineFixture(range?: { start: string; end: string }): HistoricalRows & { snapshot: OptimisationSnapshot } {
-  const captured = { ...snapshot(), criteria: {}, roi_solar_profile: null, roi_pool_seed: null };
+  const captured = { ...snapshot(), criteria: {}, roi_solar_profile: null, roi_pool_seed: null, roi_simulation_seed: null };
   const meter = { statistic_id: 'test', suggested_load_type: 'fixed_full_load' as const, load_type: 'fixed_full_load' as const, planning_role: 'controllable' as const, control_type: 'setpoint' as const, profile_sample_count: 1000, forecast_w_by_slot: Array(288).fill(0) };
   const end = range?.end ?? '2026-10-26T00:00:00.000Z', start = range ? Date.parse(range.start) : Date.parse(end) - 72 * 3_600_000;
   captured.capabilities.ev = true;

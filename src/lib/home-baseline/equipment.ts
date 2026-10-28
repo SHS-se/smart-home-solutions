@@ -37,17 +37,18 @@ export function equipmentInput(input: BaselineInput, trial: EquipmentTrial): Bas
       battery = { ...battery, capacity_kwh: trial.batteryKwh };
     }
   }
-  let slots = input.problem.slots;
+  let slots = input.problem.slots, tailSlots = input.planningTail.slots;
   if (trial.solar) {
     const { current, proposed } = trial.solar;
     if (![current.arrayKwp, current.inverterKw].every(v => nonnegative(v) && v > 0)) throw new Error('Enter the installed solar array and inverter sizes');
     if (![proposed.arrayKwp, proposed.inverterKw].every(nonnegative)) throw new Error('Solar array and inverter sizes must be zero or greater');
     if (current.arrayKwp !== proposed.arrayKwp || current.inverterKw !== proposed.inverterKw) {
       const scale = proposed.arrayKwp / current.arrayKwp;
-      slots = slots.map(slot => ({ ...slot, solar_w: Math.min(slot.solar_w * scale, proposed.inverterKw * 1000) }));
+      const scaleSlots = (values: typeof slots) => values.map(slot => ({ ...slot, solar_w: Math.min(slot.solar_w * scale, proposed.inverterKw * 1000) }));
+      slots = scaleSlots(slots); tailSlots = scaleSlots(tailSlots);
     }
   }
-  return { ...input, equipment: structuredClone(trial), batteryInitialAssumed: battery ? input.batteryInitialAssumed : false,
+  return { ...input, planningTail: { ...input.planningTail, slots: tailSlots }, equipment: structuredClone(trial), batteryInitialAssumed: battery ? input.batteryInitialAssumed : false,
     problem: { ...input.problem, battery, initial, limits, slots } };
 }
 

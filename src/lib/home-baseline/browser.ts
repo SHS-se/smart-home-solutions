@@ -3,20 +3,20 @@ import type { BaselineAnchor, BaselinePeriod } from './period';
 import type { SchedulerReplay } from './scheduler-replay';
 import type { ModelComparison } from './model-comparison';
 import type { BaselineInput, BaselineResult } from './model';
-import { withPoolState, type PoolStart } from './pool-carry';
+import type { SimulationBasis } from './simulation-state';
+import { withSimulationBasis } from './simulation-state';
 
 export interface BaselineResponse { result: BaselineResult; engineHash: string }
 export interface BaselineCapture extends BaselineResponse { input: BaselineInput }
 
 export interface ComparisonCapture extends BaselineCapture { scheduler: SchedulerReplay; modeled: ModelComparison }
-export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal, pool: PoolStart | null): Promise<ComparisonCapture> {
-  return projectHomeBaseline(await loadHomeBaseline(ref, anchor, period, signal), signal, pool);
+export async function generateHomeBaseline(ref: HomeRef, anchor: BaselineAnchor, period: BaselinePeriod, signal: AbortSignal, basis: SimulationBasis | null): Promise<ComparisonCapture> {
+  return projectHomeBaseline(await loadHomeBaseline(ref, anchor, period, signal), signal, basis);
 }
 
 /** Shared worker boundary for the pinned home and equipment trials. */
-export async function projectHomeBaseline(prepared: BaselineInput, signal: AbortSignal, pool: PoolStart | null): Promise<ComparisonCapture> {
-  const input = { ...prepared, pool };
-  input.problem = withPoolState(input.problem, pool?.initial.baseline);
+export async function projectHomeBaseline(prepared: BaselineInput, signal: AbortSignal, basis: SimulationBasis | null): Promise<ComparisonCapture> {
+  const input = withSimulationBasis(prepared, basis);
   const projected = await new Promise<Omit<ComparisonCapture, 'input'>>((resolve, reject) => {
     if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
     const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });

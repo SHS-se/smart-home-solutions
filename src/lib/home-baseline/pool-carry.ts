@@ -7,7 +7,6 @@ export interface PoolSeed { month: string; temperatureC: number; hash: string }
 export interface PoolState { poolC: number; pendingHeatKwh: number; sourceDepletionKwh: number | null; heaterState: HeaterState }
 export interface PoolActors { baseline: PoolState; scheduler: PoolState }
 export interface PoolStart { parentHash: string; initial: PoolActors }
-export interface PoolCheckpoint extends PoolStart { month: string; start: string; end: string; final: PoolActors; inputHash: string }
 
 export function seedPool(seed: PoolSeed, response: PoolResponseState | null = null): PoolStart {
   return { parentHash: seed.hash, initial: { baseline: { poolC: seed.temperatureC, pendingHeatKwh: response?.pending_heat_kwh ?? 0, sourceDepletionKwh: response?.source_depletion_kwh ?? null, heaterState: { kind: 'off_unobserved' } },

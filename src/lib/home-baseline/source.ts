@@ -3,7 +3,8 @@ import type { resolveBaselineAnchor, HomeRef } from './history';
 import { monthPeriod, periodKey, type BaselineAnchor, type BaselinePeriod } from './period';
 import { comparisonMonthLedger, type MonthLedger } from './savings';
 import { CALCULATION_VERSION, type MonthStore, type SavedReport } from './saved-months.ts';
-import { seedPool, type PoolStart, type PoolCheckpoint } from './pool-carry.ts';
+import { seedPool } from './pool-carry.ts';
+import type { SimulationBasis, SimulationCheckpoint } from './simulation-state.ts';
 import { localDay } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import { homeMonthBounds } from '../energy-shift/home-time.ts';
 import { frameCapture } from './frame-capture.ts';
@@ -14,7 +15,7 @@ interface Job { controller: AbortController; promise: Promise<ComparisonCapture>
 export function createCaptureSource(ref: HomeRef | null, dependencies: { resolveAnchor: typeof resolveBaselineAnchor; generate: typeof generateHomeBaseline; store?: MonthStore; now?: () => number }) {
   const lifetime = new AbortController(), cache = new Map<string, ComparisonCapture>(), jobs = new Map<string, Job>();
   const summaries = new Map<string, MonthLedger>();
-  const checkpoints = new Map<string, PoolCheckpoint>();
+  const checkpoints = new Map<string, SimulationCheckpoint>();
   const summaryListeners = new Set<(ledger: MonthLedger) => void>();
   let anchorPromise: Promise<BaselineAnchor> | null = null;
   let report: SavedReport | null = null, hydration: Promise<SavedReport | null> | null = null;
@@ -64,7 +65,7 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
       if (!fresh) { const found = cached(period); if (found) return found; }
       const pinned = await anchor();
       signal.throwIfAborted(); lifetime.signal.throwIfAborted();
-      if (period.view === 'frame' && pinned.snapshot.roi_pool_seed) {
+      if (period.view === 'frame' && pinned.snapshot.roi_simulation_seed) {
         const captures: ComparisonCapture[] = [];
         for (let at = Date.parse(period.start); at < Date.parse(period.end);) {
           const month = monthPeriod(pinned, localDay(new Date(at).toISOString(), pinned.snapshot.timezone).slice(0, 7));
@@ -83,31 +84,31 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
           promise: anchor().then(async pinned => {
             controller.signal.throwIfAborted();
             const capturedReport = report;
-            let pool: PoolStart | null = null;
-            const seed = pinned.snapshot.roi_pool_seed;
+            let basis: SimulationBasis | null = null;
+            const seed = pinned.snapshot.roi_simulation_seed;
             if (seed && period.view === 'month') {
               const month = localDay(period.start, pinned.snapshot.timezone).slice(0, 7);
-              if (month < seed.month) throw new Error(`Pool history starts in ${seed.month}`);
-              if (Date.parse(pinned.earliestStart) > Date.parse(period.start)) throw new Error(`Pool model needs history for ${month}`);
+              if (month < seed.month) throw new Error(`Simulation history starts in ${seed.month}`);
+              if (pinned.snapshot.roi_pool_seed && Date.parse(pinned.earliestStart) > Date.parse(period.start)) throw new Error(`Simulation needs history for ${month}`);
               if (month === seed.month) {
                 const dynamics = pinned.snapshot.pool_model?.thermal_dynamics;
                 const initialResponse = dynamics ? [dynamics.initial_state, dynamics.state].find(s => Date.parse(s.at) === Date.parse(period.start)) ?? null : null;
-                pool = seedPool(seed, initialResponse);
+                basis = { kind: 'seed', hash: seed.hash, pool: pinned.snapshot.roi_pool_seed ? seedPool(pinned.snapshot.roi_pool_seed, initialResponse) : null };
               }
               else {
                 const priorBounds = homeMonthBounds(period.start, -1, pinned.snapshot.timezone);
                 const priorMonth = localDay(new Date(priorBounds.startMs).toISOString(), pinned.snapshot.timezone).slice(0, 7);
                 if (!checkpoints.has(priorMonth)) {
                   const priorPeriod = monthPeriod(pinned, priorMonth);
-                  if (!priorPeriod) throw new Error(`Pool model needs history for ${priorMonth}`);
+                  if (!priorPeriod) throw new Error(`Simulation needs history for ${priorMonth}`);
                   await source.capture(priorPeriod, controller.signal);
                 }
                 const checkpoint = checkpoints.get(priorMonth);
-                if (!checkpoint || Date.parse(checkpoint.end) !== Date.parse(period.start)) throw new Error(`Pool continuation missing for ${priorMonth}`);
-                pool = { parentHash: checkpoint.inputHash, initial: checkpoint.final };
+                if (!checkpoint || Date.parse(checkpoint.end) !== Date.parse(period.start)) throw new Error(`Simulation continuation missing for ${priorMonth}`);
+                basis = { kind: 'continued', parentHash: checkpoint.inputHash, initial: checkpoint.final };
               }
             }
-            const capture = await dependencies.generate(ref, pinned, period, controller.signal, pool);
+            const capture = await dependencies.generate(ref, pinned, period, controller.signal, basis);
             if (report !== capturedReport) throw new Error('ROI model changed; reload the report');
             return { capture, capturedReport };
           })
@@ -116,9 +117,9 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
             if (jobs.get(key) === own && !controller.signal.aborted && !lifetime.signal.aborted && own.waiters.size) {
               if (period.view === 'month') {
                 let ledger = comparisonMonthLedger(capture);
-                if (dependencies.store || ledger.pool) {
+                if (dependencies.store || ledger.continuation) {
                   const bytes = new TextEncoder().encode(JSON.stringify({ version: CALCULATION_VERSION, problem: capture.input.problem,
-                    ev: capture.input.evDemandKwh, evidence: capture.input.evidence, solar: capture.input.solar, ledger }));
+                    ev: capture.input.evDemandKwh, evidence: capture.input.evidence, solar: capture.input.solar, tail: capture.input.planningTail, ledger }));
                   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), n => n.toString(16).padStart(2, '0')).join('');
                   controller.signal.throwIfAborted();
                   if (dependencies.store) {
@@ -138,13 +139,13 @@ export function createCaptureSource(ref: HomeRef | null, dependencies: { resolve
                     writes = saved.then(() => undefined, () => undefined);
                     ledger = await saved;
                   }
-                  if (ledger.pool && ledger.coverage === 1) {
+                  if (ledger.continuation && ledger.coverage === 1) {
                     const previous = checkpoints.get(ledger.month);
                     if (previous && previous.inputHash !== hash) {
                       for (const month of checkpoints.keys()) if (month > ledger.month) { checkpoints.delete(month); if (report) { delete report.checkpoints[month]; delete report.months[month]; } }
                       for (const [key, value] of summaries) if (value.month > ledger.month) { summaries.delete(key); cache.delete(key); }
                     }
-                    const checkpoint = { ...ledger.pool, month: ledger.month, start: ledger.start, end: ledger.end, inputHash: hash };
+                    const checkpoint = { ...ledger.continuation, month: ledger.month, start: ledger.start, end: ledger.end, inputHash: hash };
                     checkpoints.set(ledger.month, checkpoint);
                     if (report) report.checkpoints[ledger.month] = checkpoint;
                   }

@@ -1,3 +1,4 @@
+import { finalSimulationState, simulationProblem, type SimulationStart } from './simulation-state.ts';
 import { parseDeviceColours } from '../energy-shift/device-colours.ts';
 import { deviceMembers, allocateDevicePower, type DeviceMember } from '../../../supabase/functions/_shared/planner/device-power-allocation.ts';
 import { poolHeaters } from '../../../supabase/functions/_shared/planner/pool-devices.ts';
@@ -15,7 +16,7 @@ import type { ChartDevice } from '../energy-shift/plan-chart-data.ts';
 import { emptyRecovery, type RecoverySummary } from './recovered-history.ts';
 import { assessAssumptions, type InputEvidence } from './evidence.ts';
 import { modeledSolar, type SolarHour, type SolarProfile } from './solar.ts';
-import { quarterPool, withPoolState, type PoolStart } from './pool-carry.ts';
+import { quarterPool, type PoolStart } from './pool-carry.ts';
 import type { ActualPrice } from '../../../supabase/functions/_shared/actual-contract-prices.ts';
 import { inferredEvAvailability } from './trip-ledger.ts';
 
@@ -31,6 +32,8 @@ export interface HistoricalRows { snapshot: HomeModelCapture; solar?: { profile:
     devices: DeviceRow[]; deviceSlots: DeviceSlot[]; pool: PoolRow[]; outdoor: OutdoorRow[]; baselineLoads?: { start_ts: string; kwh: number }[]; recovery?: RecoverySummary; hourlyFields?: { start_ts: string; fields: string[] }[]; intervalFields?: { start_ts: string; fields: string[] }[]; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue }
 export interface BaselineInput { equipment?: import('./equipment.ts').EquipmentTrial; members: { heater: DeviceMember[]; auxiliary: DeviceMember[]; ev: DeviceMember[] }; tariff?: import('../../../supabase/functions/_shared/energy-grid-pricing.ts').GridTariffCatalogue; settings: Pick<HomeModelCapture, 'comfort' | 'policy' | 'criteria' | 'ev_battery' | 'pool_model'>; start: string; end: string; timeZone: string; modelCapturedAt: string; initialObservedAt: string; batteryInitialAssumed: boolean; evInitialAssumed: boolean; poolInitialAssumed: boolean;
   pool: PoolStart | null;
+  continuation: SimulationStart | null;
+  planningTail: { slots: ReadyProblem['slots']; evDemandKwh: number[] };
   evidence: InputEvidence;
   solar: { profileHash: string | null; reconstructedKwh: number; reconstructedQuarters: number };
   recovery: RecoverySummary;
@@ -187,7 +190,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     auxiliary: facts.heater ? deviceMembers(poolMembers.filter(model => !heaterKeys.has(model.key)), facts.heater.auxiliary_w) : [],
     ev: facts.charger ? deviceMembers(rows.snapshot.device_models.filter(model => model.category === 'ev_charging'), facts.charger.max_current_a * facts.charger.voltage_v * facts.charger.phase_count) : [],
   };
-  return { members, pool: null, tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
+  return { members, pool: null, continuation: null, planningTail: { slots: [], evDemandKwh: [] }, tariff: rows.tariff, solar, settings: { comfort: rows.snapshot.comfort, policy: rows.snapshot.policy, criteria: rows.snapshot.criteria, ev_battery: rows.snapshot.ev_battery, pool_model: rows.snapshot.pool_model }, start, end: new Date(time(rows.end)).toISOString(), timeZone: rows.snapshot.timezone, evidence, recovery: rows.recovery ?? emptyRecovery(),
     priceArea: rows.priceArea, reconstructedPriceQuarters: rows.prices.filter(row => row.source === 'reconstructed').length,
     assumedPriceQuarters: rows.prices.filter(row => row.supplier_revision.includes('assumed')).length, modelCapturedAt: rows.snapshot.captured_at, initialObservedAt, batteryInitialAssumed, evInitialAssumed, poolInitialAssumed, problem, idlePumpW, carName: facts.carName,
     evInitialObservedAt: facts.car && !evInitialAssumed ? rows.evInitial!.start_ts : null, evDemandKwh,
@@ -213,10 +216,10 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
 
 export function projectBaseline(input: BaselineInput, engine: ProjectionEngine, assess = true) {
   const began = performance.now();
-  const { problem, commands, quarters } = projectDefaultProblem(withPoolState(input.problem, input.pool?.initial.baseline), input.start, input.timeZone, defaultSettings(input.settings.comfort?.pool?.target_c), engine, input.evDemandKwh);
+  const { problem, commands, quarters } = projectDefaultProblem(simulationProblem(input, 'baseline'), input.start, input.timeZone, defaultSettings(input.settings.comfort?.pool?.target_c), engine, input.evDemandKwh);
   const series = projectionSeries(input, problem, quarters);
   const ledger = electricityLedger(quarters, problem);
-  return { series, commands, ledger, poolStates: quarters.map(quarterPool), sensitivity: assess ? assessAssumptions(input, ledger.costSek, series.gridImportW, engine) : { initial: [], markup10OreDeltaSek: 0, timingSavingMinSek: 0, timingSavingMaxSek: 0 }, projectionMs: performance.now() - began };
+  return { series, commands, ledger, states: quarters.map(finalSimulationState), poolStates: quarters.map(quarterPool), sensitivity: assess ? assessAssumptions(input, ledger.costSek, series.gridImportW, engine) : { initial: [], markup10OreDeltaSek: 0, timingSavingMinSek: 0, timingSavingMaxSek: 0 }, projectionMs: performance.now() - began };
 }
 
 export function projectionSeries(input: BaselineInput, problem: ReadyProblem, quarters: import('../../../supabase/functions/_shared/planner-wasm/core.ts').NativeQuarter[]): BenchSeries {

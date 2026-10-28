@@ -4,11 +4,11 @@ import { scenarioBill, type BillExtras } from './scenario-bill.ts';
 import { POOL_THERMOSTAT_BAND_C } from './controller.ts';
 import { endCredit, problemEndCredit } from '../../../supabase/functions/_shared/planner-wasm/end-credit.ts';
 import { poolInventoryC } from '../../../supabase/functions/_shared/planner/device-models.ts';
-import { withPoolState } from './pool-carry.ts';
+import { simulationProblem } from './simulation-state.ts';
 import type { BenchSeries } from '../planner-bench/types.ts';
 
 export function seriesService(input: BaselineInput, series: BenchSeries, actor: 'baseline' | 'scheduler' = 'baseline') {
-  const p = withPoolState(input.problem, input.pool?.initial[actor]), last = series.start.length - 1;
+  const p = simulationProblem(input, actor), last = series.start.length - 1;
   const endBatteryKwh = p.battery ? series.homeSoc[last]! / 100 * p.battery.capacity_kwh : null;
   const endEvKwh = p.car ? series.carSoc[last]! / 100 * p.car.capacity_kwh : null;
   const endPoolC = series.poolC[last];

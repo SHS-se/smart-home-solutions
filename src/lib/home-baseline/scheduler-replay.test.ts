@@ -6,7 +6,63 @@ import { compareModels } from './model-comparison';
 import { createWasmPlanner, createWasmReplayPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
 import { roiBenchmarkInput } from '../../../scripts/roi-benchmark-scenarios.ts';
 import type { NativeCommand, ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem';
+import { equipmentInput } from './equipment.ts';
+import { withSimulationBasis } from './simulation-state.ts';
 const engine=createWasmPlanner(Deno.readFileSync(new URL('../../../supabase/functions/_shared/planner-wasm/solver.wasm',import.meta.url)));
+
+function batteryOnly(capacityKwh: number) {
+ const input=prepareHomeBaseline(baselineFixture({start:'2026-01-30T00:00:00Z',end:'2026-02-02T00:00:00Z'}));
+ input.timeZone='UTC';input.idlePumpW=0;input.members={heater:[],auxiliary:[],ev:[]};input.evDemandKwh.fill(0);
+ input.problem={...input.problem,car:null,charger:null,pool_store:null,heater:null,pool_stop_c:null,rules:[],
+  battery:{capacity_kwh:capacityKwh,min_soc:0,max_soc:1,charge_max_w:5000,discharge_max_w:5000,charge_efficiency:.9,discharge_efficiency:.9},
+  initial:{battery_kwh:0,ev_kwh:null,pool_c:null,pool_pending_heat_kwh:null,pool_source_depletion_kwh:null,heater_state:null},
+  targets:{pool_c:null,ev_km:null,ev_limit_kwh:null},limits:{...input.problem.limits,import_w:50000,export_w:50000,wear_per_kwh:.05,battery_export_enabled:false},
+  slots:input.problem.slots.map((slot,i)=>({...slot,local_month:i<192?1:2,base_w:i<192?0:2000,base_ev_w:0,solar_w:0,import_price:i<192?.2:2,export_price:0,ev_available:false}))};
+ return input;
+}
+
+Deno.test('production native battery arbitrage uses additional capacity with independently calculated losses and wear',()=>{
+ const costs:number[]=[];
+ for(const capacity of [10,15]){
+  const input=batteryOnly(capacity),first:ReadyProblem[]=[];
+  // Inspect the actual first production solve, independent of replay cadence.
+  replayScheduler(input,{project:engine.project,solve:p=>{if(!first.length)first.push(p);return engine.solve(p);}});
+  const result=engine.solve(first[0]).outcome;assert(result.kind==='selected');
+  const charge=result.selection.quarters.reduce((n,q)=>n+q.charge_w/4000,0);
+  const discharge=result.selection.quarters.reduce((n,q)=>n+q.discharge_w/4000,0);
+  assertAlmostEquals(charge,capacity/.9,1e-7);assertAlmostEquals(discharge,capacity*.9,1e-7);
+  assertAlmostEquals(result.selection.quarters.at(-1)!.battery_kwh!,0,1e-7);
+  const expected=capacity/.9*.2+(48-capacity*.9)*2;
+  assertAlmostEquals(result.selection.account.cash_sek,expected,1e-7);
+  assertAlmostEquals(result.selection.account.wear_sek,capacity*.9*.05,1e-7);
+  costs.push(expected);
+ }
+ assertAlmostEquals(costs[0]-costs[1],7.888888888888889,1e-7);
+});
+
+Deno.test('a month with observed lookahead executes the same prefix as the unbroken production replay',()=>{
+ const full=batteryOnly(15),split=192;
+ const prefix={...full,end:'2026-02-01T00:00:00Z',problem:{...full.problem,slots:full.problem.slots.slice(0,split)},
+  evDemandKwh:full.evDemandKwh.slice(0,split),planningTail:{slots:full.problem.slots.slice(split),evDemandKwh:full.evDemandKwh.slice(split)}};
+ const expected=replayScheduler(full,engine),actual=replayScheduler(prefix,engine);
+ assertEquals(actual.commands,expected.commands.slice(0,split));
+ assertEquals(actual.series.homeSoc,expected.series.homeSoc.slice(0,split));
+ assert(actual.series.homeSoc.some(soc=>soc!>99));
+ const sized=equipmentInput({...prefix,planningTail:{...prefix.planningTail,slots:prefix.planningTail.slots.map(slot=>({...slot,solar_w:1000}))}},
+  {batteryKwh:20,solar:{current:{arrayKwp:5,inverterKw:5},proposed:{arrayKwp:10,inverterKw:1.5}}});
+ assert(sized.planningTail.slots.every(slot=>slot.solar_w===1500));
+});
+
+Deno.test('both scenario inventories carry across a boundary instead of resetting to the observed battery SOC',()=>{
+ const input=batteryOnly(15);
+ const initial={baseline:{batteryKwh:3,evKwh:null,pool:null},scheduler:{batteryKwh:12,evKwh:null,pool:null}};
+ const continued=withSimulationBasis(input,{kind:'continued',parentHash:'a'.repeat(64),initial});
+ const result=compareModels(continued,engine);
+ assertEquals(result.result.series.homeStartSoc,20);
+ assertEquals(result.scheduler.series.homeStartSoc,80);
+ assertEquals(input.problem.initial.battery_kwh,0);
+ assertEquals(continued.continuation!.initial,initial);
+});
 for (const operation of ['grid_charge', 'export'] as const) for (const remaining of [0, .7]) Deno.test(`midnight retains the allocated ${operation} power with ${remaining} kWh remaining`,()=>{
  const input=prepareHomeBaseline(baselineFixture({start:'2026-02-26T22:00:00Z',end:'2026-02-27T01:00:00Z'}));
  const battery=input.problem.battery!;

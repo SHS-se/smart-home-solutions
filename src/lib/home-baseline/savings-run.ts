@@ -41,7 +41,7 @@ export function createSavingsRun(source: CaptureSource) {
       const pending: string[] = [];
       publish({ rows: state.rows.map(row => {
         const saved = refresh ? undefined : source.saved(row.month);
-        if (!saved || (saved.ledger.coverage < 1 && source.now() - Date.parse(saved.computedAt) >= PARTIAL_REFRESH_MS)) pending.push(row.month);
+        if (!saved || ((saved.ledger.coverage < 1 || saved.ledger.replay.lookaheadQuarters < 288) && source.now() - Date.parse(saved.computedAt) >= PARTIAL_REFRESH_MS)) pending.push(row.month);
         return saved ? { month: row.month, status: 'done', ledger: saved.ledger } : { month: row.month, status: 'queued' };
       }) });
       if (!pending.length) return;
@@ -52,7 +52,7 @@ export function createSavingsRun(source: CaptureSource) {
         const period = monthPeriod(anchor, month);
         if (!period) { update(month, { month, status: 'unavailable' }); continue; }
         const previous = source.saved(month);
-        const stale = !refresh && previous && previous.ledger.coverage < 1;
+        const stale = !refresh && previous && (previous.ledger.coverage < 1 || previous.ledger.replay.lookaheadQuarters < 288);
         const saved = refresh || stale ? undefined : source.summary(period);
         if (saved) { update(month, { month, status: 'done', ledger: saved }); continue; }
         if (!previous) update(month, { month, status: 'running' });

@@ -22,7 +22,7 @@ import { mixedModeSnapshot } from '../scripts/generate-ha-plan-fixture';
 import { readFileSync } from 'node:fs';
 const mixedModeFixture = JSON.parse(readFileSync(new URL('../contracts/ha-api/fixtures/schema-9-mixed-mode-plan.json', import.meta.url), 'utf8'));
 import { baselineFixture } from '../src/lib/home-baseline/fixture';
-import { mockRoiHistory, expectRoiMonths } from './helpers/roi-history';
+import { mockRoiHistory, expectRoiMonths, readSek } from './helpers/roi-history';
 import { portalDelta } from './helpers/portal-delta';
 import { isTestWebsite } from './helpers/environment';
 
@@ -490,6 +490,7 @@ test.describe('requesting a replan', () => {
     const installedReport = JSON.stringify(history.saved());
     const currentCosts = await page.getByTestId('scheduler-totals').locator('td').allTextContents();
     const currentThrough = (await page.getByTestId('scheduler-month-2026-10').locator('th').textContent())!;
+    expect(history.saved()!.months['2026-10'].ledger.continuation!.initial).toEqual(history.saved()!.checkpoints['2026-09'].final);
     // A new completed quarter exists, but the freshly saved report remains valid.
     // This reproduces the production 12:30 versus 12:45 cutoff mismatch.
     await context.route('**/rest/v1/energy_optimisation_actual_slots*', route => {
@@ -796,7 +797,8 @@ test.describe('requesting a replan', () => {
     const initialReads = history.reads();
     await page.getByTestId('baseline-previous').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
-    expect(history.reads()).toBeGreaterThan(initialReads);
+    // Frames are views of the already computed monthly trajectory.
+    expect(history.reads()).toBe(initialReads);
     const olderReads = history.reads();
     await page.getByTestId('baseline-next').click();
     await expect(page.getByTestId('baseline-net-cost')).toContainText('SEK');
@@ -856,7 +858,7 @@ test.describe('requesting a replan', () => {
     expect(capture.input.recorded.ledger.costSek).toBe(2879);
     await expect(september.locator('td').nth(0)).toHaveText(display(capture.modeled.baselineBill.totalSek));
     await expect(september.locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
-    await expect(september.locator('td').nth(2)).toHaveText(display(capture.modeled.baselineBill.totalSek - capture.modeled.schedulerBill.totalSek));
+    await expect(september.locator('td').nth(2)).toHaveText(display(readSek(display(capture.modeled.baselineBill.totalSek)) - readSek(display(capture.modeled.schedulerBill.totalSek))));
     const comparison = viewer.getByTestId('period-comparison');
     await expect(comparison.locator('thead th').nth(2)).toHaveText(/Actual consumption|Faktisk förbrukning/);
     const actualCells = comparison.locator('tbody tr');
@@ -868,7 +870,10 @@ test.describe('requesting a replan', () => {
     await expect(actualCells.last().locator('td').nth(2)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
     const windows = history.windows.filter(w => w.start >= capture.input.start && w.end <= capture.input.end).sort((a,b) => a.start.localeCompare(b.start));
     expect(windows[0].start).toBe(capture.input.start); expect(windows.at(-1)!.end).toBe(capture.input.end);
-    windows.slice(1).forEach((window, i) => expect(window.start).toBe(windows[i].end));
+    // Planning tails can overlap execution reads; their union must cover every execution quarter.
+    let coveredThrough = capture.input.start;
+    for (const window of windows) { expect(window.start <= coveredThrough).toBe(true); if (window.end > coveredThrough) coveredThrough = window.end; }
+    expect(coveredThrough).toBe(capture.input.end);
     const reads = history.reads();
     await page.getByTestId('comparison-graph-scheduler').click();
     await expect(viewer.getByRole('group', { name: /power flows|effektflöden/i }).first()).toContainText(/SHS ENERGY SCHEDULER|SHS ENERGIS/);
@@ -948,8 +953,8 @@ test.describe('requesting a replan', () => {
     expect(capture.input.recovery.hours).toBe(744);
     expect(capture.input.problem.initial.ev_kwh).toBe(.75 * 75.6);
     await expect(row.locator('td').nth(1)).toHaveText(display(capture.modeled.schedulerBill.totalSek));
-    await expect(row.locator('td').nth(2)).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek));
-    await expect(page.getByTestId('roi-period-net')).toHaveText(display(capture.modeled.baselineBill.totalSek-capture.modeled.schedulerBill.totalSek-320));
+    await expect(row.locator('td').nth(2)).toHaveText(display(readSek(display(capture.modeled.baselineBill.totalSek))-readSek(display(capture.modeled.schedulerBill.totalSek))));
+    await expect(page.getByTestId('roi-period-net')).toHaveText(display(readSek(display(capture.modeled.baselineBill.totalSek))-readSek(display(capture.modeled.schedulerBill.totalSek))-320));
   });
 
   test('ROI retains saved months when new prices are unavailable and keeps graph navigation usable', async ({ context, page }) => {
@@ -961,8 +966,10 @@ test.describe('requesting a replan', () => {
     history.failPrices();
     await page.locator('#roi-from').fill('2026-04');
     await expectRoiMonths(page, '(2/7)');
-    await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('Missing historical market price');
+    await expect(page.getByTestId('scheduler-month-2026-04')).toContainText('Simulation history starts in 2026-09');
     history.failPrices();
+    await page.reload();
+    await expectRoiMonths(page, '(2/7)');
     await page.getByTestId('roi-view-graphs').click();
     await expect(page.getByTestId('roi-baseline').getByRole('alert')).toContainText('historical market price');
     await expect(page.getByTestId('baseline-net-cost')).toHaveCount(0);
