@@ -264,6 +264,12 @@ Deno.test("buildInvoicePaymentDetails uses the provided settings' bankgiro + pay
   assertEquals(details.payee_name, "Philip Cheong");
   assert(details.manual_payment_instruction.includes("Betala till Bankgiro 5307-7913"));
   assertExists(details.qr_data_url); // QR is generated when a bankgiro exists
+  assert(details.qr_data_url.startsWith("data:image/png;base64,"));
+  const png = Uint8Array.from(atob(details.qr_data_url.split(",")[1]), (byte) => byte.charCodeAt(0));
+  assertEquals([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const header = new DataView(png.buffer);
+  assertEquals(header.getUint32(16), 256);
+  assertEquals(header.getUint32(20), 256);
 });
 
 Deno.test("buildInvoicePaymentDetails explains when no bankgiro is configured", async () => {
