@@ -3,7 +3,8 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { commandSnapshot } from "../../../scripts/generate-ha-device-plan-fixture.ts";
 import { runRulesPlanner } from "./run-rules-planner.ts";
-import { type PublishedCommandReference } from "./rules-planner.ts";
+import { prepareRulesPlanningInput, type PublishedCommandReference } from "./rules-planner.ts";
+import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { ownerLabel } from "./rules-commitments.ts";
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
@@ -168,6 +169,89 @@ Deno.test("unresolved faults are retained on an ordinary later capture until exp
   assertEquals(resumed.execution_availability, []);
   assert(resumed.plans.priority.slots.some(slot => slot.battery_charge_w > 0));
 });
+
+// Synthetic outage and recovery; no household captures are used.
+Deno.test("an observation outage can publish without a battery and recover through other device events", () => {
+  const {snapshot, reference} = chargingHouse();
+  snapshot.device_models.push({key: "relay", name: "Relay", statistic_id: "sensor.synthetic_relay",
+    category: "other", load_type: "fixed_full_load", suggested_load_type: "fixed_full_load",
+    planning_role: "controllable", control_type: "switch_schedule", active_power_w: 100,
+    profile_sample_count: 100, forecast_w_by_slot: snapshot.slots.map(() => 100)});
+  for (const slot of reference.slots) slot.device_commands!.relay = {type: "switch_schedule", on_seconds: 900};
+  const batteryFault = change("$battery", snapshot);
+  const relayFault = change("relay", snapshot);
+  snapshot.measurement_issues = [{device: "battery", field: "soc", entity_id: "sensor.synthetic_battery",
+    value: "unavailable", reason: "Synthetic network outage", detected_by: "home_assistant"}];
+  const outage = runRulesPlanner(input(snapshot, request(reference, snapshot, [batteryFault, relayFault])), reference).plan;
+  assertEquals(outage.capabilities.battery, false);
+  assert(outage.plans.priority.slots.every(slot => slot.battery_command === null));
+
+  // Readings return while the battery's execution fault is still unresolved.
+  snapshot.measurement_issues = [];
+  snapshot.execution_availability = [batteryFault, relayFault];
+  const outageReference = {plan_id: outage.plan_id, slots: outage.plans.priority.slots};
+  const partial = runRulesPlanner(input(snapshot, request(outageReference, snapshot,
+    [change("relay", snapshot, "recovered")])), outageReference).plan;
+  assertEquals(partial.status, "ready");
+  assert(partial.battery);
+  assert(partial.plans.priority.slots.every(slot => slot.battery_charge_w === 0 && slot.battery_discharge_w === 0));
+  assertEquals(partial.execution_availability, [batteryFault]);
+
+  // The same outage plan also supports direct battery recovery, without a manual reset.
+  snapshot.slots = snapshot.slots.map(slot => ({...slot, import_price_sek_per_kwh: -.2, export_price_sek_per_kwh: -.3}));
+  const recovered = runRulesPlanner(input(snapshot, request(outageReference, snapshot,
+    [change("$battery", snapshot, "recovered")])), outageReference).plan;
+  assertEquals(recovered.status, "ready");
+  assert(recovered.plans.priority.slots.some(slot => slot.battery_charge_w > 0));
+  assertEquals(recovered.execution_availability, [relayFault]);
+  for (const plan of [outage, partial, recovered]) for (let i = 0; i < 4; i++) {
+    assertEquals(plan.plans.priority.slots[i].ev_target_current_a, reference.slots[i].ev_target_current_a);
+  }
+});
+
+for (const owner of ["$battery", "$pool", "$ev"] as const) {
+  Deno.test(`released ${owner} commands may be absent while unaffected native commitments remain held`, () => {
+    const snapshot = rulesFixtureInput(mixedModeSnapshot()).snapshot;
+    snapshot.operating_scope!.modes.$pool = "controlling";
+    delete snapshot.operating_scope!.external_demands.pool_heater;
+    const ev = dispatchedEvSnapshot();
+    snapshot.capabilities.ev = true;
+    snapshot.ev_battery = ev.ev_battery;
+    snapshot.comfort!.ev = ev.comfort!.ev;
+    snapshot.services.push(...ev.services);
+    snapshot.operating_scope!.modes.$ev = "controlling";
+    const previous = runRulesPlanner(input(snapshot)).plan;
+    const reference = {plan_id: previous.plan_id, slots: structuredClone(previous.plans.priority.slots)};
+    const nativeOwner = owner.slice(1) as "battery" | "pool" | "ev";
+    for (const slot of reference.slots) {
+      if (owner === "$battery") { slot.battery_command = null; delete slot.battery_instruction; }
+      if (owner === "$pool") { slot.pool_permitted = true; delete slot.pool_command_w; }
+      if (owner === "$ev") delete slot.ev_target_current_a;
+    }
+    // Missing commands remain errors when their owner has not been released.
+    assertThrows(() => prepareRulesPlanningInput(input(snapshot), reference, resolveRulePolicy()), Error, "command missing");
+    const prepared = prepareRulesPlanningInput(input(snapshot, request(reference, snapshot,
+      [change(owner, snapshot, "recovered")])), reference, resolveRulePolicy());
+    assert(prepared.problem.released!.every(mask => mask[nativeOwner]));
+    for (const mask of prepared.problem.released!) {
+      for (const other of ["battery", "pool", "ev"] as const) if (other !== nativeOwner) assertEquals(mask[other], false);
+    }
+    const plan = runRulesPlanner(input(snapshot, request(reference, snapshot,
+      [change(owner, snapshot, "recovered")])), reference).plan;
+    assertEquals(plan.status, "ready");
+    for (let i = 0; i < prepared.held_reference.length; i++) {
+      const actual = plan.plans.priority.slots[i], old = reference.slots[i];
+      if (owner !== "$battery") assertEquals(actual.battery_command, old.battery_command);
+      if (owner !== "$ev") assertEquals(actual.ev_target_current_a, old.ev_target_current_a);
+      if (owner !== "$pool") assertEquals(actual.pool_command_w, old.pool_command_w);
+    }
+    const booking = {id: "synthetic-booking", source_snapshot_id: snapshot.snapshot_id,
+      starts_at: reference.slots[0].start, ends_at: end(reference.slots[0].start),
+      slots: [{start: reference.slots[0].start, targets: reference.slots[0], power_w: {}, discharge_w: {}, allow_export: false}]};
+    assertThrows(() => prepareRulesPlanningInput({...input(snapshot, request(reference, snapshot,
+      [change(owner, snapshot, "recovered")])), fixed_plan: booking}, reference, resolveRulePolicy()), Error, "command missing");
+  });
+}
 
 Deno.test('pool forecast deviation corrects only that owner and keeps its healthy heater available', () => {
   const snapshot = rulesFixtureInput(mixedModeSnapshot()).snapshot;

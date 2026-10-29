@@ -16,7 +16,7 @@ import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 const { recipe } = runtime;
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter } from "./planner-wasm/core.ts";
-import { builderRecipe, type NativeCommand, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
+import { builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import { batteryAcCeilings } from './planner/battery-conversion.ts';
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
@@ -103,14 +103,18 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
   } };
 }
 
-function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapshot, nativePool = snapshot.capabilities.pool): NativeCommand {
-  const battery = slot.battery_command;
-  if (snapshot.capabilities.battery && !battery) return fail(`Committed battery command missing at ${slot.start}`);
-  if (snapshot.capabilities.pool && slot.pool_permitted !== null && !finite(slot.pool_command_w)) return fail(`Committed native pool command missing at ${slot.start}`);
-  if (snapshot.capabilities.ev && !finite(slot.ev_target_current_a)) return fail(`Committed native EV command missing at ${slot.start}`);
+function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapshot, nativePool = snapshot.capabilities.pool,
+  released?: NativeOwnerMask): NativeCommand {
+  // Released owners have no retained instruction to validate or encode. An
+  // outage plan may legitimately omit their commands; the native release mask
+  // leaves these neutral components unconstrained while other owners stay held.
+  const battery = released?.battery ? null : slot.battery_command;
+  if (!released?.battery && snapshot.capabilities.battery && !battery) return fail(`Committed battery command missing at ${slot.start}`);
+  if (!released?.pool && snapshot.capabilities.pool && slot.pool_permitted !== null && !finite(slot.pool_command_w)) return fail(`Committed native pool command missing at ${slot.start}`);
+  if (!released?.ev && snapshot.capabilities.ev && !finite(slot.ev_target_current_a)) return fail(`Committed native EV command missing at ${slot.start}`);
   // A schema 10 quarter keeps the exact candidate it was chosen as.
-  const stated = slot.battery_instruction ? nativeBattery(slot.battery_instruction) : null;
-  return { pool_on: nativePool && (slot.pool_command_w ?? 0) > 0, ev_amps: slot.ev_target_current_a,
+  const stated = !released?.battery && slot.battery_instruction ? nativeBattery(slot.battery_instruction) : null;
+  return { pool_on: !released?.pool && nativePool && (slot.pool_command_w ?? 0) > 0, ev_amps: released?.ev ? 0 : slot.ev_target_current_a,
     battery: stated?.battery ?? battery?.operation ?? "idle", charge_limit_w: stated?.charge_limit_w ?? battery?.charge_limit_w ?? 0,
     discharge_limit_w: stated?.discharge_limit_w ?? battery?.discharge_limit_w ?? 0 };
 }
@@ -353,7 +357,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     rules: approved.rules, service_guard: approved.service_guard,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
-    accepted: locked.length ? commitments.original.map(slot => nativeCommand(slot, snapshot, !!pool)) : null,
+    accepted: locked.length ? commitments.original.map((slot, i) => nativeCommand(slot, snapshot, !!pool, commitments.released[i])) : null,
     released: locked.length ? commitments.released : null,
     unavailable: commitments.unavailable,
     fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
