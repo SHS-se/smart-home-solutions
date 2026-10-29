@@ -47,8 +47,6 @@ export interface BenchSeries {
   gridExportW: number[];
   batteryChargeW: number[];
   batteryDischargeW: number[];
-  /** Explicit installation demand, absent on historical measured series. */
-  batteryIdleW?: number[];
   /** Percentages. */
   homeSoc: (number | null)[];
   /** Home-battery SOC at the case start, percent; null when the series has no initial reading. */

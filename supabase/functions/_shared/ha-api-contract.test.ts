@@ -281,7 +281,7 @@ Deno.test("schema 10 consumer fixture states each quarter's battery instruction 
   const saved = JSON.parse(await Deno.readTextFile(new URL("../../../contracts/ha-api/fixtures/schema-10-mixed-mode-plan.json", import.meta.url)));
   assertEquals(saved, mixedModeV10PlanFixture());
   const plan = saved.plan, contract = plan.battery_execution;
-  assertEquals([plan.schema_version, contract.schema], [10, "battery-plan-execution-v3"]);
+  assertEquals([plan.schema_version, contract.schema], [10, "battery-plan-execution-v2"]);
   assertEquals("battery_supply_scope" in plan, false);
   // HA executes exactly what the plan view shows: one demand, one instruction per quarter.
   assertEquals(contract.demand, plan.battery_demand);

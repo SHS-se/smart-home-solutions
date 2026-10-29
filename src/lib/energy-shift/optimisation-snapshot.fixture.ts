@@ -1,4 +1,3 @@
-import { syntheticIdentityConversion } from '../../../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 // One realistic snapshot, shared by every test that needs the planner to run.
 //
 // Three sunny days at real Swedish August prices with a pool below its band —
@@ -76,7 +75,7 @@ export const snapshot = (): OptimisationSnapshot => {
       charge_max_w: 8_800,
       discharge_max_w: 9_600,
       charge_efficiency: 0.95,
-      discharge_efficiency: 0.95, conversion: syntheticIdentityConversion(),
+      discharge_efficiency: 0.95,
     },
     ev_battery: null,
     pool: { water_temperature_c: 27, volume_m3: 55 },

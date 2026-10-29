@@ -5,8 +5,8 @@
 // in a model are data: they arrive with the household or the snapshot, and
 // nothing here states one.
 //
-// Pure device data and validation; callers do not import scheduling policy.
-import { validConversion, type Conversion } from './battery-conversion.ts';
+// A leaf module: it imports nothing, so a caller that needs only the models
+// does not take the planner with it.
 
 /** A car charger set in amps, the same on every phase. */
 export interface ChargerModel {
@@ -81,14 +81,10 @@ export interface BatteryModel {
   capacity_kwh: number;
   min_soc: number;
   max_soc: number;
-  /** Native battery-terminal DC ratings, not AC command ceilings. */
   charge_max_w: number;
   discharge_max_w: number;
-  /** Stored energy gained per terminal DC input. */
   charge_efficiency: number;
-  /** Terminal DC output per stored energy spent. */
   discharge_efficiency: number;
-  conversion: Conversion;
 }
 
 export interface CarBatteryModel {
@@ -616,7 +612,6 @@ export function parseDeviceModels<T extends Partial<DeviceModels>>(input: T): T 
     if (!positive(battery.capacity_kwh) || !positive(battery.charge_max_w) || !positive(battery.discharge_max_w)) fail("A battery needs a capacity and charge and discharge powers.");
     if (!finite(battery.min_soc) || !finite(battery.max_soc) || battery.min_soc < 0 || battery.max_soc > 1 || battery.min_soc >= battery.max_soc) fail("A battery's limits must lie in order between empty and full.");
     if (!share(battery.charge_efficiency) || !share(battery.discharge_efficiency)) fail("A battery's efficiencies are shares between zero and one.");
-    if (!validConversion(battery.conversion)) fail("A battery needs its explicit directional conversion and installation-loss model.");
   }
   if (car) {
     if (!car.battery || !positive(car.battery.capacity_kwh) || !positive(car.battery.kwh_per_km) || !share(car.battery.charge_efficiency)) fail("A car needs a capacity, a consumption and a charge efficiency.");

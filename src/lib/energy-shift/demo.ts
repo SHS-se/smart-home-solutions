@@ -7,7 +7,6 @@ import type {
   ThermalFixtureSeason,
 } from './contracts';
 import { createSeasonalThermalProjection } from './thermal-fixtures';
-import { syntheticIdentityConversion } from '../../../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 
 const SLOT_MS = 15 * 60_000;
 const SLOT_HOURS = 0.25;
@@ -207,7 +206,6 @@ export function createWebsiteDemoPlan(
         discharge_max_w: 5_000,
         charge_efficiency: 0.95,
         discharge_efficiency: 0.95,
-        conversion: syntheticIdentityConversion(),
       }
       : null,
     ev_battery: {

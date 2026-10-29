@@ -15,11 +15,7 @@ export default function BaselineModelDetails({ capture }: { capture: ComparisonC
       <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
         {p.battery && <><dt className="font-medium">{t('Batteri', 'Battery')}</dt><dd>
           {t('Maximal egenförbrukning', 'Maximum self consumption')} · {number(p.battery.capacity_kwh)} kWh · {number(p.battery.min_soc * 100)}–{number(p.battery.max_soc * 100)}% SOC
-          <br />{number(p.battery.charge_max_w / 1000)} / {number(p.battery.discharge_max_w / 1000)} kW DC · {t('lagringsverkningsgrad', 'storage efficiency')} {number(p.battery.charge_efficiency * 100)} / {number(p.battery.discharge_efficiency * 100)}%
-          <br />{t('Omvandling: nätladdning / solladdning / urladdning', 'Conversion: grid charge / solar charge / discharge')}:{' '}
-          {[p.battery.conversion.grid_charge, p.battery.conversion.surplus_charge, p.battery.conversion.discharge]
-            .map(c => `${number(c.gain * 100)}% − ${number(c.overhead_w)} W`).join(' / ')}
-          <br />{t('Installationens tomgångsförlust', 'Installation idle loss')}: {number(p.battery.conversion.idle_loss_w)} W
+          <br />{number(p.battery.charge_max_w / 1000)} / {number(p.battery.discharge_max_w / 1000)} kW · {t('verkningsgrad', 'efficiency')} {number(p.battery.charge_efficiency * 100)} / {number(p.battery.discharge_efficiency * 100)}%
         </dd></>}
         {p.car && p.charger && <><dt className="font-medium">{input.carName}</dt><dd>
           {t('80% från midnatt', '80% from midnight')} · {t('lastbalanserad', 'load balanced')} · {number(p.car.capacity_kwh)} kWh · {number(p.charger.max_current_a)} A · {p.charger.phase_count} × {number(p.charger.voltage_v)} V

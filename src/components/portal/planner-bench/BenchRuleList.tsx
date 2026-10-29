@@ -20,7 +20,7 @@ const COLUMNS = 'grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] sm:grid-col
 const NAME = 'col-span-3 sm:col-span-1';
 const POINTS = 'pl-5 sm:pl-0 sm:text-right';
 const LIMIT_KEY = 'can_execute';
-const signed = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.round(Math.abs(value) * 100) / 100}`;
+const signed = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value)}`;
 // The palette runs −2…+2, as in the chart's score strip.
 const scoreColour = (points: number) => points === 0 ? undefined : `var(--plan-score-${points < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(points))})`;
 

@@ -35,18 +35,17 @@ Deno.test("pre-native commits cannot execute a retired planner",async()=>{
 });
 Deno.test("the current native artifact has a stable planner identity",async()=>{
   const first=await plannerVersion(tree);
-  assert(first.startsWith("v14-rule-wasm:"));
+  assert(first.startsWith("v13-rule-wasm:"));
   assertEquals(await plannerVersion(tree),first);
 });
 
 const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
-const BATTERY_CONVERSION = `${PLANNER_DIR}/battery-conversion.ts`;
 const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
-/** The referee version and every shared physical consumption model. */
-const DEVICE_MODELS_PIN = "29:1aa8c1fcf24617f1";
+/** The referee version and both shared physical consumption models. */
+const DEVICE_MODELS_PIN = "28:4b9798d1cf1851ed";
 
-Deno.test("the bench judges every planner with the shared pure physical models", () => {
-  assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), ["./battery-conversion.ts"]);
+Deno.test("the bench judges with one planner file, the device models, and that file stands alone", () => {
+  assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), []);
   const fromPlanner = new Set<string>();
   for (const entry of Deno.readDirSync(`${root}/src/lib/planner-bench`)) {
     if (!entry.isFile || !/\.tsx?$/.test(entry.name) || /\.(test|fixture)\.ts$/.test(entry.name)) continue;
@@ -56,22 +55,21 @@ Deno.test("the bench judges every planner with the shared pure physical models",
       if (local?.startsWith(`${PLANNER_DIR}/`)) fromPlanner.add(local);
     }
   }
-  // Every planner version is judged in one physical world, including the shared
-  // converter rather than a second battery law embedded in the referee.
-  assertEquals([...fromPlanner].sort(), [BATTERY_CONVERSION, DEVICE_MODELS]);
+  // Every planner version on the bench is judged in this one world, whatever models its own code carries.
+  assertEquals([...fromPlanner], [DEVICE_MODELS]);
 });
 
 Deno.test("a change to the device models is a change to how every plan is judged", async () => {
   const { transform, stop } = await import("npm:esbuild");
   try {
-    const models = await Promise.all([DEVICE_MODELS, BATTERY_CONVERSION, BOILER_CONSUMPTION].map(async path => {
+    const models = await Promise.all([DEVICE_MODELS, BOILER_CONSUMPTION].map(async path => {
       const { code } = await transform(tree.read(path)!, { loader: "ts", minifyWhitespace: true, minifySyntax: true, format: "esm" });
       return code;
     }));
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(models)));
     const hash = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
     assertEquals(`${REFEREE_VERSION}:${hash}`, DEVICE_MODELS_PIN,
-      "Device, battery conversion or shared boiler consumption models changed: bump REFEREE_VERSION in src/lib/planner-bench/referee.ts so stored results are judged again, then pin the new pair here.");
+      "Device or shared boiler consumption models changed: bump REFEREE_VERSION in src/lib/planner-bench/referee.ts so stored results are judged again, then pin the new pair here.");
   } finally {
     stop();
   }

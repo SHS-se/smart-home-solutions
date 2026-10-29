@@ -184,9 +184,6 @@ pub struct Quarter {
     pub ev_w: f64,
     pub charge_w: f64,
     pub discharge_w: f64,
-    pub charge_dc_w: f64,
-    pub discharge_dc_w: f64,
-    pub battery_idle_w: f64,
     pub net_w: f64,
     pub curtailed_w: f64,
     pub battery_kwh: Option<f64>,
@@ -203,8 +200,8 @@ pub struct Quarter {
 pub struct Account {
     /// The plan's score, a point a krona: points − (cash + wear − credit).
     pub score_sek: f64,
-    /// What the rules took and gave, in kronor.
-    pub points: f64,
+    /// What the rules took and gave, in whole kronor.
+    pub points: i32,
     pub cash_sek: f64,
     pub wear_sek: f64,
     /// Scheduling preference; never a bill item or physical equipment wear.
@@ -212,7 +209,7 @@ pub struct Account {
     /// The energy left in the stores, each up to its cap.
     pub credit_sek: f64,
     /// Contributions retain individual signs, including net-zero quarters.
-    pub contributions: Vec<Vec<f64>>,
+    pub contributions: Vec<Vec<i32>>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Selection {
@@ -237,7 +234,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 14 || p.slots.is_empty() {
+    if p.abi != 13 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -298,7 +295,6 @@ fn validate(p: &Problem) -> Result<(), String> {
             || b.min_soc >= b.max_soc
             || b.charge_max_w <= 0.0
             || b.discharge_max_w <= 0.0
-            || !b.conversion.valid()
         {
             return bad("invalid_model_parameters");
         }

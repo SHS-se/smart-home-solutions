@@ -1,4 +1,3 @@
-import { syntheticIdentityConversion } from '../supabase/functions/_shared/planner/battery-physics.fixture.ts';
 import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Entirely invented diagnostic household. No HA readings, case export or customer IDs.
@@ -14,7 +13,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 14,
+    abi: 13,
     ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -38,7 +37,7 @@ export function syntheticReadyProblem(): ReadyProblem {
       charge_max_w: 3000,
       discharge_max_w: 3000,
       charge_efficiency: .9,
-      discharge_efficiency: .9, conversion: syntheticIdentityConversion(),
+      discharge_efficiency: .9,
     },
     car: { capacity_kwh: 50, kwh_per_km: .18, charge_efficiency: .9 },
     charger: {

@@ -39,7 +39,6 @@ Deno.test('current browser reports pin and save through SQL with source recovery
     await db.exec('RESET ROLE');
     await db.exec(await Deno.readTextFile('supabase/migrations/20261028120000_roi_source_recovery_contract.sql'));
     await db.exec(await Deno.readTextFile(migration));
-    await db.exec(await Deno.readTextFile('supabase/migrations/20261028230000_roi_refined_battery_physics.sql'));
     await db.exec('SET ROLE authenticated');
     await assertRejects(() => pin(`roi-month-v6:${'a'.repeat(64)}`), Error, 'ROI calculation updated');
     const upgraded = parseSavedReport(await pin());

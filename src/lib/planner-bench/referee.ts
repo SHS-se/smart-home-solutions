@@ -1,6 +1,5 @@
 import { boilerDemand } from "./household";
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
-import { chargeAcPower, chargeDcPower, dischargeDcPower, outputPower, refinedBatteryFlow, gridKwhPerStoredKwh } from '../../../supabase/functions/_shared/planner/battery-conversion';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
 import { projectBoilerTank } from '../../../supabase/functions/_shared/boiler-consumption';
 // The bench's own account of what a plan does (docs/planner-bench/test-cases.md).
@@ -47,7 +46,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 29;
+export const REFEREE_VERSION = 28;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -124,7 +123,7 @@ export interface Outcome {
 /** The household carried through one set of decisions, unrounded. Stores are at the end of each quarter. */
 export interface Simulation {
   poolStart: (import('../../../supabase/functions/_shared/planner/device-models').HeaterStart | null)[];
-  poolW: Float64Array; compressorW: Float64Array; pumpW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array; batteryIdleW: Float64Array;
+  poolW: Float64Array; compressorW: Float64Array; pumpW: Float64Array; evW: Float64Array; chargeW: Float64Array; dischargeW: Float64Array;
   /** The fixed load as carried out: base load with the water heater as it ran. */
   baseW: Float64Array;
   /** The water heater, where the case has one; null otherwise. */
@@ -208,6 +207,8 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
     return Math.max(0, wanted);
   };
 
+  const batteryMinKwh = h.battery.min_soc * h.battery.capacity_kwh;
+  const batteryMaxKwh = h.battery.max_soc * h.battery.capacity_kwh;
   const carLevels = evLevels(h), carMaxW = evMaxW(h), carLimitKwh = evLimitKwh(c, h);
   const heatLevels = poolLevels(h), poolMaxW = heatLevels.at(-1)!.draw_w;
   /** A device runs at one of its levels: a power between two is carried out at the lower and reported. */
@@ -229,7 +230,7 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
   const out: Simulation = {
     compressorW: new Float64Array(QUARTERS), pumpW: new Float64Array(QUARTERS),
     poolStart: [],
-    poolW: new Float64Array(QUARTERS), evW: new Float64Array(QUARTERS), chargeW: new Float64Array(QUARTERS), dischargeW: new Float64Array(QUARTERS), batteryIdleW: new Float64Array(QUARTERS),
+    poolW: new Float64Array(QUARTERS), evW: new Float64Array(QUARTERS), chargeW: new Float64Array(QUARTERS), dischargeW: new Float64Array(QUARTERS),
     netW: new Float64Array(QUARTERS), batteryKwh: new Float64Array(QUARTERS), poolC: new Float64Array(QUARTERS), poolPendingHeatKwh: new Float64Array(QUARTERS), poolSourceDepletionKwh: new Float64Array(QUARTERS), evKwh: new Float64Array(QUARTERS),
     baseW: new Float64Array(QUARTERS),
     water: needW && { w: new Float64Array(QUARTERS), owedKwh: new Float64Array(QUARTERS), permitted: new Uint8Array(QUARTERS) },
@@ -257,51 +258,45 @@ export function simulate(c: BenchCase, h: Household, d: Decisions, world: World 
       out.water.w[i] = waterW[i]; out.water.owedKwh[i] = waterRemaining[i];
       out.water.permitted[i] = d.hot_water?.[i]?.kind !== 'inhibit' || waterW[i] > 0 ? 1 : 0;
     }
-    const grossW = fixedW + poolW + evW;
-    const chargeMaxAc = chargeAcPower(h.battery.conversion, h.battery.charge_max_w, solarW[i], grossW);
-    const dischargeMaxAc = outputPower(h.battery.conversion.discharge, h.battery.discharge_max_w);
-    let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), chargeMaxAc);
-    let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), dischargeMaxAc);
+    let chargeW = clip(i, 'battery_power', asked(i, d.battery_charge_w[i]), h.battery.charge_max_w);
+    let dischargeW = clip(i, 'battery_power', asked(i, d.battery_discharge_w[i]), h.battery.discharge_max_w);
     if (measured) {
       const follow = followLimits(c, h, d, i, poolW, evW, chargeW, dischargeW);
       if (follow) {
         const houseW = fixedW + poolW + evW - solarW[i];
-        chargeW = Math.min(follow.charge_limit_w, chargeMaxAc, Math.max(0, -houseW));
+        chargeW = Math.min(follow.charge_limit_w, h.battery.charge_max_w, Math.max(0, -houseW));
+        const grossW = fixedW + poolW + evW;
         const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
-        dischargeW = Math.min(follow.discharge_limit_w, dischargeMaxAc,
+        dischargeW = Math.min(follow.discharge_limit_w, h.battery.discharge_max_w,
           proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW);
       }
     }
+    // A pack that ran dry or filled because the day differed from its forecast is not an impossible request.
+    chargeW = clip(i, 'battery_full', chargeW, Math.max(0, (Math.max(batteryMaxKwh, batteryKwh) - batteryKwh) / (h.battery.charge_efficiency * HOURS) * 1_000 + dischargeW / (h.battery.charge_efficiency * h.battery.discharge_efficiency)), !measured);
+    dischargeW = clip(i, 'battery_empty', dischargeW, Math.max(0, (batteryKwh - Math.min(batteryMinKwh, batteryKwh)) * h.battery.discharge_efficiency / HOURS * 1_000 + chargeW * h.battery.charge_efficiency * h.battery.discharge_efficiency), !measured);
+
     // All fixed and demand-following modes share the permission, including export.
     // If excluded demand remains on the bus, battery export cannot bypass it.
+    const grossW = fixedW + poolW + evW;
     const eligibleW = h.site.ev_battery_supply_allowed ? grossW : grossW - evW;
     const supplyW = proportionalSupply(grossW, solarW[i], eligibleW).houseSupplyBoundW;
     if (Math.max(0, grossW - solarW[i]) > supplyW + 1e-6) {
       dischargeW = clip(i, 'battery_supply', dischargeW, supplyW, !measured);
     }
 
-    const battery = refinedBatteryFlow(h.battery, { stored_kwh: batteryKwh, hours: HOURS,
-      charge_w: chargeW, discharge_w: dischargeW, pv_w: solarW[i], house_w: grossW });
-    // Diagnose stored saturation separately from an unused converter activation
-    // budget: the latter is ordinary physical execution, not a full/empty pack.
-    const requestedChargeDc = chargeDcPower(h.battery.conversion, chargeW, solarW[i], grossW);
-    const requestedDischargeDc = dischargeDcPower(h.battery.conversion, dischargeW);
-    clip(i, 'battery_full', chargeW, battery.charge_w, !measured && requestedChargeDc > battery.charge_dc_w + 1e-7);
-    clip(i, 'battery_empty', dischargeW, battery.discharge_w, !measured && requestedDischargeDc > battery.discharge_dc_w + 1e-7);
-    chargeW = battery.charge_w; dischargeW = battery.discharge_w;
-    batteryKwh = battery.battery_kwh;
+    batteryKwh += (chargeW * h.battery.charge_efficiency - dischargeW / h.battery.discharge_efficiency) * HOURS / 1_000;
     poolC = projected.water_c;
     poolPendingHeatKwh = projected.pending_heat_kwh;
     poolSourceDepletionKwh = projected.source_depletion_kwh ?? 0;
     evKwh += evW * h.car.battery.charge_efficiency * HOURS / 1_000;
 
-    const netW = grossW + chargeW - dischargeW + battery.battery_idle_w - solarW[i];
+    const netW = fixedW + poolW + evW + chargeW - dischargeW - solarW[i];
     if (!measured && netW - h.site.import_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(netW - h.site.import_limit_w) });
     if (!measured && -netW - h.site.export_limit_w > CLIP_TOLERANCE_W) violations.push({ quarter: i, kind: 'grid_limit', clipped_w: r1(-netW - h.site.export_limit_w) });
     const quarterCost = (netW > 0 ? netW * buy[i] : netW * sell[i]) * HOURS / 1_000;
     out.cost += quarterCost;
 
-    out.poolW[i] = poolW; out.evW[i] = evW; out.chargeW[i] = chargeW; out.dischargeW[i] = dischargeW; out.batteryIdleW[i] = battery.battery_idle_w;
+    out.poolW[i] = poolW; out.evW[i] = evW; out.chargeW[i] = chargeW; out.dischargeW[i] = dischargeW;
     out.netW[i] = netW; out.batteryKwh[i] = batteryKwh; out.poolC[i] = poolC; out.poolPendingHeatKwh[i] = poolPendingHeatKwh; out.poolSourceDepletionKwh[i] = poolSourceDepletionKwh; out.evKwh[i] = evKwh; out.baseW[i] = fixedW;
     out.costSek[i] = quarterCost;
   }
@@ -323,19 +318,16 @@ function followLimits(c: BenchCase, h: Household, d: Decisions, i: number, poolW
     && Math.abs(stated.planned[1] - d.battery_discharge_w[i]) <= CLIP_TOLERANCE_W) {
     return stated.follows ? stated : null;
   }
-  const gross = c.base_load_forecast_w[i] + poolW + evW;
-  const chargeMax = chargeAcPower(h.battery.conversion, h.battery.charge_max_w, c.solar_forecast_w[i], gross);
-  const dischargeMax = outputPower(h.battery.conversion.discharge, h.battery.discharge_max_w);
-  const toldHouseW = gross - c.solar_forecast_w[i];
+  const toldHouseW = c.base_load_forecast_w[i] + poolW + evW - c.solar_forecast_w[i];
   if (chargeW > CLIP_TOLERANCE_W) {
-    return chargeW <= Math.max(0, -toldHouseW) + CLIP_TOLERANCE_W ? { charge_limit_w: chargeMax, discharge_limit_w: 0 } : null;
+    return chargeW <= Math.max(0, -toldHouseW) + CLIP_TOLERANCE_W ? { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 } : null;
   }
   if (dischargeW > CLIP_TOLERANCE_W) {
     const needW = Math.max(0, toldHouseW);
     if (dischargeW > needW + CLIP_TOLERANCE_W) return null;
-    return { charge_limit_w: chargeMax, discharge_limit_w: dischargeW + CLIP_TOLERANCE_W >= needW ? dischargeMax : dischargeW };
+    return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: dischargeW + CLIP_TOLERANCE_W >= needW ? h.battery.discharge_max_w : dischargeW };
   }
-  return { charge_limit_w: chargeMax, discharge_limit_w: 0 };
+  return { charge_limit_w: h.battery.charge_max_w, discharge_limit_w: 0 };
 }
 
 /** Mechanical wear shared by the bill and alternative-schedule audits. */
@@ -423,7 +415,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     start: [], hours: [], published: [], importPrice: [], exportPrice: [], believedImportPrice: [],
     poolStart: sim.poolStart,
     solarW: [], loadW: [], poolW: [], hotWaterW: [], carW: [],
-    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [], batteryIdleW: [],
+    gridImportW: [], gridExportW: [], batteryChargeW: [], batteryDischargeW: [],
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
     carSoc: [], carKm: [], carConnected: [], poolC: [], poolPendingHeatKwh: [], poolSourceDepletionKwh: [], costSek: [], wearSek: [],
     comfort: {
@@ -443,7 +435,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.exportPrice.push(r4(c.recorded.prices.export_sek_per_kwh[i]));
     series.believedImportPrice!.push(believedImportPrice && Number.isFinite(believedImportPrice[i]) ? r4(believedImportPrice[i]) : null);
     series.solarW.push(r1(solarW[i]));
-    series.loadW.push(r1(sim.baseW[i] + sim.poolW[i] + sim.evW[i] + sim.batteryIdleW[i]));
+    series.loadW.push(r1(sim.baseW[i] + sim.poolW[i] + sim.evW[i]));
     series.poolW.push(r1(sim.poolW[i]));
     series.hotWaterW.push(r1(sim.water?.w[i] ?? 0));
     series.carW.push(r1(sim.evW[i]));
@@ -451,7 +443,6 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.gridExportW.push(r1(Math.max(0, -sim.netW[i])));
     series.batteryChargeW.push(r1(sim.chargeW[i]));
     series.batteryDischargeW.push(r1(sim.dischargeW[i]));
-    series.batteryIdleW!.push(r1(sim.batteryIdleW[i]));
     series.homeSoc.push(r1(sim.batteryKwh[i] / h.battery.capacity_kwh * 100));
     series.carSoc.push(r1(sim.evKwh[i] / h.car.battery.capacity_kwh * 100));
     series.carKm!.push(r1(sim.evKwh[i] / h.car.battery.kwh_per_km));
@@ -479,7 +470,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
   const reference = median(c.recorded.prices.import_sek_per_kwh);
   // A degree of pool water costs its heat over the heat pump's COP, the pump that must run with it included.
   const poolKwhPerDegree = electricKwhPerDegree(h.pool.store, poolLevels(h).at(-1)!);
-  const terminalGridKwh = (batteryKwh - sim.start.batteryKwh) * gridKwhPerStoredKwh(h.battery)
+  const terminalGridKwh = (batteryKwh - sim.start.batteryKwh) * h.battery.discharge_efficiency
     + (poolInventoryC(h.pool.store, poolC, sim.poolPendingHeatKwh[QUARTERS - 1]) - poolInventoryC(h.pool.store, sim.start.poolC, sim.start.poolPendingHeatKwh)) * poolKwhPerDegree
     + (evKwh - sim.start.evKwh) / h.car.battery.charge_efficiency;
   return {

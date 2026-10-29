@@ -128,7 +128,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 14, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: 13, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
@@ -241,8 +241,7 @@ export function projectionSeries(input: BaselineInput, problem: ReadyProblem, qu
     devices, deviceW: Object.fromEntries(devices.map(device => [device.key, loads.map(slot => slot[device.key])])),
     start: problem.slots.map(s => new Date(Date.parse(input.start) + s.start_seconds * 1000).toISOString()), hours: problem.slots.map(s => s.hours),
     published: problem.slots.map(() => 1), importPrice: problem.slots.map(s => s.import_price), exportPrice: problem.slots.map(s => s.export_price),
-    solarW: field((q, i) => Math.max(0, problem.slots[i].solar_w - q.curtailed_w)), loadW: field((q, i) => problem.slots[i].base_w + q.pool_w + q.ev_w + q.battery_idle_w),
-    batteryIdleW: field(q => q.battery_idle_w),
+    solarW: field((q, i) => Math.max(0, problem.slots[i].solar_w - q.curtailed_w)), loadW: field((q, i) => problem.slots[i].base_w + q.pool_w + q.ev_w),
     poolW: field(q => q.pool_w + input.idlePumpW), hotWaterW: field(() => 0), carW: field(q => q.ev_w),
     gridImportW: field(q => Math.max(0, q.net_w)), gridExportW: field(q => Math.max(0, -q.net_w)),
     batteryChargeW: field(q => q.charge_w), batteryDischargeW: field(q => q.discharge_w),

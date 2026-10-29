@@ -20,7 +20,7 @@ second copy of its dependency lock. Updating the pin is an intentional producer
 rollout and must be reviewed with the producer changes.
 
 The Python bridge runs the real `Household._build_optimisation_snapshot`, including
-empirical device/base-load modeling, service construction, schema 11 scope and
+empirical device/base-load modeling, service construction, schema 10 scope and
 JSON serialization. Synthetic ports supply retained electrical capability,
 recorded demand, sensor state and supplier tariffs. The candidate TypeScript
 planner then prepares and solves that captured input; server-owned comfort

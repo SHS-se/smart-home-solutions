@@ -6,7 +6,6 @@
 import type { OptimisationPlan } from "./planning-contracts.ts";
 import type { BatteryProjectionRow } from "./planning-contracts.ts";
 import type { BatteryDemand, BatteryInstruction } from "./battery-instruction.ts";
-import { chargeDcPower, convertedFlows } from './battery-conversion.ts';
 
 export interface ExecutionFeedback {
   scope_revision?: string;
@@ -93,13 +92,7 @@ export interface ReferenceIntervalV2 {
   rounding_mwh: number;
 }
 
-export type BatteryExecutionContract = BatteryExecutionContractV1 | BatteryExecutionContractV2 | BatteryExecutionContractV3;
-
-export interface BatteryExecutionContractV3 extends Omit<BatteryExecutionContractV2, 'schema' | 'intervals'> {
-  schema: 'battery-plan-execution-v3';
-  storage: { charge_efficiency: number; discharge_efficiency: number };
-  intervals: Array<ReferenceIntervalV2 & { installation_mwh: number }>;
-}
+export type BatteryExecutionContract = BatteryExecutionContractV1 | BatteryExecutionContractV2;
 
 export interface BatteryExecutionContractV2 extends Omit<BatteryExecutionContractV1, "schema" | "intervals"> {
   schema: "battery-plan-execution-v2";
@@ -169,7 +162,7 @@ export function buildBatteryExecutionContract(input: {
   const maximum = Math.round(battery.max_soc * capacity);
   let stored = battery.soc * battery.capacity_kwh * 1e6;
   const gross: Array<{ charge_w: number; discharge_w: number }> = [];
-  const intervals: Array<ReferenceInterval & { installation_mwh: number }> = rows.map((row, i) => {
+  const intervals: ReferenceInterval[] = rows.map((row, i) => {
     const start = Date.parse(row.start), end = Date.parse(row.end);
     integer(start, "interval start"); integer(end, "interval end");
     if (end <= start || (i && row.start !== rows[i - 1].end)) throw new Error("noncontiguous exact intervals");
@@ -185,21 +178,21 @@ export function buildBatteryExecutionContract(input: {
       : command.operation === "self_consumption"
       ? row.charge_w > 0 ? "solar_charge" : row.discharge_w > 0 ? "supply_house" : "hold"
       : command.operation;
-    const charge_w = row.charge_w, discharge_w = row.discharge_w;
-    if (((operation === 'idle' || operation === 'export') && charge_w * hours * 1000 >= 1)
-      || (operation !== 'supply_house' && operation !== 'export' && discharge_w * hours * 1000 >= 1)) {
-      throw new Error('Published battery role contradicts authoritative physical flows');
-    }
+    // The stated role is what HA executes. A direction it forbids is solver
+    // residue the instruction already floored away (an idle quarter can carry
+    // milliwatts of charge), so the reference must not state that energy.
+    const charge_w = operation === "idle" || operation === "export" ? 0 : row.charge_w;
+    const discharge_w = operation === "supply_house" || operation === "export" ? row.discharge_w : 0;
     gross.push({ charge_w, discharge_w });
-    const net = row.house_w - row.unserved_w + charge_w - discharge_w + row.battery_idle_w + row.curtailed_w - pv;
+    const net = row.house_w - row.unserved_w + charge_w - discharge_w + row.curtailed_w - pv;
     const energy = (w: number) => {
       if (!Number.isFinite(w) || w < 0) throw new Error("invalid gross flow");
       return integer(Math.round(w * hours * 1000), "reference energy");
     };
     const begin = Math.round(stored);
-    if (row.stored_end_kwh === null || !Number.isFinite(row.stored_end_kwh)) throw new Error('Native battery stored endpoint required');
-    stored = row.stored_end_kwh * 1e6;
-    const result: ReferenceInterval & { installation_mwh: number } = {
+    stored = Math.min(maximum, Math.max(minimum, stored +
+      (charge_w * battery.charge_efficiency - discharge_w / battery.discharge_efficiency) * hours * 1000));
+    const result: ReferenceInterval = {
       start_ms: start, end_ms: end, stored_start_mwh: begin, stored_end_mwh: Math.round(stored),
       operation, target_kind: charge_w > 0 ? "stored_energy" : operation === "supply_house" ? "demand_following" : "permission",
       grid_charge_allowed: command.allow_grid_charge,
@@ -214,10 +207,9 @@ export function buildBatteryExecutionContract(input: {
       pv_mwh: energy(pv), load_mwh: energy(row.house_w), import_mwh: energy(Math.max(0, net)),
       export_mwh: energy(Math.max(0, -net)), curtailed_mwh: energy(row.curtailed_w),
       unserved_mwh: energy(row.unserved_w), rounding_mwh: 0,
-      installation_mwh: energy(row.battery_idle_w),
     };
     result.rounding_mwh = result.pv_mwh + result.import_mwh + result.discharge_ac_mwh -
-      result.load_mwh + result.unserved_mwh - result.charge_ac_mwh - result.export_mwh - result.curtailed_mwh - result.installation_mwh;
+      result.load_mwh + result.unserved_mwh - result.charge_ac_mwh - result.export_mwh - result.curtailed_mwh;
     return result;
   });
   const liveObjectives = feedback.objectives.filter((r) =>
@@ -251,21 +243,16 @@ export function buildBatteryExecutionContract(input: {
       const row = rows[j], { charge_w, discharge_w } = gross[j];
       // Nominal device loads own their forecast headroom first. This quantity is
       // a conditional forecast allocation; HA rechecks real loads/pending writes.
-      const nominalGrid = Math.max(0, row.house_w + charge_w - discharge_w + row.battery_idle_w - pv_w[j]);
+      const nominalGrid = Math.max(0, row.house_w + charge_w - discharge_w - pv_w[j]);
       const gridRoom = Math.max(0, plan.grid.import_limit_w - nominalGrid);
-      const candidateDc = Math.min(battery.charge_max_w,
-        chargeDcPower(battery.conversion, charge_w + (intervals[j].grid_charge_allowed ? gridRoom : 0), pv_w[j], row.house_w));
-      const newFlows = convertedFlows(battery.conversion, candidateDc, 0, pv_w[j], row.house_w);
-      // Total installation demand changes with branch activation. Reclaiming
-      // the nominal idle term is permitted only through this captured law.
-      const availableAc = charge_w + gridRoom + row.battery_idle_w - newFlows.idle;
-      const allowedDc = Math.min(candidateDc, chargeDcPower(battery.conversion, Math.max(0, availableAc), pv_w[j], row.house_w));
-      const extraDc = Math.max(0, Math.floor(allowedDc - row.charge_dc_w));
+      const extraAc = Math.min(Math.max(0, battery.charge_max_w - charge_w),
+        intervals[j].grid_charge_allowed ? gridRoom : 0);
+      const extraDc = Math.floor(extraAc * battery.charge_efficiency);
       if (!extraDc) continue;
       recovery.push({
         objective_id: id, start_ms: intervals[j].start_ms, end_ms: intervals[j].end_ms,
         max_correction_mwh: Math.min(objective.target_mwh - minimum,
-          Math.floor(extraDc * battery.charge_efficiency * (intervals[j].end_ms - intervals[j].start_ms) / 3600)),
+          Math.floor(extraDc * (intervals[j].end_ms - intervals[j].start_ms) / 3600)),
         extra_charge_dc_w: extraDc, order: j, resource_id: "household:battery-recovery",
         rule: "nominal_first_then_earliest",
         reason: "Use remaining allocated headroom in the original charging window",
@@ -275,12 +262,11 @@ export function buildBatteryExecutionContract(input: {
   const contract: BatteryExecutionContractV1 = {
     schema: "battery-plan-execution-v1", id: `${plan.plan_id}:battery:${feedback.generation}`,
     plan_id: plan.plan_id, generation: feedback.generation, mode, scope_revision,
-    model_revision: `${plan.model_version}:${battery.conversion.revision}:terminal-storage:${battery.charge_efficiency}:${battery.discharge_efficiency}`,
+    model_revision: `${plan.model_version}:ac-constant-efficiency:${battery.charge_efficiency}:${battery.discharge_efficiency}`,
     energy_basis: "stored_energy_mwh", capacity_mwh: capacity, minimum_mwh: minimum, maximum_mwh: maximum,
     export_reserve_mwh: Math.max(minimum, Math.round(plan.policy.battery_export_reserve_soc * capacity)),
     valid_until_ms: Date.parse(plan.valid_until), source_receipt: feedback.source_receipt,
-    previous_contract_id: feedback.previous_contract_id,
-    intervals: intervals.map(({ installation_mwh: _installation, ...row }) => row), objectives, recovery,
+    previous_contract_id: feedback.previous_contract_id, intervals, objectives, recovery,
     dispositions: liveObjectives.map(({ objective }) => {
       const same = objectives.find((o) => o.id === objective.id && o.deadline_ms === objective.deadline_ms);
       if (same) return { objective_id: objective.id, outcome: "retained" as const,
@@ -292,19 +278,14 @@ export function buildBatteryExecutionContract(input: {
           reason: "Revised strategy no longer requests this objective; this is not measured fulfilment" };
     }),
   };
-  if (!demand) {
-    if (intervals.some(row => row.installation_mwh)) throw new Error('Refined battery execution needs an explicit demand partition');
-    return contract;
-  }
+  if (!demand) return contract;
   // The slot's instruction is copied verbatim: HA executes what the plan view shows.
-  return { ...contract, schema: "battery-plan-execution-v3", demand,
-    storage: { charge_efficiency: battery.charge_efficiency, discharge_efficiency: battery.discharge_efficiency },
+  return { ...contract, schema: "battery-plan-execution-v2", demand,
     intervals: intervals.map((row, i) => ({ start_ms: row.start_ms, end_ms: row.end_ms,
       stored_start_mwh: row.stored_start_mwh, stored_end_mwh: row.stored_end_mwh, target_kind: row.target_kind,
       instruction: slots[i].battery_instruction!, charge_ac_mwh: row.charge_ac_mwh, discharge_ac_mwh: row.discharge_ac_mwh,
       pv_mwh: row.pv_mwh, load_mwh: row.load_mwh, import_mwh: row.import_mwh, export_mwh: row.export_mwh,
-      curtailed_mwh: row.curtailed_mwh, unserved_mwh: row.unserved_mwh, rounding_mwh: row.rounding_mwh,
-      installation_mwh: row.installation_mwh })) };
+      curtailed_mwh: row.curtailed_mwh, unserved_mwh: row.unserved_mwh, rounding_mwh: row.rounding_mwh })) };
 }
 
 /** Validate the external capture before solving; receipt ordering is local only. */

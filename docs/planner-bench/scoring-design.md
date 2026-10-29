@@ -1,7 +1,5 @@
 # Planner bench v4: architecture decision
 
-Scorer 39, 28 October 2026: car range deductions grow with the square of the shortfall into each check's band, so a car just under a line no longer buys a top-up at the evening peak; a whole band under still costs the full point. Readiness still counts from quarter zero. See [scoring.md](scoring.md).
-
 Scorer 37, 24 October 2026: EV readiness shortfalls count from quarter zero, with no reachability grace or renewed day of deferral. Pool reachability retains its existing policy. Archived scores preserve their original scorer version. See [error and readiness policy](../energy-optimisation/replan-error-policy.md).
 
 Current behavior is defined in [scoring.md](scoring.md). The v32 cleanup removes

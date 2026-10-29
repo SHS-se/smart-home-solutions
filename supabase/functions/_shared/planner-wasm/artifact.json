@@ -1,7 +1,7 @@
 {
-  "abi": 14,
-  "wasm_sha256": "a926f86c2231ef949abf6e550d87ad622cbc50ad9229f8e1559cc42bea87dbe6",
-  "source_sha256": "49173fd5006cb4c98850b38664db8444431950359253d98feecbfafe6e910331",
+  "abi": 13,
+  "wasm_sha256": "04514308bed0554e77cd108a5abae58079832e2838de6ee99c38cade4290dec9",
+  "source_sha256": "aa5f79ea41e6eea6eb4b150c829b710d4630a09cff8b0ea03f328e681a26c50b",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -70,7 +70,6 @@
     "supabase/functions/_shared/planner-wasm/ready-schema.ts",
     "supabase/functions/_shared/planner-wasm/rule-policy.ts",
     "supabase/functions/_shared/planner-wasm/runtime.ts",
-    "supabase/functions/_shared/planner/battery-conversion.ts",
     "supabase/functions/_shared/planner/battery-instruction.ts",
     "supabase/functions/_shared/planner/battery-plan-execution.ts",
     "supabase/functions/_shared/planner/demand-outlook.ts",

@@ -7,7 +7,7 @@ use crate::*;
 struct Label {
     state: State,
     parent: usize,
-    points: f64,
+    points: i32,
     cash: f64,
     wear: f64,
     continuity: f64,
@@ -41,8 +41,14 @@ fn command(
         pool_on,
         ev_amps,
         battery,
-        charge_limit_w: p.battery.as_ref().map_or(0.0, |_| charge),
-        discharge_limit_w: p.battery.as_ref().map_or(0.0, |_| discharge),
+        charge_limit_w: p
+            .battery
+            .as_ref()
+            .map_or(0.0, |b| charge.min(b.charge_max_w)),
+        discharge_limit_w: p
+            .battery
+            .as_ref()
+            .map_or(0.0, |b| discharge.min(b.discharge_max_w)),
     }
 }
 fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f64) -> Vec<u32> {
@@ -143,8 +149,7 @@ fn actions_with_pool(
         let pool = pool_step(on);
         let pool_demand = physics::pool_demand(p, s, on, label.state.pool, pool.as_ref());
         let household_w = s.base_w + pool_demand.average_w - s.solar_w;
-        let admission_w = s.base_w + pool_demand.reservation_w - s.solar_w
-            + p.battery.as_ref().map_or(0.0, |b| b.conversion.idle_loss_w);
+        let admission_w = s.base_w + pool_demand.reservation_w - s.solar_w;
         for amps in ev_levels(p, index, i, label, admission_w) {
             let ev_w = p
                 .charger
@@ -156,21 +161,15 @@ fn actions_with_pool(
             };
             let demand = household_w + ev_w;
             let grid_room = (p.limits.import_w - demand).max(0.0);
-            let gross_w = demand + s.solar_w;
-            let refill_hours = h * f
-                .next_cheaper
-                .saturating_sub(i)
-                .max(1)
-                .min(p.slots.len() - i) as f64;
-            let stored = battery.discharge_for_inventory_w(
-                (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0),
-                refill_hours,
-            ) * refill_hours
-                / 1000.0;
-            // Full physical room and grid headroom use the same source-specific model as projection.
-            let cap = battery
-                .available_charge_w(label.state.battery, h, s.solar_w, gross_w)
-                .min(battery.charge_grid_room_w(grid_room, s.solar_w, gross_w));
+            let stored = (label.state.battery - battery.min_soc * battery.capacity_kwh).max(0.0)
+                * battery.discharge_efficiency;
+            // Charging is worth doing up to a full battery: what it leaves at
+            // the end is credited (end credit), so no demand-only ceiling.
+            let headroom = (battery.max_soc * battery.capacity_kwh - label.state.battery).max(0.0)
+                * 1000.0
+                / h
+                / battery.charge_efficiency;
+            let cap = battery.charge_max_w.min(grid_room).min(headroom);
             // Automatic supply follows eligible measured demand. A forecast-sized
             // cap would suppress later appliance moves and ordinary load changes.
             out.push(command(
@@ -178,26 +177,22 @@ fn actions_with_pool(
                 on,
                 amps,
                 Operation::SelfConsumption,
-                battery.maximum_charge_ac_w(),
-                battery.maximum_discharge_ac_w(),
+                battery.charge_max_w,
+                battery.discharge_max_w,
             ));
             out.push(command(
                 p,
                 on,
                 amps,
                 Operation::Hold,
-                battery.maximum_charge_ac_w(),
+                battery.charge_max_w,
                 0.0,
             ));
             out.push(command(p, on, amps, Operation::Idle, 0.0, 0.0));
             if cap > 0.0 {
-                let needed_stored = battery.discharge_dc_w(
-                    (f.refill_demand_kwh - stored).max(0.0) * 1000.0 / refill_hours,
-                ) * refill_hours
-                    / 1000.0
-                    / battery.discharge_efficiency;
-                let refill = battery
-                    .charge_for_inventory_w(needed_stored, h, s.solar_w, gross_w)
+                let refill = ((f.refill_demand_kwh - stored).max(0.0) * 1000.0
+                    / h
+                    / battery.charge_efficiency)
                     .min(cap);
                 if refill > 0.0 {
                     out.push(command(p, on, amps, Operation::GridCharge, refill, 0.0));
@@ -217,7 +212,7 @@ fn actions_with_pool(
                     amps,
                     Operation::Export,
                     0.0,
-                    battery.maximum_discharge_ac_w(),
+                    battery.discharge_max_w,
                 ));
             }
         }
@@ -259,14 +254,14 @@ fn rank(opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
     // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
     let cost = l.cash + l.wear + l.continuity + future.cost;
-    (l.points + future.points - cost, cost)
+    (f64::from(l.points) + future.points - cost, cost)
 }
 
 fn initial_label(p: &Problem) -> Label {
     Label {
         state: physics::initial(p),
         parent: usize::MAX,
-        points: 0.0,
+        points: 0,
         cash: 0.0,
         wear: 0.0,
         continuity: 0.0,
@@ -312,11 +307,9 @@ fn construct(
                 // opportunity tables explore hypothetical inventory states.
                 if commitments::hold(p, i).has(commitments::Owner::Battery)
                     && ((c.battery == Operation::GridCharge
-                        && (q.charge_w - c.charge_limit_w).abs() > 0.01
-                        && !physics::quantized_allocation(c.charge_limit_w, q.charge_w))
+                        && (q.charge_w - c.charge_limit_w).abs() > 0.01)
                         || (c.battery == Operation::Export
-                            && (q.discharge_w - c.discharge_limit_w).abs() > 0.01
-                            && !physics::quantized_allocation(c.discharge_limit_w, q.discharge_w)))
+                            && (q.discharge_w - c.discharge_limit_w).abs() > 0.01))
                 {
                     committed_issue = Some(format!(
                         "committed_command_infeasible:{i}:native_battery_power_limit"
@@ -388,7 +381,7 @@ fn construct(
             .collect();
     }
     let finished = |l: &Label| {
-        l.points - (l.cash + l.wear + l.continuity)
+        f64::from(l.points) - (l.cash + l.wear + l.continuity)
             + policy::end_credit(
                 p,
                 l.state.battery,
@@ -486,7 +479,7 @@ impl<'p> CandidateScorer<'p> {
             reuse,
             |commands, work, prefix| {
                 self.projector
-                    .project_normalized_metered_prefix(commands, work, prefix)
+                    .project_metered_prefix(commands, work, prefix)
             },
         )
     }
@@ -509,36 +502,40 @@ fn score_prefix(
     reuse: Option<&Candidate>,
 ) -> Result<Candidate, EvaluationIssue> {
     score_projection(p, index, commands, work, reuse, |commands, work, prefix| {
-        physics::project_normalized_metered_prefix(p, commands, work, prefix)
+        physics::project_metered_prefix(p, commands, work, prefix)
     })
 }
 /// Reuse only the physically identical command prefix of this same problem.
 fn score_projection(
     p: &Problem,
     index: &Index,
-    mut commands: Vec<Command>,
+    commands: Vec<Command>,
     work: &mut Work,
     reuse: Option<&Candidate>,
-    project: impl FnOnce(&mut [Command], &mut Work, &[Quarter]) -> Option<Vec<Quarter>>,
+    project: impl FnOnce(&[Command], &mut Work, &[Quarter]) -> Option<Vec<Quarter>>,
 ) -> Result<Candidate, EvaluationIssue> {
     let n = p.slots.len() as u64;
     // Decline before projecting what could not also be accounted.
     if work.free() < n * work.unit_cost * 4 {
         return Err(EvaluationIssue::GrantUnavailable);
     }
-    let prefix = reuse.map_or(&[][..], |base| {
-        let count = commands
-            .iter()
-            .zip(&base.commands)
-            .take_while(|(a, b)| {
-                a == b
-                    && a.charge_limit_w.to_bits() == b.charge_limit_w.to_bits()
-                    && a.discharge_limit_w.to_bits() == b.discharge_limit_w.to_bits()
-            })
-            .count();
-        &base.quarters[..count]
-    });
-    let quarters = project(&mut commands, work, prefix).ok_or(EvaluationIssue::Infeasible)?;
+    let quarters = project(
+        &commands,
+        work,
+        reuse.map_or(&[], |base| {
+            let count = commands
+                .iter()
+                .zip(&base.commands)
+                .take_while(|(a, b)| {
+                    a == b
+                        && a.charge_limit_w.to_bits() == b.charge_limit_w.to_bits()
+                        && a.discharge_limit_w.to_bits() == b.discharge_limit_w.to_bits()
+                })
+                .count();
+            &base.quarters[..count]
+        }),
+    )
+    .ok_or(EvaluationIssue::Infeasible)?;
     if !work.spend(n * work.unit_cost) {
         return Err(EvaluationIssue::GrantUnavailable);
     }
@@ -1538,75 +1535,6 @@ mod forecast_tests {
         }
     }
 
-    #[test]
-    fn replan_retains_the_exact_clipped_allocation_behind_an_integer_ac_request() {
-        let mut p = witnesses::tests::problem(4);
-        p.car = None;
-        p.charger = None;
-        p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
-        p.heater = None;
-        p.pool_store = None;
-        p.pool_stop_c = None;
-        p.initial.pool_c = None;
-        p.initial.pool_pending_heat_kwh = None;
-        p.initial.heater_state = None;
-        p.targets.pool_c = None;
-        for s in &mut p.slots {
-            s.base_w = 1000.0;
-        }
-        let b = p.battery.as_mut().unwrap();
-        b.conversion.grid_charge.gain = 0.9;
-        b.conversion.grid_charge.overhead_w = 90.0;
-        b.conversion.discharge.gain = 0.96;
-        b.conversion.discharge.overhead_w = 120.0;
-        b.conversion.idle_loss_w = 150.0;
-        b.discharge_max_w = 1703.4;
-        for (operation, request, expected) in [
-            (Operation::GridCharge, 301.0, 300.25),
-            (Operation::Export, 1516.0, 1515.264),
-        ] {
-            p.limits.import_w = 1350.25;
-            let c = Command {
-                pool_on: false,
-                ev_amps: 0,
-                battery: operation,
-                charge_limit_w: if operation == Operation::GridCharge {
-                    request
-                } else {
-                    0.0
-                },
-                discharge_limit_w: if operation == Operation::Export {
-                    request
-                } else {
-                    0.0
-                },
-            };
-            p.accepted = Some(vec![c.clone()]);
-            p.locked_through_seconds = 900.0;
-            let selected = solve(&p).unwrap();
-            assert_eq!(selected.commands[0], c);
-            let actual = if operation == Operation::GridCharge {
-                selected.quarters[0].charge_w
-            } else {
-                selected.quarters[0].discharge_w
-            };
-            assert!((actual - expected).abs() < 1e-8);
-            assert!(physics::quantized_allocation(request, actual));
-            let mut impossible = c.clone();
-            if operation == Operation::GridCharge {
-                impossible.charge_limit_w += 2.0;
-            } else {
-                impossible.discharge_limit_w += 2.0;
-            }
-            p.accepted = Some(vec![impossible]);
-            assert!(
-                solve(&p).is_err(),
-                "a genuinely unachievable retained request is still rejected"
-            );
-        }
-    }
     #[test]
     fn pool_admission_reserves_held_grid_charge_instead_of_saturated_average() {
         let mut p = witnesses::tests::problem(4);

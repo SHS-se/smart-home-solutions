@@ -4,7 +4,6 @@ import { projectLoadBalancedEv } from "./planner-wasm/load-balanced-ev.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { waterBatteryCommand, waterBatteryCommands } from "./rules-hot-water.ts";
 import { applyNativeHolds, nativeOwnerHeld } from "./rules-commitments.ts";
-import { batteryAcCeilings } from './planner/battery-conversion.ts';
 
 /** Same scheduled loads, reactive self-consumption and charger load balancing.
  * Carry this comparison's own stores; the selected battery trajectory cannot
@@ -12,10 +11,9 @@ import { batteryAcCeilings } from './planner/battery-conversion.ts';
 export function projectRulesBaseline(core: Pick<ReturnType<typeof createWasmPlanner>, "project">,
   input: PreparedRulesInput, selected: NativeCommand[], selectedQuarters: NativeQuarter[]): { commands: NativeCommand[]; outcome: ProjectionOutcome } {
   const p = input.problem;
-  const ceilings = p.battery ? batteryAcCeilings(p.battery) : { charge_w: 0, discharge_w: 0 };
   const requested = selected.map((command, i) => applyNativeHolds(p, i, {
     ...command, battery: p.battery ? "self_consumption" as const : "idle" as const,
-    charge_limit_w: ceilings.charge_w, discharge_limit_w: ceilings.discharge_w,
+    charge_limit_w: p.battery?.charge_max_w ?? 0, discharge_limit_w: p.battery?.discharge_max_w ?? 0,
   }));
   if (!p.car || !p.charger) {
     const commands = waterBatteryCommands(input, requested, selectedQuarters);

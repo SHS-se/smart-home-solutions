@@ -15,8 +15,6 @@ import {
 import { fitRoom } from "../supabase/functions/_shared/device-learning/room/fit.ts";
 import { roomObservations } from "../tests/planner-contracts/synthetic.ts";
 import type { OptimisationSnapshot } from "../supabase/functions/_shared/planner/planning-contracts.ts";
-import { nativePlanner } from "../supabase/functions/_shared/planner-wasm/runtime.ts";
-import { nativeBattery } from "../supabase/functions/_shared/planner/battery-instruction.ts";
 import { qualifyPoolCapture } from "../tests/planner-integration/pool-capture.ts";
 
 const root = new URL("../", import.meta.url);
@@ -94,67 +92,6 @@ assertEquals(
 );
 const bridge = new URL("tests/planner-integration/ha_bridge.py", root).pathname;
 const results: Record<string, unknown>[] = [];
-{
-  const produced = JSON.parse(await command(python, [bridge, haRepo, "produce-battery"]));
-  const snapshot: OptimisationSnapshot = produced.snapshot;
-  assertEquals(snapshot.schema_version, 11);
-  assertEquals(snapshot.battery, {
-    capacity_kwh: 10, soc: .5, min_soc: .1, max_soc: 1,
-    charge_max_w: 4000, discharge_max_w: 5000,
-    conversion: { revision: "synthetic-qualification-affine-v1",
-      grid_charge: { gain: .8, overhead_w: 80 }, surplus_charge: { gain: .9, overhead_w: 45 },
-      discharge: { gain: .75, overhead_w: 75 }, idle_loss_w: 60 },
-    charge_efficiency: .9, discharge_efficiency: .8,
-  }, "real producer must preserve the complete invented terminal/storage model");
-  const basis = prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at,
-    price_archive: [], resolved_price_outlook: { shaped: true, observed_days: 3,
-      effective_days: 3, level_sek_per_kwh: 1,
-      shadow_import_sek_per_kwh: snapshot.slots.map(s => s.import_price_sek_per_kwh!) } },
-    null, resolveRulePolicy());
-  const plan = generateRulesPlan(basis).plan;
-  const slots = plan.plans.priority.slots;
-  const projected = nativePlanner().project(basis.problem, slots.map(s => ({
-    pool_on: false, ev_amps: 0, ...nativeBattery(s.battery_instruction!),
-  }))).outcome;
-  assert(projected.kind === "projected");
-  const quarters = projected.quarters;
-  assert(quarters.some(q => q.charge_dc_w > 0), "synthetic cheap quarters must charge");
-  assert(quarters.some(q => q.discharge_dc_w > 0), "synthetic dear quarters must supply the house");
-  assert(quarters.some(q => q.battery_idle_w > 0), "inactive quarters retain installation demand");
-  const reference = plan.battery_execution!;
-  assertEquals(reference.schema, "battery-plan-execution-v3");
-  assert("storage" in reference && "intervals" in reference);
-  assertEquals(reference.storage, { charge_efficiency: .9, discharge_efficiency: .8 });
-  let stored = 5;
-  for (const [i, q] of quarters.entries()) {
-    const h = basis.problem.slots[i].hours, house = slots[i].load_w - q.battery_idle_w;
-    // Independent affine arithmetic: zero forecast PV in this plant means the
-    // grid charging and discharge curves have exact closed forms.
-    assertAlmostEquals(q.charge_w, q.charge_dc_w > 0 ? (q.charge_dc_w + 80) / .8 : 0, 1e-7);
-    assertAlmostEquals(q.discharge_w, q.discharge_dc_w > 0 ? Math.max(0, .75 * q.discharge_dc_w - 75) : 0, 1e-7);
-    assertAlmostEquals(q.net_w, house + q.charge_w - q.discharge_w + q.battery_idle_w, 1e-7);
-    stored += h / 1000 * (q.charge_dc_w * .9 - q.discharge_dc_w / .8);
-    assertAlmostEquals(q.battery_kwh!, stored, 1e-7);
-    const row = reference.intervals[i];
-    assertAlmostEquals(row.stored_end_mwh, stored * 1e6, .500001);
-    assertAlmostEquals(row.installation_mwh, q.battery_idle_w * h * 1000, .500001);
-    assertAlmostEquals(slots[i].battery_soc! * 10, stored, 1e-7);
-  }
-  const consumed = JSON.parse(await command(python, [bridge, haRepo, "consume-battery"], { plan, quarters }));
-  assertEquals(consumed.admitted, true);
-  assertEquals(consumed.storage, { charge_efficiency: .9, discharge_efficiency: .8 });
-  assertEquals(consumed.rows.length, quarters.length);
-  for (const [i, q] of quarters.entries()) {
-    const actual = consumed.rows[i];
-    assertAlmostEquals(actual.charge_ac_w, q.charge_w, 1e-7);
-    assertAlmostEquals(actual.discharge_ac_w, q.discharge_w, 1e-7);
-    assertAlmostEquals(actual.net_w, q.net_w, 1e-7);
-    assertAlmostEquals(actual.battery_idle_w, q.battery_idle_w, 1e-7);
-  }
-  results.push({ scenario: "refined_battery", producer_schema: snapshot.schema_version,
-    execution_schema: reference.schema, quarters: quarters.length, final_stored_kwh: stored });
-}
-
 for (const watts of [0, 1200]) {
   const produced = JSON.parse(await command(python, [bridge, haRepo, "produce-manual-pool", String(watts)]));
   results.push(await qualifyPoolCapture(produced, watts));
@@ -202,7 +139,7 @@ for (const amps of [12, 15]) {
     const snapshot: OptimisationSnapshot = produced.snapshot;
     assertEquals(
       snapshot.schema_version,
-      11,
+      10,
       "use the real current producer schema",
     );
     assertEquals(

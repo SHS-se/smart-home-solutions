@@ -31,10 +31,10 @@ export type EquippedProblem =
   }
   & {
     initial: {
-      [K in Exclude<keyof ReadyProblem["initial"], "pool_source_depletion_kwh">]: NonNullable<
+      [K in keyof ReadyProblem["initial"]]: NonNullable<
         ReadyProblem["initial"][K]
       >;
-    } & { pool_source_depletion_kwh: number | null };
+    };
     targets: {
       [K in keyof ReadyProblem["targets"]]: NonNullable<
         ReadyProblem["targets"][K]
@@ -43,7 +43,7 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   return {
-    abi: 14,
+    abi: 13,
     // No end credit unless a test asks for one.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     ev_battery_supply_allowed: false,

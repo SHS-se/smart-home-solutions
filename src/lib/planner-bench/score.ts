@@ -9,7 +9,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from 
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 40;
+export const SCORER_VERSION = 38;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -39,8 +39,6 @@ export interface QuarterRule {
   required?: boolean;
   /** True counts once; a number counts that many missing service units. */
   fires: (q: QuarterView, threshold: number) => boolean | number;
-  /** The share of its points a firing takes; all of them when absent. */
-  depth?: (q: QuarterView, threshold: number) => number;
   /** The first quarter in which the rule could fire; Infinity when it never can. */
   eligibleFrom: (s: BenchSeries, threshold: number) => number;
 }
@@ -52,16 +50,6 @@ const poolBelow = (q: QuarterView, t: number) => {
 const carBelow = (q: QuarterView, t: number) => {
   const c = q.s.comfort, km = q.s.carKm;
   return !!c && !!km && km[q.i] < c.ev_target_km - t;
-};
-/**
- * How far into its band a car range rule reaches. The band is the threshold
- * wide below the rule's line and the deduction grows with the square of the
- * depth: a car just under the line costs a sliver, a whole band under costs
- * all the points (policy.rs `depth`).
- */
-const carDepth = (q: QuarterView, t: number) => {
-  const c = q.s.comfort, km = q.s.carKm;
-  return t > 0 && c && km ? Math.min(1, (c.ev_target_km - t - km[q.i]) / t) ** 2 : 1;
 };
 const poolAbove = (q: QuarterView, t: number) =>
   !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t;
@@ -90,10 +78,10 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
     fires: (q, t) => poolHeatingPast(q, t) || poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
   },
   {
-    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short, growing with the square of the shortfall to all points ${t} km further`, fires: carBelow, depth: carDepth, eligibleFrom: carFrom,
+    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
-    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short, growing with the square of the shortfall to all points ${t} km further`, fires: carBelow, depth: carDepth, eligibleFrom: carFrom,
+    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
   },
   {
     key: 'water_opportunities', about: 'water', label: 'Boiler permission shortfall',
@@ -240,13 +228,12 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
     for (const rule of rules) {
       const occurrences = Number(rule.fires(q, rule.threshold));
       if (!occurrences) continue;
-      deductions[rule.key] = rule.points * occurrences * (rule.depth?.(q, rule.threshold) ?? 1);
+      deductions[rule.key] = rule.points * occurrences;
       score += deductions[rule.key];
       fired.push(rule.key);
       counts[rule.key] = (counts[rule.key] ?? 0) + occurrences;
     }
-    const bucket = String(Math.round(score * 100) / 100);
-    histogram[bucket] = (histogram[bucket] ?? 0) + 1;
+    histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
     sum += score;
     quarters.push({ score, fired, deductions });
   }

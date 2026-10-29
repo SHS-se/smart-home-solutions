@@ -138,8 +138,8 @@ pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
 impl Account {
     /// The score from its parts, after any of them changed.
     pub(crate) fn rescore(&mut self) {
-        self.score_sek =
-            self.points - (self.cash_sek + self.wear_sek + self.continuity_sek - self.credit_sek);
+        self.score_sek = f64::from(self.points)
+            - (self.cash_sek + self.wear_sek + self.continuity_sek - self.credit_sek);
     }
 }
 /// What the battery is credited for ending where it does.
@@ -289,13 +289,13 @@ pub(crate) fn totals(p: &Problem, q: &[Quarter], index: &Index) -> Account {
 fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
     let mut before_c = p.initial.pool_c.unwrap_or(0.0);
     let mut contributions = Vec::with_capacity(if rows { q.len() } else { 0 });
-    let mut total = 0.0;
+    let mut total = 0;
     for (i, v) in q.iter().enumerate() {
         let fired = raw_quarter(p, index, i, v, before_c);
         before_c = v.pool_c.unwrap_or(0.0);
-        total += points(p, v, fired);
+        total += points(&p.rules, fired);
         if rows {
-            contributions.push(self::contributions(p, v, fired));
+            contributions.push(self::contributions(&p.rules, fired));
         }
     }
     let last = q.last();
@@ -328,15 +328,12 @@ fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
         .enumerate()
         .fold(0, |fired, (j, r)| fired | Fired::from(fires(r)) << j)
 }
-/// The car's range at the end of a quarter, at its stored precision.
-fn ev_km(p: &Problem, v: &Quarter) -> f64 {
-    p.car
-        .as_ref()
-        .map_or(0.0, |c| measured(v.ev_kwh.unwrap() / c.kwh_per_km, 10.0))
-}
 fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64) -> Fired {
     let pool_c = measured(v.pool_c.unwrap_or(0.0), 1000.0);
-    let ev_km = ev_km(p, v);
+    let ev_km = p
+        .car
+        .as_ref()
+        .map_or(0.0, |c| measured(v.ev_kwh.unwrap() / c.kwh_per_km, 10.0));
     fired_where(&p.rules, |r| {
         if !applicable(p, r.key) {
             return false;
@@ -355,39 +352,26 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64)
         }
     })
 }
-/// How far into its band a fired rule reaches. A car range rule's band is its
-/// threshold wide below its line: a car just under the line costs a sliver of
-/// the points, one a whole threshold under costs them all. Others count whole.
-fn depth(p: &Problem, r: &Rule, v: &Quarter) -> f64 {
-    match r.key {
-        RuleKey::EvLow | RuleKey::EvShort if r.threshold > 0.0 => {
-            ((p.targets.ev_km.unwrap() - r.threshold - ev_km(p, v)) / r.threshold)
-                .min(1.0)
-                .powi(2)
-        }
-        _ => 1.0,
-    }
-}
 /// What service rule `j` contributes in a quarter.
-fn contribution(p: &Problem, v: &Quarter, fired: Fired, j: usize) -> f64 {
+fn contribution(rules: &[Rule], fired: Fired, j: usize) -> i32 {
     if fired >> j & 1 == 1 {
-        f64::from(p.rules[j].points) * depth(p, &p.rules[j], v)
+        rules[j].points
     } else {
-        0.0
+        0
     }
 }
-fn contributions(p: &Problem, v: &Quarter, fired: Fired) -> Vec<f64> {
-    (0..p.rules.len())
-        .map(|j| contribution(p, v, fired, j))
+fn contributions(rules: &[Rule], fired: Fired) -> Vec<i32> {
+    (0..rules.len())
+        .map(|j| contribution(rules, fired, j))
         .collect()
 }
 /// A quarter's points without its row.
-fn points(p: &Problem, v: &Quarter, fired: Fired) -> f64 {
+fn points(rules: &[Rule], fired: Fired) -> i32 {
     if fired == 0 {
-        return 0.0;
+        return 0;
     }
-    (0..p.rules.len())
-        .map(|j| contribution(p, v, fired, j))
+    (0..rules.len())
+        .map(|j| contribution(rules, fired, j))
         .sum()
 }
 /// Continuation tables and complete accounts share the service predicates.
@@ -397,8 +381,8 @@ pub(crate) fn guidance_quarter(
     i: usize,
     v: &Quarter,
     before_c: f64,
-) -> f64 {
-    points(p, v, raw_quarter(p, index, i, v, before_c))
+) -> i32 {
+    points(&p.rules, raw_quarter(p, index, i, v, before_c))
 }
 
 #[cfg(test)]
@@ -496,43 +480,14 @@ mod service_tests {
         let mut q = physics::projection(&p, &[idle]).unwrap();
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        // 95 km: 55 km under ev_low's line (all of its band), 5 under ev_short's.
         assert_eq!(
             account(&p, &q, &index).contributions[0],
-            [-1.0, -1.0, 0.0, -1.0, -0.05_f64.powi(2)]
+            [-1, -1, 0, -1, -1]
         );
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
-        assert_eq!(
-            account(&p, &q, &index).contributions[0],
-            [0.0, 0.0, -1.0, -1.0, -0.05_f64.powi(2)]
-        );
-    }
-    #[test]
-    fn a_car_just_under_its_range_line_costs_a_sliver_of_the_points() {
-        let mut p = crate::witnesses::tests::problem(1);
-        p.rules = rules();
-        p.initial.ev_kwh = Some(40.0);
-        p.targets.ev_km = Some(383.0);
-        let index = index(&p, &mut work(&p)).unwrap();
-        let idle = Command {
-            pool_on: false,
-            ev_amps: 0,
-            battery: Operation::Idle,
-            charge_limit_w: 0.0,
-            discharge_limit_w: 0.0,
-        };
-        let mut q = physics::projection(&p, &[idle]).unwrap();
-        let ev = |q: &[Quarter]| account(&p, q, &index).contributions[0][3..].to_vec();
-        // 330.5 km is 2.5 km under ev_low's 333 km line.
-        q[0].ev_kwh = Some(66.1);
-        assert_eq!(ev(&q), [-0.05_f64.powi(2), 0.0]);
-        q[0].ev_kwh = Some(66.6);
-        assert_eq!(ev(&q), [0.0, 0.0]);
-        // 233 km: a whole band under ev_low, half of ev_short's band.
-        q[0].ev_kwh = Some(46.6);
-        assert_eq!(ev(&q), [-1.0, -0.25]);
+        assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1, -1]);
     }
     #[test]
     fn unreachable_pool_keeps_grace_but_ev_readiness_counts_immediately() {

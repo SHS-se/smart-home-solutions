@@ -18,7 +18,6 @@ import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter } from "./planner-wasm/core.ts";
 import { builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
-import { batteryAcCeilings } from './planner/battery-conversion.ts';
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/planning-contracts.ts";
 import type { BaselinePlan, DutyCycleServiceInput, GeneratedPlan, OptimisationPlan, OptimisationResult, OptimisationSnapshot, PlannedSlot, PlanSummary } from "./planner/planning-contracts.ts";
@@ -161,7 +160,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (outlook.shadow_import_sek_per_kwh.length !== count || !outlook.shadow_import_sek_per_kwh.every(finite)) return fail("Resolved prices must cover every planning interval");
   const battery = snapshot.capabilities.battery ? snapshot.device_physics?.battery ?? snapshot.battery : null;
   if (snapshot.capabilities.battery && !battery) return fail("Battery capability requires a physical model and state");
-  if (battery) parseDeviceModels({ battery });
   if (battery && (!finite(snapshot.value_settings?.battery_degradation_sek_per_kwh) || snapshot.value_settings!.battery_degradation_sek_per_kwh < 0)) {
     snapshot.value_settings = {...DEFAULT_VALUE_SETTINGS, ...snapshot.value_settings,
       battery_degradation_sek_per_kwh: DEFAULT_VALUE_SETTINGS.battery_degradation_sek_per_kwh};
@@ -315,7 +313,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 14, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 13, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -439,16 +437,14 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     const unrepresented = (input.members.heater.length + input.members.auxiliary.length ? 0 : q.pool_w) +
       (input.members.ev.length ? 0 : q.ev_w) + (input.members.boiler.length ? 0 : input.boiler_w[i]);
     const load = input.base_w[i] + sum(Object.values(loads)) + unrepresented;
-    const net = load + q.charge_w - q.discharge_w + q.battery_idle_w + q.curtailed_w - f.solar_w;
+    const net = load + q.charge_w - q.discharge_w + q.curtailed_w - f.solar_w;
     const imports = Math.max(0, net), exports = Math.max(0, -net);
-    const batteryExport = Math.max(0, q.discharge_w - Math.max(0, load + q.battery_idle_w - f.solar_w));
+    const batteryExport = Math.max(0, q.discharge_w - Math.max(0, load - f.solar_w));
     binding = binding && f.published;
     const end = Date.parse(source.start) + QUARTER_MS;
     rows.push({ start: new Date(end - hours * 3_600_000).toISOString(), end: new Date(end).toISOString(),
       house_w: load, residual_w: input.base_w[i] + unrepresented, device_loads_w: loads,
-      charge_w: q.charge_w, discharge_w: q.discharge_w, charge_dc_w: q.charge_dc_w, discharge_dc_w: q.discharge_dc_w,
-      battery_idle_w: q.battery_idle_w, stored_end_kwh: q.battery_kwh,
-      export_w: batteryExport, curtailed_w: q.curtailed_w, unserved_w: 0 });
+      charge_w: q.charge_w, discharge_w: q.discharge_w, export_w: batteryExport, curtailed_w: q.curtailed_w, unserved_w: 0 });
     const locked = input.fixed_slots[i] ?? input.locked_slots[i];
     return { start: source.start, duration_hours: hours, binding,
       pv_raw_w: source.pv_forecast_w, pv_w: f.solar_w, base_w: input.base_w[i],
@@ -466,19 +462,18 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
       ev_target_current_a: command.ev_amps, ev_min_current_a: locked?.ev_min_current_a ?? 0, ev_max_current_a: locked?.ev_max_current_a ?? (f.ev_available ? p.charger?.max_current_a ?? 0 : 0),
       ev_soc: p.car && q.ev_kwh !== null ? q.ev_kwh / p.car.capacity_kwh : null, ev_connected: !!snapshot.ev_battery?.connected,
       ...(p.car && !snapshot.ev_battery?.connected && command.ev_amps > 0 ? { ev_charging_conditional: true } : {}),
-      load_w: load + q.battery_idle_w, battery_idle_w: q.battery_idle_w,
-      battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
+      load_w: load, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w, battery_export_w: batteryExport,
       battery_command: p.battery ? locked?.battery_command ?? batteryCommand(command, q) : null,
       ...(p.battery && snapshot.schema_version >= 10 ? { battery_instruction: locked?.battery_instruction ??
         instructionFor(command, q, profileFor(input.boiler_services.length ? input.boiler_battery_allowed[i] : undefined),
-          { import_w: p.limits.import_w, discharge_max_w: batteryAcCeilings(p.battery).discharge_w }) } : {}),
+          { import_w: p.limits.import_w, discharge_max_w: p.battery.discharge_max_w }) } : {}),
       battery_soc: p.battery && q.battery_kwh !== null ? q.battery_kwh / p.battery.capacity_kwh : 0,
       grid_import_w: imports, grid_export_w: exports, curtailed_w: q.curtailed_w, unserved_w: 0,
       import_cost_sek: source.import_price_sek_per_kwh === null ? null : imports * hours / 1000 * source.import_price_sek_per_kwh,
       export_revenue_sek: source.export_price_sek_per_kwh === null ? null : exports * hours / 1000 * source.export_price_sek_per_kwh,
       decision: { schema_version: 1, store_allocations: [], battery: null,
-        grid_balance: { load_w: load + q.battery_idle_w, pv_w: f.solar_w, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w,
-          residual_w: load + q.battery_idle_w - f.solar_w, direction: net > 0 ? "import" : net < 0 ? "export" : "balanced",
+        grid_balance: { load_w: load, pv_w: f.solar_w, battery_charge_w: q.charge_w, battery_discharge_w: q.discharge_w,
+          residual_w: load - f.solar_w, direction: net > 0 ? "import" : net < 0 ? "export" : "balanced",
           power_w: Math.abs(net), limit_w: net >= 0 ? p.limits.import_w : p.limits.export_w,
           limit_binding: q.curtailed_w > 0, reason: q.curtailed_w > 0 ? "export_limit" : net === 0 ? "balanced" : "residual_after_dispatch" } },
     };
