@@ -52,6 +52,17 @@ Deno.test("forced absence moves EV charging into held OFF destinations while bat
   assert(result.execution_replan!.released_intervals.every(interval => interval.owner === "$ev"));
 });
 
+Deno.test("an unplugged car gets one planning note, not two", () => {
+  const {snapshot, reference} = chargingHouse();
+  snapshot.ev_battery!.connected = false;
+  const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [change("$ev", snapshot, "temporarily_absent")])), reference).plan;
+  const codes = result.planning_warnings!.map(warning => warning.code);
+  if (result.plans.priority.slots.some(slot => slot.ev_w > 0)) {
+    assert(codes.includes("ev_connection_required"));
+    assert(!codes.includes("execution_unavailable"));
+  } else assert(codes.includes("execution_unavailable"), "with no charging planned, the failed work is still reported");
+});
+
 Deno.test("faulted battery remains modelled without projected charging, while held EV requests stay exact", () => {
   const {snapshot, reference} = chargingHouse();
   const result = runRulesPlanner(input(snapshot, request(reference, snapshot, [change("$battery", snapshot)])), reference).plan;

@@ -568,13 +568,16 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   assertHeldCommands(input.snapshot, input.held_reference, input.released_owners_by_slot, priority.generated.slots);
   const cost = { ...priority.generated, key: "cost" as const, label: "Rule-based plan (same selected schedule)" };
   const snapshot = input.snapshot;
-  if (snapshot.ev_battery && !snapshot.ev_battery.connected && priority.generated.slots.some(slot => slot.ev_w > 0)) {
+  const unpluggedNoted = !!snapshot.ev_battery && !snapshot.ev_battery.connected && priority.generated.slots.some(slot => slot.ev_w > 0);
+  if (unpluggedNoted) {
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "ev_connection_required", "ev", "The car is unplugged. Its future charging remains planned.",
       "Forecast charging and range depend on connecting the car. Scheduled charging that cannot execute automatically requests a new plan.")]);
   }
   for (const change of snapshot.execution_availability ?? []) {
     if (change.status === "plan_deviation") continue;
+    // An unplugged car has its own note; a second one would only say it again.
+    if (unpluggedNoted && change.owner === "$ev" && change.cause === "vehicle_disconnected") continue;
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "execution_unavailable", change.owner, `${ownerLabel(snapshot, change.owner)}: scheduled work could not execute (${change.cause}).`,
       "The replacement accounts for current state and outstanding service. Other loads retain their accepted next-hour commands.",
