@@ -1,10 +1,11 @@
+import { classifyPlanningFailure, PlanningError } from "./planning-errors.ts";
 import { recordPlanningActivity } from './planning-log.ts';
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import type { ExecutionReplan } from "./execution-replan.ts";
 import type { OptimisationPlan } from "./planner/planning-contracts.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
-import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan, EnergyPlanningError } from "./rules-planning-client.ts";
+import { RULES_PLANNING_PROTOCOL, generateRemoteRulesPlan } from "./rules-planning-client.ts";
 import { storedPlan, expandStoredPlan } from "./stored-plan.ts";
 import { sha256Hex } from "./ha-device-auth.ts";
 import { describeThrown } from "./ha-api-contract.ts";
@@ -14,7 +15,7 @@ import { archiveAccuracyForecast } from "./forecast-accuracy-store.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
-export const PLANNING_EXCHANGE_VERSION = 2;
+export const PLANNING_EXCHANGE_VERSION = 3;
 
 export type PlanningCompletionBasis = "publication" | "home_assistant_ack";
 
@@ -34,17 +35,19 @@ type ReceiptIdentity = {
   exchange?: Record<string, unknown>;
 };
 export type PlanningReceipt = ReceiptIdentity & (
-  | { state: "pending"; pending: true; retry_after_ms: number }
+  | { state: "pending"; pending: true; retry_after_ms: number; last_error?: {code: string; detail: string} | null }
   | { state: "published"; pending: false; plan: PublishedPlan; plan_id: string }
   | { state: "superseded"; pending: false }
-  | { state: "failed"; pending: false; code: string; detail: string }
+  | { state: "failed"; pending: false; code: string; detail: string; recapture?: { replaces_job_id: string } | null }
 );
 export interface PlanningContext {
   request_id: string;
+  replaces_job_id?: string | null;
   integration_version: string | null;
   model_capture_status?: "captured" | "unavailable";
   model_revisions?: { rooms: Record<string, number>; pool: number | null };
   reference_plan_id: string | null;
+  accepted_reference_revision?: number;
   fixed_revision: number;
   observed_replan_request_id: string | null;
   replan_request_id: string | null;
@@ -65,20 +68,21 @@ interface LoadedJob {
   input: CapturedRulesInput;
   context: PlanningContext & { model_version: string };
 }
-export class PlanningJobError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 500) {
-    super(message); this.name = "PlanningJobError";
+export class PlanningJobError extends PlanningError {
+  constructor(code: string, message: string, status = 500) {
+    super(message, code, status, status >= 500 ? "retry" : "terminal"); this.name = "PlanningJobError";
   }
 }
 
 /** Owns the complete household job lifecycle; callers never coordinate phases. */
 export class PlanningJobs {
-  constructor(private readonly db: SupabaseClient) {}
+  constructor(private readonly db: SupabaseClient, private readonly now: () => number = Date.now) {}
 
   private async rpc<T>(name: string, body: Record<string, unknown>): Promise<T> {
     const { data, error } = await this.db.rpc(name, body);
     if (error) {
-      const conflict = error.code === "22023" || error.code === "40001";
+      if (error.code === "P4091") throw new PlanningError(error.message, "accepted_reference_changed", 409, "recapture");
+      const conflict = error.code === "22023";
       throw new PlanningJobError(conflict ? "planning_submission_conflict" : "planning_storage_failed", error.message, conflict ? 409 : 500);
     }
     return data as T;
@@ -121,6 +125,15 @@ export class PlanningJobs {
     return this.delivery(receipt);
   }
 
+  /** An obsolete current capture grants only its original planning purpose. */
+  async recaptureForHome(homeId: string, jobId: string, replanRequestId: string | null,
+    executionReplan: ExecutionReplan | null): Promise<PlanningContext> {
+    return await this.rpc<PlanningContext>("read_energy_planning_recapture", {
+      p_home_id: homeId, p_job_id: jobId, p_replan_request_id: replanRequestId,
+      p_execution_replan: executionReplan,
+    });
+  }
+
   async readSubmissionForHome(homeId: string, snapshotId: string): Promise<PlanningReceipt | null> {
     return this.delivery(await this.rpc<PlanningReceipt | null>("read_energy_planning_job", {
       p_home_id: homeId, p_snapshot_id: snapshotId,
@@ -159,12 +172,21 @@ export class PlanningJobs {
     const owner = { job_id: job.id, home_id: homeId, fence: job.fence };
     if (job.protocol !== RULES_PLANNING_PROTOCOL || loaded.context.model_version !== RULES_MODEL_VERSION) {
       return deliver(await this.writeRecovering("fail_energy_planning_job", { ...owner,
-        code: "planner_upgraded", detail: "Planner version changed. Request a new replan." }, homeId, job.id));
+        code: "planner_upgraded", detail: "Planner version changed. A fresh capture is required." }, homeId, job.id));
     }
     let generated: PublishedPlan;
     let publication: { current: Record<string, unknown>; run: Record<string, unknown> };
     const assembledJob = { ...job, ...loaded };
+    // The actual finite command horizon, not capture/source age, determines
+    // whether this immutable input can still produce an executable replacement.
+    const horizonEnd = Date.parse(loaded.input.snapshot.slots.at(-1)?.start ?? "") +
+      loaded.input.snapshot.slot_minutes * 60_000;
+    const requireRemainingHorizon = () => {
+      if (horizonEnd <= this.now()) throw new PlanningError(
+        "The captured plan horizon has ended. A fresh capture is required.", "capture_horizon_ended", 409, "recapture");
+    };
     try {
+      requireRemainingHorizon();
       const planned = await generateRemoteRulesPlan(loaded.input, { ...connection, requestId: loaded.context.request_id }, fetcher);
       generated = planned.plan;
       const snapshot = loaded.input.snapshot;
@@ -194,6 +216,7 @@ export class PlanningJobs {
         if (actionablePlanningWarnings([warning]).length) console.warn("[ENERGY-PLANNING-JOB] planning needs attention", evidence);
         else console.info("[ENERGY-PLANNING-JOB] learning evidence", evidence);
       }
+      requireRemainingHorizon();
       publication = { current, run };
     } catch (error) {
       return deliver(await this.computeFailure(owner, error, loaded.context.planning_trigger));
@@ -218,9 +241,11 @@ export class PlanningJobs {
   private async computeFailure(owner: { job_id: string; home_id: string; fence: number },
     error: unknown, planningTrigger: Record<string, unknown> | undefined): Promise<PlanningReceipt | null> {
     const detail = describeThrown(error);
-    const code = error instanceof EnergyPlanningError ? error.code : "invalid_snapshot";
+    const failure = classifyPlanningFailure(error);
+    const code = failure.code;
     console.error("[ENERGY-PLANNING-JOB] failed", { ...owner, code, detail, planning_trigger: planningTrigger });
-    return this.writeRecovering("fail_energy_planning_job", { ...owner, code, detail }, owner.home_id, owner.job_id);
+    return this.writeRecovering(failure.disposition === "retry" ? "retry_energy_planning_attempt" : "fail_energy_planning_job",
+      { ...owner, code, detail }, owner.home_id, owner.job_id);
   }
 
   private async writeRecovering(name: string, body: Record<string, unknown>, homeId: string,

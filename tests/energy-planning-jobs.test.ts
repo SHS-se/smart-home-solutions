@@ -1056,3 +1056,355 @@ Deno.test('protocol 10 persists an unsolved capture and retains exact execution 
     assertEquals(await attemptLoad(db, { ...claim, fence: claim.fence + 1 }), null);
   } finally { await db.close(); }
 });
+
+const retryMigration = '20261029120000_retry_planning_attempts_and_recapture';
+async function retryDatabase() {
+  // Production attempt/publication, execution, audit and curated-log definitions,
+  // followed by the current capture protocol and compact reference owner fields.
+  const db = await loggedDatabase();
+  for (const name of ['20261025003000_pool_commitment_basis', '20261026001500_capture_before_planning_workers',
+    '20261026006000_pool_retained_target', retryMigration]) await db.exec(await migration(name));
+  return db;
+}
+const capturedSubmission = (id = snapshot, context: Record<string, unknown> = {}) => ({ ...rulesSubmission(id, {planning_trigger: {source:"initial_plan",forced:false,reason:{code:"synthetic_initial"}}, ...context}), protocol: 10 });
+const recapture = async (db: PGlite, job: string, requestId: string | null = null, execution: unknown = null, homeId = home) =>
+  (await db.query<{value: Record<string, unknown>}>(
+    'SELECT read_energy_planning_recapture($1,$2,$3,$4::jsonb) value', [homeId,job,requestId,JSON.stringify(execution)])).rows[0].value;
+
+Deno.test('recoverable attempts pace durable retries, keep captures immutable and fence every late result', async () => {
+  const db = await retryDatabase();
+  try {
+    const args = capturedSubmission();
+    const accepted = await rpc<Receipt>(db,'accept_energy_planning_job',args);
+    const first = (await attemptClaim(db,accepted.job_id))!;
+    const original = await attemptLoad(db,first);
+    const retry = {...attemptIdentity(first),code:'planning_deadline_exceeded',detail:'Synthetic worker timeout'};
+    const pending = await rpc<Receipt & {retry_after_ms:number;last_error:{code:string}}>(db,'retry_energy_planning_attempt',retry);
+    assertEquals(pending.state,'pending');
+    assert(pending.retry_after_ms >= 4000 && pending.retry_after_ms <= 5000);
+    assertEquals(pending.last_error.code,'planning_deadline_exceeded');
+    assertEquals(await attemptClaim(db,first.id),null,'Due time is enforced in storage, not merely suggested to HA');
+    assertEquals(await rpc(db,'retry_energy_planning_attempt',retry),null,'A lost reply cannot schedule the same failure twice');
+    assertEquals(await rpc(db,'fail_energy_planning_job',{...retry,code:'late_failure'}),null);
+    await db.query("UPDATE private.energy_planning_jobs SET wake_after=clock_timestamp()-interval '1 second' WHERE id=$1",[first.id]);
+    const second = (await attemptClaim(db,first.id))!;
+    assert(second.fence > first.fence);
+    assertEquals((await attemptLoad(db,second))!.input,args.input);
+    assertEquals((await attemptLoad(db,second))!.context,original!.context);
+    assertEquals(await rpc(db,'retry_energy_planning_attempt',retry),null,'Old attempt cannot delay its successor');
+    assertEquals(await rpc(db,'publish_energy_planning_job',{...attemptIdentity(first),current:currentRow(),run:runRow()}),null);
+    // A process can die without issuing a retry result. Its expired lease is reclaimable.
+    await db.query("UPDATE private.energy_planning_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1",[second.id]);
+    const third = (await attemptClaim(db,second.id))!;
+    assert(third.fence > second.fence);
+    const published = await rpc<Receipt>(db,'publish_energy_planning_job',{...attemptIdentity(third),current:currentRow(),run:runRow()});
+    assertEquals(published.state,'published');
+    assertEquals((await read(db,third.id))!.plan,currentRow().plan,'A lost commit reply recovers exact committed output');
+    assertEquals((await rpc<Receipt>(db,'retry_energy_planning_attempt',retry)).state,'published');
+    assertEquals((await db.query<{n:number}>('SELECT count(*)::int n FROM energy_optimisation_plan_runs')).rows[0].n,1);
+  } finally { await db.close(); }
+});
+
+Deno.test('retry failure cannot move another home or a superseded head and service access stays closed', async () => {
+  const db = await retryDatabase();
+  try {
+    const original = await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission());
+    const owner = (await attemptClaim(db,original.job_id))!;
+    const failure={...attemptIdentity(owner),code:'planning_failed',detail:'Synthetic outage'};
+    assertEquals(await rpc(db,'retry_energy_planning_attempt',{...failure,home_id:other}),null);
+    for(const role of ['anon','authenticated']) {
+      await db.exec(`SET ROLE ${role}`);
+      await assertRejects(()=>rpc(db,'retry_energy_planning_attempt',failure),Error,'permission denied');
+      await assertRejects(()=>recapture(db,owner.id),Error,'permission denied');
+      await db.exec('RESET ROLE');
+    }
+    const replacement = await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(other));
+    assertEquals((await rpc<Receipt>(db,'retry_energy_planning_attempt',failure)).state,'superseded');
+    assert((await attemptClaim(db,replacement.job_id)) !== null);
+  } finally {await db.close();}
+});
+
+Deno.test('upgraded captures grant one current same-purpose replacement and retries recover its receipt', async () => {
+  const db = await retryDatabase();
+  try {
+    await insertCurrent(db);
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1',[manual]);
+    const context={reference_plan_id:other,observed_replan_request_id:manual,replan_request_id:manual};
+    const old=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(snapshot,context));
+    const owner=(await attemptClaim(db,old.job_id))!;
+    const retired=await rpc<Receipt & {recapture:{replaces_job_id:string}}>(db,'fail_energy_planning_job',{
+      ...attemptIdentity(owner),code:'planner_upgraded',detail:'Fresh capture required'});
+    assertEquals(retired.recapture,{replaces_job_id:old.job_id});
+    assertEquals((await recapture(db,old.job_id,manual)).replan_request_id,manual);
+    await assertRejects(()=>recapture(db,old.job_id,nextManual),Error,'different purpose');
+    await assertRejects(()=>recapture(db,old.job_id,manual,null,other),Error,'different purpose');
+    const replacement=capturedSubmission(nextManual,{...context,replaces_job_id:old.job_id});
+    const fresh=await rpc<Receipt>(db,'accept_energy_planning_job',replacement);
+    assert(fresh.job_id!==old.job_id);
+    assertEquals((await rpc<Receipt>(db,'accept_energy_planning_job',replacement)).job_id,fresh.job_id,
+      'A lost replacement response deduplicates before rechecking now-spent authority');
+    assertEquals((await read(db,old.job_id) as Receipt & {recapture:null}).recapture,null);
+    await assertRejects(()=>recapture(db,old.job_id,manual),Error,'no longer current');
+    await assertRejects(()=>rpc(db,'accept_energy_planning_job',capturedSubmission(plan,{...context,replaces_job_id:old.job_id})),Error,'no longer current');
+    assertEquals((await db.query<{error:string|null}>('SELECT replan_error error FROM energy_optimisation_current')).rows[0].error,null);
+  } finally {await db.close();}
+});
+
+Deno.test('recapture rechecks manual/reference authority inside admission and refuses terminal-error tickets', async () => {
+  const db=await retryDatabase();
+  try {
+    await insertCurrent(db);
+    const context={reference_plan_id:other};
+    const old=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(snapshot,context));
+    const owner=(await attemptClaim(db,old.job_id))!;
+    await rpc(db,'fail_energy_planning_job',{...attemptIdentity(owner),code:'invalid_snapshot',detail:'Synthetic invalid input'});
+    await assertRejects(()=>recapture(db,old.job_id),Error,'no longer current');
+    // A later genuine upgrade grants a new purpose, but a fixed edit revokes it.
+    const newer=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(nextManual,context));
+    const claimed=(await attemptClaim(db,newer.job_id))!;
+    await rpc(db,'fail_energy_planning_job',{...attemptIdentity(claimed),code:'planner_upgraded',detail:'Upgrade'});
+    await recapture(db,newer.job_id);
+    await db.exec('UPDATE energy_optimisation_current SET fixed_plan_revision=1');
+    await assertRejects(()=>rpc(db,'accept_energy_planning_job',capturedSubmission(plan,{...context,fixed_revision:1,replaces_job_id:newer.job_id})),Error,'no longer current');
+  } finally {await db.close();}
+});
+
+Deno.test('repeated transient attempts keep paced work alive without a maximum attempt count', async () => {
+  const db=await retryDatabase();
+  try {
+    const job=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission());
+    await db.query('UPDATE private.energy_planning_jobs SET retry_count=100000 WHERE id=$1',[job.job_id]);
+    const owner=(await attemptClaim(db,job.job_id))!;
+    const pending=await rpc<Receipt & {retry_after_ms:number}>(db,'retry_energy_planning_attempt',{
+      ...attemptIdentity(owner),code:'planning_failed',detail:'Synthetic persistent outage'});
+    assertEquals(pending.state,'pending');
+    assert(pending.retry_after_ms>59000 && pending.retry_after_ms<=60000);
+    assertEquals((await db.query<{count:number}>('SELECT retry_count::int count FROM private.energy_planning_jobs')).rows[0].count,100001);
+  } finally {await db.close();}
+});
+
+Deno.test('execution recapture keeps the accepted reference while current evidence replaces an obsolete fault', async () => {
+  const db=await retryDatabase();
+  try {
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)',[JSON.stringify(currentRow())]);
+    await db.exec("UPDATE energy_optimisation_current SET ha_ack_status='accepted',ha_acknowledged_at=now()");
+    const execution={request_id:manual,accepted_plan_id:plan,observed_at:'2026-10-29T10:00:00Z',
+      changes:[{owner:'$ev',status:'faulted',cause:'synthetic unavailable',blocked_intervals:[]}]};
+    const context={reference_plan_id:plan,execution_replan:execution};
+    const args={...capturedSubmission(snapshot,context),input:{execution_replan:execution}};
+    const old=await rpc<Receipt>(db,'accept_energy_planning_job',args);
+    const owner=(await attemptClaim(db,old.job_id))!;
+    await rpc(db,'fail_energy_planning_job',{...attemptIdentity(owner),code:'planner_upgraded',detail:'Upgrade'});
+    const recovered={...execution,request_id:nextManual,changes:[{...execution.changes[0],status:'recovered'}]};
+    await recapture(db,old.job_id,null,recovered);
+    await assertRejects(()=>recapture(db,old.job_id,null,{...recovered,accepted_plan_id:other}),Error,'different purpose');
+    await assertRejects(()=>recapture(db,old.job_id,null,null),Error,'different purpose');
+    const fresh=await rpc<Receipt>(db,'accept_energy_planning_job',{
+      ...capturedSubmission(nextManual,{...context,replaces_job_id:old.job_id,execution_replan:recovered}),
+      input:{execution_replan:recovered}});
+    const claimed=(await attemptClaim(db,fresh.job_id))!;
+    assertEquals((await attemptLoad(db,claimed))!.context.execution_replan,recovered);
+  } finally {await db.close();}
+});
+
+Deno.test('ended capture horizons authorize only a still-current same-home purpose with a fresh immutable snapshot', async () => {
+  const db = await retryDatabase();
+  try {
+    const oldArgs = capturedSubmission();
+    const old = await rpc<Receipt>(db,'accept_energy_planning_job',oldArgs);
+    const owner = (await attemptClaim(db,old.job_id))!;
+    const ended = await rpc<Receipt & {recapture:{replaces_job_id:string}}>(db,'fail_energy_planning_job',{
+      ...attemptIdentity(owner),code:'capture_horizon_ended',detail:'The actual captured final slot has ended'});
+    assertEquals(ended.recapture,{replaces_job_id:old.job_id});
+    await recapture(db,old.job_id);
+    await assertRejects(()=>recapture(db,old.job_id,null,null,other),Error,'no longer current');
+    await assertRejects(()=>recapture(db,old.job_id,manual),Error,'different purpose');
+    const freshArgs = capturedSubmission(nextManual,{replaces_job_id:old.job_id});
+    const fresh = await rpc<Receipt>(db,'accept_energy_planning_job',freshArgs);
+    assert(fresh.job_id !== old.job_id);
+    const freshOwner = (await attemptClaim(db,fresh.job_id))!;
+    assertEquals((await attemptLoad(db,freshOwner))!.input,freshArgs.input);
+    assertEquals((await rpc<Receipt>(db,'accept_energy_planning_job',freshArgs)).job_id,fresh.job_id,
+      'Lost fresh-capture reply remains idempotent');
+    await assertRejects(()=>recapture(db,old.job_id),Error,'no longer current');
+    assertEquals((await read(db,old.job_id) as Receipt & {recapture:null}).recapture,null);
+  } finally {await db.close();}
+});
+
+const ownershipMigration='20261030120000_accepted_command_ownership';
+async function ownershipDatabase() {
+  const db=await retryDatabase();
+  await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+  await db.exec(await migration(ownershipMigration));
+  return db;
+}
+const acceptedState=async(db:PGlite)=>(await db.query<{value:{reference_plan_id:string|null;accepted_reference_revision:number;accepted_commands:{state:string;household:Record<string,unknown>|null;battery:Record<string,unknown>|null}}}>('SELECT get_energy_replan_state($1) value',[home])).rows[0].value;
+async function publishOwnership(db:PGlite,id:string,snapshotId:string,end:string,battery=true) {
+  const state=await acceptedState(db);
+  const args=capturedSubmission(snapshotId,{reference_plan_id:state?.reference_plan_id??null,accepted_reference_revision:state?.accepted_reference_revision??0});
+  const receipt=await rpc<Receipt>(db,'accept_energy_planning_job',args);
+  const owned=(await attemptClaim(db,receipt.job_id))!;
+  const current={...currentRow(),plan_id:id,snapshot_id:snapshotId,plan_schema_version:10,
+    snapshot:{slot_minutes:15,operating_scope:{modes:{$ev:'controlling',$battery:'controlling'}},slots:[{start:end}]},
+    plan:{status:'ready',plan_id:id,plans:{priority:{slots:[{start:end,ev_target_current_a:6,pool_permitted:false,pool_w:0,device_commands:{},battery_command:{operation:'grid_charge',charge_limit_w:1000,discharge_limit_w:0}}]}},
+      ...(battery?{battery_execution:{id:`contract-${id}`,scope_revision:'synthetic-scope',generation:owned.fence}}:{})}};
+  const run={...runRow(),id,snapshot_id:snapshotId,plan_schema_version:10};
+  assertEquals((await rpc<Receipt>(db,'publish_energy_planning_job',{...attemptIdentity(owned),current,run})).state,'published');
+  return {id,snapshotId,receipt,owned,current,run};
+}
+async function acknowledgeOwnership(db:PGlite,id:string,snapshotId:string,outcome='accepted',homeId=home) {
+  return (await db.query<{value:boolean}>(`SELECT acknowledge_energy_optimisation_plan($1,$2,$3,10::smallint,$4,clock_timestamp(),'synthetic','ack',$5::jsonb) value`,
+    [homeId,id,snapshotId,outcome,outcome==='rejected'?JSON.stringify({code:'synthetic_rejected',message:'synthetic'}):null])).rows[0].value;
+}
+Deno.test('accepted ownership preserves longer Q through P and exact late ACK facts never regress it',async()=>{
+  const db=await ownershipDatabase();
+  try {
+    await publishOwnership(db,plan,snapshot,'2099-01-01T12:00:00Z');
+    assertEquals((await acceptedState(db)).accepted_commands.household,null);
+    await publishOwnership(db,other,manual,'2099-01-01T10:00:00Z');
+    assert(await acknowledgeOwnership(db,other,manual,'rejected'));
+    assert(await acknowledgeOwnership(db,plan,snapshot)); // Q ACK arrives after P publication.
+    let state=await acceptedState(db);
+    assertEquals(state.reference_plan_id,other);
+    assertEquals(state.accepted_commands.household?.plan_id,plan);
+    const revision=state.accepted_reference_revision;
+    assert(await acknowledgeOwnership(db,plan,snapshot,'rejected'));
+    assert(await acknowledgeOwnership(db,plan,snapshot));
+    assertEquals((await acceptedState(db)).accepted_reference_revision,revision);
+    assert(await acknowledgeOwnership(db,other,manual)); // rejection does not latch out later acceptance.
+    assert(await acknowledgeOwnership(db,other,manual,'rejected'));
+    assert(await acknowledgeOwnership(db,plan,snapshot)); // stale acceptance cannot roll back P.
+    state=await acceptedState(db);
+    assertEquals(state.accepted_commands.household?.plan_id,other);
+    assertEquals((await db.query<{s:string}>("SELECT ha_ack_status s FROM energy_optimisation_current")).rows[0].s,'accepted');
+    assertEquals((await db.query<{n:number}>("SELECT count(*)::int n FROM private.energy_command_publications WHERE accepted_at IS NOT NULL AND rejected_at IS NOT NULL")).rows[0].n,2);
+    assertEquals(await acknowledgeOwnership(db,plan,manual),false);
+    assertEquals(await acknowledgeOwnership(db,plan,snapshot,'accepted',other),false);
+  }finally{await db.close();}
+});
+Deno.test('independent battery acceptance fences immutable captured work before publication and grants recapture',async()=>{
+  const db=await ownershipDatabase();
+  try{
+    const q=await publishOwnership(db,plan,snapshot,'2099-01-01T12:00:00Z');
+    await acknowledgeOwnership(db,plan,snapshot);
+    const state=await acceptedState(db);
+    const args=capturedSubmission(manual,{reference_plan_id:plan,accepted_reference_revision:state.accepted_reference_revision});
+    const receipt=await rpc<Receipt>(db,'accept_energy_planning_job',args);
+    const owned=(await attemptClaim(db,receipt.job_id))!;
+    const runtime={observed_at:'2000-01-01T00:00:00Z',battery_plan:{accepted:{plan_id:plan,contract_id:`contract-${plan}`,scope_revision:'synthetic-scope',generation:q.owned.fence}}};
+    await db.query("UPDATE energy_optimisation_current SET ha_runtime='{"+'"observed_at":"2099-01-01T00:00:00Z"'+"}'::jsonb");
+    assertEquals((await db.query<{v:boolean}>('SELECT report_energy_runtime($1,$2::jsonb) v',[home,JSON.stringify(runtime)])).rows[0].v,false);
+    assertEquals((await acceptedState(db)).accepted_commands.battery?.plan_id,plan); // ownership precedes diagnostic clock filter.
+    const failed=await rpc<Receipt>(db,'publish_energy_planning_job',{...attemptIdentity(owned),current:q.current,run:q.run});
+    assertEquals(failed.code,'accepted_reference_changed');
+    assertEquals((await recapture(db,receipt.job_id)).accepted_reference_revision,state.accepted_reference_revision);
+    assertEquals((await db.query<{n:number}>('SELECT count(*)::int n FROM private.energy_command_publications')).rows[0].n,1);
+    await assertRejects(()=>rpc(db,'accept_energy_planning_job',capturedSubmission(other,{reference_plan_id:plan,accepted_reference_revision:state.accepted_reference_revision})),Error,'ownership changed');
+  }finally{await db.close();}
+});
+Deno.test('command projection retention trims only ended inactive candidates and keeps durable accepted copies',async()=>{
+  const db=await ownershipDatabase();
+  try{
+    await publishOwnership(db,plan,snapshot,'2000-01-01T00:00:00Z');
+    await acknowledgeOwnership(db,plan,snapshot);
+    await publishOwnership(db,other,manual,'2000-01-01T00:00:00Z');
+    await publishOwnership(db,nextManual,nextManual,'2099-01-01T00:00:00Z');
+    await db.exec('SELECT private.prune_energy_command_publications()');
+    const rows=(await db.query<{plan_id:string;n:number}>('SELECT plan_id,jsonb_array_length(commands->\'slots\') n FROM private.energy_command_publications')).rows;
+    assertEquals(rows.find(r=>r.plan_id===plan)?.n,1);
+    assertEquals(rows.find(r=>r.plan_id===other)?.n,0);
+    assertEquals(rows.find(r=>r.plan_id===nextManual)?.n,1);
+    assertEquals(((await acceptedState(db)).accepted_commands.household?.slots as unknown[]).length,1);
+    assert(await acknowledgeOwnership(db,other,manual)); // exact identity survives payload cleanup.
+  }finally{await db.close();}
+});
+Deno.test('ownership cutover backfills exact current ACK and independent battery and recaptures legacy jobs',async()=>{
+  const db=await retryDatabase();
+  try{
+    await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+    const c={...currentRow(),plan_schema_version:10,ha_ack_status:'accepted',ha_acknowledged_at:'2026-10-01T00:00:00Z',
+      snapshot:{slot_minutes:15},plan:{plan_id:plan,status:'ready',plans:{priority:{slots:[{start:'2099-01-01T00:00:00Z'}]}},battery_execution:{id:'synthetic-contract',scope_revision:'scope',generation:3}}};
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)',[JSON.stringify(c)]);
+    await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1::jsonb',[JSON.stringify({battery_plan:{accepted:{plan_id:plan,contract_id:'synthetic-contract',scope_revision:'scope',generation:3}}})]);
+    const job=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(other,{reference_plan_id:plan}));
+    await db.exec(await migration(ownershipMigration));
+    const state=await acceptedState(db);
+    assertEquals(state.accepted_commands.state,'ready');assertEquals(state.accepted_commands.household?.plan_id,plan);assertEquals(state.accepted_commands.battery?.plan_id,plan);
+    assertEquals((await read(db,job.job_id))?.code,'accepted_reference_changed');
+    await recapture(db,job.job_id);
+  }finally{await db.close();}
+});
+Deno.test('ownership migration never invents acceptance for a mirror and unknown runtime cannot block it',async()=>{
+  const db=await retryDatabase();
+  try{
+    await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+    const accepted=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(snapshot,{completion_basis:'publication'}));
+    const owned=(await attemptClaim(db,accepted.job_id))!;
+    await rpc(db,'publish_energy_planning_job',{...attemptIdentity(owned),current:currentRow(),run:runRow()});
+    // Synthetic historical ACK summary lacks commands; it cannot establish a mirror's current native ownership.
+    await db.exec(`INSERT INTO energy_optimisation_plan_runs(id,home_id,customer_id,snapshot_id,input_hash,issued_at,status,model_version,summary,validation_errors,plan_schema_version,ha_ack_status,ha_acknowledged_at)
+      SELECT '${other}',home_id,customer_id,'${other}',input_hash,issued_at,status,model_version,summary,validation_errors,plan_schema_version,'accepted',clock_timestamp()
+      FROM energy_optimisation_plan_runs WHERE id='${plan}'`);
+    const runtime={observed_at:'2099-01-01T00:00:00Z',battery_plan:{accepted:{plan_id:other,contract_id:'foreign-contract',scope_revision:'foreign-scope',generation:9}}};
+    await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1::jsonb',[JSON.stringify(runtime)]);
+    await db.exec(await migration(ownershipMigration));
+    assertEquals((await acceptedState(db)).accepted_commands,{state:'ready',household:null,battery:null});
+    await db.query('SELECT report_energy_runtime($1,$2::jsonb)',[home,JSON.stringify({...runtime,observed_at:'2099-01-02T00:00:00Z'})]);
+    assertEquals((await acceptedState(db)).accepted_reference_revision,0);
+    const next=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(other,{reference_plan_id:plan,accepted_reference_revision:0,completion_basis:'publication'}));
+    assertEquals(next.state,'pending');
+  }finally{await db.close();}
+});
+Deno.test('ownership recapture receipt survives snapshot lookup and admits current accepted identity with original manual purpose',async()=>{
+  const db=await ownershipDatabase();
+  try{
+    await publishOwnership(db,plan,snapshot,'2099-01-01T00:00:00Z');await acknowledgeOwnership(db,plan,snapshot);
+    await publishOwnership(db,other,manual,'2099-01-01T00:00:00Z');
+    await db.query('UPDATE energy_optimisation_current SET replan_request_id=$1',[nextManual]);
+    const state=await acceptedState(db);
+    const oldEvidence={request_id:'77777777-7777-4777-8777-777777777777',accepted_plan_id:plan,observed_at:'2099-01-01T00:00:00Z',changes:[]};
+    const args=capturedSubmission(home,{reference_plan_id:other,accepted_reference_revision:state.accepted_reference_revision,
+      observed_replan_request_id:nextManual,replan_request_id:nextManual,execution_replan:oldEvidence});
+    const job=await rpc<Receipt>(db,'accept_energy_planning_job',{...args,input:{...args.input,execution_replan:oldEvidence}});
+    await acknowledgeOwnership(db,other,manual);
+    assertEquals(await attemptClaim(db,job.job_id),null);
+    const lookup=(await db.query<{v:Receipt&{recapture:{replaces_job_id:string}}}>('SELECT read_energy_planning_job($1,NULL,$2) v',[home,home])).rows[0].v;
+    assertEquals(lookup.recapture,{replaces_job_id:job.job_id});
+    const latestEvidence={...oldEvidence,request_id:'88888888-8888-4888-8888-888888888888',accepted_plan_id:other};
+    await recapture(db,job.job_id,nextManual,latestEvidence);
+    const newState=await acceptedState(db);
+    const fresh=capturedSubmission(nextManual,{reference_plan_id:other,accepted_reference_revision:newState.accepted_reference_revision,
+      observed_replan_request_id:nextManual,replan_request_id:nextManual,execution_replan:latestEvidence,replaces_job_id:job.job_id});
+    assertEquals((await rpc<Receipt>(db,'accept_energy_planning_job',{...fresh,input:{...fresh.input,execution_replan:latestEvidence}})).state,'pending');
+  }finally{await db.close();}
+});
+Deno.test('cutover current accepted publication outranks retained older jobs when its own job was pruned',async()=>{
+  const db=await retryDatabase();
+  try{
+    await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+    const old=await rpc<Receipt>(db,'accept_energy_planning_job',capturedSubmission(other));
+    await db.query("UPDATE private.energy_planning_jobs SET state='published',revision=10,plan_id=$1 WHERE id=$2",[other,old.job_id]);
+    await db.exec('UPDATE private.energy_planning_heads SET revision=11');
+    const c={...currentRow(),ha_ack_status:'accepted',ha_acknowledged_at:'2026-10-01T00:00:00Z',
+      snapshot:{slot_minutes:15},plan:{plan_id:plan,status:'ready',plans:{priority:{slots:[{start:'2099-01-01T00:00:00Z'}]}}}};
+    await db.query('SELECT store_energy_optimisation_current($1::jsonb)',[JSON.stringify(c)]);
+    await db.query(`INSERT INTO energy_optimisation_plan_runs(id,home_id,customer_id,snapshot_id,input_hash,issued_at,status,model_version,summary,validation_errors,plan_schema_version,ha_ack_status,ha_acknowledged_at)
+      VALUES($1,$2,$2,$1,repeat('a',64),now(),'ready','synthetic','{}','{}',9,'accepted',now())`,[other,home]);
+    const captured=capturedSubmission(manual,{reference_plan_id:plan});
+    await rpc(db,'accept_energy_planning_job',{...captured,input:{...captured.input,reference:{plan_id:other,slots:[{start:'2099-01-01T02:00:00Z'}]}}});
+    await db.exec(await migration(ownershipMigration));
+    assertEquals((await acceptedState(db)).accepted_commands.household?.plan_id,plan);
+  }finally{await db.close();}
+});
+Deno.test('unprovable historical accepted commands remain explicit instead of silently unlocking holds',async()=>{
+  const db=await retryDatabase();
+  try{
+    await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+    await insertCurrent(db);
+    await db.query(`INSERT INTO energy_optimisation_plan_runs(id,home_id,customer_id,snapshot_id,input_hash,issued_at,status,model_version,summary,validation_errors,plan_schema_version,ha_ack_status,ha_acknowledged_at)
+      VALUES($1,$2,$2,$1,repeat('a',64),now(),'ready','synthetic','{}','{}',9,'accepted',now())`,[plan,home]);
+    await db.exec(await migration(ownershipMigration));
+    assertEquals((await acceptedState(db)).accepted_commands.state,'unresolved');
+    await assertRejects(()=>rpc(db,'accept_energy_planning_job',capturedSubmission(snapshot,{reference_plan_id:other,accepted_reference_revision:0})),Error,'provenance is unresolved');
+  }finally{await db.close();}
+});

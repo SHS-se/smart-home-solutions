@@ -185,6 +185,39 @@ were rejected as model identities; explicit locally generated revisions identify
 exactly which coefficients were captured. The existing numerical model ownership
 is retained rather than replacing it with a generic device framework.
 
+## Durable planning recovery
+
+Planning exchange 3 retains the captured input through recoverable worker,
+transport and storage failures. Each attempt keeps its home/head revision and
+lease fence. Storage records the last failure, releases that attempt's lease and
+sets the next due time with 5–60 second backoff; a repeated failure does not impose
+a lifetime attempt limit. Claims enforce the due time. Expired leases can be
+reclaimed, and a stale fence cannot publish, fail or reschedule its successor.
+Input, identity, authentication and configuration errors remain distinct terminal
+outcomes. Unexpected internal failures are reported as internal failures, never
+as malformed user snapshots.
+
+An incompatible planner capture fails with `planner_upgraded`; a capture whose
+actual final slot has ended fails with `capture_horizon_ended`. Horizon checks
+run before solving and before publication, and introduce no source-age or capture-age
+cutoff. Only while that
+job remains the current home/head/reference does its receipt carry
+`recapture.replaces_job_id`. A fresh snapshot presents that value as
+`replaces_job_id`. The backend checks its original planning purpose before
+preparation and again under the admission lock. Manual request identity and the
+accepted reference remain exact; execution changes are validated against that
+reference using current owner evidence. A newer head, manual request or fixed
+revision revokes the authority. This is a fresh capture, never execution of an
+old protocol or a household-wide hold release. Receipt identity deduplication
+precedes the spent-ticket check, so a lost replacement response remains recoverable.
+
+The HA producer persists the exact credential-free outgoing envelope before
+sending it. A lost pre-admission response is resolved by receipt lookup and,
+when absent, retransmission of that same envelope. Plan acknowledgements are
+independent durable delivery work. Neither a successful telemetry upload nor
+cloud publication proves that HA accepted the plan. All exchanges use version 3;
+server and producer roll forward together without an alternate execution path.
+
 ## Observation semantics and integration qualification
 
 Home Assistant reports quarter-average room temperatures, not interval-start
@@ -259,3 +292,36 @@ execution on one runtime must retain the exact publication hash. The diagnostic
 cannot publish models or operate devices. The
 first request follows diagnostic deployment; repeated requests additionally check
 determinism. A successful retry does not excuse a failed hosted qualification.
+
+### Accepted command ownership
+
+Publication and local acceptance have separate owners. The private command
+publication store projects exact commands from server-generated plans, retaining
+publication identity and accepted/rejected acknowledgement facts. The current
+home row keeps durable copies of independently accepted household and battery
+references. A household ACK never asserts battery handover; the battery's exact
+runtime contract identity advances only its own reference. Delayed known ACKs
+are idempotent, acceptance remains sticky, and older publications cannot regress
+accepted ownership. Diagnostic source timestamps do not order ownership.
+
+Live admission captures both references and their monotonic ownership revision.
+The existing current-publication, fixed-plan and request fences remain in force.
+Ownership changes invalidate immutable work with `accepted_reference_changed`
+and a same-purpose recapture directive. A definite pre-admission race instead
+returns HTTP 409 with that code and `details.recapture: true`; the producer first
+looks up the exact old snapshot, then captures anew only after absence is proven.
+An ownership-change ticket permits current accepted identity/evidence while
+retaining the original manual and execution purpose.
+
+Commitments select source by owner and absolute UTC interval: household Q for
+EV, pool and devices, independent B for battery. Neither is truncated to a newer
+unaccepted publication P. Missing owner coverage is an absent hold, never an OFF
+command inherited from another owner. Pure callers supplying one explicitly
+accepted reference still mean all its owners share that reference; live captures
+always supply the independent battery reference explicitly. Old durable jobs
+without the ownership fence recapture rather than inheriting that convention.
+
+Inactive candidate slot arrays may be cleared only after their actual final
+interval ends; identity/ACK facts and durable accepted copies survive. Migration
+uses exact current or provable historical server references. Missing accepted
+provenance remains explicit and never becomes an implicit release of holds.

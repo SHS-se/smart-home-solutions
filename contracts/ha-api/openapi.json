@@ -25,7 +25,7 @@
     ],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5,
-    "planning_exchange_version": 2
+    "planning_exchange_version": 3
   },
   "servers": [
     {
@@ -1421,10 +1421,15 @@
             "description": "An integration event recommending a manual replan. This never authorizes a new solve."
           },
           "planning_exchange_version": {
-            "const": 2
+            "const": 3
           },
           "execution_replan": {
             "$ref": "#/components/schemas/ExecutionReplan"
+          },
+          "replaces_job_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The current failed planner_upgraded or capture_horizon_ended job authorizing this fresh capture. Its home, reference and original planning purpose must still match."
           }
         },
         "dependentRequired": {
@@ -1445,6 +1450,10 @@
           ],
           "execution_replan": [
             "snapshot"
+          ],
+          "replaces_job_id": [
+            "snapshot",
+            "planning_exchange_version"
           ]
         },
         "additionalProperties": false,
@@ -3474,7 +3483,7 @@
             "const": 1
           },
           "planning_exchange_version": {
-            "const": 2
+            "const": 3
           },
           "job_id": {
             "type": "string",
@@ -3574,6 +3583,42 @@
           },
           "detail": {
             "type": "string"
+          },
+          "recapture": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "replaces_job_id"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "replaces_job_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only a still-current failed planner_upgraded, capture_horizon_ended or accepted_reference_changed job authorizes a fresh capture."
+          },
+          "last_error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "description": "Last recoverable attempt failure; the job remains pending and retry_after_ms schedules its next attempt."
           }
         }
       },

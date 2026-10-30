@@ -1,5 +1,7 @@
+import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
+import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { assert, assertEquals } from "@std/assert";
-import { dispatchedEvSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
+import { dispatchedEvSnapshot, mixedModeSnapshot, rulesFixtureInput } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { generateRulesPlan } from "./rules-planner.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
@@ -76,9 +78,28 @@ Deno.test("worker records the active failing stage and preserves its error respo
   snapshot.slots = snapshot.slots.slice(0, 8);
   const input = { ...rulesFixtureInput(snapshot), model_version: "obsolete" };
   const rejected = await captureWorker(JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input }));
-  assertEquals(rejected.response.status, 400);
+  assertEquals(rejected.response.status, 409);
   assertEquals((await rejected.response.json()).detail, "Prepared rules planner version changed");
-  assertEquals(rejected.stages.at(-1)?.stage, "plan_generation");
+  assertEquals(rejected.stages.at(-1)?.stage, "request");
   assertEquals(rejected.stages.at(-1)?.phase, "failed");
   assert(!rejected.stages.some(event => event.stage === "wasm_execute"));
+});
+
+Deno.test("unknown worker failures remain retriable internal failures instead of blaming the snapshot", async () => {
+  const request = new Request("https://worker.test/plan", {method: "POST", headers: {"x-shs-planning-secret": "secret"}});
+  request.text = () => Promise.reject(new Error("synthetic stream interruption"));
+  const response = await handleEnergyPlanningStep(request, "secret");
+  assertEquals(response.status, 500);
+  assertEquals((await response.json()).error, "planning_internal_error");
+});
+
+Deno.test("pure domain input validation maps to a terminal worker response at the transport boundary", async () => {
+  const snapshot = {...mixedModeSnapshot(), operating_scope: undefined};
+  const capture = captureRulesPlanningInput({snapshot, now: snapshot.captured_at,
+    resolved_price_outlook: rulesFixtureInput(mixedModeSnapshot()).price_outlook}, null, resolveRulePolicy());
+  const result = await captureWorker(JSON.stringify({protocol: RULES_PLANNING_PROTOCOL, stage: "prepare", input: capture}));
+  assertEquals(result.response.status, 400);
+  const body = await result.response.json();
+  assertEquals(body.error, "invalid_snapshot");
+  assert(body.detail.includes("operating_scope"));
 });
