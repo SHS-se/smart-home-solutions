@@ -1,3 +1,4 @@
+import { PlanningInputError } from "./input-error.ts";
 /**
  * An impossible device reading takes only its own device out of the plan.
  *
@@ -69,7 +70,7 @@ function reportedIssues(snapshot: OptimisationSnapshot): MeasurementIssue[] {
   const supplied = snapshot.measurement_issues;
   if (supplied === undefined) return [];
   if (!Array.isArray(supplied)) {
-    throw new Error("measurement_issues must be an array");
+    throw new PlanningInputError("measurement_issues must be an array");
   }
   return supplied.map((issue, index) => {
     if (
@@ -81,7 +82,7 @@ function reportedIssues(snapshot: OptimisationSnapshot): MeasurementIssue[] {
         (typeof issue.value === "number" && Number.isFinite(issue.value))) ||
       !["home_assistant", "planner"].includes(issue.detected_by as string)
     ) {
-      throw new Error(`measurement_issues[${index}] is invalid`);
+      throw new PlanningInputError(`measurement_issues[${index}] is invalid`);
     }
     return { ...issue } as MeasurementIssue;
   });

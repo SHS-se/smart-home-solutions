@@ -36,7 +36,7 @@ Deno.test("only the exact TEST server origin completes on publication", () => {
   }
 });
 
-function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; planningInput?: typeof input } = {}) {
+function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; planningInput?: typeof input; now?: () => number } = {}) {
   const job = options.planningInput ?? input;
   let fence = 0;
   let owned = options.claimed ?? false;
@@ -80,6 +80,12 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
         const { plan: _plan, ...publicationReceipt } = receipt;
         return Response.json(publicationReceipt);
       }
+      if (name === "retry_energy_planning_attempt") {
+        assertEquals(body.fence, fence);
+        owned = false;
+        receipt = {job_id: jobId, snapshot_id: job.snapshot.snapshot_id, state: "pending", pending: true, retry_after_ms: 5000};
+        return Response.json(receipt);
+      }
       if (name === "fail_energy_planning_job") {
         assertEquals(body.fence, fence);
         owned = false;
@@ -91,7 +97,7 @@ function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; sup
       return Response.json([]);
     } },
   });
-  return { jobs: new PlanningJobs(db), calls, publication: () => publication };
+  return { jobs: new PlanningJobs(db, options.now ?? (() => Date.parse(job.snapshot.captured_at))), calls, publication: () => publication };
 }
 const realWorker: typeof fetch = (url, init) => handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
 
@@ -155,12 +161,16 @@ Deno.test("an existing claimant and a different home never load or compute the j
   assert(!state.calls.some(call => call.name === "load_energy_planning_attempt"));
 });
 
-Deno.test("real complete-worker failures remain terminal and never publish partial results", async () => {
+Deno.test("a transient complete-worker failure retains the same capture and later publishes once", async () => {
   const state = memoryJobs();
   const receipt = await state.jobs.advanceForHome(jobId, { jobId }, connection,
     () => Promise.resolve(Response.json({ error: "cpu_limit" }, { status: 546 })));
-  assert(receipt?.state === "failed");
+  assert(receipt?.state === "pending");
   assert(!state.calls.some(call => call.name === "publish_energy_planning_job"));
+  assert(!state.calls.some(call => call.name === "fail_energy_planning_job"));
+  const recovered = await state.jobs.advanceForHome(jobId, { jobId }, connection, realWorker);
+  assertEquals(recovered?.state, "published");
+  assertEquals(state.calls.filter(call => call.name === "publish_energy_planning_job").length, 1);
 });
 
 Deno.test("a superseded fence returns storage authority instead of the locally computed plan", async () => {
@@ -222,4 +232,83 @@ Deno.test("execution request lookup reuses its durable receipt and refuses chang
   assertEquals(calls[0], { p_home_id: jobId, p_request_id: snapshot.snapshot_id });
   await assertRejects(() => jobs.findExecutionRequest(jobId, snapshot.snapshot_id, "changed-evidence"), PlanningJobError, "reused with different input");
   assertEquals(await jobs.findExecutionRequest("other-home", snapshot.snapshot_id, "immutable-evidence"), null);
+});
+
+Deno.test("terminal worker input and configuration failures retain their exact code", async () => {
+  for (const [status, code] of [[400, "invalid_snapshot"], [401, "unauthorized"], [503, "planner_not_configured"]] as const) {
+    const state = memoryJobs();
+    const receipt = await state.jobs.advanceForHome(jobId, { jobId }, connection,
+      () => Promise.resolve(Response.json({error: code, detail: "Synthetic terminal failure"}, {status})));
+    assert(receipt?.state === "failed");
+    assertEquals(receipt.code, code);
+    assert(!state.calls.some(call => call.name === "retry_energy_planning_attempt"));
+  }
+});
+
+Deno.test("bad worker replies are rejected while the same authorized capture retries to a complete plan", async () => {
+  for (const corruption of ["stage", "request_id", "protocol", "prepared", "result"] as const) {
+    const state = memoryJobs();
+    let corrupted = false;
+    const badOnce: typeof fetch = async (url, init) => {
+      const response = await realWorker(url, init);
+      const body = await response.json();
+      const targetStage = corruption === "result" ? "solve" : "prepare";
+      if (!corrupted && body.stage === targetStage) {
+        corrupted = true;
+        if (corruption === "prepared" || corruption === "result") body[corruption] = {};
+        else body[corruption] = "synthetic-crossed-reply";
+      }
+      return Response.json(body);
+    };
+    const pending = await state.jobs.advanceForHome(jobId, {jobId}, connection, badOnce);
+    assertEquals(pending?.state, "pending", corruption);
+    assertEquals(state.publication(), undefined);
+    assert(!state.calls.some(call => call.name === "fail_energy_planning_job"));
+    const retry = state.calls.find(call => call.name === "retry_energy_planning_attempt")!;
+    assertEquals(retry.body.code, "invalid_planning_response");
+    const recovered = await state.jobs.advanceForHome(jobId, {jobId}, connection, badOnce);
+    assertEquals(recovered?.state, "published");
+    assertEquals(state.calls.filter(call => call.name === "publish_energy_planning_job").length, 1);
+  }
+});
+
+Deno.test("a long outage recaptures only after the actual final command interval ends", async () => {
+  const end = Date.parse(input.snapshot.slots.at(-1)!.start) + input.snapshot.slot_minutes * 60_000;
+  let now = Date.parse(input.snapshot.captured_at) + 60 * 60_000;
+  const state = memoryJobs({now: () => now});
+  let workers = 0;
+  const unavailable: typeof fetch = () => { workers++; return Promise.reject(new Error("synthetic outage")); };
+  assertEquals((await state.jobs.advanceForHome(jobId, {jobId}, connection, unavailable))?.state, "pending",
+    "A capture older than one quarter remains usable while its command horizon is future");
+  now = end;
+  const expired = await state.jobs.advanceForHome(jobId, {jobId}, connection, unavailable);
+  assert(expired?.state === "failed");
+  assertEquals(expired.code, "capture_horizon_ended");
+  assertEquals(workers, 1, "Ended capture cannot waste another worker attempt");
+  assertEquals(state.publication(), undefined);
+});
+
+Deno.test("a solve crossing its actual final interval cannot publish an already expired replacement", async () => {
+  const end = Date.parse(input.snapshot.slots.at(-1)!.start) + input.snapshot.slot_minutes * 60_000;
+  let now = end - 1;
+  const state = memoryJobs({now: () => now});
+  const crossesEnd: typeof fetch = async (url, init) => {
+    const response = await realWorker(url, init);
+    if (JSON.parse(String(init?.body)).stage === "solve") now = end;
+    return response;
+  };
+  const result = await state.jobs.advanceForHome(jobId, {jobId}, connection, crossesEnd);
+  assert(result?.state === "failed");
+  assertEquals(result.code, "capture_horizon_ended");
+  assertEquals(state.publication(), undefined);
+});
+
+Deno.test('definite acceptance ownership race requests fresh capture instead of retrying immutable admission',async()=>{
+  const db=createClient('http://localhost:54321','synthetic',{auth:{persistSession:false},global:{fetch:()=>Promise.resolve(
+    Response.json({code:'P4091',message:'Accepted command ownership changed during preparation'},{status:400}))}});
+  const error=await assertRejects(()=>new PlanningJobs(db).accept({homeId:jobId,customerId:jobId,snapshotId:snapshot.snapshot_id,
+    sourceHash:'synthetic',input,context:{...context,accepted_reference_revision:0}}));
+  assertEquals((error as {code:string}).code,'accepted_reference_changed');
+  assertEquals((error as {status:number}).status,409);
+  assertEquals((error as {disposition:string}).disposition,'recapture');
 });

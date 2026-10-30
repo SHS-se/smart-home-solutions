@@ -4,7 +4,7 @@ import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.
 import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
 import { prepareCapturedRulesInput, executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
-import { generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
+import { EnergyPlanningError, generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { handleEnergyPlanningStep } from "./energy-planning-worker.ts";
 import { MAX_PLANNING_BODY_BYTES } from "./planning-transport-limits.ts";
 import { createPlannerProbe } from "./planner-wasm/probe.ts";
@@ -146,4 +146,15 @@ Deno.test("separate worker stages preserve mixed-room, household and hot-water o
   assertEquals(phases, ["prepare", "solve"]);
   assertEquals(result, JSON.parse(JSON.stringify(expected)));
   assertEquals(capture, before);
+});
+
+Deno.test("worker failures preserve retry, recapture and terminal disposition across HTTP", async () => {
+  for (const [status, code, disposition] of [[429, "busy", "retry"], [546, "cpu_limit", "retry"],
+    [400, "invalid_snapshot", "terminal"], [401, "unauthorized", "terminal"],
+    [503, "planner_not_configured", "terminal"], [409, "planner_upgraded", "recapture"]] as const) {
+    const error = await assertRejects(() => generateRemoteRulesPlan(input(), connection,
+      () => Promise.resolve(Response.json({error: code}, {status}))), EnergyPlanningError);
+    assertEquals(error.code, code);
+    assertEquals(error.disposition, disposition);
+  }
 });

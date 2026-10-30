@@ -9,7 +9,7 @@
     "generation": 1,
     "mode": "controlling",
     "scope_revision": "fixture-whole-house",
-    "model_revision": "rules-planner-v22:86d5370bba4df5c01edc5557ec2cc570e9dfd138a11b1822ad8c31c69ff7ddb5:synthetic-identity-conversion-v1:terminal-storage:0.95:0.95",
+    "model_revision": "rules-planner-v22:d5d30d37504810225a93a9a3d74b5480a32ad2238f35ac6a9759935d0c018361:synthetic-identity-conversion-v1:terminal-storage:0.95:0.95",
     "energy_basis": "stored_energy_mwh",
     "capacity_mwh": 18080000,
     "minimum_mwh": 904000,

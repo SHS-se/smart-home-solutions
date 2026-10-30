@@ -1,3 +1,4 @@
+import { PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { deviceMembers as group, allocateDevicePower as allocate, type DeviceMember } from './planner/device-power-allocation.ts';
 import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
 import { addHotWater } from "./rules-hot-water.ts";
@@ -42,11 +43,12 @@ export { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-const fail = (message: string): never => { throw new Error(message); };
+const fail = (message: string): never => { throw new PlanningInputError(message); };
 
 export type PublishedCommandSlot = Pick<PlannedSlot, "start" | "pool_w" | "pool_command_w" | "pool_permitted" | "ev_target_current_a" | "ev_min_current_a" | "ev_max_current_a" | "boiler_permitted" | "boiler_expected_w" | "boiler_battery_allowed" | "battery_command" | "device_commands"> & Partial<Pick<PlannedSlot, "battery_instruction">> & Partial<Pick<PlannedSlot, "device_loads_w" | "room_heating_w">>;
 export interface PublishedCommandReference {
   plan_id: string;
+  battery_contract?: {id: string; scope_revision: string; generation: number};
   hot_water_permissions?: string[];
   /** Provenance from the exact accepted publication, never inferred from its draw. */
   pool_planning_basis?: "thermal" | "empirical";
@@ -62,7 +64,7 @@ export interface PreparedRulesInput {
   problem: ReadyProblem;
   price_outlook: OptimisationPlan["price_outlook"];
   locked_slots: RetainedCommandSlot[];
-  held_reference: PublishedCommandSlot[];
+  held_reference: RetainedCommandSlot[];
   released_owners_by_slot: string[][];
   execution_replan: ExecutionReplan | null;
   fixed_slots: Record<number, PublishedCommandSlot>;
@@ -103,7 +105,7 @@ function alignedSnapshot(original: OptimisationSnapshot, effective: number): { s
   } };
 }
 
-function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapshot, nativePool = snapshot.capabilities.pool,
+function nativeCommand(slot: RetainedCommandSlot, snapshot: OptimisationSnapshot, nativePool = snapshot.capabilities.pool,
   released?: NativeOwnerMask): NativeCommand {
   // Released owners have no retained instruction to validate or encode. An
   // outage plan may legitimately omit their commands; the native release mask
@@ -114,14 +116,14 @@ function nativeCommand(slot: PublishedCommandSlot, snapshot: OptimisationSnapsho
   if (!released?.ev && snapshot.capabilities.ev && !finite(slot.ev_target_current_a)) return fail(`Committed native EV command missing at ${slot.start}`);
   // A schema 10 quarter keeps the exact candidate it was chosen as.
   const stated = !released?.battery && slot.battery_instruction ? nativeBattery(slot.battery_instruction) : null;
-  return { pool_on: !released?.pool && nativePool && (slot.pool_command_w ?? 0) > 0, ev_amps: released?.ev ? 0 : slot.ev_target_current_a,
+  return { pool_on: !released?.pool && nativePool && (slot.pool_command_w ?? 0) > 0, ev_amps: released?.ev ? 0 : slot.ev_target_current_a ?? 0,
     battery: stated?.battery ?? battery?.operation ?? "idle", charge_limit_w: stated?.charge_limit_w ?? battery?.charge_limit_w ?? 0,
     discharge_limit_w: stated?.discharge_limit_w ?? battery?.discharge_limit_w ?? 0 };
 }
 
 /** Freeze supplied forecasts/models and current published commands before admission. */
 export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "price_archive"> & { price_archive?: EnergyPlanningInput["price_archive"] }, reference: PublishedCommandReference | null,
-  approved: ReadyRulePolicy, trace?: PlanningTrace): PreparedRulesInput {
+  approved: ReadyRulePolicy, trace?: PlanningTrace, independent?: {battery: PublishedCommandReference | null}): PreparedRulesInput {
   if (!input.resolved_price_outlook) return fail("Rules planner requires an already resolved price outlook");
   if (!approved || !Array.isArray(approved.rules)) return fail("Rules planner requires the approved rule policy");
   // State and commitment belong to the immutable measurement capture, not the
@@ -132,10 +134,10 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   // Own the supplied basis once. All derived schedules belong to this call;
   // copying them again at publication adds work without further isolation.
   // The resolved outlook is authoritative here; the archive is not consumed.
-  ({ input, reference, approved } = structuredClone({ input: {
+  ({ input, reference, approved, independent } = structuredClone({ input: {
     snapshot: input.snapshot, now: input.now, fixed_plan: input.fixed_plan,
     execution_replan: input.execution_replan, resolved_price_outlook: input.resolved_price_outlook,
-  }, reference, approved }));
+  }, reference, approved, independent }));
   const isolated = isolateMeasurements(input.snapshot);
   const availability = new Map(parseExecutionChanges(isolated.execution_availability ?? []).map(change => [change.owner, change]));
   for (const change of input.execution_replan?.changes ?? []) {
@@ -186,7 +188,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (snapshot.policy.battery_target_is_hard) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
     "battery_target_not_guaranteed", "battery", "The requested hard battery target cannot be guaranteed by the rules objective.",
     "Battery and household planning continue within the configured equipment limits.")]);
-  const commitments = compileCommitments(snapshot, reference, input.execution_replan);
+  const commitments = compileCommitments(snapshot, reference, input.execution_replan, independent);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, commitments.warnings);
   const retained = snapshot.slots.map((_slot, i) => commitments.retained[i] ?? {});
   const fixedByStart = new Map(input.fixed_plan?.slots.map(s => [Date.parse(s.start), s.targets]) ?? []);
@@ -506,20 +508,21 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
 
 /** Native physics also owns the baseline projection. */
 export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): OptimisationResult {
-  if (input.model_version !== RULES_MODEL_VERSION) return fail("Prepared rules planner version changed");
+  if (input.model_version !== RULES_MODEL_VERSION) throw new PlanningError("Prepared rules planner version changed", "planner_upgraded", 409, "recapture");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
   input = { ...input, snapshot: { ...input.snapshot } };
   const core = nativePlanner(trace);
   const solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
   if (solved.kind === "failed") {
+    const infeasible = (message: string): never => { throw new PlanningError(message, "planning_infeasible", 422, "terminal"); };
     const committed = /^committed_command_infeasible:(\d+):(.+)$/.exec(solved.issue);
     if (committed) {
       const start = input.snapshot.slots[Number(committed[1])]?.start;
-      if (start) return fail(committed[2] === "shared_grid_limit"
+      if (start) return infeasible(committed[2] === "shared_grid_limit"
         ? `Previously accepted commands at ${start} exceed the configured grid limit when projected from current measurements (import ${input.problem.limits.import_w / 1000} kW, export ${input.problem.limits.export_w / 1000} kW).`
         : `Previously accepted commands at ${start} cannot be projected from current measurements: ${committed[2]}.`);
     }
-    return fail(solved.issue);
+    return infeasible(solved.issue);
   }
   const projections = core.projectionSession();
   const refined = planningStage(trace, "hot_water_refinement", () => addHotWater(projections, input, solved.selection));
@@ -603,7 +606,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     ...(input.execution_replan ? { execution_replan: { request_id: input.execution_replan.request_id,
       accepted_plan_id: input.execution_replan.accepted_plan_id, changes: input.execution_replan.changes,
       released_intervals: input.held_reference.flatMap((slot, i) => input.released_owners_by_slot[i].filter(owner => {
-        const command = (row: PublishedCommandSlot) => [
+        const command = (row: RetainedCommandSlot) => [
           ...(owner === "$ev" ? [row.ev_target_current_a, row.ev_min_current_a, row.ev_max_current_a]
             : owner === "$pool" ? [row.pool_command_w, row.pool_permitted]
             : owner === "$battery" ? [row.battery_command, row.battery_instruction] : []),

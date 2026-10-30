@@ -1,3 +1,4 @@
+import { PlanningInputError } from "./input-error.ts";
 /** Planner-owned reference and delegated recovery, never a second optimiser.
  *
  * Integer mWh is the canonical published reference. Native capabilities and
@@ -134,9 +135,9 @@ export interface BatteryExecutionContractV1 {
   }>;
 }
 
-function integer(value: number, label: string): number {
+function integer(value: number, label: string, ErrorType: new (message: string) => Error = Error): number {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error(`${label}: nonnegative integer required`);
+    throw new ErrorType(`${label}: nonnegative integer required`);
   }
   return value;
 }
@@ -309,21 +310,21 @@ export function buildBatteryExecutionContract(input: {
 
 /** Validate the external capture before solving; receipt ordering is local only. */
 export function validateExecutionFeedback(value: ExecutionFeedback): void {
-  integer(value.generation, "generation");
-  integer(value.source_receipt, "source receipt");
+  integer(value.generation, "generation", PlanningInputError);
+  integer(value.source_receipt, "source receipt", PlanningInputError);
   if (!value.generation || typeof value.scope_revision !== "string" || !value.scope_revision ||
       (value.previous_contract_id !== null && (typeof value.previous_contract_id !== "string" || !value.previous_contract_id)) ||
-      !Array.isArray(value.objectives)) throw new Error("Invalid battery execution feedback identity");
+      !Array.isArray(value.objectives)) throw new PlanningInputError("Invalid battery execution feedback identity");
   if (value.observed) {
-    integer(value.observed.at_ms, "observed time"); integer(value.observed.stored_mwh, "observed storage");
-    if (typeof value.observed.source !== "string" || !value.observed.source) throw new Error("Missing observation provenance");
+    integer(value.observed.at_ms, "observed time", PlanningInputError); integer(value.observed.stored_mwh, "observed storage", PlanningInputError);
+    if (typeof value.observed.source !== "string" || !value.observed.source) throw new PlanningInputError("Missing observation provenance");
   }
   const ids = new Set<string>();
   for (const row of value.objectives) {
     if (!row || typeof row.objective?.id !== "string" || !row.objective.id || ids.has(row.objective.id) ||
         !["stored_energy", "demand_following", "permission"].includes(row.objective.kind) ||
         !["outstanding", "retained", "incorporated", "retired"].includes(row.responsibility) ||
-        typeof row.outcome !== "string") throw new Error("Invalid prior battery objective");
-    integer(row.objective.deadline_ms, "objective deadline"); ids.add(row.objective.id);
+        typeof row.outcome !== "string") throw new PlanningInputError("Invalid prior battery objective");
+    integer(row.objective.deadline_ms, "objective deadline", PlanningInputError); ids.add(row.objective.id);
   }
 }

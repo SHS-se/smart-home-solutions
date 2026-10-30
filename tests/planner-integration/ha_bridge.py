@@ -263,13 +263,14 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
         household.async_report_runtime = AsyncMock()
         household.async_battery_inputs_refresh = AsyncMock()
         household._record_device_exchange = AsyncMock()
-        household.client.push_optimisation = AsyncMock(return_value={})
+        household.client.submit_optimisation = AsyncMock(return_value={})
         await household._store.async_save({"optimisation_actuals_accepted_until":
             (START - timedelta(minutes=30)).isoformat(),
             "optimisation_device_configuration": {device["key"]: deepcopy(device) for device in devices}})
         await household.async_optimisation_push(force_plan=True, replan_request_id="synthetic-manual")
-        assert household.client.push_optimisation.await_count == 1, household.last_optimisation_error
-        actuals, snapshot = household.client.push_optimisation.call_args.args[:2]
+        assert household.client.submit_optimisation.await_count == 1, household.last_optimisation_error
+        body = household.client.submit_optimisation.call_args.args[0]
+        actuals, snapshot = body["actual_slots"], body["snapshot"]
         assert snapshot is not None, household.last_optimisation_error
     return {"integration_version": INTEGRATION_VERSION,
             "app_version": json.loads((HA_REPO / "web/package.json").read_text())["version"], "provenance": "independently_generated_synthetic",

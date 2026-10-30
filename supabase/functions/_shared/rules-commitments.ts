@@ -57,15 +57,34 @@ export function unavailableOwner(snapshot: OptimisationSnapshot, owner: string, 
 
 /** One capture-anchored view owns both native and prepared-service commitments. */
 export function compileCommitments(snapshot: OptimisationSnapshot, reference: PublishedCommandReference | null,
-  request: ExecutionReplan | null | undefined) {
+  request: ExecutionReplan | null | undefined, independent?: {battery: PublishedCommandReference | null}) {
   const capture = Date.parse(snapshot.captured_at);
   const byStart = new Map(reference?.slots.map(slot => [Date.parse(slot.start), slot]));
-  const original: PublishedCommandSlot[] = [];
+  // Existing no-battery planning semantics apply after explicit exclusion or
+  // measurement isolation. Keep durable provenance outside this planning view.
+  const batteryReference = independent ? (snapshot.capabilities.battery && snapshot.battery ? independent.battery : null) : reference;
+  const batteryByStart = new Map(batteryReference?.slots.map(slot => [Date.parse(slot.start), slot]));
+  const original: RetainedCommandSlot[] = [];
+  const missing: string[][] = [];
   for (const slot of snapshot.slots) {
-    if (Date.parse(slot.start) >= capture + HOUR || !reference) break;
-    const prior = byStart.get(Date.parse(slot.start));
-    if (!prior) break;
-    original.push(prior);
+    const at = Date.parse(slot.start);
+    if (at >= capture + HOUR) break;
+    const prior = byStart.get(at), battery = batteryByStart.get(at);
+    if (!independent) {
+      if (!prior) break;
+      original.push(prior); missing.push([]);
+    } else {
+      // Row alignment is the new capture's UTC grid. A missing owner's source
+      // is an absent hold, never a synthetic OFF instruction from another owner.
+      const row: RetainedCommandSlot = prior ? structuredClone(prior) : {start: slot.start, device_commands: {}};
+      delete row.battery_command; delete row.battery_instruction;
+      if (battery) {
+        row.battery_command = battery.battery_command;
+        if (battery.battery_instruction) row.battery_instruction = battery.battery_instruction;
+      }
+      original.push(row);
+      missing.push([...(prior ? [] : ["$ev", "$pool"]), ...(battery ? [] : ["$battery"])]);
+    }
   }
   const evidence: ExecutionChange[] = snapshot.execution_availability ?? [];
   const owners = new Set(evidence.filter(change => change.status !== "plan_deviation" && (change.status === "recovered" || change.status === "faulted" ||
@@ -74,7 +93,7 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
   // A delayed capture may follow the blocked source quarter. Its explicitly
   // requested repair still needs eligible destinations in the current held hour.
   for (const change of request?.changes ?? []) owners.add(change.owner);
-  const slotOwners = original.map(() => new Set(owners));
+  const slotOwners = original.map((_slot, i) => new Set([...owners, ...missing[i]]));
   // An explicit absence of a pool instruction is not an OFF commitment. Once
   // evidence returns, the pool may plan again without unlocking other owners.
   original.forEach((slot, i) => { if (slot.pool_permitted === null) slotOwners[i].add("$pool"); });
@@ -133,11 +152,11 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
     mask.battery = unavailableOwner(snapshot, "$battery", slot.start);
     return mask;
   });
-  return {original, retained, released, unavailable, owners_by_slot: slotOwners.map(owners => [...owners]), warnings};
+  return {original, retained, released, unavailable, owners_by_slot: slotOwners.map((owners, i) => [...owners].filter(owner => !missing[i].includes(owner))), warnings};
 }
 
 /** Independent publication check catches TS postprocessing that changes held requests. */
-export function assertHeldCommands(snapshot: OptimisationSnapshot, original: PublishedCommandSlot[],
+export function assertHeldCommands(snapshot: OptimisationSnapshot, original: RetainedCommandSlot[],
   released: readonly string[][], actual: PlannedSlot[]): void {
   const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
   const fields = { $ev: ["ev_target_current_a", "ev_min_current_a", "ev_max_current_a"],
