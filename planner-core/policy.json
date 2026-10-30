@@ -1,5 +1,5 @@
 {
-  "version": "kronor-score-v15",
+  "version": "kronor-score-v16",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"

@@ -437,8 +437,9 @@ impl Opportunity {
                             };
                             let future = t.at(i + 1, &next);
                             let v = Value {
-                                points: policy::guidance_quarter(&m, index, i, &q, state.pool)
-                                    + future.points,
+                                points: f64::from(policy::guidance_quarter(
+                                    &m, index, i, &q, state.pool,
+                                )) + future.points,
                                 cost: q.cost + q.wear + future.cost,
                             };
                             if best.is_none_or(|old| v.better(old)) {

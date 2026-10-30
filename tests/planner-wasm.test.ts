@@ -512,7 +512,7 @@ Deno.test("native heater restart events and startup wear match the referee", () 
   assertEquals(
     selected.account.contributions,
     scored.quarters.map((q) =>
-      p.rules.map((r) => q.deductions[r.key] ?? 0)
+      p.rules.map((r) => q.fired.includes(r.key) ? r.points : 0)
     ),
   );
   for (let i = 0; i < QUARTERS; i++) {

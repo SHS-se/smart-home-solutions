@@ -169,7 +169,7 @@ impl Context<'_> {
     }
     // Battery-only alternatives retain the same pool/EV service predicates.
     // Compute those once per quarter instead of cloning/scoring every inventory move.
-    fn service_points(&self, i: usize) -> f64 {
+    fn service_points(&self, i: usize) -> i32 {
         let before = if i == 0 {
             self.p.initial.pool_c
         } else {
@@ -258,7 +258,7 @@ impl Values {
         ctx: &Context,
         i: usize,
         kwh: f64,
-        service_points: f64,
+        service_points: i32,
     ) -> [Option<(Command, f64, f64)>; 2] {
         let mut best: [Option<(Command, f64, f64)>; 2] = [None, None];
         for mut c in ctx.options(i, kwh) {
@@ -283,7 +283,7 @@ impl Values {
                 }
             }
             for previous in [false, true] {
-                let value = (service_points - q.cost)
+                let value = (f64::from(service_points) - q.cost)
                     - crate::charging::battery_start_cost(previous, charging, &ctx.p.limits)
                     + continuation;
                 let kept = &mut best[usize::from(previous)];
@@ -302,7 +302,7 @@ impl Values {
         ctx: &Context,
         i: usize,
         kwh: f64,
-        service_points: f64,
+        service_points: i32,
         previous_charging: bool,
     ) -> Option<(Command, f64, f64)> {
         let mut best: Option<(Command, f64, f64)> = None;
@@ -311,7 +311,7 @@ impl Values {
                 continue;
             };
             let charging = c.battery == Operation::GridCharge && q.charge > 0.0;
-            let value = (service_points - q.cost)
+            let value = (f64::from(service_points) - q.cost)
                 - crate::charging::battery_start_cost(previous_charging, charging, &ctx.p.limits)
                 + self.at(ctx, i + 1, q.battery_kwh, charging);
             if !value.is_finite() {
@@ -429,7 +429,7 @@ impl Allocation {
                     let Ok(q) = projector.step(i, &c, &mut next) else {
                         continue;
                     };
-                    let value = policy::guidance_quarter(p, index, i, &q, state.pool)
+                    let value = f64::from(policy::guidance_quarter(p, index, i, &q, state.pool))
                         - q.cost
                         - q.wear
                         - q.continuity
@@ -611,7 +611,7 @@ mod tests {
         let unsupported = Values {
             rows: vec![[vec![f64::NEG_INFINITY; 2], vec![f64::NEG_INFINITY; 2]]; 2],
         };
-        assert!(unsupported.best_pair(&ctx, 0, 0.5, 0.0)[0].is_none());
+        assert!(unsupported.best_pair(&ctx, 0, 0.5, 0)[0].is_none());
     }
 
     #[test]
@@ -865,7 +865,7 @@ mod tests {
         let q = physics::projection(&p, &commands).unwrap();
         let after = policy::account(&p, &q, &index);
         assert!(after.score_sek > before + 0.2);
-        assert_eq!(after.points, 0.0);
+        assert_eq!(after.points, 0);
         assert_eq!((commands[0].ev_amps, commands[1].ev_amps), (6, 0));
         assert!(w.used + w.reserved <= w.limit);
     }
