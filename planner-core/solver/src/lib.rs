@@ -82,8 +82,14 @@ pub struct Initial {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Targets {
     pub pool_c: Option<f64>,
-    pub ev_km: Option<f64>,
-    pub ev_limit_kwh: Option<f64>,
+}
+/// The car's levels and one breach line per slot. The producer owns them
+/// (car-policy.ts); the solver only compares the charge against the line.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CarPolicy {
+    pub floor_kwh: f64,
+    pub limit_kwh: f64,
+    pub breach_permille: Vec<Option<i32>>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Limits {
@@ -103,8 +109,7 @@ pub enum RuleKey {
     PoolLow,
     PoolCold,
     PoolHot,
-    EvLow,
-    EvShort,
+    CarFloor,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Rule {
@@ -120,6 +125,17 @@ pub struct StoreTerm {
     pub cap: f64,
     pub grid_kwh_per_unit: f64,
 }
+/// The car's energy, priced in tiers: each up to its own level from the last.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CarTier {
+    pub up_to: f64,
+    pub sek_per_kwh: f64,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CarTerm {
+    pub grid_kwh_per_unit: f64,
+    pub tiers: Vec<CarTier>,
+}
 /// What the energy a plan leaves in its stores is worth. The producer owns the
 /// caps, conversions and reference price (end-credit.ts); the solver applies them.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -127,12 +143,11 @@ pub struct EndCreditTerms {
     pub reference_sek_per_kwh: f64,
     pub battery: Option<StoreTerm>,
     pub pool: Option<StoreTerm>,
-    pub ev: Option<StoreTerm>,
+    pub ev: Option<CarTerm>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ServiceGuard {
     pub pool: [f64; 2],
-    pub ev: [f64; 2],
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Recipe {
@@ -158,6 +173,7 @@ pub struct Problem {
     pub initial: Initial,
     pub pool_stop_c: Option<f64>,
     pub targets: Targets,
+    pub car_policy: Option<CarPolicy>,
     pub limits: Limits,
     pub rules: Vec<Rule>,
     pub end_credit: EndCreditTerms,
@@ -237,7 +253,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 14 || p.slots.is_empty() {
+    if p.abi != 15 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -250,7 +266,7 @@ fn validate(p: &Problem) -> Result<(), String> {
         return bad("invalid_charging_preference");
     }
     // A store without a term is simply not credited; a term never changes what a device can do.
-    let terms = [&p.end_credit.battery, &p.end_credit.pool, &p.end_credit.ev];
+    let terms = [&p.end_credit.battery, &p.end_credit.pool];
     if !p.end_credit.reference_sek_per_kwh.is_finite()
         || p.end_credit.reference_sek_per_kwh < 0.0
         || terms.iter().any(|term| {
@@ -260,6 +276,28 @@ fn validate(p: &Problem) -> Result<(), String> {
         })
     {
         return bad("invalid_end_credit");
+    }
+    if p.end_credit.ev.as_ref().is_some_and(|t| {
+        !t.grid_kwh_per_unit.is_finite()
+            || t.grid_kwh_per_unit < 0.0
+            || t.tiers.is_empty()
+            || t.tiers.iter().any(|tier| {
+                !tier.up_to.is_finite() || !tier.sek_per_kwh.is_finite() || tier.sek_per_kwh < 0.0
+            })
+            || t.tiers.windows(2).any(|pair| pair[1].up_to < pair[0].up_to)
+    }) {
+        return bad("invalid_end_credit");
+    }
+    // A slice of a plan's quarters may carry the whole plan's lines: only a plan
+    // that is solved reads them, and its producer aligns them with its slots.
+    if p.car_policy.as_ref().is_some_and(|c| {
+        !c.floor_kwh.is_finite()
+            || !c.limit_kwh.is_finite()
+            || c.floor_kwh < 0.0
+            || c.floor_kwh > c.limit_kwh
+            || c.breach_permille.len() < p.slots.len()
+    }) {
+        return bad("invalid_car_policy");
     }
     if p.slots.iter().any(|s| {
         s.pool_auxiliary_dispatch.as_ref().is_some_and(|d| {
@@ -274,8 +312,7 @@ fn validate(p: &Problem) -> Result<(), String> {
     if p.battery.is_some() != p.initial.battery_kwh.is_some()
         || p.car.is_some() != p.charger.is_some()
         || p.car.is_some() != p.initial.ev_kwh.is_some()
-        || p.car.is_some() != p.targets.ev_km.is_some()
-        || p.car.is_some() != p.targets.ev_limit_kwh.is_some()
+        || p.car.is_some() != p.car_policy.is_some()
         || p.heater.as_ref().is_some_and(|h| h.source.is_some())
             != p.initial.pool_source_depletion_kwh.is_some()
         || p.heater.is_some() != p.pool_store.is_some()
@@ -654,8 +691,7 @@ mod live_tests {
                 p.car = None;
                 p.charger = None;
                 p.initial.ev_kwh = None;
-                p.targets.ev_km = None;
-                p.targets.ev_limit_kwh = None;
+                p.car_policy = None;
             }
             if mask & 4 == 0 {
                 p.heater = None;
@@ -673,10 +709,10 @@ mod live_tests {
                     required: true,
                 },
                 Rule {
-                    key: RuleKey::EvShort,
-                    threshold: 100.0,
-                    points: -1,
-                    required: true,
+                    key: RuleKey::CarFloor,
+                    threshold: 0.0,
+                    points: -2,
+                    required: false,
                 },
             ];
             p.slots[0].export_price = 2.0;

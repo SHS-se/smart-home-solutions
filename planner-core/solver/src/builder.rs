@@ -53,7 +53,7 @@ fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f
     let held = hold.impose(command(p, false, 0, Operation::Idle, 0.0, 0.0));
     let mut levels = vec![0];
     if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-        let room = (p.targets.ev_limit_kwh.unwrap() - label.state.ev).max(0.0) * 1000.0
+        let room = (p.car_policy.as_ref().unwrap().limit_kwh - label.state.ev).max(0.0) * 1000.0
             / h
             / car.charge_efficiency;
         let need = (f.ev_goal - label.state.ev).max(0.0) * 1000.0 / h / car.charge_efficiency;
@@ -1230,8 +1230,7 @@ mod forecast_tests {
         p.car = None;
         p.charger = None;
         p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
+        p.car_policy = None;
         p.initial.pool_c = Some(29.7);
         p.pool_store.as_mut().unwrap().loss = shs_planner_models::StandingLoss::Linear {
             kw_per_c: 0.05,
@@ -1349,7 +1348,7 @@ mod forecast_tests {
         let mut p = witnesses::tests::problem(24);
         p.recipe.max_actions = 32;
         p.initial.pool_c = Some(29.0);
-        p.targets.ev_km = Some(250.0);
+        p.car_policy.as_mut().unwrap().floor_kwh = 50.0;
         p.rules.clear();
         for s in &mut p.slots {
             s.base_w = 1000.0;
@@ -1376,7 +1375,7 @@ mod forecast_tests {
         for source in [false, true] {
             for delayed in [false, true] {
                 let mut p = witnesses::tests::problem(24);
-                p.targets.ev_km = Some(250.0);
+                p.car_policy.as_mut().unwrap().floor_kwh = 50.0;
                 p.slots[0].start_seconds = -300.0;
                 p.slots[0].base_w = 1000.0;
                 p.pool_stop_c = Some(30.0001);
@@ -1454,7 +1453,7 @@ mod forecast_tests {
             p.initial.heater_state = Some(HeaterState::Steady);
             p.heater.as_mut().unwrap().compressor_w = 2990.5;
             p.heater.as_mut().unwrap().auxiliary_w = 760.0;
-            p.targets.ev_km = Some(250.0);
+            p.car_policy.as_mut().unwrap().floor_kwh = 50.0;
             p.slots[0].base_w = 1000.0;
             let expected = match variant {
                 1 => {
@@ -1544,8 +1543,7 @@ mod forecast_tests {
         p.car = None;
         p.charger = None;
         p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
+        p.car_policy = None;
         p.heater = None;
         p.pool_store = None;
         p.pool_stop_c = None;
@@ -1645,7 +1643,7 @@ mod forecast_tests {
         p.heater.as_mut().unwrap().auxiliary_w = 700.0;
         p.initial.pool_c = Some(29.0);
         p.pool_stop_c = Some(29.001);
-        p.targets.ev_limit_kwh = Some(p.car.as_ref().unwrap().capacity_kwh);
+        p.car_policy.as_mut().unwrap().limit_kwh = p.car.as_ref().unwrap().capacity_kwh;
         p.initial.battery_kwh = Some(p.battery.as_ref().unwrap().capacity_kwh * 0.8);
         let c = command(&p, true, 16, Operation::Export, 0.0, 6000.0);
         assert_eq!(
@@ -1659,9 +1657,9 @@ mod forecast_tests {
         let mut p = witnesses::tests::problem(8);
         p.charger.as_mut().unwrap().phase_count = 3;
         p.charger.as_mut().unwrap().min_current_a = 5;
-        p.targets.ev_km = Some(250.0);
+        p.car_policy.as_mut().unwrap().floor_kwh = 50.0;
         p.slots[0].start_seconds = -450.0;
-        p.targets.ev_limit_kwh = Some(10.6);
+        p.car_policy.as_mut().unwrap().limit_kwh = 10.6;
         let index = policy::index(&p, &mut work(&p)).unwrap();
         let label = initial_label(&p);
         let levels = ev_levels(&p, &index, 0, &label, 1000.0);
@@ -1680,7 +1678,7 @@ mod forecast_tests {
     fn automatic_supply_proposal_follows_changed_pool_demand_without_serving_ev() {
         let mut p = witnesses::tests::problem(1);
         p.slots[0].base_w = 1000.0;
-        p.targets.ev_km = Some(100.0);
+        p.car_policy.as_mut().unwrap().floor_kwh = 20.0;
         let index = policy::index(&p, &mut work(&p)).unwrap();
         let mut c = actions(
             &p,

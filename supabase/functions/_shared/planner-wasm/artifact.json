@@ -1,7 +1,7 @@
 {
-  "abi": 14,
-  "wasm_sha256": "a5f76adda3a4c72032f0b8e693f786560c96e263455e36dfd130886366bf2aae",
-  "source_sha256": "d9b8cf13034c90241bec32796c86dee25827b15f5db31948230ee1d1e4eed8df",
+  "abi": 15,
+  "wasm_sha256": "1229ff5014e29d022ac430bc9977a83e125a88f3b1631102c652b0f25753668d",
+  "source_sha256": "b470b48eb9e52bf0b7da92dc564b5e81ef496a4e714e5cd628b1e526be0d824c",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -61,6 +61,7 @@
     "supabase/functions/_shared/hot-water-opportunities.ts",
     "supabase/functions/_shared/planner-wasm/battery-command.ts",
     "supabase/functions/_shared/planner-wasm/calendar.ts",
+    "supabase/functions/_shared/planner-wasm/car-policy.ts",
     "supabase/functions/_shared/planner-wasm/core.ts",
     "supabase/functions/_shared/planner-wasm/cost-policy.ts",
     "supabase/functions/_shared/planner-wasm/end-credit.ts",

@@ -1041,7 +1041,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       };
       const [targetResult, settingsResult] = await Promise.all([
         supabase.from("energy_optimisation_comfort_targets")
-          .select("pool_target_c, ev_target_soc").eq("home_id", auth.homeId).maybeSingle(),
+          .select("pool_target_c, ev_floor_soc").eq("home_id", auth.homeId).maybeSingle(),
         supabase.from("energy_optimisation_value_settings")
           .select("battery_degradation_sek_per_kwh, vehicle_fallback_sek_per_km").eq("home_id", auth.homeId).maybeSingle(),
       ]);
@@ -1058,10 +1058,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       snapshot = {
         ...withoutCurves,
         grid: { ...snapshot.grid, import_limit_w: importLimitW },
-        // The same car battery the planner plans with turns the charge level into a range.
-        comfort: comfortTargets(targetResult.data, snapshot.device_physics?.car?.battery ??
-          (snapshot.ev_battery && Number.isFinite(snapshot.ev_battery.kwh_per_km)
-            ? { capacity_kwh: snapshot.ev_battery.capacity_kwh, kwh_per_km: snapshot.ev_battery.kwh_per_km! } : null)),
+        comfort: comfortTargets(targetResult.data),
         value_settings: resolveValueSettings(settingsResult.data),
         battery_curve_mode: "balanced",
       };

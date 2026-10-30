@@ -9,7 +9,7 @@ Deno.test("EV charging has no planner minimum runtime", () => {
     ...slot,
     import_price_sek_per_kwh: slot.import_price_sek_per_kwh === null
       ? null
-      : (index % 2 === 0 ? 1.1 : 2.3),
+      : index === 3 ? 0.5 : (index % 2 === 0 ? 1.1 : 2.3),
   }));
   const evService = routedEvService(base);
   const snapshot = horizon({
@@ -20,7 +20,8 @@ Deno.test("EV charging has no planner minimum runtime", () => {
       name: "Tesla Model Y",
       connected: true,
       capacity_kwh: 77.25,
-      soc: 0.4,
+      // Just under its limit: a quarter or two of cheap power covers it.
+      soc: 0.78,
       charge_limit_soc: 0.8,
       charge_efficiency: 0.92,
       available_from: base.slots[0].start,
@@ -343,13 +344,6 @@ Deno.test("a single-phase charger is planned at the power its cable delivers", (
     three > 0 && three <= 3 * 230 * 16 + 1 && three % (3 * 230) === 0,
     `three-phase charging must use supported currents within its limit: ${three}`,
   );
-});
-
-Deno.test("the native planner uses the vehicle's own consumption when buying range",async()=>{
- const {dispatchedEvSnapshot}=await import("../../../scripts/generate-ha-plan-fixture.ts");
- const s=dispatchedEvSnapshot();const solve=(consumption:number)=>{s.ev_battery!.kwh_per_km=consumption;
-  return runRulesPlanner({snapshot:s,now:s.captured_at,price_archive:[]}).plan.plans.priority.slots.reduce((total,slot)=>total+slot.ev_w*.25/1000,0);};
- assert(solve(.24)>solve(.14),"the thirstier car needs more electricity for the same requested range");
 });
 
 Deno.test("unplugging preserves the car's planned energy while cable telemetry stays false", async () => {

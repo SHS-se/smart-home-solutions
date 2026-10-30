@@ -35,7 +35,7 @@ Deno.test("pre-native commits cannot execute a retired planner",async()=>{
 });
 Deno.test("the current native artifact has a stable planner identity",async()=>{
   const first=await plannerVersion(tree);
-  assert(first.startsWith("v14-rule-wasm:"));
+  assert(first.startsWith("v15-rule-wasm:"));
   assertEquals(await plannerVersion(tree),first);
 });
 
@@ -43,7 +43,7 @@ const DEVICE_MODELS = `${PLANNER_DIR}/device-models.ts`;
 const BATTERY_CONVERSION = `${PLANNER_DIR}/battery-conversion.ts`;
 const BOILER_CONSUMPTION = 'supabase/functions/_shared/boiler-consumption.ts';
 /** The referee version and every shared physical consumption model. */
-const DEVICE_MODELS_PIN = "29:1aa8c1fcf24617f1";
+const DEVICE_MODELS_PIN = "30:1aa8c1fcf24617f1";
 
 Deno.test("the bench judges every planner with the shared pure physical models", () => {
   assertEquals(specifiers(tree.read(DEVICE_MODELS)!, { types: true }), ["./battery-conversion.ts"]);

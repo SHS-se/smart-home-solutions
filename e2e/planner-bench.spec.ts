@@ -151,7 +151,7 @@ function series(runStart: number, runQuarters: number): BenchSeries {
   // The battery ends 2.3 kWh below its start: a debit of 3.4 kr at 1.40 kr/kWh.
   const battery = { start: 8, end: 5.7, cap: 17, counted: -2.3, grid_kwh: -2.4286, credit_sek: -3.4 };
   s.bill = { grid_sek: grid, wear_sek: 0, net_sek: Math.round((grid + 3.4) * 10_000) / 10_000, credit: { reference_sek_per_kwh: 1.4, battery, pool: null, ev: null, credit_sek: -3.4 } };
-  s.comfort = { pool_target_c: 30.5, ev_target_km: 300, pool_start_c: 29.5, ev_start_km: 0,
+  s.comfort = { pool_target_c: 30.5, ev_target_km: 300, carFloorKm: new Array(n).fill(120), pool_start_c: 29.5, ev_start_km: 0,
     poolReachableC: new Array(n).fill(32), carReachableKm: new Array(n).fill(0) };
   // A synthetic transport fixture for the audit UI, not an optimiser correctness test.
   const before = { poolC: s.poolC.map(v => v!), carKm: [...s.carKm], homeSoc: new Array(n).fill(50) };
@@ -995,8 +995,8 @@ test.describe('planner bench', () => {
     // Energy timing is evidence in kronor: the quarters it would change, and no points.
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
     await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
-    // Ongoing EV readiness counts immediately even in this empty-car fixture.
-    await expect(row('ev_low')).toContainText(/\d+ (q|kv) · −\d+/);
+    // A car below its floor line counts: this fixture's car is empty.
+    await expect(row('car_floor')).toContainText(/\d+ (q|kv) · −\d+/);
     // Rules that did not fire are kept out of the way.
     await expect(row('ev_timing')).toHaveCount(0);
     await page.locator('#bench-untriggered-rules > button').click();

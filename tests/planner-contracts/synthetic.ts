@@ -18,7 +18,7 @@ export function syntheticHome(quarters = 24): OptimisationSnapshot {
     ev_battery: { name: "Synthetic EV", connected: true, capacity_kwh: 75, soc: .05, charge_limit_soc: .8,
       charge_efficiency: .92, kwh_per_km: .16, available_from: starts[0], priority: 3,
       source_entity_ids: { connected: "binary_sensor.synthetic_cable", soc: "sensor.synthetic_soc", target_soc: "number.synthetic_limit" } },
-    comfort: { ev: { target_km: 300 } },
+    comfort: { ev: { floor_soc: .3 } },
     value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     grid: { import_limit_w: 15000, export_limit_w: 15000 },
     policy: { battery_end_of_solar_target_soc: 0, battery_target_is_hard: false, terminal_soc_min: 0,

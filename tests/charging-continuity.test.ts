@@ -16,10 +16,10 @@ function competition(): ReadyProblem {
   p.car = { capacity_kwh: 10, kwh_per_km: .2, charge_efficiency: 1 };
   p.charger = { voltage_v: 230, phase_count: 3, min_current_a: 5, max_current_a: 6, current_step_a: 1 };
   p.initial.battery_kwh = p.initial.ev_kwh = 0;
-  p.targets.ev_km = 30; p.targets.ev_limit_kwh = 6;
   p.limits.import_w = 5000;
   p.slots = Array.from({ length: 16 }, (_, i) => ({ ...p.slots[0], start_seconds: i * 900, base_w: 700, solar_w: 0, import_price: 1 + (i % 2) * .005, export_price: 0 }));
-  p.end_credit = { reference_sek_per_kwh: 5, battery: { cap: 6, grid_kwh_per_unit: 1 }, pool: null, ev: { cap: 6, grid_kwh_per_unit: 1 } };
+  p.car_policy = { floor_kwh: 6, limit_kwh: 6, breach_permille: p.slots.map(() => null) };
+  p.end_credit = { reference_sek_per_kwh: 5, battery: { cap: 6, grid_kwh_per_unit: 1 }, pool: null, ev: { grid_kwh_per_unit: 1, tiers: [{ up_to: 6, sek_per_kwh: 5 }] } };
   return p;
 }
 function selected(p: ReadyProblem) {
@@ -73,7 +73,7 @@ Deno.test("active EV currents group into blocks instead of alternating with batt
   const p = activeCurrentCompetition();
   // Isolate current smoothing from the separate ongoing-readiness preference.
   // This synthetic scenario retains its active-block demand and all bounds.
-  p.rules = p.rules.filter(rule => rule.key !== 'ev_low' && rule.key !== 'ev_short');
+  p.rules = p.rules.filter(rule => rule.key !== 'car_floor');
   const result = selected(p);
   const evening = result.commands.slice(25, 44).map(c => c.ev_amps);
   assert(evening.filter(amps => amps > 0).length > 1);

@@ -6,7 +6,7 @@ import { CASE_FORMAT, CASE_VERSION, QUARTERS, type BenchCase, type CaseStartStat
 import type { Decisions } from './referee';
 
 /** Synthetic preferences for tests only; the runner reads the home's settings. */
-export const TARGETS: Targets = { pool_c: 30, ev_km: 300 };
+export const TARGETS: Targets = { pool_c: 30, ev_km: 300, ev_floor_soc: .3 };
 
 export const quarters = <T>(make: (i: number) => T): T[] => Array.from({ length: QUARTERS }, (_, i) => make(i));
 /** Whether quarter i lies in [from, to). */

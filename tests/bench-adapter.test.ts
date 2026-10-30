@@ -18,6 +18,8 @@ Deno.test("native bench planning respects the captured 15 kW limit with competin
   c.grid_import_limit_w = 15_000;
   c.base_load_forecast_w.fill(1350);
   c.recorded.actual!.base_load_w.fill(1350);
+  // Below its floor from the start, so the car wants the grid beside the pool.
+  c.start_state.ev.soc = .1;
   const { record } = planner.plan(c, caseHousehold(c));
   assertEquals(record.status, "planned");
   const { series } = evaluate(c, record, {});

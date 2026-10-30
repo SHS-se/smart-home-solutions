@@ -1,3 +1,4 @@
+import { noUnservedTrips } from './trip-ledger.ts';
 import type { ComparisonCapture } from './browser.ts';
 import type { BaselinePeriod } from './period.ts';
 import type { BenchSeries } from '../planner-bench/types.ts';
@@ -23,7 +24,19 @@ export function frameCapture(captures: readonly ComparisonCapture[], period: Bas
       carConnected: gather(s => s.carConnected), poolC: gather(s => s.poolC), poolPendingHeatKwh: gather(s => s.poolPendingHeatKwh), poolSourceDepletionKwh: gather(s => s.poolSourceDepletionKwh), costSek: gather(s => s.costSek), wearSek: gather(s => s.wearSek) };
     const ledger = emptyElectricityLedger();
     series.start.forEach((_, i) => addElectricity(ledger, series.gridImportW[i] / 4000, series.gridExportW[i] / 4000, series.importPrice[i], series.exportPrice[i]));
-    return { series, ledger, states: parts.flatMap(p => p.capture[actor].states.slice(p.from, p.to)), commands: parts.flatMap(p => p.capture[actor].commands.slice(p.from, p.to)), poolStates: parts.flatMap(p => p.capture[actor].poolStates.slice(p.from, p.to)) };
+    // Trips the car could not cover, in the quarters this frame keeps; the rest of the ledger is rebuilt above from the series.
+    const unserved = noUnservedTrips();
+    let offset = 0;
+    for (const p of parts) {
+      p.capture[actor].unserved.quarters.forEach((q, n) => {
+        if (q < p.from || q >= p.to) return;
+        const at = offset + q - p.from, grid = p.capture[actor].unserved.gridKwh[n];
+        unserved.trips++; unserved.kwh += grid; unserved.quarters.push(at); unserved.gridKwh.push(grid);
+        addElectricity(ledger, grid, 0, series.importPrice[at], series.exportPrice[at]);
+      });
+      offset += p.to - p.from;
+    }
+    return { series, ledger, unserved, states: parts.flatMap(p => p.capture[actor].states.slice(p.from, p.to)), commands: parts.flatMap(p => p.capture[actor].commands.slice(p.from, p.to)), poolStates: parts.flatMap(p => p.capture[actor].poolStates.slice(p.from, p.to)) };
   };
   const baseline = project('result'), scheduler = project('scheduler');
   const slots = parts.flatMap(p => p.capture.input.problem.slots.slice(p.from, p.to)).map((slot, i) => ({ ...slot, start_seconds: i * 900 }));
@@ -51,5 +64,5 @@ export function frameCapture(captures: readonly ComparisonCapture[], period: Bas
   const result = { ...first.capture.result, ...baseline };
   const replay = { ...first.capture.scheduler, ...scheduler };
   return { input, result, scheduler: replay, engineHash: first.capture.engineHash, modeled: {
-    baselineBill: modeledBill(input, result), schedulerBill: modeledBill(input, replay), baselineService: seriesService(input, result.series), schedulerService: seriesService(input, replay.series, 'scheduler') } };
+    baselineBill: modeledBill(input, result), schedulerBill: modeledBill(input, replay), baselineService: seriesService(input, result.series, 'baseline', result.unserved), schedulerService: seriesService(input, replay.series, 'scheduler', replay.unserved) } };
 }

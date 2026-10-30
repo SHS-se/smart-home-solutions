@@ -35,11 +35,14 @@ const solve = (p: ReadyProblem) => core.solve(p).outcome;
 
 Deno.test("pool heat can wait for cheap supply while low EV readiness charges immediately", () => {
   const p = forecastProblem();
+  // Past its grace from the first quarter: the car is below its floor line now.
+  p.car_policy!.floor_kwh = 25;
+  p.car_policy!.breach_permille = p.slots.map(() => 499);
   const result = solve(p);
   assert(result.kind === "selected");
   const s = result.selection;
   assertEquals(s.commands[0].pool_on, false);
-  assert(s.commands[0].ev_amps > 0, "A low-range EV has ongoing readiness, without a fresh grace period");
+  assert(s.commands[0].ev_amps > 0, "A car below its floor after its grace charges now");
   assert(s.commands[0].battery !== "grid_charge");
   const first = s.commands.findIndex(c => c.pool_on);
   assert(first > 0);
@@ -81,7 +84,7 @@ function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
   p.initial.battery_kwh = null;
   if (!ev) {
     p.car = null; p.charger = null; p.initial.ev_kwh = null;
-    p.targets.ev_km = null; p.targets.ev_limit_kwh = null;
+    p.car_policy = null;
   } else {
     p.initial.ev_kwh = 10;
   }
@@ -201,9 +204,8 @@ Deno.test("selective owner masks cross Wasm without releasing unrelated OFF or b
   const p = problem();
   p.slots = p.slots.slice(0, 4);
   p.initial.ev_kwh = 10;
-  p.targets.ev_km = 300;
   p.end_credit = { reference_sek_per_kwh: 1000, battery: null, pool: null,
-    ev: { cap: 60, grid_kwh_per_unit: 1 } };
+    ev: { grid_kwh_per_unit: 1, tiers: [{ up_to: 60, sek_per_kwh: 1000 }] } };
   p.accepted = p.slots.map(() => ({ ...command(false), battery: "hold" as const, charge_limit_w: 1234, discharge_limit_w: 0 }));
   p.accepted[0].ev_amps = 16;
   p.locked_through_seconds = 3600;
@@ -572,7 +574,8 @@ Deno.test("public native projection keeps absent devices null and models PV curt
     pool_pending_heat_kwh: null,
     heater_state: null,
   };
-  p.targets = { pool_c: null, ev_km: null, ev_limit_kwh: null };
+  p.targets = { pool_c: null };
+  p.car_policy = null;
   p.slots[0].solar_w = 20000;
   const commands = p.slots.map(() => ({
     ...command(),

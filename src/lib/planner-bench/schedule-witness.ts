@@ -2,7 +2,7 @@
 // original plan in both the forecast and measured worlds.
 import type { BenchCase, Targets } from './case';
 import type { Household } from './household';
-import { reachability, simulate, type Decisions, type Simulation } from './referee';
+import { carFloorKm, evLimitKwh, reachability, simulate, type Decisions, type Simulation } from './referee';
 import { serviceExposure, serviceNotWorse, type Comfort, type ServiceGuard } from './service';
 
 export type ScheduleDevice = 'pool' | 'ev' | 'battery';
@@ -12,7 +12,7 @@ export function scheduleWitness(
 ) {
   const reach = reachability(c, h);
   const comfort: Comfort = {
-    pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
+    pool_target_c: targets.pool_c, ev_target_km: evLimitKwh(c, h) / h.car.battery.kwh_per_km, carFloorKm: carFloorKm(c, h, targets),
     pool_start_c: original.start.poolC, ev_start_km: original.start.evKwh / h.car.battery.kwh_per_km,
     poolReachableC: reach.poolC, carReachableKm: reach.carKm,
   };

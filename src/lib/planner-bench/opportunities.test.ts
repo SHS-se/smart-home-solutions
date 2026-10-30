@@ -6,7 +6,7 @@ import { LANES, type LaneId } from './lanes.ts';
 import {
   findOpportunities, MAX_TRIALS, NOT_MODELLED, OPPORTUNITY_RULES, ruleState, summariseAudit, type OpportunityAudit,
 } from './opportunities.ts';
-import { referee, type Decisions } from './referee.ts';
+import { carFloorKm, referee, type Decisions } from './referee.ts';
 import { scoreQuarters, storedPassed, storedScore } from './score.ts';
 import { DEFAULT_SERVICE_GUARD, serviceNotWorse, type ServiceExposure, type ServiceGuard } from './service.ts';
 import type { PlanRecord } from './types.ts';
@@ -234,18 +234,17 @@ Deno.test('comfort is guarded store by store: a warmer pool never pays for a sho
   // The same count, deeper: still worse.
   assertEquals(serviceNotWorse(exposure(10, 0), { ...exposure(10, 0), pool: { ...exposure(10, 0).pool, worst: 3 } }), false);
 
-  // A car 100 km short that the plan charges at 7 A for two hours, 9.66 kWh, at a dear time. Power is cheapest on the last day,
-  // but waiting for it leaves the car short for a day and more: the charge may move earlier, not there.
+  // A car below its floor that the plan charges at 7 A for two hours, at a dear time. Power is cheapest on the last day,
+  // but waiting for it would leave the car below the floor after its grace: no alternative may add a quarter there.
   // (The battery starts empty and the spread is too thin for it, so the car is the only thing to move.)
   const prices = { buy: (i: number) => within(i, 90, 98) ? 1.8 : i >= 200 ? 0.5 : 1.5, published: 288 };
-  const short = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.42 } } }), plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
+  const low = world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.22 } } });
+  const short = audited(low, plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   const car = (audit: OpportunityAudit) => audit.findings.filter(f => f.device === 'ev');
-  assert(car(short).length > 0 && car(short).every(f => f.rule === 'ev_timing'));
-  // 250 km counts from a day after it was reachable; the car is never below it there, as in the plan.
-  for (const f of car(short)) assert(Math.min(...f.after.carKm.slice(100)) >= 250, `${f.id} leaves the car short`);
-  // 9.66 kWh at 0.3 kr less; a whole 5 A quarter more could wait for the 0.5 kr day only if the car had that to spare.
-  assert(short.rules.ev_timing.knownSek >= 9.66 * 0.3 - 1e-3 && short.rules.ev_timing.knownSek < 4.5, `${short.rules.ev_timing.knownSek}`);
-  // The same charge for a car already within 50 km of target can all wait for the cheap day.
+  const floorLines = carFloorKm(low, HOUSEHOLD, TARGETS);
+  const belowFloor = (km: number[]) => km.filter((v, i) => floorLines[i] !== null && v < floorLines[i]!).length;
+  for (const f of car(short)) assert(belowFloor(f.after.carKm) <= belowFloor(f.before.carKm), `${f.id} leaves the car below its floor`);
+  // The same charge for a car above its floor can all wait for the cheap day.
   const fine = audited(world({ ...prices, start: { battery_soc: 0.05, ev: { soc: 0.56 } } }), plan({ ev: i => within(i, 90, 98) ? 4830 : 0 }));
   assert(car(fine).some(f => f.to >= 200), JSON.stringify(car(fine).map(f => [f.rule, f.to])));
   assertAlmostEquals(fine.rules.ev_timing.knownSek, 9.66 * 1.3, 0.01);
@@ -395,7 +394,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'needs recomputing for these rule thresholds or this audit version');
   // Evaluated under the tight band, the audit holds itself to it.
   const strict = evaluate(c, record(decisions), { pool_low: { threshold: 0.05 } }, 'told/nominal');
-  assertEquals(strict.series.audit!.guard, { pool: [0.05, 2], ev: [50, 100] });
+  assertEquals(strict.series.audit!.guard, { pool: [0.05, 2] });
   assertEquals(scoreQuarters(strict.series, { pool_low: { threshold: 0.05 } }).auditPending, false);
   // A series from before the audit: no economic score, said so, and no stored score to be had.
   const { audit: _, ...old } = series;

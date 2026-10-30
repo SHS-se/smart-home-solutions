@@ -15,7 +15,11 @@ export function savingsForecast(months: readonly MonthLedger[], subscriptionSekP
   const withoutSek = roundedSek(sum(r => r.withoutSek)), withSek = roundedSek(sum(r => r.withSek));
   const savingSek = roundedSek(withoutSek - withSek);
   const subscriptionSek = roundedSek(subscriptionSekPerMonth * coverage), netSek = roundedSek(savingSek - subscriptionSek);
-  return { rows, coverage, withoutSek, withSek, savingSek, subscriptionSek, netSek,
+  // What each side leaves in its stores differs. Valued at one neutral price, this is what that is worth to the saving.
+  const inventoryAdjustmentSek = roundedSek(sum(r => r.ledger.modeled.schedulerService.endCreditSek - r.ledger.modeled.baselineService.endCreditSek));
+  return { rows, coverage, withoutSek, withSek, savingSek, inventoryAdjustmentSek, adjustedSavingSek: roundedSek(savingSek + inventoryAdjustmentSek),
+    unservedTrips: { without: sum(r => r.ledger.modeled.baselineService.unservedTrips), with: sum(r => r.ledger.modeled.schedulerService.unservedTrips) },
+    subscriptionSek, netSek,
     monthlyNetSek: coverage > 0 ? netSek / coverage : null };
 }
 export type SavingsForecast = ReturnType<typeof savingsForecast>;

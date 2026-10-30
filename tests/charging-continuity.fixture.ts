@@ -19,13 +19,14 @@ export function activeCurrentCompetition(): ReadyProblem {
   p.pool_store = null; p.heater = null; p.pool_stop_c = null;
   p.initial = { battery_kwh: 18.5, ev_kwh: 51.5, pool_c: null, pool_pending_heat_kwh: null,
     pool_source_depletion_kwh: null, heater_state: null };
-  p.targets = { pool_c: null, ev_km: 400, ev_limit_kwh: 72 };
-  p.limits = { ...p.limits, import_w: 15000, export_w: 10000, battery_export_enabled: false,
+  p.targets = { pool_c: null };
+    p.limits = { ...p.limits, import_w: 15000, export_w: 10000, battery_export_enabled: false,
     ev_start_preference_sek: .25, battery_start_preference_sek: .25,
     battery_export_reserve_kwh: 16, battery_export_min_price: 3, wear_per_kwh: .04 };
+  p.car_policy = { floor_kwh: 72, limit_kwh: 72, breach_permille: Array.from({ length: 96 }, () => null) };
   p.end_credit = { reference_sek_per_kwh: 1,
     battery: { cap: 20, grid_kwh_per_unit: 1 / .96 }, pool: null,
-    ev: { cap: 72, grid_kwh_per_unit: 1 / .94 } };
+    ev: { grid_kwh_per_unit: 1 / .94, tiers: [{ up_to: 72, sek_per_kwh: 1 }] } };
   p.slots = Array.from({ length: 96 }, (_, i) => ({ ...p.slots[0], local_month: 2,
     start_seconds: i * 900, base_w: i < 25 ? 0 : i < 28 ? 1800 : i < 44 ? 11550 : 1800,
     solar_w: 0, import_price: i < 25 ? 2 : i < 44 ? .2 : .6,

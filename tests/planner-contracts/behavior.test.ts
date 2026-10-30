@@ -15,7 +15,10 @@ function prepare(snapshot: OptimisationSnapshot, reference: PublishedCommandRefe
 const plan = (s: OptimisationSnapshot) => generateRulesPlan(prepare(s)).plan;
 
 Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charging", () => {
-  const connected = syntheticHome(), unplugged = structuredClone(connected);
+  const connected = syntheticHome();
+  // Plugged in as the plan starts: the same clock an unplugged car is planned with.
+  connected.ev_battery!.plugged_in_at = connected.captured_at;
+  const unplugged = structuredClone(connected);
   unplugged.ev_battery!.connected = false;
   assertEquals(prepare(unplugged).problem, prepare(connected).problem);
   const a = plan(connected), b = plan(unplugged);
@@ -27,17 +30,27 @@ Deno.test("CONTRACT EV-1: cable telemetry cannot remove or postpone future charg
   assertThrows(() => check(mutant));
   // A later capture does not renew a free shortfall period.
   for (const hours of [1, 8, 24]) {
-    const s = structuredClone(unplugged);
+    const s = structuredClone(connected);
     s.slots = s.slots.map(slot => ({ ...slot, start: new Date(Date.parse(slot.start) + hours * 3600000).toISOString() }));
     s.captured_at = s.slots[0].start;
     s.ev_battery!.available_from = s.slots[0].start;
     const p = plan(s); check(p);
-    assert((p.plans.priority.slots[0].rule_points?.ev_short ?? 0) < 0, "shortfall is counted in the opening quarter");
+    assert((p.plans.priority.slots[0].rule_points?.car_floor ?? 0) < 0, "shortfall is counted in the opening quarter");
   }
+  // A car in its grace stays free only until the plug-in's own clock runs out, however often it replans.
+  const inGrace = structuredClone(connected); inGrace.ev_battery!.soc = .25;
+  assertEquals(plan(inGrace).plans.priority.slots[0].rule_points?.car_floor ?? 0, 0);
+  const later = structuredClone(inGrace);
+  later.slots = later.slots.map(slot => ({ ...slot, start: new Date(Date.parse(slot.start) + 8 * 3600000).toISOString() }));
+  later.captured_at = later.slots[0].start;
+  later.ev_battery!.available_from = later.slots[0].start;
+  assert(plan(later).plans.priority.slots[0].ev_target_current_a > 0, "a replan must not renew the grace");
 });
 
 for (const amps of [12, 15]) Deno.test(`CONTRACT EV-2: ${amps} A fits beside full pool power and is selected`, () => {
   const s = withPool(); s.grid.import_limit_w = 500 + 3600 + 3 * 230 * amps;
+  // A car above its floor and a cheap opening half hour: both loads want quarter 0.
+  s.ev_battery!.soc = .5; s.slots.forEach((slot, i) => { if (i >= 2) slot.import_price_sek_per_kwh = 1; });
   const check = (p: OptimisationPlan) => {
     const q = p.plans.priority.slots[0];
     assertEquals(q.pool_w, 3600);

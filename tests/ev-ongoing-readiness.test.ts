@@ -13,7 +13,7 @@ Deno.test('a synthetic overnight scenario buys range now while preserving accept
   assert(energy > 10, `The synthetic night must charge useful energy; got ${energy} kWh`);
   assertEquals(commands.findIndex(c => c.ev_amps > 0), 5);
   for (let i=0;i<5;i++) assertEquals(commands[i], p.accepted![i]);
-  assert(quarters.every(q => q.ev_kwh! <= p.targets.ev_limit_kwh! + 1e-8));
+  assert(quarters.every(q => q.ev_kwh! <= p.car_policy!.limit_kwh + 1e-8));
   // A new, low-SOC capture must not receive another day of readiness grace.
   const retry = core.solve(structuredClone(p)).outcome;
   assert(retry.kind === 'selected');

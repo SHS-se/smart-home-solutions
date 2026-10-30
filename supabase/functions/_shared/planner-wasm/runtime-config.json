@@ -10,7 +10,7 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v16",
+    "version": "kronor-score-v17",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
@@ -20,8 +20,7 @@
       "pool_low",
       "pool_cold",
       "pool_hot",
-      "ev_low",
-      "ev_short"
+      "car_floor"
     ],
     "witness_rules": [],
     "evidence_rules": [],

@@ -104,7 +104,7 @@ pub(crate) fn available_command(p: &Problem, i: usize, c: &Command) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EndCreditTerms, Outcome, ProjectionOutcome, StoreTerm};
+    use crate::{CarTerm, CarTier, EndCreditTerms, Outcome, ProjectionOutcome, StoreTerm};
 
     fn idle() -> Command {
         Command {
@@ -160,7 +160,7 @@ mod tests {
                 }
                 Owner::Ev => {
                     accepted[0].ev_amps = 16;
-                    p.targets.ev_km = Some(300.0);
+                    p.car_policy.as_mut().unwrap().floor_kwh = 60.0;
                 }
                 Owner::Battery => {
                     accepted[0].battery = Operation::GridCharge;
@@ -173,9 +173,12 @@ mod tests {
                     cap: 32.0,
                     grid_kwh_per_unit: 1.0,
                 }),
-                ev: matches!(owner, Owner::Ev).then_some(StoreTerm {
-                    cap: 60.0,
+                ev: matches!(owner, Owner::Ev).then_some(CarTerm {
                     grid_kwh_per_unit: 1.0,
+                    tiers: vec![CarTier {
+                        up_to: 60.0,
+                        sek_per_kwh: 1000.0,
+                    }],
                 }),
                 battery: matches!(owner, Owner::Battery).then_some(StoreTerm {
                     cap: 10.0,

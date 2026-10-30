@@ -19,6 +19,7 @@ import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter } from "./planner-wasm/core.ts";
 import { builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
+import { CAR_FLOOR_SOC_DEFAULT, carPolicy, connectionFromSnapshot } from "./planner-wasm/car-policy.ts";
 import { batteryAcCeilings } from './planner/battery-conversion.ts';
 import type { ReadyRulePolicy } from "./planner-wasm/rule-policy.ts";
 import type { EnergyPlanningInput } from "./planner/planning-contracts.ts";
@@ -178,9 +179,9 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   let car = ev ? snapshot.device_physics?.car?.battery ?? (finite(ev.kwh_per_km) ? {
     capacity_kwh: ev.capacity_kwh, kwh_per_km: ev.kwh_per_km, charge_efficiency: ev.charge_efficiency,
   } : null) : null;
-  if (snapshot.capabilities.ev && (!ev || !charger || !car || !finite(snapshot.comfort?.ev?.target_km))) {
+  if (snapshot.capabilities.ev && (!ev || !charger || !car)) {
     snapshot.planning_warnings=mergePlanningWarnings(snapshot.planning_warnings,[planningWarning("ev_service_evidence","ev",
-      "EV battery state, range target, consumption or charger configuration is incomplete.",
+      "EV battery state, consumption or charger configuration is incomplete.",
       "Household planning continues with the EV's measured demand. Existing charger settings are retained; no new charging command is invented.")]);
     snapshot.capabilities={...snapshot.capabilities,ev:false}; snapshot.ev_battery=null;
     snapshot.services=snapshot.services.filter(s=>s.device!=="ev"); ev=null; car=null; charger=null;
@@ -204,7 +205,6 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const hardware = snapshot.pool_model?.hardware ?? snapshot.pool?.hardware;
   if (pool && (!hardware || hardware.control !== "external_enable" || !finite(hardware.stop_c) || !finite(hardware.start_c))) return fail("Pool requires independently configured native start/stop settings and external-enable semantics");
   if (pool && !finite(snapshot.comfort?.pool?.target_c)) return fail("Pool requires an explicit comfort target");
-  if (car && !finite(snapshot.comfort?.ev?.target_km)) return fail("EV requires an explicit range target");
   const poolMembers = snapshot.device_models.filter(m => m.planning_service === "pool");
   const heaterKeys = new Set(poolHeaters(poolMembers).map(m => m.key));
   const member = (m: OptimisationSnapshot["device_models"][number]): DeviceMember => ({ key: m.key, watts: m.active_power_w ?? 0 });
@@ -317,7 +317,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 14, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 15, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -348,8 +348,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       heater_state: pool ? snapshot.pool!.heating_running
         ? finite(snapshot.pool!.heating_elapsed_seconds) ? { kind: "running", seconds: snapshot.pool!.heating_elapsed_seconds! } : { kind: "running", seconds: 0 }
         : { kind: "off_unobserved" } : null },
-    targets: { pool_c: pool ? snapshot.comfort!.pool!.target_c : null, ev_km: car ? snapshot.comfort!.ev!.target_km : null,
-      ev_limit_kwh: car && ev ? ev.charge_limit_soc * car.capacity_kwh : null },
+    targets: { pool_c: pool ? snapshot.comfort!.pool!.target_c : null },
+    car_policy: null,
     limits: { import_w: snapshot.grid.import_limit_w, export_w: snapshot.grid.export_limit_w,
       battery_export_enabled: !!battery && snapshot.policy.battery_export_enabled,
       battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,
@@ -365,6 +365,8 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
     locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
   };
+  if (car && ev) problem.car_policy = carPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
+    floorSetting: snapshot.comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT, connection: connectionFromSnapshot(ev) }, problem.slots, effective);
   problem.end_credit = problemEndCredit(problem);
   return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
     price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,

@@ -1,5 +1,7 @@
 # Planner bench v4: architecture decision
 
+Scorer 42, 30 October 2026: `ev_low` and `ev_short` are replaced by one `car_floor` rule (−2 per quarter below the safety floor once the grace since plug-in has passed) and tiered car credit. Compare planners under the same scorer only; stored decisions are rescored. See [scoring.md](scoring.md) and `car-policy.ts`.
+
 Scorer 37, 24 October 2026: EV readiness shortfalls count from quarter zero, with no reachability grace or renewed day of deferral. Pool reachability retains its existing policy. Archived scores preserve their original scorer version. See [error and readiness policy](../energy-optimisation/replan-error-policy.md).
 
 Current behavior is defined in [scoring.md](scoring.md). The v32 cleanup removes

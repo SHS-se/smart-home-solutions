@@ -28,7 +28,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(14),
+  abi: z.literal(15),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -117,9 +117,12 @@ export const readyProblemSchema = z.object({
   }),
   targets: z.object({
     pool_c: number.nullable(),
-    ev_km: number.nullable(),
-    ev_limit_kwh: number.nullable(),
   }),
+  car_policy: z.object({
+    floor_kwh: number.nonnegative(),
+    limit_kwh: number.nonnegative(),
+    breach_permille: number.int().nullable().array(),
+  }).strict().nullable(),
   limits: z.object({
     import_w: number,
     export_w: number,
@@ -135,7 +138,10 @@ export const readyProblemSchema = z.object({
     reference_sek_per_kwh: number.nonnegative(),
     battery: storeTerm.nullable(),
     pool: storeTerm.nullable(),
-    ev: storeTerm.nullable(),
+    ev: z.object({
+      grid_kwh_per_unit: number.nonnegative(),
+      tiers: z.object({ up_to: number.nonnegative(), sek_per_kwh: number.nonnegative() }).strict().array().min(1),
+    }).strict().nullable(),
   }).strict(),
   rules: z.object({
     key: z.enum(RULE_KEYS),
@@ -146,7 +152,6 @@ export const readyProblemSchema = z.object({
     .array(),
   service_guard: z.object({
     pool: z.tuple([number, number]),
-    ev: z.tuple([number, number]),
   }),
   accepted: command.array().nullable(),
   fixed_commands: command.nullable().array().nullable().optional(),

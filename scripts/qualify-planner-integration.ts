@@ -228,7 +228,7 @@ for (const amps of [12, 15]) {
     );
     // Server-owned preferences and accepted thermal calibration are supplied at
     // their actual boundary. Producer fields above are never repaired in the test.
-    snapshot.comfort = { ev: { target_km: 300 }, pool: { target_c: 30 } };
+    snapshot.comfort = { ev: { floor_soc: .3 }, pool: { target_c: 30 } };
     snapshot.outdoor_temperature_c = snapshot.slots.map(() => 10);
     snapshot.pool_model = {
       loss_kw_per_k: 0,

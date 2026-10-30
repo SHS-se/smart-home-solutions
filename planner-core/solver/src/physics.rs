@@ -171,7 +171,7 @@ fn transition(
         {
             return Err("ev_unavailable".into());
         }
-        let room = (p.targets.ev_limit_kwh.unwrap() - state.ev).max(0.0) * 1000.0
+        let room = (p.car_policy.as_ref().unwrap().limit_kwh - state.ev).max(0.0) * 1000.0
             / hours
             / car.charge_efficiency;
         if nominal > room + 1e-7
@@ -890,8 +890,7 @@ mod refinement_tests {
         p.car = None;
         p.charger = None;
         p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
+        p.car_policy = None;
         let battery = p.battery.as_mut().unwrap();
         battery.conversion.grid_charge.gain = 0.9;
         battery.conversion.grid_charge.overhead_w = 90.0;
@@ -942,8 +941,7 @@ mod refinement_tests {
         p.car = None;
         p.charger = None;
         p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
+        p.car_policy = None;
         let b = p.battery.as_mut().unwrap();
         b.conversion=serde_json::from_value(serde_json::json!({"revision":"synthetic-carry","grid_charge":{"gain":0.9,"overhead_w":90.0},"surplus_charge":{"gain":0.95,"overhead_w":95.0},"discharge":{"gain":0.96,"overhead_w":120.0},"idle_loss_w":150.0})).unwrap();
         b.charge_efficiency = 0.98;
@@ -1365,8 +1363,7 @@ mod supply_permission_tests {
         p.car = None;
         p.charger = None;
         p.initial.ev_kwh = None;
-        p.targets.ev_km = None;
-        p.targets.ev_limit_kwh = None;
+        p.car_policy = None;
         p.slots[0].base_w = 3000.0;
         p.slots[0].base_ev_w = 2000.0;
         p.slots[0].solar_w = 1500.0;
@@ -1407,7 +1404,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 14;
+        p.abi = 15;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

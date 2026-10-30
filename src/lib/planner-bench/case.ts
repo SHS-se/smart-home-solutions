@@ -1,3 +1,4 @@
+import { CAR_FLOOR_SOC_DEFAULT } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
 import { parseHeaterState, type HeaterState } from '../../../supabase/functions/_shared/planner/device-models';
 
 // A planner bench test case (docs/planner-bench/test-cases.md).
@@ -33,7 +34,10 @@ export interface CaseStartState {
 /** What the owner wants: one number per store, in its own unit. Never money, never a band. */
 export interface Targets {
   pool_c: number;
+  /** Only older planner versions read this; the car is planned from its charge limit and floor. */
   ev_km: number;
+  /** The car's safety floor, a fraction of its battery. */
+  ev_floor_soc: number;
 }
 
 export interface BenchScenarioData {
@@ -139,7 +143,8 @@ export function caseTargets(data: Pick<BenchScenarioData, 'comfort'>): Targets {
   if (!finite(data.comfort?.pool_c) || !finite(data.comfort?.ev_km)) {
     throw new CaseFormatError('Comfort targets are missing. Run the bench with the home settings; local cases must supply comfort.pool_c and comfort.ev_km.');
   }
-  return { pool_c: data.comfort.pool_c, ev_km: data.comfort.ev_km };
+  return { pool_c: data.comfort.pool_c, ev_km: data.comfort.ev_km,
+    ev_floor_soc: finite(data.comfort.ev_floor_soc) ? data.comfort.ev_floor_soc : CAR_FLOOR_SOC_DEFAULT };
 }
 
 /** No fixed bench limit may replace the captured home setting. */

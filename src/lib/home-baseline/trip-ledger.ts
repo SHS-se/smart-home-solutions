@@ -24,8 +24,16 @@ export function recordedTrips(demand: readonly number[], count: number) {
   return { next };
 }
 
-export function withdrawTrip(energyKwh: number, demandKwh: number, scenario: string, at: string): number {
+/** A trip the car could not cover leaves it empty, and the rest is bought just before leaving. */
+export function withdrawTrip(energyKwh: number, demandKwh: number): { kwh: number; unservedKwh: number } {
   const left = energyKwh - demandKwh;
-  if (left < -1e-9) throw new Error(`${scenario}: unserved recorded EV trip at ${at} (${demandKwh.toFixed(2)} kWh needed; ${energyKwh.toFixed(2)} kWh available). Excluded from savings.`);
-  return Math.max(0, left);
+  return left < -1e-9 ? { kwh: 0, unservedKwh: -left } : { kwh: Math.max(0, left), unservedKwh: 0 };
+}
+
+/** What a simulated car could not cover, and the electricity it took to top it up for those trips. */
+export interface UnservedTrips { trips: number; kwh: number; quarters: number[]; gridKwh: number[] }
+export const noUnservedTrips = (): UnservedTrips => ({ trips: 0, kwh: 0, quarters: [], gridKwh: [] });
+export function recordUnserved(unserved: UnservedTrips, i: number, kwh: number, efficiency: number) {
+  if (kwh <= 0) return;
+  unserved.trips++; unserved.kwh += kwh; unserved.quarters.push(i); unserved.gridKwh.push(kwh / efficiency);
 }

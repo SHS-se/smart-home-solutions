@@ -17,7 +17,7 @@ function batteryOnly(capacityKwh: number) {
  input.problem={...input.problem,car:null,charger:null,pool_store:null,heater:null,pool_stop_c:null,rules:[],
   battery:{capacity_kwh:capacityKwh,min_soc:0,max_soc:1,charge_max_w:5000,discharge_max_w:5000,charge_efficiency:.9,discharge_efficiency:.9, conversion: syntheticIdentityConversion()},
   initial:{battery_kwh:0,ev_kwh:null,pool_c:null,pool_pending_heat_kwh:null,pool_source_depletion_kwh:null,heater_state:null},
-  targets:{pool_c:null,ev_km:null,ev_limit_kwh:null},limits:{...input.problem.limits,import_w:50000,export_w:50000,wear_per_kwh:.05,battery_export_enabled:false},
+  targets:{pool_c:null},car_policy:null,limits:{...input.problem.limits,import_w:50000,export_w:50000,wear_per_kwh:.05,battery_export_enabled:false},
   slots:input.problem.slots.map((slot,i)=>({...slot,local_month:i<192?1:2,base_w:i<192?0:2000,base_ev_w:0,solar_w:0,import_price:i<192?.2:2,export_price:0,ev_available:false}))};
  return input;
 }
@@ -157,7 +157,8 @@ Deno.test('Recorded EV trips mask only car availability, including midnight trip
  assert(homecoming);assertAlmostEquals(homecoming.initial.ev_kwh!,r.series.carSoc[second]!/100*input.problem.car!.capacity_kwh);
  assertEquals(r.commands[trip].ev_amps,0);
  const impossible={...input,evDemandKwh:[input.problem.car!.capacity_kwh*2,...input.evDemandKwh.slice(1)]};
- assertThrows(()=>replayScheduler(impossible,engine),Error,'unserved recorded EV trip');
+ const empty=replayScheduler(impossible,engine);
+ assertEquals(empty.unserved.trips,1);assert(empty.unserved.kwh>0);
 });
 Deno.test('comparisons run only the selected physical model and retain no cross-calculation solves',()=>{
  const input=prepareHomeBaseline(baselineFixture({start:'2026-09-01T00:00:00Z',end:'2026-09-02T00:00:00Z'}));

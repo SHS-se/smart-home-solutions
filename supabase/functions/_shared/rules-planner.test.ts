@@ -68,7 +68,7 @@ Deno.test("rules plan publishes the points each deduction took, on the selected 
   const { plans } = generateRulesPlan(prepared).plan;
   // The planner is sent the deduction rules only: a cheap quarter is on the bill, not a reward.
   const sent = new Set<string>(prepared.problem.rules.map(rule => rule.key));
-  assert(!sent.has("cheapest_buy") && !sent.has("cheap_buy") && sent.has("ev_low"));
+  assert(!sent.has("cheapest_buy") && !sent.has("cheap_buy") && sent.has("car_floor"));
   assert(plans.priority.slots.every(slot => slot.rule_points && Object.keys(slot.rule_points).every(key => sent.has(key))));
   // The car still charges in the two cheap quarters, because the bill is in the score.
   const charged = plans.priority.slots.flatMap((slot, i) => slot.ev_w > 0 ? [i] : []);

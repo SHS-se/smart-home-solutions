@@ -130,6 +130,8 @@ export interface EvBatteryInput {
    */
   kwh_per_km?: number | null;
   available_from: string | null;
+  /** When the cable last went in, recorded by the integration. Absent from older senders. */
+  plugged_in_at?: string | null;
   priority: number;
   source_entity_ids: {
     connected: string;
@@ -336,7 +338,7 @@ export interface OptimisationSnapshot {
    * the import reference and the existing urgency policy; `value_curves`
    * for those stores is not read.
    */
-  comfort?: { pool?: { target_c: number }; ev?: { target_km: number } } | null;
+  comfort?: { pool?: { target_c: number }; ev?: { floor_soc: number } } | null;
   /**
    * Daily mean wind speed over the home's bidding zone, observed for the past
    * weeks and forecast for the days ahead (energy-price-shape.ts). The server

@@ -9,7 +9,7 @@ export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from 
 
 export { GRACE_QUARTERS } from './service';
 
-export const SCORER_VERSION = 41;
+export const SCORER_VERSION = 42;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -47,9 +47,9 @@ const poolBelow = (q: QuarterView, t: number) => {
   const c = q.s.comfort, now = q.s.poolC[q.i];
   return !!c && now !== null && now < c.pool_target_c - t && q.due(c.poolReachableC, c.pool_start_c, c.pool_target_c - t);
 };
-const carBelow = (q: QuarterView, t: number) => {
-  const c = q.s.comfort, km = q.s.carKm;
-  return !!c && !!km && km[q.i] < c.ev_target_km - t;
+const carBelowFloor = (q: QuarterView) => {
+  const line = q.s.comfort?.carFloorKm?.[q.i], km = q.s.carKm?.[q.i];
+  return line !== null && line !== undefined && km !== null && km !== undefined && km < line;
 };
 const poolAbove = (q: QuarterView, t: number) =>
   !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t;
@@ -78,10 +78,7 @@ const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = 
     fires: (q, t) => poolHeatingPast(q, t) || poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
   },
   {
-    key: 'ev_low', about: 'car', label: 'Car short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
-  },
-  {
-    key: 'ev_short', about: 'car', label: 'Car far short of target range', describe: t => `more than ${t} km short`, fires: carBelow, eligibleFrom: carFrom,
+    key: 'car_floor', about: 'car', label: 'Car below its safety floor', describe: () => 'below the floor after its grace since plug-in', fires: carBelowFloor, eligibleFrom: carFrom,
   },
   {
     key: 'water_opportunities', about: 'water', label: 'Boiler permission shortfall',
@@ -107,7 +104,7 @@ export function resolveRules(overrides: CriteriaOverrides = {}): ResolvedRule[] 
 /** The comfort thresholds an alternative plan is held to: the bench's own, whether or not a rule is switched on. */
 export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
   const t = Object.fromEntries(resolveRules(overrides).map(r => [r.key, r.threshold]));
-  return { pool: [t.pool_low, t.pool_cold], ev: [t.ev_low, t.ev_short] };
+  return { pool: [t.pool_low, t.pool_cold] };
 }
 
 export interface QuarterScore {
@@ -155,7 +152,7 @@ export interface CaseScore {
 }
 
 const sameGuard = (a: ServiceGuard, b: ServiceGuard) =>
-  a.pool[0] === b.pool[0] && a.pool[1] === b.pool[1] && a.ev[0] === b.ev[0] && a.ev[1] === b.ev[1];
+  a.pool[0] === b.pool[0] && a.pool[1] === b.pool[1];
 
 /** Whether every stored witness still holds under other comfort thresholds, from its stored traces. */
 function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGuard): boolean {
@@ -165,7 +162,7 @@ function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGu
   // A finding moves only its own device's store; the battery has no comfort level.
   return audit.findings.every(f =>
     f.device === 'pool' ? storeNotWorse(poolExposure(comfort, f.before.poolC, guard), poolExposure(comfort, f.after.poolC, guard))
-      : f.device === 'ev' ? storeNotWorse(evExposure(comfort, f.before.carKm, guard), evExposure(comfort, f.after.carKm, guard))
+      : f.device === 'ev' ? storeNotWorse(evExposure(comfort, f.before.carKm), evExposure(comfort, f.after.carKm))
         : true);
 }
 

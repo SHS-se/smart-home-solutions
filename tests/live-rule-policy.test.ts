@@ -51,7 +51,7 @@ for (const withBench of [false, true]) {
       await db.exec(cleanupSql);
       const published = (await db.query<{ criteria: typeof serviceCriteria }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria;
       assertEquals(published, serviceCriteria);
-      assertEquals(resolveRulePolicy(published).rules.map(r => r.key).sort(), Object.keys(serviceCriteria).filter(k => k !== 'pool_cold').sort());
+      assertEquals(resolveRulePolicy(published).rules.map(r => r.key).sort(), ['car_floor', 'pool_hot', 'pool_low']);
       if (withBench) {
         assertEquals((await db.query<{ criteria: typeof serviceCriteria }>('SELECT criteria FROM bench_rules WHERE id=true')).rows[0].criteria, serviceCriteria);
         await db.query('UPDATE bench_rules SET criteria=$1::jsonb WHERE id=true', [JSON.stringify({ pool_low: { threshold: 0.5 } })]);

@@ -11,7 +11,7 @@ const level = poolLevels(HOUSEHOLD).at(-1)!;
 const termsOf = (c: BenchCase) => endCreditTerms({
   battery: HOUSEHOLD.battery,
   pool: { store: HOUSEHOLD.pool.store, draw_w: level.draw_w, heat_w: level.heat_w, target_c: TARGETS.pool_c },
-  car: { battery: HOUSEHOLD.car.battery, target_km: TARGETS.ev_km, limit_kwh: evLimitKwh(c, HOUSEHOLD) },
+  car: { battery: HOUSEHOLD.car.battery, floor_kwh: Math.min(TARGETS.ev_floor_soc * HOUSEHOLD.car.battery.capacity_kwh, evLimitKwh(c, HOUSEHOLD)), limit_kwh: evLimitKwh(c, HOUSEHOLD) },
   import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh,
 });
 const record = (c: BenchCase, decisions: Decisions) => ({ decisions, beliefs: { import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh } });
@@ -37,8 +37,9 @@ Deno.test('each store is credited as the grid electricity it takes to put the en
   assertEquals(terms.reference_sek_per_kwh, 2);
   // The home battery counts to full and converts like the car: what it takes to charge it.
   assertEquals(terms.battery, { cap: h.battery.max_soc * h.battery.capacity_kwh, grid_kwh_per_unit: 1 / h.battery.charge_efficiency });
-  // The car counts to the range asked for, within its charge limit.
-  assertEquals(terms.ev, { cap: Math.min(TARGETS.ev_km * h.car.battery.kwh_per_km, evLimitKwh(c, h)), grid_kwh_per_unit: 1 / h.car.battery.charge_efficiency });
+  // The car is priced in two tiers, up to the middle of its range and on to its own charge limit.
+  const limit = evLimitKwh(c, h), floor = Math.min(TARGETS.ev_floor_soc * h.car.battery.capacity_kwh, limit);
+  assertEquals(terms.ev, { grid_kwh_per_unit: 1 / h.car.battery.charge_efficiency, tiers: [{ up_to: (floor + limit) / 2, sek_per_kwh: 2 }, { up_to: limit, sek_per_kwh: 2 }] });
   // A degree of pool water is its heat over what the heat pump gives per watt drawn, the pump included.
   assertEquals(terms.pool!.cap, TARGETS.pool_c);
   assertAlmostEquals(terms.pool!.grid_kwh_per_unit, h.pool.store.capacity_kwh_per_c * level.draw_w / level.heat_w, 1e-9);

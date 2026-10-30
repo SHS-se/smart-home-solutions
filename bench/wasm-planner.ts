@@ -20,7 +20,7 @@ import { publishHeater } from "../supabase/functions/_shared/planner/device-mode
 import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/planning-contracts.ts";
 import { addHotWater } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
-import type { HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
+import { caseCarPolicy, type HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
 import {
   type BenchCase,
   caseTargets,
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 14,
+    abi: 15,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -175,9 +175,8 @@ export function readyProblem(
     },
     targets: {
       pool_c: target.pool_c,
-      ev_km: target.ev_km,
-      ev_limit_kwh: c.start_state.ev.target_soc * h.car.battery.capacity_kwh,
     },
+    car_policy: null,
     limits: {
       import_w: h.site.import_limit_w,
       export_w: h.site.export_limit_w,
@@ -208,6 +207,7 @@ export function readyProblem(
     accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
+  problem.car_policy = caseCarPolicy(c, h, target);
   problem.end_credit = problemEndCredit(problem);
   return problem;
 }
@@ -221,7 +221,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 14 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 15 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(

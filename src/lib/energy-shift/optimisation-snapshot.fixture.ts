@@ -48,7 +48,7 @@ export const snapshot = (): OptimisationSnapshot => {
   return {
     schema_version: 6,
     mode: 'live',
-    comfort: { pool: { target_c: 30 }, ev: { target_km: 300 } },
+    comfort: { pool: { target_c: 30 }, ev: { floor_soc: .3 } },
     value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     capabilities: { pv: true, battery: true, pool: true, boiler: false, ev: false },
     snapshot_id: '00000000-0000-4000-8000-000000000001',

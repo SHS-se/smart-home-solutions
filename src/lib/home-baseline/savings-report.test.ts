@@ -5,12 +5,21 @@ import type { MonthLedger } from './savings';
 import type { BilledMonth } from './billed-months';
 const month = (key: string, coverage: number, baseline: number, scheduler: number): MonthLedger => ({ month: key, coverage,
   modeled: { baselineBill: { totalSek: baseline, supplierFixedSek: 0, gridFixedSek: 0, gridPeakSek: 0, peakKw: 0 },
-    schedulerBill: { totalSek: scheduler, supplierFixedSek: 0, gridFixedSek: 0, gridPeakSek: 0, peakKw: 0 } } } as MonthLedger);
+    schedulerBill: { totalSek: scheduler, supplierFixedSek: 0, gridFixedSek: 0, gridPeakSek: 0, peakKw: 0 },
+    baselineService: { endCreditSek: 0, unservedTrips: 0 }, schedulerService: { endCreditSek: 0, unservedTrips: 0 } } } as MonthLedger);
 const bills = new Map<string, BilledMonth>([['2026-06', { month: '2026-06', totalSek: 500, electricitySek: 200, gridSek: 300, documentIds: ['e','g'], importKwh: 100, reason: null, allocated: false }]]);
 Deno.test('the forecast compares the two modeled costs and charges the subscription once per month', () => {
   const f = savingsForecast([month('2026-06', 1, 600, 400), month('2026-07', 1, 300, 350)], 30);
   assertEquals(f.rows.map(x => [x.withoutSek, x.withSek, x.savingSek]), [[600, 400, 200], [300, 350, -50]]);
   assertEquals([f.withoutSek, f.withSek, f.savingSek, f.subscriptionSek, f.netSek, f.monthlyNetSek], [900, 750, 150, 60, 90, 45]);
+});
+Deno.test('energy left in the stores adjusts the saving separately, and short trips are counted per side', () => {
+  const stored = month('2026-06', 1, 600, 400);
+  stored.modeled.baselineService = { ...stored.modeled.baselineService, endCreditSek: 25, unservedTrips: 1 };
+  stored.modeled.schedulerService = { ...stored.modeled.schedulerService, endCreditSek: 10, unservedTrips: 2 };
+  const f = savingsForecast([stored], 30);
+  assertEquals([f.savingSek, f.inventoryAdjustmentSek, f.adjustedSavingSek, f.netSek], [200, -15, 185, 170]);
+  assertEquals(f.unservedTrips, { without: 1, with: 2 });
 });
 Deno.test('saved demand evidence is excluded from the forecast and the stored ledger stays intact', () => {
   const saved = month('2026-06', 1, 1200, 1400);

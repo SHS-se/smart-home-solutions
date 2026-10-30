@@ -17,7 +17,7 @@ import type { SimulationCheckpoint } from './simulation-state.ts';
 // Pin the host model sources as well as the binary: pool physics and ready-input
 // changes can alter results while producing identical Wasm bytes.
 // The engine version is checked inside every saved ledger.
-export const CALCULATION_VERSION = `roi-month-v9:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, source: artifact.source_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, grid: ROI_GRID_POLICY, solar: 'published-pre-installation-v1', continuation: 'all-stores-v1', lookahead: 'observed-72h-tail-v1', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
+export const CALCULATION_VERSION = `roi-month-v9:${Array.from(sha256(new TextEncoder().encode(JSON.stringify({ wasm: artifact.wasm_sha256, source: artifact.source_sha256, runtime, protocol: REPLAY_PROTOCOL, supplier: ROI_SUPPLIER_TERMS, grid: ROI_GRID_POLICY, solar: 'published-pre-installation-v1', continuation: 'all-stores-v1', lookahead: 'observed-72h-tail-v1', thermostat: 'shared-pool-target-v2-uninterrupted', meters: 'late-counter-alignment-v1', energy: 'verified-reporting-intervals-v1', car: 'floor-tiers-v1', inventory: 'neutral-median-v1', trips: 'bought-at-departure-v1' }))), b => b.toString(16).padStart(2, '0')).join('')}`;
 export const PARTIAL_REFRESH_MS = 15 * 60_000;
 const finite = z.number().finite(), count = finite.int().nonnegative();
 const heaterState = z.discriminatedUnion('kind', [z.object({ kind: z.literal('off_unobserved') }).strict(), z.object({ kind: z.literal('steady') }).strict(),
@@ -42,7 +42,7 @@ export const monthLedgerSchema = z.object({ month: z.string().regex(/^\d{4}-(0[1
     hourlyFields: z.array(z.object({ field: z.string(), quarters: count }).strict()).max(200) }).strict(),
 }).strict();
 const bill = z.object({ supplierFixedSek: finite, gridFixedSek: finite, gridPeakSek: finite, peakKw: finite.nonnegative(), totalSek: finite }).strict();
-const service = z.object({ minimumPoolC: finite.nullable(), belowPoolStartHours: finite.nonnegative(), endBatteryKwh: finite.nullable(), endEvKwh: finite.nullable(), endPoolC: finite.nullable(), endCreditSek: finite }).strict();
+const service = z.object({ minimumPoolC: finite.nullable(), belowPoolStartHours: finite.nonnegative(), endBatteryKwh: finite.nullable(), endEvKwh: finite.nullable(), endPoolC: finite.nullable(), floorHours: finite.nonnegative(), unservedTrips: count, unservedKwh: finite.nonnegative(), endCreditSek: finite }).strict();
 const modeled = z.object({ baselineBill: bill, schedulerBill: bill, baselineService: service, schedulerService: service }).strict();
 export const comparisonLedgerSchema = monthLedgerSchema.omit({ comparison: true, gridImportCostSek: true }).extend({ continuation: pool.nullable(), solar: z.object({ profileHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(), reconstructedKwh: finite.nonnegative(), reconstructedQuarters: count }).strict(), scheduler: ledger, modeled, replay: z.object({ engine: z.literal(REPLAY_ENGINE), protocol: z.literal(REPLAY_PROTOCOL), solves: count.positive(), lookaheadQuarters: count.max(288) }).strict() }).strict();
 const savedMonthSchema = z.object({ ledger: comparisonLedgerSchema, inputHash: z.string().regex(/^[a-f0-9]{64}$/), computedAt: z.string().datetime() }).strict();

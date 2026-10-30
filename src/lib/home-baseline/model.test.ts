@@ -397,10 +397,17 @@ Deno.test('SOC gaps retain observed declines across the gap and disclose missing
   assertAlmostEquals(input.evDemandKwh[2], .1 * input.problem.car!.capacity_kwh);
 });
 
-Deno.test('unreachable recorded driving demand fails rather than clipping trips', () => {
+Deno.test('a trip the car cannot cover empties it, and the shortfall is bought at the price of that quarter', () => {
   const input = prepareHomeBaseline(baselineFixture());
-  input.evDemandKwh[0] = input.problem.car!.capacity_kwh;
-  assertThrows(() => projectBaseline(input, engine), Error, 'unserved recorded EV trip');
+  const plain = projectBaseline(input, engine);
+  const start = input.problem.initial.ev_kwh!;
+  input.evDemandKwh[0] = start + 7;
+  const short = projectBaseline(input, engine);
+  assertEquals(short.unserved.trips, 1);
+  assertAlmostEquals(short.unserved.kwh, 7);
+  assertEquals(short.series.carSoc[0], 0);
+  const topUp = 7 / input.problem.car!.charge_efficiency * input.problem.slots[0].import_price;
+  assert(short.ledger.costSek - plain.ledger.costSek >= topUp - 1e-6 - plain.ledger.costSek);
 });
 
 Deno.test('quarter-by-quarter baseline preserves delayed response through thermostat shutdown and tail', () => {

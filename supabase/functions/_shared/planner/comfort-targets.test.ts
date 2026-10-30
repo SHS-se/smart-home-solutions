@@ -1,7 +1,6 @@
 import { runRulesPlanner } from "../run-rules-planner.ts";
 import { assert, assertEquals } from "@std/assert";
 import { type OptimisationSnapshot } from "./planning-contracts.ts";
-import { RULE_DEFAULTS } from "../planner-wasm/rule-policy.ts";
 import { horizon, NOW, routedEvService } from "./energy-optimisation.fixture.ts";
 
 /** Sanitized home-scale case: real physical quantities, synthetic prices and identifiers. */
@@ -9,7 +8,7 @@ function comfortHome(): OptimisationSnapshot {
   const input = horizon({
     battery: null,
     capabilities: { pv: true, battery: false, pool: true, boiler: false, ev: true },
-    comfort: { pool: { target_c: 30.5 }, ev: { target_km: 360 } },
+    comfort: { pool: { target_c: 30.5 }, ev: { floor_soc: .3 } },
     pool: { water_temperature_c: 30.08, volume_m3: 55, heating_running: false },
     ev_battery: { name: "Car", soc: .67, capacity_kwh: 76.119, kwh_per_km: .16,
       charge_efficiency: .92, connected: true, available_from: "2026-08-10T08:00:00Z",
@@ -55,13 +54,12 @@ Deno.test("ordinary cheap windows restore pool comfort and meet the native car r
   const plan = runRulesPlanner({ snapshot: comfortHome(), now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
   assertEquals(plan.status, "ready");
   const slots = plan.plans.priority.slots;
-  const firstDay = slots.slice(0, 96);
+  const firstDay = slots.slice(0, 96), input_floor = .3;
   assert(firstDay.some(slot => slot.pool_w > 0), "pool waited beyond today's cheap window");
   assert(Math.max(...firstDay.map(slot => slot.pool_temperature_c!)) >= 30.4,
     "pool failed to restore its target in the affordable first day");
-  const range = firstDay.at(-1)!.ev_soc! * 76.119 / .16;
-  assert(range >= 360-RULE_DEFAULTS.ev_low.threshold && range <= .8 * 76.119 / .16,
-    `car ended the first day at ${range} km instead of its reachable preference`);
+  const soc = firstDay.at(-1)!.ev_soc!;
+  assert(soc >= input_floor && soc <= .8 + 1e-9, `car ended the first day at ${soc} instead of above its floor and within its limit`);
 });
 
 Deno.test("free forecast solar does not erase the value of unmet car readiness", () => {
@@ -74,18 +72,18 @@ Deno.test("free forecast solar does not erase the value of unmet car readiness",
   assertEquals(plan.status, "ready");
   const slots = plan.plans.priority.slots;
   assert(slots.some(slot => slot.ev_w > 0), "free PV turned readiness willingness into zero");
-  assert(slots.at(-1)!.ev_soc! * 76.119 / .16 >= 360, "reachable car target was not supplied");
+  assert(slots.at(-1)!.ev_soc! >= .79, "the car was not filled from free solar");
 });
 
-Deno.test("an unreachable car preference respects the hardware charge ceiling", () => {
-  const input = comfortHome();
-  input.comfort!.ev!.target_km = 450;
-  const plan = runRulesPlanner({ snapshot: input, now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
-  assertEquals(plan.status, "ready");
-  const range = plan.plans.priority.slots.at(-1)!.ev_soc! * 76.119 / .16;
-  // The unattainable 450 km preference cannot earn the 400 km low-range
-  // threshold. Its reachable required rule is 350 km; the old 370 km check
-  // was an incidental trajectory, not a service or hardware requirement.
-  assert(range >= 450 - RULE_DEFAULTS.ev_short.threshold && range <= .8 * 76.119 / .16,
-    `readiness or hardware ceiling was lost: ${range}`);
+Deno.test("the car's own charge limit is the ceiling, whatever it is set to", () => {
+  for (const limit of [.5, .8, 1]) {
+    const input = comfortHome();
+    input.ev_battery!.charge_limit_soc = limit;
+    input.ev_battery!.soc = .2;
+    const plan = runRulesPlanner({ snapshot: input, now: (new Date(NOW)).toISOString(), price_archive: [] }).plan;
+    assertEquals(plan.status, "ready");
+    assert(plan.plans.priority.slots.every(slot => slot.ev_soc! <= limit + 1e-9), `past the ${limit} limit`);
+    // This tariff has only two prices, so nothing is cheaper than its 25th percentile: the car fills to the middle.
+    assert(plan.plans.priority.slots.at(-1)!.ev_soc! >= (.3 + limit) / 2 - .02, `did not fill to the middle below the ${limit} limit`);
+  }
 });

@@ -78,7 +78,11 @@ export interface BenchSeries {
    * level was reachable.
    */
   comfort?: {
-    pool_target_c: number; ev_target_km: number;
+    pool_target_c: number;
+    /** The car's charge limit as a range: the top of what it is charged to. */
+    ev_target_km: number;
+    /** Per quarter, the range below which that quarter counts as below the floor. */
+    carFloorKm?: (number | null)[];
     pool_start_c: number; ev_start_km: number;
     poolReachableC: number[]; carReachableKm: number[];
   };

@@ -272,7 +272,7 @@ export function createWebsiteDemoPlan(
       ev_charging: 8,
     },
   };
-  snapshot.comfort = { pool: { target_c: 30 }, ev: { target_km: 300 } };
+  snapshot.comfort = { pool: { target_c: 30 }, ev: { floor_soc: .3 } };
   snapshot.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
   if (snapshot.ev_battery) snapshot.ev_battery.kwh_per_km = .16;
   const generated = runRulesPlanner({ snapshot: snapshot, now: (captured).toISOString(), price_archive: [] }).plan;

@@ -24,20 +24,27 @@ conversion are defined in `planner-wasm/end-credit.ts`. Above-target inventory
 earns no extra credit. Scores compare planners on the same case; case scores
 add into a run score.
 
-## Six comfort checks
+## Five comfort checks
 
 | Check | Default threshold | Deduction per quarter | Automatic case failure |
 |---|---|---|---|
 | Pool below target | More than 1 °C below | −1 | No |
 | Pool far below target | More than 2 °C below | −1 | Yes |
 | Pool overheated | Target +2 °C | −1 | No |
-| Car short of range | More than 50 km short | −1 | No |
-| Car far short of range | More than 100 km short | −1 | Yes |
+| Car below its floor | Below the safety floor after its grace | −2 | No |
 | Boiler permission shortfall | Fewer than 10 allowed quarters per 24-hour sample period | −1 per missing quarter | No |
 
-The two shortfall tiers stack. A level starts counting only when full power
+The pool's two shortfall tiers stack. A pool level starts counting only when full power
 from the initial state could have reached it, followed by 24 hours to choose
 when to supply it. A level already met at the start counts immediately.
+The car has one check, against its safety floor, 30 % by default, or its own
+charge limit if that is lower. Its grace runs from plug-in: 10 hours at the
+floor, half an hour less for each point below it, none from 20 points below. The
+bench's car counts as plugged in when the case starts, so each starting charge
+shows its own grace. The car's energy is credited in tiers rather than at the
+median: up to the middle of floor and charge limit at the 75th-percentile import
+price, from there to the limit at the 25th, nothing above it.
+
 Pool overheating counts heating after the threshold has already been reached,
 or warmth above it when the next full day is neither over 10% dearer nor over
 10% less sunny. This cleanup preserves those service semantics.

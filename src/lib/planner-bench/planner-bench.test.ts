@@ -117,17 +117,23 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
 Deno.test('comfort is scored from the target: a point per level missed, per store', () => {
   // On target: nothing fires.
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 300)).sum, 0);
-  // Exactly 1 °C below and exactly 50 km short are still fine; just past them lose a point each.
-  assertEquals(scoreQuarters(comfortSeries(() => 29, () => 250)).sum, 0);
-  const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 249));
-  assertEquals(slipping.quarters[0], { score: -2, fired: ['pool_low', 'ev_low'], deductions: { pool_low: -1, ev_low: -1 } });
-  // More than 2 °C below and more than 100 km short lose a second point each; a store never loses more than two.
-  const far = scoreQuarters(comfortSeries(() => 27.9, () => 199));
-  assertEquals(far.quarters[0], { score: -4, fired: ['pool_low', 'pool_cold', 'ev_low', 'ev_short'], deductions: { pool_low: -1, pool_cold: -1, ev_low: -1, ev_short: -1 } });
-  assertEquals(far.requiredFired, ['pool_cold', 'ev_short']);
+  // Exactly 1 °C below is still fine; just past it loses a point.
+  assertEquals(scoreQuarters(comfortSeries(() => 29, () => 300)).sum, 0);
+  const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 300));
+  assertEquals(slipping.quarters[0], { score: -1, fired: ['pool_low'], deductions: { pool_low: -1 } });
+  const far = scoreQuarters(comfortSeries(() => 27.9, () => 300));
+  assertEquals(far.quarters[0], { score: -2, fired: ['pool_low', 'pool_cold'], deductions: { pool_low: -1, pool_cold: -1 } });
+  assertEquals(far.requiredFired, ['pool_cold']);
   assertEquals(far.passed, false);
-  // A car above its target loses nothing.
-  assertEquals(scoreQuarters(comfortSeries(() => 30, () => 450)).sum, 0);
+});
+
+Deno.test('the car loses two points in a quarter below its floor line, and never fails the case', () => {
+  const lines = Array.from({ length: 288 }, (_, i) => i < 4 ? null : 100);
+  const low = scoreQuarters(comfortSeries(() => 30, i => i < 8 ? 99 : 100, { carFloorKm: lines }));
+  assertEquals(low.quarters[3], { score: 0, fired: [], deductions: {} });
+  assertEquals(low.quarters[4], { score: -2, fired: ['car_floor'], deductions: { car_floor: -2 } });
+  assertEquals(low.quarters[8], { score: 0, fired: [], deductions: {} });
+  assertEquals([low.counts.car_floor, low.sum, low.requiredFired], [4, -8, []]);
 });
 
 Deno.test('overheating accounts for the following day’s price and solar without earning points', () => {
@@ -154,12 +160,11 @@ Deno.test('overheating accounts for the following day’s price and solar withou
 
 Deno.test('each comfort rule says whether it could fire in the case, and in how many quarters', () => {
   const reachable = Array.from({ length: 288 }, (_, i) => 24 + i * 0.125);
-  const cold = scoreQuarters(comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: reachable }), { ev_short: { enabled: false } });
-  // 29 °C is due from quarter 136, 28 °C from 128; the car was on target from the start.
+  const cold = scoreQuarters(comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: reachable }), { car_floor: { enabled: false } });
+  // 29 °C is due from quarter 136, 28 °C from 128.
   assertEquals(cold.applicability.pool_low, { applicable: true, eligibleQuarters: 152, reason: 'Counts in 152 of 288 quarters.' });
   assertEquals(cold.applicability.pool_cold.eligibleQuarters, 160);
-  assertEquals(cold.applicability.ev_low.eligibleQuarters, 288);
-  assertEquals([cold.applicability.ev_short.applicable, cold.applicability.ev_short.reason], [false, 'Switched off for this case.']);
+  assertEquals([cold.applicability.car_floor.applicable, cold.applicability.car_floor.reason], [false, 'Switched off for this case.']);
   const never = scoreQuarters(comfortSeries(() => 20, () => 300, { pool_start_c: 20, poolReachableC: new Array(288).fill(21) }));
   assertEquals(never.applicability.pool_low, { applicable: false, eligibleQuarters: 0, reason: 'This level was not reachable for a day within the window.' });
 });
@@ -193,12 +198,15 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertEquals(criteriaErrors({ pool_low: { points: 3 } }), ['pool_low: points must be between -2 and 2, and not 0.']);
   assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
   assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
-  assertEquals(criteriaErrors({ ev_low: { threshold: Number.NaN }, ev_short: { threshold: -5 } }).length, 2);
+  assertEquals(criteriaErrors({ pool_low: { threshold: Number.NaN }, pool_cold: { threshold: -5 } }).length, 2);
+  // The floor is a car setting, not a threshold; the old car rules are ignored by name.
+  assertEquals(criteriaErrors({ car_floor: { threshold: 10 } }).length, 1);
+  assertEquals(criteriaErrors({ ev_low: { threshold: 60 }, ev_short: { points: -2 } }), []);
   assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
   const series = comfortSeries(() => 28.5, () => 300);
   assertThrows(() => scoreQuarters(series, { pool_low: { points: 3 } }), CriteriaError);
-  assertThrows(() => resolveRules({ ev_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
-  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'ev_low', 'ev_short', 'water_opportunities']);
+  assertThrows(() => resolveRules({ pool_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
+  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'car_floor', 'water_opportunities']);
   // The referee's own rule is overridden like any other, and never reaches a planner's policy.
   assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
   assertEquals(criteriaErrors({ water_cold: { threshold: 3 } }), ['Unknown rule "water_cold".']);
@@ -206,7 +214,7 @@ Deno.test('criteria are checked: a rule gives or takes at most two points, at a 
   assertThrows(() => resolveRules({ ev_from_home_battery: { points: -1 } }), CriteriaError);
   assertEquals(criteriaFingerprint({ pool_low: { threshold: 2 }, ev_low: { points: -2 } }),
     criteriaFingerprint({ ev_low: { points: -2 }, pool_low: { threshold: 2 } }));
-  assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false }, ev_short: { threshold: 120 } }), { pool: [0.5, 2], ev: [50, 120] });
+  assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false } }), { pool: [0.5, 2] });
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */

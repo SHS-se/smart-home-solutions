@@ -75,28 +75,32 @@ struct Exposure {
 }
 fn exposure(p: &Problem, q: &[Quarter], index: &policy::Index, device: usize) -> Exposure {
     let mut out = Exposure::default();
-    let target = if device == 0 {
-        p.targets.pool_c
-    } else {
-        p.targets.ev_km
-    };
-    let Some(target) = target else {
+    if device == 1 {
+        // A witness may not add a quarter below the floor, or deepen one.
+        let Some((car, car_policy)) = p.car.as_ref().zip(p.car_policy.as_ref()) else {
+            return out;
+        };
+        for (i, v) in q.iter().enumerate() {
+            let Some(line) = car_policy.breach_permille[i] else {
+                continue;
+            };
+            let short = line - policy::soc_permille(car, v.ev_kwh.unwrap()) + 1;
+            if short > 0 {
+                out.counts[0] += 1;
+                out.deficits[0] += f64::from(short) * projected_hours(&p.slots[i]);
+                out.worst = out.worst.max(f64::from(short));
+            }
+        }
+        return out;
+    }
+    let Some(target) = p.targets.pool_c else {
         return out;
     };
-    let thresholds = if device == 0 {
-        p.service_guard.pool
-    } else {
-        p.service_guard.ev
-    };
     for (i, v) in q.iter().enumerate() {
-        let value = if device == 0 {
-            policy::measured(v.pool_c.unwrap(), 1000.0)
-        } else {
-            policy::measured(v.ev_kwh.unwrap() / p.car.as_ref().unwrap().kwh_per_km, 10.0)
-        };
-        for (level, offset) in thresholds.iter().enumerate() {
+        let value = policy::measured(v.pool_c.unwrap(), 1000.0);
+        for (level, offset) in p.service_guard.pool.iter().enumerate() {
             let short = (target - offset - value).max(0.0);
-            if i >= index.due[device * 2 + level] && short > 0.0 {
+            if i >= index.due[level] && short > 0.0 {
                 out.counts[level] += 1;
                 out.deficits[level] += short * projected_hours(&p.slots[i]);
                 if level == 0 {
@@ -862,7 +866,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 14,
+            abi: 15,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -957,11 +961,12 @@ pub(crate) mod tests {
                 pool_pending_heat_kwh: Some(0.0),
                 heater_state: Some(HeaterState::OffUnobserved),
             },
-            targets: Targets {
-                pool_c: Some(30.0),
-                ev_km: Some(0.0),
-                ev_limit_kwh: Some(60.0),
-            },
+            targets: Targets { pool_c: Some(30.0) },
+            car_policy: Some(CarPolicy {
+                floor_kwh: 0.0,
+                limit_kwh: 60.0,
+                breach_permille: vec![None; n],
+            }),
             limits: Limits {
                 import_w: 7000.0,
                 export_w: 7000.0,
@@ -974,10 +979,7 @@ pub(crate) mod tests {
                 battery_start_preference_sek: 0.0,
             },
             rules: vec![],
-            service_guard: ServiceGuard {
-                pool: [1.0, 2.0],
-                ev: [50.0, 100.0],
-            },
+            service_guard: ServiceGuard { pool: [1.0, 2.0] },
             accepted: None,
             released: None,
             unavailable: None,

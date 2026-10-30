@@ -21,14 +21,14 @@ pub(crate) struct FutureNeeds {
     pub refill_demand_kwh: f64,
 }
 pub(crate) struct Index {
-    pub due: [usize; 4],
+    pub due: [usize; 2],
     pub buffer: Vec<Option<bool>>,
     pub future: Vec<FutureNeeds>,
 }
 pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
     match key {
         RuleKey::PoolLow | RuleKey::PoolCold | RuleKey::PoolHot => p.heater.is_some(),
-        RuleKey::EvLow | RuleKey::EvShort => p.car.is_some(),
+        RuleKey::CarFloor => p.car.is_some(),
     }
 }
 pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
@@ -63,13 +63,31 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
         })
         .collect();
     let due = eligibility(p);
-    let ev_goal = p.car.as_ref().map_or(0.0, |car| {
-        (p.targets.ev_km.unwrap() * car.kwh_per_km).min(p.targets.ev_limit_kwh.unwrap())
-    });
+    // Where a quarter's charging should aim: the floor, and as high up the tiers
+    // as this quarter's electricity costs less than the energy is worth.
+    let ev_goal = |s: &Slot| {
+        p.car_policy
+            .as_ref()
+            .filter(|_| s.ev_available)
+            .map_or(0.0, |car| {
+                let price = if s.solar_w > s.base_w {
+                    s.export_price
+                } else {
+                    s.import_price
+                };
+                p.end_credit
+                    .ev
+                    .iter()
+                    .flat_map(|t| &t.tiers)
+                    .filter(|tier| tier.sek_per_kwh > price)
+                    .fold(car.floor_kwh, |goal, tier| goal.max(tier.up_to))
+                    .min(car.limit_kwh)
+            })
+    };
     let mut future = vec![
         FutureNeeds {
             pool_goal: p.targets.pool_c.unwrap_or(0.0),
-            ev_goal,
+            ev_goal: 0.0,
             next_cheaper: n,
             refill_demand_kwh: 0.0,
         };
@@ -90,7 +108,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             .unwrap_or(n);
         future[i] = FutureNeeds {
             pool_goal: p.targets.pool_c.unwrap_or(0.0),
-            ev_goal,
+            ev_goal: ev_goal(s),
             next_cheaper,
             refill_demand_kwh: 0.0,
         };
@@ -161,6 +179,24 @@ pub(crate) fn store_credit(
         p.end_credit.reference_sek_per_kwh * t.grid_kwh_per_unit * counted(start, end, t.cap)
     })
 }
+/// What the car is credited for ending at this level, tier by tier (end-credit.ts).
+pub(crate) fn car_credit(p: &Problem, end_kwh: f64) -> f64 {
+    p.end_credit
+        .ev
+        .as_ref()
+        .zip(p.initial.ev_kwh)
+        .map_or(0.0, |(t, start)| {
+            let value = |kwh: f64| {
+                let mut from = 0.0;
+                t.tiers.iter().fold(0.0, |sum, tier| {
+                    let part = tier.sek_per_kwh * (kwh.min(tier.up_to) - kwh.min(from));
+                    from = tier.up_to;
+                    sum + part
+                })
+            };
+            (value(end_kwh) - value(start)) * t.grid_kwh_per_unit
+        })
+}
 /// Total pool energy expressed in degrees; comfort continues to use water alone.
 pub(crate) fn pool_inventory(p: &Problem, water_c: f64, pending_heat_kwh: f64) -> f64 {
     p.pool_store
@@ -187,9 +223,9 @@ pub(crate) fn end_credit(
             initial_pool_inventory(p),
             pool_inventory(p, pool_c, pending_heat_kwh),
         )
-        + store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, ev_kwh)
+        + car_credit(p, ev_kwh)
 }
-pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
+pub(crate) fn eligibility(p: &Problem) -> [usize; 2] {
     let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
     let mut pending = p.initial.pool_pending_heat_kwh.unwrap_or(0.0);
     let mut depletion = p.initial.pool_source_depletion_kwh.unwrap_or(0.0);
@@ -198,31 +234,14 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
         .heater_state
         .unwrap_or(HeaterState::OffUnobserved)
         .age();
-    let thresholds = [
-        p.service_guard.pool[0],
-        p.service_guard.pool[1],
-        p.service_guard.ev[0],
-        p.service_guard.ev[1],
-    ];
-    let mut due = [usize::MAX; 4];
-    for (k, threshold) in thresholds.iter().enumerate() {
-        if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {
-            continue;
-        }
-        let (start, target) = if k < 2 {
-            (reach_pool, p.targets.pool_c.unwrap_or(0.0))
-        } else {
-            (
-                p.car.as_ref().map_or(0.0, |c| {
-                    measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)
-                }),
-                p.targets.ev_km.unwrap_or(0.0),
-            )
-        };
-        // EV readiness is continuous. Every solve counts missing range now;
-        // neither initial shortfall nor an unreachable preference grants delay.
-        if k >= 2 || start >= target - threshold {
-            due[k] = 0;
+    let thresholds = p.service_guard.pool;
+    let target = p.targets.pool_c.unwrap_or(0.0);
+    let mut due = [usize::MAX; 2];
+    if p.heater.is_some() {
+        for (k, threshold) in thresholds.iter().enumerate() {
+            if reach_pool >= target - threshold {
+                due[k] = 0;
+            }
         }
     }
     for (i, s) in p.slots.iter().enumerate() {
@@ -251,22 +270,12 @@ pub(crate) fn eligibility(p: &Problem) -> [usize; 4] {
             pending = step.pending_heat_kwh;
             depletion = step.source_depletion_kwh;
         }
-        for (k, threshold) in thresholds.iter().enumerate() {
-            if k < 2 && p.heater.is_none() || k >= 2 && p.car.is_none() {
-                continue;
-            }
-            let (now, target) = if k < 2 {
-                (measured(reach_pool, 100.0), p.targets.pool_c.unwrap_or(0.0))
-            } else {
-                (
-                    p.car.as_ref().map_or(0.0, |c| {
-                        measured(p.initial.ev_kwh.unwrap_or(0.0) / c.kwh_per_km, 10.0)
-                    }),
-                    p.targets.ev_km.unwrap_or(0.0),
-                )
-            };
-            if k < 2 && due[k] == usize::MAX && now >= target - threshold {
-                due[k] = i + 96;
+        if p.heater.is_some() {
+            let now = measured(reach_pool, 100.0);
+            for (k, threshold) in thresholds.iter().enumerate() {
+                if due[k] == usize::MAX && now >= target - threshold {
+                    due[k] = i + 96;
+                }
             }
         }
     }
@@ -320,6 +329,19 @@ fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
     account
 }
 
+/// The car's charge in permille of its battery, at the precision the lines use.
+pub(crate) fn soc_permille(car: &CarBattery, kwh: f64) -> i32 {
+    (kwh / car.capacity_kwh * 1000.0 + 0.5).floor() as i32
+}
+/// Whether a quarter ending at this charge counts as below the floor (car-policy.ts).
+pub(crate) fn car_floor_breached(p: &Problem, i: usize, kwh: f64) -> bool {
+    p.car
+        .as_ref()
+        .zip(p.car_policy.as_ref())
+        .is_some_and(|(car, policy)| {
+            policy.breach_permille[i].is_some_and(|line| soc_permille(car, kwh) <= line)
+        })
+}
 /// Which rules fired in a quarter: bit `j` is rule `j` of the problem.
 type Fired = u32;
 fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
@@ -330,10 +352,6 @@ fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
 }
 fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64) -> Fired {
     let pool_c = measured(v.pool_c.unwrap_or(0.0), 1000.0);
-    let ev_km = p
-        .car
-        .as_ref()
-        .map_or(0.0, |c| measured(v.ev_kwh.unwrap() / c.kwh_per_km, 10.0));
     fired_where(&p.rules, |r| {
         if !applicable(p, r.key) {
             return false;
@@ -347,8 +365,7 @@ fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64)
                     && measured(before_c, 1000.0) >= p.targets.pool_c.unwrap() + t
                     || pool_c > p.targets.pool_c.unwrap() + t && index.buffer[i] == Some(false)
             }
-            RuleKey::EvLow => i >= index.due[2] && ev_km < p.targets.ev_km.unwrap() - t,
-            RuleKey::EvShort => i >= index.due[3] && ev_km < p.targets.ev_km.unwrap() - t,
+            RuleKey::CarFloor => car_floor_breached(p, i, v.ev_kwh.unwrap()),
         }
     })
 }
@@ -408,15 +425,14 @@ mod service_tests {
             (RuleKey::PoolLow, 1.0),
             (RuleKey::PoolCold, 2.0),
             (RuleKey::PoolHot, 2.0),
-            (RuleKey::EvLow, 50.0),
-            (RuleKey::EvShort, 100.0),
+            (RuleKey::CarFloor, 0.0),
         ]
         .into_iter()
         .map(|(key, threshold)| Rule {
             key,
             threshold,
             points: -1,
-            required: matches!(key, RuleKey::PoolCold | RuleKey::EvShort),
+            required: matches!(key, RuleKey::PoolCold),
         })
         .collect()
     }
@@ -464,11 +480,11 @@ mod service_tests {
     }
 
     #[test]
-    fn all_five_service_checks_keep_distinct_contributions() {
+    fn all_four_service_checks_keep_distinct_contributions() {
         let mut p = crate::witnesses::tests::problem(1);
         p.rules = rules();
         p.initial.ev_kwh = Some(40.0);
-        p.targets.ev_km = Some(200.0);
+        p.car_policy.as_mut().unwrap().breach_permille = vec![Some(399)];
         let index = index(&p, &mut work(&p)).unwrap();
         let idle = Command {
             pool_on: false,
@@ -480,23 +496,83 @@ mod service_tests {
         let mut q = physics::projection(&p, &[idle]).unwrap();
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        assert_eq!(
-            account(&p, &q, &index).contributions[0],
-            [-1, -1, 0, -1, -1]
-        );
+        assert_eq!(account(&p, &q, &index).contributions[0], [-1, -1, 0, -1]);
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1, -1]);
+        assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1]);
     }
     #[test]
-    fn unreachable_pool_keeps_grace_but_ev_readiness_counts_immediately() {
+    fn the_floor_only_counts_at_or_below_the_line_of_that_quarter() {
+        let mut p = crate::witnesses::tests::problem(3);
+        p.car_policy.as_mut().unwrap().breach_permille = vec![None, Some(250), Some(299)];
+        // 60 kWh battery: 15 kWh is 250 permille.
+        assert!(!car_floor_breached(&p, 0, 0.0));
+        assert!(car_floor_breached(&p, 1, 15.0));
+        assert!(!car_floor_breached(&p, 1, 15.06));
+        assert!(car_floor_breached(&p, 2, 17.9));
+        assert!(!car_floor_breached(&p, 2, 18.0));
+        assert_eq!(soc_permille(p.car.as_ref().unwrap(), 15.03), 251);
+    }
+    #[test]
+    fn car_credit_prices_each_tier_and_nothing_above_the_limit() {
+        let mut p = crate::witnesses::tests::problem(1);
+        p.initial.ev_kwh = Some(10.0);
+        p.end_credit.ev = Some(CarTerm {
+            grid_kwh_per_unit: 2.0,
+            tiers: vec![
+                CarTier {
+                    up_to: 30.0,
+                    sek_per_kwh: 3.0,
+                },
+                CarTier {
+                    up_to: 48.0,
+                    sek_per_kwh: 1.0,
+                },
+            ],
+        });
+        assert_eq!(car_credit(&p, 10.0), 0.0);
+        assert_eq!(car_credit(&p, 20.0), 60.0);
+        assert_eq!(car_credit(&p, 40.0), 140.0);
+        assert_eq!(car_credit(&p, 48.0), 156.0);
+        assert_eq!(car_credit(&p, 60.0), 156.0);
+        assert_eq!(car_credit(&p, 5.0), -30.0);
+        p.initial.ev_kwh = Some(55.0);
+        assert_eq!(car_credit(&p, 50.0), 0.0);
+    }
+    #[test]
+    fn quarters_aim_at_the_floor_and_only_as_high_as_the_tiers_pay() {
+        let mut p = crate::witnesses::tests::problem(3);
+        p.car_policy.as_mut().unwrap().floor_kwh = 18.0;
+        p.car_policy.as_mut().unwrap().limit_kwh = 48.0;
+        p.end_credit.ev = Some(CarTerm {
+            grid_kwh_per_unit: 1.0,
+            tiers: vec![
+                CarTier {
+                    up_to: 33.0,
+                    sek_per_kwh: 3.0,
+                },
+                CarTier {
+                    up_to: 48.0,
+                    sek_per_kwh: 2.0,
+                },
+            ],
+        });
+        for (s, price) in p.slots.iter_mut().zip([4.0, 2.5, 1.0]) {
+            s.import_price = price;
+            s.solar_w = 0.0;
+            s.base_w = 500.0;
+        }
+        let index = index(&p, &mut work(&p)).unwrap();
+        let goals: Vec<f64> = index.future.iter().map(|f| f.ev_goal).collect();
+        assert_eq!(goals, [18.0, 33.0, 48.0]);
+    }
+    #[test]
+    fn unreachable_pool_keeps_grace() {
         let mut p = crate::witnesses::tests::problem(1);
         p.rules = rules();
         p.initial.pool_c = Some(0.0);
-        p.initial.ev_kwh = Some(0.0);
-        p.targets.ev_km = Some(300.0);
         assert!(crate::validate(&p).is_ok());
-        assert_eq!(eligibility(&p), [usize::MAX, usize::MAX, 0, 0]);
+        assert_eq!(eligibility(&p), [usize::MAX, usize::MAX]);
     }
 }

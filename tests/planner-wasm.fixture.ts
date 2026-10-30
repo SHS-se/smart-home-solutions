@@ -42,8 +42,8 @@ export type EquippedProblem =
     };
   };
 export function problem(): EquippedProblem {
-  return {
-    abi: 14,
+  const ready: EquippedProblem = {
+    abi: 15,
     // No end credit unless a test asks for one.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     ev_battery_supply_allowed: false,
@@ -89,7 +89,8 @@ export function problem(): EquippedProblem {
       pool_pending_heat_kwh: 0, pool_source_depletion_kwh: null,
       heater_state: { kind: "off_unobserved" },
     },
-    targets: { pool_c: 30, ev_km: 300, ev_limit_kwh: 70 },
+    targets: { pool_c: 30 },
+    car_policy: null,
     limits: {
       import_w: 16000,
       export_w: 16000,
@@ -100,10 +101,12 @@ export function problem(): EquippedProblem {
       ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
     rules: [],
-    service_guard: { pool: [1, 2], ev: [50, 100] },
+    service_guard: { pool: [1, 2] },
     accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
+  ready.car_policy = { floor_kwh: 0, limit_kwh: 70, breach_permille: ready.slots.map(() => null) };
+  return ready;
 }
 
 export function causalCase(): BenchCase {

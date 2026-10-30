@@ -3,7 +3,7 @@
   "generated_by": "scripts/ev-readiness-synthetic.fixture.ts",
   "night_quarters": 38,
   "problem": {
-    "abi": 14,
+    "abi": 15,
     "end_credit": {
       "reference_sek_per_kwh": 1,
       "battery": {
@@ -12,8 +12,17 @@
       },
       "pool": null,
       "ev": {
-        "cap": 40,
-        "grid_kwh_per_unit": 1.0869565217391304
+        "grid_kwh_per_unit": 1.0869565217391304,
+        "tiers": [
+          {
+            "up_to": 27.5,
+            "sek_per_kwh": 1
+          },
+          {
+            "up_to": 40,
+            "sek_per_kwh": 0.5
+          }
+        ]
       }
     },
     "ev_battery_supply_allowed": false,
@@ -1420,9 +1429,7 @@
       "heater_state": null
     },
     "targets": {
-      "pool_c": null,
-      "ev_km": 200,
-      "ev_limit_kwh": 40
+      "pool_c": null
     },
     "limits": {
       "import_w": 10000,
@@ -1455,26 +1462,16 @@
         "required": false
       },
       {
-        "key": "ev_low",
-        "threshold": 50,
-        "points": -1,
+        "key": "car_floor",
+        "threshold": 0,
+        "points": -2,
         "required": false
-      },
-      {
-        "key": "ev_short",
-        "threshold": 100,
-        "points": -1,
-        "required": true
       }
     ],
     "service_guard": {
       "pool": [
         1,
         2
-      ],
-      "ev": [
-        50,
-        100
       ]
     },
     "accepted": [
@@ -1516,6 +1513,108 @@
     ],
     "released": null,
     "unavailable": null,
-    "locked_through_seconds": 3600
+    "locked_through_seconds": 3600,
+    "car_policy": {
+      "floor_kwh": 15,
+      "limit_kwh": 40,
+      "breach_permille": [
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299,
+        299
+      ]
+    }
   }
 }

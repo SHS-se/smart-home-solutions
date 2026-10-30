@@ -2,7 +2,7 @@
 
 Settled implementation, 24 October 2026. Supersedes any generic “error or recovery means replan” rule.
 
-EV readiness is ongoing from the current quarter, including when the initial range is low. No new plan grants another day of grace. There is no departure time, trip deadline or readiness episode clock. The household range preference and existing range bands determine readiness; the vehicle charge limit remains a physical cap. The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. An unreachable preference remains valid input and is reported honestly; it does not invalidate the household or extend a clock. The independent bench uses the same continuous EV exposure under scorer version 37; archived scorer-36 results retain their identity.
+Superseded in part on 30 October 2026: the car is protected by a safety floor (30 % by default, capped at the car's own charge limit) instead of range bands, and its grace runs from the plug-in time the integration records and keeps across restarts. No replan renews that clock: a new plan reads the same plug-in time. There is still no departure time or trip deadline. The car's own charge limit is the top of what it is charged to, and a physical cap. Energy up to the middle of floor and limit is valued at the plan's 75th-percentile import price, the rest at its 25th (`car-policy.ts`, `end-credit.ts`). The accepted first-hour command lock still applies unless owner-scoped execution evidence permits a correction. The independent bench uses the same rule under scorer version 42, counting the car as plugged in at the start of each case.
 
 ## Admission thresholds
 

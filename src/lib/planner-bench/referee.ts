@@ -1,5 +1,6 @@
 import { boilerDemand } from "./household";
 import { POOL_START_COST_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy';
+import { carPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy';
 import { chargeAcPower, chargeDcPower, dischargeDcPower, outputPower, refinedBatteryFlow, gridKwhPerStoredKwh } from '../../../supabase/functions/_shared/planner/battery-conversion';
 import { proportionalSupply } from '../../../supabase/functions/_shared/battery-supply';
 import { projectBoilerTank } from '../../../supabase/functions/_shared/boiler-consumption';
@@ -47,7 +48,7 @@ import type { BenchSeries, Bill } from './types';
 import { BENCH_DEVICES, BENCH_DEVICE_KEYS } from './devices';
 import { endCredit, endCreditTerms } from '../../../supabase/functions/_shared/planner-wasm/end-credit';
 
-export const REFEREE_VERSION = 29;
+export const REFEREE_VERSION = 30;
 export const HOURS = 0.25;
 /** A decision clipped by less than this is rounding, not a violation. */
 const CLIP_TOLERANCE_W = 5;
@@ -149,6 +150,20 @@ const r4 = (v: number) => Math.round(v * 10_000) / 10_000;
 export const evLevels = (h: Household) => chargerLevels(h.car.charger);
 export const evMaxW = (h: Household) => evLevels(h).at(-1)!.draw_w;
 /** The car's own charge limit, kWh: charging stops there whatever the plan asks. */
+/**
+ * The car's levels and breach lines in a case. The bench's car is always
+ * connected and is counted as plugged in when the case starts, so each starting
+ * charge shows the grace it gets.
+ */
+export function caseCarPolicy(c: BenchCase, h: Household, targets: Targets) {
+  return carPolicy({ battery: h.car.battery, limitSoc: c.start_state.ev.target_soc, floorSetting: targets.ev_floor_soc,
+    connection: { kind: 'plugged', sinceMs: 0 } },
+    c.recorded.prices.import_sek_per_kwh.map((_, i) => ({ start_seconds: i * 900, hours: HOURS, ev_available: true })), 0);
+}
+/** The range below which each quarter counts as below the floor: the same comparison as a charge at or below the line. */
+export const carFloorKm = (c: BenchCase, h: Household, targets: Targets) => caseCarPolicy(c, h, targets).breach_permille.map(line =>
+  line === null ? null : (line + 0.5) / 1000 * h.car.battery.capacity_kwh / h.car.battery.kwh_per_km);
+
 export const evLimitKwh = (c: BenchCase, h: Household) => Math.min(1, Math.max(0, c.start_state.ev.target_soc)) * h.car.battery.capacity_kwh;
 /** What the pool's heat pump can be told: off, or on at its setting, the circulation pump with it. */
 export const poolLevels = (h: Household) => heatPumpLevels(h.pool.heater);
@@ -354,7 +369,7 @@ export function billOf(c: BenchCase, h: Household, targets: Targets, sim: Simula
   const terms = endCreditTerms({
     battery: h.battery,
     pool: { store: h.pool.store, draw_w: level.draw_w, heat_w: level.heat_w, target_c: targets.pool_c },
-    car: { battery: h.car.battery, target_km: targets.ev_km, limit_kwh: evLimitKwh(c, h) },
+    car: { battery: h.car.battery, floor_kwh: caseCarPolicy(c, h, targets).floor_kwh, limit_kwh: evLimitKwh(c, h) },
     import_sek_per_kwh: c.recorded.prices.import_sek_per_kwh,
   });
   const credit = endCredit(terms,
@@ -427,7 +442,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     homeSoc: [], homeStartSoc: sim.start.batteryKwh / h.battery.capacity_kwh * 100,
     carSoc: [], carKm: [], carConnected: [], poolC: [], poolPendingHeatKwh: [], poolSourceDepletionKwh: [], costSek: [], wearSek: [],
     comfort: {
-      pool_target_c: targets.pool_c, ev_target_km: targets.ev_km,
+      pool_target_c: targets.pool_c, ev_target_km: evLimitKwh(c, h) / h.car.battery.kwh_per_km, carFloorKm: carFloorKm(c, h, targets),
       pool_start_c: sim.start.poolC, ev_start_km: r1(sim.start.evKwh / h.car.battery.kwh_per_km),
       poolReachableC: reach.poolC, carReachableKm: reach.carKm,
     },

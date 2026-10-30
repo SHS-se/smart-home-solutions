@@ -158,20 +158,32 @@ impl Estimate {
         }
         // A store short of its cap at the end is credited for what it gains,
         // near enough the reference price per kWh bought for it.
-        let (term, end) = match device {
-            Device::Pool => (
-                &p.end_credit.pool,
-                q.last().and_then(|v| {
+        match device {
+            Device::Pool => {
+                let end = q.last().and_then(|v| {
                     v.pool_c.map(|water| {
                         policy::pool_inventory(p, water, v.pool_pending_heat_kwh.unwrap_or(0.0))
                     })
-                }),
-            ),
-            Device::Ev => (&p.end_credit.ev, q.last().and_then(|v| v.ev_kwh)),
-        };
-        if let Some((term, end)) = term.as_ref().zip(end) {
-            out.stored = p.end_credit.reference_sek_per_kwh;
-            out.room = (term.cap - end) * term.grid_kwh_per_unit;
+                });
+                if let Some((term, end)) = p.end_credit.pool.as_ref().zip(end) {
+                    out.stored = p.end_credit.reference_sek_per_kwh;
+                    out.room = (term.cap - end) * term.grid_kwh_per_unit;
+                }
+            }
+            // The tier the car ends in sets what the next kWh is worth.
+            Device::Ev => {
+                if let Some((term, end)) = p
+                    .end_credit
+                    .ev
+                    .as_ref()
+                    .zip(q.last().and_then(|v| v.ev_kwh))
+                {
+                    if let Some(tier) = term.tiers.iter().find(|tier| tier.up_to > end) {
+                        out.stored = tier.sek_per_kwh;
+                        out.room = (tier.up_to - end) * term.grid_kwh_per_unit;
+                    }
+                }
+            }
         }
         out
     }
@@ -709,9 +721,12 @@ mod tests {
         let mut p = crate::witnesses::tests::problem(12);
         p.rules.clear();
         p.end_credit.reference_sek_per_kwh = 2.0;
-        p.end_credit.ev = Some(StoreTerm {
-            cap: 10.5,
+        p.end_credit.ev = Some(CarTerm {
             grid_kwh_per_unit: 1.0,
+            tiers: vec![CarTier {
+                up_to: 10.5,
+                sek_per_kwh: 2.0,
+            }],
         });
         let mut commands = vec![
             Command {
@@ -735,7 +750,7 @@ mod tests {
         };
         // The extra 0.69 kWh costs 0.69 kr but only 0.155 kWh fits below the cap.
         assert!((estimate.gain(&edit) - (-0.69 + 0.155 * 2.0)).abs() < 1e-9);
-        p.end_credit.ev.as_mut().unwrap().cap = 10.2;
+        p.end_credit.ev.as_mut().unwrap().tiers[0].up_to = 10.2;
         let estimate = Estimate::new(&p, Device::Ev, 1380.0, &q);
         assert!((estimate.gain(&edit) + 0.69).abs() < 1e-9);
     }

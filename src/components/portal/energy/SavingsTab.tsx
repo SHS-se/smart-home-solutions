@@ -185,6 +185,12 @@ function SavingsEstimate({ customerId, homeId, homeCount = 1 }: SavingsTabProps)
         <div><dt className="text-muted-foreground">{t('Före abonnemang', 'Before subscription')}</dt><dd className="mt-1 font-medium" data-testid="roi-gross">{ready ? sek(forecast.savingSek) : '—'}</dd></div>
         <div><dt className="text-muted-foreground">{t('Abonnemang', 'Subscription')}</dt><dd className="mt-1 font-medium" data-testid="roi-subscription-cost">{ready ? sek(forecast.subscriptionSek) : '—'}</dd></div>
       </dl>
+      {ready && <p className="mt-4 text-sm text-muted-foreground" data-testid="roi-adjusted-saving">
+        {t(`Justerat för skillnaden i lagrad energi vid periodens slut (${sek(forecast.inventoryAdjustmentSek)}, värderad till periodens medianpris): ${sek(forecast.adjustedSavingSek)} före abonnemang.`,
+          `Adjusted for the difference in stored energy at the end of the period (${sek(forecast.inventoryAdjustmentSek)}, valued at the period's median price): ${sek(forecast.adjustedSavingSek)} before subscription.`)}
+        {(forecast.unservedTrips.with > 0 || forecast.unservedTrips.without > 0) && ` ${t(`Resor bilen inte räckte till: ${forecast.unservedTrips.with} med SHS, ${forecast.unservedTrips.without} utan. Det som saknades köptes till priset vid avresan.`,
+          `Trips the car could not cover: ${forecast.unservedTrips.with} with SHS, ${forecast.unservedTrips.without} without. The shortfall was bought at the price when leaving.`)}`}
+      </p>}
       <ul className="mt-5 flex flex-wrap gap-2 text-xs" data-testid="savings-assumptions" aria-label={t('Antaganden', 'Assumptions')}>
         {assumptions.map(text => <li key={text} className="rounded-md border bg-background/70 px-2.5 py-1 text-muted-foreground">{text}</li>)}
       </ul>

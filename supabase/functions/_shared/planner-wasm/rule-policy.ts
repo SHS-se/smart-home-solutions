@@ -1,6 +1,7 @@
 import { PlanningError } from "../planning-errors.ts";
 import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
 import { WATER_MINUTES_PER_DAY } from "../hot-water-opportunities.ts";
+import { CAR_FLOOR_POINTS } from "./car-policy.ts";
 
 export interface CriterionOverride { enabled?: boolean; threshold?: number; points?: number }
 export type CriteriaOverrides = Record<string, CriterionOverride>;
@@ -11,8 +12,8 @@ export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
   pool_low: { threshold: 1, points: -1 },
   pool_cold: { threshold: 2, points: -1, required: true },
   pool_hot: { threshold: 2, points: -1 },
-  ev_low: { threshold: 50, points: -1 },
-  ev_short: { threshold: 100, points: -1, required: true },
+  // The floor and its grace are car-policy.ts's; this rule only names the points.
+  car_floor: { threshold: 0, points: CAR_FLOOR_POINTS },
 };
 /**
  * Rules only the bench's referee scores. No planner is given them: the kernel
@@ -23,6 +24,8 @@ export const REFEREE_RULE_DEFAULTS: Record<"water_opportunities", RuleDefault> =
   // One deduction per missing quarter in each 24-hour benchmark sample period.
   water_opportunities: { threshold: WATER_MINUTES_PER_DAY / 15, points: -1 },
 };
+/** Rules that no longer exist; a saved override for one is ignored, not an error. */
+const RETIRED_RULES = new Set(["ev_low", "ev_short"]);
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
 export class CriteriaError extends PlanningError {
@@ -37,6 +40,8 @@ export function ruleDefaults(key: string): RuleDefault {
 export function criteriaErrors(overrides: CriteriaOverrides = {}): string[] {
   const errors: string[] = [];
   for (const [key, o] of Object.entries(overrides ?? {})) {
+    if (RETIRED_RULES.has(key)) continue;
+    if (key === "car_floor" && o?.threshold !== undefined) { errors.push(`${key}: the floor is a car setting, not a threshold.`); continue; }
     if (!(key in RULE_DEFAULTS) && !(key in REFEREE_RULE_DEFAULTS)) { errors.push(`Unknown rule "${key}".`); continue; }
     if (typeof o !== "object" || o === null) { errors.push(`${key}: not an override.`); continue; }
     if (o.enabled !== undefined && typeof o.enabled !== "boolean") errors.push(`${key}: enabled must be true or false.`);
@@ -57,5 +62,5 @@ export function resolveRulePolicy(overrides: CriteriaOverrides = {}): ReadyRuleP
       points:o.points ?? rule.points, required:rule.required ?? false}] : [];
   });
   const threshold = (key: PlannerRuleKey) => overrides[key]?.threshold ?? RULE_DEFAULTS[key].threshold;
-  return {rules,service_guard:{pool:[threshold("pool_low"),threshold("pool_cold")],ev:[threshold("ev_low"),threshold("ev_short")]}};
+  return {rules,service_guard:{pool:[threshold("pool_low"),threshold("pool_cold")]}};
 }

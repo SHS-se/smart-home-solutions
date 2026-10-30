@@ -26,7 +26,7 @@ export const input = (
   return {
     schema_version: 5,
     mode: "live",
-    comfort: { pool: { target_c: 30 }, ev: { target_km: 300 } },
+    comfort: { pool: { target_c: 30 }, ev: { floor_soc: .3 } },
     value_settings: { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null },
     capabilities: {
       pv: true,

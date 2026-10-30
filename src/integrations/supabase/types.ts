@@ -2232,6 +2232,7 @@ export type Database = {
         Row: {
           customer_id: string
           ev_target_km: number
+          ev_floor_soc: number
           ev_target_soc: number
           home_id: string
           pool_target_c: number
@@ -2241,6 +2242,7 @@ export type Database = {
         Insert: {
           customer_id: string
           ev_target_km?: number
+          ev_floor_soc?: number
           ev_target_soc?: number
           home_id: string
           pool_target_c?: number
@@ -2250,6 +2252,7 @@ export type Database = {
         Update: {
           customer_id?: string
           ev_target_km?: number
+          ev_floor_soc?: number
           ev_target_soc?: number
           home_id?: string
           pool_target_c?: number

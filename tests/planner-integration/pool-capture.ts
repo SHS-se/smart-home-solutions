@@ -58,7 +58,7 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
   assertEquals(state.source_depletion_kwh, 0);
   await assertRejects(() => capturedPoolResponseState(observationDatabase([], at), context.home_id, s, model),
     Error, "missing compressor history", "negative control: the former manual upload omission cannot pass");
-  s.comfort = { ev: { target_km: 300 }, pool: { target_c: 30 } };
+  s.comfort = { ev: { floor_soc: .3 }, pool: { target_c: 30 } };
   s.outdoor_temperature_c = s.slots.map(() => 10);
   s.pool_model = { thermal_dynamics: model, pending_heat_kwh: state.pending_heat_kwh, source_depletion_kwh: 0,
     loss_kw_per_k: null, rated_cop: null, cop_per_air_c: null, heater_response: { kind: "steady" }, hardware: s.pool!.hardware! };

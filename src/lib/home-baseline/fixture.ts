@@ -19,7 +19,7 @@ export function baselineFixture(range?: { start: string; end: string }): Histori
     charge_efficiency: .92, kwh_per_km: .16, available_from: null, priority: 1, source_entity_ids: { connected: 'test', soc: 'test', target_soc: 'test', energy_remaining: null, charge_current: null } };
   captured.grid = { import_limit_w: 17_200, export_limit_w: 13_200 };
   captured.device_physics = structuredClone({ battery: HOUSEHOLD.battery, car: HOUSEHOLD.car, pool: HOUSEHOLD.pool });
-  captured.comfort = { pool: { target_c: 30.5 }, ev: { target_km: 300 } };
+  captured.comfort = { pool: { target_c: 30.5 }, ev: { floor_soc: .3 } };
   captured.value_settings = { battery_degradation_sek_per_kwh: .05, vehicle_fallback_sek_per_km: null };
   captured.pool_model = { loss_kw_per_k: .13, rated_cop: 4, cop_per_air_c: null,
     hardware: { start_c: 30, stop_c: 30.5, control: 'external_enable', source_entity_ids: {} }, heater_response: { kind: 'steady' } };

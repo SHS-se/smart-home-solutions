@@ -14,7 +14,7 @@ export function syntheticReadyProblem(): ReadyProblem {
     (_, i) => 1 + .8 * Math.cos(i % 96 / 96 * 2 * Math.PI),
   );
   const problem: ReadyProblem = {
-    abi: 14,
+    abi: 15,
     ev_battery_supply_allowed: false,
     work_grant: recipe.work_grant,
     recipe: builderRecipe(recipe),
@@ -67,7 +67,8 @@ export function syntheticReadyProblem(): ReadyProblem {
       pool_pending_heat_kwh: 0, pool_source_depletion_kwh: null,
       heater_state: { kind: "off_unobserved" },
     },
-    targets: { pool_c: 30, ev_km: 200, ev_limit_kwh: 45 },
+    targets: { pool_c: 30 },
+    car_policy: null,
     limits: {
       import_w: 12000,
       export_w: 5000,
@@ -87,11 +88,12 @@ export function syntheticReadyProblem(): ReadyProblem {
         }))
         : []
     ),
-    service_guard: { pool: [1, 2], ev: [50, 100] },
+    service_guard: { pool: [1, 2] },
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: null, released: null, unavailable: null,
     locked_through_seconds: 0,
   };
+  problem.car_policy = { floor_kwh: 12, limit_kwh: 45, breach_permille: problem.slots.map(() => null) };
   problem.end_credit = problemEndCredit(problem);
   return problem;
 }

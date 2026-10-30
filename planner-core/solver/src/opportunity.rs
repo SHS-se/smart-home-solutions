@@ -151,8 +151,7 @@ impl Table {
             m.car = None;
             m.charger = None;
             m.initial.ev_kwh = None;
-            m.targets.ev_km = None;
-            m.targets.ev_limit_kwh = None;
+            m.car_policy = None;
             m.end_credit.ev = None;
         }
         if !matches!(self.device, Device::Battery) {
@@ -257,15 +256,28 @@ fn tables(p: &Problem) -> Vec<Table> {
         ));
     }
     if let Some((car, charger)) = p.car.as_ref().zip(p.charger.as_ref()) {
-        let mut nodes = vec![
-            0.0,
-            p.initial.ev_kwh.unwrap(),
-            p.targets.ev_limit_kwh.unwrap(),
-            (p.targets.ev_km.unwrap() * car.kwh_per_km).min(p.targets.ev_limit_kwh.unwrap()),
-        ];
-        for r in &p.rules {
-            if matches!(r.key, RuleKey::EvLow | RuleKey::EvShort) {
-                let t = (p.targets.ev_km.unwrap() - r.threshold) * car.kwh_per_km;
+        let policy = p.car_policy.as_ref().unwrap();
+        let start = p.initial.ev_kwh.unwrap();
+        let mut nodes = vec![0.0, start, policy.limit_kwh, policy.floor_kwh];
+        nodes.extend(
+            p.end_credit
+                .ev
+                .iter()
+                .flat_map(|t| &t.tiers)
+                .map(|tier| tier.up_to),
+        );
+        // A car that can start below the floor also needs the rising breach line,
+        // every 2.5 points of it. One above the floor never meets the line.
+        let highest = policy.breach_permille.iter().flatten().copied().max();
+        if highest.is_some_and(|line| policy::soc_permille(car, start) <= line) {
+            let mut lines: Vec<i32> = policy.breach_permille.iter().flatten().copied().collect();
+            lines.sort_unstable();
+            lines.dedup();
+            for line in lines
+                .into_iter()
+                .filter(|line| line % 25 == 0 || Some(*line) == highest)
+            {
+                let t = (f64::from(line) + 0.5) / 1000.0 * car.capacity_kwh;
                 nodes.extend([t - 0.01 * car.kwh_per_km, t, t + 0.01 * car.kwh_per_km]);
             }
         }
@@ -387,9 +399,7 @@ impl Opportunity {
                             policy::initial_pool_inventory(p),
                             level,
                         ),
-                        Device::Ev => {
-                            policy::store_credit(p, &p.end_credit.ev, p.initial.ev_kwh, level)
-                        }
+                        Device::Ev => policy::car_credit(p, level),
                         Device::Battery => policy::store_credit(
                             p,
                             &p.end_credit.battery,
