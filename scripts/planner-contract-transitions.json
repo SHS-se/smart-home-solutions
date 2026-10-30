@@ -15,5 +15,17 @@
         "new_name": "CONTRACT POOL-4: a thermal calibration cannot replace authoritative 3600 W ON electricity with 1200 W"
       }
     ]
+  },
+  {
+    "requirement": "User approved the EV-1 transition on 30 October 2026: range bands give way to a car safety floor with a grace from plug-in, so the shortfall rule is car_floor and a replan keeps the plug-in clock. See docs/energy-optimisation/replan-error-policy.md.",
+    "before": "e254d7b43b602761b6d62a8b68e0ac03ea61cbf6",
+    "after": "3ef2761da2605ba4d9a08a6bdedfd25be26b8059",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging",
+        "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
+      }
+    ]
   }
 ]
