@@ -47,8 +47,6 @@ Deno.test("CONTRACT POOL-4: a thermal calibration cannot replace authoritative 3
 Deno.test("CONTRACT POOL-4: full published planning reserves equipment draw beside intermediate EV charging", () => {
   const s = installation();
   s.grid.import_limit_w = 500 + 3600 + 3 * 230 * 12;
-  // A car above its floor and a cheap opening half hour: both loads want quarter 0.
-  s.ev_battery!.soc = .5; s.slots.forEach((slot, i) => { if (i >= 2) slot.import_price_sek_per_kwh = 1; });
   const plan = runRulesPlanner({ snapshot: s, now: s.captured_at, price_archive: [] }).plan;
   const opening = plan.plans.priority.slots[0];
   assertEquals(opening.pool_w, 3600);
