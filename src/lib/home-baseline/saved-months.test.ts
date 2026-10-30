@@ -130,12 +130,40 @@ Deno.test('server month eviction removes stale local save hashes before an uncac
 
 Deno.test('concurrent graph and month captures consume canonical report receipts in save order', async () => {
   const stored: SavedReport = { ...report(), months: {} };
-  const releases: (() => void)[] = [], started: string[] = [];
+  const barrier = () => {
+    let release!: () => void;
+    const promise = new Promise<void>(resolve => { release = resolve; });
+    return { promise, release };
+  };
+  const entered = [barrier(), barrier()], releases = [barrier(), barrier()];
+  const secondHashReady = barrier(), releaseSecondHash = barrier(), secondHashContinued = barrier();
+  const digestDescriptor = Object.getOwnPropertyDescriptor(crypto.subtle, 'digest');
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  let hashCalls = 0;
+  crypto.subtle.digest = (algorithm, data) => {
+    const computed = digest(algorithm, data);
+    if (++hashCalls !== 2) return computed;
+    return new Promise((resolve, reject) => {
+      void computed.then(hash => {
+        secondHashReady.release();
+        void releaseSecondHash.promise.then(() => {
+          resolve(hash);
+          // First run the hash consumer, then any save callback it schedules.
+          // This checkpoint uses promise ordering, not elapsed wall time.
+          queueMicrotask(() => queueMicrotask(secondHashContinued.release));
+        });
+      }, reject);
+    });
+  };
+  const started: string[] = [];
+  const work: Promise<unknown>[] = [];
   const store: MonthStore = {
     read: () => Promise.resolve(structuredClone(stored)), pin: () => Promise.resolve(structuredClone(stored)),
     save: async (_, __, value, inputHash, expectedHash) => {
+      const index = started.length;
       started.push(value.month);
-      await new Promise<void>(resolve => { releases.push(resolve); });
+      entered[index].release();
+      await releases[index].promise;
       assertEquals(expectedHash, stored.months[value.month]?.inputHash ?? null);
       stored.months[value.month] = { ledger: value, inputHash, computedAt: new Date(now).toISOString() };
       return structuredClone(stored);
@@ -143,16 +171,35 @@ Deno.test('concurrent graph and month captures consume canonical report receipts
   };
   const source = createCaptureSource(ref, { store, resolveAnchor: () => Promise.resolve(anchor),
     generate: (_, __, period) => Promise.resolve({ ...capture, input: { ...capture.input, timeZone: 'UTC', start: period.start, end: period.end } }) });
+  const track = (promise: Promise<unknown>) => {
+    work.push(promise);
+    // Observe failures immediately, even when an earlier assertion triggers cleanup.
+    void promise.catch(() => undefined);
+    return promise;
+  };
   try {
-    const september = source.capture({ view: 'month', start: '2026-09-01T00:00:00.000Z', end: '2026-10-01T00:00:00.000Z' }, new AbortController().signal);
-    const october = source.capture({ view: 'month', start: '2026-10-01T00:00:00.000Z', end: '2026-11-01T00:00:00.000Z' }, new AbortController().signal);
-    while (!releases.length) await new Promise(resolve => setTimeout(resolve, 0));
+    const september = track(source.capture({ view: 'month', start: '2026-09-01T00:00:00.000Z', end: '2026-10-01T00:00:00.000Z' }, new AbortController().signal));
+    // Hash completion order is unspecified. Start the competing capture only once
+    // September has reached its held save, establishing the order this test needs.
+    await entered[0].promise;
+    const october = track(source.capture({ view: 'month', start: '2026-10-01T00:00:00.000Z', end: '2026-11-01T00:00:00.000Z' }, new AbortController().signal));
+    await secondHashReady.promise;
+    releaseSecondHash.release();
+    await secondHashContinued.promise;
+    assertEquals(hashCalls, 2);
     assertEquals(started, ['2026-09']);
-    releases[0](); await september;
-    while (releases.length < 2) await new Promise(resolve => setTimeout(resolve, 0));
+    releases[0].release(); await september;
+    await entered[1].promise;
     assertEquals(started, ['2026-09', '2026-10']);
-    releases[1](); await october;
+    releases[1].release(); await october;
     assertEquals(source.saved('2026-09'), stored.months['2026-09']);
     assertEquals(source.saved('2026-10'), stored.months['2026-10']);
-  } finally { source.dispose(); }
+  } finally {
+    source.dispose();
+    releases.forEach(gate => gate.release());
+    releaseSecondHash.release();
+    await Promise.allSettled(work);
+    if (digestDescriptor) Object.defineProperty(crypto.subtle, 'digest', digestDescriptor);
+    else Reflect.deleteProperty(crypto.subtle, 'digest');
+  }
 });

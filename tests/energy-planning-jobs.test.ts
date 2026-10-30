@@ -1408,3 +1408,99 @@ Deno.test('unprovable historical accepted commands remain explicit instead of si
     await assertRejects(()=>rpc(db,'accept_energy_planning_job',capturedSubmission(snapshot,{reference_plan_id:other,accepted_reference_revision:0})),Error,'provenance is unresolved');
   }finally{await db.close();}
 });
+
+const batteryProvenanceMigration='20261030133000_restore_accepted_battery_provenance';
+async function legacyIndependentBatteryDatabase(runtimeOverride:Record<string,unknown>={}) {
+  const db=await retryDatabase();
+  await db.exec('ALTER TABLE energy_optimisation_current ADD COLUMN ha_runtime_received_at timestamptz');
+  const batterySnapshot={schema_version:10,slot_minutes:15,capabilities:{battery:true},battery:{capacity_kwh:10},
+    operating_scope:{modes:{$battery:'controlling'}},
+    battery_execution_feedback:{generation:4,scope_revision:'synthetic-shared-scope',source_receipt:7,previous_contract_id:null,objectives:[]}};
+  const args=capturedSubmission(snapshot,{completion_basis:'home_assistant_ack'});
+  const b=await rpc<Receipt>(db,'accept_energy_planning_job',{...args,input:{...args.input,snapshot:batterySnapshot}});
+  const owned=(await attemptClaim(db,b.job_id))!;
+  const slots=[{start:'2099-01-01T12:00:00Z',battery_command:{schema_version:3,operation:'grid_charge',charge_limit_w:1000,discharge_limit_w:0},device_commands:{},ev_target_current_a:0}];
+  const bCurrent={...currentRow(),plan_schema_version:10,snapshot:batterySnapshot,
+    plan:{status:'ready',plan_id:plan,plans:{priority:{slots}},battery_execution:{id:`${plan}:battery:4`,generation:4,scope_revision:'synthetic-shared-scope'}}};
+  await rpc(db,'publish_energy_planning_job',{...attemptIdentity(owned),current:bCurrent,run:{...runRow(),plan_schema_version:10}});
+  await acknowledgeOwnership(db,plan,snapshot);
+  const oldReference=(await db.query<{v:{published_commands:Record<string,unknown>}}>('SELECT get_energy_replan_state($1) v',[home])).rows[0].v.published_commands;
+  const pArgs=capturedSubmission(manual,{reference_plan_id:plan,completion_basis:'home_assistant_ack'});
+  const p=await rpc<Receipt>(db,'accept_energy_planning_job',{...pArgs,input:{...pArgs.input,reference:oldReference,
+    snapshot:{...batterySnapshot,battery_execution_feedback:{...batterySnapshot.battery_execution_feedback,generation:5,previous_contract_id:`${plan}:battery:4`}}}});
+  const pOwned=(await attemptClaim(db,p.job_id))!;
+  const pCurrent={...bCurrent,plan_id:other,snapshot_id:manual,plan:{...bCurrent.plan,plan_id:other,
+    battery_execution:{id:`${other}:battery:5`,generation:5,scope_revision:'synthetic-shared-scope'}}};
+  await rpc(db,'publish_energy_planning_job',{...attemptIdentity(pOwned),current:pCurrent,run:{...runRow(),id:other,snapshot_id:manual,plan_schema_version:10}});
+  await acknowledgeOwnership(db,other,manual);
+  await db.query('UPDATE energy_optimisation_current SET ha_runtime=$1::jsonb',[JSON.stringify({battery_plan:{accepted:{
+    plan_id:plan,contract_id:`${plan}:battery:4`,scope_revision:'synthetic-shared-scope',generation:4,...runtimeOverride}}})]);
+  await db.exec(await migration(ownershipMigration));
+  return {db,b,p,oldReference};
+}
+Deno.test('forward repair recovers exact older battery provenance after household publication advanced before cutover',async()=>{
+  const {db,b,oldReference}=await legacyIndependentBatteryDatabase();
+  try{
+    const before=await acceptedState(db);
+    assertEquals(before.accepted_commands.state,'unresolved');
+    assertEquals(before.accepted_commands.household?.plan_id,other);
+    assertEquals(before.accepted_commands.battery,null);
+    const frozen=(await db.query<{input:unknown}>('SELECT input FROM private.energy_planning_jobs WHERE id=$1',[b.job_id])).rows[0].input;
+    await db.exec(await migration(batteryProvenanceMigration));
+    const repaired=await acceptedState(db);
+    assertEquals(repaired.reference_plan_id,other);
+    assertEquals(repaired.accepted_commands.household,before.accepted_commands.household);
+    assertEquals(repaired.accepted_commands.state,'ready');
+    assertEquals(repaired.accepted_commands.battery?.plan_id,plan);
+    assertEquals(repaired.accepted_commands.battery?.battery_contract,{id:`${plan}:battery:4`,generation:4,scope_revision:'synthetic-shared-scope'});
+    assertEquals(repaired.accepted_commands.battery?.slots,oldReference.slots);
+    assertEquals(repaired.accepted_reference_revision,before.accepted_reference_revision+1);
+    assertEquals((await db.query<{input:unknown}>('SELECT input FROM private.energy_planning_jobs WHERE id=$1',[b.job_id])).rows[0].input,frozen);
+    await db.exec(await migration(batteryProvenanceMigration));
+    assertEquals(await acceptedState(db),repaired);
+  }finally{await db.close();}
+});
+Deno.test('older battery repair requires all four exact identity fields and never guesses missing commands',async()=>{
+  for(const mismatch of [{plan_id:nextManual},{contract_id:'not-server-issued'},{scope_revision:'different'},{generation:9}]) {
+    const {db}=await legacyIndependentBatteryDatabase(mismatch);
+    try{
+      await db.exec(await migration(batteryProvenanceMigration));
+      assertEquals((await acceptedState(db)).accepted_commands.battery,null);
+      assertEquals((await acceptedState(db)).accepted_commands.state,'unresolved');
+    }finally{await db.close();}
+  }
+  const {db,p}=await legacyIndependentBatteryDatabase();
+  try{
+    await db.query('DELETE FROM private.energy_command_publications WHERE home_id=$1 AND plan_id=$2',[home,plan]);
+    await db.query("UPDATE private.energy_planning_jobs SET input=json_build_object('snapshot',input->'snapshot') WHERE id=$1",[p.job_id]);
+    await db.exec(await migration(batteryProvenanceMigration));
+    assertEquals((await acceptedState(db)).accepted_commands.battery,null);
+    assertEquals((await acceptedState(db)).accepted_commands.state,'unresolved');
+  }finally{await db.close();}
+});
+
+Deno.test('older battery repair accepts intentionally pruned ended slots but refuses future or unknown empty horizons',async()=>{
+  for(const horizon of ['2000-01-01T00:00:00Z','2099-01-01T00:00:00Z',null]) {
+    const {db,p}=await legacyIndependentBatteryDatabase();
+    try{
+      // The later capture has been pruned; the publication identity and its
+      // deliberately empty retained projection are the remaining server proof.
+      await db.query('DELETE FROM private.energy_planning_jobs WHERE id=$1',[p.job_id]);
+      await db.query("UPDATE private.energy_command_publications SET commands=jsonb_set(commands,'{slots}','[]'),horizon_end=$3::timestamptz WHERE home_id=$1 AND plan_id=$2",[home,plan,horizon]);
+      await db.exec(await migration(batteryProvenanceMigration));
+      const state=await acceptedState(db);
+      assertEquals(state.reference_plan_id,other);
+      assertEquals(state.accepted_commands.household?.plan_id,other);
+      if(horizon==='2000-01-01T00:00:00Z') {
+        assertEquals(state.accepted_commands.state,'ready');
+        assertEquals(state.accepted_commands.battery?.plan_id,plan);
+        assertEquals(state.accepted_commands.battery?.slots,[]);
+        assertEquals(state.accepted_commands.battery?.battery_contract,{id:`${plan}:battery:4`,generation:4,scope_revision:'synthetic-shared-scope'});
+        assertEquals((await db.query<{h:string}>('SELECT horizon_end::text h FROM private.energy_command_publications WHERE home_id=$1 AND plan_id=$2',[home,plan])).rows[0].h,'2000-01-01 00:00:00+00');
+      }else{
+        assertEquals(state.accepted_commands.state,'unresolved');
+        assertEquals(state.accepted_commands.battery,null);
+      }
+    }finally{await db.close();}
+  }
+});

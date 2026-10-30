@@ -25,6 +25,7 @@
     "test:planner-contracts": "deno run --allow-read --allow-write --allow-run scripts/check-planner-contracts.ts"
   },
   "imports": {
+    "https://esm.sh/resend@2.0.0": "npm:resend@2.0.0",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.57.2",
     "@/": "./src/",
     "@std/assert": "jsr:@std/assert@1"

@@ -374,7 +374,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1"
+      "jsr:@std/assert@1",
+      "npm:resend@2.0.0"
     ],
     "packageJson": {
       "dependencies": [
@@ -451,6 +452,7 @@
         "npm:react@^18.3.1",
         "npm:recharts@^2.15.4",
         "npm:remark-gfm@^4.0.1",
+        "npm:resend@2.0.0",
         "npm:sonner@^1.7.4",
         "npm:swedish-holidays@^1.1.2",
         "npm:tailwind-merge@^3.7.0",
