@@ -1,5 +1,6 @@
+import { classifyPlanningFailure, PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { generateRulesPlan, type PreparedRulesInput } from "./rules-planner.ts";
-import { RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
+import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
 import { prepareCapturedRulesInput } from "./rules-planning-execution.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import { describeThrown } from "./ha-api-contract.ts";
@@ -20,9 +21,20 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
     const raw = await request.text();
     read();
     if (new TextEncoder().encode(raw).byteLength > MAX_PLANNING_BODY_BYTES) return json({error:"request_too_large"},413);
-    const body = trace.run("request_parse", () => JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput} | {stage:"solve";input:PreparedRulesInput}));
+    const body = trace.run("request_parse", () => {
+      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput} | {stage:"solve";input:PreparedRulesInput}); }
+      catch (error) { if (error instanceof SyntaxError) throw new PlanningInputError(error.message); throw error; }
+    });
+    if (!body || typeof body !== "object") throw new PlanningInputError("Planning request must be an object");
     if (body.protocol !== RULES_PLANNING_PROTOCOL) return json({error:"planning_protocol_mismatch"},409);
     if (body.stage !== "prepare" && body.stage !== "solve") return json({error:"planning_stage_required"},400);
+    if (!body.input || typeof body.input.model_version !== "string" ||
+        !Array.isArray(body.stage === "prepare" ? body.input.snapshot?.slots : body.input.problem?.slots)) {
+      throw new PlanningInputError("Planning stage requires its captured input and slots");
+    }
+    if (body.input.model_version !== RULES_MODEL_VERSION) {
+      throw new PlanningError(body.stage === "prepare" ? "Captured rules planner version changed" : "Prepared rules planner version changed", "planner_upgraded", 409, "recapture");
+    }
     if (body.stage === "prepare") {
       const prepared = trace.run("plan_preparation", () => prepareCapturedRulesInput(body.input, trace), {
         model_version: body.input.model_version, slots: body.input.snapshot.slots.length,
@@ -41,6 +53,7 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
   } catch (error) {
     const detail = describeThrown(error);
     trace.failed(detail);
-    return json({error:"invalid_snapshot",detail},400);
+    const failure = classifyPlanningFailure(error);
+    return json({error:failure.code,detail},failure.status);
   }
 }

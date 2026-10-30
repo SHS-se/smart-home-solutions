@@ -109,6 +109,12 @@ const retryableCode = (code: string): boolean =>
     "internal_error",
     "notification_unavailable",
     "storage_failed",
+    "planning_storage_failed",
+    "planning_internal_error",
+    "planning_input_read_failed",
+    "fixed_plan_read_failed",
+    "home_planning_storage_failed",
+    "home_planning_unavailable",
     "token_lookup_failed",
     "customer_lookup_failed",
   ].includes(code);

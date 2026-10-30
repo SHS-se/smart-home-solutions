@@ -316,3 +316,16 @@ Deno.test("unobserved boiler remains permitted with explicitly unknown power in 
   assert(stored.plan.planning_warnings.some(w => w.code === "boiler_power_estimated"));
   assertEquals(stored.plan.services[0].control.rated_power_w, null);
 });
+
+Deno.test("known planning storage outages carry retry authority while input and auth remain terminal", async () => {
+  for (const code of ["planning_storage_failed", "planning_input_read_failed", "fixed_plan_read_failed",
+    "home_planning_storage_failed", "home_planning_unavailable", "planning_internal_error"]) {
+    const response = haApiResponse("synthetic-request", {error: code}, 503);
+    const body = await response.json();
+    assertEquals(body.error_info.code, code);
+    assertEquals(body.error_info.retryable, true);
+  }
+  for (const code of ["invalid_snapshot", "unauthorized", "planner_not_configured", "planning_submission_conflict"]) {
+    assertEquals((await haApiResponse("synthetic-request", {error: code}, 400).json()).error_info.retryable, false);
+  }
+});

@@ -99,3 +99,17 @@ Deno.test('model deviations are strict scoped requests and never execution unava
     assertThrows(() => parseExecutionReplan({...raw,changes:[change]}), ExecutionReplanError);
   }
 });
+
+Deno.test('independent battery evidence names household Q but proves actual B contract and opportunity',()=>{
+  const snapshot=capture();snapshot.operating_scope.modes.$battery='controlling';
+  snapshot.battery_execution_feedback={generation:3,source_receipt:2,previous_contract_id:'synthetic-B',scope_revision:'scope',objectives:[]};
+  const household=reference(snapshot);
+  const battery={...reference(snapshot),plan_id:'33333333-3333-4333-8333-333333333333',battery_contract:{id:'synthetic-B',scope_revision:'scope',generation:2}};
+  battery.slots[0].battery_command={schema_version:3,operation:'grid_charge',charge_limit_w:1000,discharge_limit_w:0,allow_grid_charge:true,allow_battery_export:false};
+  household.slots=[]; // Q's horizon is shorter; B still owns this opportunity.
+  const evidence=parseExecutionReplan({...request(),changes:[{...request().changes[0],owner:'$battery',cause:'synthetic_fault'}]});
+  assertEquals(validateExecutionReplan(evidence,household,snapshot,{battery}),evidence);
+  assertThrows(()=>validateExecutionReplan(evidence,household,snapshot,{battery:null}),ExecutionReplanError,'exact accepted owner');
+  snapshot.battery_execution_feedback.previous_contract_id='another';
+  assertThrows(()=>validateExecutionReplan(evidence,household,snapshot,{battery}),ExecutionReplanError,'exact accepted owner');
+});

@@ -1,3 +1,4 @@
+import { PlanningError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { OperatingScope } from "./planner/operating-scope.ts";
 import type { PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
@@ -5,9 +6,9 @@ import { HA_UUID } from "./ha-api-contract.ts";
 
 import { changeIntervals, type ExecutionChange, type ExecutionReplan } from "./planner/execution-evidence.ts";
 export type { ExecutionChange, ExecutionReplan } from "./planner/execution-evidence.ts";
-export class ExecutionReplanError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 400) {
-    super(message); this.name = "ExecutionReplanError";
+export class ExecutionReplanError extends PlanningError {
+  constructor(code: string, message: string, status = 400) {
+    super(message, code, status, "terminal"); this.name = "ExecutionReplanError";
   }
 }
 const invalid = (detail: string): never => { throw new ExecutionReplanError("invalid_execution_replan", detail); };
@@ -109,34 +110,46 @@ export function ownerHasAcceptedWork(owner: string, slot: PublishedCommandSlot, 
     });
 }
 
-type ExecutionReference = PublishedCommandReference & {
+export type ExecutionReference = PublishedCommandReference & {
   operating_scope?: OperatingScope;
   execution_availability?: ExecutionChange[];
 };
+/** A restored local account may bootstrap without discarding cloud-held commands. */
+export function validateAcceptedBatteryCapture(snapshot: OptimisationSnapshot, reference: ExecutionReference | null): void {
+  const previous = snapshot.battery_execution_feedback?.previous_contract_id;
+  if (previous != null && previous !== reference?.battery_contract?.id) throw new PlanningError(
+    "Battery acceptance changed during capture", "accepted_reference_changed", 409, "recapture");
+}
+
 export function validateExecutionReplan(request: ExecutionReplan, reference: ExecutionReference | null,
-  snapshot: OptimisationSnapshot): ExecutionReplan {
+  snapshot: OptimisationSnapshot, independent?: {battery: ExecutionReference | null}): ExecutionReplan {
   if (!reference || reference.plan_id !== request.accepted_plan_id) {
-    throw new ExecutionReplanError("execution_reference_changed", "Execution evidence must name the current HA-accepted reference plan", 409);
+    throw new ExecutionReplanError(independent ? "accepted_reference_changed" : "execution_reference_changed", "Execution evidence must name the current HA-accepted reference plan", 409);
   }
   const owners = executionOwnerKeys(snapshot);
   for (const change of request.changes) {
+    const source = change.owner === "$battery" && independent ? independent.battery : reference;
+    if (!source || change.owner === "$battery" && independent &&
+        source.battery_contract?.id !== snapshot.battery_execution_feedback?.previous_contract_id) {
+      throw new ExecutionReplanError("accepted_reference_changed", "Execution evidence requires the exact accepted owner reference", 409);
+    }
     if (change.status !== "recovered" && !changeIntervals(change).length) {
       return invalid(`Execution change owner ${change.owner} must name its blocked accepted opportunity`);
     }
     if (!owners.has(change.owner) || snapshot.operating_scope?.modes[change.owner] !== "controlling" ||
-        reference.operating_scope?.modes[change.owner] !== "controlling") {
+        source.operating_scope?.modes[change.owner] !== "controlling") {
       return invalid(`Execution change owner ${change.owner} must be known and controlling in the accepted plan and capture`);
     }
     if (change.status === "plan_deviation") {
       const comparable = change.owner === "$pool" ? !!snapshot.pool : !!snapshot.battery;
-      if (!comparable || !reference.slots.some(slot => change.affected_intervals.some(interval =>
+      if (!comparable || !source.slots.some(slot => change.affected_intervals.some(interval =>
         Date.parse(interval.start) < Date.parse(slot.start) + snapshot.slot_minutes * 60_000 && Date.parse(interval.end) > Date.parse(slot.start)))) {
         return invalid("Plan deviation must name an accepted owner trajectory and affected interval");
       }
       continue;
     }
-    const recovery = change.status === "recovered" && reference.execution_availability?.some(previous => previous.owner === change.owner && previous.status !== "recovered");
-    const work = reference.slots.some(slot => ownerHasAcceptedWork(change.owner, slot, snapshot) &&
+    const recovery = change.status === "recovered" && source.execution_availability?.some(previous => previous.owner === change.owner && previous.status !== "recovered");
+    const work = source.slots.some(slot => ownerHasAcceptedWork(change.owner, slot, snapshot) &&
       (change.status === "recovered" || change.blocked_intervals.some(interval =>
         Date.parse(interval.start) < Date.parse(slot.start) + snapshot.slot_minutes * 60_000 && Date.parse(interval.end) > Date.parse(slot.start))));
     if (!work && !recovery) return invalid(`Execution change owner ${change.owner} does not name accepted work or a suppressed objective recovering`);

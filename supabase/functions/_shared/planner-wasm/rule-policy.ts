@@ -1,3 +1,4 @@
+import { PlanningError } from "../planning-errors.ts";
 import type { PlannerRuleKey, ReadyProblem } from "./ready-problem.ts";
 import { WATER_MINUTES_PER_DAY } from "../hot-water-opportunities.ts";
 
@@ -24,7 +25,9 @@ export const REFEREE_RULE_DEFAULTS: Record<"water_opportunities", RuleDefault> =
 };
 export const RULE_POINTS_MIN = -2;
 export const RULE_POINTS_MAX = 2;
-export class CriteriaError extends Error {}
+export class CriteriaError extends PlanningError {
+  constructor(message: string) { super(message, "planner_not_configured", 503, "terminal"); }
+}
 
 export function ruleDefaults(key: string): RuleDefault {
   const value = [...Object.entries(RULE_DEFAULTS), ...Object.entries(REFEREE_RULE_DEFAULTS)].find(([candidate]) => candidate === key)?.[1];
