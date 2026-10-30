@@ -107,6 +107,7 @@
     "fast-xml-parser": "5.11.2",
     "globals": "^15.15.0",
     "jscpd": "^5.4.2",
+    "resend": "2.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
