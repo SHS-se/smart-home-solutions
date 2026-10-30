@@ -149,13 +149,15 @@ export function buildBatteryExecutionContract(input: {
   pv_w: number[];
   mode: BatteryExecutionContract["mode"];
   scope_revision: string;
+  /** The planner and battery model this contract was made with, fixed-length (rules-planner-identity.ts). */
+  model_revision: string;
   feedback: ExecutionFeedback;
   /** Schema 10: state each slot's instruction over this demand (contract v2). */
   demand?: BatteryDemand;
 }): BatteryExecutionContract {
-  const { plan, rows, pv_w, mode, scope_revision, feedback, demand } = input;
+  const { plan, rows, pv_w, mode, scope_revision, model_revision, feedback, demand } = input;
   const battery = plan.battery;
-  if (!battery || plan.status !== "ready" || !scope_revision || !rows.length) {
+  if (!battery || plan.status !== "ready" || !scope_revision || !model_revision || !rows.length) {
     throw new Error("ready battery plan and explicit execution scope required");
   }
   integer(feedback.generation, "request generation");
@@ -276,7 +278,7 @@ export function buildBatteryExecutionContract(input: {
   const contract: BatteryExecutionContractV1 = {
     schema: "battery-plan-execution-v1", id: `${plan.plan_id}:battery:${feedback.generation}`,
     plan_id: plan.plan_id, generation: feedback.generation, mode, scope_revision,
-    model_revision: `${plan.model_version}:${battery.conversion.revision}:terminal-storage:${battery.charge_efficiency}:${battery.discharge_efficiency}`,
+    model_revision,
     energy_basis: "stored_energy_mwh", capacity_mwh: capacity, minimum_mwh: minimum, maximum_mwh: maximum,
     export_reserve_mwh: Math.max(minimum, Math.round(plan.policy.battery_export_reserve_soc * capacity)),
     valid_until_ms: Date.parse(plan.valid_until), source_receipt: feedback.source_receipt,

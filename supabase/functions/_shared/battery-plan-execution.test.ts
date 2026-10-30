@@ -4,6 +4,7 @@ import { batteryExecutionFixture } from "../../../scripts/generate-battery-execu
 import { rulesFixtureInput, batterySnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 
 import { buildBatteryExecutionContract } from "./planner/battery-plan-execution.ts";
+import { executionModelRevision } from "./rules-planner-identity.ts";
 
 function source(soc?: number) {
   const snapshot = batterySnapshot();
@@ -21,7 +22,7 @@ function source(soc?: number) {
     stored_end_kwh: s.battery_soc * result.plan.battery!.capacity_kwh,
     curtailed_w: s.curtailed_w, unserved_w: s.unserved_w,
   })), pv_w: result.plan.plans.priority.slots.map(s => s.pv_w),
-    mode: "controlling" as const, scope_revision: "whole-house",
+    mode: "controlling" as const, scope_revision: "whole-house", model_revision: "test-model",
     feedback: { generation: 0, source_receipt: 0, previous_contract_id: null, objectives: [] } };
 }
 
@@ -36,6 +37,18 @@ Deno.test("canonical reference preserves a partial first quarter and every gross
     assert(row.stored_end_mwh >= contract.minimum_mwh);
     assert(!(row.charge_ac_mwh && row.discharge_ac_mwh));
   }
+});
+
+Deno.test("a real battery model's revision fits the executor's 128-character identity", () => {
+  // A measured model's revision is a sha256; joined with the planner's version it would not fit.
+  const version = `rules-planner-v22:${"7".repeat(64)}`;
+  const battery = (revision: string) => ({ conversion: { revision: `sha256:${revision.repeat(64)}` }, charge_efficiency: .95, discharge_efficiency: .95 });
+  const measured = executionModelRevision(version, battery("a"));
+  assert(measured.length <= 128, `${measured.length} characters`);
+  // It still changes with the model it names, and only then.
+  assertEquals(executionModelRevision(version, battery("a")), measured);
+  assert(executionModelRevision(version, battery("b")) !== measured);
+  assert(executionModelRevision(`${version}0`, battery("a")) !== measured);
 });
 
 Deno.test("recovery is allocated once inside the original charging objective", () => {

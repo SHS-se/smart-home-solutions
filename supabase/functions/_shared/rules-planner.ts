@@ -39,7 +39,7 @@ import { assertHeldCommands, commandOwner, compileCommitments, ownerLabel, unava
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
 
-import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
+import { RULES_MODEL_VERSION, executionModelRevision } from "./rules-planner-identity.ts";
 export { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
 const QUARTER_MS = 900_000;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -646,7 +646,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     const feedback = snapshot.battery_execution_feedback;
     const contract = p.battery && feedback && (mode === "controlling" || mode === "control_verification")
       ? buildBatteryExecutionContract({ plan: executionPlan, rows: priority.rows, pv_w: p.slots.map(s => s.solar_w),
-        mode, scope_revision: feedback.scope_revision!, feedback, demand: plan.battery_demand }) : undefined;
+        mode, scope_revision: feedback.scope_revision!, model_revision: executionModelRevision(executionPlan.model_version, executionPlan.battery!), feedback, demand: plan.battery_demand }) : undefined;
     plan = { ...plan, operating_scope: snapshot.operating_scope, execution_plan: executionPlan,
       ...(contract ? { battery_execution: contract } : {}) };
   }
