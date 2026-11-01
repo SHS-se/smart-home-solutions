@@ -199,7 +199,8 @@ serve(withTrafficMetrics("integration-status", async (req, traffic) => {
       });
     }
     const [{data: forecastAccuracy, error: accuracyError}, roomModels] = await Promise.all([
-      supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId}), readRoomModels(supabase, auth.homeId)]);
+      Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: auth.homeId}))
+        .catch(() => ({data: null, error: {code: 'report_read_failed'}})), readRoomModels(supabase, auth.homeId)]);
     if (accuracyError) console.error('[FORECAST-ACCURACY] report read failed', {home_id: auth.homeId, code: accuracyError.code});
     return json({
       api_version: HA_API_VERSION,

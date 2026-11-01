@@ -153,7 +153,8 @@ const PlanWorkspace: React.FC<PlanWorkspaceProps> = ({ section, customerId, home
         p_customer_id: customerId, p_home_id: homeId,
         p_known: { ...cache.known, actuals: cache.actuals.hashes(),
           prices: cache.prices.hashes(), device_actuals: cache.deviceActuals.hashes() },
-      }), supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId})]);
+      }), Promise.resolve(supabase.rpc('get_energy_forecast_accuracy', {p_home_id: homeId}))
+        .catch(() => ({data: null, error: {message: 'Accuracy unavailable'}}))]);
       if (syncRef.current !== cache) return;
       setAccuracyError(accuracyResult.error ? t('Noggrannhet är inte tillgänglig', 'Accuracy unavailable') : null);
       setAccuracy(accuracyResult.data as unknown as AccuracyReport | null);
