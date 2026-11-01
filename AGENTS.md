@@ -27,6 +27,27 @@ The Home Assistant code is in the separate `shs-ha-integration` repository,
 checked out beside this one. Before changing anything there, read its `AGENTS.md`
 and follow it.
 
+# Working in this checkout
+
+Other sessions and the user work in this tree too. Before editing or committing,
+check the branch and `git status --porcelain`. If not on `dev` with a clean tree,
+switch to `dev`. If not on `dev` with staged or uncommitted changes, stop and tell
+the user instead of switching, stashing or committing; they may be mid-merge.
+
+Stage files by name, never with `git add -A` or `git add .`. Account for every
+line of `git status` before committing; an untracked file you did not write is not
+yours to add. Check `git diff --cached --stat` for changes larger than you made.
+
+Never use `git stash` to compare against `HEAD`; an interrupted command leaves the
+work stranded. Read the test, inspect the history or use a temporary worktree.
+
+# Answering questions about the setup
+
+For what a home has, what is configured or whether prerequisites are met, query
+the Home Assistant connector and search earlier sessions when those tools are
+available. Do not answer from source or vendor documentation alone. Verify entity
+IDs, units and current values before recommending anything built on them.
+
 # Lint validation
 
 Before committing code changes, run `npm run lint` from the repository root and
@@ -72,6 +93,42 @@ Run `deno task test` before committing planner changes. The full suite includes
 `supabase/functions/_shared/ha-api-contract.test.ts`, which checks that the stored
 consumer fixture exactly matches output from the real planner; the focused
 planner tests alone do not cover this requirement.
+
+Judge planner changes on the planner bench (`docs/planner-bench/README.md`, the
+staff page `/portal/planner-bench` on the test site), not from gate tables. Push
+to `dev` or run `bench/run.ts --shas <sha>`, and report the run score against the
+current planner.
+
+Keep user preferences and live measurements out of `energy_prepared_forecasts`;
+read them at planning time. When a setting does not take effect, check whether it
+travels through the prepared product before adding cache invalidation.
+
+The pool model is learned from measured data by the daily refit, never by a
+one-off retune, and has no air-temperature terms. Propose changes as learned terms
+in `fitPoolDynamics`, backtested out-of-sample with a refit before each run, and
+show the measured evidence before proposing a model shape.
+
+# Planner bench
+
+The planner version is the only variable between bench runs. Initial conditions,
+forecast data and value curves belong to the test case, with curves derived from
+the case's data. Before adding a case or changing the household, adapter or
+referee, check what each planner version is given and say where versions get
+different information.
+
+In `src/lib/planner-bench/score.ts`, price penalties count only energy drawn from
+the grid, never load carried by solar or the battery. Two rules must not take
+points from the same quarter for the same mistake. When a scoring rule involves a
+choice like these, state it with a recommendation before pushing.
+
+# Interface copy
+
+Do not put informational notes in banners at the top of a page. Put a note beside
+what it describes, or behind a control in the status row.
+
+Savings copy says "estimate", never "up to" or a similar hedge. Mark a modelled
+figure as an estimate once, such as in its section heading, and leave rows and
+repeats unqualified. Measured figures are never labelled as estimates.
 
 # Database migrations
 
