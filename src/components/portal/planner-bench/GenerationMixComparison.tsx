@@ -58,9 +58,12 @@ const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: Arm
 const GenerationMixComparison: React.FC = () => {
   const { t, language } = useLanguage();
   const [params, setParams] = useSearchParams();
-  const correction = params.get('study') === 'correction';
+  const study = params.get('study') === 'correction-v2' ? 'correction-v2' : params.get('study') === 'correction' ? 'correction' : 'mix';
+  const correction = study !== 'mix';
+  const v2 = study === 'correction-v2';
+  const algorithm = v2 ? 'se3-price-residual-v2' : 'se3-price-residual-v1';
   const labels: ArmLabels = correction ? {
-    baseline: t('Nuvarande prognos', 'Current forecast'), corrected: t('Med korrigering', 'With correction'),
+    baseline: t('Nuvarande prognos', 'Current forecast'), corrected: v2 ? t('Med korrigering v2', 'With correction v2') : t('Med korrigering', 'With correction'),
     lowError: t('Korrigeringen har lägre fel hittills', 'Correction has lower error so far'),
     highError: t('Korrigeringen har högre fel hittills', 'Correction has higher error so far'),
   } : {
@@ -71,9 +74,10 @@ const GenerationMixComparison: React.FC = () => {
   const series = MIX_SERIES.map(item => ({ ...item, label: item.key === 'reduced' ? labels.baseline : item.key === 'full' ? labels.corrected : t(item.sv, item.en) }));
   const pairId = params.get('pair');
   const query = useQuery({
-    queryKey: ['test-price-pair-comparison', correction, pairId],
+    queryKey: ['test-price-pair-comparison', study, pairId],
     queryFn: async () => {
-      const { data, error } = await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison', { p_pair_id: pairId });
+      const { data, error } = await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison',
+        correction ? { p_pair_id: pairId, p_algorithm: algorithm } : { p_pair_id: pairId });
       if (error) throw new Error(error.message);
       return data as PricePairComparison;
     },
@@ -104,11 +108,11 @@ const GenerationMixComparison: React.FC = () => {
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label htmlFor="price-study-select" className="mb-1 block text-sm">{t('Experiment', 'Experiment')}</label>
-          <Select value={correction ? 'correction' : 'mix'} onValueChange={value => {
+          <Select value={study} onValueChange={value => {
             const next = new URLSearchParams(params); next.set('study', value); next.delete('pair'); setParams(next, { replace: true });
           }}>
             <SelectTrigger id="price-study-select" className="min-h-11 w-64"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="correction">{t('Korrigera nuvarande prognos', 'Correct current forecast')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell', 'Generation mix model')}</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="correction-v2">{t('Korrigering v2 · ny studie', 'Correction v2 · new study')}</SelectItem><SelectItem value="correction">{t('Korrigering v1', 'Correction v1')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell', 'Generation mix model')}</SelectItem></SelectContent>
           </Select>
         </div>
       <Button variant="outline" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -116,6 +120,8 @@ const GenerationMixComparison: React.FC = () => {
       </Button>
       </div>
     </div>
+    {v2 && <p className="max-w-3xl text-sm text-muted-foreground">{t('Ny framåtblickande studie: en försiktigare marknadskorrigering där varje prisdag väger lika i inlärningen. Endast prognoser sparade efter v2-starten ingår i resultaten. Den ursprungliga studien finns kvar som v1.',
+      'New prospective study: a more conservative market correction that gives each priced date equal training weight. Results include only forecasts saved after v2 started. The original study remains available as v1.')}</p>}
     {query.isLoading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Laddar jämförelser…', 'Loading comparisons…')}</p>}
     {query.isError && <Alert variant="destructive"><AlertDescription>{t('Kunde inte hämta jämförelsen. Försök uppdatera igen.', 'Could not load the comparison. Try refreshing again.')}</AlertDescription></Alert>}
     {data && <>

@@ -356,6 +356,28 @@ async function expectGenerationMixAvailability(page: Page): Promise<boolean> {
 }
 
 test.describe('planner bench', () => {
+  test('TEST correction v2 requests its own cohort and clears pair selection when returning to v1', async ({ context, page }) => {
+    await mockBackend(context);
+    const algorithms: string[] = [];
+    await context.route('**/rest/v1/rpc/get_test_price_correction_comparison', async route => {
+      const body = route.request().postDataJSON(); algorithms.push(body.p_algorithm);
+      const data = mixComparison(true);
+      data.selected!.baseline_generated_at = '2026-10-22T20:15Z';
+      await route.fulfill({ json: data });
+    });
+    await login(page);
+    await page.goto(`/portal/planner-bench?tab=generation-mix&study=correction-v2&pair=${PRICE_PAIR_ID}`);
+    if (!await expectGenerationMixAvailability(page)) { expect(algorithms).toHaveLength(0); return; }
+    const view = page.getByTestId('generation-mix-comparison');
+    await expect(view).toContainText(/New prospective study|Ny framåtblickande studie/);
+    await expect(view.getByTestId('mix-score-2')).toContainText(/With correction v2|Med korrigering v2/);
+    expect(algorithms.every(algorithm => algorithm === 'se3-price-residual-v2')).toBe(true);
+    await view.locator('#price-study-select').click();
+    await page.getByRole('option', { name: /Correction v1|Korrigering v1/ }).click();
+    await expect(page).toHaveURL(/study=correction(&|$)/); await expect(page).not.toHaveURL(/pair=/);
+    await expect.poll(() => algorithms.at(-1)).toBe('se3-price-residual-v1');
+  });
+
   test('TEST residual correction compares the real forecast and keeps studies separate in navigation', async ({ context, page }) => {
     await mockBackend(context);
     let correctionRequests = 0, mixRequests = 0;

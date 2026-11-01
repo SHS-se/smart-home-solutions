@@ -1,9 +1,11 @@
 import { assert, assertEquals, assertStringIncludes } from '@std/assert';
 import { classify, classifyPipeline } from '../scripts/ci-changes.ts';
 Deno.test('residual study source has no path into executable household forecasts or the planner', () => {
-  const changes=classify(new URL('..',import.meta.url).pathname,['supabase/functions/_shared/price-correction.ts']);
-  assertEquals(changes.functions,['energy-price-correction-experiment']);
-  assert(!changes.planner);
+  for (const source of ['price-correction.ts', 'price-correction-v2.ts']) {
+    const changes=classify(new URL('..',import.meta.url).pathname,[`supabase/functions/_shared/${source}`]);
+    assertEquals(changes.functions,['energy-price-correction-experiment']);
+    assert(!changes.planner);
+  }
 });
 Deno.test('the complete residual deployment change validates the planner but deploys only research workers', () => {
   const workflow='.github/workflows/ci-deploy.yml';

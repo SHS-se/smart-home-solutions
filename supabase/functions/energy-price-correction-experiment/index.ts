@@ -1,12 +1,19 @@
 /** Independent TEST worker: corrections are research records, never household forecasts. */
-import { buildPriceCorrection, type PriceCorrectionForecast, type PriceCorrectionInput } from '../_shared/price-correction.ts';
+import { buildPriceCorrection, PRICE_CORRECTION_ALGORITHM, type PriceCorrectionForecast, type PriceCorrectionInput } from '../_shared/price-correction.ts';
+import { buildPriceCorrectionV2, PRICE_CORRECTION_V2_ALGORITHM, type PriceCorrectionV2Forecast } from '../_shared/price-correction-v2.ts';
 
-export interface CorrectionReservation { id: string; status: 'pending' | 'paired' | 'unavailable'; context: PriceCorrectionInput }
+export type CorrectionAlgorithm = typeof PRICE_CORRECTION_ALGORITHM | typeof PRICE_CORRECTION_V2_ALGORITHM;
+export type CorrectionForecast = PriceCorrectionForecast | PriceCorrectionV2Forecast;
+export interface CorrectionReservation { id: string; algorithm: CorrectionAlgorithm; status: 'pending' | 'paired' | 'unavailable'; context: PriceCorrectionInput }
 export interface CorrectionStore {
   verifyToken(token: string): Promise<boolean>;
-  begin(): Promise<CorrectionReservation | null>;
-  complete(id: string, forecast: PriceCorrectionForecast): Promise<void>;
+  begin(algorithm: CorrectionAlgorithm): Promise<CorrectionReservation | null>;
+  complete(id: string, forecast: CorrectionForecast): Promise<void>;
 }
+const STUDIES = [
+  { algorithm: PRICE_CORRECTION_ALGORITHM, calculate: buildPriceCorrection },
+  { algorithm: PRICE_CORRECTION_V2_ALGORITHM, calculate: buildPriceCorrectionV2 },
+] as const;
 export function createPriceCorrectionHandler(projectUrl: string, store: CorrectionStore) {
   return async (request: Request): Promise<Response> => {
     if (projectUrl !== 'https://vxqpgbzseckgceopitpm.supabase.co') return Response.json({ error: 'test_lane_only' }, { status: 403 });
@@ -15,13 +22,25 @@ export function createPriceCorrectionHandler(projectUrl: string, store: Correcti
     if (!token) return Response.json({ error: 'unauthorized' }, { status: 401 });
     try {
       if (!await store.verifyToken(token)) return Response.json({ error: 'unauthorized' }, { status: 401 });
-      const reservation = await store.begin();
-      if (!reservation) return Response.json({ status: 'no_household_forecast' });
-      if (reservation.status !== 'pending') return Response.json({ id: reservation.id, status: 'already_saved' });
-      const forecast = buildPriceCorrection(reservation.context);
-      await store.complete(reservation.id, forecast);
-      return Response.json({ id: reservation.id, status: forecast.status, training_quarters: forecast.fit?.training.quarters ?? 0,
-        corrected_quarters: forecast.targets.filter(row => row.corrected !== null).length });
+      // Independent reservations: a failed version cannot prevent the other
+      // study from retaining its completed forecast. Retries reuse each fence.
+      const results = await Promise.allSettled(STUDIES.map(async study => {
+        const reservation = await store.begin(study.algorithm);
+        if (!reservation) return { algorithm: study.algorithm, status: 'no_household_forecast' };
+        if (reservation.algorithm !== study.algorithm) throw new Error('Wrong correction algorithm');
+        if (reservation.status !== 'pending') return { algorithm: study.algorithm, id: reservation.id, status: 'already_saved' };
+        const forecast = study.calculate(reservation.context);
+        await store.complete(reservation.id, forecast);
+        return { algorithm: study.algorithm, id: reservation.id, status: forecast.status,
+          training_quarters: forecast.fit?.training.quarters ?? 0,
+          corrected_quarters: forecast.targets.filter(row => row.corrected !== null).length };
+      }));
+      const runs = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+      if (results.some(result => result.status === 'rejected')) {
+        console.error('test_price_correction_failed');
+        return Response.json({ error: 'test_price_correction_failed', runs }, { status: 500 });
+      }
+      return Response.json(runs.every(run => run.status === 'no_household_forecast') ? { status: 'no_household_forecast' } : { runs });
     } catch {
       console.error('test_price_correction_failed');
       return Response.json({ error: 'test_price_correction_failed' }, { status: 500 });
@@ -38,8 +57,8 @@ if (import.meta.main) {
       if (error) throw new Error('Correction authentication failed');
       return data === true;
     },
-    async begin() {
-      const { data, error } = await client.rpc('begin_test_price_correction');
+    async begin(algorithm) {
+      const { data, error } = await client.rpc('begin_test_price_correction', { p_algorithm: algorithm });
       if (error) throw new Error('Correction reservation failed');
       return data;
     },

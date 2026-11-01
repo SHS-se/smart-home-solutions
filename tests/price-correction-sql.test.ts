@@ -1,14 +1,10 @@
 /** Independently generated synthetic forecasts; no household captures. */
 import { assertEquals, assertRejects } from '@std/assert';
-import { priceExperimentDb } from './helpers/price-experiment-db.ts';
+import { priceCorrectionDb } from './helpers/price-experiment-db.ts';
 const HOME='11111111-1111-4111-8111-111111111111', BASE='21111111-1111-4111-8111-111111111111';
 const START=Math.ceil(Date.now()/3_600_000)*3_600_000+5*86_400_000;
 const iso=(at: number)=>new Date(at).toISOString();
-async function setup() {
-  const db=await priceExperimentDb(HOME);
-  await db.exec(await Deno.readTextFile('supabase/migrations/20261026100000_test_price_residual_correction.sql'));
-  return db;
-}
+const setup=()=>priceCorrectionDb(HOME);
 type DB=Awaited<ReturnType<typeof setup>>;
 async function baseline(db: DB, id=BASE) {
   await db.query(`INSERT INTO energy_price_forecast_generations(id,home_id,generated_at,inputs,outlook) VALUES($1,$2,clock_timestamp(),$3,$4)`,[id,HOME,
@@ -32,7 +28,7 @@ Deno.test('correction schema is dormant and service RPC-only; reservations freez
   assertEquals((await db.query('SELECT training_eligible,eligible FROM energy_test_price_correction_targets ORDER BY start_ts')).rows,[{training_eligible:true,eligible:false},{training_eligible:true,eligible:false}]);
   await assertRejects(()=>complete(db,r.id,forecast(true)),Error,'Conflicting completed');
   await assertRejects(()=>db.exec('UPDATE energy_test_price_correction_targets SET baseline=99'),Error,'immutable');
-  assertEquals((await db.query("SELECT has_table_privilege('service_role','energy_test_price_corrections','INSERT') writable,has_function_privilege('anon','begin_test_price_correction()','EXECUTE') executable")).rows,[{writable:false,executable:false}]);
+  assertEquals((await db.query("SELECT has_table_privilege('service_role','energy_test_price_corrections','INSERT') writable,has_function_privilege('anon','begin_test_price_correction(text)','EXECUTE') executable")).rows,[{writable:false,executable:false}]);
  }finally{await db.close();}
 });
 Deno.test('first unavailable correction seeds later fits from newly published future prices, with immutable truth cutoffs',async()=>{

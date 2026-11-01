@@ -21,3 +21,18 @@ export async function priceExperimentDb(home: string) {
   await db.exec(await Deno.readTextFile('supabase/migrations/20261022233000_test_price_pair_comparison_ui.sql'));
   return db;
 }
+
+/** Current research schema, including versioned corrections; all callers supply synthetic homes. */
+export async function priceCorrectionDb(home: string) {
+  const db = await priceExperimentDb(home);
+  try {
+    for (const migration of [
+      '20261026100000_test_price_residual_correction.sql',
+      '20261101110000_test_price_residual_v2.sql',
+    ]) await db.exec(await Deno.readTextFile(`supabase/migrations/${migration}`));
+    return db;
+  } catch (error) {
+    await db.close();
+    throw error;
+  }
+}
