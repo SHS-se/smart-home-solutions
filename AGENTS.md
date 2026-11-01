@@ -3,6 +3,30 @@
 Make all changes on `dev` unless the user explicitly requests another branch.
 Check the current branch before editing files and switch to `dev` if needed.
 
+# Environments and deploys
+
+All changes go to `dev` first so they can be tested before reaching production.
+Never commit feature work directly to `main`. Promote tested work with a normal
+`dev` → `main` merge once it has been verified on the test deploy.
+
+- `dev` → test: TEST Supabase (`vxqpgbzseckgceopitpm`), Cloudflare Pages project
+  `test-smart-home-solutions`, https://test-smart-home-solutions.pages.dev
+- `main` → production: prod Supabase (`oosxndduqzhvrorgogaw`), Cloudflare Pages
+  project `prod-smart-home-solutions`, https://prod-smart-home-solutions.pages.dev
+
+CI (`.github/workflows/ci-deploy.yml`) runs on push to `main` or `dev` on `origin`
+(`SHS-se/smart-home-solutions`). It runs lint, tests and build, applies migrations,
+deploys edge functions, deploys the frontend, then prunes old Pages deployments,
+keeping a short rollback window. Each job runs only for what changed since the
+branch's last successful deploy. No manual edge-function deploy is needed;
+`scripts/dev.sh deploy [test|live]` is only for ad-hoc testing.
+
+# Other repository
+
+The Home Assistant code is in the separate `shs-ha-integration` repository,
+checked out beside this one. Before changing anything there, read its `AGENTS.md`
+and follow it.
+
 # Lint validation
 
 Before committing code changes, run `npm run lint` from the repository root and
