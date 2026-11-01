@@ -9,6 +9,9 @@ const weather = () => Response.json(mediumRangeWeatherFixture());
 const request = (token = "private-cron-token") => new Request(`${TEST}/functions/v1/energy-market-archive`, {
   method: "POST", headers: { "x-energy-market-archive-token": token },
 });
+const generationRequest = (body: unknown = { generation: true }) => new Request(`${TEST}/functions/v1/energy-market-archive`, {
+  method: "POST", headers: { "x-energy-market-archive-token": "private-cron-token" }, body: JSON.stringify(body),
+});
 const hourly = `<GL_MarketDocument><mRID>doc-1</mRID><revisionNumber>2</revisionNumber><process.processType>A01</process.processType>
 <createdDateTime>2026-10-24T08:00Z</createdDateTime><TimeSeries><mRID>series-1</mRID><businessType>A01</businessType><curveType>A01</curveType>
 <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name><Period><timeInterval><start>2026-10-24T22:00Z</start><end>2026-10-24T23:00Z</end></timeInterval>
@@ -39,17 +42,10 @@ Deno.test("market archive checks exact TEST and private custom token before any 
   assertEquals(db.rows.length, 0);
 });
 
-Deno.test("market archive records native market and seven-day weather windows and appends repeated observations", async () => {
+Deno.test("hourly market archive requests only day-ahead datasets and appends repeated observations", async () => {
   const db = storage(), queries: URLSearchParams[] = [];
   const upstream: typeof fetch = (input, init) => {
     const url = new URL(String(input));
-    if (url.hostname === "api.open-meteo.com") {
-      assertEquals(url.searchParams.get("securityToken"), null);
-      assertEquals(url.searchParams.get("models"), "ecmwf_ifs025");
-      assertEquals(url.searchParams.get("forecast_days"), "7");
-      assertEquals(url.searchParams.get("latitude")?.split(",").length, 10);
-      return Promise.resolve(weather());
-    }
     assertEquals(`${url.origin}${url.pathname}`, "https://web-api.tp.entsoe.eu/api");
     assertEquals(url.searchParams.get("securityToken"), config.entsoeToken);
     assertEquals(init?.redirect, "error");
@@ -59,13 +55,12 @@ Deno.test("market archive records native market and seven-day weather windows an
   const handler = createMarketArchiveHandler(config, db.store, upstream, now);
   assertEquals((await handler(request())).status, 200);
   assertEquals((await handler(request())).status, 200);
-  assertEquals(db.rows.length, 8);
-  assertEquals(new Set(db.rows.map(row => row.id)).size, 8);
-  assertEquals(db.rows.map(row => row.dataset).sort(), ["wind_day_ahead", "load_day_ahead", "load_week_ahead", "weather_medium_range", "wind_day_ahead", "load_day_ahead", "load_week_ahead", "weather_medium_range"].sort());
-  assertEquals(queries.slice(0, 3).map(query => [query.get("documentType"), query.get("processType"), query.get("periodStart"), query.get("periodEnd")]), [
+  assertEquals(db.rows.length, 4);
+  assertEquals(new Set(db.rows.map(row => row.id)).size, 4);
+  assertEquals(db.rows.map(row => row.dataset).sort(), ["wind_day_ahead", "load_day_ahead", "wind_day_ahead", "load_day_ahead"].sort());
+  assertEquals(queries.slice(0, 2).map(query => [query.get("documentType"), query.get("processType"), query.get("periodStart"), query.get("periodEnd")]), [
     ["A69", "A01", "202610240000", "202610270000"],
     ["A65", "A01", "202610240000", "202610270000"],
-    ["A65", "A31", "202610240000", "202611020000"],
   ]);
   for (const row of db.rows) {
     assertEquals(row.zone, "SE3");
@@ -74,20 +69,13 @@ Deno.test("market archive records native market and seven-day weather windows an
     assertEquals(row.result.status, "data");
     if (!("body_sha256" in row.result)) throw new Error("Unexpected research source in ordinary hourly collection");
     assertMatch(row.result.body_sha256!, /^[a-f0-9]{64}$/);
-    if (row.dataset === "weather_medium_range") {
-      assertEquals(row.requested_to, "2026-10-31T00:00:00.000Z");
-      assertEquals(row.result.request.model, "ecmwf_ifs025");
-      if (row.result.status !== "data") throw new Error("Expected weather data");
-      assertEquals(row.result.document.issue_time, null);
-      assertEquals(row.result.document.sites.length, 10);
-      continue;
-    }
     if (row.result.status !== "data") throw new Error("Expected data");
     if (!("documentId" in row.result.document)) throw new Error("Unexpected research document in ordinary hourly collection");
     assertEquals(row.result.document.documentId, "doc-1");
     assertEquals(row.result.document.revisionNumber, "2");
   }
-  for (const dataset of ["wind_day_ahead", "load_day_ahead", "load_week_ahead", "weather_medium_range"]) {
+  assertEquals(db.runs.length, 0);
+  for (const dataset of ["wind_day_ahead", "load_day_ahead"]) {
     const repeated = db.rows.filter(row => row.dataset === dataset);
     assertEquals(repeated.length, 2);
     const first = repeated[0].result, second = repeated[1].result;
@@ -96,14 +84,14 @@ Deno.test("market archive records native market and seven-day weather windows an
   }
 });
 
-Deno.test("market archive fetches all four datasets concurrently and waits for partial storage failures", async () => {
+Deno.test("hourly market archive fetches both datasets concurrently and waits for partial storage failures", async () => {
   const db = storage();
   let entered = 0;
   let allEntered: () => void = () => {};
   const ready = new Promise<void>(resolve => { allEntered = resolve; });
   const upstream: typeof fetch = async () => {
     entered++;
-    if (entered === 4) allEntered();
+    if (entered === 2) allEntered();
     await ready;
     return new Response(hourly);
   };
@@ -115,8 +103,8 @@ Deno.test("market archive fetches all four datasets concurrently and waits for p
   assertEquals(response.status, 500);
   const body = await response.json();
   assertEquals(body.error, "archive_storage_failed");
-  assertEquals(body.observations.length, 3);
-  assertEquals(db.rows.length, 3);
+  assertEquals(body.observations.length, 1);
+  assertEquals(db.rows.length, 1);
 });
 
 Deno.test("market archive preserves no-data and provider failures while concealing credentials", async () => {
@@ -127,7 +115,7 @@ Deno.test("market archive preserves no-data and provider failures while conceali
     if (url.searchParams.get("processType") === "A01") return Promise.resolve(new Response(`upstream ${config.entsoeToken} ${encodeURIComponent(config.entsoeToken)}`, { status: 599 }));
     throw new Error(`connection failed ${url}`);
   };
-  const response = await createMarketArchiveHandler(config, db.store, upstream, now)(request());
+  const response = await createMarketArchiveHandler(config, db.store, upstream, now)(generationRequest());
   assertEquals(response.status, 200);
   const byDataset = new Map(db.rows.map(row => [row.dataset, row]));
   assertEquals(byDataset.get("wind_day_ahead")?.result.status, "no_data");
@@ -149,9 +137,9 @@ Deno.test("market archive separately records malformed XML and HTTP-200 error ac
     const process = new URL(String(input)).searchParams.get("processType");
     return Promise.resolve(new Response(process === "A31" ? "<broken>" : `<Acknowledgement_MarketDocument><Reason><code>999</code><text>Invalid API query</text></Reason></Acknowledgement_MarketDocument>`));
   };
-  const response = await createMarketArchiveHandler(config, db.store, upstream, now)(request());
+  const response = await createMarketArchiveHandler(config, db.store, upstream, now)(generationRequest());
   assertEquals(response.status, 200);
-  assertEquals(Object.fromEntries(db.rows.map(row => [row.dataset, row.result.status])), {
+  assertEquals(Object.fromEntries(db.rows.filter(row => ["wind_day_ahead", "load_day_ahead", "load_week_ahead", "weather_medium_range"].includes(row.dataset)).map(row => [row.dataset, row.result.status])), {
     wind_day_ahead: "provider_error", load_day_ahead: "provider_error",
     load_week_ahead: "parse_error", weather_medium_range: "parse_error",
   });
@@ -168,10 +156,10 @@ Deno.test("public weather remains independently archived when ENTSO-E credential
     calls++;
     return Promise.resolve(weather());
   };
-  const response = await createMarketArchiveHandler({ ...config, entsoeToken: "" }, db.store, upstream, now)(request());
+  const response = await createMarketArchiveHandler({ ...config, entsoeToken: "" }, db.store, upstream, now)(generationRequest());
   assertEquals(response.status, 200);
   assertEquals(calls, 1);
-  assertEquals(db.rows.filter(row => "error_code" in row.result && row.result.error_code === "entsoe_token_not_configured").length, 3);
+  assertEquals(db.rows.filter(row => "error_code" in row.result && row.result.error_code === "entsoe_token_not_configured").length, 7);
   const captured = db.rows.find(row => row.dataset === "weather_medium_range");
   if (captured?.dataset !== "weather_medium_range") throw new Error("Missing weather");
   assertEquals(captured.result.status, "data");
@@ -188,8 +176,8 @@ Deno.test("weather error outcomes retain the exact request and body without affe
       if (outcome === "parse") return Promise.resolve(new Response("broken JSON"));
       return Promise.resolve(Response.json({ error: true, reason: "provider unavailable" }, { status: outcome === "provider" ? 503 : 200 }));
     };
-    assertEquals((await createMarketArchiveHandler(config, db.store, upstream, now)(request())).status, 200);
-    assertEquals(db.rows.filter(row => row.dataset !== "weather_medium_range" && row.result.status === "data").length, 3);
+    assertEquals((await createMarketArchiveHandler(config, db.store, upstream, now)(generationRequest())).status, 200);
+    assertEquals(db.rows.filter(row => ["wind_day_ahead", "load_day_ahead", "load_week_ahead"].includes(row.dataset) && row.result.status === "data").length, 3);
     const captured = db.rows.find(row => row.dataset === "weather_medium_range");
     if (captured?.dataset !== "weather_medium_range") throw new Error("Missing weather");
     assertEquals(captured.result.status, outcome === "transport" ? "transport_error" : outcome === "parse" ? "parse_error" : "provider_error");
@@ -200,9 +188,6 @@ Deno.test("weather error outcomes retain the exact request and body without affe
   }
 });
 
-const generationRequest = (body: unknown = { generation: true }) => new Request(`${TEST}/functions/v1/energy-market-archive`, {
-  method: "POST", headers: { "x-energy-market-archive-token": "private-cron-token" }, body: JSON.stringify(body),
-});
 const generationActual = hourly.replace("<businessType>A01</businessType>", '<businessType>A01</businessType><inBiddingZone_Domain.mRID>10Y1001A1001A46L</inBiddingZone_Domain.mRID><MktPSRType><psrType>B14</psrType></MktPSRType>')
   .replaceAll("2026-10-24T22:00Z", "2026-10-24T18:00Z").replaceAll("2026-10-24T23:00Z", "2026-10-24T19:00Z");
 
@@ -227,8 +212,19 @@ Deno.test("generation research acquires 28-day actuals and weather, commits sour
   const capturedWeather = db.rows.find(row => row.dataset === "weather_medium_range");
   if (capturedWeather?.dataset !== "weather_medium_range") throw new Error("Missing weather evidence");
   assertEquals(capturedWeather.result.request.past_days, 28);
+  if (capturedWeather.result.status !== "data") throw new Error("Expected weather data");
+  assertEquals(capturedWeather.result.document.issue_time, null);
+  assertEquals(capturedWeather.result.document.sites.length, 10);
+  assertEquals(capturedWeather.requested_to, "2026-10-31T00:00:00.000Z");
   assertEquals(capturedWeather.requested_from, "2026-09-26T00:00:00.000Z");
-  assertEquals(queries.find(url => url.hostname === "api.open-meteo.com")!.searchParams.get("past_days"), "28");
+  const weatherQuery = queries.find(url => url.hostname === "api.open-meteo.com")!;
+  assertEquals(weatherQuery.searchParams.get("past_days"), "28");
+  assertEquals(weatherQuery.searchParams.get("forecast_days"), "7");
+  assertEquals(weatherQuery.searchParams.get("models"), "ecmwf_ifs025");
+  assertEquals(weatherQuery.searchParams.get("latitude")?.split(",").length, 10);
+  assertEquals(weatherQuery.searchParams.get("securityToken"), null);
+  const weekAhead = queries.find(url => url.searchParams.get("processType") === "A31")!;
+  assertEquals([weekAhead.searchParams.get("periodStart"), weekAhead.searchParams.get("periodEnd")], ["202610240000", "202611020000"]);
   const run = db.runs[0];
   assertEquals(run.origin, now().toISOString());
   assertEquals(run.source_refs, Object.fromEntries(db.rows.map(row => [row.dataset, row.id])));

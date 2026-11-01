@@ -120,7 +120,7 @@ async function weatherResult(requestedAt: string, token: string, fetchProvider: 
   }
 }
 
-/** Independent hourly acquisition. Provider failures become evidence, never model inputs. */
+/** Day-ahead acquisition is hourly; longer-range inputs join six-hour generation research. */
 export function createMarketArchiveHandler(
   config: { projectUrl: string; entsoeToken: string },
   store: MarketArchiveStore,
@@ -146,7 +146,9 @@ export function createMarketArchiveHandler(
       generation = "generation" in options;
     } catch { return Response.json({ error: "invalid_archive_request" }, { status: 400 }); }
     const today = Date.parse(`${clock().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    const datasets: ArchiveDataset[] = [...ARCHIVED_MARKET_DATASETS, ...(generation ? GENERATION_DATASETS : [])];
+    const datasets: ArchiveDataset[] = generation
+      ? [...ARCHIVED_MARKET_DATASETS, ...GENERATION_DATASETS]
+      : ["wind_day_ahead", "load_day_ahead"];
     const outcomes = await Promise.allSettled(datasets.map(async dataset => {
       const currentMinute = Math.floor(clock().getTime() / 60_000) * 60_000;
       const yearStart = Date.UTC(clock().getUTCFullYear(), 0, 1);
