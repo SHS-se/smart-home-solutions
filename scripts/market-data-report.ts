@@ -9,7 +9,8 @@ const assessed = new Set(snapshot.assessed_ids);
 const index = (await client.index(snapshot.observation_ids)).map(row => assessed.has(row.id) ? row : { ...row, assessor_version: null, facts: null, http_status: null, error_code: null, body_sha256: null });
 const sources = new Map<string, typeof index>();
 for (const row of index.sort((a, b) => a.sequence - b.sequence)) {
-  const key = `${row.dataset}/${row.zone}`;
+  const scope = row.facts?.scope_key ?? row.facts?.station_id;
+  const key = `${row.dataset}/${row.zone}${typeof scope === 'string' && scope ? `/${scope}` : ''}`;
   if (!sources.has(key)) sources.set(key, []);
   sources.get(key)!.push(row);
 }
@@ -34,7 +35,7 @@ const batches = snapshot.batches.map(batch => ({ id: batch.id, kind: batch.kind,
   age_hours: (Date.parse(snapshot.at) - Date.parse(batch.requested_at)) / 3_600_000,
   expected: batch.plan.length, saved: index.filter(r => r.batch_id === batch.id).length,
   missing: batch.plan.filter(p => !index.some(r => r.batch_id === batch.id && r.request_key === p.key)).map(p => p.key) }));
-const cadence = (['day_ahead', 'generation', 'market_context'] as const).map(kind => {
+const cadence = (['day_ahead', 'generation', 'market_context', 'weather_truth', 'regional_context'] as const).map(kind => {
   const rows = batches.filter(b => b.kind === kind).sort((a, b) => a.at.localeCompare(b.at));
   const hours = kind === 'day_ahead' ? 1 : 6;
   // Cron runs on fixed UTC hours. Compare bucket numbers, rather than mistaking request-time jitter for a missed run.
@@ -51,6 +52,6 @@ await Deno.writeTextFile(`${out}/demand-evidence.json`, JSON.stringify(evidence)
 await Deno.writeTextFile(`${out}/index.json`, JSON.stringify(index) + '\n');
 const report = { snapshot_at: snapshot.at, quality_version: snapshot.assessor_version, cadence, batches, sources: health, demand,
   capability_gaps: MARKET_CAPABILITY_GAPS,
-  interpretation: 'HTTP success does not establish completeness or skill. Coverage refers to the requested native window; unpublished future periods and delayed actuals remain visible. Weather accuracy and network-driven price skill are not yet established.' };
+  interpretation: 'HTTP success does not establish completeness or skill. Coverage refers to the requested native window; unpublished future periods and delayed actuals remain visible. Weather accuracy is independently scored by research:weather:report; network-driven price skill is not established.' };
 await Deno.writeTextFile(`${out}/report.json`, JSON.stringify(report, null, 2) + '\n');
 console.log(JSON.stringify({ out, observations: index.length, batches: batches.length, sources: health.length, demand_scores: demand.scores }, null, 2));

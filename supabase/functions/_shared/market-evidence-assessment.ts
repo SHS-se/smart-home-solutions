@@ -1,3 +1,5 @@
+import { marketDate, marketDaySpan } from './demand-forecast-quality.ts';
+import type { SmhiDocument } from './smhi-observations.ts';
 import type { EntsoeInterval } from './entsoe-market-data.ts';
 import { NEIGHBOUR_EIC } from './entsoe-market-data.ts';
 import { intervalCoverage } from './market-intervals.ts';
@@ -5,7 +7,7 @@ import { intervalCoverage } from './market-intervals.ts';
 export const MARKET_ASSESSOR = 'market-quality-v1';
 export interface AssessedObservation {
   id: string; dataset: string; zone: string; requested_from: string; requested_to: string;
-  result: { status: string; http_status?: number | null; error_code?: string | null; body_sha256?: string | null; document?: unknown };
+  result: { status: string; http_status?: number | null; error_code?: string | null; body_sha256?: string | null; document?: unknown; request?: unknown };
 }
 export interface MarketAssessment {
   assessor_version: typeof MARKET_ASSESSOR; status: string; http_status: number | null;
@@ -16,9 +18,31 @@ export function assessMarketObservation(row: AssessedObservation): MarketAssessm
   const assessment: MarketAssessment = { assessor_version: MARKET_ASSESSOR, status: result.status,
     http_status: result.http_status ?? null, error_code: result.error_code ?? null,
     body_sha256: result.body_sha256 ?? null, facts: { kind: 'no_document' } };
+  if (row.dataset.startsWith('smhi_') && result.request && typeof result.request === 'object' && 'station_id' in result.request) assessment.facts.station_id = result.request.station_id;
+  if (row.dataset.startsWith('nucs_') && result.request && typeof result.request === 'object' && 'neighbour' in result.request && 'direction' in result.request) {
+    assessment.facts.scope_key = `${result.request.neighbour}/${result.request.direction}`;
+  }
   if (result.status !== 'data' || !result.document || typeof result.document !== 'object') return assessment;
   const doc = result.document as Record<string, unknown>;
-  if (Array.isArray(doc.intervals)) {
+  if (row.dataset === 'nucs_week_ahead_ntc' || row.dataset === 'nucs_transmission_outages') {
+    const native = result.document as import('./nucs-market-data.ts').NucsDocument;
+    assessment.facts = { ...assessment.facts, kind: 'regional_border_context', semantics: native.semantics,
+      in_domain: native.in_domain, out_domain: native.out_domain, documents: native.notices.length,
+      cancelled_documents: native.notices.filter(n => n.status === 'A09').length,
+      unspecified_status_documents: native.notices.filter(n => n.status === null).length,
+      capacity_points: native.capacity_intervals.length };
+  } else if (row.dataset === 'smhi_wind_10m_observed' || row.dataset === 'smhi_temperature_2m_observed') {
+    const native = result.document as SmhiDocument;
+    const priorDay = new Date(Date.parse(marketDate(Date.parse(row.requested_to))) - 86_400_000).toISOString().slice(0, 10), [start, end] = marketDaySpan(priorDay);
+    const previous = native.hours.filter(p => p.at >= start && p.at < end);
+    assessment.facts = { kind: 'station_hourly_truth', station_id: native.station_id, variable: native.variable,
+      unit: native.unit, height_m: native.height_m, semantics: native.semantics,
+      first: native.hours[0]?.at ?? null, last: native.hours.at(-1)?.at ?? null,
+      points: native.hours.length, conflicts: native.hours.filter(p => p.conflict).length,
+      quality: Object.fromEntries([...new Set(native.hours.map(p => p.quality ?? 'unknown'))].map(q => [q, native.hours.filter(p => (p.quality ?? 'unknown') === q).length])),
+      previous_day: { day: priorDay, expected: (end - start) / 3_600_000, present: previous.filter(p => p.value !== null && !p.conflict).length,
+        approved: previous.filter(p => p.value !== null && !p.conflict && p.quality === 'G').length } };
+  } else if (Array.isArray(doc.intervals)) {
     const rows = doc.intervals as EntsoeInterval[];
     const groups = new Map<string, EntsoeInterval[]>();
     for (const interval of rows) {

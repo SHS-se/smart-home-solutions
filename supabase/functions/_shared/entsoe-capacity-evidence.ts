@@ -1,4 +1,5 @@
 /** Bounded, credential-redacted capacity evidence for TEST research only. */
+import { readMarketProvider, marketBodyBase64 } from './market-provider-response.ts';
 import { entsoeParameters } from './entsoe-market-data.ts';
 import { parseNuclearOutages, parseNuclearRoster, type NuclearRoster, type NuclearOutageDocument } from './nuclear-availability.ts';
 export interface CapacityDocuments {
@@ -17,34 +18,11 @@ export async function captureCapacityEvidence<K extends CapacityDataset>(dataset
   const url = new URL('https://web-api.tp.entsoe.eu/api');
   url.search = entsoeParameters({ dataset, from, to }).toString();
   url.searchParams.set('securityToken', token);
-  let response: Response, bytes: Uint8Array<ArrayBuffer>;
-  try {
-    response = await fetchProvider(url, { signal: AbortSignal.timeout(60_000), redirect: 'error' });
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Missing provider body');
-    const chunks: Uint8Array[] = []; let size = 0;
-    for (;;) {
-      const part = await reader.read(); if (part.done) break;
-      size += part.value.length;
-      if (size > 8 * 1024 * 1024) { await reader.cancel(); throw new Error('Provider body too large'); }
-      chunks.push(part.value);
-    }
-    bytes = new Uint8Array(size); let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-    // Plain XML/HTTP error bodies can echo request details. Never retain the credential.
-    if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
-      let text = new TextDecoder().decode(bytes);
-      for (const value of new Set([token, encodeURIComponent(token), new URLSearchParams({ token }).toString().slice(6)])) {
-        if (value) text = text.replaceAll(value, '[REDACTED]');
-      }
-      bytes = new TextEncoder().encode(text);
-    }
-  } catch { return { ...empty, status: 'transport_error', error_code: 'entsoe_capacity_transport_failed' }; }
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  let binary = ''; for (const value of bytes) binary += String.fromCharCode(value);
-  const evidence = { http_status: response.status, body_sha256: Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join(''),
-    raw_base64: btoa(binary), error_code: null };
-  if (!response.ok) return { ...evidence, status: 'provider_error', error_code: `http_${response.status}` };
+  const held = await readMarketProvider(url, token, fetchProvider);
+  if (!held) return { ...empty, status: 'transport_error', error_code: 'entsoe_capacity_transport_failed' };
+  const bytes = held.bytes;
+  const evidence = { http_status: held.http_status, body_sha256: held.body_sha256, raw_base64: marketBodyBase64(bytes), error_code: null };
+  if (held.http_status < 200 || held.http_status >= 300) return { ...evidence, status: 'provider_error', error_code: `http_${held.http_status}` };
   try {
     const document = dataset === 'installed_generation_units' ? await parseNuclearRoster(bytes) : await parseNuclearOutages(bytes);
     return { ...evidence, status: 'data', document: document as CapacityDocuments[K] };

@@ -1,15 +1,18 @@
 /** Fixed provider products and cadences. This is acquisition policy, never a price model. */
+import { ZONE_STATIONS } from './market-wind.ts';
+import type { NucsArchiveDataset } from './nucs-market-data.ts';
+import type { SmhiDataset } from './smhi-observations.ts';
 import { ARCHIVED_MARKET_DATASETS } from './price-estimate-evidence.ts';
 
 export const GENERATION_DATASETS = [...ARCHIVED_MARKET_DATASETS, 'generation_actual', 'sweden_hydrology',
   'production_outages', 'generation_outages', 'installed_generation_units'] as const;
 export const NEIGHBOUR_ZONES = ['SE2', 'SE4', 'NO1', 'FI', 'DK1'] as const;
 export type NeighbourZone = typeof NEIGHBOUR_ZONES[number];
-export type CollectionKind = 'day_ahead' | 'generation' | 'market_context';
+export type CollectionKind = 'day_ahead' | 'generation' | 'market_context' | 'weather_truth' | 'regional_context';
 export type ArchiveDataset = typeof GENERATION_DATASETS[number] | 'load_actual' |
-  'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges';
+  'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead' | 'jao_max_net_positions' | 'jao_max_exchanges' | SmhiDataset | NucsArchiveDataset;
 export type MarketZone = 'SE3' | NeighbourZone | 'NORDIC_CCR';
-export interface MarketRequest { key: string; dataset: ArchiveDataset; zone: MarketZone; from: string; to: string }
+export interface MarketRequest { key: string; dataset: ArchiveDataset; zone: MarketZone; from: string; to: string; station_id?: string; neighbour?: NeighbourZone; direction?: 'import' | 'export' }
 export interface MarketBatch { id: string; kind: CollectionKind; requested_at: string; plan: MarketRequest[] }
 const DAY = 86_400_000;
 const stockholmDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Stockholm', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -30,6 +33,8 @@ export function collectionKind(body: string): CollectionKind {
   if (!keys.length) return 'day_ahead';
   if (keys.length === 1 && 'generation' in value && value.generation === true) return 'generation';
   if (keys.length === 1 && 'context' in value && value.context === true) return 'market_context';
+  if (keys.length === 1 && 'truth' in value && value.truth === true) return 'weather_truth';
+  if (keys.length === 1 && 'regional' in value && value.regional === true) return 'regional_context';
   throw new Error('Invalid archive request');
 }
 
@@ -41,7 +46,22 @@ export function collectionPlan(kind: CollectionKind, now: Date): MarketRequest[]
     const start = new Date(from).toISOString(), end = new Date(to).toISOString();
     requests.push({ key: `${dataset}/${zone}/${start}/${end}`, dataset, zone, from: start, to: end });
   };
-  if (kind === 'day_ahead') {
+  if (kind === 'regional_context') {
+    for (const neighbour of NEIGHBOUR_ZONES) for (const direction of ['import', 'export'] as const) for (const dataset of ['nucs_week_ahead_ntc', 'nucs_transmission_outages'] as const) {
+      add(dataset, 'SE3', today - DAY, today + 9 * DAY);
+      const request = requests.at(-1)!;
+      request.key += `/${neighbour}/${direction}`;
+      request.neighbour = neighbour; request.direction = direction;
+    }
+  } else if (kind === 'weather_truth') {
+    const to = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
+    for (const station of ZONE_STATIONS.SE3) for (const dataset of ['smhi_wind_10m_observed', 'smhi_temperature_2m_observed'] as const) {
+      add(dataset, 'SE3', to - 90 * DAY, to);
+      const request = requests.at(-1)!;
+      request.key += `/${station.id}`;
+      request.station_id = station.id;
+    }
+  } else if (kind === 'day_ahead') {
     for (const dataset of ['wind_day_ahead', 'load_day_ahead'] as const) add(dataset, 'SE3', today, today + 3 * DAY);
     const localDay = stockholmDate.format(now);
     const endDay = new Date(Date.parse(`${localDay}T00:00:00Z`) + 2 * DAY).toISOString().slice(0, 10);
@@ -74,7 +94,7 @@ export function collectionPlan(kind: CollectionKind, now: Date): MarketRequest[]
 }
 
 export const MARKET_CAPABILITY_GAPS = [
-  { source: 'NUCS week-ahead outage impacts', status: 'authenticated_access_unverified' },
+  { source: 'NUCS flow-based week-ahead net positions (IG-182/184)', status: 'token_verified_no_matching_flow_based_publications_for_tested_weeks' },
   { source: 'Full Nordic flow-based domain', status: 'not_collected' },
   { source: 'Hourly week-ahead demand', status: 'provider_publishes_daily_extrema' },
   { source: 'Operational weather issue time', status: 'not_exposed_by_provider' },

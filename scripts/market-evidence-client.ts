@@ -20,6 +20,7 @@ export async function marketEvidenceClient() {
     return await response.json();
   }
   return {
+    status: (since: number) => read('rpc/read_test_market_quality_status', { p_since: since }),
     snapshot: () => read<MarketSnapshot>('rpc/read_test_market_snapshot', {}),
     async index(ids: string[]) {
       const rows: MarketIndex[] = [];

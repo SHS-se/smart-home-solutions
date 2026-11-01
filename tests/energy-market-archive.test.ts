@@ -3,7 +3,7 @@ import { createMarketArchiveHandler, type MarketArchiveObservation, type MarketA
 import { mediumRangeWeatherFixture } from "./medium-range-weather.fixture.ts";
 
 const TEST = "https://vxqpgbzseckgceopitpm.supabase.co";
-const config = { projectUrl: TEST, entsoeToken: "private-provider-token" };
+const config = { projectUrl: TEST, entsoeToken: "private-provider-token", nucsToken: "private-nucs-token" };
 const now = () => new Date("2026-10-24T20:15:00.000Z");
 const weather = () => Response.json(mediumRangeWeatherFixture());
 const request = (token = "private-cron-token") => new Request(`${TEST}/functions/v1/energy-market-archive`, {

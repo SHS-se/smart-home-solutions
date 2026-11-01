@@ -11,11 +11,11 @@ Deno.test('archive deployment changes validate the pipeline and select only the 
   const workflow = '.github/workflows/ci-deploy.yml';
   const changes = classifyPipeline(new URL('..', import.meta.url).pathname, [workflow, 'scripts/ci-changes.ts',
     'scripts/deploy-market-archive.ts'], [workflow, 'scripts/ci-changes.ts']);
-  assertEquals(changes.functions, ['energy-market-archive']);
+  assertEquals(changes.functions, ['energy-market-archive', 'energy-market-quality']);
   assert(changes.planner && changes.frontend && changes.bench);
 });
 Deno.test('research collector is excluded from ordinary production deployment', async () => {
   const workflow = await Deno.readTextFile('.github/workflows/ci-deploy.yml');
-  assertStringIncludes(workflow, '[ "$name" = energy-market-archive ]; then\n              continue');
+  assertStringIncludes(workflow, '[ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ]; then\n              continue');
   assertStringIncludes(workflow, '[ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]');
 });

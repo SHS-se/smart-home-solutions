@@ -1,8 +1,11 @@
+import { readMarketProvider } from "../_shared/market-provider-response.ts";
 import { entsoeParameters, parseEntsoeResponse, neighbourEntsoeParameters, EntsoeProviderError, type EntsoeResponse } from "../_shared/entsoe-market-data.ts";
 import { GENERATION_DATASETS, collectionKind, collectionPlan, type MarketBatch, type MarketZone, type NeighbourZone, type ArchiveDataset } from "../_shared/market-collection-plan.ts";
 import { jaoRequest, parseJaoResponse, type JaoDocument, type JaoDataset } from "../_shared/jao-nordic-market-data.ts";
 import { assessMarketObservation, type MarketAssessment } from "../_shared/market-evidence-assessment.ts";
 export type { ArchiveDataset } from "../_shared/market-collection-plan.ts";
+import { captureNucsEvidence, type NucsArchiveDataset } from '../_shared/nucs-market-data.ts';
+import { smhiObservationRequest, parseSmhiObservations, type SmhiDocument, type SmhiDataset } from '../_shared/smhi-observations.ts';
 import { mediumRangeWeatherRequest, parseMediumRangeWeather, type MediumRangeWeatherDocument } from "../_shared/medium-range-weather.ts";
 
 import { forecastGenerationMixV2 } from "../_shared/generation-mix-v2.ts";
@@ -30,7 +33,9 @@ type WeatherArchiveResult = Omit<ResultEvidence, "raw_xml"> & {
   | { status: "provider_error" | "transport_error" | "parse_error" });
 type JaoArchiveResult = Omit<ResultEvidence, "raw_xml"> & { raw_body: string | null } &
   ({ status: "data"; document: JaoDocument } | { status: "no_data" | "provider_error" | "transport_error" | "parse_error" });
-export type MarketArchiveResult = EntsoeArchiveResult | WeatherArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
+type SmhiArchiveResult = Omit<ResultEvidence, 'raw_xml'> & { raw_body: string | null; request: { station_id: string; dataset: SmhiDataset } } &
+  ({ status: 'data'; document: SmhiDocument } | { status: 'provider_error' | 'transport_error' | 'parse_error' });
+export type MarketArchiveResult = Awaited<ReturnType<typeof captureNucsEvidence>> | SmhiArchiveResult | EntsoeArchiveResult | WeatherArchiveResult | JaoArchiveResult | HydroAcquisition | CapacityEvidence<CapacityDocuments[CapacityDataset]>;
 interface ObservationIdentity {
   id: string;
   batch_id: string;
@@ -46,6 +51,8 @@ export type MarketArchiveObservation = ObservationIdentity & (
   | { dataset: EntsoeArchiveDataset; result: EntsoeArchiveResult }
   | { dataset: "weather_medium_range"; result: WeatherArchiveResult }
   | { dataset: "sweden_hydrology"; result: HydroAcquisition }
+  | { dataset: NucsArchiveDataset; result: Awaited<ReturnType<typeof captureNucsEvidence>> }
+  | { dataset: SmhiDataset; result: SmhiArchiveResult }
   | { dataset: JaoDataset; result: JaoArchiveResult }
   | CapacityObservation
 );
@@ -64,25 +71,11 @@ export interface MarketArchiveStore {
   saveGenerationRun(row: GenerationForecastRun): Promise<void>;
 }
 
-function redact(body: string, token: string): string {
-  const variants = [token, encodeURIComponent(token), new URLSearchParams({ token }).toString().slice(6)];
-  for (const value of new Set(variants)) if (value) body = body.replaceAll(value, "[REDACTED]");
-  return body;
-}
-async function digest(body: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
-  return Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, "0")).join("");
-}
-
-/** Capture one bounded request without exposing token-bearing transport errors. */
+/** Capture a bounded provider body; the shared reader owns redaction, size and transport policy. */
 async function providerResponse(url: URL, token: string, fetchProvider: typeof fetch) {
-  try {
-    const response = await fetchProvider(url, { signal: AbortSignal.timeout(60_000), redirect: "error" });
-    const body = redact(await response.text(), token);
-    return { body, http_status: response.status, body_sha256: await digest(body) };
-  } catch {
-    return { body: null, http_status: null, body_sha256: null };
-  }
+  const held = await readMarketProvider(url, token, fetchProvider);
+  return held ? { body: new TextDecoder().decode(held.bytes), http_status: held.http_status, body_sha256: held.body_sha256 }
+    : { body: null, http_status: null, body_sha256: null };
 }
 
 async function entsoeResult(dataset: EntsoeArchiveDataset, from: string, to: string,
@@ -141,9 +134,20 @@ async function jaoResult(dataset: JaoDataset, from: string, to: string, token: s
   } catch { return { ...evidence, status: "parse_error", error_code: "unsupported_or_invalid_jao_document" }; }
 }
 
+async function smhiResult(dataset: SmhiDataset, station_id: string, from: string, to: string, token: string, fetchProvider: typeof fetch): Promise<SmhiArchiveResult> {
+  const request = { dataset, station_id, from, to };
+  const held = await providerResponse(smhiObservationRequest(request), token, fetchProvider);
+  const evidence = { http_status: held.http_status, body_sha256: held.body_sha256, raw_body: held.body,
+    request: { dataset, station_id }, error_code: null };
+  if (held.body === null) return { ...evidence, status: 'transport_error', error_code: 'smhi_transport_failed' };
+  if (held.http_status! < 200 || held.http_status! >= 300) return { ...evidence, status: 'provider_error', error_code: `http_${held.http_status}` };
+  try { return { ...evidence, status: 'data', document: parseSmhiObservations(JSON.parse(held.body), request) }; }
+  catch { return { ...evidence, status: 'parse_error', error_code: 'unsupported_or_invalid_smhi_document' }; }
+}
+
 /** Day-ahead acquisition is hourly; longer-range inputs join six-hour generation research. */
 export function createMarketArchiveHandler(
-  config: { projectUrl: string; entsoeToken: string },
+  config: { projectUrl: string; entsoeToken: string; nucsToken: string },
   store: MarketArchiveStore,
   fetchProvider: typeof fetch = fetch,
   clock: () => Date = () => new Date(),
@@ -163,10 +167,14 @@ export function createMarketArchiveHandler(
     const batch: MarketBatch = { id: crypto.randomUUID(), kind, requested_at: clock().toISOString(), plan: collectionPlan(kind, clock()) };
     try { await store.saveBatch(batch); }
     catch { return Response.json({ error: "archive_batch_storage_failed" }, { status: 500 }); }
-    const outcomes = await Promise.allSettled(batch.plan.map(async ({ dataset, zone, from, to, key }) => {
+    const outcomes = await Promise.allSettled(batch.plan.map(async ({ dataset, zone, from, to, key, station_id, neighbour, direction }) => {
       const identity = { id: crypto.randomUUID(), batch_id: batch.id, request_key: key, zone,
         requested_from: from, requested_to: to, requested_at: clock().toISOString() };
-      const row: MarketArchiveObservation = dataset === "weather_medium_range"
+      const row: MarketArchiveObservation = dataset === 'nucs_week_ahead_ntc' || dataset === 'nucs_transmission_outages'
+        ? { ...identity, dataset, result: await captureNucsEvidence({ dataset, neighbour: neighbour!, direction: direction!, from, to }, config.nucsToken, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === 'smhi_wind_10m_observed' || dataset === 'smhi_temperature_2m_observed'
+        ? { ...identity, dataset, result: await smhiResult(dataset, station_id!, from, to, config.entsoeToken, fetchProvider), resolved_at: clock().toISOString() }
+        : dataset === "weather_medium_range"
         ? { ...identity, dataset, result: await weatherResult(identity.requested_at, config.entsoeToken, fetchProvider, 28), resolved_at: clock().toISOString() }
         : dataset === "sweden_hydrology"
         ? { ...identity, dataset, result: await acquireHydro(fetchProvider), resolved_at: clock().toISOString() }
@@ -221,7 +229,7 @@ if (import.meta.main) {
   const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.57.2");
   const projectUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const client = createClient(projectUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "", { auth: { persistSession: false } });
-  Deno.serve(createMarketArchiveHandler({ projectUrl, entsoeToken: Deno.env.get("ENTSOE_API_TOKEN") ?? "" }, {
+  Deno.serve(createMarketArchiveHandler({ projectUrl, entsoeToken: Deno.env.get("ENTSOE_API_TOKEN") ?? "", nucsToken: Deno.env.get("NUCS_WEB_API_TOKEN") ?? "" }, {
     async verifyToken(token) {
       const { data, error } = await client.rpc("verify_test_market_archive_token", { p_token: token });
       if (error) throw new Error("Archive authentication storage failed");

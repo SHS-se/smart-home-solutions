@@ -26,7 +26,9 @@
     "research:prices:correction-replay": "deno run --allow-read --allow-write scripts/price-correction-replay.ts",
     "test:planner-contracts": "deno run --allow-read --allow-write --allow-run scripts/check-planner-contracts.ts",
     "research:market:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-data-report.ts",
-    "research:market:assess": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-data-assess.ts"
+    "research:market:assess": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-data-assess.ts",
+    "research:market:status": "deno run --allow-read --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-quality-status.ts",
+    "research:weather:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/weather-accuracy-report.ts"
   },
   "imports": {
     "https://esm.sh/resend@2.0.0": "npm:resend@2.0.0",

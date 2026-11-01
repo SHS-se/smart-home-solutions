@@ -28,7 +28,7 @@ function demandRows(row: DemandEvidence) {
   return (row.result.document?.intervals ?? []).filter(r => r.unit === 'MAW' && r.psrType === null &&
     r.flow === 'consumption' && ['PT15M', 'PT60M'].includes(r.resolution));
 }
-export function scoreDemandForecasts(evidence: readonly DemandEvidence[]) {
+export function scoreDemandForecasts(evidence: readonly DemandEvidence[], window: { from: number; to: number } | null = null) {
   const actuals = new Map<number, { value: number | null; id: string }>();
   for (const row of [...evidence].filter(r => r.dataset === 'load_actual' && r.zone === 'SE3' &&
     r.result.status === 'data' && r.result.document?.processType === 'A16').sort((a, b) => a.sequence - b.sequence)) {
@@ -49,6 +49,7 @@ export function scoreDemandForecasts(evidence: readonly DemandEvidence[]) {
     const days = [...new Set(doc.intervals.map(r => marketDate(r.startMs)))].sort();
     for (const day of days) {
       const [start, end] = marketDaySpan(day);
+      if (window && (start < window.from || end > window.to)) continue;
       if (start < known) { skip('target_started_before_local_acquisition'); continue; }
       const truth = Array.from({ length: (end - start) / QUARTER }, (_, i) => actuals.get(start + i * QUARTER));
       if (truth.some(v => v?.value === null || v?.value === undefined)) { skip('incomplete_actual_day'); continue; }
