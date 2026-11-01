@@ -84,6 +84,14 @@ Keep this command aligned with `.github/workflows/ci-deploy.yml`. The separate
 
 # Planner changes
 
+The planner runs in a Supabase Edge Function with a strict CPU limit (2 seconds per
+request), and going over it kills the worker. Be careful of the performance impact
+of every planner change, and read
+[planning within Supabase CPU limits](docs/energy-optimisation/supabase-planning-stages.md)
+first. Run `deno task test:planner-handler-cpu` and report the result. Do not raise
+its budget to make a change pass. The check is scaled to a baseline machine, so
+passing it does not prove the change fits the hosted limit.
+
 Follow [the constraint requirements](docs/energy-optimisation/constraint-requirements.md).
 Read [component ownership and behavioral contracts](docs/energy-optimisation/planner-component-boundaries.md)
 before changing planner, model, transport or execution code. EV departure concepts
