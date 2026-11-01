@@ -8,6 +8,10 @@ export type EntsoeDataset =
 export interface EntsoeQuery { dataset: EntsoeDataset; from: string; to: string }
 
 const SE3 = "10Y1001A1001A46L";
+export const NEIGHBOUR_EIC = {
+  SE2: '10Y1001A1001A45N', SE4: '10Y1001A1001A47J', NO1: '10YNO-1--------2',
+  FI: '10YFI-1--------U', DK1: '10YDK-1--------W',
+} as const;
 const DATASETS: Record<EntsoeDataset, Record<string, string>> = {
   price: { documentType: "A44", in_Domain: SE3, out_Domain: SE3 },
   load_actual: { documentType: "A65", processType: "A16", outBiddingZone_Domain: SE3 },
@@ -49,6 +53,18 @@ export function entsoeParameters(query: unknown): URLSearchParams {
   return new URLSearchParams({ ...DATASETS[raw.dataset as EntsoeDataset], periodStart: compact(from), periodEnd: compact(to) });
 }
 
+/** Separate, closed neighbour products cannot change the existing SE3 query contract. */
+export function neighbourEntsoeParameters(query: {
+  dataset: 'neighbour_load_day_ahead' | 'neighbour_wind_day_ahead'; zone: keyof typeof NEIGHBOUR_EIC; from: string; to: string;
+}): URLSearchParams {
+  if (!Object.hasOwn(NEIGHBOUR_EIC, query.zone) ||
+    !['neighbour_load_day_ahead', 'neighbour_wind_day_ahead'].includes(query.dataset)) throw new Error('Unsupported neighbour product');
+  const dataset = query.dataset === 'neighbour_load_day_ahead' ? 'load_day_ahead' : 'wind_day_ahead';
+  const params = entsoeParameters({ dataset, from: query.from, to: query.to });
+  params.set(dataset === 'load_day_ahead' ? 'outBiddingZone_Domain' : 'in_Domain', NEIGHBOUR_EIC[query.zone]);
+  return params;
+}
+
 export interface EntsoeInterval {
   startMs: number; endMs: number; value: number; unit: string; psrType: string | null;
   /** Native provider resolution and series labels; daily min/max is not a mean. */
@@ -57,7 +73,7 @@ export interface EntsoeInterval {
 }
 export type EntsoeResponse =
   | { status: "data"; createdAt: string | null; documentId: string | null;
-    revisionNumber: string | null; processType: string | null; intervals: EntsoeInterval[] }
+    revisionNumber: string | null; processType: string | null; biddingZones?: string[]; intervals: EntsoeInterval[] }
   | { status: "no_data"; reason: string };
 
 export class EntsoeProviderError extends Error {}
@@ -117,6 +133,7 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
   const series = list(document.TimeSeries);
   if (!series.length) throw new Error("ENTSO-E document has no supported time series");
   const intervals: EntsoeInterval[] = [];
+  const biddingZones = new Set<string>();
   for (const rawSeries of series) {
     const s = element(rawSeries);
     const curve = text(s.curveType);
@@ -127,6 +144,8 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
     const inZone = optionalText(s["inBiddingZone_Domain.mRID"]);
     const outZone = optionalText(s["outBiddingZone_Domain.mRID"]);
     if (inZone !== null && outZone !== null) throw new Error("Ambiguous ENTSO-E generation flow");
+    if (inZone) biddingZones.add(inZone);
+    if (outZone) biddingZones.add(outZone);
     const domainFlow = inZone !== null ? "production" : outZone !== null ? "consumption" : null;
     const businessFlow = businessType === "A01" ? "production" : businessType === "A04" ? "consumption" : null;
     if (domainFlow !== null && businessFlow !== null && domainFlow !== businessFlow) throw new Error("Inconsistent ENTSO-E generation flow");
@@ -159,5 +178,5 @@ export function parseEntsoeResponse(xml: string): EntsoeResponse {
   }
   return { status: "data", createdAt: optionalText(document.createdDateTime),
     documentId: optionalText(document.mRID), revisionNumber: optionalText(document.revisionNumber),
-    processType: optionalText(document["process.processType"]), intervals };
+    processType: optionalText(document["process.processType"]), biddingZones: [...biddingZones].sort(), intervals };
 }

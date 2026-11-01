@@ -2,7 +2,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { PROBE_PROJECT, testProbeServiceKey } from './planner-probe-auth.ts';
 import { buildPricePair, type PricePairForecast } from '../supabase/functions/_shared/price-pair.ts';
-import type { PricePairReservation } from '../supabase/functions/energy-price-experiment/index.ts';
+import type { PricePairReservation } from '../supabase/functions/_shared/price-pair.ts';
 import type { EntsoeInterval } from '../supabase/functions/_shared/entsoe-market-data.ts';
 import { buildPriceCorrection, type PriceCorrectionInput, type PriceCorrectionForecast } from '../supabase/functions/_shared/price-correction.ts';
 import { buildPriceCorrectionV2, type PriceCorrectionV2Forecast } from '../supabase/functions/_shared/price-correction-v2.ts';

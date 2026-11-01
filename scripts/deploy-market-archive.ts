@@ -10,6 +10,8 @@ const MIGRATIONS = [
   { version: '20261022233000', name: 'test_price_pair_comparison_ui' },
   { version: '20261026100000', name: 'test_price_residual_correction' },
   { version: '20261101110000', name: 'test_price_residual_v2' },
+  { version: '20261101143000', name: 'retire_test_price_workers' },
+  { version: '20261101144000', name: 'market_data_foundation' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');
@@ -43,18 +45,17 @@ try {
   }
   await cli(['functions', 'deploy', 'energy-market-archive', '--project-ref', TEST, '--use-api', '--yes']);
   console.log('Deployed the TEST collector.');
-  await cli(['functions', 'deploy', 'energy-price-experiment', '--project-ref', TEST, '--use-api', '--yes']);
-  console.log('Deployed the TEST paired price worker.');
-  // Keep authentication configuration local to this TEST deployment. A global
-  // config edit selects unrelated household functions for redeployment.
-  await cli(['functions', 'deploy', 'energy-price-correction-experiment', '--project-ref', TEST, '--use-api', '--no-verify-jwt', '--yes']);
-  console.log('Deployed the TEST residual correction worker.');
-  const homes = await query('SELECT home_id FROM public.energy_optimisation_current ORDER BY home_id;');
-  if (homes.length !== 1 || typeof homes[0].home_id !== 'string' || !/^[0-9a-f-]{36}$/.test(homes[0].home_id)) {
-    throw new Error('TEST price study requires exactly one explicitly scoped current home.');
+  const functions: { slug: string }[] = JSON.parse(await cli(['functions', 'list', '--project-ref', TEST, '--output', 'json']));
+  for (const slug of ['energy-price-experiment', 'energy-price-correction-experiment']) {
+    if (functions.some(fn => fn.slug === slug)) await cli(['functions', 'delete', slug, '--project-ref', TEST, '--yes']);
   }
-  await query(`SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.enable_test_price_experiment('${homes[0].home_id}'::uuid); SELECT private.enable_test_price_correction(); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT private.request_test_price_experiment(); SELECT private.request_test_price_correction(); SELECT true AS enabled;`);
-  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-price-experiment','test-energy-price-correction');");
+  const homes = await query(`SELECT coalesce((SELECT price_experiment_home_id FROM private.test_market_archive_config WHERE singleton),
+    CASE WHEN count(*)=1 THEN min(home_id::text)::uuid END) home_id FROM public.energy_optimisation_current;`);
+  if (homes.length !== 1 || typeof homes[0].home_id !== 'string' || !/^[0-9a-f-]{36}$/.test(homes[0].home_id)) {
+    throw new Error('TEST ledger requires one explicitly scoped home.');
+  }
+  await query(`SELECT private.enable_test_market_archive(); SELECT private.enable_test_generation_forecast(); SELECT private.enable_test_market_context(); SELECT private.enable_test_price_ledger('${homes[0].home_id}'::uuid); SELECT private.request_test_market_archive(); SELECT private.request_test_generation_forecast(); SELECT private.request_test_market_context(); SELECT true AS enabled;`);
+  const schedule = await query("SELECT jobname,schedule,active FROM cron.job WHERE jobname IN ('test-energy-market-forecast-archive','test-energy-generation-forecast','test-energy-market-context','test-energy-price-experiment','test-energy-price-correction');");
   console.log(JSON.stringify({ project: TEST, archive: 'enabled', first_collection: 'requested', schedule }));
 } finally {
   await Deno.remove(temporary, { recursive: true });

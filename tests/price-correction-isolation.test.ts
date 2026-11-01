@@ -1,22 +1,21 @@
 import { assert, assertEquals, assertStringIncludes } from '@std/assert';
 import { classify, classifyPipeline } from '../scripts/ci-changes.ts';
-Deno.test('residual study source has no path into executable household forecasts or the planner', () => {
-  for (const source of ['price-correction.ts', 'price-correction-v2.ts']) {
-    const changes=classify(new URL('..',import.meta.url).pathname,[`supabase/functions/_shared/${source}`]);
-    assertEquals(changes.functions,['energy-price-correction-experiment']);
+Deno.test('retained residual replay modules have no live deployment path', () => {
+  for (const source of ['price-pair.ts', 'price-correction.ts', 'price-correction-v2.ts']) {
+    const changes = classify(new URL('..', import.meta.url).pathname, [`supabase/functions/_shared/${source}`]);
+    assertEquals(changes.functions, []);
     assert(!changes.planner);
   }
 });
-Deno.test('the complete residual deployment change validates the planner but deploys only research workers', () => {
-  const workflow='.github/workflows/ci-deploy.yml';
-  const changes=classifyPipeline(new URL('..',import.meta.url).pathname,[workflow,'scripts/ci-changes.ts',
-    'scripts/deploy-market-archive.ts','supabase/functions/_shared/price-pair.ts',
-    'supabase/functions/_shared/price-correction.ts','supabase/functions/energy-price-correction-experiment/index.ts'],[workflow,'scripts/ci-changes.ts']);
-  assertEquals(changes.functions,['energy-market-archive','energy-price-correction-experiment','energy-price-experiment']);
+Deno.test('archive deployment changes validate the pipeline and select only the collector', () => {
+  const workflow = '.github/workflows/ci-deploy.yml';
+  const changes = classifyPipeline(new URL('..', import.meta.url).pathname, [workflow, 'scripts/ci-changes.ts',
+    'scripts/deploy-market-archive.ts'], [workflow, 'scripts/ci-changes.ts']);
+  assertEquals(changes.functions, ['energy-market-archive']);
   assert(changes.planner && changes.frontend && changes.bench);
 });
-Deno.test('residual worker is explicitly excluded from ordinary production deployment',async()=>{
-  const workflow=await Deno.readTextFile('.github/workflows/ci-deploy.yml');
-  assertStringIncludes(workflow,'[ "$name" = energy-price-correction-experiment ]; then\n              continue');
-  assertStringIncludes(workflow,'[ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]');
+Deno.test('research collector is excluded from ordinary production deployment', async () => {
+  const workflow = await Deno.readTextFile('.github/workflows/ci-deploy.yml');
+  assertStringIncludes(workflow, '[ "$name" = energy-market-archive ]; then\n              continue');
+  assertStringIncludes(workflow, '[ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]');
 });

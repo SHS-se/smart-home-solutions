@@ -22,6 +22,7 @@ function storage() {
   let verified = 0;
   const store: MarketArchiveStore = {
     verifyToken(token) { verified++; return Promise.resolve(token === "private-cron-token"); },
+    saveBatch() { return Promise.resolve(); },
     saveObservation(row) { rows.push(row); return Promise.resolve(); },
     saveGenerationRun(row) { runs.push(row); return Promise.resolve(); },
   };
@@ -42,10 +43,11 @@ Deno.test("market archive checks exact TEST and private custom token before any 
   assertEquals(db.rows.length, 0);
 });
 
-Deno.test("hourly market archive requests only day-ahead datasets and appends repeated observations", async () => {
+Deno.test("hourly market archive requests day-ahead and bounded network datasets and appends repeated observations", async () => {
   const db = storage(), queries: URLSearchParams[] = [];
   const upstream: typeof fetch = (input, init) => {
     const url = new URL(String(input));
+    if (url.hostname === 'publicationtool.jao.eu') return Promise.resolve(Response.json({ data: [], rejected: false, messages: null }));
     assertEquals(`${url.origin}${url.pathname}`, "https://web-api.tp.entsoe.eu/api");
     assertEquals(url.searchParams.get("securityToken"), config.entsoeToken);
     assertEquals(init?.redirect, "error");
@@ -55,14 +57,14 @@ Deno.test("hourly market archive requests only day-ahead datasets and appends re
   const handler = createMarketArchiveHandler(config, db.store, upstream, now);
   assertEquals((await handler(request())).status, 200);
   assertEquals((await handler(request())).status, 200);
-  assertEquals(db.rows.length, 4);
-  assertEquals(new Set(db.rows.map(row => row.id)).size, 4);
-  assertEquals(db.rows.map(row => row.dataset).sort(), ["wind_day_ahead", "load_day_ahead", "wind_day_ahead", "load_day_ahead"].sort());
+  assertEquals(db.rows.length, 12);
+  assertEquals(new Set(db.rows.map(row => row.id)).size, 12);
+  assertEquals(db.rows.filter(row => row.zone === "SE3").map(row => row.dataset).sort(), ["wind_day_ahead", "load_day_ahead", "wind_day_ahead", "load_day_ahead"].sort());
   assertEquals(queries.slice(0, 2).map(query => [query.get("documentType"), query.get("processType"), query.get("periodStart"), query.get("periodEnd")]), [
     ["A69", "A01", "202610240000", "202610270000"],
     ["A65", "A01", "202610240000", "202610270000"],
   ]);
-  for (const row of db.rows) {
+  for (const row of db.rows.filter(row => row.zone === "SE3")) {
     assertEquals(row.zone, "SE3");
     assertEquals(row.requested_at, now().toISOString());
     assertEquals(row.resolved_at, now().toISOString());
@@ -89,22 +91,23 @@ Deno.test("hourly market archive fetches both datasets concurrently and waits fo
   let entered = 0;
   let allEntered: () => void = () => {};
   const ready = new Promise<void>(resolve => { allEntered = resolve; });
-  const upstream: typeof fetch = async () => {
+  const upstream: typeof fetch = async input => {
+    if (new URL(String(input)).hostname === 'publicationtool.jao.eu') return Response.json({ data: [], rejected: false, messages: null });
     entered++;
     if (entered === 2) allEntered();
     await ready;
     return new Response(hourly);
   };
-  const store: MarketArchiveStore = { ...db.store, saveObservation(row) {
+  const store: MarketArchiveStore = { ...db.store, saveObservation(row, assessment) {
     if (row.dataset === "load_day_ahead") return Promise.reject(new Error("private db detail"));
-    return db.store.saveObservation(row);
+    return db.store.saveObservation(row, assessment);
   } };
   const response = await createMarketArchiveHandler(config, store, upstream, now)(request());
   assertEquals(response.status, 500);
   const body = await response.json();
   assertEquals(body.error, "archive_storage_failed");
-  assertEquals(body.observations.length, 1);
-  assertEquals(db.rows.length, 1);
+  assertEquals(body.observations.length, 5);
+  assertEquals(db.rows.length, 5);
 });
 
 Deno.test("market archive preserves no-data and provider failures while concealing credentials", async () => {
@@ -196,7 +199,7 @@ Deno.test("generation research acquires 28-day actuals and weather, commits sour
   const queries: URL[] = [];
   let committed = 0;
   const store: MarketArchiveStore = { ...db.store,
-    async saveObservation(row) { await db.store.saveObservation(row); committed++; },
+    async saveObservation(row, assessment) { await db.store.saveObservation(row, assessment); committed++; },
     async saveGenerationRun(run) { assertEquals(committed, 9); await db.store.saveGenerationRun(run); },
   };
   const upstream: typeof fetch = input => {
@@ -273,4 +276,48 @@ Deno.test("archive rejects unknown research options before provider access", asy
   }
   assertEquals(calls, 0);
   assertEquals(db.runs.length, 0);
+});
+
+Deno.test('context collection commits intent first and independently archives actual demand and all five neighbouring areas', async () => {
+  const db = storage(), queries: URL[] = [];
+  let intentSaved = false;
+  const store: MarketArchiveStore = { ...db.store,
+    saveBatch(batch) { assertEquals(batch.kind, 'market_context'); assertEquals(batch.plan.length, 11); intentSaved = true; return Promise.resolve(); },
+  };
+  const upstream: typeof fetch = input => {
+    assertEquals(intentSaved, true);
+    const url = new URL(String(input)); queries.push(url);
+    return Promise.resolve(new Response(hourly));
+  };
+  const response = await createMarketArchiveHandler(config, store, upstream, now)(generationRequest({ context: true }));
+  assertEquals(response.status, 200);
+  assertEquals(db.rows.length, 11);
+  assertEquals(db.runs.length, 0);
+  const actual = queries.find(q => q.searchParams.get('processType') === 'A16')!;
+  assertEquals(actual.searchParams.get('outBiddingZone_Domain'), '10Y1001A1001A46L');
+  assertEquals(actual.searchParams.get('periodStart'), '202609262015');
+  assertEquals(queries.filter(q => q.searchParams.get('processType') === 'A01').length, 10);
+  assertEquals(new Set(queries.filter(q => q.searchParams.get('processType') === 'A01').map(q => q.searchParams.get('outBiddingZone_Domain') ?? q.searchParams.get('in_Domain'))).size, 5);
+  assertEquals(db.rows.some(r => r.zone !== 'SE3' && !r.dataset.startsWith('neighbour_')), false);
+});
+Deno.test('failed intent storage prevents untracked provider acquisition', async () => {
+  const db = storage(); let calls = 0;
+  const store: MarketArchiveStore = { ...db.store, saveBatch() { return Promise.reject(new Error('private storage detail')); } };
+  const upstream: typeof fetch = () => { calls++; throw new Error('unexpected'); };
+  const response = await createMarketArchiveHandler(config, store, upstream, now)(request());
+  assertEquals(response.status, 500);
+  assertEquals(calls, 0);
+  assertEquals(await response.json(), { error: 'archive_batch_storage_failed' });
+});
+Deno.test('public network data remains independent of missing ENTSO-E credentials and preserves provider rejections', async () => {
+  const db = storage();
+  const upstream: typeof fetch = input => {
+    const url = new URL(String(input));
+    assertEquals(url.hostname, 'publicationtool.jao.eu');
+    assertEquals(url.searchParams.get('securityToken'), null);
+    return Promise.resolve(Response.json({ data: [], rejected: url.pathname.endsWith('maxNetPos'), messages: ['synthetic rejection'] }));
+  };
+  assertEquals((await createMarketArchiveHandler({ ...config, entsoeToken: '' }, db.store, upstream, now)(request())).status, 200);
+  assertEquals(db.rows.filter(r => r.dataset === 'jao_max_net_positions').every(r => r.result.status === 'provider_error'), true);
+  assertEquals(db.rows.filter(r => r.dataset === 'jao_max_exchanges').every(r => r.result.status === 'no_data'), true);
 });

@@ -1,4 +1,5 @@
 /** Read-only TEST snapshot and reproducible scoring; no provider or planner writes. */
+import { marketEvidenceClient } from './market-evidence-client.ts';
 import { PROBE_PROJECT, testProbeServiceKey } from './planner-probe-auth.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveGenerationTruth } from '../supabase/functions/_shared/generation-truth.ts';
@@ -28,18 +29,14 @@ interface Run { id: string; origin: string; source_refs: Record<string, string>;
 interface Evidence { id: string; sequence: number; dataset: string; requested_from: string; requested_to: string; result: { status: string; document?: unknown } }
 const runs = await rows<Run>('energy_generation_forecast_runs', { select: 'id,origin,source_refs,forecast', order: 'origin,id' });
 const ids = [...new Set(runs.flatMap(run => Object.values(run.source_refs)))];
-const observations: Evidence[] = [];
-for (let index = 0; index < ids.length; index += 50) {
-  observations.push(...await rows<Evidence>('energy_market_forecast_observations', {
-    select: 'id,sequence,dataset,requested_from,requested_to,result', id: `in.(${ids.slice(index, index + 50).join(',')})`, order: 'sequence',
-  }));
-}
+const market = await marketEvidenceClient();
+const observations = await market.documents<Evidence>(ids);
 // Keep older targets scoreable after they leave the provider's rolling window.
 const latest = await rows<Evidence>('energy_market_forecast_observations', {
-  select: 'id,sequence,dataset,requested_from,requested_to,result', dataset: 'eq.generation_actual', 'result->>status': 'eq.data',
+  select: 'id', dataset: 'eq.generation_actual', 'result->>status': 'eq.data',
   order: 'sequence.desc',
 }, 1);
-const truth = latest[0];
+const truth = latest[0] ? (await market.documents<Evidence>([latest[0].id]))[0] : undefined;
 const actualDocuments = new Map(observations.filter(row => row.dataset === 'generation_actual' && row.result.status === 'data').map(row => [row.id, row]));
 if (truth) actualDocuments.set(truth.id, truth);
 const resolvedTruth = resolveGenerationTruth([...actualDocuments.values()].map(row => ({

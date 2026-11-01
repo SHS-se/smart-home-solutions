@@ -369,7 +369,7 @@ test.describe('planner bench', () => {
     await page.goto(`/portal/planner-bench?tab=generation-mix&study=correction-v2&pair=${PRICE_PAIR_ID}`);
     if (!await expectGenerationMixAvailability(page)) { expect(algorithms).toHaveLength(0); return; }
     const view = page.getByTestId('generation-mix-comparison');
-    await expect(view).toContainText(/New prospective study|Ny framåtblickande studie/);
+    await expect(view).toContainText(/These studies are retired|Studierna är avslutade/);
     await expect(view.getByTestId('mix-score-2')).toContainText(/With correction v2|Med korrigering v2/);
     expect(algorithms.every(algorithm => algorithm === 'se3-price-residual-v2')).toBe(true);
     await view.locator('#price-study-select').click();
