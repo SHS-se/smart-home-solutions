@@ -1,6 +1,6 @@
 /** Fixed provider products and cadences. This is acquisition policy, never a price model. */
 import { ZONE_STATIONS } from './market-wind.ts';
-import type { NucsArchiveDataset } from './nucs-market-data.ts';
+import { nucsParameters, type NucsArchiveDataset } from './nucs-market-data.ts';
 import type { SmhiDataset } from './smhi-observations.ts';
 import { ARCHIVED_MARKET_DATASETS } from './price-estimate-evidence.ts';
 
@@ -47,12 +47,7 @@ export function collectionPlan(kind: CollectionKind, now: Date): MarketRequest[]
     requests.push({ key: `${dataset}/${zone}/${start}/${end}`, dataset, zone, from: start, to: end });
   };
   if (kind === 'regional_context') {
-    for (const neighbour of NEIGHBOUR_ZONES) for (const direction of ['import', 'export'] as const) for (const dataset of ['nucs_week_ahead_ntc', 'nucs_transmission_outages'] as const) {
-      add(dataset, 'SE3', today - DAY, today + 9 * DAY);
-      const request = requests.at(-1)!;
-      request.key += `/${neighbour}/${direction}`;
-      request.neighbour = neighbour; request.direction = direction;
-    }
+    requests.push(...regionalCollectionPlan(new Date(today - DAY).toISOString(), new Date(today + 9 * DAY).toISOString()));
   } else if (kind === 'weather_truth') {
     const to = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
     for (const station of ZONE_STATIONS.SE3) for (const dataset of ['smhi_wind_10m_observed', 'smhi_temperature_2m_observed'] as const) {
@@ -99,3 +94,20 @@ export const MARKET_CAPABILITY_GAPS = [
   { source: 'Hourly week-ahead demand', status: 'provider_publishes_daily_extrema' },
   { source: 'Operational weather issue time', status: 'not_exposed_by_provider' },
 ] as const;
+
+/** Same verified products for scheduled collection and history downloads. */
+export function regionalCollectionPlan(from: string, to: string): MarketRequest[] {
+  // Reuse the provider boundary's closed window validation; no arbitrary endpoint or products can be supplied.
+  const requests: MarketRequest[] = [];
+  for (const neighbour of NEIGHBOUR_ZONES) for (const direction of ['import', 'export'] as const) for (const dataset of ['nucs_week_ahead_ntc', 'nucs_transmission_outages'] as const) {
+    const query = { provider: 'nucs', dataset, direction, neighbour, from, to };
+    nucsParameters(query);
+    requests.push({ key: `${dataset}/SE3/${from}/${to}/${neighbour}/${direction}`, dataset, zone: 'SE3', from, to, neighbour, direction });
+  }
+  return requests;
+}
+
+/** A regional request for a completed historical window does not refresh the forward-looking feed. */
+export function isCurrentCollection(batch: MarketBatch): boolean {
+  return batch.kind !== 'regional_context' || batch.plan.some(request => Date.parse(request.to) > Date.parse(batch.requested_at));
+}

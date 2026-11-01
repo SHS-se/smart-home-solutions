@@ -1,14 +1,16 @@
 /** Freeze acquisition health and prospective demand accuracy. No provider or database writes. */
 import { marketEvidenceClient, newPrivateEvidenceDirectory } from './market-evidence-client.ts';
-import { MARKET_CAPABILITY_GAPS } from '../supabase/functions/_shared/market-collection-plan.ts';
+import { MARKET_CAPABILITY_GAPS, isCurrentCollection } from '../supabase/functions/_shared/market-collection-plan.ts';
 import { scoreDemandForecasts, type DemandEvidence } from '../supabase/functions/_shared/demand-forecast-quality.ts';
 const out = await newPrivateEvidenceDirectory(Deno.args, 'Usage: deno task research:market:report --out NEW_PRIVATE_DIRECTORY');
 const client = await marketEvidenceClient(), snapshot = await client.snapshot();
 await Deno.writeTextFile(`${out}/manifest.json`, JSON.stringify(snapshot, null, 2) + '\n');
 const assessed = new Set(snapshot.assessed_ids);
 const index = (await client.index(snapshot.observation_ids)).map(row => assessed.has(row.id) ? row : { ...row, assessor_version: null, facts: null, http_status: null, error_code: null, body_sha256: null });
+const currentBatches = new Set(snapshot.batches.filter(isCurrentCollection).map(b => b.id));
 const sources = new Map<string, typeof index>();
 for (const row of index.sort((a, b) => a.sequence - b.sequence)) {
+  if (row.batch_id && !currentBatches.has(row.batch_id)) continue;
   const scope = row.facts?.scope_key ?? row.facts?.station_id;
   const key = `${row.dataset}/${row.zone}${typeof scope === 'string' && scope ? `/${scope}` : ''}`;
   if (!sources.has(key)) sources.set(key, []);
@@ -36,7 +38,7 @@ const batches = snapshot.batches.map(batch => ({ id: batch.id, kind: batch.kind,
   expected: batch.plan.length, saved: index.filter(r => r.batch_id === batch.id).length,
   missing: batch.plan.filter(p => !index.some(r => r.batch_id === batch.id && r.request_key === p.key)).map(p => p.key) }));
 const cadence = (['day_ahead', 'generation', 'market_context', 'weather_truth', 'regional_context'] as const).map(kind => {
-  const rows = batches.filter(b => b.kind === kind).sort((a, b) => a.at.localeCompare(b.at));
+  const rows = batches.filter(b => b.kind === kind && currentBatches.has(b.id)).sort((a, b) => a.at.localeCompare(b.at));
   const hours = kind === 'day_ahead' ? 1 : 6;
   // Cron runs on fixed UTC hours. Compare bucket numbers, rather than mistaking request-time jitter for a missed run.
   const bucket = (at: string) => Math.floor(Date.parse(at) / (hours * 3_600_000));

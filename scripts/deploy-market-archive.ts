@@ -14,6 +14,8 @@ const MIGRATIONS = [
   { version: '20261101144000', name: 'market_data_foundation' },
   { version: '20261101162000', name: 'weather_accuracy_quality_monitor' },
   { version: '20261101164000', name: 'verified_regional_context' },
+  { version: '20261101180000', name: 'retrospective_regional_backfill' },
+  { version: '20261101181000', name: 'native_history_request_windows' },
 ];
 const root = new URL('..', import.meta.url).pathname;
 if (Deno.args.length) throw new Error('This command accepts no project override; TEST only.');

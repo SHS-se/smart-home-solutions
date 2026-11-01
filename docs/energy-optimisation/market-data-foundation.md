@@ -158,3 +158,17 @@ Primary references:
 - [NUCS weekly capacity parameters](https://www.nucs.net/nucs/web-api-docs/web-api-di-1-8-forecasted-week-ahead-transfer-capacities-111.html)
 - [NUCS transmission availability parameters](https://www.nucs.net/nucs/web-api-docs/web-api-di-2-1-changes-in-actual-availability-in-the-transmission-grid-101b.html)
 - [Nordic flow-based publication handbook](https://nordic-rcc.net/wp-content/uploads/2025/10/Publication-Handbook-NUCS.pdf)
+
+### NUCS history
+
+```sh
+deno task research:market:backfill-nucs --from 2026-10-22 --to 2026-11-01 --out NEW_PRIVATE_DIRECTORY
+```
+
+Dates delimit Stockholm market dates; the end date is exclusive. The command
+archives the same twenty products with their real download dates and provider
+revisions. It produces a ready-to-use daily capacity dataset and outage records;
+no additional consumer code or label handling is required. Normal tools include
+the historical records automatically. Current feed status and baseline pointers
+use the native requested window so a download of older dates does not replace a
+forward-looking collection. Original forecast snapshots remain intact.

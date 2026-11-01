@@ -1,6 +1,8 @@
 /** TEST-only bounded reads. Credentials never become report artifacts. */
+import { readMarketProvider } from '../supabase/functions/_shared/market-provider-response.ts';
 import { PROBE_PROJECT, testProbeServiceKey } from './planner-probe-auth.ts';
 import type { MarketBatch } from '../supabase/functions/_shared/market-collection-plan.ts';
+import type { MarketArchiveObservation } from '../supabase/functions/energy-market-archive/index.ts';
 import type { AssessedObservation, MarketAssessment } from '../supabase/functions/_shared/market-evidence-assessment.ts';
 export interface MarketSnapshot { at: string; assessor_version: string; observation_ids: string[]; assessed_ids: string[]; batches: MarketBatch[] }
 export interface MarketIndex extends Omit<AssessedObservation, 'result'> {
@@ -11,15 +13,23 @@ export interface MarketIndex extends Omit<AssessedObservation, 'result'> {
 export async function marketEvidenceClient() {
   const key = await testProbeServiceKey();
   const headers = { authorization: `Bearer ${key}`, apikey: key, 'content-type': 'application/json' };
-  async function read<T>(path: string, body?: object): Promise<T> {
+  async function send(path: string, body?: object): Promise<Response> {
     const response = await fetch(`https://${PROBE_PROJECT}.supabase.co/rest/v1/${path}`, {
       headers, method: body ? 'POST' : 'GET', body: body ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) throw new Error(`TEST market evidence HTTP ${response.status}`);
+    return response;
+  }
+  async function read<T>(path: string, body?: object): Promise<T> {
+    const response = await send(path, body);
     if (response.status === 204) return undefined as T; // PostgREST void RPC protocol.
     return await response.json();
   }
   return {
+    research: (query: Record<string, unknown>) => readMarketProvider(new URL(`https://${PROBE_PROJECT}.supabase.co/functions/v1/energy-market-research`), key,
+      (url, options) => fetch(url, { ...options, method: 'POST', headers, body: JSON.stringify({ provider: 'nucs', ...query }) })),
+    saveBatch: async (batch: MarketBatch) => { await send('energy_market_collection_batches', batch); },
+    record: (row: MarketArchiveObservation, assessment: MarketAssessment) => read('rpc/record_test_market_observation', { p_observation: row, p_assessment: assessment }),
     status: (since: number) => read('rpc/read_test_market_quality_status', { p_since: since }),
     snapshot: () => read<MarketSnapshot>('rpc/read_test_market_snapshot', {}),
     async index(ids: string[]) {

@@ -248,7 +248,16 @@ export async function captureNucsEvidence(
   const url = new URL("https://www.nucs.net/api");
   url.search = nucsParameters({ provider: "nucs", ...query }).toString();
   url.searchParams.set("securityToken", token);
-  const response = await readMarketProvider(url, token, fetchProvider);
+  return nucsEvidenceFromResponse(query, await readMarketProvider(url, token, fetchProvider));
+}
+
+/** Parse provider bytes obtained through the private research endpoint. */
+export async function nucsEvidenceFromResponse(
+  query: Parameters<typeof parseNucsResponse>[1],
+  response: Awaited<ReturnType<typeof readMarketProvider>>,
+) {
+  const empty = { http_status: null as number | null, body_sha256: null as string | null,
+    raw_base64: null as string | null, error_code: null as string | null, request: query };
   if (!response) {
     return {
       ...empty,
