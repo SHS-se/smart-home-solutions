@@ -107,6 +107,11 @@ prediction under the existing room policy. Future prices remain comparable as
 soon as published, including estimates from partial forecast slots. Catalog
 names and latest rosters include records without winning energy quarters.
 
+Slot timestamps and numeric room values are parsed once per archived slot or
+room value. Room-key ordering is applied only to selected evidence; expanding an
+old room object does not need its own sort. These query details preserve the
+same evidence without increasing the database request timeout.
+
 Selection preserves millisecond publication comparisons, UUID ties, duplicate
 slot ordinality, first-seen order and JavaScript property ordering. Tests compare
 the complete scores, sums, gaps and plan identities against a frozen, test-only
