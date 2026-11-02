@@ -21,6 +21,7 @@ async function database() {
     CREATE TABLE energy_forecast_accuracy_reports(home_id uuid,scheduled_at timestamptz,report jsonb,diagnostics jsonb);
     CREATE TABLE energy_optimisation_current(home_id uuid,plan_id uuid);`);
   await db.exec(await Deno.readTextFile(migration));
+  await db.exec(await Deno.readTextFile('supabase/migrations/20261102080000_stream_accuracy_slot_selection.sql'));
   return db;
 }
 const slot=(start:string):AccuracySlot=>({start,duration_hours:.25,load_w:1600,pv_w:200,device_loads_w:{heater:400},
@@ -101,9 +102,10 @@ Deno.test('compact evidence preserves publication ties, omissions, future prices
 Deno.test('compact evidence has bounded output with many synthetic replans and exact DST day metrics',async()=>{
   const db=await database();
   try {
-    const count=120, length=288, origin=Date.parse('2026-10-23T00:00:00Z');
+    const count=360, length=288, origin=Date.parse('2026-10-23T00:00:00Z');
     const records=Array.from({length:count},(_,i)=>record(i+1,new Date(origin+i*900000+1).toISOString(),
-      Array.from({length},(_,n)=>slot(new Date(origin+(i+n)*900000).toISOString()))));
+      Array.from({length},(_,n)=>({...slot(new Date(origin+(i+n)*900000).toISOString()),
+        room_temperature_c:Object.fromEntries(Array.from({length:7},(_,r)=>[`room-${r}`,20+r/10]))}))));
     await insert(db,records);
     await db.query("INSERT INTO energy_optimisation_devices VALUES($1,$1,'heater')",[HOME]);
     await db.query(`INSERT INTO energy_optimisation_actual_slots SELECT $1,t,.4,.05,.15,.05,.6
