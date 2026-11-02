@@ -136,3 +136,13 @@ export function buildPricePair(input: PricePairInput): PricePairForecast {
     ? { status: 'paired', fit, targets }
     : { status: 'unavailable', reason: 'No target has both forecasts; missing inputs remain explicit.', fit, targets };
 }
+
+/** Frozen historical study context, retained for numerical replay. */
+export interface PricePairReservation {
+  id: string;
+  status: "pending" | PricePairForecast["status"];
+  context: Omit<PricePairInput, "actualIntervals"> & {
+    homeId: string; mixRunId: string; origin: string;
+    actualObservationId: string; priceCutoff: number;
+  };
+}

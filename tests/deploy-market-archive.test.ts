@@ -23,11 +23,13 @@ if [ "$operation" = 'db query' ]; then
  [ "$agent" = 'no' ] || exit 9
  case "$(cat "$input")" in
   *'AS applied'*) printf '[{"applied":true}]' ;;
-  *'SELECT home_id'*) printf '[{"home_id":"9bc2ab59-7832-4530-8a15-e51a09e43a59"}]' ;;
+  *'SELECT coalesce'*) printf '[{"home_id":"9bc2ab59-7832-4530-8a15-e51a09e43a59"}]' ;;
   *'cron.job'*) printf '[{"jobname":"test-energy-price-experiment","active":true}]' ;;
   *'AS enabled'*) printf '[{"enabled":true}]' ;;
   *) exit 10 ;;
  esac
+elif [ "$operation" = 'functions list' ]; then
+ printf '[{"slug":"energy-price-experiment"},{"slug":"energy-price-correction-experiment"}]'
 fi
 `, { mode: 0o700 });
     const run = (args: string[] = []) => new Deno.Command(Deno.execPath(), {
@@ -37,11 +39,11 @@ fi
     }).output();
     const success = await run();
     assertEquals(success.code, 0, new TextDecoder().decode(success.stderr));
-    assertStringIncludes(new TextDecoder().decode(success.stdout), 'Deployed the TEST paired price worker.');
+    assertStringIncludes(new TextDecoder().decode(success.stdout), 'Deployed the TEST collector.');
     const invocations = await Deno.readTextFile(calls);
     assertStringIncludes(invocations, '--agent no --output json');
-    assertStringIncludes(invocations, 'functions deploy energy-price-experiment --project-ref vxqpgbzseckgceopitpm --use-api');
-    assertStringIncludes(invocations, 'functions deploy energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --use-api --no-verify-jwt');
+    assertStringIncludes(invocations, 'functions delete energy-price-experiment --project-ref vxqpgbzseckgceopitpm --yes');
+    assertStringIncludes(invocations, 'functions delete energy-price-correction-experiment --project-ref vxqpgbzseckgceopitpm --yes');
     assertEquals(invocations.includes('oosxndduqzhvrorgogaw'), false);
     const rejected = await run(['another-project']);
     assertEquals(rejected.code !== 0, true);

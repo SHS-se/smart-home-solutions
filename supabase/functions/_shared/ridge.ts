@@ -6,6 +6,20 @@ export interface RidgeFit {
   /** Intercept first, then coefficients for standardized features. */
   coefficients: number[];
 }
+/** Internal augmented normal-equation solver, shared by the two fixed research fit policies. Mutates its matrix. */
+export function solveRidgeSystem(matrix: (number[] | Float64Array)[]): number[] {
+  const width = matrix.length - 1;
+  for (let column = 0; column <= width; column++) {
+    const pivot = matrix[column][column];
+    for (let right = column; right <= width + 1; right++) matrix[column][right] /= pivot;
+    for (let row = 0; row <= width; row++) {
+      if (row === column) continue;
+      const factor = matrix[row][column];
+      for (let right = column; right <= width + 1; right++) matrix[row][right] -= factor * matrix[column][right];
+    }
+  }
+  return matrix.map(row => row[width + 1]);
+}
 export function fitRidge(inputs: readonly (readonly number[])[], values: readonly number[]): RidgeFit {
   if (!inputs.length || inputs.length !== values.length) throw new Error('Ridge requires a nonempty paired training cohort.');
   const width = inputs[0].length;
@@ -19,16 +33,7 @@ export function fitRidge(inputs: readonly (readonly number[])[], values: readonl
     Array.from({ length: width + 2 }, (_, right) => right > width
       ? x.reduce((sum, row, index) => sum + row[left] * values[index], 0)
       : x.reduce((sum, row) => sum + row[left] * row[right], 0) + (left === right && left > 0 ? 1 : 0)));
-  for (let column = 0; column <= width; column++) {
-    const pivot = matrix[column][column];
-    for (let right = column; right <= width + 1; right++) matrix[column][right] /= pivot;
-    for (let row = 0; row <= width; row++) {
-      if (row === column) continue;
-      const factor = matrix[row][column];
-      for (let right = column; right <= width + 1; right++) matrix[row][right] -= factor * matrix[column][right];
-    }
-  }
-  const coefficients = matrix.map(row => row[width + 1]);
+  const coefficients = solveRidgeSystem(matrix);
   if ([...means, ...scales, ...coefficients].some(value => !Number.isFinite(value))) throw new Error('Ridge fit is not numerically finite.');
   return { lambda: 1, means, scales, coefficients };
 }

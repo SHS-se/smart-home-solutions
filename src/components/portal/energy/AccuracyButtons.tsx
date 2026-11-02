@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useHomeTimeZone } from './HomeTimeZoneContext';
-import type { AccuracyReport } from '../../../../supabase/functions/_shared/forecast-accuracy';
+import type { AccuracyReport, EnergyAccuracy, HistoricalAccuracyDevice, AccuracyBreakdown } from '../../../../supabase/functions/_shared/forecast-accuracy';
 import type { InputAccuracy, InputCheck } from '../../../../supabase/functions/_shared/input-accuracy';
 
 const colours = {green: 'text-emerald-700 dark:text-emerald-400', lime: 'text-lime-700 dark:text-lime-400',
@@ -40,10 +41,9 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
           {error ? <p role="status" className="text-sm text-muted-foreground">{error}</p> : <>
             <section aria-labelledby="accuracy-energy">
               <h3 id="accuracy-energy" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Elförbrukning', 'Electricity')}</h3>
-              {!report?.historical.devices.length ? <p className="py-2 text-sm text-muted-foreground">{t('Lär sig', 'Learning')}</p> :
-                <ul className="divide-y">{report.historical.devices.map(row => <li key={row.key} className="flex justify-between gap-4 py-2 text-sm">
-                  <span>{row.name}</span><span className={`font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
-                    {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
+              {!report?.historical.devices.length ? <p className="py-2 text-sm text-muted-foreground">{t('Ingen historisk jämförelse tillgänglig ännu', 'No historical comparison available yet')}</p> :
+                <ul className="divide-y">{report.historical.devices.map(row => <li key={row.key}>
+                  <EnergyComparison row={row} t={t} />
                 </li>)}</ul>}
             </section>
             {report?.room_temperature && <RoomTemperatures accuracy={report.room_temperature} t={t} />}
@@ -53,6 +53,55 @@ export default function AccuracyButtons({report, error, input, inputUnavailable}
         </div>
       </DialogContent>
     </Dialog></>;
+}
+
+/** One shared comparison presentation for baseline, devices and both battery directions. */
+function EnergyNumbers({metric, t}: {metric: EnergyAccuracy; t: Translate}) {
+  const kwh = (n: number) => n.toLocaleString(undefined, {maximumFractionDigits: 2});
+  const bias = metric.bias_percent === null ? t('Ingen uppmätt energi', 'No measured energy')
+    : Math.abs(metric.bias_percent) < .05 ? t('Ingen total avvikelse', 'No overall bias')
+    : metric.bias_percent > 0 ? t('Överskattat', 'Overestimated') : t('Underskattat', 'Underestimated');
+  return <div className="space-y-1 text-xs text-muted-foreground">
+    <p>{t('Prognos', 'Forecast')} {kwh(metric.predicted_kwh)} kWh · {t('Uppmätt', 'Measured')} {kwh(metric.actual_kwh)} kWh</p>
+    <p>{bias}{metric.bias_percent !== null && Math.abs(metric.bias_percent) >= .05
+      ? ` ${Math.abs(metric.bias_percent).toLocaleString(undefined, {maximumFractionDigits: 1})}%` : ''}
+      {` · ${metric.quarters} `}{t('jämförda kvartar', 'compared quarters')}</p>
+  </div>;
+}
+function EnergyBreakdown({label, rows, t}: {label: string; rows: AccuracyBreakdown[]; t: Translate}) {
+  if (!rows.length) return null;
+  return <details className="text-xs"><summary className="min-h-11 cursor-pointer py-3 focus-visible:outline focus-visible:outline-2">{label}</summary>
+    <ul className="space-y-2 pb-2">{rows.map(row => <li key={row.key} className="space-y-1 border-l-2 pl-2">
+      <p className="flex justify-between gap-2"><span className="min-w-0 break-all" title={row.key}>{row.key.split(':')[0]}</span>
+        <span className="shrink-0 tabular-nums">{value(row.percentage)}{row.percentage !== null ? '%' : ''}</span></p>
+      <EnergyNumbers metric={row} t={t} />
+    </li>)}</ul>
+  </details>;
+}
+function EnergyComparison({row, t}: {row: HistoricalAccuracyDevice; t: Translate}) {
+  return <details className="group" data-testid={`accuracy-energy-${row.key}`}>
+    <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 py-2 text-sm focus-visible:outline focus-visible:outline-2">
+      <ChevronRight aria-hidden="true" className="size-3 shrink-0 group-open:rotate-90" />
+      <span className="min-w-0 flex-1">{row.name}</span>
+      <span className={`shrink-0 font-medium tabular-nums ${row.grade ? colours[row.grade] : 'text-muted-foreground'}`}>
+        {value(row.percentage)}{row.percentage !== null ? '%' : ''}</span>
+    </summary>
+    <div className="space-y-2 pb-3 pl-5">
+      <EnergyNumbers metric={row} t={t} />
+      {row.gaps > 0 && <p className="text-xs text-muted-foreground">{row.gaps} {t('kvartar utan jämförbara värden', 'quarters without comparable values')}</p>}
+      {row.battery && (['charge', 'discharge'] as const).map(direction => {
+        const metric = row.battery![direction];
+        return <div key={direction} className="space-y-1 border-l-2 pl-2" data-testid={`accuracy-battery-${direction}`}>
+          <p className="flex justify-between gap-2 text-xs font-medium"><span>{direction === 'charge' ? t('Laddning', 'Charging') : t('Urladdning', 'Discharging')}</span>
+            <span>{value(metric.percentage)}{metric.percentage !== null ? '%' : ''}</span></p>
+          <EnergyNumbers metric={metric} t={t} />
+        </div>;
+      })}
+      <EnergyBreakdown label={t('Per dag', 'By day')} rows={row.daily} t={t} />
+      <EnergyBreakdown label={t('Prognoshorisont', 'Forecast lead time')} rows={row.leads} t={t} />
+      <EnergyBreakdown label={t('Planerarversion', 'Planner version')} rows={row.models} t={t} />
+    </div>
+  </details>;
 }
 
 /**
@@ -131,6 +180,12 @@ function InputChecks({input, unavailable, timeZone, t}: {input: InputAccuracy | 
 function AccuracyFooter({report, stamp}: {report: AccuracyReport | null; stamp: string}) {
   const {t} = useLanguage();
   return <div className="space-y-0.5 text-xs text-muted-foreground" data-testid="accuracy-schedule">
-    {report && <p>{t('Beräknad', 'Calculated')} <time dateTime={report.calculated_at}>{stamp}</time></p>}
+    {report && <>
+      <p>{t('Jämförd period', 'Compared period')}: <time dateTime={report.historical_from}>{new Date(report.historical_from).toLocaleString(undefined, {timeZone: report.timezone})}</time>
+        {' – '}<time dateTime={report.scheduled_at}>{new Date(report.scheduled_at).toLocaleString(undefined, {timeZone: report.timezone})}</time></p>
+      <p>{t('Beräknad', 'Calculated')} <time dateTime={report.calculated_at}>{stamp}</time></p>
+      <p>{t('Procenten visar överensstämmelse per kvart. Avvikelsen visar om den totala energin över- eller underskattats.',
+        'The percentage measures agreement per quarter. Bias shows whether total energy was over- or underestimated.')}</p>
+    </>}
   </div>;
 }

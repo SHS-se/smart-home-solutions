@@ -1607,8 +1607,12 @@ test.describe('requesting a replan', () => {
   test('accuracy buttons open compact device lists with all five grades', async ({page}) => {
     const devices = [['baseline','Baseline',94,'green'],['ev','Car',84,'lime'],['pool','Pool',74,'yellow'],
       ['boiler','Water boiler',64,'orange'],['battery','House battery',54,'red'],
-      ...Array.from({length:15},(_,i)=>[`device-${i}`,`Bedroom heater ${i+1}`,null,null])].map(([key,name,percentage,grade]) => ({key,name,percentage,grade}));
-    replan.accuracy = {version:2,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',historical_from:CAPTURED_AT,
+      ...Array.from({length:15},(_,i)=>[`device-${i}`,`Bedroom heater ${i+1}`,null,null])].map(([key,name,percentage,grade]) => ({key,name,percentage,grade,quarters:96,predicted_kwh:22,actual_kwh:20,
+      bias_kwh:2,bias_percent:10,absolute_error_kwh:4,gaps:0,daily:[{key:'2026-10-24',percentage:75,grade:'yellow',quarters:96,
+        predicted_kwh:22,actual_kwh:20,bias_kwh:2,bias_percent:10,absolute_error_kwh:4}],models:[],leads:[],
+      ...(key==='battery'?{battery:{charge:{percentage:91,grade:'green',quarters:96,predicted_kwh:11,actual_kwh:10,bias_kwh:1,bias_percent:10,absolute_error_kwh:1},
+        discharge:{percentage:47,grade:'red',quarters:96,predicted_kwh:11,actual_kwh:10,bias_kwh:1,bias_percent:10,absolute_error_kwh:1}}}:{})}));
+    replan.accuracy = {version:3,calculated_at:CAPTURED_AT,scheduled_at:CAPTURED_AT,timezone:'Europe/Stockholm',historical_from:CAPTURED_AT,
       historical:{percentage:64,grade:'orange',devices},prices:{percentage:80,grade:'lime',quarters:96},
       room_temperature:{tolerance_c:.5,rooms:[{key:'bath',name:'Master bathroom',percentage:82,grade:'lime',quarters:180,
         mean_absolute_error_c:.31,bias_c:-.1},
@@ -1642,6 +1646,18 @@ test.describe('requesting a replan', () => {
     const popup = page.getByRole('dialog');
     await expect(popup.getByText('Baseline',{exact:true})).toBeVisible();
     for (const n of [94,84,74,64,54]) await expect(popup.getByText(`${n}%`,{exact:true})).toBeVisible();
+    const baseline=popup.getByTestId('accuracy-energy-baseline');
+    await baseline.locator('summary').first().click();
+    await expect(baseline).toContainText(/Overestimated|Överskattat/);
+    await expect(baseline).toContainText('10%');
+    await expect(baseline).toContainText(/96 (compared quarters|jämförda kvartar)/);
+    await baseline.getByText(/^(By day|Per dag)$/).click();
+    await expect(baseline.getByText('2026-10-24',{exact:true})).toBeVisible();
+    const battery=popup.getByTestId('accuracy-energy-battery');
+    await battery.locator('summary').first().click();
+    await expect(battery.getByTestId('accuracy-battery-charge')).toContainText('91%');
+    await expect(battery.getByTestId('accuracy-battery-discharge')).toContainText('47%');
+    await expect(popup.getByTestId('accuracy-schedule')).toContainText(/Compared period|Jämförd period/);
     // Room temperature is its own section, never a row among the meters.
     const rooms = popup.getByTestId('room-temperature-accuracy');
     await expect(rooms).toContainText(/Room temperature|Rumstemperatur/);
@@ -1677,6 +1693,16 @@ test.describe('requesting a replan', () => {
     }
     await popup.getByRole('button',{name:'Close',exact:true}).click();
     await expect(forecast).toBeFocused();
+  });
+
+  test('failed accuracy reporting leaves the plan and replanning available', async ({page}) => {
+    await page.route('**/rest/v1/rpc/get_energy_forecast_accuracy', route => route.abort('failed'));
+    await page.goto('/portal/energy-modeling?tab=plan');
+    await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
+    await page.getByRole('button',{name:/Historical accuracy %|Historisk noggrannhet %/}).click();
+    await expect(page.getByRole('dialog')).toContainText(/Accuracy unavailable|Noggrannhet är inte tillgänglig/);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button',{name:replanButton})).toBeEnabled();
   });
 
   test('routine learning does not create a banner or block replanning', async ({page})=>{

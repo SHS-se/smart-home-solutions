@@ -48,8 +48,10 @@ function demandRange(intervals: readonly EntsoeInterval[], at: number): number[]
   }, []);
 }
 
-/** Only labels already frozen below this run's truth cutoff can train it. */
-export function buildPriceCorrection(input: PriceCorrectionInput): PriceCorrectionForecast {
+export interface PreparedPriceCorrection { cohort: CorrectionSample[]; targets: CorrectionTarget[] }
+
+/** Shared immutable feature and cohort policy; versioned estimators own fitting. */
+export function preparePriceCorrection(input: PriceCorrectionInput): PreparedPriceCorrection {
   const origin = Date.parse(input.knownAt);
   if (!Number.isFinite(origin) || !Number.isSafeInteger(input.truthCutoff) || input.truthCutoff < 0) {
     throw new Error('Invalid correction knowledge boundary');
@@ -68,13 +70,6 @@ export function buildPriceCorrection(input: PriceCorrectionInput): PriceCorrecti
       row.origin === prior.origin && row.runId > prior.runId) training.set(key, row);
   }
   const cohort = [...training.values()].sort((a, b) => a.start.localeCompare(b.start) || a.leadDay - b.leadDay);
-  const fit = cohort.length ? {
-    ridge: fitRidge(cohort.map(row => row.features), cohort.map(row => row.actual - row.baseline)),
-    featureNames: [...CORRECTION_FEATURE_NAMES],
-    training: { quarters: cohort.length,
-      targetDays: new Set(cohort.map(row => generationLocalTime(Date.parse(row.start)).day)).size,
-      examples: cohort.map(({ runId, start, truthSequence }) => ({ runId, start, truthSequence })) },
-  } : null;
   const targets = input.baseline.slots.map((slot): CorrectionTarget => {
     const at = Date.parse(slot.start);
     if (!Number.isFinite(at) || at % 900_000 || !Number.isFinite(slot.price)) throw new Error('Invalid frozen baseline quarter');
@@ -89,9 +84,24 @@ export function buildPriceCorrection(input: PriceCorrectionInput): PriceCorrecti
     const features = [slot.price, Math.sin(phase), Math.cos(phase), clock.dayType === 'weekend' ? 1 : 0,
       (at - origin) / 3_600_000, ...mix as number[], ...range];
     return { start: slot.start, baseline: slot.price, features,
-      corrected: fit ? slot.price + predictRidge(fit.ridge, features) : null,
-      reason: fit ? null : 'Collecting prospective residual outcomes.' };
+      corrected: null, reason: null };
   });
+  return { cohort, targets };
+}
+
+/** V1 remains numerically unchanged for exact historical replay. */
+export function buildPriceCorrection(input: PriceCorrectionInput): PriceCorrectionForecast {
+  const { cohort, targets: prepared } = preparePriceCorrection(input);
+  const fit = cohort.length ? {
+    ridge: fitRidge(cohort.map(row => row.features), cohort.map(row => row.actual - row.baseline)),
+    featureNames: [...CORRECTION_FEATURE_NAMES],
+    training: { quarters: cohort.length,
+      targetDays: new Set(cohort.map(row => generationLocalTime(Date.parse(row.start)).day)).size,
+      examples: cohort.map(({ runId, start, truthSequence }) => ({ runId, start, truthSequence })) },
+  } : null;
+  const targets = prepared.map(row => row.features ? { ...row,
+    corrected: fit ? row.baseline + predictRidge(fit.ridge, row.features) : null,
+    reason: fit ? null : 'Collecting prospective residual outcomes.' } : row);
   const paired = targets.some(row => row.corrected !== null);
   return { algorithm: PRICE_CORRECTION_ALGORITHM, status: paired ? 'paired' : 'unavailable',
     reason: paired ? null : fit ? 'No target has complete prospective market inputs.' : 'Collecting prospective residual outcomes.', fit, targets };

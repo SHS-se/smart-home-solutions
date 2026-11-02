@@ -22,7 +22,14 @@
     "deploy:market-archive": "deno run --allow-read --allow-write --allow-run=supabase scripts/deploy-market-archive.ts",
     "research:prices:paired-report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-pair-report.ts",
     "research:prices:correction-report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-pair-report.ts --study correction",
-    "test:planner-contracts": "deno run --allow-read --allow-write --allow-run scripts/check-planner-contracts.ts"
+    "research:prices:correction-v2-report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/price-pair-report.ts --study correction-v2",
+    "research:prices:correction-replay": "deno run --allow-read --allow-write scripts/price-correction-replay.ts",
+    "test:planner-contracts": "deno run --allow-read --allow-write --allow-run scripts/check-planner-contracts.ts",
+    "research:market:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-data-report.ts",
+    "research:market:assess": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-data-assess.ts",
+    "research:market:status": "deno run --allow-read --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/market-quality-status.ts",
+    "research:weather:report": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/weather-accuracy-report.ts",
+    "research:market:backfill-nucs": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/nucs-backfill.ts"
   },
   "imports": {
     "https://esm.sh/resend@2.0.0": "npm:resend@2.0.0",

@@ -103,7 +103,7 @@ Deno.test("ENTSO-E no-data acknowledgement differs from provider errors", () => 
 });
 
 const TEST = "https://vxqpgbzseckgceopitpm.supabase.co";
-const config = { projectUrl: TEST, secret: "private-test-secret", token: "server-token" };
+const config = { projectUrl: TEST, secret: "private-test-secret", token: "server-token", nucsToken: "server-nucs-token" };
 const request = (body: unknown = query, auth = "Bearer private-test-secret") => new Request(`${TEST}/functions/v1/energy-market-research`, {
   method: "POST", headers: { authorization: auth }, body: JSON.stringify(body),
 });

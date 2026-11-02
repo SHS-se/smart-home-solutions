@@ -1,5 +1,9 @@
 import {assertEquals, assert} from '@std/assert';
-import {calculateAccuracy, accuracyScore, type ForecastRecord, type AccuracySlot, type AccuracyActual, type PublishedPrice} from './forecast-accuracy.ts';
+import {calculateAccuracy as calculateSelectedAccuracy, accuracyScore} from './forecast-accuracy.ts';
+import {selectReferenceEvidence, type ForecastRecord, type AccuracySlot, type AccuracyActual, type PublishedPrice, calculateReferenceAccuracy} from '../../../tests/helpers/forecast-accuracy-reference.ts';
+function calculateAccuracy(input: Parameters<typeof calculateReferenceAccuracy>[0]) {
+  return calculateSelectedAccuracy({...selectReferenceEvidence(input), scheduled_at:input.scheduled_at, calculated_at:input.calculated_at, timezone:input.timezone});
+}
 
 const past = '2026-10-16T12:00:00Z', next = '2026-10-17T18:00:00Z';
 type Calculation = {historical: {bias_kwh: number; pairs: number; absolute_error_kwh: number}; gaps: number; plan_ids: string[];
@@ -19,7 +23,7 @@ Deno.test('historical accuracy uses measured pairs; the report has no forecast s
   const i = input();
   i.actuals[0].total_load_kwh = .75; // baseline actually .5, forecast .25: 50%.
   const {report, diagnostics} = calculateAccuracy(i);
-  assertEquals(report.version, 2);
+  assertEquals(report.version, 3);
   assertEquals('forecast' in report, false);
   assertEquals(report.historical.devices.find(d => d.key === 'baseline')!.percentage, 50);
   assertEquals(report.historical.percentage, 67); // .5 matched / .75 larger.
@@ -129,4 +133,18 @@ Deno.test('a driven room without readings is listed as not yet compared; no driv
   assertEquals(report.room_temperature?.rooms, [{key: 'bath', name: 'Bathroom', percentage: null, grade: null,
     quarters: 0, mean_absolute_error_c: null, bias_c: null}]);
   assertEquals('room_temperature' in calculateAccuracy(input()).report, false);
+});
+
+Deno.test('signed bias and battery directions explain opposing errors without changing overlap',()=>{
+  const i=input(); i.forecasts[0].forecast.battery=true;
+  i.forecasts[0].forecast.slots[0].battery_charge_w=1600;
+  i.forecasts[0].forecast.slots[0].battery_discharge_w=800;
+  i.actuals[0].battery_charge_kwh=.2; i.actuals[0].battery_discharge_kwh=.4;
+  const {report}=calculateAccuracy(i), row=report.historical.devices.find(d=>d.key==='battery')!;
+  assertEquals(row.percentage,50);
+  assertEquals(row.bias_percent,0);
+  assertEquals(row.battery!.charge.bias_percent,100);
+  assertEquals(row.battery!.discharge.bias_percent,-50);
+  assertEquals(row.quarters,1);
+  assertEquals(row.daily[0].quarters,1);
 });

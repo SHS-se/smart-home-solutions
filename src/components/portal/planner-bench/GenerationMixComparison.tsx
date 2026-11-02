@@ -58,9 +58,12 @@ const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: Arm
 const GenerationMixComparison: React.FC = () => {
   const { t, language } = useLanguage();
   const [params, setParams] = useSearchParams();
-  const correction = params.get('study') === 'correction';
+  const study = params.get('study') === 'correction-v2' ? 'correction-v2' : params.get('study') === 'correction' ? 'correction' : 'mix';
+  const correction = study !== 'mix';
+  const v2 = study === 'correction-v2';
+  const algorithm = v2 ? 'se3-price-residual-v2' : 'se3-price-residual-v1';
   const labels: ArmLabels = correction ? {
-    baseline: t('Nuvarande prognos', 'Current forecast'), corrected: t('Med korrigering', 'With correction'),
+    baseline: t('Nuvarande prognos', 'Current forecast'), corrected: v2 ? t('Med korrigering v2', 'With correction v2') : t('Med korrigering', 'With correction'),
     lowError: t('Korrigeringen har lägre fel hittills', 'Correction has lower error so far'),
     highError: t('Korrigeringen har högre fel hittills', 'Correction has higher error so far'),
   } : {
@@ -71,9 +74,10 @@ const GenerationMixComparison: React.FC = () => {
   const series = MIX_SERIES.map(item => ({ ...item, label: item.key === 'reduced' ? labels.baseline : item.key === 'full' ? labels.corrected : t(item.sv, item.en) }));
   const pairId = params.get('pair');
   const query = useQuery({
-    queryKey: ['test-price-pair-comparison', correction, pairId],
+    queryKey: ['test-price-pair-comparison', study, pairId],
     queryFn: async () => {
-      const { data, error } = await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison', { p_pair_id: pairId });
+      const { data, error } = await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison',
+        correction ? { p_pair_id: pairId, p_algorithm: algorithm } : { p_pair_id: pairId });
       if (error) throw new Error(error.message);
       return data as PricePairComparison;
     },
@@ -103,12 +107,12 @@ const GenerationMixComparison: React.FC = () => {
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label htmlFor="price-study-select" className="mb-1 block text-sm">{t('Experiment', 'Experiment')}</label>
-          <Select value={correction ? 'correction' : 'mix'} onValueChange={value => {
+          <label htmlFor="price-study-select" className="mb-1 block text-sm">{t('Avslutade experiment', 'Retired experiments')}</label>
+          <Select value={study} onValueChange={value => {
             const next = new URLSearchParams(params); next.set('study', value); next.delete('pair'); setParams(next, { replace: true });
           }}>
             <SelectTrigger id="price-study-select" className="min-h-11 w-64"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="correction">{t('Korrigera nuvarande prognos', 'Correct current forecast')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell', 'Generation mix model')}</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="correction-v2">{t('Korrigering v2 · avslutad', 'Correction v2 · retired')}</SelectItem><SelectItem value="correction">{t('Korrigering v1', 'Correction v1')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell', 'Generation mix model')}</SelectItem></SelectContent>
           </Select>
         </div>
       <Button variant="outline" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -116,6 +120,8 @@ const GenerationMixComparison: React.FC = () => {
       </Button>
       </div>
     </div>
+    <p className="max-w-3xl text-sm text-muted-foreground">{t('Studierna är avslutade. Inga nya experimentprognoser beräknas; sparade resultat finns kvar för granskning.',
+      'These studies are retired. No new experimental forecasts are calculated; saved results remain available for review.')}</p>
     {query.isLoading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Laddar jämförelser…', 'Loading comparisons…')}</p>}
     {query.isError && <Alert variant="destructive"><AlertDescription>{t('Kunde inte hämta jämförelsen. Försök uppdatera igen.', 'Could not load the comparison. Try refreshing again.')}</AlertDescription></Alert>}
     {data && <>
@@ -124,7 +130,7 @@ const GenerationMixComparison: React.FC = () => {
         <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={data.report.scores.find(row => row.lead_day === lead)} />)}</div>
         <p className="max-w-3xl text-sm text-muted-foreground">{t('Resultaten ovan gäller alla sparade prognospar. Tidiga resultat visar bara felet hittills. Kvartar från samma dag och överlappande prognoser är beroende av varandra; många unika dagar behövs för en säker slutsats. D+3 kan täcka en del av dagen.',
           'The results above cover all saved forecast pairs. Early results show only the error so far. Quarters from the same day and overlapping forecasts are related; many distinct days are needed for a reliable conclusion. D+3 can cover part of a day.')}</p>
-        {!selected ? <p role="status" className="rounded-md border p-4 text-sm">{t('Inga prognospar har sparats ännu. Nya par visas när studien körs.', 'No forecast pairs saved yet. New pairs appear as the study runs.')}</p> : <Card>
+        {!selected ? <p role="status" className="rounded-md border p-4 text-sm">{t('Inga prognospar sparades i denna studie.', 'No forecast pairs were saved in this study.')}</p> : <Card>
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <CardTitle className="text-lg">{t('Ett sparat prognospar', 'One saved forecast pair')}</CardTitle>
@@ -132,7 +138,7 @@ const GenerationMixComparison: React.FC = () => {
                 <label htmlFor="mix-pair-select" className="mb-1 block text-sm">{t('Prognos gjord', 'Forecast made')}</label>
                 <Select value={selected.id} onValueChange={selectPair}>
                   <SelectTrigger id="mix-pair-select" className="min-h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>{pairOptions.map(pair => <SelectItem key={pair.id} value={pair.id}>{stamp(pair.saved_at ?? pair.reserved_at)} · {pair.status === 'pending' ? t('beräknas', 'calculating') : pair.status === 'unavailable' ? t('saknar underlag', 'unavailable') : t(`${pair.scored_count}/${pair.eligible_count} bedömda`, `${pair.scored_count}/${pair.eligible_count} scored`)}</SelectItem>)}</SelectContent>
+                  <SelectContent>{pairOptions.map(pair => <SelectItem key={pair.id} value={pair.id}>{stamp(pair.saved_at ?? pair.reserved_at)} · {pair.status === 'pending' ? t('slutfördes inte', 'never completed') : pair.status === 'unavailable' ? t('saknar underlag', 'unavailable') : t(`${pair.scored_count}/${pair.eligible_count} bedömda`, `${pair.scored_count}/${pair.eligible_count} scored`)}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
@@ -141,7 +147,7 @@ const GenerationMixComparison: React.FC = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             {correction && selected.baseline_generated_at && <p className="text-sm text-muted-foreground">{t('Ursprunglig hushållsprognos', 'Original household forecast')}: {stamp(selected.baseline_generated_at)}.</p>}
-            {selected.status !== 'paired' && <Alert><AlertDescription>{selected.status === 'pending' ? t('Prognosparet beräknas. Vyn uppdateras automatiskt.', 'This forecast pair is being calculated. The view refreshes automatically.') : t('Underlag saknas för ett komplett prognospar.', 'Inputs are missing for a complete forecast pair.')}{selected.reason && <p className="mt-1">{selected.reason}</p>}</AlertDescription></Alert>}
+            {selected.status !== 'paired' && <Alert><AlertDescription>{selected.status === 'pending' ? t('Detta prognospar slutfördes inte innan studien avslutades.', 'This forecast pair was never completed before the study retired.') : t('Underlag saknas för ett komplett prognospar.', 'Inputs are missing for a complete forecast pair.')}{selected.reason && <p className="mt-1">{selected.reason}</p>}</AlertDescription></Alert>}
             {targets && targets.length > 0 && <>
               <ul className="flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label={t('Teckenförklaring', 'Legend')}>
                 {series.map(series => <li key={series.key} className="flex items-center gap-2"><svg width="30" height="12" aria-hidden="true"><line x1="0" x2="30" y1="6" y2="6" stroke={series.colour} strokeWidth="2" strokeDasharray={series.dash} /></svg>{series.label}</li>)}

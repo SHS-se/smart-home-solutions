@@ -41,8 +41,11 @@ request/response times, native query window, result, raw XML and source metadata
 its exact calibrated SMHI wind days, price inputs, output and explicit market IDs.
 There is no collection on cache reuse and no research ID in planner contracts.
 
-A TEST-only `energy-market-archive` endpoint collects A69 wind/solar, A65 day-ahead
-load, A65 week-ahead load and medium-range weather once per hour. P1D business A60/A61 remains a daily
+A TEST-only `energy-market-archive` endpoint collects A69 day-ahead wind/solar and
+A65 day-ahead load hourly. A65 week-ahead load and seven-day medium-range weather
+are collected every six hours with generation research (`17 */6 * * *` UTC).
+This split, introduced on 1 November 2026, keeps short-range inputs fresh without
+repeating the longer-range requests hourly. P1D business A60/A61 remains a daily
 range, never a fabricated quarter-hour mean. Every response, including identical
 payloads, no-data and errors, is a distinct local observation. Source document
 creation/revision times remain provenance; they do not order local availability.
@@ -73,7 +76,8 @@ gaps; they do not change the price policy or planning admission.
 
 ## Tradeoffs accepted
 
-- We accept up to one hour between collections in exchange for independent,
+- We accept up to one hour between day-ahead collections and six hours between
+  longer-range collections in exchange for independent,
   bounded provider traffic. "Known" means actually collected by TEST, not every
   version a provider might have published between collections.
 - We accept repeated payload storage in exchange for preserving observations

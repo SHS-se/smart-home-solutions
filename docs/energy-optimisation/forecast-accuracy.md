@@ -8,7 +8,7 @@ Queuing runs in a statement trigger that can never fail the write that caused
 it. The minute cron posts each job once its bucket has closed; leases and
 fencing prevent a late attempt from overwriting another attempt. Reports are
 kept for two days, since readers want only the latest. Reads never calculate scores. Both planner pages
-read the same report (version 2). It has two scores: historical accuracy per
+read the same report (version 3). It has two scores: historical accuracy per
 component, and price estimate accuracy. There is no forward-looking forecast
 score.
 
@@ -36,6 +36,13 @@ that published price, so the score measures how close the planner's guess came
 before the day-ahead prices arrived in the afternoon. Tomorrow's quarters count
 as soon as their prices are published. Archives made before estimates were kept
 cannot be backfilled.
+
+Each energy row includes forecast and actual kWh, absolute error, signed bias,
+compared quarters and gaps. Positive bias means overestimation. A percentage bias
+is unavailable when actual energy is zero. Daily, planner-model and forecast-lead
+summaries help distinguish changing demand from a persistent directional error.
+The dialog shows the comparison period separately from calculation time. The
+score and all details use the same stored report, without extra history reads.
 
 ## Input accuracy
 
@@ -72,7 +79,10 @@ device demand, solar and battery throughput; household demand is not counted
 again. Battery charge and discharge errors are added separately, never netted.
 
 Reports retain the underlying error sums, signed bias, paired/missing counts,
-source plan IDs and battery SOC residuals, plus the price comparison's sums.
+source plan IDs, plus the price comparison's sums. The former battery SOC
+residual is explicitly unavailable: HA supplies quarter means while the planner
+supplies endpoints (`endpoint_vs_interval_mean`). It does not affect energy
+accuracy and must not calibrate physics.
 Battery diagnostics also compare shifts of -30, -15, 0, 15, 30 and 60 minutes;
 these do not change the reported score. `[FORECAST-ACCURACY]` logs each completed
 device calculation. HA logs the shared report, including its calculations, once
@@ -81,3 +91,59 @@ when received so the app log download preserves the evidence.
 Routine learning remains diagnostic information. Acquisition, command,
 configuration and unavailable-comparison failures remain actionable attention.
 Accuracy never participates in plan admission, permissions or device execution.
+
+## Bounded evidence read
+
+`read_energy_accuracy_evidence` is a service-role-only, read-only RPC. It selects
+compact evidence from archive records once and reads measured rows within the
+same database snapshot. Whole overlapping forecast documents do not reach the
+worker. Selection and scoring have separate owners: SQL selects; TypeScript
+performs the existing floating energy arithmetic.
+
+Energy, room temperatures and price estimates retain different selection rules.
+A newer invalid energy prediction becomes a gap; it does not select an older
+forecast. A room omitted from a newer slot retains its previous eligible
+prediction under the existing room policy. Future prices remain comparable as
+soon as published, including estimates from partial forecast slots. Catalog
+names and latest rosters include records without winning energy quarters.
+
+Selection preserves millisecond publication comparisons, UUID ties, duplicate
+slot ordinality, first-seen order and JavaScript property ordering. Tests compare
+the complete scores, sums, gaps and plan identities against a frozen, test-only
+pre-change oracle. Large regression inputs are independently generated synthetic
+data. Database CPU and hosted worker performance still need deployment
+qualification; moving work into SQL does not make its shared-database cost free.
+
+Report schema 3 is a coordinated roll-forward. The reader does not return old
+report shapes. Deployment queues normal reporting work; it neither replans the
+home nor operates a device. Existing report-job coalescing, fencing and retries
+remain in force.
+
+The previous SOC diagnostic compared a planned endpoint with a measured quarter
+mean. It is explicitly unavailable with reason `endpoint_vs_interval_mean`.
+Neither value is fabricated or used to calibrate battery physics. This does not
+change the battery energy score. Meter AC/DC and installation-idle boundaries
+must be verified before changing energy definitions or calibration.
+
+## Offline baseline experiments
+
+Run `python3.12 scripts/research-baseline.py --input /private/path/input.json
+--out /private/path/new-report.json --app-repo /path/to/shs-ha-integration`.
+Input is `{ "timezone": "Europe/Stockholm", "quarters": [{ "start": "...",
+"energy_kwh": 0.25 }] }`. Establish one consistent measured residual/device
+partition before preparing it. Reports must stay outside repositories.
+
+The tool reuses the actual app estimator. Fixed candidates are the existing
+profile, a coherent expected-energy centre across all three fitting stages, and
+a recent-level adjustment. Each local-day origin refits on the preceding ten
+elapsed days. Selection uses only earlier validation days; the final full day is
+held out. Results include energy overlap, absolute error and signed bias. The
+tool never publishes models, forecasts or commands. Final repaired observations
+are not acquisition-time vintages, and forecast skill alone does not establish
+better planner cost or battery delivery.
+
+The dormant server `demandLevel` path is not wired into ordinary current
+captures. Its historical actuals subtract only pool/hot-water/EV aggregates,
+whereas the app subtracts every separately modelled device. Do not reconnect it
+or stack corrections without aligning that population and choosing one model
+owner. No experimental quality threshold becomes a live planning gate.

@@ -24,8 +24,10 @@ publication dates cannot make subsequently retrieved evidence available earlier.
 ## Shape
 
 The existing collector gains an authenticated `{generation:true}` research mode.
-A separate TEST cron requests it every six hours, sharing the existing private
-credential. Ordinary hourly collection is unchanged. Research mode additionally
+A TEST cron requests it every six hours, sharing the existing private
+credential. Since 1 November 2026 ordinary hourly collection requests only
+day-ahead wind/solar and load; week-ahead load and seven-day weather are acquired
+with these six-hour research runs. Research mode additionally
 captures 28 days of generation actuals and requests 28 past weather days alongside
 seven forecast days. Older null weather remains null. Historical weather acquired
 today can train future predictions; it cannot establish historical forecast skill.
