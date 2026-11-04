@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects, assert } from "jsr:@std/assert@1";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { createClient } from "npm:@supabase/supabase-js@2.90.1";
 import { PlanningJobs, PlanningJobError, planningCompletionBasis, type PlanningReceipt } from "./energy-planning-jobs.ts";
 import { RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
 import { RULES_MODEL_VERSION } from "./rules-planner-identity.ts";
