@@ -84,7 +84,7 @@ jobs:
       - name: Apply bench schema to the test project
         run: |
           supabase link --project-ref "$SUPABASE_PROJECT_REF"
-          supabase db query --linked --file bench/schema.sql
+          supabase db query --file bench/schema.sql --yes --remote="$SUPABASE_PROJECT_REF"
 
       - name: Fetch the service-role key
         run: |
