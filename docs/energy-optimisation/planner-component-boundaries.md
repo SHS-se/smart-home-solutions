@@ -16,7 +16,7 @@ refactor does not create a new priority or spending policy.
 
 | Owner | Knowledge and inputs | Must not own |
 | --- | --- | --- |
-| `device-learning/room` | Room observation fitting, existing model-family comparison, fit evidence | Prices, commands, device permissions, other devices' fits |
+| `device-learning/room` | Joint internal/external room exchange, solar and delayed-heater fitting, fit evidence | Prices, commands, device permissions, other devices' fits |
 | `device-learning/pool` | Water/electricity observations, pool loss and response fitting, prospective model-family selection | Room coefficients, commitments, electrical permission |
 | `device-learning/linear-algebra.ts` | Numerical equation solving | Room or pool policy |
 | `planner/models/room/thermal.ts` | Room thermal response and delayed heat | Regression, prices, scheduling |
@@ -222,13 +222,23 @@ server and producer roll forward together without an alternate execution path.
 
 Home Assistant reports quarter-average room temperatures, not interval-start
 samples. The room learner uses an integrated mean observation operator, including
-both adjacent quarters' heater energy, and compares candidate families/delays on
+both adjacent quarters' heater energy, and compares candidate heating delays on
 chronologically held-out measured transitions. Twelve-hour prediction error
 remains a reported diagnostic. It cannot alone select a model that fits passive
 background drift while explaining measured heater response poorly. Missing meter
 coverage remains unknown; only complete measured zero energy is an OFF sample.
 A changed learner method causes one new attempt, then the existing per-room
 cadence resumes. There is no weak-gain floor or new heater shutoff policy.
+
+Recorder-mean room learning fits internal house exchange and outdoor exchange
+together, with a nonnegative solar term when irradiance is observed. It searches
+total exchange and solves the internal/external split as a bounded linear
+coefficient; zero is an empirical physical limit, not a forced positive floor.
+Both boundary temperatures are required to identify the joint model. Missing
+evidence or an unidentifiable split records a failed attempt while the existing
+model and planning continuity remain available. The observation/selection method
+identity is separate from the exchange-family identity, which requests one new
+fit on rollout and then resumes the existing per-room cadence.
 
 The pool learner likewise distinguishes quarter means from interval starts. Its
 delayed/source response fit integrates the existing physical transition over the

@@ -4,7 +4,7 @@ export const SLOT_HOURS = 0.25;
 export interface ThermalZoneModel {
   /** Temperature rise per watt-hour delivered, °C/Wh. */
   gain_c_per_wh: number;
-  /** EMHASS cooling constant γ, per hour per °C. */
+  /** Outdoor exchange, °C/h per °C between outdoor air and this room. */
   cooling_constant_per_h: number;
   /**
    * Steady background gain, °C/h.
@@ -16,10 +16,8 @@ export interface ThermalZoneModel {
   /**
    * Temperature rise per hour per W/m² of global horizontal irradiance.
    *
-   * Null on a zone fitted without irradiance, which is the only difference
-   * between the two model shapes: everything downstream reads the free-heat
-   * rate through `backgroundRateForSlot` and neither knows nor cares which it
-   * was given.
+   * Null when irradiance has insufficient coverage or variation. The shared room model supports
+   * solar gain alongside both internal and external heat exchange.
    */
   solar_gain_c_per_h_per_wm2?: number | null;
   /**
@@ -33,7 +31,7 @@ export interface ThermalZoneModel {
   solar_mean_w_per_m2?: number | null;
   /** Derived lumped heat capacity, Wh/°C. */
   thermal_capacity_wh_per_c: number;
-  /** Derived envelope loss coefficient, W/°C. */
+  /** Derived total internal plus external exchange coefficient, W/°C. */
   heat_loss_w_per_c: number;
   /** Derived time constant, hours. */
   time_constant_h: number;
@@ -48,9 +46,8 @@ export interface ThermalZoneModel {
    */
   heat_lag_h?: number | null;
   /**
-   * °C/h per °C the room sits below the house. A room fitted against the
-   * house's measured temperature carries this and a zero outdoor
-   * `cooling_constant_per_h`; null keeps the outdoor-coupled shape.
+   * Internal exchange, °C/h per °C between the house and this room.
+   * Learned jointly with outdoor exchange; either may empirically be zero.
    */
   house_coupling_per_h?: number | null;
   /** Mean 12-hour prediction error over the fit's own window, °C. */
