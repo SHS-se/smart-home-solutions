@@ -1075,6 +1075,36 @@ test.describe('requesting a replan', () => {
     await page.screenshot({ path: testInfo.outputPath('saved-device-colours-chart.png'), fullPage: true });
   });
 
+  test('consumption stacks base first, then steady loads, with intermittent loads on top', async ({ page }, testInfo) => {
+    // Synthetic shapes deliberately oppose the old descending-energy order.
+    const model = mixedModeFixture.plan.device_models[0];
+    const loads = [
+      { key: 'charging', values: [8000, 8000, 0, 0, 0, 0] },
+      { key: 'pulses', values: [0, 100, 0, 0, 0, 100] },
+      { key: 'smooth', values: [800, 900, 1000, 1100, 1000, 900] },
+      { key: 'steady', values: [200, 200, 200, 200, 200, 200] },
+    ];
+    replan.publishedPlan = { ...PLAN,
+      device_models: loads.map(load => ({ ...model, key: load.key, name: load.key, planning_service: undefined })),
+      plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map((slot, i) => {
+        const deviceLoads = Object.fromEntries(loads.map(load => [load.key, load.values[i % 6]]));
+        return { ...slot, boiler_consumption_w: 0, device_loads_w: deviceLoads,
+          load_w: 500 + Object.values(deviceLoads).reduce((sum, value) => sum + value, 0) };
+      }) } },
+    };
+    await page.goto('/portal/energy-modeling?tab=plan');
+    const chart = page.getByRole('group', { name: /effektflöden|power flows/i }).first();
+    const drawnOrder = () => chart.locator('path[data-band][data-series]').evaluateAll(elements =>
+      elements.filter(element => element.getAttribute('data-series') === 'base' || element.getAttribute('data-series')?.startsWith('load:'))
+        .map(element => element.getAttribute('data-band')));
+    await expect.poll(drawnOrder).toEqual(['base', 'steady', 'smooth', 'charging', 'pulses']);
+    await chart.locator('[data-series-control="load:smooth"] button').click();
+    await expect.poll(drawnOrder).toEqual(['base', 'steady', 'smooth', 'charging', 'pulses']);
+    await chart.locator('[data-series-control="load:smooth"] button').click();
+    await page.mouse.move(0, 0);
+    await chart.screenshot({ path: testInfo.outputPath('consumption-stack-order.png') });
+  });
+
   test('missing device readings contribute zero and preserve base load in the tooltip', async ({ page }, testInfo) => {
     replan.publishedPlan = { ...PLAN, device_models: mixedModeFixture.plan.device_models };
     replan.history = [{

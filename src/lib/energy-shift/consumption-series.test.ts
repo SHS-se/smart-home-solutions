@@ -2,6 +2,7 @@ import { assert, assertEquals } from 'jsr:@std/assert@1';
 import {
   earnsOwnBand,
   consumptionGapDescription,
+  orderConsumptionStack,
   splitConsumption,
   type ConsumptionCandidate,
 } from './consumption-series.ts';
@@ -19,6 +20,42 @@ const candidate = (
   values: flat(0),
   schedulable: true,
   ...overrides,
+});
+
+// Independently generated synthetic loads; no household measurements.
+const stackSeries = (key: string, values: number[]) => ({
+  key, name: key, values, kwh: values.reduce((sum, value) => sum + value / 4000, 0),
+  partial: values.map(() => false), colour: '#123456',
+});
+
+Deno.test('consumption stack puts steady loads below fluctuating and intermittent loads', () => {
+  const input = [
+    stackSeries('charging', [8000, 8000, 0, 0, 0, 0]),
+    stackSeries('pulses', [0, 100, 0, 0, 0, 100]),
+    stackSeries('smooth', [800, 900, 1000, 1100, 1000, 900]),
+    stackSeries('steady', flat(200, 6)),
+  ];
+  const ordered = orderConsumptionStack(input);
+  assertEquals(ordered.map(s => s.key), ['steady', 'smooth', 'charging', 'pulses']);
+  assertEquals(input.map(s => s.key), ['charging', 'pulses', 'smooth', 'steady']);
+  ordered.forEach(entry => assert(entry === input.find(s => s.key === entry.key), 'ordering must preserve series data and colours'));
+});
+
+Deno.test('equal duty cycles put a continuous run below repeated cycling regardless of power', () => {
+  const ordered = orderConsumptionStack([
+    stackSeries('cycling', [100, 0, 100, 0, 100, 0]),
+    stackSeries('run', [8000, 8000, 8000, 0, 0, 0]),
+  ]);
+  assertEquals(ordered.map(s => s.key), ['run', 'cycling']);
+});
+
+Deno.test('idle, missing and empty series sort deterministically above active loads', () => {
+  const input = [stackSeries('z-idle', [0, 0]), stackSeries('a-missing', [NaN, Infinity]),
+    stackSeries('empty', []), stackSeries('active', [200, 200])];
+  const expected = ['active', 'a-missing', 'empty', 'z-idle'];
+  assertEquals(orderConsumptionStack(input).map(s => s.key), expected);
+  assertEquals(orderConsumptionStack([...input].reverse()).map(s => s.key), expected);
+  assertEquals(orderConsumptionStack([]), []);
 });
 
 Deno.test('any use earns a band, however small', () => {

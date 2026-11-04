@@ -8,7 +8,7 @@ export interface ConsumptionCandidate {
   values: number[];
   /** Whether the plan can move this load at all. */
   schedulable: boolean;
-  /** Always drawn, first above base load, whatever it used. */
+  /** Always drawn, whatever it used. */
   pinned?: boolean;
   /** A fixed colour, for a band that means one thing in every home. */
   colour: string;
@@ -27,6 +27,25 @@ export interface ConsumptionSeries {
 export interface ConsumptionIssue {
   missingDevices: string[];
 }
+
+/** Bottom-to-top device order; base load is kept separate by the chart. */
+export const orderConsumptionStack = (series: readonly ConsumptionSeries[]): ConsumptionSeries[] =>
+  series.map(entry => {
+    // Include off/missing quarters, so intermittent loads rise above continuous
+    // ones. Relative variance compares shape independently of a device's watts.
+    const values = entry.values.map(value => Number.isFinite(value) ? value : 0);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const variance = total > 0
+      ? values.length * values.reduce((sum, value) => sum + value ** 2, 0) / total ** 2 - 1
+      : Infinity;
+    // Equal distributions can still differ in fragmentation: a single run is
+    // steadier than repeated on/off cycling with the same energy and duty cycle.
+    const changes = total > 0
+      ? values.reduce((sum, value, i) => sum + (i ? Math.abs(value - values[i - 1]) : 0), 0) / total
+      : Infinity;
+    return { entry, variance, changes };
+  }).sort((a, b) => a.variance - b.variance || a.changes - b.changes || a.entry.key.localeCompare(b.entry.key))
+    .map(({ entry }) => entry);
 
 export const consumptionGapDescription = (
   issue: ConsumptionIssue,
