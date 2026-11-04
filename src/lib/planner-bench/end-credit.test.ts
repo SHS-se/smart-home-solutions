@@ -80,7 +80,7 @@ Deno.test('the referee bills a plan: grid cost and discharge wear, less what it 
 Deno.test('energy above a target earns nothing: heating the pool past it only costs', () => {
   // The pool starts five degrees above its target and stays above it all three days.
   const c = world({ buy: () => 2, start: { pool_water_c: TARGETS.pool_c + 5 }, published: 288 });
-  const noHeat = { pool_hot: { enabled: false } };
+  const noHeat = {};
   const coasting = evaluate(c, record(c, plan()), noHeat);
   const heated = evaluate(c, record(c, plan({ pool: i => within(i, 270, 288) ? 3764 : 0 })), noHeat);
   assert(coasting.series.poolC.at(-1)! > TARGETS.pool_c && heated.series.poolC.at(-1)! > coasting.series.poolC.at(-1)!);

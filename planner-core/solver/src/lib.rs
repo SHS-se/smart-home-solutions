@@ -106,16 +106,14 @@ pub struct Limits {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleKey {
-    PoolLow,
-    PoolCold,
-    PoolHot,
+    PoolShortfall,
     CarFloor,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Rule {
     pub key: RuleKey,
     pub threshold: f64,
-    pub points: i32,
+    pub points: f64,
     pub required: bool,
 }
 /// One store's end credit: the level it counts up to, and the grid electricity
@@ -146,10 +144,6 @@ pub struct EndCreditTerms {
     pub ev: Option<CarTerm>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServiceGuard {
-    pub pool: [f64; 2],
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Recipe {
     pub beam_width: usize,
     pub max_actions: usize,
@@ -177,7 +171,6 @@ pub struct Problem {
     pub limits: Limits,
     pub rules: Vec<Rule>,
     pub end_credit: EndCreditTerms,
-    pub service_guard: ServiceGuard,
     /// None means first-ever plan. A partial accepted prefix is never silently filled.
     pub accepted: Option<Vec<Command>>,
     /// Released components of the accepted prefix; fixed bookings stay exact.
@@ -219,8 +212,8 @@ pub struct Quarter {
 pub struct Account {
     /// The plan's score, a point a krona: points − (cash + wear − credit).
     pub score_sek: f64,
-    /// What the rules took and gave, in whole kronor.
-    pub points: i32,
+    /// Fractional comfort contributions in kronor.
+    pub points: f64,
     pub cash_sek: f64,
     pub wear_sek: f64,
     /// Scheduling preference; never a bill item or physical equipment wear.
@@ -228,7 +221,7 @@ pub struct Account {
     /// The energy left in the stores, each up to its cap.
     pub credit_sek: f64,
     /// Contributions retain individual signs, including net-zero quarters.
-    pub contributions: Vec<Vec<i32>>,
+    pub contributions: Vec<Vec<f64>>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Selection {
@@ -253,7 +246,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 15 || p.slots.is_empty() {
+    if p.abi != 16 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [
@@ -703,15 +696,15 @@ mod live_tests {
             }
             p.rules = vec![
                 Rule {
-                    key: RuleKey::PoolCold,
+                    key: RuleKey::PoolShortfall,
                     threshold: 2.0,
-                    points: -1,
+                    points: -1.0,
                     required: true,
                 },
                 Rule {
                     key: RuleKey::CarFloor,
                     threshold: 0.0,
-                    points: -2,
+                    points: -2.0,
                     required: false,
                 },
             ];

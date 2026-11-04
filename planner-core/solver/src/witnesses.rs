@@ -73,7 +73,7 @@ struct Exposure {
     deficits: [f64; 2],
     worst: f64,
 }
-fn exposure(p: &Problem, q: &[Quarter], index: &policy::Index, device: usize) -> Exposure {
+fn exposure(p: &Problem, q: &[Quarter], _index: &policy::Index, device: usize) -> Exposure {
     let mut out = Exposure::default();
     if device == 1 {
         // A witness may not add a quarter below the floor, or deepen one.
@@ -96,18 +96,15 @@ fn exposure(p: &Problem, q: &[Quarter], index: &policy::Index, device: usize) ->
     let Some(target) = p.targets.pool_c else {
         return out;
     };
+    let mut before = p.initial.pool_c.unwrap();
     for (i, v) in q.iter().enumerate() {
-        let value = policy::measured(v.pool_c.unwrap(), 1000.0);
-        for (level, offset) in p.service_guard.pool.iter().enumerate() {
-            let short = (target - offset - value).max(0.0);
-            if i >= index.due[level] && short > 0.0 {
-                out.counts[level] += 1;
-                out.deficits[level] += short * projected_hours(&p.slots[i]);
-                if level == 0 {
-                    out.worst = out.worst.max(short);
-                }
-            }
-        }
+        out.deficits[0] += policy::pool_exposure(
+            target,
+            before,
+            v.pool_c.unwrap(),
+            projected_hours(&p.slots[i]),
+        );
+        before = v.pool_c.unwrap();
     }
     out
 }
@@ -866,7 +863,7 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 15,
+            abi: 16,
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -979,7 +976,6 @@ pub(crate) mod tests {
                 battery_start_preference_sek: 0.0,
             },
             rules: vec![],
-            service_guard: ServiceGuard { pool: [1.0, 2.0] },
             accepted: None,
             released: None,
             unavailable: None,

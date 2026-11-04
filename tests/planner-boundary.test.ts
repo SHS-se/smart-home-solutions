@@ -35,7 +35,7 @@ Deno.test("pre-native commits cannot execute a retired planner",async()=>{
 });
 Deno.test("the current native artifact has a stable planner identity",async()=>{
   const first=await plannerVersion(tree);
-  assert(first.startsWith("v15-rule-wasm:"));
+  assert(first.startsWith("v16-rule-wasm:"));
   assertEquals(await plannerVersion(tree),first);
 });
 

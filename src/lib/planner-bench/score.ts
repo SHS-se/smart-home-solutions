@@ -1,15 +1,15 @@
 // A point is a krona: comfort deductions minus the net bill. Economic audit
 // findings prove feasible savings; they are not additional costs or points.
 import { OPPORTUNITY_AUDIT_VERSION, summariseAudit, type OpportunityAudit, type OpportunityAuditSummary } from './opportunities';
-import { dueFrom, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
+import { DEFAULT_SERVICE_GUARD, evExposure, poolExposure, storeNotWorse, type ServiceGuard } from './service';
 import type { BenchSeries, Bill, CriteriaOverrides, Verdict } from './types';
 import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
-export { GRACE_QUARTERS } from './service';
+import { poolSquaredExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 
-export const SCORER_VERSION = 42;
+export const SCORER_VERSION = 43;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -18,10 +18,6 @@ export const AHEAD_MARGIN = 0.1;
 export interface QuarterView {
   s: BenchSeries;
   i: number;
-  /** The plan's next day against this one; null in the last day, which has none to compare with. */
-  ahead: { dearer: boolean; lessSun: boolean } | null;
-  /** Whether a level was reachable long enough ago for missing it to count. */
-  due: (reachable: readonly number[] | undefined, start: number, level: number) => boolean;
   /** Missing permissions in this sample day, assessed at its final quarter. */
   waterShortfall: number;
 }
@@ -43,40 +39,21 @@ export interface QuarterRule {
   eligibleFrom: (s: BenchSeries, threshold: number) => number;
 }
 
-const poolBelow = (q: QuarterView, t: number) => {
-  const c = q.s.comfort, now = q.s.poolC[q.i];
-  return !!c && now !== null && now < c.pool_target_c - t && q.due(c.poolReachableC, c.pool_start_c, c.pool_target_c - t);
-};
 const carBelowFloor = (q: QuarterView) => {
   const line = q.s.comfort?.carFloorKm?.[q.i], km = q.s.carKm?.[q.i];
   return line !== null && line !== undefined && km !== null && km !== undefined && km < line;
 };
-const poolAbove = (q: QuarterView, t: number) =>
-  !!q.s.comfort && q.s.poolC[q.i] !== null && q.s.poolC[q.i]! > q.s.comfort.pool_target_c + t;
 const poolAny = (s: BenchSeries) => s.comfort && s.poolC.some(v => v !== null) ? 0 : Infinity;
-const poolFrom = (s: BenchSeries, t: number) =>
-  s.comfort && s.poolC.some(v => v !== null) ? dueFrom(s.comfort.poolReachableC, s.comfort.pool_start_c, s.comfort.pool_target_c - t) : Infinity;
 const carFrom = (s: BenchSeries) => s.comfort && s.carKm ? 0 : Infinity;
-
-const poolBeforeC = (s: BenchSeries, i: number): number | null =>
-  s.comfort ? i === 0 ? Math.round(s.comfort.pool_start_c * 1000) / 1000 : s.poolC[i - 1] : null;
-const poolHeatingPast = (q: QuarterView, threshold: number) => {
-  const before = poolBeforeC(q.s, q.i);
-  return !!q.s.comfort && before !== null && before >= q.s.comfort.pool_target_c + threshold
-    && (q.s.poolW[q.i] > 0 || !!q.s.poolStart?.[q.i]);
+const poolShortfall = (q: QuarterView) => {
+  const c = q.s.comfort, after = q.s.poolC[q.i];
+  const before = q.i === 0 ? c?.pool_start_c : q.s.poolC[q.i-1];
+  return c && before !== null && before !== undefined && after !== null
+    ? poolSquaredExposure(c.pool_target_c, before, after, q.s.hours[q.i]) : 0;
 };
 const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = [
-  {
-    key: 'pool_low', about: 'pool', label: 'Pool below target', describe: t => `more than ${t} °C below`, fires: poolBelow, eligibleFrom: poolFrom,
-  },
-  {
-    key: 'pool_cold', about: 'pool', label: 'Pool far below target', describe: t => `more than ${t} °C below`, fires: poolBelow, eligibleFrom: poolFrom,
-  },
-  // Warm water is a store. Above the target it is one or the other: heat kept for a dearer or duller day, or waste.
-  {
-    key: 'pool_hot', about: 'pool', label: 'Pool overheated', describe: t => `heating after reaching target +${t} °C, or warmer than that with the next day neither dearer nor less sunny`,
-    fires: (q, t) => poolHeatingPast(q, t) || poolAbove(q, t) && !!q.ahead && !q.ahead.dearer && !q.ahead.lessSun, eligibleFrom: poolAny,
-  },
+  { key: 'pool_shortfall', about: 'pool', label: 'Pool cold exposure',
+    describe: () => 'squared temperature shortfall × hours', fires: poolShortfall, eligibleFrom: poolAny },
   {
     key: 'car_floor', about: 'car', label: 'Car below its safety floor', describe: () => 'below the floor after its grace since plug-in', fires: carBelowFloor, eligibleFrom: carFrom,
   },
@@ -102,10 +79,7 @@ export function resolveRules(overrides: CriteriaOverrides = {}): ResolvedRule[] 
 }
 
 /** The comfort thresholds an alternative plan is held to: the bench's own, whether or not a rule is switched on. */
-export function serviceGuard(overrides: CriteriaOverrides = {}): ServiceGuard {
-  const t = Object.fromEntries(resolveRules(overrides).map(r => [r.key, r.threshold]));
-  return { pool: [t.pool_low, t.pool_cold] };
-}
+export function serviceGuard(_overrides: CriteriaOverrides = {}): ServiceGuard { return DEFAULT_SERVICE_GUARD; }
 
 export interface QuarterScore {
   /** What the quarter's deductions took, in points (kronor); never above 0 with the default rules. */
@@ -152,7 +126,7 @@ export interface CaseScore {
 }
 
 const sameGuard = (a: ServiceGuard, b: ServiceGuard) =>
-  a.pool[0] === b.pool[0] && a.pool[1] === b.pool[1];
+  a.pool === b.pool;
 
 /** Whether every stored witness still holds under other comfort thresholds, from its stored traces. */
 function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGuard): boolean {
@@ -161,7 +135,7 @@ function witnessesHold(s: BenchSeries, audit: OpportunityAudit, guard: ServiceGu
   if (!comfort) return false;
   // A finding moves only its own device's store; the battery has no comfort level.
   return audit.findings.every(f =>
-    f.device === 'pool' ? storeNotWorse(poolExposure(comfort, f.before.poolC, guard), poolExposure(comfort, f.after.poolC, guard))
+    f.device === 'pool' ? poolExposure(comfort, f.after.poolC, guard, s.hours) <= poolExposure(comfort, f.before.poolC, guard, s.hours) + 1e-9
       : f.device === 'ev' ? storeNotWorse(evExposure(comfort, f.before.carKm), evExposure(comfort, f.after.carKm))
         : true);
 }
@@ -194,31 +168,12 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
   const audit = s.audit ?? null;
   const auditPending = !!audit && (audit.version !== OPPORTUNITY_AUDIT_VERSION
     || audit.status === 'complete' && !witnessesHold(s, audit, serviceGuard(overrides)));
-  // The first quarter from which each level counts, found once per level.
-  const dueAt = new Map<string, number>();
-  const due = (i: number): QuarterView['due'] => (reachable, start, level) => {
-    const id = `${reachable === s.comfort?.poolReachableC ? 'pool' : 'car'}:${level}`;
-    if (!dueAt.has(id)) dueAt.set(id, dueFrom(reachable, start, level));
-    return i >= dueAt.get(id)!;
-  };
-
-  // Each plan day's mean price and solar, to judge warmth held for the day after.
-  const days = Array.from({ length: Math.ceil(n / DAY_QUARTERS) }, (_, d) => {
-    const of = (values: number[]) => values.slice(d * DAY_QUARTERS, (d + 1) * DAY_QUARTERS);
-    const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
-    return { price: mean(of(s.importPrice)), solar: mean(of(s.solarW)), full: of(s.importPrice).length === DAY_QUARTERS };
-  });
-  const aheadOf = (i: number): QuarterView['ahead'] => {
-    const today = days[Math.floor(i / DAY_QUARTERS)], next = days[Math.floor(i / DAY_QUARTERS) + 1];
-    return next?.full ? { dearer: next.price > today.price * (1 + AHEAD_MARGIN), lessSun: next.solar < today.solar * (1 - AHEAD_MARGIN) } : null;
-  };
-
   const counts: Record<string, number> = {};
   const histogram: Record<string, number> = {};
   const quarters: QuarterScore[] = [];
   let sum = 0;
   for (let i = 0; i < n; i++) {
-    const q: QuarterView = { s, i, due: due(i), ahead: aheadOf(i), waterShortfall: waterShortfalls.get(i) ?? 0 };
+    const q: QuarterView = { s, i,  waterShortfall: waterShortfalls.get(i) ?? 0 };
     let score = 0;
     const fired: string[] = [];
     const deductions: Record<string, number> = {};
@@ -228,7 +183,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
       deductions[rule.key] = rule.points * occurrences;
       score += deductions[rule.key];
       fired.push(rule.key);
-      counts[rule.key] = (counts[rule.key] ?? 0) + occurrences;
+      counts[rule.key] = (counts[rule.key] ?? 0) + (rule.key === 'pool_shortfall' ? 1 : occurrences);
     }
     histogram[String(score)] = (histogram[String(score)] ?? 0) + 1;
     sum += score;
@@ -241,7 +196,7 @@ function tally(s: BenchSeries, overrides: CriteriaOverrides, verdict: Verdict | 
     const reason = !rule.enabled ? 'Switched off for this case.'
       : rule.about === 'water' ? s.hotWater ? 'Counts missing permissions in each consecutive 24-hour sample period, independently of thermostat consumption.' : 'The plan has no boiler permissions.'
       : !s.comfort ? 'The plan carries no targets.'
-        : !eligibleQuarters ? 'This level was not reachable for a day within the window.'
+        : !eligibleQuarters ? 'No temperature projection is available.'
           : `Counts in ${eligibleQuarters} of ${n} quarters.`;
     return [rule.key, { applicable: rule.enabled && eligibleQuarters > 0, reason, eligibleQuarters }];
   }));
@@ -285,13 +240,13 @@ export const criteriaFingerprint = (overrides: CriteriaOverrides = {}) =>
 /** The effective rule inputs, including defaults, used by the rule-driven solver: the deduction rules, which are all it is sent. */
 export const plannerInputsFingerprint = (rules: readonly {
   key: string; threshold: number; points: number; required?: boolean;
-}[], guard: ServiceGuard) => JSON.stringify({
+}[], guard?: unknown) => JSON.stringify({
   rules: rules.map(r => ({ key: r.key, threshold: r.threshold, points: r.points,
     required: r.required ?? false })), service_guard: guard,
 });
 /** The rules a planner is given: the referee's own (rule-policy.ts) never reach it. */
 export const plannerRulesFingerprint = (overrides: CriteriaOverrides = {}) =>
-  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled && !(r.key in REFEREE_RULE_DEFAULTS)), serviceGuard(overrides));
+  plannerInputsFingerprint(resolveRules(overrides).filter(r => r.enabled && !(r.key in REFEREE_RULE_DEFAULTS)));
 
 /** Full supplied inputs: historical planners may consume rules today's scorer removed. */
 export const plannerCriteriaFingerprint = (overrides: CriteriaOverrides = {}) => canonicalJson(overrides);

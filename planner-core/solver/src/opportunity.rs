@@ -210,15 +210,14 @@ fn tables(p: &Problem) -> Vec<Table> {
             low = low.min(water);
         }
         let mut nodes = vec![low, initial, target];
-        for r in &p.rules {
-            let threshold = match r.key {
-                RuleKey::PoolLow | RuleKey::PoolCold => Some(target - r.threshold),
-                RuleKey::PoolHot => Some(target + r.threshold),
-                _ => None,
-            };
-            if let Some(t) = threshold {
-                nodes.extend([t - 0.001, t, t + 0.001]);
-            }
+        // Smooth curvature and usable storage, not knots around retired cliffs.
+        let upper = p
+            .pool_stop_c
+            .unwrap_or(target + (initial - low).max(0.0))
+            .max(initial)
+            .max(target);
+        for j in 0..=8 {
+            nodes.push(low + (upper - low) * j as f64 / 8.0);
         }
         let top = nodes.iter().copied().max_by(f64::total_cmp).unwrap();
         nodes.push(top + heater.heat_w / 4000.0 / store.capacity_kwh_per_c);

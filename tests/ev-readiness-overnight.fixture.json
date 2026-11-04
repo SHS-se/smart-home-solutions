@@ -3,7 +3,7 @@
   "generated_by": "scripts/ev-readiness-synthetic.fixture.ts",
   "night_quarters": 38,
   "problem": {
-    "abi": 15,
+    "abi": 16,
     "end_credit": {
       "reference_sek_per_kwh": 1,
       "battery": {
@@ -1444,21 +1444,9 @@
     },
     "rules": [
       {
-        "key": "pool_low",
-        "threshold": 1,
-        "points": -1,
-        "required": false
-      },
-      {
-        "key": "pool_cold",
-        "threshold": 2,
-        "points": -1,
-        "required": true
-      },
-      {
-        "key": "pool_hot",
-        "threshold": 2,
-        "points": -1,
+        "key": "pool_shortfall",
+        "threshold": 0,
+        "points": -2,
         "required": false
       },
       {
@@ -1468,12 +1456,6 @@
         "required": false
       }
     ],
-    "service_guard": {
-      "pool": [
-        1,
-        2
-      ]
-    },
     "accepted": [
       {
         "pool_on": false,

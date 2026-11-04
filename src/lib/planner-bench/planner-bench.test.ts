@@ -114,17 +114,19 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
   return series;
 }
 
-Deno.test('comfort is scored from the target: a point per level missed, per store', () => {
-  // On target: nothing fires.
+Deno.test('pool cold exposure is fractional, depth squared and duration weighted without threshold cliffs', () => {
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 300)).sum, 0);
-  // Exactly 1 °C below is still fine; just past it loses a point.
-  assertEquals(scoreQuarters(comfortSeries(() => 29, () => 300)).sum, 0);
-  const slipping = scoreQuarters(comfortSeries(() => 28.9, () => 300));
-  assertEquals(slipping.quarters[0], { score: -1, fired: ['pool_low'], deductions: { pool_low: -1 } });
-  const far = scoreQuarters(comfortSeries(() => 27.9, () => 300));
-  assertEquals(far.quarters[0], { score: -2, fired: ['pool_low', 'pool_cold'], deductions: { pool_low: -1, pool_cold: -1 } });
-  assertEquals(far.requiredFired, ['pool_cold']);
-  assertEquals(far.passed, false);
+  const constant = (temp: number) => scoreQuarters(comfortSeries(() => temp, () => 300, { pool_start_c: temp }));
+  assertAlmostEquals(constant(29).sum, -144, 1e-9);
+  assertAlmostEquals(constant(28).sum, -576, 1e-9);
+  assertAlmostEquals(constant(29.5).quarters[0].score, -.125, 1e-9);
+  assertAlmostEquals(constant(29.99).quarters[0].score - constant(30.01).quarters[0].score, -.00005, 1e-9);
+  const nearFormerLine = constant(28.9999).quarters[0].score - constant(29.0001).quarters[0].score;
+  assertAlmostEquals(nearFormerLine, -.0002, 1e-9);
+  assertEquals(constant(28).requiredFired, []);
+  const partial = comfortSeries(() => 29, () => 300, { pool_start_c: 29 });
+  partial.hours[0] = .05;
+  assertAlmostEquals(scoreQuarters(partial).quarters[0].score, -.1, 1e-9);
 });
 
 Deno.test('the car loses two points in a quarter below its floor line, and never fails the case', () => {
@@ -136,85 +138,43 @@ Deno.test('the car loses two points in a quarter below its floor line, and never
   assertEquals([low.counts.car_floor, low.sum, low.requiredFired], [4, -8, []]);
 });
 
-Deno.test('overheating accounts for the following day’s price and solar without earning points', () => {
-  const hot = (price: (day: number) => number, solar: (day: number) => number) => {
-    const series = comfortSeries(() => 32.1, () => 300);
-    series.importPrice = series.importPrice.map((_, i) => price(Math.floor(i / 96)));
-    series.solarW = series.solarW.map((_, i) => solar(Math.floor(i / 96)));
-    return scoreQuarters(series);
-  };
-  // The same every day: nothing to hold the heat for. The last day has no next day and is not judged.
-  const waste = hot(() => 1, () => 1000);
-  assertEquals([waste.quarters[0], waste.quarters[287]], [{ score: -1, fired: ['pool_hot'], deductions: { pool_hot: -1 } }, { score: 0, fired: [], deductions: {} }]);
-  assertEquals([waste.counts.pool_hot, waste.sum, waste.passed], [192, -192, true]);
-  // Dearer on the second day only: storing heat on day one avoids an overheating deduction.
-  const dearer = hot(day => day === 1 ? 2 : 1, () => 1000);
-  assertEquals([dearer.quarters[0], dearer.quarters[96]], [{ score: 0, fired: [], deductions: {} }, { score: -1, fired: ['pool_hot'], deductions: { pool_hot: -1 } }]);
-  assertEquals(dearer.sum, -96);
-  // Less sun the next day counts the same; a difference within the margin does not.
-  assertEquals(hot(() => 1, day => day === 0 ? 1000 : 500).quarters[0].fired, []);
-  assertEquals(hot(day => 1 + day * 0.05, () => 1000).quarters[0].fired, ['pool_hot']);
-  // At the target nothing fires.
-  assertEquals(scoreQuarters(comfortSeries(() => 31.9, () => 300)).counts.pool_hot, undefined);
+Deno.test('warm water earns no comfort reward or arbitrary next-day deduction', () => {
+  const warm = comfortSeries(() => 34, () => 300, { pool_start_c: 34 });
+  assertEquals(scoreQuarters(warm).sum, 0);
+  warm.importPrice.fill(10); warm.solarW.fill(0);
+  assertEquals(scoreQuarters(warm).sum, 0);
 });
 
-Deno.test('each comfort rule says whether it could fire in the case, and in how many quarters', () => {
-  const reachable = Array.from({ length: 288 }, (_, i) => 24 + i * 0.125);
-  const cold = scoreQuarters(comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: reachable }), { car_floor: { enabled: false } });
-  // 29 °C is due from quarter 136, 28 °C from 128.
-  assertEquals(cold.applicability.pool_low, { applicable: true, eligibleQuarters: 152, reason: 'Counts in 152 of 288 quarters.' });
-  assertEquals(cold.applicability.pool_cold.eligibleQuarters, 160);
-  assertEquals([cold.applicability.car_floor.applicable, cold.applicability.car_floor.reason], [false, 'Switched off for this case.']);
-  const never = scoreQuarters(comfortSeries(() => 20, () => 300, { pool_start_c: 20, poolReachableC: new Array(288).fill(21) }));
-  assertEquals(never.applicability.pool_low, { applicable: false, eligibleQuarters: 0, reason: 'This level was not reachable for a day within the window.' });
+Deno.test('pool applicability needs a temperature trajectory, not reachability grace', () => {
+  const cold = comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: Array(288).fill(24) });
+  assertEquals(scoreQuarters(cold).applicability.pool_shortfall, { applicable: true, eligibleQuarters: 288, reason: 'Counts in 288 of 288 quarters.' });
 });
 
-Deno.test('a miss counts only once its level has been reachable for a day', () => {
-  // A pool that starts at 24 °C and can first reach 29 °C in quarter 40: quarters before 40 + 96 are not held against the plan.
-  const reachable = Array.from({ length: 288 }, (_, i) => 24 + i * 0.125);
-  const cold = scoreQuarters(comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: reachable }));
-  // 28 °C (two below target) was reachable at quarter 32, so that level is due from 128;
-  // 29 °C (one below) at quarter 40, due from 136.
-  assertEquals(cold.quarters[127].fired, []);
-  assertEquals(cold.quarters[128].fired, ['pool_cold']);
-  assertEquals(cold.quarters[135].fired, ['pool_cold']);
-  assertEquals(cold.quarters[136].fired, ['pool_low', 'pool_cold']);
-  // A level that was never reachable in the window never counts.
-  const never = scoreQuarters(comfortSeries(() => 20, () => 300, { pool_start_c: 20, poolReachableC: new Array(288).fill(21) }));
-  assertEquals(never.sum, 0);
+Deno.test('cold exposure does not restart a recovery grace on replanning', () => {
+  const cold = comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: Array(288).fill(24) });
+  assertAlmostEquals(scoreQuarters(cold).quarters[0].score, -18, 1e-9);
 });
 
-Deno.test('rule overrides change thresholds, points and whether a rule runs', () => {
-  const series = comfortSeries(() => 28.5, () => 300);
-  assertEquals(scoreQuarters(series).quarters[0].fired, ['pool_low']);
-  assertEquals(scoreQuarters(series, { pool_low: { threshold: 2 } }).quarters[0].fired, []);
-  assertEquals(scoreQuarters(series, { pool_low: { enabled: false } }).sum, 0);
-  assertEquals(scoreQuarters(series, { pool_low: { points: -2 } }).quarters[0].score, -2);
+Deno.test('continuous pool coefficient and enabled state control its cost', () => {
+  const series = comfortSeries(() => 29, () => 300, { pool_start_c: 29 });
+  assertEquals(scoreQuarters(series, { pool_shortfall: { enabled: false } }).sum, 0);
+  assertAlmostEquals(scoreQuarters(series, { pool_shortfall: { points: -1.5 } }).quarters[0].score, -.375, 1e-9);
 });
 
-Deno.test('criteria are checked: a rule gives or takes at most two points, at a real threshold, and old money rules are gone by name', () => {
-  assertEquals(criteriaErrors({}), []);
-  assertEquals(criteriaErrors({ pool_low: { enabled: false, threshold: 0, points: -2 }, pool_hot: { points: -1 } }), []);
-  assertEquals(criteriaErrors({ pool_low: { points: 3 } }), ['pool_low: points must be between -2 and 2, and not 0.']);
-  assertEquals(criteriaErrors({ pool_low: { points: -3 } }).length, 1);
-  assertEquals(criteriaErrors({ pool_low: { points: -0.5 } }).length, 1);
-  assertEquals(criteriaErrors({ pool_low: { threshold: Number.NaN }, pool_cold: { threshold: -5 } }).length, 2);
-  // The floor is a car setting, not a threshold; the old car rules are ignored by name.
+Deno.test('continuous pool costs accept finite negative coefficients and reject retired temperature rules', () => {
+  assertEquals(criteriaErrors({ pool_shortfall: { points: -0.5 } }), []);
+  assertEquals(criteriaErrors({ pool_shortfall: { points: 0 } }).length, 1);
+  assertEquals(criteriaErrors({ pool_shortfall: { points: 1 } }).length, 1);
+  assertEquals(criteriaErrors({ pool_shortfall: { threshold: 1 } }).length, 1);
+  for (const key of ['pool_low', 'pool_cold', 'pool_hot', 'pool_warm', 'cheap_buy']) assertThrows(() => resolveRules({ [key]: { points: -1 } }), CriteriaError);
   assertEquals(criteriaErrors({ car_floor: { threshold: 10 } }).length, 1);
+  assertEquals(criteriaErrors({ car_floor: { points: 3 } }).length, 1);
   assertEquals(criteriaErrors({ ev_low: { threshold: 60 }, ev_short: { points: -2 } }), []);
-  assertEquals(criteriaErrors({ pool_warm: { points: -1 } }), ['Unknown rule "pool_warm".']);
-  const series = comfortSeries(() => 28.5, () => 300);
-  assertThrows(() => scoreQuarters(series, { pool_low: { points: 3 } }), CriteriaError);
-  assertThrows(() => resolveRules({ pool_low: { threshold: Number.POSITIVE_INFINITY } }), CriteriaError);
-  assertEquals(resolveRules().map(r => r.key), ['pool_low', 'pool_cold', 'pool_hot', 'car_floor', 'water_opportunities']);
-  // The referee's own rule is overridden like any other, and never reaches a planner's policy.
+  assertEquals(resolveRules().map(r => r.key), ['pool_shortfall', 'car_floor', 'water_opportunities']);
   assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
-  assertEquals(criteriaErrors({ water_cold: { threshold: 3 } }), ['Unknown rule "water_cold".']);
-  assertEquals(criteriaErrors({ cheap_buy: { points: 1 } }), ['Unknown rule "cheap_buy".']);
-  assertThrows(() => resolveRules({ ev_from_home_battery: { points: -1 } }), CriteriaError);
-  assertEquals(criteriaFingerprint({ pool_low: { threshold: 2 }, ev_low: { points: -2 } }),
-    criteriaFingerprint({ ev_low: { points: -2 }, pool_low: { threshold: 2 } }));
-  assertEquals(serviceGuard({ pool_low: { threshold: 0.5, enabled: false } }), { pool: [0.5, 2] });
+  assertEquals(criteriaFingerprint({ pool_shortfall: { points: -1.5 }, car_floor: { points: -2 } }),
+    criteriaFingerprint({ car_floor: { points: -2 }, pool_shortfall: { points: -1.5 } }));
+  assertEquals(serviceGuard(), { pool: 'squared_shortfall' });
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
@@ -230,10 +190,10 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
 Deno.test('case points are the deductions less the net bill, a point a krona; evidence takes none', () => {
   const cold = comfortSeries(() => 28.5, () => 300);
   const worst = scoreQuarters(cold);
-  assertEquals(worst.sum, -288);
+  assertAlmostEquals(worst.sum, -323.25, 1e-9);
   assertEquals([worst.audit, worst.bill, worst.complete], [null, null, false]);
   // Without its bill or its audit a case shows its deductions alone, and has no stored score.
-  assertEquals(worst.points, -288);
+  assertEquals(worst.points, -323.25);
   assertThrows(() => storedScore(cold), Error, 'opportunity audit');
 
   const audit = auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 });
@@ -243,21 +203,21 @@ Deno.test('case points are the deductions less the net bill, a point a krona; ev
   assertEquals(scoreQuarters({ ...cold, audit }).complete, false);
   assertThrows(() => storedScore({ ...cold, audit }), Error, 'bill');
   const audited = scoreQuarters({ ...cold, audit, bill });
-  // 288 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
-  assertEquals([audited.points, audited.sum, audited.complete], [-360, -288, true]);
+  // 323.25 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
+  assertEquals([audited.points, audited.sum, audited.complete], [-395.25, -323.25, true]);
   // Loading a device does not change the service deductions or award a price-rank reward.
   const busy = { ...cold, audit, bill, carW: cold.carW.map(() => 3000) };
-  assertEquals(scoreQuarters(busy).points, -360);
+  assertEquals(scoreQuarters(busy).points, -395.25);
   // An audit of another version is not read.
   const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }), bill });
-  assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -288]);
+  assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -323.25]);
 
   const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit, bill });
   assertEquals([stored.sum, stored.points, stored.physical_failed], [0, -72, false]);
   assertEquals([stored.grid_sek, stored.wear_sek, stored.credit_sek], [100, 2, 30]);
   assertEquals([stored.audit.knownSek, stored.audit.findingCount, stored.audit.violations], [5, 0, 0]);
   assertEquals(isStale(stored), false);
-  assertEquals(isStale(stored, { pool_low: { threshold: 2 } }), true);
+  assertEquals(isStale(stored, { pool_shortfall: { points: -1.5 } }), true);
   assertEquals(isStale({ ...stored, version: 2 }), true);
   assertEquals(isStale({ ...stored, audit: { ...stored.audit, version: OPPORTUNITY_AUDIT_VERSION + 1 } }), true);
   // A score stored by the comfort-only scorer has no audit at all.

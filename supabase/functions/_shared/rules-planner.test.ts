@@ -147,7 +147,7 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
       active_power_w: watts, profile_sample_count: 12, forecast_w_by_slot: s.slots.map(() => watts) });
   }
   const ready = prepare(s);
-  assertEquals(ready.problem.pool_stop_c, 29);
+  assertEquals(ready.problem.pool_stop_c, 34);
   assertEquals(ready.snapshot.pool_model!.hardware!.stop_c, 34);
   assertEquals(ready.problem.targets.pool_c, 29);
   assertEquals(ready.problem.heater!.compressor_w, 3000);

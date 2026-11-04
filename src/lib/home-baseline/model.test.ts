@@ -35,7 +35,7 @@ Deno.test('home physical models match unchanged live preparation', () => {
   const p = prepareRulesPlanningInput({ snapshot, now: snapshot.captured_at, resolved_price_outlook: {
     level_sek_per_kwh: 1, observed_days: 1, effective_days: 1, shaped: false,
     shadow_import_sek_per_kwh: snapshot.slots.map(() => 1),
-  } }, null, { rules: [], service_guard: { pool: [0, 0], ev: [0, 0] } }).problem;
+  } }, null, { rules: [] }).problem;
   const facts = homePhysics(snapshot);
   assertEquals(facts.battery, p.battery);
   assertEquals(facts.car, p.car);
@@ -52,7 +52,7 @@ Deno.test('empirical pool normalization agrees with live preparation', () => {
   const p = prepareRulesPlanningInput({ snapshot: rows.snapshot, now: rows.snapshot.captured_at, resolved_price_outlook: {
     level_sek_per_kwh: 1, observed_days: 1, effective_days: 1, shaped: false,
     shadow_import_sek_per_kwh: rows.snapshot.slots.map(() => 1),
-  } }, null, { rules: [], service_guard: { pool: [0, 0], ev: [0, 0] } }).problem;
+  } }, null, { rules: [] }).problem;
   const facts = homePhysics(rows.snapshot);
   assertEquals(facts.poolStore, p.pool_store);
   assertEquals(facts.heater, p.heater);

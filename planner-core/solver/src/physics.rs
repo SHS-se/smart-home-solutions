@@ -1404,7 +1404,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 15;
+        p.abi = 16;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

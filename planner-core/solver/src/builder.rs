@@ -7,7 +7,7 @@ use crate::*;
 struct Label {
     state: State,
     parent: usize,
-    points: i32,
+    points: f64,
     cash: f64,
     wear: f64,
     continuity: f64,
@@ -119,7 +119,6 @@ fn actions_with_pool(
     let h = physics::projected_hours(s);
     let f = &index.future[i];
     // Comfort and future demand propose heating; complete physics and score select it.
-    let target = p.targets.pool_c.unwrap_or(0.0);
     let pool_goal = f.pool_goal;
     let pool_needed = p.pool_store.as_ref().is_some_and(|store| {
         let coast = store.idle_per_hour(pool_goal, s.outdoor_c).abs()
@@ -128,8 +127,7 @@ fn actions_with_pool(
                 .saturating_sub(i)
                 .max(1)
                 .min(p.slots.len() - i) as f64;
-        policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && pool_step(false).unwrap().water_c < pool_goal + coast
+        pool_step(false).unwrap().water_c < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut out = Vec::new();
@@ -266,7 +264,7 @@ fn initial_label(p: &Problem) -> Label {
     Label {
         state: physics::initial(p),
         parent: usize::MAX,
-        points: 0,
+        points: 0.0,
         cash: 0.0,
         wear: 0.0,
         continuity: 0.0,
@@ -1241,26 +1239,12 @@ mod forecast_tests {
         p.recipe.finalists = 4;
         p.recipe.witness_trials = 12;
         p.recipe.repair_trials = 8;
-        p.rules = vec![
-            Rule {
-                key: RuleKey::PoolLow,
-                threshold: 1.0,
-                points: -1,
-                required: false,
-            },
-            Rule {
-                key: RuleKey::PoolCold,
-                threshold: 2.0,
-                points: -1,
-                required: true,
-            },
-            Rule {
-                key: RuleKey::PoolHot,
-                threshold: 2.0,
-                points: -1,
-                required: false,
-            },
-        ];
+        p.rules = vec![Rule {
+            key: RuleKey::PoolShortfall,
+            threshold: 0.0,
+            points: -2.0,
+            required: false,
+        }];
         for (i, s) in p.slots.iter_mut().enumerate() {
             s.import_price = if (4..7).contains(&i) {
                 0.5

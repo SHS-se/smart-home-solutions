@@ -317,7 +317,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 15, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: 16, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -356,7 +356,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
       ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
-    rules: approved.rules, service_guard: approved.service_guard,
+    rules: approved.rules,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: locked.length ? commitments.original.map((slot, i) => nativeCommand(slot, snapshot, !!pool, commitments.released[i])) : null,

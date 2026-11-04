@@ -27,7 +27,7 @@ export interface NativeCommand {
   charge_limit_w: number;
   discharge_limit_w: number;
 }
-export const RULE_KEYS = ["pool_low", "pool_cold", "pool_hot", "car_floor"] as const;
+export const RULE_KEYS = ["pool_shortfall", "car_floor"] as const;
 export type PlannerRuleKey = typeof RULE_KEYS[number];
 export interface ReadySlot {
   battery_export_allowed?: boolean | null;
@@ -47,7 +47,7 @@ export interface ReadySlot {
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 15;
+  abi: 16;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;
@@ -104,7 +104,6 @@ export interface ReadyProblem {
     points: number;
     required: boolean;
   }[];
-  service_guard: { pool: [number, number] };
   accepted: NativeCommand[] | null;
   released: NativeOwnerMask[] | null;
   unavailable: NativeOwnerMask[] | null;

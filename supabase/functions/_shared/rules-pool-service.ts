@@ -29,7 +29,7 @@ export function preparePoolService(snapshot: OptimisationSnapshot, retained: Par
   const empty = (): PoolService => ({ physics: null, pending_heat_kwh: null, source_depletion_kwh: null, empirical: false, permitted: [], command_w: [], commands: {}, power: {}, total_w: [], stop_c: null, warnings: [] });
   if (!snapshot.capabilities.pool) return empty();
   const target = snapshot.comfort?.pool?.target_c;
-  const stop = finite(target) ? target : snapshot.pool_model?.hardware?.stop_c;
+  const stop = (snapshot.pool_model?.hardware ?? snapshot.pool?.hardware)?.stop_c;
   let reason = "Pool thermal evidence is incomplete";
   try {
     if (!snapshot.pool) throw new Error("Pool water state is unavailable");

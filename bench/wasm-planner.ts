@@ -27,7 +27,7 @@ import {
   quarterStarts,
 } from "../src/lib/planner-bench/case.ts";
 import type { Household } from "../src/lib/planner-bench/household.ts";
-import { resolveRules, serviceGuard } from "../src/lib/planner-bench/score.ts";
+import { resolveRules } from "../src/lib/planner-bench/score.ts";
 import { REFEREE_RULE_DEFAULTS } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import type {
   CriteriaOverrides,
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 15,
+    abi: 16,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -201,7 +201,6 @@ export function readyProblem(
         }]
         : [];
     }),
-    service_guard: serviceGuard(criteria),
     // Filled below from the finished problem: the credit's reference is the median of the prices it was told.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: null, released: null, unavailable: null,
@@ -221,7 +220,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 15 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== 16 || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(
@@ -235,7 +234,7 @@ export async function loadWasmCandidate(root: string) {
     JSON.stringify({ manifest, producer: READY_PRODUCER_VERSION }),
   ).digest("hex");
   return {
-    version: `wasm-v9:${identity}`,
+    version: `wasm-v10:${identity}`,
     cold_compile_ms,
     artifact_bytes: bytes.length,
     plan(
@@ -283,7 +282,7 @@ export async function loadWasmCandidate(root: string) {
         wasm_memory_bytes,
         record: {
           status: "planned",
-          generation: "ready-wasm-v9",
+          generation: "ready-wasm-v10",
           decisions: {
             pool_w: s.quarters.map((q) => q.pool_command_w),
             ev_w: s.commands.map((c) =>

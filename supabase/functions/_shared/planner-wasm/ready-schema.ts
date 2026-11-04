@@ -28,7 +28,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(15),
+  abi: z.literal(16),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -146,13 +146,10 @@ export const readyProblemSchema = z.object({
   rules: z.object({
     key: z.enum(RULE_KEYS),
     threshold: number,
-    points: number.int(),
+    points: number,
     required: z.boolean(),
   })
     .array(),
-  service_guard: z.object({
-    pool: z.tuple([number, number]),
-  }),
   accepted: command.array().nullable(),
   fixed_commands: command.nullable().array().nullable().optional(),
   released: ownerMask.array().nullable(),

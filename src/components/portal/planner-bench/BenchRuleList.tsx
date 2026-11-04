@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
-import { AHEAD_MARGIN, RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
+import { RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
 import type { BenchSeries, CriteriaOverrides } from '@/lib/planner-bench/types';
 
@@ -20,9 +20,9 @@ const COLUMNS = 'grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] sm:grid-col
 const NAME = 'col-span-3 sm:col-span-1';
 const POINTS = 'pl-5 sm:pl-0 sm:text-right';
 const LIMIT_KEY = 'can_execute';
-const signed = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value)}`;
+const signed = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}`;
 // The palette runs −2…+2, as in the chart's score strip.
-const scoreColour = (points: number) => points === 0 ? undefined : `var(--plan-score-${points < 0 ? 'n' : 'p'}${Math.min(2, Math.abs(points))})`;
+const scoreColour = (points: number) => points === 0 ? undefined : `var(--plan-score-${points < 0 ? 'n' : 'p'}${Math.min(2, Math.ceil(Math.abs(points)))})`;
 
 type Side = 'current' | 'test';
 interface Range { from: number; to: number }
@@ -195,11 +195,12 @@ export default function BenchRuleList({
 
   /** A quarter rule's settings: on or off, its threshold and its points, saved for the case. */
   const settings = (rule: ResolvedRule, thresholdLabel: string | null, step: string) => {
-    const lo = RULE_POINTS_MIN, hi = RULE_POINTS_MAX;
+    const smooth = rule.key === 'pool_shortfall';
+    const lo = smooth ? undefined : RULE_POINTS_MIN, hi = smooth ? -.001 : RULE_POINTS_MAX;
     return <div className="flex flex-wrap items-end gap-3 pt-1">
       <label className="flex items-center gap-2 text-xs" htmlFor={`bench-${rule.key}-on`}><Switch id={`bench-${rule.key}-on`} checked={rule.enabled} onCheckedChange={v => patch(rule.key, 'enabled', v)} />{t('På', 'On')}</label>
       {thresholdLabel !== null && <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-threshold`}><span>{thresholdLabel}</span><Input id={`bench-${rule.key}-threshold`} className="h-8 w-28" type="number" min="0" step={step} value={rule.threshold} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber) && e.target.valueAsNumber >= 0) patch(rule.key, 'threshold', e.target.valueAsNumber); }} /></label>}
-      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={lo} max={hi} step="1" value={rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = Math.max(lo, Math.min(hi, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
+      <label className="text-xs space-y-1" htmlFor={`bench-${rule.key}-points`}><span>{smooth ? t('Kostnad (SEK/°C²·h)', 'Cost (SEK/°C²·h)') : rule.about === 'water' ? t('Poäng per saknad kvart', 'Points per missing quarter') : t('Poäng per kvart', 'Points per quarter')}</span><Input id={`bench-${rule.key}-points`} className="h-8 w-28" type="number" min={smooth ? 0 : lo} max={smooth ? undefined : hi} step={smooth ? "0.1" : "1"} value={smooth ? -rule.points : rule.points} onChange={e => { if (e.target.value !== '' && Number.isFinite(e.target.valueAsNumber)) { const points = smooth ? -Math.abs(e.target.valueAsNumber) : Math.max(RULE_POINTS_MIN, Math.min(RULE_POINTS_MAX, Math.round(e.target.valueAsNumber))); if (points !== 0) patch(rule.key, 'points', points); } }} /></label>
       <Button size="sm" variant="outline" disabled={!unsaved} onClick={onSave}>{t('Spara regler', 'Save rules')}</Button>
       <span className="basis-full text-xs text-muted-foreground">{t('Reglerna gäller alla testfall och alla planerare. Att spara räknar om alla poäng.', 'Rules apply to every test case and every planner. Saving rescores everything.')}</span>
     </div>;
@@ -231,27 +232,12 @@ export default function BenchRuleList({
       })}
       {settings(rule, null, '1')}
     </>;
-    const pool = rule.about === 'pool', above = rule.key === 'pool_hot';
-    const comfort = test?.comfort ?? current?.comfort;
-    const target = pool ? comfort?.pool_target_c : comfort?.ev_target_km;
-    const unit = pool ? '°C' : 'km';
-    const margin = Math.round(AHEAD_MARGIN * 100);
-    const level = target === undefined ? null : Number((target + (above ? rule.threshold : -rule.threshold)).toFixed(2));
     return <>
-      {level !== null && <p>
-        {pool
-          ? above ? t(`Poolen är varmare än ${level} ${unit}.`, `The pool is warmer than ${level} ${unit}.`) : t(`Poolen är kallare än ${level} ${unit}.`, `The pool is colder than ${level} ${unit}.`)
-          : t(`Bilens räckvidd är under ${level} ${unit}.`, `The car has less than ${level} ${unit} of range.`)}
-        {' '}{t(`Målet är ${target} ${unit}.`, `The target is ${target} ${unit}.`)}
-        {above && rule.key === 'pool_hot' && ` ${t(`Nästa dygn är varken ${margin} % dyrare eller ${margin} % solfattigare.`, `The next 24 h are neither ${margin} % dearer nor ${margin} % less sunny.`)} ${t('Planens sista dygn bedöms inte: det har inget nästa dygn.', "The plan's last 24 h are not judged: they have no next day.")}`}
-        {rule.required && ` ${t('En enda kvart underkänner fallet.', 'A single quarter fails the case.')}`}
-        {!above && ` ${t('Räknas först ett dygn efter att nivån gick att nå.', 'Counts only from a day after the level could be reached.')}`}
-      </p>}
-      {sides.map(s => {
-        const application = s.score?.applicability[rule.key];
-        return application && !application.applicable && <p key={s.side} className="text-muted-foreground">{s.label}: {application.reason}</p>;
-      })}
-      {settings(rule, `${t('Avstånd från mål', 'Distance from target')} (${unit})`, '0.1')}
+      <p>{t('Kostnaden är temperaturskillnaden under önskad temperatur i kvadrat, multiplicerad med tiden och kostnadsfaktorn. Små korta avvikelser kostar lite; djup eller långvarig kyla kostar mer.',
+        'The cost is the squared shortfall below the desired temperature, multiplied by time and the cost factor. Brief shallow dips cost little; deeper or longer cold periods cost more.')}</p>
+      <p>{t('Varmare vatten ger inga extra komfortpoäng. Planeraren kan lagra värme inom utrustningens temperaturgräns när det sparar framtida uppvärmning.',
+        'Warmer water earns no extra comfort points. The planner can store heat within the equipment temperature limit when it saves future heating.')}</p>
+      {settings(rule, null, '0.1')}
     </>;
   };
 
@@ -309,7 +295,7 @@ export default function BenchRuleList({
         </span>
         <span className={`${POINTS} font-mono font-semibold tabular-nums`} style={{ color: row.perQuarter === null || row.unscored ? undefined : scoreColour(row.perQuarter) }}>
           {row.perQuarter === null ? <span className="text-destructive">{t('Fel', 'Fail')}</span>
-            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">kr</span> : signed(row.perQuarter)}
+            : row.unscored ? <span className="text-xs font-normal text-muted-foreground">kr</span> : <>{signed(row.perQuarter)}{row.key === 'pool_shortfall' && <span className="block text-xs font-normal">/°C²·h</span>}</>}
         </span>
         {(['current', 'test'] as const).map(side => <span key={side} className={`text-right font-mono text-xs tabular-nums ${row.cells[side].events.length ? '' : 'text-muted-foreground'}`}>{cellText(row, row.cells[side])}</span>)}
       </button>
@@ -342,7 +328,7 @@ export default function BenchRuleList({
     <div>
       <div className={`${COLUMNS} border-b pb-1 text-xs text-muted-foreground`}>
         <span className={`${NAME} pl-5`}>{t('Regel', 'Rule')}</span>
-        <span className={POINTS}>{t('P/kvart', 'Pts/q')}</span>
+        <span className={POINTS}>{t('Kostnad', 'Cost')}</span>
         <span className="truncate text-right">{names.current}</span>
         <span className="truncate text-right">{names.test}</span>
       </div>

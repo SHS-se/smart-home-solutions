@@ -1,6 +1,6 @@
 # Planner bench scoring
 
-Scorer v32, referee v17, opportunity audit v14 (10 October 2026).
+Scorer v43, referee v17, opportunity audit v19 (4 November 2026).
 
 ## Score and costs
 
@@ -24,30 +24,31 @@ conversion are defined in `planner-wasm/end-credit.ts`. Above-target inventory
 earns no extra credit. Scores compare planners on the same case; case scores
 add into a run score.
 
-## Five comfort checks
+## Comfort checks
 
-| Check | Default threshold | Deduction per quarter | Automatic case failure |
-|---|---|---|---|
-| Pool below target | More than 1 °C below | −1 | No |
-| Pool far below target | More than 2 °C below | −1 | Yes |
-| Pool overheated | Target +2 °C | −1 | No |
-| Car below its floor | Below the safety floor after its grace | −2 | No |
-| Boiler permission shortfall | Fewer than 10 allowed quarters per 24-hour sample period | −1 per missing quarter | No |
+| Check | Cost | Automatic case failure |
+|---|---|---|
+| Pool cold exposure | 2 SEK per °C²·hour below desired water temperature | No |
+| Car below its floor | −2 per quarter after its existing grace | No |
+| Boiler permission shortfall | −1 per missing allowed quarter in each 24-hour sample | No |
 
-The pool's two shortfall tiers stack. A pool level starts counting only when full power
-from the initial state could have reached it, followed by 24 hours to choose
-when to supply it. A level already met at the start counts immediately.
-The car has one check, against its safety floor, 30 % by default, or its own
-charge limit if that is lower. Its grace runs from plug-in: 10 hours at the
-floor, half an hour less for each point below it, none from 20 points below. The
-bench's car counts as plugged in when the case starts, so each starting charge
-shows its own grace. The car's energy is credited in tiers rather than at the
-median: up to the middle of floor and charge limit at the 75th-percentile import
-price, from there to the limit at the 25th, nothing above it.
+Pool cost integrates `max(target − water, 0)²` over time using linear
+interpolation between projected water readings. This is an explicit quadrature
+convention, not an exact claim about the subquarter physical path. Costs retain
+fractional kronor, including partial intervals. The coefficient is independent
+of spot prices and configurable; the initial 2 SEK/(°C²·h) equals the former
+stacked 8 SEK/hour cost at a 2°C shortfall. There are no penalties or rewards for
+above-target warmth. Actual electricity, equipment start and scheduling costs
+and future cold exposure determine whether preheating pays. The equipment stop,
+not the comfort target, limits heating. Existing pool end credit stays unchanged
+and capped at the comfort target for this initial comparison.
 
-Pool overheating counts heating after the threshold has already been reached,
-or warmth above it when the next full day is neither over 10% dearer nor over
-10% less sunny. This cleanup preserves those service semantics.
+The pool's former 1°C/2°C deductions, overheating heuristic and replanning
+recovery grace are replaced by this single continuous account. Cold initial
+water remains valid; unavoidable exposure is a cost, never admission failure.
+Equal-comfort economic witnesses compare total squared pool exposure, separately
+from the existing car floor checks. Main search may trade comfort for money.
+The car's safety floor, charge limit and existing plug-in grace are unchanged.
 
 Boiler permission shortfall is the referee's own check
 (`REFEREE_RULE_DEFAULTS` in `rule-policy.ts`): no kernel planner is given it.
@@ -65,7 +66,7 @@ can still shift recorded heating between quarters, but its remaining energy
 counter is never converted to money or scored. The net bill is grid cost plus
 modelled equipment wear minus the battery, pool and EV store credit.
 
-Thresholds, nonzero points and enabled state remain configurable. A required
+Discrete rule thresholds and points remain configurable. Pool exposure uses a finite negative monetary coefficient and enabled state; it has no rule temperature threshold. A required
 check firing fails the automatic case verdict; the planner still ranks its
 candidates by the stated numerical score. This cleanup does not introduce a
 new service-priority hierarchy.

@@ -27,5 +27,17 @@
         "new_name": "CONTRACT EV-1: cable telemetry cannot remove or postpone future charging"
       }
     ]
+  },
+  {
+    "requirement": "User approved implementation on 4 November 2026 of continuous pool comfort costs and independent equipment limits. BASIS-2 retains both immutable-basis assertions; its mutation probe uses an active rule field instead of the removed threshold guard. See docs/energy-optimisation/constraint-requirements.md.",
+    "before": "81d9f340655d2a2b330cefb803981696409cae26",
+    "after": "d2f6524f53e20615cb6877c9badf5c540cc49ee9",
+    "tests": [
+      {
+        "file": "tests/planner-contracts/behavior.test.ts",
+        "old_name": "CONTRACT BASIS-2: capture detaches models, policy and accepted commands from caller mutations",
+        "new_name": "CONTRACT BASIS-2: capture detaches models, policy and accepted commands from caller mutations"
+      }
+    ]
   }
 ]

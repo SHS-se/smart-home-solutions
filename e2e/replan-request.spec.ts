@@ -1160,22 +1160,21 @@ test.describe('requesting a replan', () => {
 
     // The rules planner publishes which rules fired in each planned quarter.
     replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority,
-      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { pool_cold: -2, pool_low: -1 } : {} })) } } };
+      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { pool_shortfall: -.375 } : {} })) } } };
     await page.reload();
     const strip = page.locator('#plan-score');
     await expect(strip).toContainText(/regelpoäng per kvart|rule points per quarter/);
     const explanation = page.locator('#plan-quarter-explanation');
     await expect(explanation).toContainText(/Klicka på en kvart|Click a quarter/);
     // Only planned quarters are scored, and the strip sits between the chart and the explanation.
-    await expect(strip.locator('[data-score="-3"]').first()).toBeVisible();
+    await expect(strip.locator('[data-score="-0.375"]').first()).toBeVisible();
     await expect(strip.locator('[data-score="0"]').first()).toBeVisible();
-    await strip.locator('[data-score="-3"]').first().click();
-    await expect(explanation).toContainText('−3');
-    await expect(explanation).toContainText('−2 Pool far below target');
-    await expect(explanation).toContainText('−1 Pool below target');
+    await strip.locator('[data-score="-0.375"]').first().click();
+    await expect(explanation).toContainText('−0.38');
+    await expect(explanation).toContainText('−0.38 Pool cold exposure');
     await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
     const chart = (await page.getByRole('group', { name: /effektflöden|power flows/i }).first().boundingBox())!;
-    const cell = (await strip.locator('[data-score="-3"]').first().boundingBox())!, why = (await explanation.boundingBox())!;
+    const cell = (await strip.locator('[data-score="-0.375"]').first().boundingBox())!, why = (await explanation.boundingBox())!;
     expect(cell.y).toBeGreaterThan(chart.y + chart.height * 0.8);
     expect(why.y).toBeGreaterThan(cell.y);
     const button = (await download.boundingBox())!;

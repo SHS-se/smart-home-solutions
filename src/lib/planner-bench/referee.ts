@@ -472,7 +472,7 @@ export function referee(c: BenchCase, h: Household, targets: Targets, d: Decisio
     series.carKm!.push(r1(sim.evKwh[i] / h.car.battery.kwh_per_km));
     // The car is planned whether plugged in or not; the bench lets it charge whenever the plan says.
     series.carConnected.push(1);
-    series.poolC.push(Math.round(sim.poolC[i] * 1000) / 1000);
+    series.poolC.push(sim.poolC[i]);
     series.poolPendingHeatKwh.push(sim.poolPendingHeatKwh[i]);
     series.poolSourceDepletionKwh.push(h.pool.heater.source ? sim.poolSourceDepletionKwh[i] : null);
     series.costSek.push(r4(sim.costSek[i]));

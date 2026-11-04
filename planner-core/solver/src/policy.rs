@@ -21,48 +21,19 @@ pub(crate) struct FutureNeeds {
     pub refill_demand_kwh: f64,
 }
 pub(crate) struct Index {
-    pub due: [usize; 2],
-    pub buffer: Vec<Option<bool>>,
     pub future: Vec<FutureNeeds>,
 }
 pub(crate) fn applicable(p: &Problem, key: RuleKey) -> bool {
     match key {
-        RuleKey::PoolLow | RuleKey::PoolCold | RuleKey::PoolHot => p.heater.is_some(),
+        RuleKey::PoolShortfall => p.heater.is_some(),
         RuleKey::CarFloor => p.car.is_some(),
     }
-}
-pub(crate) fn rule(p: &Problem, key: RuleKey) -> Option<&Rule> {
-    p.rules.iter().find(|r| r.key == key && applicable(p, key))
 }
 pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
     let n = p.slots.len();
     if !work.spend(n as u64 * work.unit_cost * 4 + (n * n) as u64 * 2) {
         return Err("work_grant_cannot_prepare".into());
     }
-    let mean = |from: usize, to: usize, solar: bool| {
-        p.slots[from..to]
-            .iter()
-            .map(|s| {
-                if solar {
-                    s.solar_w
-                } else {
-                    measured(s.import_price, 10000.0)
-                }
-            })
-            .sum::<f64>()
-            / (to - from) as f64
-    };
-    let buffer: Vec<Option<bool>> = (0..n)
-        .map(|i| {
-            let d = i / 96 * 96;
-            let next = d + 96;
-            (next + 96 <= n).then(|| {
-                mean(next, next + 96, false) > mean(d, next, false) * 1.1
-                    || mean(next, next + 96, true) < mean(d, next, true) * 0.9
-            })
-        })
-        .collect();
-    let due = eligibility(p);
     // Where a quarter's charging should aim: the floor, and as high up the tiers
     // as this quarter's electricity costs less than the energy is worth.
     let ev_goal = |s: &Slot| {
@@ -144,11 +115,7 @@ pub(crate) fn index(p: &Problem, work: &mut Work) -> Result<Index, String> {
             f.refill_demand_kwh += demand;
         }
     }
-    Ok(Index {
-        due,
-        buffer,
-        future,
-    })
+    Ok(Index { future })
 }
 
 /// A thousandth of a krona separates two plans; less is rounding.
@@ -156,8 +123,8 @@ pub(crate) const MIN_GAIN_SEK: f64 = 1e-3;
 impl Account {
     /// The score from its parts, after any of them changed.
     pub(crate) fn rescore(&mut self) {
-        self.score_sek = f64::from(self.points)
-            - (self.cash_sek + self.wear_sek + self.continuity_sek - self.credit_sek);
+        self.score_sek =
+            self.points - (self.cash_sek + self.wear_sek + self.continuity_sek - self.credit_sek);
     }
 }
 /// What the battery is credited for ending where it does.
@@ -225,67 +192,6 @@ pub(crate) fn end_credit(
         )
         + car_credit(p, ev_kwh)
 }
-pub(crate) fn eligibility(p: &Problem) -> [usize; 2] {
-    let mut reach_pool = p.initial.pool_c.unwrap_or(0.0);
-    let mut pending = p.initial.pool_pending_heat_kwh.unwrap_or(0.0);
-    let mut depletion = p.initial.pool_source_depletion_kwh.unwrap_or(0.0);
-    let mut age = p
-        .initial
-        .heater_state
-        .unwrap_or(HeaterState::OffUnobserved)
-        .age();
-    let thresholds = p.service_guard.pool;
-    let target = p.targets.pool_c.unwrap_or(0.0);
-    let mut due = [usize::MAX; 2];
-    if p.heater.is_some() {
-        for (k, threshold) in thresholds.iter().enumerate() {
-            if reach_pool >= target - threshold {
-                due[k] = 0;
-            }
-        }
-    }
-    for (i, s) in p.slots.iter().enumerate() {
-        let hours = projected_hours(s);
-        if let Some((heater, store)) = p.heater.as_ref().zip(p.pool_store.as_ref()) {
-            let state = match age {
-                shs_planner_models::RunAge::Off => HeaterState::OffUnobserved,
-                shs_planner_models::RunAge::Running { seconds } => HeaterState::Running { seconds },
-                shs_planner_models::RunAge::Steady => HeaterState::Steady,
-            };
-            let step = heater.pool_transition(
-                store,
-                state,
-                true,
-                shs_planner_models::PoolConditions {
-                    source_depletion_kwh: depletion,
-                    water_c: reach_pool,
-                    pending_heat_kwh: pending,
-                    outdoor_c: s.outdoor_c,
-                    seconds: hours * 3600.0,
-                    stop_c: p.pool_stop_c,
-                },
-            );
-            age = step.next.age();
-            reach_pool = step.water_c;
-            pending = step.pending_heat_kwh;
-            depletion = step.source_depletion_kwh;
-        }
-        if p.heater.is_some() {
-            let now = measured(reach_pool, 100.0);
-            for (k, threshold) in thresholds.iter().enumerate() {
-                if due[k] == usize::MAX && now >= target - threshold {
-                    due[k] = i + 96;
-                }
-            }
-        }
-    }
-    due
-}
-
-// Match the declared stored measurement precision, without rounding physics.
-pub(crate) fn measured(value: f64, scale: f64) -> f64 {
-    (value * scale + 0.5).floor() / scale
-}
 /// A plan's account with every quarter's contributions: the selected plan's.
 pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     tally(p, q, index, true)
@@ -295,17 +201,16 @@ pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
 pub(crate) fn totals(p: &Problem, q: &[Quarter], index: &Index) -> Account {
     tally(p, q, index, false)
 }
-fn tally(p: &Problem, q: &[Quarter], index: &Index, rows: bool) -> Account {
+fn tally(p: &Problem, q: &[Quarter], _index: &Index, rows: bool) -> Account {
     let mut before_c = p.initial.pool_c.unwrap_or(0.0);
     let mut contributions = Vec::with_capacity(if rows { q.len() } else { 0 });
-    let mut total = 0;
+    let mut total = 0.0;
     for (i, v) in q.iter().enumerate() {
-        let fired = raw_quarter(p, index, i, v, before_c);
-        before_c = v.pool_c.unwrap_or(0.0);
-        total += points(&p.rules, fired);
+        total += guidance_quarter(p, _index, i, v, before_c);
         if rows {
-            contributions.push(self::contributions(&p.rules, fired));
+            contributions.push(self::contributions(p, i, v, before_c));
         }
+        before_c = v.pool_c.unwrap_or(0.0);
     }
     let last = q.last();
     let mut account = Account {
@@ -342,64 +247,67 @@ pub(crate) fn car_floor_breached(p: &Problem, i: usize, kwh: f64) -> bool {
             policy.breach_permille[i].is_some_and(|line| soc_permille(car, kwh) <= line)
         })
 }
-/// Which rules fired in a quarter: bit `j` is rule `j` of the problem.
-type Fired = u32;
-fn fired_where(rules: &[Rule], fires: impl Fn(&Rule) -> bool) -> Fired {
-    rules
-        .iter()
-        .enumerate()
-        .fold(0, |fired, (j, r)| fired | Fired::from(fires(r)) << j)
-}
-fn raw_quarter(p: &Problem, index: &Index, i: usize, v: &Quarter, before_c: f64) -> Fired {
-    let pool_c = measured(v.pool_c.unwrap_or(0.0), 1000.0);
-    fired_where(&p.rules, |r| {
-        if !applicable(p, r.key) {
-            return false;
-        }
-        let t = r.threshold;
-        match r.key {
-            RuleKey::PoolLow => i >= index.due[0] && pool_c < p.targets.pool_c.unwrap() - t,
-            RuleKey::PoolCold => i >= index.due[1] && pool_c < p.targets.pool_c.unwrap() - t,
-            RuleKey::PoolHot => {
-                (measured(v.pool_w, 10.0) > 0.0 || v.pool_start.is_some())
-                    && measured(before_c, 1000.0) >= p.targets.pool_c.unwrap() + t
-                    || pool_c > p.targets.pool_c.unwrap() + t && index.buffer[i] == Some(false)
-            }
-            RuleKey::CarFloor => car_floor_breached(p, i, v.ev_kwh.unwrap()),
-        }
-    })
-}
-/// What service rule `j` contributes in a quarter.
-fn contribution(rules: &[Rule], fired: Fired, j: usize) -> i32 {
-    if fired >> j & 1 == 1 {
-        rules[j].points
+/// Squared cold exposure for the linear segment between projected water readings.
+/// This integrates the interpolation, not the unobserved subquarter physical path.
+pub(crate) fn pool_exposure(target: f64, before: f64, after: f64, hours: f64) -> f64 {
+    let a = target - before;
+    let b = target - after;
+    let integral = if a <= 0.0 && b <= 0.0 {
+        0.0
+    } else if a >= 0.0 && b >= 0.0 {
+        (a * a + a * b + b * b) / 3.0
+    } else if a > 0.0 {
+        a * a * a / (3.0 * (a - b))
     } else {
-        0
+        b * b * b / (3.0 * (b - a))
+    };
+    integral * hours
+}
+fn contribution(p: &Problem, r: &Rule, i: usize, v: &Quarter, before_c: f64) -> f64 {
+    if !applicable(p, r.key) {
+        return 0.0;
+    }
+    match r.key {
+        RuleKey::PoolShortfall => {
+            let exposure = pool_exposure(
+                p.targets.pool_c.unwrap(),
+                before_c,
+                v.pool_c.unwrap(),
+                projected_hours(&p.slots[i]),
+            );
+            if exposure > 0.0 {
+                r.points * exposure
+            } else {
+                0.0
+            }
+        }
+        RuleKey::CarFloor => {
+            if car_floor_breached(p, i, v.ev_kwh.unwrap()) {
+                r.points
+            } else {
+                0.0
+            }
+        }
     }
 }
-fn contributions(rules: &[Rule], fired: Fired) -> Vec<i32> {
-    (0..rules.len())
-        .map(|j| contribution(rules, fired, j))
+fn contributions(p: &Problem, i: usize, v: &Quarter, before_c: f64) -> Vec<f64> {
+    p.rules
+        .iter()
+        .map(|r| contribution(p, r, i, v, before_c))
         .collect()
 }
-/// A quarter's points without its row.
-fn points(rules: &[Rule], fired: Fired) -> i32 {
-    if fired == 0 {
-        return 0;
-    }
-    (0..rules.len())
-        .map(|j| contribution(rules, fired, j))
-        .sum()
-}
-/// Continuation tables and complete accounts share the service predicates.
+/// Guidance and complete accounts use the same fractional monetary policy.
 pub(crate) fn guidance_quarter(
     p: &Problem,
-    index: &Index,
+    _index: &Index,
     i: usize,
     v: &Quarter,
     before_c: f64,
-) -> i32 {
-    points(&p.rules, raw_quarter(p, index, i, v, before_c))
+) -> f64 {
+    p.rules
+        .iter()
+        .map(|r| contribution(p, r, i, v, before_c))
+        .sum()
 }
 
 #[cfg(test)]
@@ -421,20 +329,20 @@ mod service_tests {
         }
     }
     fn rules() -> Vec<Rule> {
-        [
-            (RuleKey::PoolLow, 1.0),
-            (RuleKey::PoolCold, 2.0),
-            (RuleKey::PoolHot, 2.0),
-            (RuleKey::CarFloor, 0.0),
+        vec![
+            Rule {
+                key: RuleKey::PoolShortfall,
+                threshold: 0.0,
+                points: -2.0,
+                required: false,
+            },
+            Rule {
+                key: RuleKey::CarFloor,
+                threshold: 0.0,
+                points: -1.0,
+                required: false,
+            },
         ]
-        .into_iter()
-        .map(|(key, threshold)| Rule {
-            key,
-            threshold,
-            points: -1,
-            required: matches!(key, RuleKey::PoolCold),
-        })
-        .collect()
     }
     #[test]
     fn terminal_pool_credit_counts_initial_and_final_latent_energy_once() {
@@ -480,7 +388,7 @@ mod service_tests {
     }
 
     #[test]
-    fn all_four_service_checks_keep_distinct_contributions() {
+    fn pool_and_car_keep_distinct_fractional_contributions() {
         let mut p = crate::witnesses::tests::problem(1);
         p.rules = rules();
         p.initial.ev_kwh = Some(40.0);
@@ -494,13 +402,14 @@ mod service_tests {
             discharge_limit_w: 0.0,
         };
         let mut q = physics::projection(&p, &[idle]).unwrap();
+        p.initial.pool_c = Some(27.0);
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [-1, -1, 0, -1]);
+        assert_eq!(account(&p, &q, &index).contributions[0], [-4.5, -1.0]);
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [0, 0, -1, -1]);
+        assert_eq!(account(&p, &q, &index).contributions[0], [0.0, -1.0]);
     }
     #[test]
     fn the_floor_only_counts_at_or_below_the_line_of_that_quarter() {
@@ -568,11 +477,11 @@ mod service_tests {
         assert_eq!(goals, [18.0, 33.0, 48.0]);
     }
     #[test]
-    fn unreachable_pool_keeps_grace() {
+    fn cold_initial_water_is_valid_and_has_continuous_exposure() {
         let mut p = crate::witnesses::tests::problem(1);
         p.rules = rules();
         p.initial.pool_c = Some(0.0);
         assert!(crate::validate(&p).is_ok());
-        assert_eq!(eligibility(&p), [usize::MAX, usize::MAX]);
+        assert_eq!(pool_exposure(30.0, 0.0, 0.0, 0.25), 225.0);
     }
 }

@@ -95,7 +95,7 @@ function solarCompetitionProblem(solarW: number, ev = false): ReadyProblem {
   p.slots = p.slots.map((s, i) => ({ ...s, base_w: 1000,
     solar_w: i === 0 ? solarW : 0, import_price: 2, export_price: 1,
     ev_available: i === 0 }));
-  p.rules = [{ key: "pool_low", threshold: 1, points: -1, required: false }];
+  p.rules = [{ key: "pool_shortfall", threshold: 0, points: -1, required: false }];
   p.end_credit = problemEndCredit(p);
   return p;
 }
@@ -120,7 +120,7 @@ Deno.test("joint loads compete for one solar surplus and grid connection", () =>
 
 Deno.test("Wasm artifact matches every declared source and the binary digest", async () => {
   const planner = await loadWasmCandidate(root);
-  assert(planner.version.startsWith("wasm-v9:"));
+  assert(planner.version.startsWith("wasm-v10:"));
   assert(planner.artifact_bytes > 0);
   assertEquals(
     Uint8Array.from(atob(SOLVER_BASE64), (c) => c.charCodeAt(0)),
@@ -451,9 +451,9 @@ Deno.test("direct rule accounts agree with the independent quarter scorer when i
   assertEquals(violations, []);
   const quarters = scoreQuarters(series, {}).quarters;
   const expected = quarters.map((q) =>
-    p.rules.map((r) => q.fired.includes(r.key) ? r.points : 0)
+    p.rules.map((r) => q.deductions[r.key] ?? 0)
   );
-  assertEquals(result.outcome.selection.account.contributions, expected);
+  result.outcome.selection.account.contributions.forEach((row, i) => row.forEach((cost, j) => assertAlmostEquals(cost, expected[i][j], 1e-8)));
 });
 
 Deno.test("withheld future prices and actual household measurements cannot affect ready input", () => {
@@ -480,12 +480,12 @@ Deno.test("every bench rule and economic family has an explicit planner mapping"
   assertEquals(policy.witness_rules, []);
   assertEquals(policy.evidence_rules, []);
   assertEquals(policy.economic_rules.toSorted(), OPPORTUNITY_RULES.map(r => r.key).sort());
-  const criteria = { pool_low: { enabled: false }, pool_hot: { threshold: 3, points: -2 } };
+  const criteria = { pool_shortfall: { points: -1.5 } };
   const p = readyProblem(causalCase(), HOUSEHOLD, criteria);
   assertEquals(p.rules, resolveRules(criteria).filter(r => r.enabled && r.key !== "water_opportunities").map(r => ({
     key: r.key, threshold: r.threshold, points: r.points, required: r.required ?? false,
   })));
-  assertEquals(p.service_guard.pool, [1, 2]);
+  assertEquals(p.rules.find(r => r.key === "pool_shortfall")?.points, -1.5);
 });
 
 Deno.test("native heater restart events and startup wear match the referee", () => {
@@ -514,7 +514,7 @@ Deno.test("native heater restart events and startup wear match the referee", () 
   assertEquals(
     selected.account.contributions,
     scored.quarters.map((q) =>
-      p.rules.map((r) => q.fired.includes(r.key) ? r.points : 0)
+      p.rules.map((r) => q.deductions[r.key] ?? 0)
     ),
   );
   for (let i = 0; i < QUARTERS; i++) {
