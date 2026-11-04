@@ -14,7 +14,7 @@ if [ "$HAS_SECRET" = "no" ]; then
 import pathlib, secrets, sys
 pathlib.Path(sys.argv[1]).write_text("ENERGY_PLANNING_SECRET=" + secrets.token_hex(32) + "\n")
 PY
-  supabase secrets set --project-ref "$PROJECT_REF" --env-file "$SECRET_DIR/env"
+  supabase secrets set --project-ref "$PROJECT_REF" --env-file "$SECRET_DIR/env" --yes
 fi
 
 supabase functions deploy energy-device-learning --project-ref "$PROJECT_REF" --use-api --yes
