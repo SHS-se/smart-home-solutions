@@ -283,7 +283,7 @@ impl Values {
                 }
             }
             for previous in [false, true] {
-                let value = (f64::from(service_points) - q.cost)
+                let value = (service_points - q.cost)
                     - crate::charging::battery_start_cost(previous, charging, &ctx.p.limits)
                     + continuation;
                 let kept = &mut best[usize::from(previous)];
@@ -311,7 +311,7 @@ impl Values {
                 continue;
             };
             let charging = c.battery == Operation::GridCharge && q.charge > 0.0;
-            let value = (f64::from(service_points) - q.cost)
+            let value = (service_points - q.cost)
                 - crate::charging::battery_start_cost(previous_charging, charging, &ctx.p.limits)
                 + self.at(ctx, i + 1, q.battery_kwh, charging);
             if !value.is_finite() {
@@ -429,7 +429,7 @@ impl Allocation {
                     let Ok(q) = projector.step(i, &c, &mut next) else {
                         continue;
                     };
-                    let value = f64::from(policy::guidance_quarter(p, index, i, &q, state.pool))
+                    let value = policy::guidance_quarter(p, index, i, &q, state.pool)
                         - q.cost
                         - q.wear
                         - q.continuity

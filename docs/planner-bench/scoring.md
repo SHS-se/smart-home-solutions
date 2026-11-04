@@ -1,6 +1,6 @@
 # Planner bench scoring
 
-Scorer v43, referee v17, opportunity audit v19 (4 November 2026).
+Scorer v43, referee v30, opportunity audit v19 (4 November 2026).
 
 ## Score and costs
 
