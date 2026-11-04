@@ -1,5 +1,15 @@
 # Requirements for planner and controller constraints
 
+User requirement, 4 November 2026: replace pool temperature-step penalties with
+a smooth squared cold-exposure cost, allow economic above-target thermal storage
+within independently configured equipment limits, and keep existing terminal
+credit during the initial comparison. No warm-state bonus, target-plus-two hard
+ceiling, persistent cold debt or new recovery clock is introduced. Current and
+future cold exposure count continuously; ordinary replans cannot renew grace.
+The BASIS-2 immutability assertion remains unchanged; its mutation probe now
+changes an active rule field because the obsolete threshold service guard is
+removed from the native policy transport.
+
 User requirement, 25 October 2026: missing wireless observations are normal and
 must be handled gracefully. A missing meter interval does not erase learned
 thermal parameters or a usable measured water temperature. If missing state
