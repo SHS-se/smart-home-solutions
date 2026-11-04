@@ -1,6 +1,6 @@
 # Planner bench scoring
 
-Scorer v43, referee v30, opportunity audit v19 (4 November 2026).
+Scorer v44, referee v30, opportunity audit v20 (4 November 2026).
 
 ## Score and costs
 
@@ -28,15 +28,21 @@ add into a run score.
 
 | Check | Cost | Automatic case failure |
 |---|---|---|
-| Pool cold exposure | 2 SEK per °C²·hour below desired water temperature | No |
+| Pool cold exposure | 2 × integrated shortfall curve: quadratic to 2°C, then linear | No |
 | Car below its floor | −2 per quarter after its existing grace | No |
 | Boiler permission shortfall | −1 per missing allowed quarter in each 24-hour sample | No |
 
-Pool cost integrates `max(target − water, 0)²` over time using linear
-interpolation between projected water readings. This is an explicit quadrature
+For `d = max(target − water, 0)`, pool cost integrates `d²` up to a 2°C
+shortfall and `4d − 4` beyond it, multiplied by 2 SEK per exposure unit.
+The curve and its slope are continuous at the join: costs are 2 SEK/hour at
+1°C shortfall, 8 at 2°C, 16 at 3°C and 72 at 10°C. The tail limits the marginal
+comfort value to 8 SEK per °C·hour, so deep-cold recovery cannot acquire an
+ever-increasing marginal weight. It does not cap the total recovery cost.
+Integration uses linear interpolation between projected water readings,
+including segments crossing the target or the join. This is an explicit quadrature
 convention, not an exact claim about the subquarter physical path. Costs retain
 fractional kronor, including partial intervals. The coefficient is independent
-of spot prices and configurable; the initial 2 SEK/(°C²·h) equals the former
+of spot prices and configurable; the initial coefficient of 2 equals the former
 stacked 8 SEK/hour cost at a 2°C shortfall. There are no penalties or rewards for
 above-target warmth. Actual electricity, equipment start and scheduling costs
 and future cold exposure determine whether preheating pays. The equipment stop,
@@ -46,7 +52,7 @@ and capped at the comfort target for this initial comparison.
 The pool's former 1°C/2°C deductions, overheating heuristic and replanning
 recovery grace are replaced by this single continuous account. Cold initial
 water remains valid; unavoidable exposure is a cost, never admission failure.
-Equal-comfort economic witnesses compare total squared pool exposure, separately
+Equal-comfort economic witnesses compare total quadratic/linear pool exposure, separately
 from the existing car floor checks. Main search may trade comfort for money.
 The car's safety floor, charge limit and existing plug-in grace are unchanged.
 

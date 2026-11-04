@@ -46,7 +46,7 @@ Deno.test('rescoring cannot make rule-driven decisions optimized under earlier r
 Deno.test('complete coverage remains correct beyond 1000 cases without a partial sum', () => {
   const cases = Array.from({ length: 1203 }, (_, i) => ({ ...scenario, id: String(i) }));
   const results = new Map(cases.map(c => [c.id, { ...summary, scenario_id: c.id }]));
-  assertEquals(runCoverage(cases, results, {}).score, 1203 * value.score.points);
+  assertEquals(runCoverage(cases, results, {}).score, Number((1203 * value.score.points).toFixed(4)));
   results.delete('1001');
   const partial = runCoverage(cases, results, {});
   assertEquals([partial.ready, partial.scored, partial.score], [1203, 1202, null]);

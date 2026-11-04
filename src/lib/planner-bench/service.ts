@@ -1,19 +1,19 @@
-// Independent equal-comfort guards: pool squared cold exposure and the car floor.
+// Independent equal-comfort guards: pool cold exposure with a linear tail and the car floor.
 import type { BenchSeries } from './types';
-import { poolSquaredExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
+import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 
 export type Comfort = NonNullable<BenchSeries['comfort']>;
-export interface ServiceGuard { pool: 'squared_shortfall' }
-export const DEFAULT_SERVICE_GUARD: ServiceGuard = { pool: 'squared_shortfall' };
+export interface ServiceGuard { pool: 'linear_tail_shortfall' }
+export const DEFAULT_SERVICE_GUARD: ServiceGuard = { pool: 'linear_tail_shortfall' };
 export interface StoreExposure { mild: number; severe: number; worst: number; mildDeficitHours: number; severeDeficitHours: number }
 export interface ServiceExposure { pool: number; ev: StoreExposure }
 
-/** Degree-squared hours, with actual interval durations and no renewed recovery grace. */
+/** Integrated quadratic/linear cold exposure, with actual interval durations and no renewed recovery grace. */
 export function poolExposure(comfort: Comfort, values: ArrayLike<number | null>, _guard: ServiceGuard, hours?: ArrayLike<number>): number {
   let exposure = 0, before: number | null = comfort.pool_start_c;
   for (let i = 0; i < values.length; i++) {
     const after = values[i];
-    if (before !== null && after !== null) exposure += poolSquaredExposure(comfort.pool_target_c, before, after, hours?.[i] ?? .25);
+    if (before !== null && after !== null) exposure += poolComfortExposure(comfort.pool_target_c, before, after, hours?.[i] ?? .25);
     before = after;
   }
   return exposure;

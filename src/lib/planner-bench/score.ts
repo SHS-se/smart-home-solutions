@@ -7,9 +7,9 @@ import { canonicalJson } from './case';
 import { criteriaErrors, CriteriaError, REFEREE_RULE_DEFAULTS, ruleDefaults } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 export { criteriaErrors, CriteriaError, RULE_POINTS_MIN, RULE_POINTS_MAX } from '../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
-import { poolSquaredExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
+import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 
-export const SCORER_VERSION = 43;
+export const SCORER_VERSION = 44;
 /** A plan day: the pool's warmth is judged against the 24 hours after the 24 it is in. */
 export const DAY_QUARTERS = 96;
 /** How much dearer, or how much less sunny, the next day must be to be worth storing heat for. */
@@ -49,11 +49,11 @@ const poolShortfall = (q: QuarterView) => {
   const c = q.s.comfort, after = q.s.poolC[q.i];
   const before = q.i === 0 ? c?.pool_start_c : q.s.poolC[q.i-1];
   return c && before !== null && before !== undefined && after !== null
-    ? poolSquaredExposure(c.pool_target_c, before, after, q.s.hours[q.i]) : 0;
+    ? poolComfortExposure(c.pool_target_c, before, after, q.s.hours[q.i]) : 0;
 };
 const QUARTER_RULES: Omit<QuarterRule, "threshold" | "points" | "required">[] = [
   { key: 'pool_shortfall', about: 'pool', label: 'Pool cold exposure',
-    describe: () => 'squared temperature shortfall × hours', fires: poolShortfall, eligibleFrom: poolAny },
+    describe: () => 'temperature shortfall cost with a linear tail × hours', fires: poolShortfall, eligibleFrom: poolAny },
   {
     key: 'car_floor', about: 'car', label: 'Car below its safety floor', describe: () => 'below the floor after its grace since plug-in', fires: carBelowFloor, eligibleFrom: carFrom,
   },

@@ -114,11 +114,13 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
   return series;
 }
 
-Deno.test('pool cold exposure is fractional, depth squared and duration weighted without threshold cliffs', () => {
+Deno.test('pool cold exposure is fractional, quadratic near target with a duration-weighted linear tail without threshold cliffs', () => {
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 300)).sum, 0);
   const constant = (temp: number) => scoreQuarters(comfortSeries(() => temp, () => 300, { pool_start_c: temp }));
   assertAlmostEquals(constant(29).sum, -144, 1e-9);
   assertAlmostEquals(constant(28).sum, -576, 1e-9);
+  assertAlmostEquals(constant(27).sum, -1152, 1e-9);
+  assertAlmostEquals(constant(20).sum, -5184, 1e-9);
   assertAlmostEquals(constant(29.5).quarters[0].score, -.125, 1e-9);
   assertAlmostEquals(constant(29.99).quarters[0].score - constant(30.01).quarters[0].score, -.00005, 1e-9);
   const nearFormerLine = constant(28.9999).quarters[0].score - constant(29.0001).quarters[0].score;
@@ -152,7 +154,7 @@ Deno.test('pool applicability needs a temperature trajectory, not reachability g
 
 Deno.test('cold exposure does not restart a recovery grace on replanning', () => {
   const cold = comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: Array(288).fill(24) });
-  assertAlmostEquals(scoreQuarters(cold).quarters[0].score, -18, 1e-9);
+  assertAlmostEquals(scoreQuarters(cold).quarters[0].score, -10, 1e-9);
 });
 
 Deno.test('continuous pool coefficient and enabled state control its cost', () => {
@@ -174,7 +176,7 @@ Deno.test('continuous pool costs accept finite negative coefficients and reject 
   assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
   assertEquals(criteriaFingerprint({ pool_shortfall: { points: -1.5 }, car_floor: { points: -2 } }),
     criteriaFingerprint({ car_floor: { points: -2 }, pool_shortfall: { points: -1.5 } }));
-  assertEquals(serviceGuard(), { pool: 'squared_shortfall' });
+  assertEquals(serviceGuard(), { pool: 'linear_tail_shortfall' });
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */

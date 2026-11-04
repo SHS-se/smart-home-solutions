@@ -1,5 +1,11 @@
 # Requirements for planner and controller constraints
 
+User requirement, 4 November 2026: bound the pool cold-exposure curve's slope
+with a linear tail. For positive shortfall `d`, integrate `d²` up to 2°C and
+`4d − 4` beyond 2°C, with the existing coefficient of 2 SEK per exposure unit.
+The value and slope join continuously. This supersedes the unbounded quadratic
+below, without changing near-target buffering incentives or renewing recovery grace.
+
 User requirement, 4 November 2026: replace pool temperature-step penalties with
 a smooth squared cold-exposure cost, allow economic above-target thermal storage
 within independently configured equipment limits, and keep existing terminal

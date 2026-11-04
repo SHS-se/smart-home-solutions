@@ -1,4 +1,4 @@
-import { poolSquaredExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort.ts';
+import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort.ts';
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import type { BenchCase } from './case.ts';
 import { evaluate } from './evaluate.ts';
@@ -228,7 +228,7 @@ Deno.test('a dull day before a sunny one: waiting for the sun is found, as far a
   assert(held.rules.pool_wait_for_sun.kwh < free.rules.pool_wait_for_sun.kwh, `${held.rules.pool_wait_for_sun.kwh} vs ${free.rules.pool_wait_for_sun.kwh}`);
   const target = TARGETS.pool_c;
   const exposure = (values: number[], start: number) => values.reduce((sum, value, i) =>
-    sum + poolSquaredExposure(target, i ? values[i-1] : start, value, .25), 0);
+    sum + poolComfortExposure(target, i ? values[i-1] : start, value, .25), 0);
   for (const f of held.findings.filter(f => f.device === 'pool')) {
     assert(exposure(f.after.poolC, 29.7) <= exposure(f.before.poolC, 29.7) + .01, 'waiting must preserve continuous comfort');
   }
@@ -396,7 +396,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
   // Scaling the homogeneous cost does not change an equal-comfort witness.
   assertEquals(scoreQuarters(series, { pool_shortfall: { points: -0.5 } }).auditPending, false);
-  assertEquals(series.audit!.guard, { pool: 'squared_shortfall' });
+  assertEquals(series.audit!.guard, { pool: 'linear_tail_shortfall' });
   // A series from before the audit: no economic score, said so, and no stored score to be had.
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);

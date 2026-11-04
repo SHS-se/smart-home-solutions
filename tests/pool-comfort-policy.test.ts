@@ -1,7 +1,7 @@
 // Entirely synthetic equations and equipment: no household replay data.
 import { assert, assertAlmostEquals, assertEquals } from '@std/assert';
 import { PGlite } from 'npm:@electric-sql/pglite@0.3.14';
-import { poolSquaredExposure } from '../supabase/functions/_shared/planner-wasm/pool-comfort.ts';
+import { poolComfortExposure } from '../supabase/functions/_shared/planner-wasm/pool-comfort.ts';
 import { createWasmPlanner } from '../supabase/functions/_shared/planner-wasm/core.ts';
 import { problemEndCredit } from '../supabase/functions/_shared/planner-wasm/end-credit.ts';
 const plannerBytes = await Deno.readFile('supabase/functions/_shared/planner-wasm/solver.wasm');
@@ -9,12 +9,12 @@ import { problem } from './planner-wasm.fixture.ts';
 import recipe from '../planner-core/recipe.json' with { type: 'json' };
 
 Deno.test('pool exposure integrates partial durations and target crossings without rounding cliffs', () => {
-  assertEquals(poolSquaredExposure(31, 30, 30, 2), 2);
-  assertAlmostEquals(poolSquaredExposure(31, 30, 32, 1), 1/6, 1e-12);
-  assertAlmostEquals(poolSquaredExposure(31, 32, 30, 1), 1/6, 1e-12);
-  assertEquals(poolSquaredExposure(31, 32, 33, 1), 0);
-  const whole = poolSquaredExposure(31, 29, 32, 1);
-  const pieces = poolSquaredExposure(31, 29, 30.5, .5) + poolSquaredExposure(31, 30.5, 32, .5);
+  assertEquals(poolComfortExposure(31, 30, 30, 2), 2);
+  assertAlmostEquals(poolComfortExposure(31, 30, 32, 1), 1/6, 1e-12);
+  assertAlmostEquals(poolComfortExposure(31, 32, 30, 1), 1/6, 1e-12);
+  assertEquals(poolComfortExposure(31, 32, 33, 1), 0);
+  const whole = poolComfortExposure(31, 29, 32, 1);
+  const pieces = poolComfortExposure(31, 29, 30.5, .5) + poolComfortExposure(31, 30.5, 32, .5);
   assertAlmostEquals(whole, pieces, 1e-12);
 });
 
