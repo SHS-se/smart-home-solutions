@@ -552,7 +552,7 @@ export interface PlannedSlot {
    * modelled price from a real one.
    */
   shadow_import_sek_per_kwh: number;
-  shadow_export_sek_per_kwh: number;
+  shadow_export_sek_per_kwh: number | null;
   pool_w: number;
   /** Relay command at nominal input; required for a transient heater response. */
   pool_command_w?: number;
@@ -726,6 +726,8 @@ export interface OptimisationPlan {
     level_sek_per_kwh: number | null;
     /** Exact unrounded series used by the solve and by deterministic replay. */
     shadow_import_sek_per_kwh: number[];
+    /** Captured tariff-based sell estimates, aligned with the buy series. Null means the tariff was unavailable. */
+    shadow_export_sek_per_kwh?: (number | null)[];
   };
   /**
    * How the base-load forecast was turned into the demand planned for; absent
