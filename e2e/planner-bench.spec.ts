@@ -1045,7 +1045,8 @@ test.describe('planner bench', () => {
 
     await expect(page.locator('#bench-pool_shortfall-threshold')).toHaveCount(0);
     await row('pool_shortfall').getByRole('button').first().click();
-    await expect(row('pool_shortfall')).toContainText(/squared shortfall|temperaturskillnaden/);
+    await expect(row('pool_shortfall')).toContainText(/linjärt|linearly/);
+    await expect(row('pool_shortfall')).toContainText('2 °C');
     await expect(page.locator('#bench-pool_shortfall-threshold')).toHaveCount(0);
     await page.locator('#bench-pool_shortfall-points').fill('1.5');
     await expect(page.locator('#bench-pool_shortfall-points')).toHaveValue('1.5');

@@ -33,7 +33,7 @@ import { consumptionGapDescription, orderConsumptionStack, type ConsumptionIssue
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { PLAN_COLOURS } from './palette';
-import { scoreColour } from '../plan/quarter-score';
+import { scoreColour, signedPoints } from '../plan/quarter-score';
 import { useHomeTimeZone } from '../HomeTimeZoneContext';
 import { formatHomeDayMonth, formatHomeTime } from '@/lib/energy-shift/home-time';
 
@@ -938,7 +938,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
               />
               <PanelHeading
                 title={t('Kvartsstyrning', 'Slot control')}
-                unit={quarterAudit?.description ?? (quarterScores ? t('regelpoäng per kvart', 'rule points per quarter') : t('blå: tillåten · tom: spärrad', 'blue: allowed · empty: blocked'))}
+                unit={quarterAudit?.description ?? (quarterScores ? t('poäng per kvart · välj en kvart för detaljer', 'points per quarter · select a quarter for details') : t('blå: tillåten · tom: spärrad', 'blue: allowed · empty: blocked'))}
                 y={scoreStrip.top - 6}
               />
               {quarterAudit?.lanes.map((lane, laneIndex) => <SlotControlLane right={right} key={lane.key}
@@ -960,26 +960,21 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
                   </g>;
                 })}
               </SlotControlLane>)}
+              {!quarterAudit && quarterScores && <text x={MARGIN_LEFT - 8} y={scoreStrip.top + 12}
+                textAnchor="end" className={AXIS_TEXT}>{t('Komfort', 'Comfort')}</text>}
               {!quarterAudit && quarterScores?.map((score, index) => {
                 if (score === null || score === undefined) return null;
                 const left = x(index), width = x(index + 1) - left;
                 const colour = scoreColour(score);
-                // Digits need about 10 units; narrower quarters (a three-day
-                // view) fall back to a coloured cell of the same colour.
-                return width >= 9.5 ? (
-                  <text
-                    key={index} data-score={score} x={left + width / 2} y={scoreStrip.top + 12}
-                    textAnchor="middle" fill={colour}
-                    className="text-[8.5px] font-mono font-semibold"
-                  >
-                    {score < 0 ? `−${-score}` : String(score)}
-                  </text>
-                ) : (
+                // Quarter cells stay compact even for fractional scores. Exact
+                // values belong in the selected-quarter detail and accessible title.
+                // Keep this row above the independently drawn boiler lane.
+                return (
                   <rect
-                    key={index} data-score={score} x={left} y={scoreStrip.top + 3}
-                    width={Math.max(0.5, width - 0.3)} height={scoreStrip.height - 6}
+                    key={index} data-score={score} x={left} y={scoreStrip.top + (score === 0 ? 11 : 3)}
+                    width={Math.max(0.5, width - 0.5)} height={score === 0 ? 2 : 10}
                     fill={colour}
-                  />
+                  ><title>{rows[index].label} · {signedPoints(score)} {t('poäng', 'points')}</title></rect>
                 );
               })}
           {showWater && (

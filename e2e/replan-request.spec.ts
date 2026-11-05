@@ -1160,18 +1160,33 @@ test.describe('requesting a replan', () => {
 
     // The rules planner publishes which rules fired in each planned quarter.
     replan.publishedPlan = { ...PLAN, plan_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority,
-      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, rule_points: i % 2 ? { pool_shortfall: -.375 } : {} })) } } };
+      // Independent synthetic temperatures and fractional costs exercise dense
+      // labels and nonzero values smaller than the display precision.
+      slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, pool_temperature_c: 27 + i * .001,
+        rule_points: i === 3 ? { pool_shortfall: -.000001 } : i === 5 ? { pool_shortfall: -1 / 3 } : i % 2 ? { pool_shortfall: -.375 } : {} })) } } };
     await page.reload();
     const strip = page.locator('#plan-score');
-    await expect(strip).toContainText(/regelpoäng per kvart|rule points per quarter/);
+    await expect(strip).toContainText(/poäng per kvart|points per quarter/);
     const explanation = page.locator('#plan-quarter-explanation');
     await expect(explanation).toContainText(/Klicka på en kvart|Click a quarter/);
     // Only planned quarters are scored, and the strip sits between the chart and the explanation.
     await expect(strip.locator('[data-score="-0.375"]').first()).toBeVisible();
     await expect(strip.locator('[data-score="0"]').first()).toBeVisible();
+    await expect(strip.locator('text[data-score]')).toHaveCount(0);
+    await expect(strip.locator('[data-score="-0.375"] title').first()).toContainText(/−0.38 (poäng|points)/);
+    await expect(strip.locator('[data-score="-0.3333333333333333"] title')).toContainText(/−0.33 (poäng|points)/);
+    expect(await strip.locator('[data-score="-0.375"]').first().getAttribute('height')).toBe('10');
     await strip.locator('[data-score="-0.375"]').first().click();
     await expect(explanation).toContainText('−0.38');
-    await expect(explanation).toContainText('−0.38 Pool cold exposure');
+    await expect(explanation).toContainText(/−0.38 (poäng|points) (Poolkomfort|Pool comfort)/);
+    await expect(explanation).not.toContainText('pool_shortfall');
+    await expect(explanation.locator('[data-pool-comfort-evidence]')).toContainText(/Planerat vatten|Predicted water/);
+    await expect(explanation.locator('[data-pool-comfort-evidence]')).toContainText('15 min');
+    await explanation.locator('summary').click();
+    await expect(explanation).toContainText(/linjärt|linearly/);
+    await expect(explanation).toContainText('2 °C');
+    await expect(explanation).toContainText('1 SEK');
+    await expect(explanation).toContainText('0.50');
     await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
     const chart = (await page.getByRole('group', { name: /effektflöden|power flows/i }).first().boundingBox())!;
     const cell = (await strip.locator('[data-score="-0.375"]').first().boundingBox())!, why = (await explanation.boundingBox())!;
@@ -1181,6 +1196,35 @@ test.describe('requesting a replan', () => {
     expect(Math.abs(button.y - why.y)).toBeLessThan(8);
     expect(button.x).toBeGreaterThan(why.x + why.width - 1);
     await page.screenshot({ path: testInfo.outputPath('plan-score.png'), fullPage: true });
+    await explanation.screenshot({ path: testInfo.outputPath('plan-score-detail.png') });
+    await page.getByRole('button', { name: 'Toggle language' }).click();
+    await expect(explanation).toContainText('Pool comfort');
+    await expect(explanation).toContainText('Beyond that it grows linearly');
+    await page.getByRole('button', { name: 'Toggle language' }).click();
+    await strip.locator('[data-score="-0.000001"]').click();
+    await expect(explanation).toContainText('>−0.01');
+    await expect(explanation).not.toContainText('−0.00');
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(explanation.locator('details')).toHaveAttribute('open', '');
+    await explanation.scrollIntoViewIfNeeded();
+    const mobile = (await explanation.boundingBox())!;
+    expect(mobile.x).toBeGreaterThanOrEqual(0);
+    expect(mobile.x + mobile.width).toBeLessThanOrEqual(375);
+    await page.screenshot({ path: testInfo.outputPath('plan-score-mobile.png'), fullPage: true });
+    await explanation.screenshot({ path: testInfo.outputPath('plan-score-mobile-detail.png') });
+    await page.setViewportSize({ width: 812, height: 375 });
+    await explanation.scrollIntoViewIfNeeded();
+    await explanation.screenshot({ path: testInfo.outputPath('plan-score-landscape.png') });
+    await page.setViewportSize({ width: 375, height: 812 });
+    // The application retains its light theme under an OS dark preference.
+    // Larger text and reduced motion must preserve the detail's layout.
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+    await page.addStyleTag({ content: ':root { font-size: 20px; }' });
+    const enlarged = (await explanation.boundingBox())!;
+    expect(enlarged.x + enlarged.width).toBeLessThanOrEqual(375);
+    await page.screenshot({ path: testInfo.outputPath('plan-score-large-text.png'), fullPage: true });
+    await page.setViewportSize({ width: 375, height: 1200 });
+    await explanation.screenshot({ path: testInfo.outputPath('plan-score-large-text-detail.png') });
   });
 
   test('returning to a hidden tab refreshes measured pool temperature immediately', async ({ page }) => {

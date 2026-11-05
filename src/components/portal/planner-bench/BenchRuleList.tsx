@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage } from '@/contexts/LanguageContext';
+import PoolComfortRuleInfo from '../energy/PoolComfortRuleInfo';
+import { signedPoints as signed } from '../energy/plan/quarter-score';
 import { formatHomeDayMonthTime } from '@/lib/energy-shift/home-time';
 import { RULE_POINTS_MAX, RULE_POINTS_MIN, resolveRules, type CaseScore, type ResolvedRule } from '@/lib/planner-bench/score';
 import { OPPORTUNITY_RULES, type OpportunityFinding, type OpportunityRuleMeta } from '@/lib/planner-bench/opportunities';
@@ -20,7 +22,6 @@ const COLUMNS = 'grid grid-cols-[3.5rem_minmax(0,1fr)_minmax(0,1fr)] sm:grid-col
 const NAME = 'col-span-3 sm:col-span-1';
 const POINTS = 'pl-5 sm:pl-0 sm:text-right';
 const LIMIT_KEY = 'can_execute';
-const signed = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}`;
 // The palette runs −2…+2, as in the chart's score strip.
 const scoreColour = (points: number) => points === 0 ? undefined : `var(--plan-score-${points < 0 ? 'n' : 'p'}${Math.min(2, Math.ceil(Math.abs(points)))})`;
 
@@ -233,10 +234,7 @@ export default function BenchRuleList({
       {settings(rule, null, '1')}
     </>;
     return <>
-      <p>{t('Kostnaden är temperaturskillnaden under önskad temperatur i kvadrat, multiplicerad med tiden och kostnadsfaktorn. Små korta avvikelser kostar lite; djup eller långvarig kyla kostar mer.',
-        'The cost is the squared shortfall below the desired temperature, multiplied by time and the cost factor. Brief shallow dips cost little; deeper or longer cold periods cost more.')}</p>
-      <p>{t('Varmare vatten ger inga extra komfortpoäng. Planeraren kan lagra värme inom utrustningens temperaturgräns när det sparar framtida uppvärmning.',
-        'Warmer water earns no extra comfort points. The planner can store heat within the equipment temperature limit when it saves future heating.')}</p>
+      <PoolComfortRuleInfo coefficient={-rule.points} />
       {settings(rule, null, '0.1')}
     </>;
   };

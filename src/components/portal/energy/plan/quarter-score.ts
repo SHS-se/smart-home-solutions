@@ -2,4 +2,9 @@
 
 // The palette runs −2…+2; anything beyond takes the darkest shade.
 export const scoreColour = (score: number) => `var(--plan-score-${score < 0 ? 'n' : 'p'}${Math.min(2, Math.ceil(Math.abs(score)))})`;
-export const signedPoints = (value: number, digits = 2) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
+export const signedPoints = (value: number, digits = 2) => {
+  if (value !== 0 && Math.abs(value) < 0.5 * 10 ** -digits) {
+    return value < 0 ? `>−${(10 ** -digits).toFixed(digits)}` : `<+${(10 ** -digits).toFixed(digits)}`;
+  }
+  return `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(digits)}`;
+};
