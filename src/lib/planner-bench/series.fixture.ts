@@ -10,7 +10,7 @@ interface PlanSlotLike {
   import_price_sek_per_kwh: number | null;
   export_price_sek_per_kwh: number | null;
   shadow_import_sek_per_kwh?: number;
-  shadow_export_sek_per_kwh?: number;
+  shadow_export_sek_per_kwh?: number | null;
   pv_w: number;
   load_w: number;
   pool_w: number;
@@ -34,7 +34,7 @@ const r4 = (value: number) => Math.round(value * 10_000) / 10_000;
  *   followed by one value per quarter, or null when the plan has no pool model.
  */
 export function planSeries(slots: readonly PlanSlotLike[], poolStateC: readonly number[] | null): BenchSeries {
-  const price = (quoted: number | null, shadow: number | undefined) =>
+  const price = (quoted: number | null, shadow: number | null | undefined) =>
     quoted !== null && Number.isFinite(quoted) ? quoted : shadow ?? 0;
   const out: BenchSeries = {
     devices: [], deviceW: {},

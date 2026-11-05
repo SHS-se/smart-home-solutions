@@ -17,6 +17,7 @@ import { runRulesPlanner } from "../../../supabase/functions/_shared/run-rules-p
 import { assert, assertEquals } from 'jsr:@std/assert@1';
 
 import type { OptimisationSnapshot } from '../../../supabase/functions/_shared/planner/planning-contracts.ts';
+import { buildPriceOutlook } from '../../../supabase/functions/_shared/planner/energy-price-shape.ts';
 import { buildEnergyTimeline } from './energy-timeline.ts';
 
 const CAPTURED_AT = '2026-08-18T20:45:00.000Z';
@@ -39,6 +40,7 @@ const priceAt = (hour: number) =>
     1.9 + 0.9 * Math.exp(-((hour - 7.5) ** 2) / 6) +
       1.5 * Math.exp(-((hour - 19) ** 2) / 5),
   );
+const syntheticSell = (buy: number) => Math.max(0.05, (buy - 0.835) / 1.25 + 0.033);
 
 const hourAt = (ms: number) => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -64,9 +66,7 @@ const snapshot = (): OptimisationSnapshot => {
         : 0,
       base_load_forecast_w: 800,
       import_price_sek_per_kwh: priced ? importPrice : null,
-      export_price_sek_per_kwh: priced
-        ? Math.max(0.05, (importPrice - 0.835) / 1.25 + 0.033)
-        : null,
+      export_price_sek_per_kwh: priced ? syntheticSell(importPrice) : null,
     };
   });
   return {
@@ -129,7 +129,16 @@ let solved: ReturnType<typeof build> | undefined;
 const planned = () => solved ??= build();
 
 const build = () => {
-  const plan = runRulesPlanner({ snapshot: snapshot(), now: (new Date(START + 60_000)).toISOString(), price_archive: archive }).plan;
+  const source = snapshot();
+  const outlook = buildPriceOutlook(source.slots, archive, { timeZone: TZ, asOf: START });
+  const plan = runRulesPlanner({ snapshot: source, now: new Date(START + 60_000).toISOString(), price_archive: archive,
+    resolved_price_outlook: {
+      shaped: outlook.shaped, observed_days: outlook.observedDays, effective_days: outlook.effectiveDays,
+      level_sek_per_kwh: outlook.levelSekPerKwh,
+      shadow_import_sek_per_kwh: outlook.shadowImportSekPerKwh,
+      shadow_export_sek_per_kwh: outlook.shadowImportSekPerKwh.map(syntheticSell),
+    },
+  }).plan;
   const timeline = buildEnergyTimeline({
     actuals: [],
     deviceActuals: [],
@@ -175,7 +184,7 @@ Deno.test('the export side matches too', () => {
     const drawn = row.exportPriceSekPerKwh ?? row.shadowExportSekPerKwh;
     assert(drawn !== null, `nothing would be drawn at ${row.start}`);
     assert(
-      Math.abs(drawn - slot.shadow_export_sek_per_kwh) < 1e-4,
+      slot.shadow_export_sek_per_kwh !== null && Math.abs(drawn - slot.shadow_export_sek_per_kwh) < 1e-4,
       `chart would draw ${drawn} where the planner used ${slot.shadow_export_sek_per_kwh}`,
     );
   }

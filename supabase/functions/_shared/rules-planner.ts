@@ -159,8 +159,11 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   if (snapshot.battery_execution_feedback) validateExecutionFeedback(snapshot.battery_execution_feedback);
   const count = snapshot.slots.length;
   if (Date.parse(snapshot.slots[0].start) > effective) return fail("Planning input must cover its capture interval");
-  const outlook = { ...input.resolved_price_outlook!,
-    shadow_import_sek_per_kwh: input.resolved_price_outlook!.shadow_import_sek_per_kwh.slice(offset) };
+  const { shadow_export_sek_per_kwh: capturedSell, ...capturedOutlook } = input.resolved_price_outlook!;
+  const outlook = { ...capturedOutlook,
+    shadow_import_sek_per_kwh: capturedOutlook.shadow_import_sek_per_kwh.slice(offset),
+    ...(capturedSell ? { shadow_export_sek_per_kwh: capturedSell.slice(offset) } : {}),
+  };
   if (outlook.shadow_import_sek_per_kwh.length !== count || !outlook.shadow_import_sek_per_kwh.every(finite)) return fail("Resolved prices must cover every planning interval");
   const battery = snapshot.capabilities.battery ? snapshot.device_physics?.battery ?? snapshot.battery : null;
   if (snapshot.capabilities.battery && !battery) return fail("Battery capability requires a physical model and state");
@@ -291,9 +294,16 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
     fixedSlots[i] = booking.targets;
   }
   const retainedServices = snapshot.slots.map((_s, i) => fixedSlots[i] ?? locked[i]);
-  const spreads = snapshot.slots.flatMap(s => s.import_price_sek_per_kwh === null || s.export_price_sek_per_kwh === null ? [] : [s.import_price_sek_per_kwh - s.export_price_sek_per_kwh]).sort((a, b) => a - b);
-  if (!spreads.length && snapshot.slots.some(s => s.export_price_sek_per_kwh === null)) return fail("Resolved export forecast needs a published tariff spread");
-  const spread = spreads[Math.floor(spreads.length / 2)] ?? 0;
+  const sellPrices = snapshot.slots.map((slot, i) =>
+    slot.export_price_sek_per_kwh ?? outlook.shadow_export_sek_per_kwh?.[i] ?? null);
+  const missingSellPrices = sellPrices.filter(price => price === null).length;
+  if (missingSellPrices) {
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+      "sell_tariff_unavailable", "prices", "The sell tariff was unavailable for some quarters.",
+      "Planning continues without new battery exports or estimated export revenue in those quarters.",
+      { quarters: missingSellPrices })]);
+  }
+  const exportValues = sellPrices.map(price => price ?? 0);
   // Reuse the same matured-home level correction as the main planner. No
   // demand margin or future measured load enters the prepared forecast.
   const level = demandLevel(snapshot.demand_outlook?.days, localDay(snapshot.captured_at, snapshot.timezone));
@@ -310,7 +320,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const headroom=spare.map(w=>Math.max(0,snapshot.grid.import_limit_w+w));
   const rooms = prepareRoomServices(snapshot, retainedServices, headroom, {
     import_sek_per_kwh: outlook.shadow_import_sek_per_kwh,
-    export_sek_per_kwh: snapshot.slots.map((s, i) => s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread),
+    export_sek_per_kwh: exportValues,
     surplus_w: spare }, trace);
   Object.assign(passive, rooms.power);
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
@@ -330,12 +340,13 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
       const outdoor = snapshot.outdoor_temperature_c?.[i];
       if (pool?.store.loss.kind === "linear" && pool.store.loss.surroundings_c === null && !finite(outdoor)) return fail(`Pool physical forecast requires outdoor temperature at ${s.start}`);
-      return { battery_export_allowed: input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
+      const exportAllowed = input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export;
+      return { battery_export_allowed: sellPrices[i] === null && !fixedSlots[i] && !locked[i]?.battery_command ? false : exportAllowed, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
         base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
         base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
         solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
         outdoor_c: finite(outdoor) ? outdoor : 0,
-        import_price: outlook.shadow_import_sek_per_kwh[i], export_price: s.export_price_sek_per_kwh ?? outlook.shadow_import_sek_per_kwh[i] - spread,
+        import_price: outlook.shadow_import_sek_per_kwh[i], export_price: exportValues[i],
         published: s.import_price_sek_per_kwh !== null && s.export_price_sek_per_kwh !== null,
         pool_auxiliary_dispatch: pool && members.auxiliary.some(member => {
           const model = snapshot.device_models.find(m => m.key === member.key)!;
@@ -471,7 +482,8 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     return { start: source.start, duration_hours: hours, binding,
       pv_raw_w: source.pv_forecast_w, pv_w: f.solar_w, base_w: input.base_w[i],
       import_price_sek_per_kwh: source.import_price_sek_per_kwh, export_price_sek_per_kwh: source.export_price_sek_per_kwh,
-      shadow_import_sek_per_kwh: f.import_price, shadow_export_sek_per_kwh: f.export_price,
+      shadow_import_sek_per_kwh: f.import_price,
+      shadow_export_sek_per_kwh: source.export_price_sek_per_kwh ?? input.price_outlook.shadow_export_sek_per_kwh?.[i] ?? null,
       pool_w: input.pool_service.empirical ? input.pool_service.total_w[i] : q.pool_w,
       pool_permitted: input.pool_service.empirical ? input.pool_service.permitted[i] : command.pool_on,
       ...(input.pool_service.empirical && input.pool_service.permitted[i] === null ? {} : {

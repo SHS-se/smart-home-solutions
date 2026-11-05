@@ -31,8 +31,12 @@ export function recoverRetainedBattery(input: PreparedRulesInput, issue: string)
     if (released[i]?.includes('$battery')) { delete next.battery_command; delete next.battery_instruction; }
     return next;
   });
+  const slots = input.problem.slots.map((slot, i) =>
+    released[i]?.includes('$battery') && input.snapshot.slots[i].export_price_sek_per_kwh === null &&
+      input.price_outlook.shadow_export_sek_per_kwh?.[i] == null
+      ? {...slot, battery_export_allowed: false} : slot);
   return {...input, locked_slots: locked, released_owners_by_slot: released,
-    problem: {...input.problem, released: input.problem.accepted!.map((_slot, i) =>
+    problem: {...input.problem, slots, released: input.problem.accepted!.map((_slot, i) =>
       ({...(input.problem.released?.[i] ?? emptyMask()), battery: released[i]?.includes('$battery') ?? false}))},
     snapshot: {...input.snapshot, planning_warnings: [...(input.snapshot.planning_warnings ?? []), planningWarning(
       'battery_commitment_rescheduled', 'battery',

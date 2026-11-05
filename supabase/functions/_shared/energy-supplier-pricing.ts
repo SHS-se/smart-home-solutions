@@ -1,4 +1,5 @@
 export const SUPPLIER_PRICE_SCHEMA_VERSION = 1;
+export class SupplierPricingError extends Error {}
 
 export interface SpotPriceInterval {
   SEK_per_kWh: number;
@@ -37,6 +38,21 @@ const round = (value: number, decimals = 6) => {
   return Math.round((value + Number.EPSILON) * scale) / scale;
 };
 
+const supplierExportPrice = (spot: number, definition: SupplierDefinitionV1) =>
+  round(spot * definition.export.spot_multiplier + definition.export.adjustment_sek_per_kwh);
+
+/** Reverse the supplier's buy tariff to value the same estimated spot on export. */
+export function estimateSupplierExportFromImport(importPrice: number, definitionValue: unknown): number | null {
+  validateSupplierDefinition(definitionValue);
+  const definition = definitionValue;
+  if (definition.export.spot_multiplier === 0) return supplierExportPrice(0, definition);
+  const { spot_multiplier, fixed_markup_sek_per_kwh_ex_vat, variable_cost_sek_per_kwh_ex_vat } = definition.import;
+  if (spot_multiplier === 0) return null;
+  const spot = (importPrice / (1 + definition.vat_rate) - variable_cost_sek_per_kwh_ex_vat -
+    fixed_markup_sek_per_kwh_ex_vat) / spot_multiplier;
+  return finite(spot) ? supplierExportPrice(spot, definition) : null;
+}
+
 export function validateSupplierDefinition(
   value: unknown,
 ): asserts value is SupplierDefinitionV1 {
@@ -51,7 +67,7 @@ export function validateSupplierDefinition(
     !finite(definition.export?.adjustment_sek_per_kwh) ||
     !finite(definition.monthly_fee_sek_in_vat)
   ) {
-    throw new Error("invalid supplier definition");
+    throw new SupplierPricingError("invalid supplier definition");
   }
 }
 
@@ -129,9 +145,6 @@ export function calculateSupplierPrice(
     supplier_import_price_sek_per_kwh: round(
       importExVat * (1 + definition.vat_rate),
     ),
-    supplier_export_price_sek_per_kwh: round(
-      interval.SEK_per_kWh * definition.export.spot_multiplier +
-        definition.export.adjustment_sek_per_kwh,
-    ),
+    supplier_export_price_sek_per_kwh: supplierExportPrice(interval.SEK_per_kWh, definition),
   };
 }

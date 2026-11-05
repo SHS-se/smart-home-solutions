@@ -14,6 +14,7 @@ import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
 import { reportedPoolHardware, samePoolHardware, type PoolHardware } from "../_shared/pool-hardware.ts";
 import { readHomeGridImportLimitW } from "../_shared/home-grid-limit.ts";
+import { readPlanningSellPrices } from "../_shared/planning-sell-prices.ts";
 import { withTrafficMetrics } from "../_shared/edge-traffic.ts";
 import type { OptimisationPlan, FixedEnergyPlan } from "../_shared/planner/planning-contracts.ts";
 import { applyBatteryChoice } from "../_shared/home-planning.ts";
@@ -1158,19 +1159,28 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
         }
         const prepared = await readOrPrepareForecasts(supabase as unknown as PreparedForecastDatabase, auth.homeId, snapshot,
           () => refreshPreparedForecasts(supabase, auth.customerId, auth.homeId, structuredClone(forecastSource)));
+        const sellPriceLookup = readPlanningSellPrices(supabase, auth.homeId, prepared.snapshot.slots,
+          prepared.price_outlook.shadow_import_sek_per_kwh).catch(error => {
+            console.warn("[ENERGY-OPTIMISATION] sell tariff unavailable", describeThrown(error));
+            return undefined;
+          });
         // Comfort routines and room temperatures are read now, never from the prepared copy.
         const thermal = prepareRoomModels(prepared.snapshot, storedDevices.map(device => ({
           key: device.key, control_type_override: device.control_type_override, room: roomMapping(device),
         })), modelBundle);
-        snapshot = await captureRoomPlanningState(supabase, auth.customerId, auth.homeId, thermal.snapshot, thermal.rooms);
-        const { data: savedRules, error: rulesError } = await supabase.from("energy_planner_rule_policy")
-          .select("criteria").eq("id", true).single();
+        const [planningSnapshot, { data: savedRules, error: rulesError }, sellPrices] = await Promise.all([
+          captureRoomPlanningState(supabase, auth.customerId, auth.homeId, thermal.snapshot, thermal.rooms),
+          supabase.from("energy_planner_rule_policy").select("criteria").eq("id", true).single(),
+          sellPriceLookup,
+        ]);
+        snapshot = planningSnapshot;
+        const priceOutlook = { ...prepared.price_outlook, ...(sellPrices ? { shadow_export_sek_per_kwh: sellPrices } : {}) };
         if (rulesError) throw new PlanningError(rulesError.message,
           rulesError.code === "PGRST116" ? "planner_not_configured" : "planning_input_read_failed", 503,
           rulesError.code === "PGRST116" ? "terminal" : "retry");
         const planningNow = new Date();
         const planningInput = { snapshot, now: planningNow.toISOString(),
-          fixed_plan: fixedPlan, resolved_price_outlook: prepared.price_outlook, execution_replan: executionReplan };
+          fixed_plan: fixedPlan, resolved_price_outlook: priceOutlook, execution_replan: executionReplan };
         const rulesInput = trace.run("admission_preparation", () => captureRulesPlanningInput(planningInput,
           fixedState?.accepted_commands?.household ?? null, resolveRulePolicy(savedRules.criteria),
           {battery: fixedState?.accepted_commands?.battery ?? null}),
