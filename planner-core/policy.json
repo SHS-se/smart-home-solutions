@@ -1,14 +1,12 @@
 {
-  "version": "kronor-score-v17",
+  "version": "kronor-score-v19",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"
   ],
   "score": "rule_points_minus_cash_minus_wear_minus_charging_start_preference_plus_capped_end_store_credit",
   "direct_rules": [
-    "pool_low",
-    "pool_cold",
-    "pool_hot",
+    "pool_shortfall",
     "car_floor"
   ],
   "witness_rules": [],
@@ -35,5 +33,6 @@
     },
     "owner": "supabase/functions/_shared/planner-wasm/end-credit.ts"
   },
-  "coverage": "bounded_causal_certificates_with_reported_exhaustion"
+  "coverage": "bounded_causal_certificates_with_reported_exhaustion",
+  "pool_comfort": "2_sek_quadratic_shortfall_tangent_tail_at_2c_integrated_linear_water_segments"
 }

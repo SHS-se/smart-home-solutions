@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { createClient } from "npm:@supabase/supabase-js@2.90.1";
 import { cpuPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
 import { prepareRoomModels, captureRoomPlanningState, type RoomDeviceMapping } from "./room-model-capture.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";

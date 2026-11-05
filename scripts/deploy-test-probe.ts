@@ -16,7 +16,7 @@ export async function deployTestProbe(
     });
     for (
       const args of [
-        ["secrets", "set", "--project-ref", PROBE_PROJECT, "--env-file", path],
+        ["secrets", "set", "--project-ref", PROBE_PROJECT, "--env-file", path, "--yes"],
         [
           "functions",
           "deploy",

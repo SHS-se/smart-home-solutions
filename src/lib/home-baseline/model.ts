@@ -3,7 +3,7 @@ import { parseDeviceColours } from '../energy-shift/device-colours.ts';
 import { deviceMembers, allocateDevicePower, type DeviceMember } from '../../../supabase/functions/_shared/planner/device-power-allocation.ts';
 import { poolHeaters } from '../../../supabase/functions/_shared/planner/pool-devices.ts';
 import recipe from '../../../planner-core/recipe.json' with { type: 'json' };
-import { builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
+import { READY_ABI, builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
 import { localDay, localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy.ts';
@@ -129,7 +129,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 15, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: READY_ABI, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
@@ -173,14 +173,14 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
         solar_w: (modeledKwh ?? energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters')) * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
-        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i], pool_auxiliary_dispatch: null };
+        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i], ev_current_ceiling_a: null, pool_auxiliary_dispatch: null };
     }),
     targets: { pool_c: facts.poolStore ? settings.poolStopC : null },
     car_policy: null,
     limits: { import_w: rows.snapshot.grid.import_limit_w, export_w: rows.snapshot.grid.export_limit_w,
       battery_export_enabled: false, battery_export_reserve_kwh: 0, battery_export_min_price: 0,
       wear_per_kwh: facts.wear, ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
-    rules: [], service_guard: { pool: [0, 0] }, accepted: null, released: null, unavailable: null, locked_through_seconds: 0,
+    rules: [], accepted: null, released: null, unavailable: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };
   // Both actors face the car's current charge limit; its history is not recorded.

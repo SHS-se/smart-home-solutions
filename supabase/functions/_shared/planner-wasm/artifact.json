@@ -1,7 +1,7 @@
 {
-  "abi": 15,
-  "wasm_sha256": "1229ff5014e29d022ac430bc9977a83e125a88f3b1631102c652b0f25753668d",
-  "source_sha256": "62e6bec5f89874a0dec3b2a8500318c32c26a6ac689d952a90f5739cdd15a70a",
+  "abi": 17,
+  "wasm_sha256": "86fbf1d213ae7d65e4ae3e8b2a8c1fc15d8456173c92802fe46c80a1a3a5d889",
+  "source_sha256": "6059572a8824501fa74dd73c9a868ed30c7311090fe2e6e2d4eeaf6164c85b0a",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",
@@ -66,6 +66,7 @@
     "supabase/functions/_shared/planner-wasm/cost-policy.ts",
     "supabase/functions/_shared/planner-wasm/end-credit.ts",
     "supabase/functions/_shared/planner-wasm/load-balanced-ev.ts",
+    "supabase/functions/_shared/planner-wasm/pool-comfort.ts",
     "supabase/functions/_shared/planner-wasm/probe.ts",
     "supabase/functions/_shared/planner-wasm/ready-problem.ts",
     "supabase/functions/_shared/planner-wasm/ready-schema.ts",

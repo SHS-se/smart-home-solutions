@@ -183,7 +183,7 @@ def tariff():
                     "export_credit": {"schedule": "swedish_winter_weekday_06_22_v1", "ore_per_kwh_ex_vat_by_area": {}}}}]}]}
 
 
-async def produce(amps, connected, room=False, electrical="retained", manual_pool_w=None, battery=False):
+async def produce(amps, connected, room=False, electrical="retained", manual_pool_w=None, battery=False, battery_soc=50):
     assert electrical in ("retained", "missing", "configured")
     options, states, devices = room_scenario(room == "thermostat") if room else scenario(amps, connected)
     if battery:
@@ -195,7 +195,7 @@ async def produce(amps, connected, room=False, electrical="retained", manual_poo
             battery_export_min_price_sek_per_kwh=100,
             battery_charge_max_w=4000, battery_discharge_max_w=5000, battery_min_soc=.1,
             grid_import_limit_w=10000, grid_export_limit_w=10000)
-        states["sensor.synthetic_pack_soc"] = state(50, unit_of_measurement="%")
+        states["sensor.synthetic_pack_soc"] = state(battery_soc, unit_of_measurement="%")
         states["sensor.synthetic_house_power"].state = "500"
         devices = []
     if electrical == "configured":
@@ -356,12 +356,13 @@ async def consume(payload):
                 "ev_condition": outcomes["ev"].get("execution_condition")}
 
 
-async def consume_battery(payload):
+async def consume_battery(payload, *, admission_only=False):
     from shs_core.battery_conversion import Conversion
     from shs_core.battery_runtime import plan_contract
     from shs_core.plan_execution import (Account, LiveState, StateObservation,
         admit_plan, assess_execution, contract_wire, read_contract, observe_state, request_replan)
-    plan, native = payload["plan"], payload["quarters"]
+    plan = payload["plan"]
+    native = [] if admission_only else payload["quarters"]
     contract = plan_contract(plan)
     assert contract_wire(read_contract(plan["battery_execution"])) == plan["battery_execution"]
     assert contract.wire_schema == "battery-plan-execution-v3"
@@ -371,6 +372,8 @@ async def consume_battery(payload):
     observation = StateObservation(first.start_ms, first.stored_start_mwh, "planning_snapshot_soc")
     requested = request_replan(observe_state(Account(), observation))
     account = admit_plan(requested, contract, first.start_ms, observation)
+    if admission_only:
+        return {"admitted": True, "storage": asdict(contract.storage)}
     for interval, quarter, slot in zip(contract.intervals, native, plan["plans"]["priority"]["slots"], strict=True):
         # The real controller observes the native physical state and device load;
         # no observation error, corrective recovery or external command is added.
@@ -415,7 +418,9 @@ async def main():
     elif sys.argv[2] == "produce-manual-pool":
         result = await produce(12, True, manual_pool_w=float(sys.argv[3]))
     elif sys.argv[2] == "produce-battery":
-        result = await produce(12, True, battery=True)
+        result = await produce(12, True, battery=True, battery_soc=float(sys.argv[3]) if len(sys.argv)>3 else 50)
+    elif sys.argv[2] == "admit-battery":
+        result = await consume_battery(json.load(sys.stdin), admission_only=True)
     elif sys.argv[2] == "consume-battery":
         result = await consume_battery(json.load(sys.stdin))
     elif sys.argv[2] == "consume":

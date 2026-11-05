@@ -48,10 +48,9 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
   const candidate = await loadWasmCandidate(root);
   const c = causalCase();
   const criteria = {
-    pool_low: { enabled: false },
-    pool_hot: { points: -2 },
+    pool_shortfall: { points: -1.5 },
   };
-  assertEquals(planner.generation, "ready-wasm-v9");
+  assertEquals(planner.generation, "ready-wasm-v10");
   for (const lane of LANES) {
     const scale = laneParts(lane).scale;
     const actual = planner.plan(toldCase(c, lane), HOUSEHOLD, scale, criteria);
@@ -67,7 +66,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     });
     assertEquals(actual.record.curves, []);
   }
-  assert((await plannerVersion(diskTree(root))).startsWith("v15-rule-wasm:"));
+  assert((await plannerVersion(diskTree(root))).startsWith("v17-rule-wasm:"));
 });
 
 Deno.test("configured rule engine versions change with artifacts and cannot silently use TypeScript", async () => {
@@ -192,7 +191,7 @@ Deno.test("real bench worker stores all rule-engine lanes and replans when saved
       first,
       "unchanged rules retain the stored decisions",
     );
-    const rules = { pool_hot: { points: -2 } };
+    const rules = { pool_shortfall: { points: -2 } };
     await Deno.writeTextFile(output, JSON.stringify({ ...first, rules }));
     const second = await run();
     check(second, rules);

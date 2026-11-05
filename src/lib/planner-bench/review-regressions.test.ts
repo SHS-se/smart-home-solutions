@@ -3,13 +3,13 @@ import { HOUSEHOLD } from './household.ts';
 import { findOpportunities, ruleState } from './opportunities.ts';
 import { assertDecisions, simulate, type Decisions } from './referee.ts';
 import { criteriaErrors, resolveRules } from './score.ts';
-import { storeExposure, storeNotWorse } from './service.ts';
+import { poolExposure, DEFAULT_SERVICE_GUARD } from './service.ts';
 import { TARGETS, plan, within, world } from './world.fixture.ts';
 
 Deno.test('unknown rules fail explicitly and service deductions cannot be saved at zero points', () => {
   assertEquals(criteriaErrors({ dear_buy: { points: -1 } }), ['Unknown rule "dear_buy".']);
-  assertEquals(resolveRules({ pool_hot: { points: -2 } }).find(r => r.key === 'pool_hot')!.points, -2);
-  assertEquals(criteriaErrors({ pool_hot: { points: 0 } }), ['pool_hot: points must be between -2 and 2, and not 0.']);
+  assertEquals(resolveRules({ pool_shortfall: { points: -2 } }).find(r => r.key === 'pool_shortfall')!.points, -2);
+  assertEquals(criteriaErrors({ pool_shortfall: { points: 0 } }), ['pool_shortfall: the cost coefficient must be finite and negative.']);
 });
 
 Deno.test('missing decision streams fail explicitly before any simulation', () => {
@@ -29,13 +29,11 @@ Deno.test('a battery outside its bound may move toward it without returning insi
   }
 });
 
-Deno.test('equal cold-quarter counts and worst depth cannot hide a larger comfort deficit', () => {
-  const exposure = (values: number[]) => storeExposure(values, 30, [1, 2], [30, 30, 30], 30);
-  const before = exposure([28, 28.9, 28.9]);
-  const after = exposure([28, 28.1, 28.1]);
-  assertEquals([after.mild, after.severe, after.worst], [before.mild, before.severe, before.worst]);
-  assert(after.mildDeficitHours > before.mildDeficitHours);
-  assertEquals(storeNotWorse(before, after), false);
+Deno.test('continuous exposure detects a larger deficit without threshold counts', () => {
+  const comfort = { pool_target_c: 30, pool_start_c: 30 } as Parameters<typeof poolExposure>[0];
+  const before = poolExposure(comfort, [28, 28.9, 28.9], DEFAULT_SERVICE_GUARD);
+  const after = poolExposure(comfort, [28, 28.1, 28.1], DEFAULT_SERVICE_GUARD);
+  assert(after > before);
 });
 
 Deno.test('flat prices do not make pool timing inapplicable, and applicability is identical for every planner', () => {

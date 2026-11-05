@@ -8,15 +8,15 @@ for (const withBench of [false, true]) {
     try {
       await db.exec('CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;');
       if (withBench) await db.exec(`CREATE TABLE bench_rules(id boolean PRIMARY KEY,criteria jsonb);
-        INSERT INTO bench_rules VALUES(true,'{"pool_hot":{"threshold":12,"points":-2}}');`);
+        INSERT INTO bench_rules VALUES(true,'{"pool_shortfall":{"points":-1.5}}');`);
       await db.exec(sql);
       const read = async () => (await db.query<{criteria:Record<string,never>}>(
         'SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria;
       const published = await read();
-      assertEquals(resolveRulePolicy(published).rules.find(r => r.key === 'pool_hot')?.points, withBench ? -2 : -1);
+      assertEquals(resolveRulePolicy(published).rules.find(r => r.key === 'pool_shortfall')?.points, withBench ? -1.5 : -2);
       if (withBench) {
-        await db.exec(`UPDATE bench_rules SET criteria='{"pool_hot":{"threshold":18,"points":-1}}' WHERE id=true`);
-        assertEquals(resolveRulePolicy(await read()).rules.find(r => r.key === 'pool_hot')?.threshold, 18);
+        await db.exec(`UPDATE bench_rules SET criteria='{"pool_shortfall":{"points":-1}}' WHERE id=true`);
+        assertEquals(resolveRulePolicy(await read()).rules.find(r => r.key === 'pool_shortfall')?.points, -1);
       } else assertEquals(published, {});
       for (const role of ['anon','authenticated']) {
         await db.exec(`SET ROLE ${role}`);
@@ -35,7 +35,7 @@ const retired = ['solar_spill', 'idle_battery', 'dear_buy', 'dearest_buy', 'esti
   'dear_load', 'dearest_load', 'base_load_dear_import', 'base_load_dearest_import', 'missed_cheap_quarter',
   'arbitrage_no_export', 'arbitrage_not_full', 'ev_from_home_battery', 'large_load_overlap', 'pool_short_gap', 'early_grid_charge'];
 const serviceCriteria = {
-  pool_low: { threshold: 1.5, points: -2 }, pool_cold: { enabled: false }, pool_hot: { threshold: 3 },
+  pool_shortfall: { points: -1.5 }, car_floor: { enabled: false },
   ev_low: { threshold: 60 }, ev_short: { points: -2 },
 };
 for (const withBench of [false, true]) {
@@ -51,11 +51,11 @@ for (const withBench of [false, true]) {
       await db.exec(cleanupSql);
       const published = (await db.query<{ criteria: typeof serviceCriteria }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria;
       assertEquals(published, serviceCriteria);
-      assertEquals(resolveRulePolicy(published).rules.map(r => r.key).sort(), ['car_floor', 'pool_hot', 'pool_low']);
+      assertEquals(resolveRulePolicy(published).rules.map(r => r.key).sort(), ['pool_shortfall']);
       if (withBench) {
         assertEquals((await db.query<{ criteria: typeof serviceCriteria }>('SELECT criteria FROM bench_rules WHERE id=true')).rows[0].criteria, serviceCriteria);
-        await db.query('UPDATE bench_rules SET criteria=$1::jsonb WHERE id=true', [JSON.stringify({ pool_low: { threshold: 0.5 } })]);
-        assertEquals((await db.query<{ criteria: unknown }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria, { pool_low: { threshold: 0.5 } });
+        await db.query('UPDATE bench_rules SET criteria=$1::jsonb WHERE id=true', [JSON.stringify({ pool_shortfall: { points: -0.5 } })]);
+        assertEquals((await db.query<{ criteria: unknown }>('SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria, { pool_shortfall: { points: -0.5 } });
       }
     } finally { await db.close(); }
   });

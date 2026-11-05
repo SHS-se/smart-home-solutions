@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/SHS-se/shs-ha-integration.git",
-  "revision": "a8583b054f49fa49851bd78d3c9103dde767385f",
-  "integration_version": "0.9.0-beta.171",
-  "app_version": "0.1.0-beta.129"
+  "revision": "7a421c8ab93eff417fd79f93eecae2a7134febf2",
+  "integration_version": "0.9.0-beta.173",
+  "app_version": "0.1.0-beta.131"
 }

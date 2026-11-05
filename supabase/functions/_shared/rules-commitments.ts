@@ -1,7 +1,7 @@
 import type { OptimisationSnapshot, PlannedSlot } from "./planner/planning-contracts.ts";
 import type { ExecutionChange, ExecutionReplan } from "./execution-replan.ts";
 import type { NativeOwnerMask, NativeCommand, ReadyProblem } from "./planner-wasm/ready-problem.ts";
-import type { PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
+import type { PreparedRulesInput, PublishedCommandReference, PublishedCommandSlot } from "./rules-planner.ts";
 
 import { poolElectricalDemand } from "./planner/models/pool/electrical.ts";
 import { planningWarning, type PlanningWarning } from "./planner/planning-warnings.ts";
@@ -13,6 +13,34 @@ const emptyMask = (): NativeOwnerMask => ({pool: false, ev: false, battery: fals
 export function nativeOwnerHeld(problem: ReadyProblem, i: number, owner: keyof NativeOwnerMask): boolean {
   return !!problem.fixed_commands?.[i] || !!problem.accepted?.[i] &&
     problem.slots[i].start_seconds < problem.locked_through_seconds && !problem.released?.[i]?.[owner];
+}
+
+/** A proved impossible retained battery request may move; bookings and other owners may not. */
+export function recoverRetainedBattery(input: PreparedRulesInput, issue: string): PreparedRulesInput | null {
+  const conflict = /^committed_command_infeasible:(\d+):(native_battery_power_limit|shared_grid_limit)$/.exec(issue);
+  if (!conflict) return null;
+  const index = Number(conflict[1]);
+  if (!input.problem.slots[index] || !input.problem.accepted?.[index] ||
+      input.fixed_slots[index] || input.problem.fixed_commands?.[index] ||
+      !nativeOwnerHeld(input.problem, index, 'battery')) return null;
+  const released = input.released_owners_by_slot.map((owners, i) =>
+    !input.fixed_slots[i] && !input.problem.fixed_commands?.[i] && nativeOwnerHeld(input.problem, i, 'battery')
+      ? [...new Set([...owners, '$battery'])] : [...owners]);
+  const locked = input.locked_slots.map((slot, i) => {
+    const next = structuredClone(slot);
+    if (released[i]?.includes('$battery')) { delete next.battery_command; delete next.battery_instruction; }
+    return next;
+  });
+  return {...input, locked_slots: locked, released_owners_by_slot: released,
+    problem: {...input.problem, released: input.problem.accepted!.map((_slot, i) =>
+      ({...(input.problem.released?.[i] ?? emptyMask()), battery: released[i]?.includes('$battery') ?? false}))},
+    snapshot: {...input.snapshot, planning_warnings: [...(input.snapshot.planning_warnings ?? []), planningWarning(
+      'battery_commitment_rescheduled', 'battery',
+      'An accepted battery request cannot run from the current measured state and has been rescheduled.',
+      'Only the battery’s remaining accepted work may move. Other devices and explicit bookings remain held.',
+      {reason: issue, start: input.held_reference[index].start,
+        released_intervals: JSON.stringify(input.held_reference.filter((_slot, i) =>
+          !input.fixed_slots[i] && released[i]?.includes('$battery')).map(slot => slot.start))})]}};
 }
 
 /** Preserve only held components when composing a baseline or postprocessed request. */
@@ -55,6 +83,15 @@ export function unavailableOwner(snapshot: OptimisationSnapshot, owner: string, 
       change.blocked_intervals.some(interval => Date.parse(interval.start) < end && Date.parse(interval.end) > at)));
 }
 
+/** A measured capacity ceiling covers only the opportunity for which it was observed. */
+export function evCurrentCeiling(snapshot: OptimisationSnapshot, start: string): number | null {
+  const at = Date.parse(start), end = at + QUARTER;
+  const limits = (snapshot.execution_availability ?? []).flatMap(change =>
+    change.status === 'capacity_limited' && change.blocked_intervals.some(interval =>
+      Date.parse(interval.start) < end && Date.parse(interval.end) > at) ? [change.maximum_current_a] : []);
+  return limits.length ? Math.min(...limits) : null;
+}
+
 /** One capture-anchored view owns both native and prepared-service commitments. */
 export function compileCommitments(snapshot: OptimisationSnapshot, reference: PublishedCommandReference | null,
   request: ExecutionReplan | null | undefined, independent?: {battery: PublishedCommandReference | null}) {
@@ -94,6 +131,14 @@ export function compileCommitments(snapshot: OptimisationSnapshot, reference: Pu
   // requested repair still needs eligible destinations in the current held hour.
   for (const change of request?.changes ?? []) owners.add(change.owner);
   const slotOwners = original.map((_slot, i) => new Set([...owners, ...missing[i]]));
+  // Explicit measurement isolation removes only that owner's executable
+  // planning requests. Raw accepted-reference provenance remains independent
+  // of whether an optional device is configured in this snapshot.
+  for (const issue of snapshot.measurement_issues ?? []) {
+    if (['battery', 'ev', 'pool'].includes(issue.device)) {
+      for (const released of slotOwners) released.add('$' + issue.device);
+    }
+  }
   // An explicit absence of a pool instruction is not an OFF commitment. Once
   // evidence returns, the pool may plan again without unlocking other owners.
   original.forEach((slot, i) => { if (slot.pool_permitted === null) slotOwners[i].add("$pool"); });

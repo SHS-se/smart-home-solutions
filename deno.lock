@@ -375,6 +375,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
+      "npm:@supabase/supabase-js@2.90.1",
       "npm:resend@2.0.0"
     ],
     "packageJson": {

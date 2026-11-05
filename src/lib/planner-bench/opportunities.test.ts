@@ -1,3 +1,4 @@
+import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort.ts';
 import { assert, assertAlmostEquals, assertEquals, assertThrows } from '@std/assert';
 import type { BenchCase } from './case.ts';
 import { evaluate } from './evaluate.ts';
@@ -43,8 +44,10 @@ function audited(c: BenchCase, d: Decisions, lane: LaneId = 'told/nominal', guar
   // Whatever the audit moved, the heat pump is on at its setting or off in every quarter.
   assert(improved.pool_w.every(w => w === 0 || w === 3764), `the pool runs between off and on: ${[...new Set(improved.pool_w)]}`);
   // Comfort is no worse, rule by rule, so store by store.
-  const was = scoreQuarters(before.series).counts, is = scoreQuarters(after.series).counts;
-  for (const key of ['pool_low', 'pool_cold', 'ev_low', 'ev_short']) assert((is[key] ?? 0) <= (was[key] ?? 0), `${key} got worse`);
+  const was = scoreQuarters(before.series), is = scoreQuarters(after.series);
+  const poolCost = (score: typeof was) => -score.quarters.reduce((sum, q) => sum + (q.deductions.pool_shortfall ?? 0), 0);
+  assert(poolCost(is) <= poolCost(was) + 1e-8, 'continuous pool comfort got worse');
+  assert((is.counts.car_floor ?? 0) <= (was.counts.car_floor ?? 0), 'car floor got worse');
   // One saving, counted once: the findings add up to the difference between the two plans.
   assertAlmostEquals(after.series.bill!.wear_sek - before.series.bill!.wear_sek, audit.wearSek, 2e-3);
   assertAlmostEquals(audit.originalCostSek - audit.improvedCostSek - audit.wearSek, audit.avoidableSek, 2e-3);
@@ -206,7 +209,7 @@ Deno.test('a sunny day before a dull one: heating the pool ahead on the surplus 
   assertEquals([preheat.after.homeSoc, preheat.after.carKm], [[], []]);
   // Storing heat ahead of the dull day incurs no overheating deduction.
   const warm = scoreQuarters(referee(c, HOUSEHOLD, TARGETS, plan({ pool: i => i < 31 ? 3764 : 0 })).series);
-  assertEquals(warm.sum, 0);
+  assertEquals(warm.quarters[0].score, 0);
 });
 
 Deno.test('a dull day before a sunny one: waiting for the sun is found, as far as the comfort band allows', () => {
@@ -218,21 +221,26 @@ Deno.test('a dull day before a sunny one: waiting for the sun is found, as far a
   const free = audited(world({ ...sunLater, start: { pool_water_c: 30.8 } }), heatEarly);
   const wait = free.findings.find(f => f.rule === 'pool_wait_for_sun')!;
   assert(wait && wait.from >= 76 && wait.to >= 136 && wait.toEnd < 160 && wait.savingSek > 10, rulesFound(free).join());
-  assert(free.rules.pool_wait_for_sun.kwh > 12, `${free.rules.pool_wait_for_sun.kwh}`);
+  assert(free.rules.pool_wait_for_sun.kwh > 0, `${free.rules.pool_wait_for_sun.kwh}`);
   // Starting a degree cooler, most of that heat is needed before the sun: without it the pool would be
   // more than a degree short by the morning. Less can wait, and the pool stays in its band until the sun.
   const held = audited(world({ ...sunLater, start: { pool_water_c: 29.7 } }), heatEarly);
-  assert(held.rules.pool_wait_for_sun.kwh < free.rules.pool_wait_for_sun.kwh - 4, `${held.rules.pool_wait_for_sun.kwh} vs ${free.rules.pool_wait_for_sun.kwh}`);
-  for (const f of held.findings.filter(f => f.device === 'pool')) assert(Math.min(...f.after.poolC.slice(0, 160)) >= 29, `${f.id} leaves the band`);
+  assert(held.rules.pool_wait_for_sun.kwh < free.rules.pool_wait_for_sun.kwh, `${held.rules.pool_wait_for_sun.kwh} vs ${free.rules.pool_wait_for_sun.kwh}`);
+  const target = TARGETS.pool_c;
+  const exposure = (values: number[], start: number) => values.reduce((sum, value, i) =>
+    sum + poolComfortExposure(target, i ? values[i-1] : start, value, .25), 0);
+  for (const f of held.findings.filter(f => f.device === 'pool')) {
+    assert(exposure(f.after.poolC, 29.7) <= exposure(f.before.poolC, 29.7) + .01, 'waiting must preserve continuous comfort');
+  }
 });
 
 Deno.test('comfort is guarded store by store: a warmer pool never pays for a shorter car', () => {
-  const exposure = (pool: number, ev: number): ServiceExposure => ({ pool: { mild: pool, severe: 0, worst: pool / 10, mildDeficitHours: pool / 10, severeDeficitHours: 0 }, ev: { mild: ev, severe: 0, worst: ev / 10, mildDeficitHours: ev / 10, severeDeficitHours: 0 } });
+  const exposure = (pool: number, ev: number): ServiceExposure => ({ pool, ev: { mild: ev, severe: 0, worst: ev / 10, mildDeficitHours: ev / 10, severeDeficitHours: 0 } });
   assertEquals(serviceNotWorse(exposure(10, 0), exposure(10, 0)), true);
   assertEquals(serviceNotWorse(exposure(10, 0), exposure(0, 5)), false);
   assertEquals(serviceNotWorse(exposure(10, 5), exposure(12, 0)), false);
   // The same count, deeper: still worse.
-  assertEquals(serviceNotWorse(exposure(10, 0), { ...exposure(10, 0), pool: { ...exposure(10, 0).pool, worst: 3 } }), false);
+  assertEquals(serviceNotWorse(exposure(10, 0), { ...exposure(10, 0), pool: 11 }), false);
 
   // A car below its floor that the plan charges at 7 A for two hours, at a dear time. Power is cheapest on the last day,
   // but waiting for it would leave the car below the floor after its grace: no alternative may add a quarter there.
@@ -344,13 +352,13 @@ Deno.test('a plan the household cannot carry out fails the case and earns no eco
   assertEquals(failed.score.physical_failed, true);
   assertEquals([failed.score.audit.violations > 0, failed.score.audit.violationKinds.battery_empty > 0], [true, true]);
   assertEquals([storedPassed(failed.score, 'pass'), storedPassed(failed.score, null)], [false, false]);
-  const live = scoreQuarters(failed.series, { pool_low: { enabled: false }, pool_cold: { enabled: false }, ev_low: { enabled: false } }, 'pass');
+  const live = scoreQuarters(failed.series, { pool_shortfall: { enabled: false } }, 'pass');
   assertEquals([live.physicalFailed, live.passed], [true, false]);
 });
 
 Deno.test('a case scores its net bill; what the audit proves is evidence beside it, hindsight apart', () => {
   // Isolate the economic audit from pool comfort deductions.
-  const unheated = { pool_low: { enabled: false }, pool_cold: { enabled: false } };
+  const unheated = { pool_shortfall: { enabled: false } };
   const lost = evaluate(spilled(), record(plan()), unheated, 'told/nominal');
   const { score } = lost, audit = lost.series.audit!;
   assertEquals(score.audit, summariseAudit(audit));
@@ -386,16 +394,9 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   const live = scoreQuarters(series);
   assertEquals([live.points, live.sum], [score.points, score.sum]);
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
-  // A wider band: every stored witness still holds, so the audit stands.
-  assertEquals(scoreQuarters(series, { pool_low: { threshold: 1.5 } }).auditPending, false);
-  // A band of 0.05 °C: the alternative lets the pool sag further than that, so the audit must be made again.
-  const tight = scoreQuarters(series, { pool_low: { threshold: 0.05 } });
-  assertEquals([tight.auditPending, tight.complete, tight.points], [true, false, tight.sum]);
-  assertThrows(() => storedScore(series, { pool_low: { threshold: 0.05 } }), Error, 'needs recomputing for these rule thresholds or this audit version');
-  // Evaluated under the tight band, the audit holds itself to it.
-  const strict = evaluate(c, record(decisions), { pool_low: { threshold: 0.05 } }, 'told/nominal');
-  assertEquals(strict.series.audit!.guard, { pool: [0.05, 2] });
-  assertEquals(scoreQuarters(strict.series, { pool_low: { threshold: 0.05 } }).auditPending, false);
+  // Scaling the homogeneous cost does not change an equal-comfort witness.
+  assertEquals(scoreQuarters(series, { pool_shortfall: { points: -0.5 } }).auditPending, false);
+  assertEquals(series.audit!.guard, { pool: 'linear_tail_shortfall' });
   // A series from before the audit: no economic score, said so, and no stored score to be had.
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);

@@ -1,4 +1,4 @@
-import { builderRecipe } from "./ready-problem.ts";
+import { READY_ABI, builderRecipe } from "./ready-problem.ts";
 import { createWasmPlanner } from "./core.ts";
 import { readyProblemSchema } from "./ready-schema.ts";
 import { handleEnergyPlanningStep } from "../energy-planning-worker.ts";
@@ -88,7 +88,7 @@ export function createPlannerProbe(
         (b) => b.toString(16).padStart(2, "0"),
       ).join("");
       if (
-        hash !== build.wasm_sha256 || build.abi !== 15 ||
+        hash !== build.wasm_sha256 || build.abi !== READY_ABI ||
         build.qualification !== "test_live_candidate"
       ) throw new Error("Invalid TEST candidate artifact.");
       try {

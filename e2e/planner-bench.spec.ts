@@ -1016,7 +1016,7 @@ test.describe('planner bench', () => {
     // Triggered rules are rows with their points per quarter and the quarters they fired in.
     // Energy timing is evidence in kronor: the quarters it would change, and no points.
     await expect(row('battery_price_spread')).toContainText(/2 (q|kv) · 1\.25 kr/);
-    await expect(row('pool_low')).toContainText(/\d+ (q|kv) · −\d+/);
+    await expect(row('pool_shortfall')).toContainText(/\d+ (q|kv) · −\d+/);
     // A car below its floor line counts: this fixture's car is empty.
     await expect(row('car_floor')).toContainText(/\d+ (q|kv) · −\d+/);
     // Rules that did not fire are kept out of the way.
@@ -1043,15 +1043,16 @@ test.describe('planner bench', () => {
     await row('battery_price_spread').getByRole('button').first().click();
     await expect(row('battery_price_spread')).not.toContainText(/Charging from the grid when cheap/);
 
-    await expect(page.locator('#bench-pool_low-threshold')).toHaveCount(0);
-    await row('pool_low').getByRole('button').first().click();
-    await expect(row('pool_low')).toContainText('29.5 °C');
-    await page.locator('#bench-pool_low-threshold').fill('1.5');
-    await expect(row('pool_low')).toContainText('29 °C');
+    await expect(page.locator('#bench-pool_shortfall-threshold')).toHaveCount(0);
+    await row('pool_shortfall').getByRole('button').first().click();
+    await expect(row('pool_shortfall')).toContainText(/squared shortfall|temperaturskillnaden/);
+    await expect(page.locator('#bench-pool_shortfall-threshold')).toHaveCount(0);
+    await page.locator('#bench-pool_shortfall-points').fill('1.5');
+    await expect(page.locator('#bench-pool_shortfall-points')).toHaveValue('1.5');
     // Rules are saved once for the whole bench, never into a case.
-    await row('pool_low').getByRole('button', { name: /^(Save rules|Spara regler)$/ }).click();
+    await row('pool_shortfall').getByRole('button', { name: /^(Save rules|Spara regler)$/ }).click();
     await expect.poll(() => captured.rules.length).toBe(1);
-    expect(captured.rules[0]).toMatchObject({ id: true, criteria: { pool_low: { threshold: 1.5 } } });
+    expect(captured.rules[0]).toMatchObject({ id: true, criteria: { pool_shortfall: { points: -1.5 } } });
     expect(captured.updated).toEqual([]);
     await expect.poll(() => captured.dispatched.length).toBe(1);
     expect(captured.dispatched[0]).toMatchObject({ shas: 'all' });

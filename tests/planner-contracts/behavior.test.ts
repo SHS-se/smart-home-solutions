@@ -141,7 +141,7 @@ Deno.test("CONTRACT BASIS-2: capture detaches models, policy and accepted comman
   s.device_models[0].active_power_w = 1;
   s.slots[0].import_price_sek_per_kwh = 100;
   policy.rules[0].points = -2;
-  policy.service_guard.pool[0] = 500;
+  policy.rules[0].threshold = 500;
   reference.slots[0].ev_target_current_a = 0;
   reference.slots[0].device_commands.synthetic_pool = { type: "switch_schedule", on_seconds: 0 };
   reference.slots.splice(1);

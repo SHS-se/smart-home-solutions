@@ -15,7 +15,15 @@ export interface PlanDeviation {
   magnitude: number;
   persistence_ms: number;
 }
-export type ExecutionChange = AvailabilityChange | PlanDeviation;
+/** Working equipment with less current available in an observed absolute interval. */
+export interface CapacityLimited {
+  owner: '$ev';
+  status: 'capacity_limited';
+  cause: 'house_import_capacity';
+  maximum_current_a: number;
+  blocked_intervals: Array<{ start: string; end: string }>;
+}
+export type ExecutionChange = AvailabilityChange | PlanDeviation | CapacityLimited;
 export const changeIntervals = (change: ExecutionChange) =>
   change.status === "plan_deviation" ? change.affected_intervals : change.blocked_intervals;
 export interface ExecutionReplan {

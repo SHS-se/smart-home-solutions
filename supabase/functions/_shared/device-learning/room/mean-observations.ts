@@ -21,18 +21,19 @@ export interface RoomMeanQuarter {
   cooling: boolean;
 }
 export const ROOM_MEAN_LEARNING_METHOD = "interval_mean_transition_holdout_v1" as const;
+export const ROOM_EXCHANGE_FAMILY = "house_outdoor_solar_v1" as const;
 export interface RoomLearningEvidence {
   method: typeof ROOM_MEAN_LEARNING_METHOD;
+  family: typeof ROOM_EXCHANGE_FAMILY;
   observation: "quarter_mean";
   selection: "chronological_transition_mse";
   training_pairs: number;
   validation_pairs: number;
   validation_mse_c2: number | null;
-  selected_boundary: "house" | "outdoor" | null;
+  selected_boundary: "house_outdoor" | null;
   selected_lag_h: number | null;
 }
 export type RoomMeanFitResult = ThermalFitResult & { learning_evidence?: RoomLearningEvidence };
-type Boundary = "house" | "outdoor";
 const finite = (v: number | null): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** Exact endpoint and interval-mean coefficients of T'=-kT+gD+F, D'=(P-D)/lag. */
@@ -54,11 +55,10 @@ function observation(k: number, lag: number) {
 }
 interface Term { index: number; segment: number; x: number[]; z: number; y: number; delivered: number }
 interface Design { terms: Term[]; op: ReturnType<typeof observation> }
-interface Fit { k: number; lag: number; boundary: Boundary; solar: boolean; beta: number[];
+interface Fit { k: number; lag: number; solar: boolean; beta: number[];
   initial: Map<number, number>; mse: number; n: number; design: Design }
-const boundaryValue = (row: RoomMeanQuarter, boundary: Boundary) => boundary === "house" ? row.house_c : row.outdoor_c;
 
-function design(rows: RoomMeanQuarter[], k: number, lag: number, boundary: Boundary, solar: boolean): Design {
+function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean): Design {
   const op = observation(k, lag), { a, effect, E, V, C, B, U } = op;
   const L = E * effect - a * V;
   const deliveredCoefficient = E * B - a * U + U * C;
@@ -70,13 +70,16 @@ function design(rows: RoomMeanQuarter[], k: number, lag: number, boundary: Bound
     const contiguous = next.start_ms - q.start_ms === 900_000;
     if (powerKnown && contiguous && finite(next.heat_w) && next.heat_w >= 0 &&
       finite(q.room_c) && finite(next.room_c) && !q.cooling && !next.cooling &&
-      finite(boundaryValue(q, boundary)) && finite(boundaryValue(next, boundary)) &&
+      finite(q.house_c) && finite(next.house_c) && finite(q.outdoor_c) && finite(next.outdoor_c) &&
       (!solar || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2)))) {
       const heat = deliveredCoefficient * delivered +
         (E * (effect - B) - a * (V - U) + U * (1 - C)) * q.heat_w! + (V - U) * next.heat_w!;
       terms.push({ index: i, segment, delivered, z: deliveredCoefficient * initialShare,
-        x: [heat, effect, ...(solar ? [L * q.solar_w_per_m2! + V * next.solar_w_per_m2!] : [])],
-        y: next.room_c! - a * q.room_c! - k * (L * boundaryValue(q, boundary)! + V * boundaryValue(next, boundary)!) });
+        // k = house + outdoor exchange. At fixed k, the outdoor share stays
+        // linear: k*house + outdoor*(outdoorTemperature-houseTemperature).
+        x: [heat, effect, L * (q.outdoor_c! - q.house_c!) + V * (next.outdoor_c! - next.house_c!),
+          ...(solar ? [L * q.solar_w_per_m2! + V * next.solar_w_per_m2!] : [])],
+        y: next.room_c! - a * q.room_c! - k * (L * q.house_c! + V * next.house_c!) });
     }
     if (!powerKnown || !contiguous || q.cooling) {
       // Unknown heat breaks memory. Estimate a new segment's initial delayed
@@ -90,8 +93,40 @@ function design(rows: RoomMeanQuarter[], k: number, lag: number, boundary: Bound
   return { terms, op };
 }
 
-function estimate(rows: RoomMeanQuarter[], k: number, lag: number, boundary: Boundary, solar: boolean): Fit | null {
-  const d = design(rows, k, lag, boundary, solar), size = solar ? 3 : 2;
+/** Scale watts, degrees and irradiance before testing numerical rank. */
+function solveScaled(matrix: number[][], vector: number[]): number[] | null {
+  const scale = matrix.map((row, j) => Math.sqrt(row[j]));
+  if (scale.some(value => !(value > 0) || !Number.isFinite(value))) return null;
+  const result = solveLinearSystem(matrix.map((row, j) => row.map((value, z) => value / scale[j] / scale[z])),
+    vector.map((value, j) => value / scale[j]));
+  return result?.map((value, j) => value / scale[j]) ?? null;
+}
+
+/** Exact minimum over the six possible outdoor/solar constraint faces. */
+function exchangeCoefficients(xx: number[][], xy: number[], k: number, solar: boolean): number[] | null {
+  // Constraint faces cannot identify a split absent from the observations:
+  // this includes solar confounded with exchange or steady background heat.
+  if (!solveScaled(xx, xy)) return null;
+  let best: number[] | null = null, objective = Infinity;
+  for (const outdoor of [null, 0, k]) for (const sun of solar ? [null, 0] : [null]) {
+    const fixed = new Map<number, number>();
+    if (outdoor !== null) fixed.set(2, outdoor);
+    if (solar && sun !== null) fixed.set(3, sun);
+    const free = xy.map((_, j) => j).filter(j => !fixed.has(j));
+    const solved = solveScaled(free.map(j => free.map(z => xx[j][z])),
+      free.map(j => xy[j] - [...fixed].reduce((sum, [z, value]) => sum + xx[j][z] * value, 0)));
+    if (!solved) continue;
+    const beta = xy.map((_, j) => fixed.get(j) ?? solved[free.indexOf(j)]);
+    if (!beta.every(Number.isFinite) || beta[2] < 0 || beta[2] > k || (solar && beta[3] < 0)) continue;
+    const score = beta.reduce((sum, value, j) => sum + value *
+      (xx[j].reduce((row, entry, z) => row + entry * beta[z], 0) - 2 * xy[j]), 0);
+    if (score < objective) { best = beta; objective = score; }
+  }
+  return best;
+}
+
+function estimate(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean): Fit | null {
+  const d = design(rows, k, lag, solar), size = solar ? 4 : 3;
   const xx = Array.from({ length: size }, () => Array<number>(size).fill(0)), xy = Array<number>(size).fill(0);
   const nuisance = new Map<number, { xx: number; xy: number; cross: number[] }>();
   for (const t of d.terms) {
@@ -114,22 +149,24 @@ function estimate(rows: RoomMeanQuarter[], k: number, lag: number, boundary: Bou
       for (let z = 0; z < size; z++) xx[j][z] -= n.cross[j] * n.cross[z] / n.xx;
     }
   }
-  const beta = solveLinearSystem(xx, xy);
-  if (!beta || !beta.every(Number.isFinite) || !(beta[0] > 0) || (solar && beta[2] < 0)) return null;
+  const beta = exchangeCoefficients(xx, xy, k, solar);
+  // Check the optimum, rather than selecting a worse constraint face just
+  // because that face happens to give a positive heater response.
+  if (!beta || !(beta[0] > 0)) return null;
   const initial = new Map<number, number>();
   for (const [segment, n] of nuisance) initial.set(segment,
     (n.xy - n.cross.reduce((sum, v, j) => sum + v * beta[j], 0)) / n.xx);
   let residual = 0;
   for (const t of d.terms) residual += (t.y - t.x.reduce((sum, v, j) => sum + v * beta[j], 0) - t.z * (initial.get(t.segment) ?? 0)) ** 2;
   if (!d.terms.length || !Number.isFinite(residual)) return null;
-  return { k, lag, boundary, solar, beta, initial, mse: residual / d.terms.length, n: d.terms.length, design: d };
+  return { k, lag, solar, beta, initial, mse: residual / d.terms.length, n: d.terms.length, design: d };
 }
 
 /** Expand a numerical bracket; no imposed lower/upper physical coupling. */
-function fitCandidate(rows: RoomMeanQuarter[], lag: number, boundary: Boundary, solar: boolean): Fit | null {
+function fitCandidate(rows: RoomMeanQuarter[], lag: number, solar: boolean): Fit | null {
   const at = (logK: number) => {
     const k = Math.exp(logK);
-    return k > 0 && Number.isFinite(k) ? estimate(rows, k, lag, boundary, solar) : null;
+    return k > 0 && Number.isFinite(k) ? estimate(rows, k, lag, solar) : null;
   };
   let center = 0, best = at(center);
   // Discover a physical least-squares solution before minimising its residual.
@@ -156,7 +193,7 @@ function fitCandidate(rows: RoomMeanQuarter[], lag: number, boundary: Boundary, 
 }
 
 function heldOut(fit: Fit, rows: RoomMeanQuarter[], split: number, comparable: Set<number>) {
-  const d = design(rows, fit.k, fit.lag, fit.boundary, fit.solar), initial = new Map(fit.initial);
+  const d = design(rows, fit.k, fit.lag, fit.solar), initial = new Map(fit.initial);
   let total = 0, count = 0;
   for (const t of d.terms) {
     if (t.index < split - 1) continue;
@@ -185,7 +222,8 @@ function forecastError(fit: Fit, rows: RoomMeanQuarter[]): number | null {
     const q = rows[i], next = rows[i + 48];
     const heatCoefficient = E * B - a * U + U * C;
     const D = term.delivered + (heatCoefficient !== 0 ? term.z / heatCoefficient * (fit.initial.get(term.segment) ?? 0) / fit.beta[0] : 0);
-    const forcing = (r: RoomMeanQuarter) => fit.k * boundaryValue(r, fit.boundary)! + fit.beta[1] + (fit.solar ? fit.beta[2] * r.solar_w_per_m2! : 0);
+    const forcing = (r: RoomMeanQuarter) => (fit.k - fit.beta[2]) * r.house_c! + fit.beta[2] * r.outdoor_c! +
+      fit.beta[1] + (fit.solar ? fit.beta[3] * r.solar_w_per_m2! : 0);
     let delivered = D, temperature = (q.room_c! - fit.beta[0] * (U * D + (V - U) * q.heat_w!) - V * forcing(q)) / E;
     for (let j = i; j < i + 48; j++) {
       const r = rows[j];
@@ -201,22 +239,17 @@ function forecastError(fit: Fit, rows: RoomMeanQuarter[]): number | null {
 export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | null = null): RoomMeanFitResult {
   const rows = [...quarters].sort((a, b) => a.start_ms - b.start_ms);
   const usable = rows.filter(r => finite(r.room_c) && finite(r.heat_w) && !r.cooling);
-  const withHouse = usable.filter(r => finite(r.house_c));
-  const boundaries: Boundary[] = ["outdoor"];
-  if (withHouse.length >= MIN_TRAINING_SAMPLES && withHouse.length >= usable.length * MIN_SOLAR_COVERAGE) boundaries.push("house");
+  const covered = usable.filter(r => finite(r.house_c) && finite(r.outdoor_c));
+  const withSun = covered.filter(r => finite(r.solar_w_per_m2));
+  const solar = withSun.length >= MIN_TRAINING_SAMPLES && withSun.length >= covered.length * MIN_SOLAR_COVERAGE &&
+    withSun.some(row => row.solar_w_per_m2 !== withSun[0].solar_w_per_m2);
   const split = Math.floor(rows.length * 2 / 3);
-  const configurations = boundaries.flatMap(boundary => {
-    const covered = usable.filter(r => finite(boundaryValue(r, boundary)));
-    const withSun = covered.filter(r => finite(r.solar_w_per_m2));
-    const solar = withSun.length >= MIN_TRAINING_SAMPLES && withSun.length >= covered.length * MIN_SOLAR_COVERAGE;
-    return (boundary === "house" ? HEAT_LAG_GRID_H : [0]).flatMap(lag =>
-      (solar ? [true, false] : [false]).map(sun => ({ boundary, lag, solar: sun })));
-  });
+  const configurations = HEAT_LAG_GRID_H.map(lag => ({ lag, solar }));
   const candidates = configurations.map(c => ({ config: c,
-    training: fitCandidate(rows.slice(0, split), c.lag, c.boundary, c.solar),
-    full: fitCandidate(rows, c.lag, c.boundary, c.solar) })).filter(c => c.full !== null);
+    training: fitCandidate(rows.slice(0, split), c.lag, c.solar),
+    full: fitCandidate(rows, c.lag, c.solar) })).filter(c => c.full !== null);
   if (!candidates.length) return { ok: false, reason: usable.length ? "singular" : "insufficient_samples", sample_count: usable.length,
-    learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD, observation: "quarter_mean", selection: "chronological_transition_mse",
+    learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation: "quarter_mean", selection: "chronological_transition_mse",
       training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null } };
   // Candidates are judged on the same observed validation transitions.
   const comparable = new Set<number>();
@@ -239,9 +272,9 @@ export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | 
   const average = changes.reduce((sum, v) => sum + v, 0) / changes.length;
   const variance = changes.reduce((sum, v) => sum + (v - average) ** 2, 0) / changes.length;
   const model: ThermalZoneModel = {
-    gain_c_per_wh: gain, cooling_constant_per_h: fit.boundary === "outdoor" ? fit.k : 0,
-    house_coupling_per_h: fit.boundary === "house" ? fit.k : null, heat_lag_h: fit.lag,
-    background_gain_c_per_h: fit.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[2] : null,
+    gain_c_per_wh: gain, cooling_constant_per_h: fit.beta[2],
+    house_coupling_per_h: fit.k - fit.beta[2], heat_lag_h: fit.lag,
+    background_gain_c_per_h: fit.beta[1], solar_gain_c_per_h_per_wm2: fit.solar ? fit.beta[3] : null,
     solar_mean_w_per_m2: fit.solar ? solarRows.reduce((sum, r) => sum + r.solar_w_per_m2!, 0) / solarRows.length : null,
     thermal_capacity_wh_per_c: 1 / gain, heat_loss_w_per_c: fit.k / gain, time_constant_h: 1 / fit.k,
     heating_rate_c_per_h: ratedPowerW && ratedPowerW > 0 ? gain * ratedPowerW : null,
@@ -249,8 +282,8 @@ export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | 
     residual_std_c: Math.sqrt(fit.mse), prediction_error_c: prediction,
   };
   return { ok: true, model, ...(warnings.length ? { warnings } : {}), learning_evidence: {
-    method: ROOM_MEAN_LEARNING_METHOD, observation: "quarter_mean", selection: "chronological_transition_mse",
+    method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation: "quarter_mean", selection: "chronological_transition_mse",
     training_pairs: selected.training?.n ?? 0, validation_pairs: selected.validation.count,
-    validation_mse_c2: selected.validation.mse, selected_boundary: fit.boundary, selected_lag_h: fit.lag,
+    validation_mse_c2: selected.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
   } };
 }

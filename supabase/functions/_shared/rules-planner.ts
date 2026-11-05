@@ -17,7 +17,7 @@ import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 const { recipe } = runtime;
 import { nativePlanner } from "./planner-wasm/runtime.ts";
 import type { NativeQuarter } from "./planner-wasm/core.ts";
-import { builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
+import { READY_ABI, builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy, connectionFromSnapshot } from "./planner-wasm/car-policy.ts";
 import { batteryAcCeilings } from './planner/battery-conversion.ts';
@@ -35,7 +35,7 @@ import { batteryDemand, instructionFor, nativeBattery, profileFor } from "./plan
 import { allocatedBatteryCommand } from "./planner-wasm/battery-command.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { planningStage, type PlanningTrace } from "./planning-trace.ts";
-import { assertHeldCommands, commandOwner, compileCommitments, ownerLabel, unavailableOwner, type RetainedCommandSlot } from "./rules-commitments.ts";
+import { assertHeldCommands, applyNativeHolds, commandOwner, compileCommitments, ownerLabel, unavailableOwner, evCurrentCeiling, recoverRetainedBattery, type RetainedCommandSlot } from "./rules-commitments.ts";
 import { parseExecutionChanges, validateExecutionAvailability } from "./execution-replan.ts";
 import type { ExecutionReplan } from "./execution-replan.ts";
 
@@ -317,13 +317,13 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
   const problem: ReadyProblem = {
-    abi: 15, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: READY_ABI, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
       const outdoor = snapshot.outdoor_temperature_c?.[i];
       if (pool?.store.loss.kind === "linear" && pool.store.loss.surroundings_c === null && !finite(outdoor)) return fail(`Pool physical forecast requires outdoor temperature at ${s.start}`);
-      return { battery_export_allowed: input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export, local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
+      return { battery_export_allowed: input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
         base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
         base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
         solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
@@ -356,7 +356,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
       ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
-    rules: approved.rules, service_guard: approved.service_guard,
+    rules: approved.rules,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     accepted: locked.length ? commitments.original.map((slot, i) => nativeCommand(slot, snapshot, !!pool, commitments.released[i])) : null,
@@ -383,6 +383,13 @@ function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number
   const ev = new Set(input.members.ev.map(m => m.key));
   const boiler = new Set(input.members.boiler.map(m => m.key));
   for (const model of input.snapshot.device_models) {
+    const isolated = input.snapshot.measurement_issues?.find(issue =>
+      issue.device === 'ev' && model.category === 'ev_charging' ||
+      issue.device === 'pool' && model.planning_service === 'pool');
+    if (isolated) {
+      result[model.key] = {type: 'unavailable', reason: isolated.reason};
+      continue;
+    }
     if (unavailableOwner(input.snapshot, commandOwner(input.snapshot, model), input.snapshot.slots[i].start)) {
       if (input.fixed_slots[i]?.device_commands?.[model.key]) return fail(`Fixed booking conflicts with unavailable ${model.key} at ${input.snapshot.slots[i].start}`);
       result[model.key] = {type: "unavailable", reason: "Equipment execution is unavailable until recovery is observed"};
@@ -514,7 +521,25 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
   input = { ...input, snapshot: { ...input.snapshot } };
   const core = nativePlanner(trace);
-  const solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
+  let solved = planningStage(trace, "solve", () => core.solve(input.problem, trace)).outcome;
+  if (solved.kind === 'failed') {
+    let recovered = recoverRetainedBattery(input, solved.issue);
+    if (recovered && solved.issue.endsWith(':shared_grid_limit')) {
+      // Attribute a shared conflict before changing any hold. Native physics
+      // must certify every other held/booked request with only the battery
+      // neutral. A coupled or unrelated conflict grants no recovery authority.
+      const problem = recovered.problem;
+      const witness = problem.slots.map((_slot, i) => applyNativeHolds(problem, i,
+        {pool_on: false, ev_amps: 0, battery: 'idle', charge_limit_w: 0, discharge_limit_w: 0}));
+      const proof = planningStage(trace, 'battery_commitment_attribution', () => core.project(problem, witness)).outcome;
+      if (proof.kind !== 'projected' || proof.quarters.some(q =>
+        q.net_w > problem.limits.import_w + 1e-7 || q.net_w < -problem.limits.export_w - 1e-7)) recovered = null;
+    }
+    if (recovered) {
+      input = recovered;
+      solved = planningStage(trace, 'battery_commitment_recovery', () => core.solve(input.problem, trace)).outcome;
+    }
+  }
   if (solved.kind === "failed") {
     const infeasible = (message: string): never => { throw new PlanningError(message, "planning_infeasible", 422, "terminal"); };
     const committed = /^committed_command_infeasible:(\d+):(.+)$/.exec(solved.issue);
@@ -576,6 +601,13 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   }
   for (const change of snapshot.execution_availability ?? []) {
     if (change.status === "plan_deviation") continue;
+    if (change.status === 'capacity_limited') {
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        'execution_capacity_limited', '$ev', `EV charging: available house capacity reduced charging to ${change.maximum_current_a} A.`,
+        'Charging remains available at the reduced current. Outstanding work can move; other accepted devices remain held.',
+        {maximum_current_a: change.maximum_current_a, blocked_intervals: JSON.stringify(change.blocked_intervals)})]);
+      continue;
+    }
     // An unplugged car has its own note; a second one would only say it again.
     if (unpluggedNoted && change.owner === "$ev" && change.cause === "vehicle_disconnected") continue;
     snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(

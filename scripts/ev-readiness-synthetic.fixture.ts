@@ -23,7 +23,7 @@ export function syntheticOvernightReadiness() {
     start_seconds: i * 900 - 450, hours: .25, base_w: 600 + 200 * Math.sin(i * Math.PI / 48),
     base_ev_w: 0, solar_w: i >= 40 && i < 72 ? 2400 * Math.sin((i - 40) * Math.PI / 32) : 0,
     import_price: i < 38 ? .2 : i < 60 ? 1.8 : .9, export_price: .05,
-    published: true, ev_available: true, outdoor_c: 10, pool_auxiliary_dispatch: null }));
+    published: true, ev_available: true, ev_current_ceiling_a: null, outdoor_c: 10, pool_auxiliary_dispatch: null }));
   p.accepted = Array.from({ length: 5 }, () => ({ pool_on: false, ev_amps: 0,
     battery: 'hold' as const, charge_limit_w: 2000, discharge_limit_w: 0 }));
   p.locked_through_seconds = 3600;

@@ -7,7 +7,7 @@ use crate::*;
 struct Label {
     state: State,
     parent: usize,
-    points: i32,
+    points: f64,
     cash: f64,
     wear: f64,
     continuity: f64,
@@ -86,6 +86,17 @@ fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f
         levels = vec![held.ev_amps];
     } else if commitments::unavailable(p, i, commitments::Owner::Ev) {
         levels = vec![0];
+    } else if let Some(limit) = s.ev_current_ceiling_a {
+        if let Some(charger) = &p.charger {
+            let ceiling = charger.fitting_amps(
+                f64::from(limit.min(charger.max_current_a))
+                    * charger.voltage_v
+                    * f64::from(charger.phase_count),
+            );
+            for amps in &mut levels {
+                *amps = (*amps).min(ceiling);
+            }
+        }
     }
     levels.sort_unstable();
     levels.dedup();
@@ -119,7 +130,6 @@ fn actions_with_pool(
     let h = physics::projected_hours(s);
     let f = &index.future[i];
     // Comfort and future demand propose heating; complete physics and score select it.
-    let target = p.targets.pool_c.unwrap_or(0.0);
     let pool_goal = f.pool_goal;
     let pool_needed = p.pool_store.as_ref().is_some_and(|store| {
         let coast = store.idle_per_hour(pool_goal, s.outdoor_c).abs()
@@ -128,8 +138,7 @@ fn actions_with_pool(
                 .saturating_sub(i)
                 .max(1)
                 .min(p.slots.len() - i) as f64;
-        policy::rule(p, RuleKey::PoolHot).is_none_or(|r| label.state.pool < target + r.threshold)
-            && pool_step(false).unwrap().water_c < pool_goal + coast
+        pool_step(false).unwrap().water_c < pool_goal + coast
             && p.pool_stop_c.is_none_or(|stop| label.state.pool < stop)
     });
     let mut out = Vec::new();
@@ -259,14 +268,14 @@ fn rank(opportunity: &Opportunity, i: usize, l: &Label) -> (f64, f64) {
     // A point is a krona: one number ranks a partial plan, its cost breaking ties.
     let future = opportunity.to_go(i + 1, &l.state);
     let cost = l.cash + l.wear + l.continuity + future.cost;
-    (f64::from(l.points) + future.points - cost, cost)
+    (l.points + future.points - cost, cost)
 }
 
 fn initial_label(p: &Problem) -> Label {
     Label {
         state: physics::initial(p),
         parent: usize::MAX,
-        points: 0,
+        points: 0.0,
         cash: 0.0,
         wear: 0.0,
         continuity: 0.0,
@@ -388,7 +397,7 @@ fn construct(
             .collect();
     }
     let finished = |l: &Label| {
-        f64::from(l.points) - (l.cash + l.wear + l.continuity)
+        l.points - (l.cash + l.wear + l.continuity)
             + policy::end_credit(
                 p,
                 l.state.battery,
@@ -1241,26 +1250,12 @@ mod forecast_tests {
         p.recipe.finalists = 4;
         p.recipe.witness_trials = 12;
         p.recipe.repair_trials = 8;
-        p.rules = vec![
-            Rule {
-                key: RuleKey::PoolLow,
-                threshold: 1.0,
-                points: -1,
-                required: false,
-            },
-            Rule {
-                key: RuleKey::PoolCold,
-                threshold: 2.0,
-                points: -1,
-                required: true,
-            },
-            Rule {
-                key: RuleKey::PoolHot,
-                threshold: 2.0,
-                points: -1,
-                required: false,
-            },
-        ];
+        p.rules = vec![Rule {
+            key: RuleKey::PoolShortfall,
+            threshold: 0.0,
+            points: -2.0,
+            required: false,
+        }];
         for (i, s) in p.slots.iter_mut().enumerate() {
             s.import_price = if (4..7).contains(&i) {
                 0.5

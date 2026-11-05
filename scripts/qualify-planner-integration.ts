@@ -153,6 +153,27 @@ const results: Record<string, unknown>[] = [];
   }
   results.push({ scenario: "refined_battery", producer_schema: snapshot.schema_version,
     execution_schema: reference.schema, quarters: quarters.length, final_stored_kwh: stored });
+  // Independently specified accepted purchase: certify it at the original
+  // measured state before capturing a near-full pack from the real producer.
+  const retained = slots.map((slot, i) => i < 4 ? {...slot,
+    battery_command: {schema_version: 3 as const, operation: "grid_charge" as const, charge_limit_w: 1000,
+      discharge_limit_w: 0, allow_grid_charge: true, allow_battery_export: false},
+    battery_instruction: {kind: "grid_charge" as const, charge_ac_w: 1000}} : slot);
+  const acceptedProof = nativePlanner().project(basis.problem, retained.map((slot, i) => ({pool_on: false,
+    ev_amps: 0, ...(i < 4 ? nativeBattery(slot.battery_instruction!) : nativeBattery({kind: "idle"}))}))).outcome;
+  assertEquals(acceptedProof.kind, "projected");
+  const fresh = JSON.parse(await command(python, [bridge, haRepo, "produce-battery", "99"]));
+  const changed: OptimisationSnapshot = fresh.snapshot;
+  changed.snapshot_id = crypto.randomUUID();
+  const repaired = generateRulesPlan(prepareRulesPlanningInput({snapshot: changed, now: changed.captured_at,
+    price_archive: [], resolved_price_outlook: basis.price_outlook},
+    {plan_id: plan.plan_id, slots: retained}, resolveRulePolicy())).plan;
+  assertEquals(repaired.status, "ready");
+  assert(repaired.planning_warnings?.some(w => w.code === "battery_commitment_rescheduled"));
+  const admitted = JSON.parse(await command(python, [bridge, haRepo, "admit-battery"], {plan: repaired}));
+  assertEquals(admitted.admitted, true);
+  results.push({scenario: "retained_battery_recovery", admitted: true});
+
 }
 
 for (const watts of [0, 1200]) {
@@ -286,6 +307,22 @@ for (const amps of [12, 15]) {
         ? null
         : { status: "temporarily_absent", cause: "vehicle_disconnected" },
     );
+    if (amps === 15 && cable === "connected") {
+      const limited = structuredClone(snapshot);
+      limited.snapshot_id = crypto.randomUUID();
+      limited.execution_availability = [{owner: "$ev", status: "capacity_limited", cause: "house_import_capacity",
+        maximum_current_a: 13, blocked_intervals: [{start: snapshot.slots[0].start,
+          end: new Date(Date.parse(snapshot.slots[0].start) + 900000).toISOString()}]}];
+      const reduced = generateRulesPlan(prepareRulesPlanningInput({snapshot: limited, now: limited.captured_at,
+        price_archive: [], resolved_price_outlook: basis.price_outlook}, null, resolveRulePolicy())).plan;
+      assertEquals(reduced.execution_plan!.plans.priority.slots[0].ev_target_current_a, 13);
+      const actual = JSON.parse(await command(python, [bridge, haRepo, "consume"],
+        {plan: reduced, options: produced.options, amps, connected: true}));
+      assertEquals(actual.admitted, true);
+      assertEquals(actual.ev_current, 13);
+      assertEquals(actual.ev_switch, "on");
+      results.push({scenario: "reduced_ev_capacity", admitted_current_a: actual.ev_current});
+    }
     results.push({
       amps,
       cable,

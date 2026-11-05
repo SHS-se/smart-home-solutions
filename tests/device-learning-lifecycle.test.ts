@@ -1,6 +1,7 @@
 // Independently generated synthetic owners; no captured household inputs.
 import { PGlite } from "npm:@electric-sql/pglite@0.3.14";
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { ROOM_EXCHANGE_FAMILY } from "../supabase/functions/_shared/device-learning/room/mean-observations.ts";
 const home = "11111111-1111-4111-8111-111111111111";
 const method = "interval_mean_transition_holdout_v1";
 async function database() {
@@ -25,6 +26,7 @@ async function database() {
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261104150000_learn_joint_room_heat_exchange.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -46,7 +48,7 @@ async function publish(db: PGlite, j: Claim, revision: number, row: object) {
 function fitted(key = "synthetic-room") {
   return { home_id: home, customer_id: home, room_key: key, room_name: "Synthetic room", trained: true,
     gain_c_per_wh: .002, sample_count: 300, last_attempted_at: new Date().toISOString(),
-    last_fit_attempt: { learning: { method }, issues: [] } };
+    last_fit_attempt: { learning: { method, family: ROOM_EXCHANGE_FAMILY }, issues: [] } };
 }
 Deno.test("learning coalesces each owner and captures model revisions atomically", async () => {
   const db = await database();
@@ -84,7 +86,7 @@ Deno.test("learning expires leases, rejects old fences and preserves the last us
     const next = await claim(db);
     assertEquals(next.generation, 2);
     assert(await publish(db, next, 2, { ...fitted(), trained: false, gain_c_per_wh: null,
-      last_fit_attempt: { learning: { method }, issues: ["insufficient_samples"] } }));
+      last_fit_attempt: { learning: { method, family: ROOM_EXCHANGE_FAMILY }, issues: ["insufficient_samples"] } }));
     const row = (await db.query<{ trained: boolean; gain_c_per_wh: string; model_revision: number }>("SELECT * FROM energy_optimisation_zone_models")).rows[0];
     assertEquals(row.trained, true); assertEquals(Number(row.gain_c_per_wh), .002); assertEquals(row.model_revision, 3);
     assertEquals(await request(db), 0);
@@ -162,5 +164,25 @@ Deno.test("pool learning keeps the daily cadence when a fresh model has no hardw
     }
     await db.exec("DELETE FROM private.energy_learning_jobs; DELETE FROM energy_optimisation_pool_model");
     assertEquals(await request(db, "pool", "pool"), 1, "missing model still schedules a first fit");
+  } finally { await db.close(); }
+});
+
+Deno.test("joint exchange triggers one room refit and preserves cadence after a failed attempt", async () => {
+  const db = await database();
+  try {
+    const row = fitted();
+    await db.query(`INSERT INTO energy_optimisation_zone_models(home_id,customer_id,room_key,trained,gain_c_per_wh,last_attempted_at,last_fit_attempt)
+      VALUES($1,$1,'synthetic-room',true,.002,now(),$2::jsonb)`, [home, { learning: { method }, issues: [] }]);
+    assertEquals(await request(db), 1, "old exchange family is due despite a recent fit");
+    assertEquals(await request(db), 0, "identical telemetry cannot continually restart learning");
+    const job = await claim(db);
+    assert(await publish(db, job, 1, { ...row, trained: false, gain_c_per_wh: null,
+      last_fit_attempt: { learning: { method, family: ROOM_EXCHANGE_FAMILY }, issues: ["singular"] } }));
+    assertEquals(await request(db), 0, "an unidentified joint split waits for the normal daily retry");
+    const stored = (await db.query<{ trained: boolean; gain_c_per_wh: string }>("SELECT trained,gain_c_per_wh FROM energy_optimisation_zone_models")).rows[0];
+    assertEquals(stored.trained, true);
+    assertEquals(Number(stored.gain_c_per_wh), .002);
+    await db.exec("UPDATE energy_optimisation_zone_models SET last_attempted_at=now()-interval '25 hours'");
+    assertEquals(await request(db), 1);
   } finally { await db.close(); }
 });
