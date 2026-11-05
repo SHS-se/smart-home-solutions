@@ -44,7 +44,7 @@ export const HOUSEHOLD: Household = {
     // Synthetic/reference equipment basis. Executable bench cases use caseHousehold's captured limit.
     market_area: "SE3", import_limit_w: 17_200, export_limit_w: 13_200,
     ev_battery_supply_allowed: false,
-    battery_export_enabled: true, battery_export_reserve_soc: 0.8, battery_export_min_price_sek_per_kwh: 2.5,
+    battery_export_enabled: true, battery_export_reserve_soc: 0, battery_export_min_price_sek_per_kwh: 2.5,
     battery_degradation_sek_per_kwh: 0.05, battery_terminal_soc_min: 0.2,
   },
   // Two active 1.5 kW elements; P3 is metered but idle. The combined
