@@ -18,6 +18,7 @@ struct Node {
     parent: usize,
     command: Command,
 }
+#[derive(Clone)]
 struct Candidate {
     commands: Vec<Command>,
     quarters: Vec<Quarter>,
@@ -845,39 +846,119 @@ fn runs(p: &Problem, commands: &[Command]) -> Vec<RunPurpose> {
     }
     out
 }
-/// Evaluate complete EV permutations with a fresh battery allocation. Pool
-/// commands are unchanged, so the incumbent pool trajectory remains exact.
-fn pack_ev(scorer: &mut CandidateScorer, best: Candidate, work: &mut Work) -> Candidate {
+
+/// Where the executor reports a reduced opening ceiling, break a complete
+/// score tie in favor of more immediate charge at the same switching cost.
+fn prefer_opening_current(
+    scorer: &mut CandidateScorer,
+    ordinary: &Candidate,
+    work: &mut Work,
+) -> Option<Candidate> {
     let p = scorer.problem;
-    if p.battery.is_none() || p.charger.is_none() || p.recipe.repair_trials == 0 {
-        return best;
-    }
-    let Some(proposals) = ev_packing::proposals(p, &best.commands, work) else {
-        return best;
+    let ceiling = p.slots[0].ev_current_ceiling_a?;
+    let charger = p.charger.as_ref()?;
+    let ceiling = charger.fitting_amps(
+        f64::from(ceiling.min(charger.max_current_a))
+            * charger.voltage_v
+            * f64::from(charger.phase_count),
+    );
+    let before = p.charging_before.ev_amps;
+    let after = ordinary.commands.get(1).map(|c| c.ev_amps);
+    let changes = |amps| {
+        u8::from(before.is_some_and(|a| a != amps)) + u8::from(after.is_some_and(|a| a != amps))
     };
-    let mut packed: Option<Candidate> = None;
-    for proposal in proposals {
-        let commands = proposal.apply(&best.commands);
-        let Some(allocation) =
-            battery_schedule::allocate(p, scorer.index, &commands, &best.quarters, work)
-        else {
-            continue;
-        };
-        work.move_resize_trials += 1;
-        match scorer.score(allocation.commands, work, None) {
-            Ok(candidate) if candidate.better(packed.as_ref().unwrap_or(&best)) => {
-                packed = Some(candidate)
+    let opening = ordinary.commands[0].ev_amps;
+    if opening == 0
+        || opening >= ceiling
+        || changes(ceiling) > changes(opening)
+        || commitments::hold(p, 0).has(commitments::Owner::Ev)
+    {
+        return None;
+    }
+    let mut commands = ordinary.commands.clone();
+    commands[0].ev_amps = ceiling;
+    let candidate = scorer.score(commands, work, None).ok()?;
+    (candidate.quarters[0].ev_w > ordinary.quarters[0].ev_w
+        && candidate.account.continuity_sek <= ordinary.account.continuity_sek + 1e-9
+        && candidate.account.points >= ordinary.account.points - 1e-9
+        && candidate.account.score_sek >= ordinary.account.score_sek - 1e-9)
+        .then_some(candidate)
+}
+/// Complete block trials compete inside the native optimizer. Keep the ordinary
+/// incumbent independently so final permission refinement can reverse the rank.
+fn charging_blocks(
+    scorer: &mut CandidateScorer,
+    ordinary: &Candidate,
+    work: &mut Work,
+) -> Option<Candidate> {
+    let p = scorer.problem;
+    if p.recipe.repair_trials == 0 {
+        return None;
+    }
+    let trials =
+        crate::charging_blocks::proposals(p, &ordinary.commands, &ordinary.quarters, work)?;
+    let mut alternative: Option<Candidate> = None;
+    let mut response = None;
+    let mut fresh_tried = false;
+    let mut battery = trials.iter().filter(|t| !t.battery_response);
+    let mut ev = trials.iter().filter(|t| t.battery_response);
+    let ordered = (0..8)
+        .flat_map(|_| [ev.next(), battery.next()])
+        .flatten()
+        .take(8);
+    for trial in ordered {
+        work.charging_block_trials += 1;
+        let mut commands = vec![trial.commands.clone()];
+        if trial.battery_response && p.battery.is_some() {
+            if !fresh_tried {
+                // Recompute continuation values against one changed EV window,
+                // rather than assuming the old inventory path can rank it.
+                fresh_tried = true;
+                if let Some(fresh) = battery_schedule::allocate(
+                    p,
+                    scorer.index,
+                    &trial.commands,
+                    &ordinary.quarters,
+                    work,
+                ) {
+                    commands.push(fresh.commands);
+                }
+            } else {
+                let table = response.get_or_insert_with(|| {
+                    battery_schedule::allocate(
+                        p,
+                        scorer.index,
+                        &ordinary.commands,
+                        &ordinary.quarters,
+                        work,
+                    )
+                });
+                if let Some(table) = table {
+                    if let Ok(adjusted) =
+                        table.respond(p, scorer.index, &trial.commands, &ordinary.quarters, work)
+                    {
+                        commands.push(adjusted);
+                    }
+                }
             }
-            Ok(_) | Err(EvaluationIssue::Infeasible) => {}
-            Err(EvaluationIssue::GrantUnavailable) => break,
+        }
+        for commands in commands {
+            match scorer.score(commands, work, Some(ordinary)) {
+                Ok(candidate)
+                    if candidate.commands != ordinary.commands
+                        && alternative.as_ref().is_none_or(|c| candidate.better(c)) =>
+                {
+                    if candidate.better(ordinary) {
+                        work.charging_block_improvements += 1;
+                    }
+                    alternative = Some(candidate);
+                }
+                Err(EvaluationIssue::GrantUnavailable) => return alternative,
+                _ => {}
+            }
         }
     }
-    if let Some(packed) = packed {
-        work.move_resize_improvements += 1;
-        packed
-    } else {
-        best
-    }
+    alternative
 }
 
 pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
@@ -937,6 +1018,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         move_resize_trials: 0,
         move_resize_passes: 0,
         move_resize_improvements: 0,
+        charging_block_trials: 0,
+        charging_block_improvements: 0,
     };
     let index = policy::index(p, &mut work)?;
     let opportunity = Opportunity::prepare(p, &index, &mut work)?;
@@ -965,6 +1048,22 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         return Err("no_complete_candidate".into());
     }
     candidates.sort_by(|a, b| b.account.score_sek.total_cmp(&a.account.score_sek));
+    let block_bound = if p.recipe.repair_trials > 0 {
+        battery_schedule::block_round_bound(
+            p,
+            &candidates[0].commands,
+            &candidates[0].quarters,
+            unit,
+        )
+    } else {
+        0
+    };
+    let block_reserve = if work.free() >= block_bound.saturating_mul(2) {
+        block_bound
+    } else {
+        0
+    };
+    work.reserved += block_reserve;
     // Construction rank is not the rank after local refinement. Give every
     // distinct finalist a share of half the remaining grant, then spend the
     // rest climbing from the best refined candidate. All compete on the same
@@ -981,9 +1080,39 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
             best = Some(candidate);
         }
     }
-    // Give whole-block moves the global budget before span refinement.
-    let best = pack_ev(&mut scorer, best.unwrap(), &mut work);
-    let (best, report) = improve(&mut scorer, best, &mut work, &mut budget_declined);
+    let (mut ordinary, mut report) =
+        improve(&mut scorer, best.unwrap(), &mut work, &mut budget_declined);
+    work.reserved -= block_reserve;
+    if let Some(candidate) = prefer_opening_current(&mut scorer, &ordinary, &mut work) {
+        ordinary = candidate;
+        report = None;
+    }
+    let challenger = charging_blocks(&mut scorer, &ordinary, &mut work);
+    let (best, charging_alternative, report) = match challenger.filter(|_| work.spend(n * unit * 5))
+    {
+        // One complete additional projection plus final accounting is prepaid.
+        Some(block) if block.better(&ordinary) => (
+            block,
+            Some(ChargingAlternative {
+                role: "ordinary",
+                account: policy::account(p, &ordinary.quarters),
+                commands: ordinary.commands,
+                quarters: ordinary.quarters,
+            }),
+            None,
+        ),
+        Some(block) => (
+            ordinary,
+            Some(ChargingAlternative {
+                role: "block",
+                account: policy::account(p, &block.quarters),
+                commands: block.commands,
+                quarters: block.quarters,
+            }),
+            report,
+        ),
+        None => (ordinary, None, report),
+    };
     work.reserved -= held;
     let report = report.unwrap_or_else(|| {
         witnesses::audit(
@@ -1001,7 +1130,7 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
     if !work.spend(n * unit) {
         return Err("work_grant_cannot_certify".into());
     }
-    let account = policy::account(p, &certified, &index);
+    let account = policy::account(p, &certified);
     if certified != best.quarters
         || account.points != best.account.points
         || account.score_sek != best.account.score_sek
@@ -1032,6 +1161,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         economic: report.economic,
         runs: run_purposes,
         work,
+        charging_alternative,
+        minimum_gain_sek: policy::MIN_GAIN_SEK,
     })
 }
 
@@ -1101,6 +1232,8 @@ mod move_resize_tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         }
     }
     fn idle() -> Command {
@@ -1125,7 +1258,7 @@ mod move_resize_tests {
         p.fixed_commands = Some(fixed);
         p.slots[5].ev_available = false;
         let mut w = work(&p);
-        let proposals = ev_packing::proposals(&p, &commands, &mut w).unwrap();
+        let proposals = crate::charging_blocks::permutations(&p, &commands, &mut w).unwrap();
         assert!(!proposals.is_empty());
         let energy = |cs: &[Command]| {
             cs.iter()
@@ -1145,7 +1278,7 @@ mod move_resize_tests {
             );
         }
         w.limit = w.used + w.reserved;
-        assert!(ev_packing::proposals(&p, &commands, &mut w).is_none());
+        assert!(crate::charging_blocks::permutations(&p, &commands, &mut w).is_none());
         assert!(w.used + w.reserved <= w.limit);
     }
 
@@ -1230,6 +1363,8 @@ mod forecast_tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         }
     }
     fn pool_problem() -> Problem {

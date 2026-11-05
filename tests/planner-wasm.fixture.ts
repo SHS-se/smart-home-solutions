@@ -1,4 +1,4 @@
-import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
+import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { type BenchCase, QUARTERS } from "../src/lib/planner-bench/case.ts";
 import type {
   NativeCommand,
@@ -43,7 +43,7 @@ export type EquippedProblem =
   };
 export function problem(): EquippedProblem {
   const ready: EquippedProblem = {
-    abi: 17,
+    abi: 18, charging_before: { ev_amps: null, battery_grid_w: null },
     // No end credit unless a test asks for one.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
     ev_battery_supply_allowed: false,
@@ -68,7 +68,7 @@ export function problem(): EquippedProblem {
         import_price: 1 + i / 10,
         export_price: .5,
         published: true,
-        ev_available: true, ev_current_ceiling_a: null, pool_auxiliary_dispatch: null,
+        ev_available: true, pool_auxiliary_dispatch: null, ev_current_ceiling_a: null,
       }),
     ),
     battery: HOUSEHOLD.battery,
@@ -98,7 +98,7 @@ export function problem(): EquippedProblem {
       battery_export_reserve_kwh: 2,
       battery_export_min_price: 4,
       wear_per_kwh: .1,
-      ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
+      ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
     rules: [],
     accepted: null, released: null, unavailable: null,

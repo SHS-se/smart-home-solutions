@@ -108,6 +108,7 @@ export const readyProblemSchema = z.object({
     ]),
   }).nullable(),
   pool_stop_c: number.nullable(),
+  charging_before: z.object({ ev_amps: number.int().nonnegative().nullable(), battery_grid_w: number.nonnegative().nullable() }).strict(),
   initial: z.object({
     battery_kwh: number.nullable(),
     ev_kwh: number.nullable(),
@@ -132,8 +133,8 @@ export const readyProblemSchema = z.object({
     battery_export_min_price: number,
     wear_per_kwh: number,
     pool_start_cost_sek: number.nonnegative(),
-    ev_start_preference_sek: number.nonnegative(),
-    battery_start_preference_sek: number.nonnegative(),
+    ev_change_preference_sek: number.nonnegative(),
+    battery_change_preference_sek: number.nonnegative(),
   }),
   end_credit: z.object({
     reference_sek_per_kwh: number.nonnegative(),

@@ -1,5 +1,5 @@
 import { boilerDemand } from "../src/lib/planner-bench/household.ts";
-import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
+import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
 import { READY_ABI, builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
@@ -18,7 +18,7 @@ import {
 import { buildPriceOutlook } from "../supabase/functions/_shared/planner/energy-price-shape.ts";
 import { publishHeater } from "../supabase/functions/_shared/planner/device-models.ts";
 import type { DutyCycleServiceInput } from "../supabase/functions/_shared/planner/planning-contracts.ts";
-import { addHotWater } from "../supabase/functions/_shared/rules-hot-water.ts";
+import { completeRulesCandidates } from "../supabase/functions/_shared/rules-hot-water.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { caseCarPolicy, type HotWaterCommand } from "../src/lib/planner-bench/referee.ts";
 import {
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: READY_ABI,
+    abi: READY_ABI, charging_before: { ev_amps: null, battery_grid_w: null },
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -185,7 +185,7 @@ export function readyProblem(
         h.battery.capacity_kwh,
       battery_export_min_price: h.site.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: h.site.battery_degradation_sek_per_kwh,
-      ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
+      ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK,
     },
     // The planner optimises the score: only the rules that take points go to it.
     rules: resolveRules(criteria).flatMap((r) => {
@@ -269,7 +269,7 @@ export async function loadWasmCandidate(root: string) {
           boiler_w: water.starts.map(() => 0), boiler_rated_w: water.starts.map(() => 0), boiler_permitted: water.starts.map(() => false),
           boiler_battery_allowed: water.starts.map(() => false), boiler_permission_starts: [], boiler_shortfall_minutes: {},
         } as unknown as PreparedRulesInput;
-        const refined = addHotWater(core, prepared, s);
+        const refined = completeRulesCandidates(core, prepared, s);
         s = refined.selection;
         const w = refined.input;
         refinedWaterW = [...w.boiler_w];

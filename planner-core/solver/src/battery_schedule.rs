@@ -284,7 +284,7 @@ impl Values {
             }
             for previous in [false, true] {
                 let value = (service_points - q.cost)
-                    - crate::charging::battery_start_cost(previous, charging, &ctx.p.limits)
+                    - crate::charging::battery_activity_cost(ctx.p, i, previous, charging)
                     + continuation;
                 let kept = &mut best[usize::from(previous)];
                 if value.is_finite() && kept.as_ref().is_none_or(|(_, _, old)| value > *old + 1e-9)
@@ -312,7 +312,7 @@ impl Values {
             };
             let charging = c.battery == Operation::GridCharge && q.charge > 0.0;
             let value = (service_points - q.cost)
-                - crate::charging::battery_start_cost(previous_charging, charging, &ctx.p.limits)
+                - crate::charging::battery_activity_cost(ctx.p, i, previous_charging, charging)
                 + self.at(ctx, i + 1, q.battery_kwh, charging);
             if !value.is_finite() {
                 continue;
@@ -435,7 +435,7 @@ impl Allocation {
                         - q.continuity
                         + self
                             .values
-                            .at(&ctx, i + 1, next.battery, next.charging.battery_grid);
+                            .at(&ctx, i + 1, next.battery, next.charging.grid_active());
                     if !value.is_finite() {
                         continue;
                     }
@@ -461,6 +461,31 @@ impl Allocation {
         response
     }
 }
+/// Conservative admission for an optional final block round, using the same
+/// inventory axes and allocation bound as the real conditional allocator.
+pub(crate) fn block_round_bound(
+    p: &Problem,
+    commands: &[Command],
+    planned: &[Quarter],
+    unit: u64,
+) -> u64 {
+    let n = p.slots.len() as u64;
+    let allocation = p.battery.as_ref().map_or(0, |_| {
+        let axes = axes(p, planned);
+        let ctx = Context {
+            p,
+            index: &policy::Index { future: Vec::new() },
+            commands,
+            planned,
+            axes: &axes,
+        };
+        ctx.bound(unit).unwrap_or(u64::MAX)
+    });
+    allocation
+        .saturating_mul(2)
+        .saturating_add(n.saturating_mul(unit.saturating_mul(2200) + 16384))
+}
+
 /// None means a complete optional pass plus its full score could not be paid.
 /// The builder alone scores and adopts the returned whole-horizon proposal.
 pub(crate) fn allocate(
@@ -526,7 +551,7 @@ pub(crate) fn allocate(
     }
     let mut kwh = p.initial.battery_kwh.unwrap();
     let mut proposal = Vec::with_capacity(n);
-    let mut previous_charging = false;
+    let mut previous_charging = p.charging_before.battery_grid_w.is_some_and(|w| w > 0.0);
     for i in 0..n {
         let (c, end, _) = values
             .best_pair(&ctx, i, kwh, ctx.service_points(i))
@@ -570,6 +595,8 @@ mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         }
     }
     fn problem(n: usize) -> Problem {
@@ -756,11 +783,8 @@ mod tests {
             s.export_price = sell;
             s.base_w = load;
         }
-        let mut w = work(&p);
-        let index = policy::index(&p, &mut w).unwrap();
-        let score = |cs: &[Command]| {
-            physics::projection(&p, cs).map(|q| policy::account(&p, &q, &index).score_sek)
-        };
+        let score =
+            |cs: &[Command]| physics::projection(&p, cs).map(|q| policy::account(&p, &q).score_sek);
         let mut options = vec![idle()];
         for watts in [250.0, 500.0, 750.0, 1000.0] {
             for op in [
@@ -852,7 +876,7 @@ mod tests {
         let mut w = work(&p);
         let index = policy::index(&p, &mut w).unwrap();
         let planned = physics::projection(&p, &base).unwrap();
-        let before = policy::account(&p, &planned, &index).score_sek;
+        let before = policy::account(&p, &planned).score_sek;
         let allocation = allocate(&p, &index, &base, &planned, &mut w).unwrap();
         let mut changed = base.clone();
         changed[0].ev_amps = 6;
@@ -863,7 +887,7 @@ mod tests {
             .respond(&p, &index, &changed, &planned, &mut w)
             .unwrap();
         let q = physics::projection(&p, &commands).unwrap();
-        let after = policy::account(&p, &q, &index);
+        let after = policy::account(&p, &q);
         assert!(after.score_sek > before + 0.2);
         assert_eq!(after.points, 0.0);
         assert_eq!((commands[0].ev_amps, commands[1].ev_amps), (6, 0));

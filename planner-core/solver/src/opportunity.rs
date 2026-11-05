@@ -504,6 +504,8 @@ mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         };
         let index = policy::index(&p, &mut work).unwrap();
         let prepared = Opportunity::prepare(&p, &index, &mut work).unwrap();

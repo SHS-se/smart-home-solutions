@@ -10,6 +10,7 @@ const starts = (values: boolean[]) => values.filter((on, i) => on && !values[i -
 function competition(): ReadyProblem {
   const p: ReadyProblem = problem();
   p.work_grant = 100_000_000;
+  p.charging_before = { ev_amps: 0, battery_grid_w: 0 };
   p.heater = p.pool_store = null;
   p.initial.pool_c = p.initial.pool_pending_heat_kwh = p.initial.heater_state = p.targets.pool_c = null;
   p.battery = { capacity_kwh: 6, min_soc: 0, max_soc: 1, charge_max_w: 4000, discharge_max_w: 4000, charge_efficiency: 1, discharge_efficiency: 1 , conversion: syntheticIdentityConversion()};
@@ -31,7 +32,7 @@ function selected(p: ReadyProblem) {
 Deno.test("near-equal quarters group EV and battery charging without sacrificing delivered energy", () => {
   const p = competition();
   const old = structuredClone(p);
-  old.limits.ev_start_preference_sek = old.limits.battery_start_preference_sek = 0;
+  old.limits.ev_change_preference_sek = old.limits.battery_change_preference_sek = 0;
   const before = selected(old), after = selected(p);
   assert(starts(before.quarters.map(q => q.ev_w > 0)) > 1);
   assertEquals(starts(after.quarters.map(q => q.ev_w > 0)), 1);
@@ -39,18 +40,28 @@ Deno.test("near-equal quarters group EV and battery charging without sacrificing
   assertAlmostEquals(after.quarters.at(-1)!.ev_kwh!, before.quarters.at(-1)!.ev_kwh!, 1e-9);
   assertAlmostEquals(after.quarters.at(-1)!.battery_kwh!, before.quarters.at(-1)!.battery_kwh!, 1e-9);
   assert(after.quarters.every(q => q.net_w <= p.limits.import_w + 1e-7));
-  assertAlmostEquals(after.account.continuity_sek, .5, 1e-9);
-  assert(after.account.cash_sek - before.account.cash_sek < .01);
+  const evRequests = [0, ...after.commands.map(c => c.ev_amps)];
+  const evChanges = evRequests.slice(1).filter((a, i) => a !== evRequests[i]).length;
+  const batteryRequests = [0, ...after.commands.map(c => c.battery === "grid_charge" ? c.charge_limit_w : 0)];
+  const batteryChanges = batteryRequests.slice(1).filter((w, i) => w !== batteryRequests[i]).length;
+  assertAlmostEquals(after.account.continuity_sek, .125 * (evChanges + batteryChanges), 1e-9);
+  // The approved setting-change preference can buy stability. Reprice the
+  // same-energy no-preference schedule before checking the exact tradeoff.
+  const repriced = core.project(p, before.commands).outcome;
+  assert(repriced.kind === "projected");
+  const oldPreference = repriced.quarters.reduce((sum, q) => sum + q.continuity, 0);
+  assert(after.account.cash_sek + after.account.wear_sek + after.account.continuity_sek <=
+    before.account.cash_sek + before.account.wear_sek + oldPreference + 1e-9);
   assertAlmostEquals(after.account.score_sek, after.account.points - after.account.cash_sek - after.account.wear_sek - after.account.continuity_sek + after.account.credit_sek, 1e-9);
 });
 
-Deno.test("power changes and a reused accepted prefix do not create charging starts", () => {
+Deno.test("requested setting changes are counted once across a reused accepted prefix", () => {
   const p = competition();
   const commands: NativeCommand[] = p.slots.map((_s, i) => ({ pool_on: false, ev_amps: i < 4 ? (i % 2 ? 5 : 6) : 0,
     battery: i >= 4 ? "grid_charge" : "idle", charge_limit_w: i >= 4 ? 500 + i * 10 : 0, discharge_limit_w: 0 }));
   const projected = core.project(p, commands).outcome;
   assert(projected.kind === "projected");
-  assertAlmostEquals(projected.quarters.reduce((sum, q) => sum + q.continuity, 0), .5, 1e-9);
+  assertAlmostEquals(projected.quarters.reduce((sum, q) => sum + q.continuity, 0), 17 * .125, 1e-9);
   p.accepted = commands.slice(0, 4);
   p.locked_through_seconds = 3600;
   const result = selected(p);
@@ -66,7 +77,7 @@ Deno.test("a worthwhile price gap can still interrupt charging", () => {
   p.slots = p.slots.slice(0, 3).map((s, i) => ({ ...s, import_price: i === 1 ? 20 : 0 }));
   const result = selected(p);
   assertEquals(result.quarters.map(q => q.ev_w > 0), [true, false, true]);
-  assertEquals(result.account.continuity_sek, .5);
+  assertEquals(result.account.continuity_sek, 3 * .125);
 });
 
 Deno.test("active EV currents group into blocks instead of alternating with battery headroom", () => {
@@ -93,4 +104,44 @@ Deno.test("active EV currents group into blocks instead of alternating with batt
   assert(projection.kind === "projected");
   assertEquals(result.quarters, projection.quarters);
   assertAlmostEquals(result.account.continuity_sek, projection.quarters.reduce((sum, q) => sum + q.continuity, 0), 1e-9);
+});
+
+Deno.test("complete projection charges discrete requests and does not round through a ceiling", () => {
+  const p = competition();
+  p.slots = p.slots.slice(0, 3);
+  p.car_policy!.breach_permille = [null, null, null];
+  p.battery!.conversion = { ...syntheticIdentityConversion(), grid_charge: { gain: .96, overhead_w: 120 } };
+  p.charging_before.battery_grid_w = 2500;
+  const commands: NativeCommand[] = [125.4, 125.6, 1500.9].map(charge_limit_w => ({
+    pool_on: false, ev_amps: 0, battery: "grid_charge", charge_limit_w, discharge_limit_w: 0,
+  }));
+  const completed = core.complete(p, commands).outcome;
+  assert(completed.kind === "projected");
+  assertEquals(completed.commands.map(c => [c.battery, c.charge_limit_w]), [
+    ["idle", 0], ["idle", 0], ["grid_charge", 1500],
+  ]);
+  assertEquals(completed.quarters.map(q => q.continuity), [.125, 0, .125]);
+  assertEquals(completed.account.continuity_sek, .25);
+});
+
+Deno.test("independent four-quarter transition ledger agrees with exact projection", () => {
+  const p = competition();
+  p.slots = p.slots.slice(0, 4);
+  p.car_policy!.breach_permille = [null, null, null, null];
+  p.limits.import_w = 15000;
+  const ev = [0, 5, 6], watts = [0, 500, 1200];
+  const charges = (settings: readonly number[]) => settings.slice(1)
+    .reduce((count, value, i) => count + Number(value !== settings[i]), 0);
+  for (let row = 0; row < 81; row++) {
+    for (const phase of [0, 1, 2]) {
+      const amps = Array.from({ length: 4 }, (_, i) => ev[Math.floor(row / 3 ** i) % 3]);
+      const grid = amps.map((_, i) => watts[(Math.floor(row / 3 ** (3 - i)) + phase) % 3]);
+      const commands: NativeCommand[] = amps.map((ev_amps, i) => ({ pool_on: false, ev_amps,
+        battery: grid[i] > 0 ? "grid_charge" : "idle", charge_limit_w: grid[i], discharge_limit_w: 0 }));
+      const projected = core.project(p, commands).outcome;
+      assert(projected.kind === "projected");
+      assertEquals(projected.quarters.reduce((total, q) => total + q.continuity, 0),
+        (charges([0, ...amps]) + charges([0, ...grid])) / 8);
+    }
+  }
 });

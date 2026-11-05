@@ -21,7 +21,7 @@ export function activeCurrentCompetition(): ReadyProblem {
     pool_source_depletion_kwh: null, heater_state: null };
   p.targets = { pool_c: null };
     p.limits = { ...p.limits, import_w: 15000, export_w: 10000, battery_export_enabled: false,
-    ev_start_preference_sek: .25, battery_start_preference_sek: .25,
+    ev_change_preference_sek: .25, battery_change_preference_sek: .25,
     battery_export_reserve_kwh: 16, battery_export_min_price: 3, wear_per_kwh: .04 };
   p.car_policy = { floor_kwh: 72, limit_kwh: 72, breach_permille: Array.from({ length: 96 }, () => null) };
   p.end_credit = { reference_sek_per_kwh: 1,

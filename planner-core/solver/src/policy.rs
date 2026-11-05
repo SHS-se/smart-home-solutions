@@ -193,22 +193,26 @@ pub(crate) fn end_credit(
         + car_credit(p, ev_kwh)
 }
 /// A plan's account with every quarter's contributions: the selected plan's.
-pub(crate) fn account(p: &Problem, q: &[Quarter], index: &Index) -> Account {
-    tally(p, q, index, true)
+pub(crate) fn account(p: &Problem, q: &[Quarter]) -> Account {
+    tally(p, q, true)
 }
 /// A plan's account without its rows, which a candidate in the search is never
 /// asked for. The totals are the same.
-pub(crate) fn totals(p: &Problem, q: &[Quarter], index: &Index) -> Account {
-    tally(p, q, index, false)
+pub(crate) fn totals(p: &Problem, q: &[Quarter], _index: &Index) -> Account {
+    tally(p, q, false)
 }
-fn tally(p: &Problem, q: &[Quarter], _index: &Index, rows: bool) -> Account {
+fn tally(p: &Problem, q: &[Quarter], rows: bool) -> Account {
     let mut before_c = p.initial.pool_c.unwrap_or(0.0);
     let mut contributions = Vec::with_capacity(if rows { q.len() } else { 0 });
     let mut total = 0.0;
     for (i, v) in q.iter().enumerate() {
-        total += guidance_quarter(p, _index, i, v, before_c);
+        let points = p.rules.iter().map(|r| contribution(p, r, i, v, before_c));
         if rows {
-            contributions.push(self::contributions(p, i, v, before_c));
+            let points: Vec<_> = points.collect();
+            total += points.iter().sum::<f64>();
+            contributions.push(points);
+        } else {
+            total += points.sum::<f64>();
         }
         before_c = v.pool_c.unwrap_or(0.0);
     }
@@ -288,12 +292,6 @@ fn contribution(p: &Problem, r: &Rule, i: usize, v: &Quarter, before_c: f64) -> 
         }
     }
 }
-fn contributions(p: &Problem, i: usize, v: &Quarter, before_c: f64) -> Vec<f64> {
-    p.rules
-        .iter()
-        .map(|r| contribution(p, r, i, v, before_c))
-        .collect()
-}
 /// Guidance and complete accounts use the same fractional monetary policy.
 pub(crate) fn guidance_quarter(
     p: &Problem,
@@ -324,6 +322,8 @@ mod service_tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         }
     }
     fn rules() -> Vec<Rule> {
@@ -391,7 +391,6 @@ mod service_tests {
         p.rules = rules();
         p.initial.ev_kwh = Some(40.0);
         p.car_policy.as_mut().unwrap().breach_permille = vec![Some(399)];
-        let index = index(&p, &mut work(&p)).unwrap();
         let idle = Command {
             pool_on: false,
             ev_amps: 0,
@@ -403,11 +402,11 @@ mod service_tests {
         p.initial.pool_c = Some(27.0);
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [-1.0, -1.0]);
+        assert_eq!(account(&p, &q).contributions[0], [-1.0, -1.0]);
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [0.0, -1.0]);
+        assert_eq!(account(&p, &q).contributions[0], [0.0, -1.0]);
     }
     #[test]
     fn the_floor_only_counts_at_or_below_the_line_of_that_quarter() {

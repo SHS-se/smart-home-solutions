@@ -6,7 +6,7 @@ import recipe from '../../../planner-core/recipe.json' with { type: 'json' };
 import { READY_ABI, builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
 import { localDay, localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
-import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy.ts';
+import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy.ts';
 import type { BenchSeries } from '../planner-bench/types.ts';
 import { homePhysics, type HomeModelCapture } from './home-physics.ts';
 import { defaultSettings, electricityLedger, projectDefaultProblem, type ProjectionEngine } from './controller.ts';
@@ -129,7 +129,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: READY_ABI, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: READY_ABI, charging_before: { ev_amps: null, battery_grid_w: null }, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
@@ -179,7 +179,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
     car_policy: null,
     limits: { import_w: rows.snapshot.grid.import_limit_w, export_w: rows.snapshot.grid.export_limit_w,
       battery_export_enabled: false, battery_export_reserve_kwh: 0, battery_export_min_price: 0,
-      wear_per_kwh: facts.wear, ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
+      wear_per_kwh: facts.wear, ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
     rules: [], accepted: null, released: null, unavailable: null, locked_through_seconds: 0,
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
   };

@@ -2,8 +2,8 @@
 mod battery_schedule;
 mod builder;
 mod charging;
+mod charging_blocks;
 mod commitments;
-mod ev_packing;
 mod move_resize;
 mod opportunity;
 mod physics;
@@ -82,6 +82,15 @@ pub struct Initial {
     pub pool_pending_heat_kwh: Option<f64>,
     pub heater_state: Option<HeaterState>,
 }
+/// Previous accepted requested intent, never an assertion of physical execution.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChargingBoundary {
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub ev_amps: Option<u32>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub battery_grid_w: Option<f64>,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Targets {
     pub pool_c: Option<f64>,
@@ -103,8 +112,8 @@ pub struct Limits {
     pub battery_export_min_price: f64,
     pub wear_per_kwh: f64,
     pub pool_start_cost_sek: f64,
-    pub ev_start_preference_sek: f64,
-    pub battery_start_preference_sek: f64,
+    pub ev_change_preference_sek: f64,
+    pub battery_change_preference_sek: f64,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +177,7 @@ pub struct Problem {
     pub pool_store: Option<ThermalStore>,
     pub heater: Option<Heater>,
     pub initial: Initial,
+    pub charging_before: ChargingBoundary,
     pub pool_stop_c: Option<f64>,
     pub targets: Targets,
     pub car_policy: Option<CarPolicy>,
@@ -239,6 +249,15 @@ pub struct Selection {
     pub economic: Vec<EconomicHit>,
     pub runs: Vec<RunPurpose>,
     pub work: Work,
+    pub charging_alternative: Option<ChargingAlternative>,
+    pub minimum_gain_sek: f64,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct ChargingAlternative {
+    pub role: &'static str,
+    pub commands: Vec<Command>,
+    pub quarters: Vec<Quarter>,
+    pub account: Account,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -249,12 +268,18 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 17 || p.slots.is_empty() {
+    if p.abi != 18 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
+    if p.charging_before
+        .battery_grid_w
+        .is_some_and(|w| !w.is_finite() || w < 0.0)
+    {
+        return bad("invalid_charging_boundary");
+    }
     if [
-        p.limits.ev_start_preference_sek,
-        p.limits.battery_start_preference_sek,
+        p.limits.ev_change_preference_sek,
+        p.limits.battery_change_preference_sek,
     ]
     .iter()
     .any(|v| !v.is_finite() || *v < 0.0)
@@ -527,6 +552,8 @@ pub struct Work {
     pub move_resize_trials: u64,
     pub move_resize_passes: u64,
     pub move_resize_improvements: u64,
+    pub charging_block_trials: u64,
+    pub charging_block_improvements: u64,
 }
 impl Work {
     /// What is left to spend once the reserve is set aside.
@@ -616,6 +643,45 @@ pub fn project_json(bytes: &[u8]) -> Vec<u8> {
 #[no_mangle]
 pub unsafe extern "C" fn planner_project(pointer: *const u8, length: usize) -> u64 {
     let output = project_json(std::slice::from_raw_parts(pointer, length));
+    let length = output.len() as u64;
+    let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
+    (length << 32) | pointer
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum CompletionOutcome {
+    Projected {
+        commands: Vec<Command>,
+        quarters: Vec<Quarter>,
+        account: Account,
+    },
+    Failed {
+        issue: String,
+    },
+}
+/// # Safety
+/// Input must name a live initialized module allocation. Caller owns both buffers.
+#[no_mangle]
+pub unsafe extern "C" fn planner_complete(pointer: *const u8, length: usize) -> u64 {
+    let result =
+        serde_json::from_slice::<ProjectionInput>(std::slice::from_raw_parts(pointer, length))
+            .map_err(|e| format!("invalid_completion: {e}"))
+            .and_then(|mut input| {
+                validate(&input.problem)?;
+                let quarters = physics::complete_external(&input.problem, &mut input.commands)?;
+                let account = policy::account(&input.problem, &quarters);
+                Ok((input.commands, quarters, account))
+            });
+    let outcome = match result {
+        Ok((commands, quarters, account)) => CompletionOutcome::Projected {
+            commands,
+            quarters,
+            account,
+        },
+        Err(issue) => CompletionOutcome::Failed { issue },
+    };
+    let output = serde_json::to_vec(&outcome).expect("finite completed projection");
     let length = output.len() as u64;
     let pointer = Box::into_raw(output.into_boxed_slice()) as *mut u8 as usize as u64;
     (length << 32) | pointer

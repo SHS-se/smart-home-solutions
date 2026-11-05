@@ -94,6 +94,9 @@ assertEquals(
 );
 const bridge = new URL("tests/planner-integration/ha_bridge.py", root).pathname;
 const results: Record<string, unknown>[] = [];
+await command(python, [new URL("tests/planner-integration/charging_handoffs.py", root).pathname, haRepo]);
+results.push({ scenario: "delayed_charging_handoffs", tested_directions: ["EV_to_battery", "battery_to_EV"] });
+
 {
   const produced = JSON.parse(await command(python, [bridge, haRepo, "produce-battery"]));
   const snapshot: OptimisationSnapshot = produced.snapshot;

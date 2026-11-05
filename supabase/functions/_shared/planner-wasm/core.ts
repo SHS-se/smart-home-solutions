@@ -59,14 +59,7 @@ const quarter = z.object({
   wear: z.number().finite(),
   continuity: z.number().finite(),
 });
-export const solveOutcome = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("failed"), issue: z.string() }),
-  z.object({
-    kind: z.literal("selected"),
-    selection: z.object({
-      commands: command.array(),
-      quarters: quarter.array(),
-      account: z.object({
+const account = z.object({
         score_sek: z.number().finite(),
         points: z.number().finite(),
         cash_sek: z.number().finite(),
@@ -74,7 +67,18 @@ export const solveOutcome = z.discriminatedUnion("kind", [
         continuity_sek: z.number().finite(),
         credit_sek: z.number().finite(),
         contributions: z.number().finite().array().array(),
-      }),
+      });
+
+export const solveOutcome = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("failed"), issue: z.string() }),
+  z.object({
+    kind: z.literal("selected"),
+    selection: z.object({
+      commands: command.array(),
+      quarters: quarter.array(),
+      account,
+      charging_alternative: z.object({ role: z.enum(["ordinary", "block"]), commands: command.array(), quarters: quarter.array(), account }).nullable(),
+      minimum_gain_sek: z.number().finite().nonnegative(),
       work_used: z.number().int().nonnegative(),
       evaluations: z.number().int().nonnegative(),
       termination: z.enum(["grant_exhausted", "bounded_complete"]),
@@ -120,6 +124,8 @@ export const solveOutcome = z.discriminatedUnion("kind", [
         move_resize_trials: z.number().int().nonnegative(),
         move_resize_passes: z.number().int().nonnegative(),
         move_resize_improvements: z.number().int().nonnegative(),
+        charging_block_trials: z.number().int().nonnegative(),
+        charging_block_improvements: z.number().int().nonnegative(),
       }),
     }),
   }),
@@ -127,6 +133,10 @@ export const solveOutcome = z.discriminatedUnion("kind", [
 export const projectionOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
   z.object({ kind: z.literal("projected"), quarters: quarter.array() }),
+]);
+const completionOutcome = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("failed"), issue: z.string() }),
+  z.object({ kind: z.literal("projected"), commands: command.array(), quarters: quarter.array(), account }),
 ]);
 const roomOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
@@ -162,8 +172,8 @@ export function createWasmPlanner(bytes: Uint8Array) {
     /** One solve request owns the allocator for its sequential postprocessing
      * projections. No physical state or memory crosses request boundaries. */
     projectionSession() {
-      const { project } = createPlanner(module, true);
-      return { project };
+      const { project, complete } = createPlanner(module, true);
+      return { project, complete };
     },
   };
 }
@@ -182,7 +192,7 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
   let projectionFailure: Error | undefined;
   function invoke<T>(
     inputValue: unknown,
-    exportName: "planner_solve" | "planner_project" | "planner_room",
+    exportName: "planner_solve" | "planner_project" | "planner_complete" | "planner_room",
     parse: (value: unknown) => T,
     trace?: PlanningTrace,
   ) {
@@ -269,6 +279,9 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
       if (outcome.kind === "selected") {
         const s = outcome.selection;
         if (
+          [s, ...(s.charging_alternative ? [s.charging_alternative] : [])].some(c =>
+            c.commands.length !== problem.slots.length || c.quarters.length !== problem.slots.length ||
+            c.account.contributions.length !== problem.slots.length) ||
           s.commands.length !== problem.slots.length ||
           s.quarters.length !== problem.slots.length ||
           s.account.contributions.length !== problem.slots.length ||
@@ -289,6 +302,13 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
             "Invalid selected-plan coverage or work accounting.",
           );
         }
+      }
+      return result;
+    },
+    complete(problem: ReadyProblem, commands: NativeCommand[]) {
+      const result = invoke({ problem, commands }, "planner_complete", value => completionOutcome.parse(value) as Wire<z.infer<typeof completionOutcome>>);
+      if (result.outcome.kind === "projected" && (result.outcome.quarters.length !== problem.slots.length || result.outcome.commands.length !== problem.slots.length)) {
+        throw new Error("Invalid completed command coverage.");
       }
       return result;
     },

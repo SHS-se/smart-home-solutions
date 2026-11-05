@@ -1,10 +1,10 @@
 {
-  "version": "kronor-score-v20",
+  "version": "kronor-score-v21",
   "qualification": "test_live_candidate",
   "ordering": [
     "score_sek"
   ],
-  "score": "rule_points_minus_cash_minus_wear_minus_charging_start_preference_plus_capped_end_store_credit",
+  "score": "rule_points_minus_cash_minus_wear_minus_charging_setting_change_preference_plus_capped_end_store_credit",
   "direct_rules": [
     "pool_shortfall",
     "car_floor"
