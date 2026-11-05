@@ -9,9 +9,9 @@ import { problem } from './planner-wasm.fixture.ts';
 import recipe from '../planner-core/recipe.json' with { type: 'json' };
 
 Deno.test('pool exposure integrates partial durations and target crossings without rounding cliffs', () => {
-  assertEquals(poolComfortExposure(31, 30, 30, 2), 2);
-  assertAlmostEquals(poolComfortExposure(31, 30, 32, 1), 1/6, 1e-12);
-  assertAlmostEquals(poolComfortExposure(31, 32, 30, 1), 1/6, 1e-12);
+  assertEquals(poolComfortExposure(31, 30, 30, 2), 0);
+  assertAlmostEquals(poolComfortExposure(31, 29, 32, 1), 1/6, 1e-12);
+  assertAlmostEquals(poolComfortExposure(31, 32, 29, 1), 1/6, 1e-12);
   assertEquals(poolComfortExposure(31, 32, 33, 1), 0);
   const whole = poolComfortExposure(31, 29, 32, 1);
   const pieces = poolComfortExposure(31, 29, 30.5, .5) + poolComfortExposure(31, 30.5, 32, .5);
@@ -28,7 +28,7 @@ Deno.test('synthetic pool builds reserve before an expensive multi-day period wi
   p.initial.pool_c = 31; p.initial.heater_state = { kind: 'off_unobserved' };
   p.targets.pool_c = 31; p.pool_stop_c = 34;
   p.slots = Array.from({ length: 288 }, (_, i) => ({ ...p.slots[0], start_seconds: i*900, import_price: i < 96 ? 1 : 4, export_price: 0, published: true, solar_w: 0, ev_available: false }));
-  p.rules = [{ key: 'pool_shortfall', threshold: 0, points: -2, required: false }];
+  p.rules = [{ key: 'pool_shortfall', threshold: 0, points: -4, required: false }];
   p.end_credit = problemEndCredit(p);
   const result = createWasmPlanner(plannerBytes).solve(p).outcome;
   assert(result.kind === 'selected', result.kind === 'failed' ? result.issue : '');

@@ -41,6 +41,7 @@ import EnergyChart, { type EnergyRoomLine } from '../../charts/EnergyChart';
 import { planChartRelations } from '@/lib/energy-shift/plan-chart-relations';
 import type { ChartRoom } from '@/lib/energy-shift/room-temperature';
 import QuarterScoreDetail, { type QuarterScoreExplanation } from '../QuarterScoreDetail';
+import PoolComfortRuleInfo from '../../PoolComfortRuleInfo';
 import { DEFAULT_RULES } from '@/lib/planner-bench/score';
 import { PLAN_COLOURS } from '../../charts/palette';
 import { ownerColour, type EmpiricalEnergyDevice } from '@/lib/energy-shift/device-colours';
@@ -133,10 +134,18 @@ const PowerSection: React.FC<{
   const explained = ((): QuarterScoreExplanation | null => {
     const fired = scored(selectedIndex), row = panelRows[selectedIndex];
     if (!fired || !row) return null;
+    const slotIndex = model.active.slots.findIndex(slot => Date.parse(slot.start) === row.startMs);
+    const slot = model.active.slots[slotIndex];
     return {
       score: total(fired), when: row.label, price: row.importPriceSekPerKwh,
       priceNote: row.importPriceQuoted ? t('publicerat', 'published') : t('uppskattat', 'estimated'),
-      lines: Object.entries(fired).map(([key, points]) => ({ key, points, label: RULE_LABEL.get(key) ?? key })),
+      lines: Object.entries(fired).map(([key, points]) => ({ key, points,
+        label: key === 'pool_shortfall' ? t('Poolkomfort', 'Pool comfort') : RULE_LABEL.get(key) ?? key,
+        detail: key === 'pool_shortfall' && <PoolComfortRuleInfo expandable water={slot ? {
+          beforeC: slotIndex === 0 ? plan.pool?.water_temperature_c ?? null : model.active.slots[slotIndex - 1].pool_temperature_c ?? null,
+          afterC: slot.pool_temperature_c ?? null, hours: slot.duration_hours, targetC: poolTargetC,
+        } : undefined} />,
+      })),
     };
   })();
 

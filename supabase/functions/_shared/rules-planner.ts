@@ -562,7 +562,8 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
   priority.generated.slots.forEach((slot, i) => {
     slot.rule_points = Object.fromEntries(p.rules.flatMap((rule, r) => {
       const points = selected.account.contributions[i][r];
-      return points ? [[rule.key, points]] : [];
+      // Keep the active pool rule explainable even inside its free comfort band.
+      return points || (rule.key === "pool_shortfall" && p.heater !== null) ? [[rule.key, points]] : [];
     }));
   });
   materialized?.();

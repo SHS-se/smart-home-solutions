@@ -5,13 +5,14 @@
 
 import React from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { scoreColour, signedPoints } from './quarter-score';
+import { signedPoints } from './quarter-score';
 
 export interface QuarterScoreLine {
   key: string;
   points: number;
   /** What the rule is, with any evidence for this quarter. */
   label: React.ReactNode;
+  detail?: React.ReactNode;
 }
 
 export interface QuarterScoreExplanation {
@@ -43,13 +44,16 @@ const QuarterScoreDetail: React.FC<{
           : (
             <div className="space-y-1">
               <div>
-                <span className="font-mono font-semibold" style={{ color: scoreColour(quarter.score) }}>{signedPoints(quarter.score)}</span>{' '}
+                <span className="font-mono font-semibold text-foreground">{signedPoints(quarter.score)} {t('poäng', 'points')}</span>{' '}
                 <span className="font-medium">{quarter.when}</span>
                 {quarter.price !== null && <>{' '}<span className="text-muted-foreground">· {quarter.price.toFixed(2)} kr/kWh{quarter.priceNote ? ` ${quarter.priceNote}` : ''}</span></>}
               </div>
               {quarter.lines.length
-                ? <ul className="text-xs space-y-0.5">{quarter.lines.map(line =>
-                  <li key={line.key} className="font-mono">{signedPoints(line.points)} {line.label}</li>)}</ul>
+                ? <ul className="space-y-3">{quarter.lines.map(line =>
+                  <li key={line.key} data-comfort-rule={line.key}>
+                    <div className="text-sm"><span className="font-mono tabular-nums">{signedPoints(line.points)} {t('poäng', 'points')}</span>{' '}<span className="font-medium">{line.label}</span></div>
+                    {line.detail}
+                  </li>)}</ul>
                 : <div className="text-xs text-muted-foreground">{t('Ingen regel slog till.', 'No rule fired.')}</div>}
             </div>
           )}

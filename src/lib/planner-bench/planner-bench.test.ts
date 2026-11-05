@@ -114,21 +114,20 @@ function comfortSeries(poolC: (i: number) => number, carKm: (i: number) => numbe
   return series;
 }
 
-Deno.test('pool cold exposure is fractional, quadratic near target with a duration-weighted linear tail without threshold cliffs', () => {
+Deno.test('pool cold exposure is fractional, linear beyond 1°C and duration weighted', () => {
   assertEquals(scoreQuarters(comfortSeries(() => 30, () => 300)).sum, 0);
   const constant = (temp: number) => scoreQuarters(comfortSeries(() => temp, () => 300, { pool_start_c: temp }));
-  assertAlmostEquals(constant(29).sum, -144, 1e-9);
-  assertAlmostEquals(constant(28).sum, -576, 1e-9);
-  assertAlmostEquals(constant(27).sum, -1152, 1e-9);
-  assertAlmostEquals(constant(20).sum, -5184, 1e-9);
-  assertAlmostEquals(constant(29.5).quarters[0].score, -.125, 1e-9);
-  assertAlmostEquals(constant(29.99).quarters[0].score - constant(30.01).quarters[0].score, -.00005, 1e-9);
-  const nearFormerLine = constant(28.9999).quarters[0].score - constant(29.0001).quarters[0].score;
-  assertAlmostEquals(nearFormerLine, -.0002, 1e-9);
+  assertAlmostEquals(constant(29).sum, 0, 1e-9);
+  assertAlmostEquals(constant(28).sum, -288, 1e-9);
+  assertAlmostEquals(constant(27).sum, -576, 1e-9);
+  assertAlmostEquals(constant(20).sum, -2592, 1e-9);
+  assertAlmostEquals(constant(29.5).quarters[0].score, 0, 1e-9);
+  const nearFreeBand = constant(28.9999).quarters[0].score - constant(29.0001).quarters[0].score;
+  assertAlmostEquals(nearFreeBand, -.0001, 1e-9);
   assertEquals(constant(28).requiredFired, []);
-  const partial = comfortSeries(() => 29, () => 300, { pool_start_c: 29 });
+  const partial = comfortSeries(() => 28, () => 300, { pool_start_c: 28 });
   partial.hours[0] = .05;
-  assertAlmostEquals(scoreQuarters(partial).quarters[0].score, -.1, 1e-9);
+  assertAlmostEquals(scoreQuarters(partial).quarters[0].score, -.2, 1e-9);
 });
 
 Deno.test('the car loses two points in a quarter below its floor line, and never fails the case', () => {
@@ -154,11 +153,11 @@ Deno.test('pool applicability needs a temperature trajectory, not reachability g
 
 Deno.test('cold exposure does not restart a recovery grace on replanning', () => {
   const cold = comfortSeries(() => 24, () => 300, { pool_start_c: 24, poolReachableC: Array(288).fill(24) });
-  assertAlmostEquals(scoreQuarters(cold).quarters[0].score, -10, 1e-9);
+  assertAlmostEquals(scoreQuarters(cold).quarters[0].score, -5, 1e-9);
 });
 
 Deno.test('continuous pool coefficient and enabled state control its cost', () => {
-  const series = comfortSeries(() => 29, () => 300, { pool_start_c: 29 });
+  const series = comfortSeries(() => 28, () => 300, { pool_start_c: 28 });
   assertEquals(scoreQuarters(series, { pool_shortfall: { enabled: false } }).sum, 0);
   assertAlmostEquals(scoreQuarters(series, { pool_shortfall: { points: -1.5 } }).quarters[0].score, -.375, 1e-9);
 });
@@ -176,7 +175,7 @@ Deno.test('continuous pool costs accept finite negative coefficients and reject 
   assertEquals(criteriaErrors({ water_opportunities: { threshold: 2, points: -2 } }), []);
   assertEquals(criteriaFingerprint({ pool_shortfall: { points: -1.5 }, car_floor: { points: -2 } }),
     criteriaFingerprint({ car_floor: { points: -2 }, pool_shortfall: { points: -1.5 } }));
-  assertEquals(serviceGuard(), { pool: 'linear_tail_shortfall' });
+  assertEquals(serviceGuard(), { pool: 'linear_shortfall' });
 });
 
 /** An audit as evaluate.ts attaches it: nothing found unless said otherwise. */
@@ -190,12 +189,12 @@ const auditOf = (over: Partial<OpportunityAudit> = {}): OpportunityAudit => ({
 });
 
 Deno.test('case points are the deductions less the net bill, a point a krona; evidence takes none', () => {
-  const cold = comfortSeries(() => 28.5, () => 300);
+  const cold = comfortSeries(() => 28.5, () => 300, { pool_start_c: 28.5 });
   const worst = scoreQuarters(cold);
-  assertAlmostEquals(worst.sum, -323.25, 1e-9);
+  assertAlmostEquals(worst.sum, -144, 1e-9);
   assertEquals([worst.audit, worst.bill, worst.complete], [null, null, false]);
   // Without its bill or its audit a case shows its deductions alone, and has no stored score.
-  assertEquals(worst.points, -323.25);
+  assertEquals(worst.points, -144);
   assertThrows(() => storedScore(cold), Error, 'opportunity audit');
 
   const audit = auditOf({ knownSek: 5, hindsightSek: 30, avoidableSek: 35 });
@@ -205,14 +204,14 @@ Deno.test('case points are the deductions less the net bill, a point a krona; ev
   assertEquals(scoreQuarters({ ...cold, audit }).complete, false);
   assertThrows(() => storedScore({ ...cold, audit }), Error, 'bill');
   const audited = scoreQuarters({ ...cold, audit, bill });
-  // 323.25 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
-  assertEquals([audited.points, audited.sum, audited.complete], [-395.25, -323.25, true]);
+  // 144 kr of deductions and a net bill of 72 kr; what the audit proves is evidence and takes nothing.
+  assertEquals([audited.points, audited.sum, audited.complete], [-216, -144, true]);
   // Loading a device does not change the service deductions or award a price-rank reward.
   const busy = { ...cold, audit, bill, carW: cold.carW.map(() => 3000) };
-  assertEquals(scoreQuarters(busy).points, -395.25);
+  assertEquals(scoreQuarters(busy).points, -216);
   // An audit of another version is not read.
   const dated = scoreQuarters({ ...cold, audit: auditOf({ version: OPPORTUNITY_AUDIT_VERSION + 1 }), bill });
-  assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -323.25]);
+  assertEquals([dated.auditPending, dated.complete, dated.points], [true, false, -144]);
 
   const stored = storedScore({ ...comfortSeries(() => 30, () => 300), audit, bill });
   assertEquals([stored.sum, stored.points, stored.physical_failed], [0, -72, false]);

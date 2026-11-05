@@ -12,7 +12,7 @@
       "boiler": false,
       "ev": false
     },
-    "model_version": "rules-planner-v24:3945828e8073766b387447d8034fdcb0d71c4701d05427ecb08f646f24e46c03",
+    "model_version": "rules-planner-v25:fd109a6f6774fe180af7b8019b031533fcaaad970fa841f94ab55bd6ef4588d1",
     "decision_diagnostics_version": 2,
     "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
     "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -1609,7 +1609,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.02341940470917
+              "pool_shortfall": -2.511709702354585
             }
           },
           {
@@ -1688,7 +1688,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.34544324953367
+              "pool_shortfall": -2.672721624766835
             }
           },
           {
@@ -1767,7 +1767,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.307396879155519
+              "pool_shortfall": -2.6536984395777594
             }
           },
           {
@@ -1846,7 +1846,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.269365378772825
+              "pool_shortfall": -2.6346826893864126
             }
           },
           {
@@ -1925,7 +1925,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.231348742573822
+              "pool_shortfall": -2.615674371286911
             }
           },
           {
@@ -2004,7 +2004,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.193346964749008
+              "pool_shortfall": -2.596673482374504
             }
           },
           {
@@ -2083,7 +2083,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.155360039491153
+              "pool_shortfall": -2.5776800197455767
             }
           },
           {
@@ -2162,7 +2162,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.117387960995298
+              "pool_shortfall": -2.558693980497649
             }
           },
           {
@@ -2241,7 +2241,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.079430723458756
+              "pool_shortfall": -2.539715361729378
             }
           },
           {
@@ -2320,7 +2320,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.041488321081107
+              "pool_shortfall": -2.520744160540554
             }
           },
           {
@@ -2399,7 +2399,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.003560748064192
+              "pool_shortfall": -2.501780374032096
             }
           },
           {
@@ -2478,7 +2478,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.965647998612122
+              "pool_shortfall": -2.4828239993060617
             }
           },
           {
@@ -2557,7 +2557,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.927750066931278
+              "pool_shortfall": -2.463875033465639
             }
           },
           {
@@ -2636,7 +2636,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.8898669472302965
+              "pool_shortfall": -2.444933473615148
             }
           },
           {
@@ -2715,7 +2715,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.851998633720083
+              "pool_shortfall": -2.4259993168600413
             }
           },
           {
@@ -2794,7 +2794,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.814145120613805
+              "pool_shortfall": -2.4070725603069025
             }
           }
         ],
@@ -2910,7 +2910,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.02341940470917
+              "pool_shortfall": -2.511709702354585
             }
           },
           {
@@ -2989,7 +2989,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.34544324953367
+              "pool_shortfall": -2.672721624766835
             }
           },
           {
@@ -3068,7 +3068,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.307396879155519
+              "pool_shortfall": -2.6536984395777594
             }
           },
           {
@@ -3147,7 +3147,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.269365378772825
+              "pool_shortfall": -2.6346826893864126
             }
           },
           {
@@ -3226,7 +3226,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.231348742573822
+              "pool_shortfall": -2.615674371286911
             }
           },
           {
@@ -3305,7 +3305,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.193346964749008
+              "pool_shortfall": -2.596673482374504
             }
           },
           {
@@ -3384,7 +3384,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.155360039491153
+              "pool_shortfall": -2.5776800197455767
             }
           },
           {
@@ -3463,7 +3463,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.117387960995298
+              "pool_shortfall": -2.558693980497649
             }
           },
           {
@@ -3542,7 +3542,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.079430723458756
+              "pool_shortfall": -2.539715361729378
             }
           },
           {
@@ -3621,7 +3621,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.041488321081107
+              "pool_shortfall": -2.520744160540554
             }
           },
           {
@@ -3700,7 +3700,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -5.003560748064192
+              "pool_shortfall": -2.501780374032096
             }
           },
           {
@@ -3779,7 +3779,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.965647998612122
+              "pool_shortfall": -2.4828239993060617
             }
           },
           {
@@ -3858,7 +3858,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.927750066931278
+              "pool_shortfall": -2.463875033465639
             }
           },
           {
@@ -3937,7 +3937,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.8898669472302965
+              "pool_shortfall": -2.444933473615148
             }
           },
           {
@@ -4016,7 +4016,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.851998633720083
+              "pool_shortfall": -2.4259993168600413
             }
           },
           {
@@ -4095,7 +4095,7 @@
               }
             },
             "rule_points": {
-              "pool_shortfall": -4.814145120613805
+              "pool_shortfall": -2.4070725603069025
             }
           }
         ],
@@ -4206,7 +4206,7 @@
         "boiler": false,
         "ev": false
       },
-      "model_version": "rules-planner-v24:3945828e8073766b387447d8034fdcb0d71c4701d05427ecb08f646f24e46c03",
+      "model_version": "rules-planner-v25:fd109a6f6774fe180af7b8019b031533fcaaad970fa841f94ab55bd6ef4588d1",
       "decision_diagnostics_version": 2,
       "plan_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
       "snapshot_id": "9c8cbe63-5b50-4f4c-a0e5-a7bc4d945c43",
@@ -5803,7 +5803,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.02341940470917
+                "pool_shortfall": -2.511709702354585
               }
             },
             {
@@ -5882,7 +5882,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.34544324953367
+                "pool_shortfall": -2.672721624766835
               }
             },
             {
@@ -5961,7 +5961,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.307396879155519
+                "pool_shortfall": -2.6536984395777594
               }
             },
             {
@@ -6040,7 +6040,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.269365378772825
+                "pool_shortfall": -2.6346826893864126
               }
             },
             {
@@ -6119,7 +6119,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.231348742573822
+                "pool_shortfall": -2.615674371286911
               }
             },
             {
@@ -6198,7 +6198,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.193346964749008
+                "pool_shortfall": -2.596673482374504
               }
             },
             {
@@ -6277,7 +6277,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.155360039491153
+                "pool_shortfall": -2.5776800197455767
               }
             },
             {
@@ -6356,7 +6356,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.117387960995298
+                "pool_shortfall": -2.558693980497649
               }
             },
             {
@@ -6435,7 +6435,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.079430723458756
+                "pool_shortfall": -2.539715361729378
               }
             },
             {
@@ -6514,7 +6514,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.041488321081107
+                "pool_shortfall": -2.520744160540554
               }
             },
             {
@@ -6593,7 +6593,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.003560748064192
+                "pool_shortfall": -2.501780374032096
               }
             },
             {
@@ -6672,7 +6672,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.965647998612122
+                "pool_shortfall": -2.4828239993060617
               }
             },
             {
@@ -6751,7 +6751,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.927750066931278
+                "pool_shortfall": -2.463875033465639
               }
             },
             {
@@ -6830,7 +6830,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.8898669472302965
+                "pool_shortfall": -2.444933473615148
               }
             },
             {
@@ -6909,7 +6909,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.851998633720083
+                "pool_shortfall": -2.4259993168600413
               }
             },
             {
@@ -6988,7 +6988,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.814145120613805
+                "pool_shortfall": -2.4070725603069025
               }
             }
           ],
@@ -7104,7 +7104,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.02341940470917
+                "pool_shortfall": -2.511709702354585
               }
             },
             {
@@ -7183,7 +7183,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.34544324953367
+                "pool_shortfall": -2.672721624766835
               }
             },
             {
@@ -7262,7 +7262,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.307396879155519
+                "pool_shortfall": -2.6536984395777594
               }
             },
             {
@@ -7341,7 +7341,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.269365378772825
+                "pool_shortfall": -2.6346826893864126
               }
             },
             {
@@ -7420,7 +7420,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.231348742573822
+                "pool_shortfall": -2.615674371286911
               }
             },
             {
@@ -7499,7 +7499,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.193346964749008
+                "pool_shortfall": -2.596673482374504
               }
             },
             {
@@ -7578,7 +7578,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.155360039491153
+                "pool_shortfall": -2.5776800197455767
               }
             },
             {
@@ -7657,7 +7657,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.117387960995298
+                "pool_shortfall": -2.558693980497649
               }
             },
             {
@@ -7736,7 +7736,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.079430723458756
+                "pool_shortfall": -2.539715361729378
               }
             },
             {
@@ -7815,7 +7815,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.041488321081107
+                "pool_shortfall": -2.520744160540554
               }
             },
             {
@@ -7894,7 +7894,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -5.003560748064192
+                "pool_shortfall": -2.501780374032096
               }
             },
             {
@@ -7973,7 +7973,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.965647998612122
+                "pool_shortfall": -2.4828239993060617
               }
             },
             {
@@ -8052,7 +8052,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.927750066931278
+                "pool_shortfall": -2.463875033465639
               }
             },
             {
@@ -8131,7 +8131,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.8898669472302965
+                "pool_shortfall": -2.444933473615148
               }
             },
             {
@@ -8210,7 +8210,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.851998633720083
+                "pool_shortfall": -2.4259993168600413
               }
             },
             {
@@ -8289,7 +8289,7 @@
                 }
               },
               "rule_points": {
-                "pool_shortfall": -4.814145120613805
+                "pool_shortfall": -2.4070725603069025
               }
             }
           ],
@@ -8332,7 +8332,7 @@
       "generation": 1,
       "mode": "controlling",
       "scope_revision": "fixture-whole-house",
-      "model_revision": "sha256:fcb6ed3d0254a0b0cc2650f745139470ad3df2cc6636e719aae198c2edb5af16",
+      "model_revision": "sha256:38bf8477e7315a89a979aa745263ad8a51687afc8eefa6e824029d99a357bbd8",
       "energy_basis": "stored_energy_mwh",
       "capacity_mwh": 18080000,
       "minimum_mwh": 904000,

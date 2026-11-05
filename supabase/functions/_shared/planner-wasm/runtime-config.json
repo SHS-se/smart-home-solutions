@@ -10,7 +10,7 @@
     "qualification": "test_live_candidate"
   },
   "policy_manifest": {
-    "version": "kronor-score-v19",
+    "version": "kronor-score-v20",
     "qualification": "test_live_candidate",
     "ordering": [
       "score_sek"
@@ -45,6 +45,6 @@
       "owner": "supabase/functions/_shared/planner-wasm/end-credit.ts"
     },
     "coverage": "bounded_causal_certificates_with_reported_exhaustion",
-    "pool_comfort": "2_sek_quadratic_shortfall_tangent_tail_at_2c_integrated_linear_water_segments"
+    "pool_comfort": "4_sek_per_degree_hour_beyond_1c_shortfall_integrated_linear_water_segments"
   }
 }
