@@ -4270,6 +4270,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExecutionPlanDeviation"
+                },
+                {
+                  "$ref": "#/components/schemas/ExecutionCapacityLimited"
                 }
               ]
             }
@@ -4629,6 +4632,54 @@
           }
         },
         "description": "Power ratings are terminal DC. Efficiency ratios are terminal/stored only. Directional AC conversion and installation overhead are required."
+      },
+      "ExecutionCapacityLimited": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "owner",
+          "status",
+          "cause",
+          "blocked_intervals",
+          "maximum_current_a"
+        ],
+        "properties": {
+          "owner": {
+            "const": "$ev"
+          },
+          "status": {
+            "const": "capacity_limited"
+          },
+          "cause": {
+            "const": "house_import_capacity"
+          },
+          "blocked_intervals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "start",
+                "end"
+              ],
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "end": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "maximum_current_a": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "description": "Observed positive EV current capacity in the named absolute opportunity; charging remains available."
       }
     }
   }

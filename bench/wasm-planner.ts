@@ -2,7 +2,7 @@ import { boilerDemand } from "../src/lib/planner-bench/household.ts";
 import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "../supabase/functions/_shared/planner-wasm/cost-policy.ts";
 import { demandLevel } from "../supabase/functions/_shared/planner/demand-outlook.ts";
 import { localDay, localMonths } from "../supabase/functions/_shared/planner-wasm/calendar.ts";
-import { builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
+import { READY_ABI, builderRecipe } from "../supabase/functions/_shared/planner-wasm/ready-problem.ts";
 // Fixture publisher and adapter for the nonpublishing candidate. No observed
 // future price/load/PV is passed through the ready-problem boundary.
 import recipe from "../planner-core/recipe.json" with { type: "json" };
@@ -137,7 +137,7 @@ export function readyProblem(
   const target = caseTargets(c);
   const water = hotWaterContext(c, h);
   const problem: ReadyProblem = {
-    abi: 16,
+    abi: READY_ABI,
     ev_battery_supply_allowed: h.site.ev_battery_supply_allowed,
     work_grant: grant,
     recipe: builderRecipe(recipe),
@@ -154,7 +154,7 @@ export function readyProblem(
       outdoor_c: c.recorded.outdoor_temperature_c[i],
       import_price: prices[i],
       export_price: c.known_prices.export_sek_per_kwh[i] ?? prices[i] - spread,
-      ev_available: true, pool_auxiliary_dispatch: null,
+      ev_available: true, ev_current_ceiling_a: null, pool_auxiliary_dispatch: null,
       published: c.known_prices.import_sek_per_kwh[i] !== null &&
         c.known_prices.export_sek_per_kwh[i] !== null,
     })),
@@ -220,7 +220,7 @@ export async function loadWasmCandidate(root: string) {
   const bytes = await Deno.readFile(`${dir}/solver.wasm`);
   const hash = createHash("sha256").update(bytes).digest("hex");
   if (
-    manifest.abi !== 16 || hash !== manifest.wasm_sha256 ||
+    manifest.abi !== READY_ABI || hash !== manifest.wasm_sha256 ||
     sourceDigest(root) !== manifest.source_sha256
   ) {
     throw new Error(

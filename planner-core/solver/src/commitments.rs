@@ -275,6 +275,27 @@ mod tests {
     }
 
     #[test]
+    fn observed_current_ceiling_is_required_and_certified_by_native_projection() {
+        let mut p = crate::witnesses::tests::problem(4);
+        p.slots[0].ev_current_ceiling_a = Some(13);
+        let mut over = idle();
+        over.ev_amps = 16;
+        let commands = vec![over, idle(), idle(), idle()];
+        assert!(
+            matches!(crate::project(&p, &commands), ProjectionOutcome::Failed { issue }
+            if issue.contains("ev_current_capacity"))
+        );
+        let mut value = serde_json::to_value(&p).unwrap();
+        value["slots"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("ev_current_ceiling_a");
+        assert!(serde_json::from_value::<Problem>(value).is_err());
+        p.slots[0].ev_current_ceiling_a = None;
+        assert!(serde_json::from_value::<Problem>(serde_json::to_value(&p).unwrap()).is_ok());
+    }
+
+    #[test]
     fn malformed_masks_are_refused_before_search() {
         let mut p = crate::witnesses::tests::problem(4);
         p.released = Some(vec![]);

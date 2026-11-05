@@ -1,3 +1,4 @@
+import { READY_ABI } from '../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -104,7 +105,7 @@ if (import.meta.main) {
     `${artifactDir}/artifact.json`,
     JSON.stringify(
       {
-        abi: 16,
+        abi: READY_ABI,
         wasm_sha256,
         source_sha256: sourceDigest(root),
         rust: '1.99.0',

@@ -11,7 +11,7 @@
  */
 import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
-import { cpuPlanningInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
@@ -44,10 +44,10 @@ const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> 
 };
 
 /** Plan once in this process, failing on an incomplete plan. */
-async function planSample(): Promise<Sample> {
-  const input = cpuPlanningInput();
+async function planSample(recovery = false): Promise<Sample> {
+  const input = recovery ? cpuBatteryRecoveryInput() : cpuPlanningInput();
   assert(input.problem.heater?.source && input.problem.initial.pool_source_depletion_kwh !== null, "CPU gate must exercise measured source recovery");
-  let response!: Response, body!: { result: { plan: { status: string; plans: { priority: { slots: unknown[] } } } } };
+  let response!: Response, body!: { result: { plan: { status: string; planning_warnings?: {code: string}[]; plans: { priority: { slots: unknown[] } } } } };
   const sample = await measure(async () => {
     response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
       method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-regression" },
@@ -58,6 +58,7 @@ async function planSample(): Promise<Sample> {
   assertEquals(response.status, 200, JSON.stringify(body));
   assertEquals(body.result.plan.status, "ready");
   assertEquals(body.result.plan.plans.priority.slots.length, 288);
+  if (recovery) assert(body.result.plan.planning_warnings?.some(w => w.code === 'battery_commitment_rescheduled'));
   return sample;
 }
 
@@ -139,7 +140,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "calibration"): Promise<Sample> {
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "calibration"): Promise<Sample> {
   const { code, stdout } = await new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
     args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--no-code-cache", import.meta.filename!, `--${kind}`],
@@ -170,6 +171,8 @@ const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floo
 
 if (Deno.args.includes("--plan")) {
   console.log(JSON.stringify(await planSample()));
+} else if (Deno.args.includes('--recovery')) {
+  console.log(JSON.stringify(await planSample(true)));
 } else if (Deno.args.includes("--reference")) {
   console.log(JSON.stringify(await referenceSample()));
 } else if (Deno.args.includes("--preparation")) {
@@ -183,10 +186,13 @@ if (Deno.args.includes("--plan")) {
 } else {
   console.log(JSON.stringify({ cpu_model: await cpuModel() }));
   const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [], calibrations: number[] = [];
+  const recoveries: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
     const plan = await coldSample("plan");
+    const recovery = await coldSample('recovery');
+    recoveries.push(recovery.cpu_ms);
     const preparation = await coldSample("preparation");
     const mixed = await coldSample("mixed-room");
     const varying = await coldSample("varying-rooms");
@@ -197,7 +203,7 @@ if (Deno.args.includes("--plan")) {
     preparations.push(preparation.cpu_ms);
     mixedRooms.push(mixed.cpu_ms);
     varyingRooms.push(varying.cpu_ms);
-    console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
+    console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
       preparation_cpu_ms: preparation.cpu_ms, preparation_elapsed_ms: preparation.elapsed_ms,
       mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms,
       preparation_wasm_memory_bytes: preparation.wasm_memory_bytes, mixed_room_wasm_memory_bytes: mixed.wasm_memory_bytes,
@@ -207,6 +213,9 @@ if (Deno.args.includes("--plan")) {
   const scaled = median(plans) * speed;
   console.log(JSON.stringify({ median_plan_cpu_ms: median(plans), median_reference_cpu_ms: median(references), speed_vs_baseline: speed, baseline_plan_cpu_ms: scaled }));
   assert(scaled < BUDGET_MS, `Complete cold planning worker used ${scaled.toFixed(1)} baseline ms CPU (median ${median(plans).toFixed(1)} ms on this machine, ${speed.toFixed(2)}× baseline speed); budget is ${BUDGET_MS} ms`);
+  const recovery = median(recoveries) * speed;
+  console.log(JSON.stringify({median_recovery_cpu_ms: median(recoveries), baseline_recovery_cpu_ms: recovery}));
+  assert(recovery < BUDGET_MS, `Battery commitment recovery used ${recovery.toFixed(1)} baseline ms CPU; budget is ${BUDGET_MS} ms`);
   const calibration = median(calibrations) * speed;
   console.log(JSON.stringify({ median_calibration_cpu_ms: median(calibrations), baseline_calibration_cpu_ms: calibration }));
   assert(calibration < PREPARATION_BUDGET_MS, `Held-out pool calibration used ${calibration.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

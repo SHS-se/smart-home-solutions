@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { RULE_KEYS } from "./ready-problem.ts";
+import { READY_ABI, RULE_KEYS } from "./ready-problem.ts";
 import { conversionSchema } from '../planner/battery-conversion-schema.ts';
 
 const number = z.number().finite();
@@ -28,7 +28,7 @@ const command = z.object({
   discharge_limit_w: number,
 });
 export const readyProblemSchema = z.object({
-  abi: z.literal(16),
+  abi: z.literal(READY_ABI),
   ev_battery_supply_allowed: z.boolean(),
   work_grant: number.int().nonnegative(),
   recipe: z.object({
@@ -50,6 +50,7 @@ export const readyProblemSchema = z.object({
     export_price: number,
     published: z.boolean(),
     ev_available: z.boolean(),
+    ev_current_ceiling_a: number.int().nonnegative().nullable(),
     pool_auxiliary_dispatch: z.object({ fixed_w: number.nonnegative(), on_w: number.nonnegative() }).strict().nullable(),
   }).array().nonempty(),
   battery: z.object({

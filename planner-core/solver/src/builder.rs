@@ -86,6 +86,17 @@ fn ev_levels(p: &Problem, index: &Index, i: usize, label: &Label, household_w: f
         levels = vec![held.ev_amps];
     } else if commitments::unavailable(p, i, commitments::Owner::Ev) {
         levels = vec![0];
+    } else if let Some(limit) = s.ev_current_ceiling_a {
+        if let Some(charger) = &p.charger {
+            let ceiling = charger.fitting_amps(
+                f64::from(limit.min(charger.max_current_a))
+                    * charger.voltage_v
+                    * f64::from(charger.phase_count),
+            );
+            for amps in &mut levels {
+                *amps = (*amps).min(ceiling);
+            }
+        }
     }
     levels.sort_unstable();
     levels.dedup();

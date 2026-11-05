@@ -24,10 +24,16 @@ export function parseExecutionChanges(raw: unknown): ExecutionChange[] {
         change.owner !== change.owner.trim() || owners.has(change.owner) ||
         typeof change.cause !== "string" || !change.cause.trim()) return invalid("Each execution change requires one distinct owner, status, cause and blocked intervals");
     const deviation = change.status === "plan_deviation";
+    const limited = change.status === 'capacity_limited';
     const field = deviation ? "affected_intervals" : "blocked_intervals";
-    if (!exactKeys(change, deviation ? ["owner", "status", "cause", field, "magnitude", "persistence_ms"] : ["owner", "status", "cause", field]) ||
-        !["temporarily_absent", "faulted", "recovered", "plan_deviation"].includes(String(change.status)) || !Array.isArray(change[field])) {
+    if (!exactKeys(change, deviation ? ["owner", "status", "cause", field, "magnitude", "persistence_ms"] :
+        limited ? ['owner', 'status', 'cause', field, 'maximum_current_a'] : ["owner", "status", "cause", field]) ||
+        !["temporarily_absent", "faulted", "recovered", "plan_deviation", 'capacity_limited'].includes(String(change.status)) || !Array.isArray(change[field])) {
       return invalid("Each execution change requires one distinct owner, status, cause and blocked intervals");
+    }
+    if (limited && (change.owner !== '$ev' || change.cause !== 'house_import_capacity' ||
+        !Number.isSafeInteger(change.maximum_current_a) || !(Number(change.maximum_current_a) > 0))) {
+      return invalid('EV capacity requires a positive integer current ceiling and house-import cause');
     }
     if (deviation && (!(typeof change.magnitude === "number" && Number.isFinite(change.magnitude) && change.magnitude > 0) ||
         !(typeof change.persistence_ms === "number" && Number.isSafeInteger(change.persistence_ms) && change.persistence_ms >= 0) ||
@@ -46,6 +52,8 @@ export function parseExecutionChanges(raw: unknown): ExecutionChange[] {
     }
     if (deviation) return { owner: change.owner, status: "plan_deviation", cause: change.cause as "battery_energy_shortfall" | "pool_temperature_shortfall",
       affected_intervals: intervals, magnitude: change.magnitude as number, persistence_ms: change.persistence_ms as number };
+    if (limited) return {owner: '$ev', status: 'capacity_limited', cause: 'house_import_capacity',
+      maximum_current_a: change.maximum_current_a as number, blocked_intervals: intervals};
     return { owner: change.owner, status: change.status as "temporarily_absent" | "faulted" | "recovered", cause: change.cause, blocked_intervals: intervals };
   });
 }

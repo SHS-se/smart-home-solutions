@@ -127,6 +127,11 @@ fn transition(
         return Err("owner_unavailable".into());
     }
     let s = &p.slots[i];
+    if s.ev_current_ceiling_a
+        .is_some_and(|limit| command.ev_amps > limit)
+    {
+        return Err("ev_current_capacity".into());
+    }
     let hours = projected_hours(s);
     if command.charge_limit_w < 0.0 || command.discharge_limit_w < 0.0 {
         return Err("negative_native_power_limit".into());
@@ -1404,7 +1409,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 16;
+        p.abi = 17;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

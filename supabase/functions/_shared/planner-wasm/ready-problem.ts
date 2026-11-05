@@ -10,6 +10,8 @@ import type {
 
 import type { EndCreditTerms } from "./end-credit.ts";
 
+export const READY_ABI = 17 as const;
+
 export type BatteryOperation =
   | "idle"
   | "solar_charge"
@@ -43,11 +45,12 @@ export interface ReadySlot {
   export_price: number;
   published: boolean;
   ev_available: boolean;
+  ev_current_ceiling_a: number | null;
   pool_auxiliary_dispatch: { fixed_w: number; on_w: number } | null;
 }
 /** Already prepared: no historical, source-fetching or fitting API is reachable here. */
 export interface ReadyProblem {
-  abi: 16;
+  abi: typeof READY_ABI;
   /** Supply permission, independent of comfort scoring and grid capacity. */
   ev_battery_supply_allowed: boolean;
   work_grant: number;

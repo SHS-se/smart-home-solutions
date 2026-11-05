@@ -1,3 +1,4 @@
+import { READY_ABI } from "./ready-problem.ts";
 import { sha256 } from "@noble/hashes/sha2.js";
 import artifact from "./artifact.json" with { type: "json" };
 import { SOLVER_BASE64 } from "./solver-bytes.ts";
@@ -14,7 +15,7 @@ export function nativePlanner(trace?: PlanningTrace): ReturnType<typeof createWa
       const decoded = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) decoded[i] = binary.charCodeAt(i);
       const hash = Array.from(sha256(decoded), b => b.toString(16).padStart(2, "0")).join("");
-      if (artifact.abi !== 16 || hash !== artifact.wasm_sha256) throw new Error("Rules planner artifact is missing, obsolete or corrupt");
+      if (artifact.abi !== READY_ABI || hash !== artifact.wasm_sha256) throw new Error("Rules planner artifact is missing, obsolete or corrupt");
       return decoded;
     });
     compiled = planningStage(trace, "wasm_compile", () => createWasmPlanner(bytes));

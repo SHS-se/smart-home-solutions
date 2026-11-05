@@ -3,7 +3,7 @@ import { parseDeviceColours } from '../energy-shift/device-colours.ts';
 import { deviceMembers, allocateDevicePower, type DeviceMember } from '../../../supabase/functions/_shared/planner/device-power-allocation.ts';
 import { poolHeaters } from '../../../supabase/functions/_shared/planner/pool-devices.ts';
 import recipe from '../../../planner-core/recipe.json' with { type: 'json' };
-import { builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
+import { READY_ABI, builderRecipe, type ReadyProblem } from '../../../supabase/functions/_shared/planner-wasm/ready-problem.ts';
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy } from '../../../supabase/functions/_shared/planner-wasm/car-policy.ts';
 import { localDay, localMonths } from '../../../supabase/functions/_shared/planner-wasm/calendar.ts';
 import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from '../../../supabase/functions/_shared/planner-wasm/cost-policy.ts';
@@ -129,7 +129,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
   const months = localMonths(starts, rows.snapshot.timezone);
   const needsOutdoor = facts.poolStore?.loss.kind === 'linear' && facts.poolStore.loss.surroundings_c === null;
   const problem: ReadyProblem = {
-    abi: 16, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
+    abi: READY_ABI, work_grant: recipe.work_grant, recipe: builderRecipe(recipe), ev_battery_supply_allowed: settings.batterySuppliesEv,
     battery: facts.battery, car: facts.car, charger: facts.charger, pool_store: facts.poolStore,
     heater: facts.heater ? { ...facts.heater, auxiliary_w: facts.heater.auxiliary_w - idlePumpW } : null,
     pool_stop_c: facts.poolStore ? settings.poolStopC : null,
@@ -173,7 +173,7 @@ export function prepareHomeBaseline(rows: HistoricalRows): BaselineInput {
         base_w: Math.max(0, base) * 4000 + idlePumpW, base_ev_w: 0,
         solar_w: (modeledKwh ?? energy(observed?.solar_production_kwh, 'solar generation', at, 'solarQuarters')) * 4000,
         outdoor_c: needsOutdoor ? number(outdoor.get(ms)?.temperature_c, 'outdoor temperature', at) : 0,
-        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i], pool_auxiliary_dispatch: null };
+        import_price: importPrice, export_price: exportPrice, published: true, ev_available: !!facts.car && evAvailable[i], ev_current_ceiling_a: null, pool_auxiliary_dispatch: null };
     }),
     targets: { pool_c: facts.poolStore ? settings.poolStopC : null },
     car_policy: null,

@@ -113,3 +113,13 @@ Deno.test('independent battery evidence names household Q but proves actual B co
   snapshot.battery_execution_feedback.previous_contract_id='another';
   assertThrows(()=>validateExecutionReplan(evidence,household,snapshot,{battery}),ExecutionReplanError,'exact accepted owner');
 });
+
+Deno.test("reduced capacity is strict EV evidence, not an absence or arbitrary configuration limit", () => {
+  const limited = {owner: "$ev", status: "capacity_limited", cause: "house_import_capacity", maximum_current_a: 13,
+    blocked_intervals: request().changes[0].blocked_intervals};
+  assertEquals(parseExecutionChanges([limited]), [limited]);
+  for (const wrong of [{...limited, owner: "$pool"}, {...limited, maximum_current_a: 0},
+    {...limited, maximum_current_a: 12.5}, {...limited, cause: "unknown"}, {...limited, extra: true}]) {
+    assertThrows(() => parseExecutionChanges([wrong]), ExecutionReplanError);
+  }
+});

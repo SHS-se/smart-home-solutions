@@ -37,6 +37,9 @@ pub struct Slot {
     pub export_price: f64,
     pub published: bool,
     pub ev_available: bool,
+    /// Observed house capacity for this absolute opportunity, not a charger rating.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub ev_current_ceiling_a: Option<u32>,
     /// Independent retained auxiliary draw plus draw following the enable command.
     #[serde(deserialize_with = "Option::deserialize")]
     pub pool_auxiliary_dispatch: Option<PoolAuxiliaryDispatch>,
@@ -246,7 +249,7 @@ pub enum Outcome {
 
 fn validate(p: &Problem) -> Result<(), String> {
     let bad = |s: &str| Err(s.to_owned());
-    if p.abi != 16 || p.slots.is_empty() {
+    if p.abi != 17 || p.slots.is_empty() {
         return bad("unsupported_abi_or_empty_problem");
     }
     if [

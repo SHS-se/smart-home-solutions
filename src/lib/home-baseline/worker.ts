@@ -1,3 +1,4 @@
+import { READY_ABI } from '../../../supabase/functions/_shared/planner-wasm/ready-problem';
 import wasmUrl from '../../../supabase/functions/_shared/planner-wasm/solver.wasm?url';
 import artifact from '../../../supabase/functions/_shared/planner-wasm/artifact.json';
 import { createWasmReplayPlanner } from '../../../supabase/functions/_shared/planner-wasm/core';
@@ -10,7 +11,7 @@ self.onmessage = async (event: MessageEvent<BaselineInput>) => {
     if (!response.ok) throw new Error(`Could not load default model engine: ${response.status}`);
     const bytes = new Uint8Array(await response.arrayBuffer());
     const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
-    if (artifact.abi !== 16 || hash !== artifact.wasm_sha256) throw new Error('Unsupported or corrupt default model engine');
+    if (artifact.abi !== READY_ABI || hash !== artifact.wasm_sha256) throw new Error('Unsupported or corrupt default model engine');
     const compared = compareModels(event.data, createWasmReplayPlanner(bytes));
     self.postMessage({ ...compared, engineHash: hash });
   } catch (error) {

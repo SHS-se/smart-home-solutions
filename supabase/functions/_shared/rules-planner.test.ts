@@ -330,7 +330,7 @@ Deno.test("a malformed retained command is refused without releasing the hour", 
   assertThrows(() => generateRulesPlan(prepared), Error, "negative_native_power_limit");
 });
 
-Deno.test("a clipped retained grid purchase reports a conflict without releasing unrelated commands", () => {
+Deno.test("a clipped retained grid purchase reschedules only its proven battery conflict", () => {
   const s = snapshot();
   s.schema_version = 8;
   s.capabilities.battery = true;
@@ -345,7 +345,16 @@ Deno.test("a clipped retained grid purchase reports a conflict without releasing
   s.grid.import_limit_w = 2000;
   const prepared = prepare(s, { plan_id: prior.plan_id, slots: locked });
   const before = JSON.stringify(prepared);
-  assertThrows(() => generateRulesPlan(prepared), Error, "Previously accepted commands");
+  // User continuity requirement: a proved battery-only conflict cannot stop the home.
+  const revised = generateRulesPlan(prepared).plan;
+  assertEquals(revised.status, "ready");
+  assert(revised.planning_warnings!.some(w => w.code === "battery_commitment_rescheduled"));
+  for (let i = 0; i < 4; i++) {
+    assertEquals(revised.plans.priority.slots[i].ev_target_current_a, locked[i].ev_target_current_a);
+    assertEquals(revised.plans.priority.slots[i].pool_permitted, locked[i].pool_permitted);
+    assertEquals(revised.plans.priority.slots[i].device_commands, locked[i].device_commands);
+    assert(revised.plans.priority.slots[i].grid_import_w <= s.grid.import_limit_w + 1e-6);
+  }
   assertEquals(JSON.stringify(prepared), before);
 });
 
