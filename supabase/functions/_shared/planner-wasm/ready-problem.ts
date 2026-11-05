@@ -10,7 +10,7 @@ import type {
 
 import type { EndCreditTerms } from "./end-credit.ts";
 
-export const READY_ABI = 17 as const;
+export const READY_ABI = 18 as const;
 
 export type BatteryOperation =
   | "idle"
@@ -74,6 +74,7 @@ export interface ReadyProblem {
     response: HeatPumpResponse;
   } | null;
   pool_stop_c: number | null;
+  charging_before: { ev_amps: number | null; battery_grid_w: number | null };
   initial: {
     battery_kwh: number | null;
     ev_kwh: number | null;
@@ -95,8 +96,8 @@ export interface ReadyProblem {
     battery_export_min_price: number;
     wear_per_kwh: number;
     pool_start_cost_sek: number;
-    ev_start_preference_sek: number;
-    battery_start_preference_sek: number;
+    ev_change_preference_sek: number;
+    battery_change_preference_sek: number;
   };
   /** What the energy left in the stores is worth to the plan's score (end-credit.ts). */
   end_credit: EndCreditTerms;

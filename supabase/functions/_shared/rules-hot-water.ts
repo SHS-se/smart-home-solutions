@@ -1,13 +1,38 @@
 import type { createWasmPlanner, NativeQuarter, SolveOutcome } from "./planner-wasm/core.ts";
-import { endCredit } from "./planner-wasm/end-credit.ts";
 import { proportionalSupply } from "./battery-supply.ts";
 import type { NativeCommand } from "./planner-wasm/ready-problem.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
 import { scheduleHotWater } from "./hot-water-opportunities.ts";
 import { nativeOwnerHeld } from "./rules-commitments.ts";
 import { chargeDcPower, dischargeDcPower, outputPower } from './planner/battery-conversion.ts';
+import { mergePlanningWarnings, planningWarning } from './planner/planning-warnings.ts';
 
 type Selection = Extract<SolveOutcome, { kind: "selected" }>["selection"];
+
+/** Complete both bounded native finalists before selecting published commands.
+ * A failed optional challenger cannot discard an already valid household plan. */
+export function completeRulesCandidates(core: Pick<ReturnType<typeof createWasmPlanner>, "complete">,
+  input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
+  const alternative = native.charging_alternative;
+  if (!alternative) return addHotWater(core, input, native);
+  const other = { ...native, commands: alternative.commands, quarters: alternative.quarters,
+    account: alternative.account, charging_alternative: null, economic: [], runs: [], witness_coverage: [] };
+  const [ordinary, block] = alternative.role === "ordinary" ? [other, native] : [native, other];
+  const incumbent = addHotWater(core, input, ordinary);
+  try {
+    const candidate = addHotWater(core, input, block);
+    const waterNoWorse = Object.entries(incumbent.input.boiler_shortfall_minutes).every(([day, minutes]) =>
+      Object.prototype.hasOwnProperty.call(candidate.input.boiler_shortfall_minutes, day) && candidate.input.boiler_shortfall_minutes[day] <= minutes);
+    return waterNoWorse && candidate.selection.account.score_sek > incumbent.selection.account.score_sek + native.minimum_gain_sek
+      ? candidate : incumbent;
+  } catch (error) {
+    incumbent.input.snapshot = { ...incumbent.input.snapshot, planning_warnings: mergePlanningWarnings(
+      incumbent.input.snapshot.planning_warnings, [planningWarning("charging_alternative_unavailable", "charging",
+        `The optional charging-block comparison could not complete: ${String(error)}`,
+        "The completed household plan remains available and planning continues.")]) };
+    return incumbent;
+  }
+}
 
 /** A finite allowance backed by otherwise exported solar at a future full
  * battery. Intervening household discharge and the physical reserve are kept.
@@ -68,7 +93,7 @@ export function waterBatteryCommand(input: PreparedRulesInput, command: NativeCo
 
 /** One household solve followed by one water projection. Pool/EV choices stay
  * fixed. Battery ceilings use the same partition as HA's measured supply scope. */
-export function addHotWater(core: Pick<ReturnType<typeof createWasmPlanner>, "project">, input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
+export function addHotWater(core: Pick<ReturnType<typeof createWasmPlanner>, "complete">, input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
   if (!input.boiler_services.length) return { input, selection: native };
   const p = input.problem;
   const other = p.slots.map((s, i) => s.base_w - input.boiler_w[i] + native.quarters[i].pool_w + native.quarters[i].ev_w);
@@ -94,12 +119,8 @@ export function addHotWater(core: Pick<ReturnType<typeof createWasmPlanner>, "pr
     boiler_battery_allowed: batteryAllowed, boiler_permission_starts: water.permission_starts,
     boiler_shortfall_minutes: water.shortfall_minutes };
   const commands = waterBatteryCommands(updated, native.commands, native.quarters);
-  const projected = core.project(problem, commands).outcome;
+  const projected = core.complete(problem, commands).outcome;
   if (projected.kind === "failed") throw new Error(`Hot-water opportunities exceed equipment limits: ${projected.issue}`);
-  const quarters = projected.quarters;
-  const cash = quarters.reduce((sum, q) => sum + q.cost, 0), wear = quarters.reduce((sum, q) => sum + q.wear, 0);
-  const credit = endCredit(problem.end_credit, problem.initial, quarters.at(-1)!).credit_sek;
-  const continuity = quarters.reduce((sum, q) => sum + q.continuity, 0);
-  return { input: updated, selection: { ...native, commands, quarters,
-      account: { ...native.account, cash_sek: cash, wear_sek: wear, credit_sek: credit, continuity_sek: continuity, score_sek: native.account.points - (cash + wear + continuity - credit) } } };
+  return { input: updated, selection: { ...native, commands: projected.commands,
+    quarters: projected.quarters, account: projected.account } };
 }

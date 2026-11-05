@@ -58,32 +58,33 @@ impl Edit {
         if self.device != Device::Ev {
             return 0.0;
         }
-        let active = |i: usize, edited: bool| {
+        let current = |i: usize, edited: bool| {
             if edited && self.start <= i && i < self.end {
-                true
+                commands[self.from].ev_amps
             } else if edited && self.from <= i && i < self.to {
-                false
+                0
             } else {
-                commands[i].ev_amps > 0
+                commands[i].ev_amps
             }
         };
-        // Only these four boundaries change the count, including neighbours
-        // at different amperages that remain part of one uninterrupted run.
         let mut boundaries = [self.from, self.to, self.start, self.end];
         boundaries.sort_unstable();
-        let starts = |edited| {
+        let changes = |edited| {
             let mut count = 0;
             for (n, &i) in boundaries.iter().enumerate() {
-                if n > 0 && i == boundaries[n - 1] {
+                if (n > 0 && i == boundaries[n - 1]) || i >= commands.len() {
                     continue;
                 }
-                if i < commands.len() && active(i, edited) && (i == 0 || !active(i - 1, edited)) {
-                    count += 1;
-                }
+                let before = if i == 0 {
+                    p.charging_before.ev_amps
+                } else {
+                    Some(current(i - 1, edited))
+                };
+                count += usize::from(before.is_some_and(|a| a != current(i, edited)));
             }
             count as f64
         };
-        (starts(false) - starts(true)) * p.limits.ev_start_preference_sek
+        (changes(false) - changes(true)) * p.limits.ev_change_preference_sek
     }
     pub fn destination(self) -> Destination {
         Destination {
@@ -555,11 +556,10 @@ mod tests {
     #[test]
     fn boundary_continuity_gain_matches_complete_run_counts_for_every_short_schedule() {
         let p = crate::witnesses::tests::problem(6);
-        let starts = |commands: &[Command]| {
+        let changes = |commands: &[Command]| {
             commands
-                .iter()
-                .enumerate()
-                .filter(|(i, c)| c.ev_amps > 0 && (*i == 0 || commands[*i - 1].ev_amps == 0))
+                .windows(2)
+                .filter(|c| c[0].ev_amps != c[1].ev_amps)
                 .count() as f64
         };
         for mask in 0..64 {
@@ -594,8 +594,8 @@ mod tests {
                                 start,
                                 end,
                             };
-                            let expected = (starts(&commands) - starts(&edit.apply(&commands)))
-                                * p.limits.ev_start_preference_sek;
+                            let expected = (changes(&commands) - changes(&edit.apply(&commands)))
+                                * p.limits.ev_change_preference_sek;
                             assert_eq!(edit.continuity_gain(&p, &commands), expected);
                         }
                     }
@@ -636,6 +636,8 @@ mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         };
         let q = physics::projection(&p, &commands).unwrap();
         let estimate = Estimate::new(&p, Device::Pool, 3000.0, &q);
@@ -785,6 +787,8 @@ mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         };
         let edit = proposals(&p, &commands, &q, usize::MAX, &mut work)
             .unwrap()

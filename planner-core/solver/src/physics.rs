@@ -10,7 +10,7 @@ pub(crate) struct State {
     pub pool_pending_heat_kwh: f64,
     pub pool_source_depletion_kwh: f64,
     pub heater: HeaterState,
-    pub charging: crate::charging::Activity,
+    pub charging: crate::charging::Settings,
     /// Quarters of the pool run this plan started, while it is on; None for
     /// one already running when the plan began, which has no run charge.
     pub pool_run_quarters: Option<u32>,
@@ -39,7 +39,7 @@ pub(crate) fn initial(p: &Problem) -> State {
         pool_pending_heat_kwh: p.initial.pool_pending_heat_kwh.unwrap_or(0.0),
         pool_source_depletion_kwh: p.initial.pool_source_depletion_kwh.unwrap_or(0.0),
         heater: p.initial.heater_state.unwrap_or(HeaterState::OffUnobserved),
-        charging: Default::default(),
+        charging: crate::charging::Settings::initial(p),
         pool_run_quarters: None,
     }
 }
@@ -295,7 +295,7 @@ fn transition(
         } else {
             0.0
         };
-    let charging = crate::charging::Activity::observed(command, ev_w, charge);
+    let charging = crate::charging::Settings::commanded(command);
     let started = pool.as_ref().is_some_and(|h| h.start.is_some());
     let run_quarters = if !command.pool_on {
         None
@@ -584,11 +584,7 @@ fn projection_prefix_with(
             pool_pending_heat_kwh: q.pool_pending_heat_kwh.unwrap_or(0.0),
             pool_source_depletion_kwh: q.pool_source_depletion_kwh.unwrap_or(0.0),
             heater: q.heater_state.unwrap_or(HeaterState::OffUnobserved),
-            charging: crate::charging::Activity::observed(
-                &commands[prefix.len() - 1],
-                q.ev_w,
-                q.charge_w,
-            ),
+            charging: crate::charging::Settings::commanded(&commands[prefix.len() - 1]),
             pool_run_quarters: pool_run_age(prefix),
         },
     );
@@ -676,6 +672,45 @@ fn integer_allocation(p: &Problem, i: usize, c: &Command, q: &Quarter) -> Option
         _ => return None,
     }
     (normalized != *c).then_some(normalized)
+}
+
+/// Final permission refinement supplies upper bounds, unlike construction's
+/// unquantized proposed allocations. Integer requests must not exceed them.
+pub(crate) fn complete_external(
+    p: &Problem,
+    commands: &mut [Command],
+) -> Result<Vec<Quarter>, String> {
+    if commands.len() != p.slots.len() {
+        return Err("projection_coverage".into());
+    }
+    for (i, command) in commands.iter_mut().enumerate() {
+        if commitments::hold(p, i).has(commitments::Owner::Battery) {
+            continue;
+        }
+        match command.battery {
+            Operation::GridCharge => command.charge_limit_w = command.charge_limit_w.floor(),
+            Operation::Export => command.discharge_limit_w = command.discharge_limit_w.floor(),
+            _ => {}
+        }
+    }
+    let mut changed = Vec::new();
+    let quarters = projection_prefix_with(
+        p,
+        commands,
+        &[],
+        |_, h, s, state, on, conditions| h.pool_transition(s, state, on, conditions),
+        |i, c, q| {
+            let normalized = integer_allocation(p, i, c, q);
+            if let Some(c) = &normalized {
+                changed.push((i, c.clone()));
+            }
+            normalized
+        },
+    )?;
+    for (i, command) in changed {
+        commands[i] = command;
+    }
+    Ok(quarters)
 }
 fn meter_normalized_projection(p: &Problem, commands: &[Command], work: &mut Work) -> bool {
     let forced = commands
@@ -886,6 +921,8 @@ mod refinement_tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         }
     }
 
@@ -1409,7 +1446,7 @@ mod supply_permission_tests {
             crate::validate(&p),
             Err("unsupported_abi_or_empty_problem".into())
         );
-        p.abi = 17;
+        p.abi = 18;
         p.initial.pool_pending_heat_kwh = None;
         assert_eq!(
             crate::validate(&p),

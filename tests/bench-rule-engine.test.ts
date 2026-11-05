@@ -66,7 +66,7 @@ Deno.test("public bench selects the configured rule engine and passes its saved 
     });
     assertEquals(actual.record.curves, []);
   }
-  assert((await plannerVersion(diskTree(root))).startsWith("v17-rule-wasm:"));
+  assert((await plannerVersion(diskTree(root))).startsWith("v18-rule-wasm:"));
 });
 
 Deno.test("configured rule engine versions change with artifacts and cannot silently use TypeScript", async () => {

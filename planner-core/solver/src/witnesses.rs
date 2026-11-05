@@ -863,7 +863,8 @@ pub(crate) mod tests {
 
     pub(crate) fn problem(n: usize) -> Problem {
         Problem {
-            abi: 17,
+            abi: 18,
+            charging_before: crate::ChargingBoundary::default(),
             // No end credit unless a test asks for one.
             end_credit: EndCreditTerms {
                 reference_sek_per_kwh: 0.0,
@@ -973,8 +974,8 @@ pub(crate) mod tests {
                 battery_export_min_price: 0.0,
                 wear_per_kwh: 0.0,
                 pool_start_cost_sek: 0.0,
-                ev_start_preference_sek: 0.0,
-                battery_start_preference_sek: 0.0,
+                ev_change_preference_sek: 0.0,
+                battery_change_preference_sek: 0.0,
             },
             rules: vec![],
             accepted: None,
@@ -1006,6 +1007,8 @@ pub(crate) mod tests {
             move_resize_trials: 0,
             move_resize_passes: 0,
             move_resize_improvements: 0,
+            charging_block_trials: 0,
+            charging_block_improvements: 0,
         };
         let index = policy::index(p, &mut work).unwrap();
         let q = physics::projection(p, commands).unwrap();

@@ -3,7 +3,11 @@
   "generated_by": "scripts/ev-readiness-synthetic.fixture.ts",
   "night_quarters": 38,
   "problem": {
-    "abi": 17,
+    "abi": 18,
+    "charging_before": {
+      "ev_amps": null,
+      "battery_grid_w": null
+    },
     "end_credit": {
       "reference_sek_per_kwh": 1,
       "battery": {
@@ -1534,8 +1538,8 @@
       "battery_export_reserve_kwh": 6,
       "battery_export_min_price": 4,
       "wear_per_kwh": 0.03,
-      "ev_start_preference_sek": 0.25,
-      "battery_start_preference_sek": 0.25,
+      "ev_change_preference_sek": 0.125,
+      "battery_change_preference_sek": 0.125,
       "pool_start_cost_sek": 3
     },
     "rules": [

@@ -23,3 +23,39 @@ Battery continuation interpolation also no longer borrows a finite value across 
 `tests/charging-continuity.fixture.ts` is an anonymous rounded power/price case derived from the reported pattern. Its regression covers an uninterrupted session with alternating positive currents, car service, retained battery inventory, grid limits, metered work and solve/project parity. Native tests also cover partial quarters, fixed commands, unsupported continuation cells and changed-current battery headroom.
 
 The complete production entry point was also rerun against the supplied 72-hour capture. In its alternating evening block, EV current changes fell from six to one. Final EV energy stayed at 57.51918 kWh; final battery storage increased from approximately 17.714 to 17.852 kWh and the pool ended approximately 0.051°C warmer. Forecast electricity cost increased by 1.81 SEK across the full horizon. Peak planned import remained within the configured 15,000 W limit. These are replay forecasts, not measurements or a claim of hardware protection.
+
+## Complete charging blocks (5 November 2026; ABI 18)
+
+The approved policy replaces charging-start charges with **0.125 SEK per
+requested EV current or battery grid-charge setting change**, including starts,
+stops and positive setting changes. An isolated stop/start costs 0.25 SEK as
+before. The preference is separate from electricity cost and wear; automatic
+supply, export and solar-capture settings retain their existing economics. A
+lower but positive request counts just like any other changed request, so a
+trickle between larger requests does not save a transition. The measure is
+planner intent, not the count of hardware writes. The app owns native DC
+conversion, quantization and live response.
+
+Independent accepted EV and battery references describe prior requested intent
+at capture. Unknown intent is neutral at the first boundary. No prior plan is
+inferred to be physically applied; current owner holds and bookings are exact.
+
+The native solver keeps its ordinary completed search and reserves a bounded
+last round for whole EV relocations, merging sessions, current grouping and
+stationary charge levelling. It also tries moving part of a longer EV session
+into an earlier continuous window with spare capacity under the existing
+battery plan. It compares at most eight attempts, including a
+fresh battery allocation on a changed EV schedule and exact projection of
+bounded conditional responses. Proposal estimates rank trials; they do not
+reject a whole block for its isolated price estimate. The final round keeps the
+ordinary incumbent and a distinct block challenger through water completion.
+Each finalist is normalized and scored with its own water permissions and rated
+reservation. A challenger cannot displace the completed plan with worse required
+water service. The original grant and final certification remain in force.
+
+Continuity reduces exposure to delayed load changes. The app still owns admission
+of each write and the durable capacity journal. The pinned producer/consumer
+qualification exercises both directions of a delayed EV/battery handoff, plus
+retained uncertain effects after restart and dispatch-receipt ordering. No timers,
+minimum power, new hardware validity gates, departure deadlines or handback
+behavior are introduced.

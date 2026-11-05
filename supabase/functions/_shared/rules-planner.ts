@@ -1,9 +1,9 @@
 import { PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { deviceMembers as group, allocateDevicePower as allocate, type DeviceMember } from './planner/device-power-allocation.ts';
 import { DEFAULT_VALUE_SETTINGS } from "./planner/value-curves.ts";
-import { addHotWater } from "./rules-hot-water.ts";
+import { completeRulesCandidates } from "./rules-hot-water.ts";
 import { projectRulesBaseline } from "./rules-baseline.ts";
-import { POOL_START_COST_SEK, EV_START_PREFERENCE_SEK, BATTERY_START_PREFERENCE_SEK } from "./planner-wasm/cost-policy.ts";
+import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
 import { preparePoolService, type PoolService } from "./rules-pool-service.ts";
 import { prepareRoomServices, type RoomServices } from "./rules-room-services.ts";
@@ -316,8 +316,15 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
   snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
   const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
   const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
+  const previousIntent = (source: PublishedCommandReference | null) => source?.slots.find(slot =>
+    Date.parse(slot.start) <= effective && Date.parse(slot.start) + QUARTER_MS > effective);
+  const previousHousehold = previousIntent(reference);
+  const previousBattery = previousIntent(independent ? independent.battery : reference)?.battery_instruction;
   const problem: ReadyProblem = {
-    abi: READY_ABI, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+    abi: READY_ABI, charging_before: {
+      ev_amps: previousHousehold?.ev_target_current_a ?? null,
+      battery_grid_w: previousBattery ? previousBattery.kind === "grid_charge" ? previousBattery.charge_ac_w : 0 : null,
+    }, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
     slots: snapshot.slots.map((s, i) => {
       const start = Date.parse(s.start);
       const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
@@ -355,7 +362,7 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,
       battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
       wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
-      ev_start_preference_sek: EV_START_PREFERENCE_SEK, battery_start_preference_sek: BATTERY_START_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
+      ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
     rules: approved.rules,
     // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
     end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
@@ -552,7 +559,7 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     return infeasible(solved.issue);
   }
   const projections = core.projectionSession();
-  const refined = planningStage(trace, "hot_water_refinement", () => addHotWater(projections, input, solved.selection));
+  const refined = planningStage(trace, "hot_water_refinement", () => completeRulesCandidates(projections, input, solved.selection));
   input = refined.input;
   const selected = refined.selection;
   const p = input.problem;

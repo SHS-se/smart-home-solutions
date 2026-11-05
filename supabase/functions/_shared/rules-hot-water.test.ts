@@ -4,16 +4,34 @@ import { prepareRulesPlanningInput, generateRulesPlan } from './rules-planner.ts
 import { createWasmPlanner } from './planner-wasm/core.ts';
 import { SOLVER_BASE64 } from './planner-wasm/solver-bytes.ts';
 import { resolveRulePolicy } from './planner-wasm/rule-policy.ts';
-import { addHotWater } from './rules-hot-water.ts';
+import { addHotWater, completeRulesCandidates } from './rules-hot-water.ts';
 import { cpuPlanningInput } from '../../../tests/planner-handler-cpu.fixture.ts';
 const core = createWasmPlanner(Uint8Array.from(atob(SOLVER_BASE64), c => c.charCodeAt(0)));
 Deno.test('water adds one projection and no further solves on the 72-hour household', () => {
   const p = cpuPlanningInput(); const native = core.solve(p.problem).outcome; assert(native.kind === 'selected');
   let projections = 0;
-  const selected = addHotWater({ ...core, project(problem, commands) { projections++; return core.project(problem, commands); }, solve() { throw new Error('Water must not solve again'); } }, p, native.selection);
+  const selected = addHotWater({ ...core, complete(problem, commands) { projections++; return core.complete(problem, commands); }, solve() { throw new Error('Water must not solve again'); } }, p, native.selection);
   assertEquals(projections, 1);
   const replay = core.project(selected.input.problem, selected.selection.commands).outcome;
   assert(replay.kind === 'projected'); assertEquals(replay.quarters, selected.selection.quarters);
+});
+Deno.test('an unexecutable charging challenger leaves the completed ordinary plan available', () => {
+  const input = cpuPlanningInput();
+  const outcome = core.solve(input.problem).outcome;
+  assert(outcome.kind === 'selected');
+  const ordinary = addHotWater(core, input, outcome.selection);
+  let attempts = 0;
+  const result = completeRulesCandidates({ complete(problem, commands) {
+    const completed = core.complete(problem, commands);
+    if (++attempts === 2) return { ...completed, outcome: { kind: 'failed', issue: 'synthetic rated reservation conflict' } };
+    return completed;
+  } }, input, { ...outcome.selection, charging_alternative: {
+    role: 'ordinary', commands: outcome.selection.commands, quarters: outcome.selection.quarters, account: outcome.selection.account,
+  } });
+  assertEquals(attempts, 2);
+  assertEquals(result.selection.commands, ordinary.selection.commands);
+  assertEquals(result.selection.account, ordinary.selection.account);
+  assert(result.input.snapshot.planning_warnings?.some(w => w.code === 'charging_alternative_unavailable'));
 });
 Deno.test('published binary commands and watts use the same selected water schedule', () => {
   const s = hotWaterSnapshot(); s.captured_at = s.slots[0].start;

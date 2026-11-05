@@ -16,23 +16,28 @@ export function syntheticOvernightReadiness() {
   p.pool_store = null; p.heater = null; p.pool_stop_c = null;
   p.initial = { battery_kwh: 3, ev_kwh: 5, pool_c: null, pool_pending_heat_kwh: null,
     pool_source_depletion_kwh: null, heater_state: null };
-  p.targets = { pool_c: null, ev_km: 200, ev_limit_kwh: 40 };
+  p.targets = { pool_c: null };
   p.limits = { ...p.limits, import_w: 10000, export_w: 5000, wear_per_kwh: .03,
     battery_export_enabled: false, battery_export_reserve_kwh: 6, battery_export_min_price: 4 };
   p.slots = Array.from({ length: 96 }, (_, i) => ({ ...p.slots[0], local_month: 2,
     start_seconds: i * 900 - 450, hours: .25, base_w: 600 + 200 * Math.sin(i * Math.PI / 48),
     base_ev_w: 0, solar_w: i >= 40 && i < 72 ? 2400 * Math.sin((i - 40) * Math.PI / 32) : 0,
     import_price: i < 38 ? .2 : i < 60 ? 1.8 : .9, export_price: .05,
-    published: true, ev_available: true, ev_current_ceiling_a: null, outdoor_c: 10, pool_auxiliary_dispatch: null }));
+    published: true, ev_available: true, outdoor_c: 10, pool_auxiliary_dispatch: null, ev_current_ceiling_a: null }));
   p.accepted = Array.from({ length: 5 }, () => ({ pool_on: false, ev_amps: 0,
     battery: 'hold' as const, charge_limit_w: 2000, discharge_limit_w: 0 }));
   p.locked_through_seconds = 3600;
   p.work_grant = 1_520_000_000;
   p.end_credit = { reference_sek_per_kwh: 1,
     battery: { cap: 7.6, grid_kwh_per_unit: 1 / .95 }, pool: null,
-    ev: { cap: 40, grid_kwh_per_unit: 1 / .92 } };
+    ev: { grid_kwh_per_unit: 1 / .92, tiers: [{ up_to: 27.5, sek_per_kwh: 1 }, { up_to: 40, sek_per_kwh: .5 }] } };
+  // Pin this scenario's service requirements independently of live defaults.
+  p.rules = [{ key: 'pool_shortfall', threshold: 0, points: -2, required: false },
+    { key: 'car_floor', threshold: 0, points: -2, required: false }];
+  p.car_policy = { floor_kwh: 15, limit_kwh: 40, breach_permille: p.slots.map(() => 299) };
+  const { car_policy, ...problemWithoutCarPolicy } = p;
   return { provenance: 'Independently invented synthetic equipment, mathematical demand/solar/price shapes and explicit held commands. No household measurements or anonymized capture.',
-    generated_by: 'scripts/ev-readiness-synthetic.fixture.ts', night_quarters: 38, problem: p };
+    generated_by: 'scripts/ev-readiness-synthetic.fixture.ts', night_quarters: 38, problem: { ...problemWithoutCarPolicy, car_policy } };
 }
 
 if (import.meta.main) await Deno.writeTextFile(new URL('../tests/ev-readiness-overnight.fixture.json', import.meta.url),
