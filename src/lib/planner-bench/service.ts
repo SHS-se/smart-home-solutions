@@ -1,14 +1,14 @@
-// Independent equal-comfort guards: pool cold exposure with a linear tail and the car floor.
+// Independent equal-comfort guards: pool cold exposure with a 1°C free band and the car floor.
 import type { BenchSeries } from './types';
 import { poolComfortExposure } from '../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 
 export type Comfort = NonNullable<BenchSeries['comfort']>;
-export interface ServiceGuard { pool: 'linear_tail_shortfall' }
-export const DEFAULT_SERVICE_GUARD: ServiceGuard = { pool: 'linear_tail_shortfall' };
+export interface ServiceGuard { pool: 'linear_shortfall' }
+export const DEFAULT_SERVICE_GUARD: ServiceGuard = { pool: 'linear_shortfall' };
 export interface StoreExposure { mild: number; severe: number; worst: number; mildDeficitHours: number; severeDeficitHours: number }
 export interface ServiceExposure { pool: number; ev: StoreExposure }
 
-/** Integrated quadratic/linear cold exposure, with actual interval durations and no renewed recovery grace. */
+/** Integrated linear cold exposure below the 1°C free band, with actual interval durations and no renewed recovery grace. */
 export function poolExposure(comfort: Comfort, values: ArrayLike<number | null>, _guard: ServiceGuard, hours?: ArrayLike<number>): number {
   let exposure = 0, before: number | null = comfort.pool_start_c;
   for (let i = 0; i < values.length; i++) {

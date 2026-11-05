@@ -1163,12 +1163,15 @@ test.describe('requesting a replan', () => {
       // Independent synthetic temperatures and fractional costs exercise dense
       // labels and nonzero values smaller than the display precision.
       slots: PLAN.plans.priority.slots.map((slot, i) => ({ ...slot, pool_temperature_c: 27 + i * .001,
-        rule_points: i === 3 ? { pool_shortfall: -.000001 } : i === 5 ? { pool_shortfall: -1 / 3 } : i % 2 ? { pool_shortfall: -.375 } : {} })) } } };
+        rule_points: i === 3 ? { pool_shortfall: -.000001 } : i === 5 ? { pool_shortfall: -1 / 3 } : i % 2 ? { pool_shortfall: -.375 } : { pool_shortfall: 0 } })) } } };
     await page.reload();
     const strip = page.locator('#plan-score');
     await expect(strip).toContainText(/poäng per kvart|points per quarter/);
     const explanation = page.locator('#plan-quarter-explanation');
     await expect(explanation).toContainText(/Klicka på en kvart|Click a quarter/);
+    await strip.locator('[data-score="0"]').first().click();
+    await expect(explanation).toContainText(/0.00 (poäng|points) (Poolkomfort|Pool comfort)/);
+    await expect(explanation.locator('summary')).toBeVisible();
     // Only planned quarters are scored, and the strip sits between the chart and the explanation.
     await expect(strip.locator('[data-score="-0.375"]').first()).toBeVisible();
     await expect(strip.locator('[data-score="0"]').first()).toBeVisible();
@@ -1184,7 +1187,8 @@ test.describe('requesting a replan', () => {
     await expect(explanation.locator('[data-pool-comfort-evidence]')).toContainText('15 min');
     await explanation.locator('summary').click();
     await expect(explanation).toContainText(/linjärt|linearly/);
-    await expect(explanation).toContainText('2 °C');
+    await expect(explanation).toContainText('1 °C');
+    await expect(explanation).toContainText('2.5 °C');
     await expect(explanation).toContainText('1 SEK');
     await expect(explanation).toContainText('0.50');
     await expect(explanation).toContainText(/kr\/kWh (publicerat|uppskattat|published|estimated)/);
@@ -1199,7 +1203,7 @@ test.describe('requesting a replan', () => {
     await explanation.screenshot({ path: testInfo.outputPath('plan-score-detail.png') });
     await page.getByRole('button', { name: 'Toggle language' }).click();
     await expect(explanation).toContainText('Pool comfort');
-    await expect(explanation).toContainText('Beyond that it grows linearly');
+    await expect(explanation).toContainText('Colder water always receives a larger deduction');
     await page.getByRole('button', { name: 'Toggle language' }).click();
     await strip.locator('[data-score="-0.000001"]').click();
     await expect(explanation).toContainText('>−0.01');

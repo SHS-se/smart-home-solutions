@@ -9,8 +9,8 @@ export type ReadyRulePolicy = Pick<ReadyProblem, "rules">;
 type RuleDefault = { threshold: number; points: number; required?: boolean };
 /** Comfort policy only. Economic opportunities belong to the bill and audit. */
 export const RULE_DEFAULTS: Record<PlannerRuleKey, RuleDefault> = {
-  // SEK per integrated cold-exposure unit: quadratic to 2°C, then linear (8 SEK/h per further °C).
-  pool_shortfall: { threshold: 0, points: -2 },
+  // SEK per degree-hour below target − 1°C: 1 point per extra °C per full quarter by default.
+  pool_shortfall: { threshold: 0, points: -4 },
   // The floor and its grace are car-policy.ts's; this rule only names the points.
   car_floor: { threshold: 0, points: CAR_FLOOR_POINTS },
 };

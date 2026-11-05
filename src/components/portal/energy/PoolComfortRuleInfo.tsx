@@ -1,4 +1,5 @@
 import { useLanguage } from '@/contexts/LanguageContext';
+import { poolComfortExposure } from '../../../../supabase/functions/_shared/planner-wasm/pool-comfort';
 import { RULE_DEFAULTS } from '../../../../supabase/functions/_shared/planner-wasm/rule-policy';
 
 /** Read-only explanation shared by the live plan and the bench rule settings. */
@@ -10,15 +11,23 @@ export default function PoolComfortRuleInfo({ coefficient, water, expandable = f
 }) {
   const { t } = useLanguage();
   const factor = coefficient ?? -RULE_DEFAULTS.pool_shortfall.points;
-  const examples = [factor / 4, factor].map(value => value.toFixed(2));
+  const examples = [0, 1, 1.1, 1.5, 2, 2.5, 3].map(shortfall => ({ shortfall,
+    points: -factor * poolComfortExposure(0, -shortfall, -shortfall, .25) }));
   const description = <div className="max-w-prose space-y-2 text-sm text-muted-foreground">
     <p>{t(
-      'Avdraget växer med hur långt och hur länge poolen är under önskad temperatur. Upp till 2 °C under målet växer kostnaden med temperaturskillnaden i kvadrat. Därefter ökar den linjärt, utan något steg vid gränsen. Vatten vid eller över målet ger inget avdrag.',
-      'The deduction grows with how far and how long the pool is below the desired temperature. Up to 2 °C below the target, the cost grows with the square of the shortfall. Beyond that it grows linearly, with no jump at the boundary. Water at or above the target has no deduction.')}</p>
-    <p>{coefficient === undefined ? t('Exempel med standardinställningen:', 'Examples at the default setting:')
-      : t('Exempel med denna inställning:', 'Examples at this setting:')}{' '}{t(
-      `15 minuter vid 1 °C under målet ger ${examples[0]} poäng i avdrag; vid 2 °C blir det ${examples[1]} poäng. Temperaturförändringar under kvarten räknas med.`,
-      `15 minutes at 1 °C below target deducts ${examples[0]} points; at 2 °C it deducts ${examples[1]} points. Temperature changes during the quarter are included.`)}</p>
+      'Poolen får vara upp till 1 °C under önskad temperatur utan avdrag. Därefter växer avdraget linjärt: med standardinställningen ger varje ytterligare 0.1 °C ett avdrag på 0.1 poäng per kvart. Kallare vatten ger alltid större avdrag.',
+      'The pool can be up to 1 °C below the desired temperature without a deduction. Beyond that, the deduction grows linearly: at the default setting each additional 0.1 °C deducts 0.1 point per quarter. Colder water always receives a larger deduction.')}</p>
+    <table className="w-full text-left tabular-nums">
+      <caption className="pb-1 text-left">{coefficient === undefined ? t('Exempel med standardinställningen', 'Examples at the default setting')
+        : t('Exempel med denna inställning', 'Examples at this setting')}</caption>
+      <thead><tr><th scope="col" className="py-1 font-medium">{t('Under målet', 'Below target')}</th><th scope="col" className="py-1 text-right font-medium">{t('Poäng / 15 min', 'Points / 15 min')}</th></tr></thead>
+      <tbody>{examples.map(({shortfall, points}) => <tr key={shortfall} className="border-t border-border">
+        <th scope="row" className="py-1 font-normal">{shortfall.toFixed(1)} °C</th>
+        <td className="py-1 text-right">{points < 0 ? '−' : ''}{Math.abs(points).toFixed(2)}</td>
+      </tr>)}</tbody>
+    </table>
+    <p>{t('Exemplen gäller oförändrad temperatur. Temperaturförändringar och kortare intervall räknas med i kvartens avdrag.',
+      'The examples assume a constant temperature. Temperature changes and shorter intervals are included in the quarter’s deduction.')}</p>
     <p>{t(
       'En poäng värderas som 1 SEK när planeraren väger komfort mot elkostnad. Elräkningen visas separat. Varmare vatten ger inga extra komfortpoäng, men kan fungera som värmebuffert inför dyrare timmar inom utrustningens temperaturgräns.',
       'One point is valued at 1 SEK when the planner balances comfort against electricity cost. The electricity bill is shown separately. Warmer water earns no extra comfort points, but can store heat ahead of expensive hours within the equipment temperature limit.')}</p>

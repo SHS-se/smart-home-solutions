@@ -396,7 +396,7 @@ Deno.test('the page scores a stored plan without replaying it, and never shows a
   assertEquals([live.complete, live.auditPending, live.audit === series.audit], [true, false, true]);
   // Scaling the homogeneous cost does not change an equal-comfort witness.
   assertEquals(scoreQuarters(series, { pool_shortfall: { points: -0.5 } }).auditPending, false);
-  assertEquals(series.audit!.guard, { pool: 'linear_tail_shortfall' });
+  assertEquals(series.audit!.guard, { pool: 'linear_shortfall' });
   // A series from before the audit: no economic score, said so, and no stored score to be had.
   const { audit: _, ...old } = series;
   const bare = scoreQuarters(old);

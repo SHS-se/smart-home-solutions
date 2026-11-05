@@ -55,6 +55,7 @@ Deno.test("rules native solve materializes missing devices and exact physical ba
   assertEquals(result.plan.battery, null);
   assertEquals(result.plan.pool, null);
   for (const slot of result.plan.plans.priority.slots) {
+    assertEquals(slot.rule_points?.pool_shortfall, undefined, "an absent pool has no comfort account");
     assertAlmostEquals(slot.pv_w + slot.grid_import_w + slot.battery_discharge_w,
       slot.load_w + slot.battery_charge_w + slot.grid_export_w + slot.curtailed_w, 1e-8);
     assertEquals(slot.ev_target_current_a, slot.ev_w / 230 / 3);
@@ -155,6 +156,8 @@ Deno.test("rules pool preparation uses measured heat/loss and separate compresso
   assertAlmostEquals(ready.problem.heater!.heat_w, .175 * 50 * 1.163 * 3000, 1e-8);
   assertEquals(ready.problem.pool_store!.loss, { kind: "measured", points: [{at_c:28,c_per_h:-.1},{at_c:30,c_per_h:-.2}] });
   assertEquals(ready.problem.slots[0].base_w, s.slots[0].base_load_forecast_w);
+  assertEquals(generateRulesPlan(ready).plan.plans.priority.slots[0].rule_points?.pool_shortfall, 0,
+    "publish the active pool rule even when there is no deduction, so its free band can be explained");
   s.operating_scope = { modes: { $pool: "controlling", pump: "controlling" },
     device_owners: { heater: "$pool", pump: "pump" }, external_demands: {} };
   s.pool_model.hardware = undefined;

@@ -247,23 +247,19 @@ pub(crate) fn car_floor_breached(p: &Problem, i: usize, kwh: f64) -> bool {
             policy.breach_permille[i].is_some_and(|line| soc_permille(car, kwh) <= line)
         })
 }
-fn mean_squared_deficit(a: f64, b: f64) -> f64 {
-    if a <= 0.0 && b <= 0.0 {
-        0.0
-    } else if a >= 0.0 && b >= 0.0 {
-        (a * a + a * b + b * b) / 3.0
-    } else if a > 0.0 {
-        a * a * a / (3.0 * (a - b))
-    } else {
-        b * b * b / (3.0 * (b - a))
-    }
-}
-/// Cold exposure: d² up to 2°C shortfall, then its tangent 4d − 4.
-/// Integrates the water interpolation through both joins, not subquarter physics.
+/// Degree-hours below target − 1°C, integrating the linear water interpolation.
+/// This quadrature convention is not an assertion about subquarter physics.
 pub(crate) fn pool_exposure(target: f64, before: f64, after: f64, hours: f64) -> f64 {
-    let a = target - before;
-    let b = target - after;
-    (mean_squared_deficit(a, b) - mean_squared_deficit(a - 2.0, b - 2.0)) * hours
+    let a = target - before - 1.0;
+    let b = target - after - 1.0;
+    if a <= 0.0 && b <= 0.0 {
+        return 0.0;
+    }
+    if a >= 0.0 && b >= 0.0 {
+        return (a + b) / 2.0 * hours;
+    }
+    let positive = a.max(b);
+    positive * (positive / (b - a).abs()) / 2.0 * hours
 }
 fn contribution(p: &Problem, r: &Rule, i: usize, v: &Quarter, before_c: f64) -> f64 {
     if !applicable(p, r.key) {
@@ -407,7 +403,7 @@ mod service_tests {
         p.initial.pool_c = Some(27.0);
         q[0].pool_c = Some(27.0);
         q[0].ev_kwh = Some(19.0);
-        assert_eq!(account(&p, &q, &index).contributions[0], [-4.0, -1.0]);
+        assert_eq!(account(&p, &q, &index).contributions[0], [-1.0, -1.0]);
         q[0].pool_c = Some(33.0);
         q[0].pool_w = 3000.0;
         p.initial.pool_c = Some(33.0);
@@ -484,15 +480,17 @@ mod service_tests {
         p.rules = rules();
         p.initial.pool_c = Some(0.0);
         assert!(crate::validate(&p).is_ok());
-        assert_eq!(pool_exposure(30.0, 0.0, 0.0, 0.25), 29.0);
+        assert_eq!(pool_exposure(30.0, 0.0, 0.0, 0.25), 7.25);
     }
     #[test]
-    fn pool_linear_tail_integrates_both_joins_and_partial_intervals() {
-        assert_eq!(pool_exposure(30.0, 29.0, 29.0, 1.0), 1.0);
-        assert_eq!(pool_exposure(30.0, 28.0, 28.0, 1.0), 4.0);
-        assert_eq!(pool_exposure(30.0, 27.0, 27.0, 1.0), 8.0);
-        assert!((pool_exposure(30.0, 31.0, 27.0, 1.0) - 13.0 / 6.0).abs() < 1e-12);
-        assert!((pool_exposure(30.0, 27.0, 31.0, 1.0) - 13.0 / 6.0).abs() < 1e-12);
-        assert!((pool_exposure(30.0, 29.0, 27.0, 0.1) - 5.0 / 12.0).abs() < 1e-12);
+    fn pool_linear_shortfall_integrates_free_band_crossings_and_partial_intervals() {
+        assert_eq!(pool_exposure(30.0, 29.5, 29.5, 1.0), 0.0);
+        assert_eq!(pool_exposure(30.0, 29.0, 29.0, 1.0), 0.0);
+        assert_eq!(pool_exposure(30.0, 28.0, 28.0, 1.0), 1.0);
+        assert_eq!(pool_exposure(30.0, 27.5, 27.5, 1.0), 1.5);
+        assert_eq!(pool_exposure(30.0, 20.0, 20.0, 1.0), 9.0);
+        assert!((pool_exposure(30.0, 31.0, 27.0, 1.0) - 0.5).abs() < 1e-12);
+        assert!((pool_exposure(30.0, 27.0, 31.0, 1.0) - 0.5).abs() < 1e-12);
+        assert!((pool_exposure(30.0, 29.0, 27.0, 0.1) - 0.1).abs() < 1e-12);
     }
 }

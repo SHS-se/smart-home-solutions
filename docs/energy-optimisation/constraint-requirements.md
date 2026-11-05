@@ -1,5 +1,14 @@
 # Requirements for planner and controller constraints
 
+User requirement, 5 November 2026: use a linear pool comfort deduction with
+no penalty through 1°C below the desired temperature. Beyond that, each
+additional 0.1°C costs 0.1 point per full quarter: 2°C below costs 1 point;
+3°C below costs 2 points. Integrate `max(target − water − 1, 0)` with a
+coefficient of 4 points per °C·hour. This replaces the earlier quadratic
+proposals and linear-tail rule below. There is no cap: recovering from cold
+water retains its incentive. Actual duration and temperature changes still
+count; there is no recovery timer, renewed grace or change to equipment limits.
+
 User requirement, 4 November 2026: bound the pool cold-exposure curve's slope
 with a linear tail. For positive shortfall `d`, integrate `d²` up to 2°C and
 `4d − 4` beyond 2°C, with the existing coefficient of 2 SEK per exposure unit.

@@ -13,7 +13,7 @@ for (const withBench of [false, true]) {
       const read = async () => (await db.query<{criteria:Record<string,never>}>(
         'SELECT criteria FROM energy_planner_rule_policy WHERE id=true')).rows[0].criteria;
       const published = await read();
-      assertEquals(resolveRulePolicy(published).rules.find(r => r.key === 'pool_shortfall')?.points, withBench ? -1.5 : -2);
+      assertEquals(resolveRulePolicy(published).rules.find(r => r.key === 'pool_shortfall')?.points, withBench ? -1.5 : -4);
       if (withBench) {
         await db.exec(`UPDATE bench_rules SET criteria='{"pool_shortfall":{"points":-1}}' WHERE id=true`);
         assertEquals(resolveRulePolicy(await read()).rules.find(r => r.key === 'pool_shortfall')?.points, -1);
