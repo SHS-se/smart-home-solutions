@@ -20,6 +20,8 @@ type RoomEvidenceDatabase = Pick<SupabaseClient, "rpc" | "from">;
 const SLOT_MS = 900_000;
 /** A day of recorded heat supplies the existing delayed-heat initial condition. */
 const RECENT_HEAT_HOURS = 24;
+/** The newest completed quarters that may still be on their way. */
+const LATE_HEAT_QUARTERS = 2;
 
 export interface PreparedThermalPlanning {
   snapshot: OptimisationSnapshot;
@@ -204,6 +206,28 @@ export async function captureRoomPlanningState(
   }
   const quarters = Array.from({ length: RECENT_HEAT_HOURS * 4 }, (_v, i) =>
     Math.floor(now / SLOT_MS) * SLOT_MS - (RECENT_HEAT_HOURS * 4 - i) * SLOT_MS);
+  // Heat that has not been reported counts as none, the lower bound on what is
+  // still on its way into the room. Say so for rooms that carry delayed heat
+  // and do report: the newest quarters still arriving are routine, an older
+  // hole is shown. A room that never reports heat has no metering to wait for.
+  const reported = new Map<string, Set<number>>();
+  for (const row of (recentResult.data ?? []) as ThermalQuarterRow[]) {
+    if (row.heat_w === null || row.heat_w === undefined || !Number.isFinite(Number(row.heat_w))) continue;
+    const starts = reported.get(row.room_key) ?? new Set<number>();
+    starts.add(Date.parse(row.start_ts)); reported.set(row.room_key, starts);
+  }
+  const delayed = rooms.filter(room => (room.model?.heat_lag_h ?? 0) > 0 && reported.get(room.key)?.size)
+    .map(room => ({ key: room.key, missing: quarters.filter(start => !reported.get(room.key)!.has(start)) }))
+    .filter(room => room.missing.length);
+  const holes = delayed.filter(room => room.missing.some(start => start < quarters.at(-LATE_HEAT_QUARTERS)!));
+  for (const [code, group, message] of [
+    ["room_heat_history_late", delayed.filter(room => !holes.includes(room)), "The latest room heating energy has not arrived yet."],
+    ["room_heat_history_missing", holes, "Some room heating energy is missing."],
+  ] as const) if (group.length) {
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(code, "rooms", message,
+      "Heat that has not been reported counts as none, so these rooms may be planned slightly colder than they are.",
+      { rooms: group.map(room => room.key).sort().join(","), quarters: Math.max(...group.map(room => room.missing.length)) })]);
+  }
   const recent = new Map(rooms.map(room => [room.key, quarters.map(start => heatByStart.get(room.key)?.get(start) ?? 0)]));
   const { zones, warnings } = roomPlanningZones(snapshot, rooms, { schedules, temperature_c: temperature, recent_heat_w: recent });
   // Silent degradation is worse than none, so what was skipped is said out loud.

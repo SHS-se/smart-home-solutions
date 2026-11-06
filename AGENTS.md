@@ -13,6 +13,31 @@ impossible to perform its function, such as the database being unavailable.
 
 A general preference for failing fast does not apply to these two paths.
 
+## Late and missing data
+
+Late data is normal, not an error. The Home Assistant integration uploads on its
+own timer, so the newest completed quarters often reach the database after a plan
+is captured, and a sensor or meter can be unavailable at any moment. Planning and
+execution must treat both as ordinary input.
+
+- Never throw, and never drop a device or service, because an observation is late
+  or missing. Estimate from what is known and keep going. An estimate must be
+  bounded in the direction that cannot overstate the device: never assume the
+  missing time was idle, free or at its best state. Zero is not a neutral fill.
+- A service may be left out, retaining its accepted instructions, only when no
+  bounded estimate can be formed at all, such as a malformed model or an unreadable
+  database. The size of a gap alone never justifies it. Do not add thresholds on
+  gap length or missing fraction that reject a service.
+- Estimates are recomputed from the observed data on every capture, so a later
+  complete capture repairs them with no relearning and no manual step. Do not
+  persist an estimate as if it were measured.
+- Say what was estimated. Use a visible warning for data that will not arrive on
+  its own, and a routine note (the routine warning codes) for the newest quarters
+  that are only late. Late data is never reported as a failure.
+- Judge every new history read for this: a read of recent history that needs every
+  quarter present is a defect. Check the newest completed quarter, a hole in the
+  middle, and an unavailable counter, and test each.
+
 # Default branch
 
 Make all changes on `dev` unless the user explicitly requests another branch.

@@ -7,6 +7,8 @@ type MonitoredPlan = Pick<OptimisationPlan, 'issued_at' | 'valid_until' | 'batte
   plans: { priority: { slots: Array<Pick<OptimisationPlan['plans']['priority']['slots'][number], 'start' | 'load_w' | 'battery_soc' | 'ev_soc'>> } };
 };
 const QUARTER = 900_000;
+/** How many of the newest completed quarters may still be on their way. */
+export const LATE_ACTUAL_QUARTERS = 2;
 
 /** A later published quarter is a new release. Elapsed/missing prices and
  * changed measurements never extend the accepted plan. Price corrections also
@@ -32,15 +34,22 @@ export function deviationRecommendations(plan: MonitoredPlan, actuals: Deviation
   const slots = plan.plans.priority.slots;
   const planned = new Map(slots.map(s => [Date.parse(s.start), s]));
   // Only complete quarters entirely covered by this plan. A missing quarter
-  // breaks the sequence; backfilled samples cannot bridge a gap.
-  const end = Math.floor(now.getTime() / QUARTER) * QUARTER;
-  const start = end - 4 * QUARTER;
+  // breaks the sequence; backfilled samples cannot bridge a gap. The newest
+  // quarters often reach the database after this check runs, so a window that
+  // ends up to LATE_ACTUAL_QUARTERS earlier is judged when the latest is late.
+  const issued = Date.parse(plan.issued_at);
   const measured = new Map(actuals.map(s => [Date.parse(s.start_ts), s.total_load_kwh]));
-  const deltas: { planned: number; actual: number }[] = [];
-  for (let at = start; at < end; at += QUARTER) {
-    const p = planned.get(at), a = measured.get(at);
-    if (at < Date.parse(plan.issued_at) || !p || typeof a !== 'number' || !Number.isFinite(a)) break;
-    deltas.push({ planned: p.load_w / 4000, actual: a });
+  const newest = Math.floor(now.getTime() / QUARTER) * QUARTER;
+  let end = newest;
+  let deltas: { planned: number; actual: number }[] = [];
+  for (let late = 0; late <= LATE_ACTUAL_QUARTERS && deltas.length < 4; late++) {
+    end = newest - late * QUARTER;
+    deltas = [];
+    for (let at = end - 4 * QUARTER; at < end; at += QUARTER) {
+      const p = planned.get(at), a = measured.get(at);
+      if (at < issued || !p || typeof a !== 'number' || !Number.isFinite(a)) break;
+      deltas.push({ planned: p.load_w / 4000, actual: a });
+    }
   }
   if (deltas.length === 4) {
     if (deltas.every(s => Math.abs(s.actual - s.planned) > s.planned * .5)) {

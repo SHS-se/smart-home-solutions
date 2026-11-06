@@ -61,3 +61,31 @@ Deno.test("capture reads current temperatures and routines without selecting mod
   assertEquals(result.thermal_zones!.every(room => room.target_c.every(value => value === 21)), true);
   assertEquals(result.thermal_zones![0].model, prepared.rooms[0].model);
 });
+
+Deno.test("late or missing room heat is counted as none and said out loud, never dropped silently", async () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const prepared = prepareRoomModels(snapshot, mappings, bundle);
+  const room = prepared.rooms.find(r => r.model)!;
+  room.model = { ...room.model!, heat_lag_h: .5 };
+  const boundary = Math.floor(Date.now() / 900_000) * 900_000;
+  const quarters = Array.from({ length: 96 }, (_, i) => boundary - (96 - i) * 900_000);
+  const run = async (starts: number[]) => {
+    const db = createClient("http://localhost:54321", "synthetic-service", {
+      auth: { persistSession: false }, global: { fetch: (url) => {
+        const endpoint = new URL(String(url)).pathname.split("/").at(-1)!;
+        if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
+          prepared.rooms.map(r => ({ room_key: r.key, room_temperature_c: 19 }))));
+        if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json([]));
+        if (endpoint === "get_energy_thermal_training_quarters") return Promise.resolve(Response.json(
+          starts.map(start => ({ room_key: room.key, start_ts: new Date(start).toISOString(), heat_w: 800 }))));
+        throw new Error(`Unexpected capture dependency ${endpoint}`);
+      } },
+    });
+    const result = await captureRoomPlanningState(db, "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), prepared.rooms);
+    return (result.planning_warnings ?? []).filter(w => w.scope === "rooms").map(w => w.code);
+  };
+  assertEquals(await run(quarters), []);
+  assertEquals(await run(quarters.slice(0, -1)), ["room_heat_history_late"]);
+  assertEquals(await run(quarters.filter((_, i) => i !== 40)), ["room_heat_history_missing"]);
+  assertEquals(await run([]), [], "a room that never reports heat has no metering to wait for");
+});

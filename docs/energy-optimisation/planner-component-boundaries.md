@@ -88,8 +88,16 @@ passive demand; the consumer holds existing settings before intent encoding or
 verification. Forecast watts cannot grant permission or trigger a failed-command
 replan. No future thermostat duty fraction or thermal trajectory is invented.
 Missing observations affect reconstructed response memory, not the retained
-calibration parameters or measured water temperature. A later complete capture
-can resume thermal scheduling without relearning. One pool-owned operational
+calibration parameters or measured water temperature. Compressor energy that is
+late or missing is bounded, never assumed idle and never a reason to retain
+instead of reschedule: unmetered time adds no in-flight heat (a lower bound) and
+advances source depletion at the supported ON draw (an upper bound), and both
+bounds hold through the observed intervals that follow. The newest quarters still
+arriving are a routine note; a quarter the uploader has passed is a warning. Only
+a state that cannot be bounded (a malformed model, or a source heater with no
+known ON draw) retains accepted instructions. A later complete capture replays the
+observed energy exactly and resumes thermal scheduling without relearning. Rooms
+with delayed heat treat unreported heat as none and report it the same way. One pool-owned operational
 note explains an unsuccessful reschedule; member devices do not duplicate it.
 
 Room projection metadata is derived from the actual member controls and load

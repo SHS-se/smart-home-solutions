@@ -2,7 +2,7 @@ import { assert, assertAlmostEquals, assertEquals, assertThrows } from "@std/ass
 import history from "./pool-response-history.fixture.json" with { type: "json" };
 import startup from "../../../src/lib/planner-bench/pool-heater-response.json" with { type: "json" };
 import { fitPoolDynamics, type PoolDynamics } from "./device-learning/pool/response.ts";
-import { poolPartialElectricity, poolResponseStateAt } from "./planner/models/pool/state.ts";
+import { poolPartialElectricity, reconstructPoolResponse } from "./planner/models/pool/state.ts";
 import { stepPool, stepPoolThermal, parseHeaterResponse, type HeaterState } from "./planner/device-models.ts";
 import { poolPhysics } from "./planner/pool-physics.ts";
 import { PoolSourceKernel } from "./planner/device-models.ts";
@@ -10,6 +10,9 @@ import { poolHeatGain } from "./planner/pool-response.ts";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import type { PoolResponseSample } from "./device-learning/pool/thermal.ts";
 
+const CEILING_KW = 3.6;
+const poolResponseStateAt = (model: PoolDynamics, capacity: number, history: Parameters<typeof reconstructPoolResponse>[2], at: number) =>
+  reconstructPoolResponse(model, capacity, history, at, CEILING_KW).state;
 // These reservoir tests explicitly supply observed OFF intervals between the
 // stated heating intervals. The production reconstructor never invents them.
 const poolPendingHeatAt = (model: PoolDynamics, capacity: number, history: Parameters<typeof poolResponseStateAt>[2], at: number) => {
@@ -280,8 +283,63 @@ Deno.test("current-quarter compressor memory uses meter deltas despite missing s
     heating_elapsed_seconds:600},["heater"],at).complete,false,"runtime must not invent unmetered electricity");
 });
 
-Deno.test("missing metering cannot restore measured source efficiency", () => {
+Deno.test("missing metering never restores source efficiency and never stops the reconstruction", () => {
   const model = fitted(synthetic(.7));
+  assert(model.source);
   const start = Date.parse(model.state.at);
-  assertThrows(() => poolResponseStateAt(model, CAPACITY, [], start + 900_000), Error, 'missing compressor history');
+  const late = reconstructPoolResponse(model, CAPACITY, [], start + 900_000, CEILING_KW);
+  assertEquals(late.unmetered, [{ start_ms: start, end_ms: start + 900_000 }]);
+  const idle = poolResponseStateAt(model, CAPACITY, [{ start_ms: start, hours: .25, electrical_kwh: 0 }], start + 900_000);
+  assert(late.state.source_depletion_kwh >= idle.source_depletion_kwh, "an unmetered quarter is not an idle quarter");
+  assert(late.state.source_depletion_kwh > model.state.source_depletion_kwh, "full draw may have been used");
+  assert(late.state.pending_heat_kwh <= idle.pending_heat_kwh + 1e-12, "no heat is assumed to have arrived");
+  assertAlmostEquals(late.state.pending_heat_kwh, model.state.pending_heat_kwh * Math.exp(-.25 / model.response_time_constant_h), 1e-9);
+  // Complete evidence is exactly the observed replay and reports nothing unmetered.
+  const complete = reconstructPoolResponse(model, CAPACITY, [{ start_ms: start, hours: .25, electrical_kwh: 0 }], start + 900_000, CEILING_KW);
+  assertEquals(complete.unmetered, []);
+  assertEquals(complete.state, idle);
+  // A source heater with no known ON draw cannot be bounded, so only then does it throw.
+  assertThrows(() => reconstructPoolResponse(model, CAPACITY, [], start + 900_000, 0), Error, "ON draw is unknown");
+  assertEquals(reconstructPoolResponse(model, CAPACITY, complete.state ? [{ start_ms: start, hours: .25, electrical_kwh: 0 }] : [], start + 900_000, 0).unmetered, []);
+});
+
+Deno.test("an interior gap is bounded and reported as unmetered time", () => {
+  const model = fitted(synthetic(.7)), start = Date.parse(model.state.at);
+  const quarter = (i: number, kwh: number) => ({ start_ms: start + i * 900_000, hours: .25, electrical_kwh: kwh });
+  const r = reconstructPoolResponse(model, CAPACITY, [quarter(0, .5), quarter(2, .5), quarter(3, 0)], start + 4 * 900_000, CEILING_KW);
+  assertEquals(r.unmetered, [{ start_ms: start + 900_000, end_ms: start + 1_800_000 }]);
+});
+
+Deno.test("PROD incident shape: anchor 19:15, rows to 19:45, capture 20:15:06 with a valid counter", () => {
+  const model = fitted(synthetic(.7));
+  const anchor = Date.parse("2026-11-06T19:15:00Z"), at = Date.parse("2026-11-06T20:15:06Z");
+  const moved = { ...model, state: { ...model.state, at: new Date(anchor).toISOString() }, initial_state: { ...model.initial_state, at: "2026-10-16T19:45:00Z" } };
+  const rows = [0, 1, 2].map(i => ({ start_ms: anchor + i * 900_000, hours: .25, electrical_kwh: 0 }));
+  const partial = { start_ms: Date.parse("2026-11-06T20:15:00Z"), hours: 6 / 3600, electrical_kwh: 0 };
+  const r = reconstructPoolResponse(moved, CAPACITY, [...rows, partial], at, CEILING_KW);
+  assertEquals(r.unmetered, [{ start_ms: anchor + 3 * 900_000, end_ms: Date.parse("2026-11-06T20:15:00Z") }]);
+  // The same capture without the 20:00 row and without a counter is a tail gap.
+  const noCounter = reconstructPoolResponse(moved, CAPACITY, rows, at, CEILING_KW);
+  assertEquals(noCounter.unmetered, [{ start_ms: anchor + 3 * 900_000, end_ms: at }]);
+  // When the late row arrives the next capture is the exact observed replay.
+  const arrived = reconstructPoolResponse(moved, CAPACITY, [...rows, { start_ms: anchor + 3 * 900_000, hours: .25, electrical_kwh: 0 }, partial], at, CEILING_KW);
+  assertEquals(arrived.unmetered, []);
+});
+
+Deno.test("bounded replay never over-states in-flight heat or under-states source depletion", () => {
+  const samples = synthetic(.7);
+  const models = [fitted(samples), (() => { const r = fitPoolDynamics(samples, CAPACITY, "constant_gain"); assert("fitted" in r); return r.fitted; })()];
+  assert(models[0].source && !models[1].source);
+  let seed = 12345;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (const model of models) for (let trial = 0; trial < 200; trial++) {
+    const start = Date.parse(model.state.at), n = 4 + Math.floor(random() * 40);
+    const truth = Array.from({ length: n }, (_, i) => ({ start_ms: start + i * 900_000, hours: .25,
+      electrical_kwh: random() < .4 ? 0 : random() * CEILING_KW * .25 }));
+    const seen = truth.filter(() => random() < .6);
+    const exact = poolResponseStateAt(model, CAPACITY, truth, start + n * 900_000);
+    const bounded = reconstructPoolResponse(model, CAPACITY, seen, start + n * 900_000, CEILING_KW).state;
+    assert(bounded.pending_heat_kwh <= exact.pending_heat_kwh + 1e-9, `pending ${bounded.pending_heat_kwh} > ${exact.pending_heat_kwh}`);
+    assert(bounded.source_depletion_kwh >= exact.source_depletion_kwh - 1e-9, `depletion ${bounded.source_depletion_kwh} < ${exact.source_depletion_kwh}`);
+  }
 });

@@ -3,7 +3,7 @@ import { recordPlanningActivity } from '../_shared/planning-log.ts';
 import { readPlannerLocation, withPlannerLocation } from "../_shared/home-planning-location.ts";
 import { prepareActualUpload } from "../_shared/actual-upload.ts";
 import { mergePlanningWarnings, planningWarning } from "../_shared/planner/planning-warnings.ts";
-import { hasNewPublishedPrices, deviationRecommendations, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
+import { hasNewPublishedPrices, deviationRecommendations, LATE_ACTUAL_QUARTERS, recoveredMeasurementRecommendations, type DeviationActual } from '../_shared/replan-policy.ts';
 import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts';
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { captureRulesPlanningInput } from "../_shared/rules-planning-capture.ts";
@@ -955,7 +955,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
     if (accepted?.plan?.status === 'ready') {
       const { data: measured, error } = await supabase.from('energy_optimisation_actual_slots')
         .select('start_ts,total_load_kwh').eq('home_id', auth.homeId)
-        .gte('start_ts', new Date(Date.now() - 5 * SLOT_MS).toISOString()).order('start_ts');
+        .gte('start_ts', new Date(Date.now() - (6 + LATE_ACTUAL_QUARTERS) * SLOT_MS).toISOString()).order('start_ts');
       if (error) throw new Error(error.message);
       // A reading that could not be real is named on the next plan, never
       // compared against this one. A malformed issue list is refused by the
@@ -1132,9 +1132,10 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
           };
           if (snapshot.pool_model?.thermal_dynamics) {
             try {
-              const state = await capturedPoolResponseState(supabase, auth.homeId, snapshot, snapshot.pool_model.thermal_dynamics);
+              const { state, warnings } = await capturedPoolResponseState(supabase, auth.homeId, snapshot, snapshot.pool_model.thermal_dynamics);
               snapshot.pool_model.pending_heat_kwh = state.pending_heat_kwh;
               snapshot.pool_model.source_depletion_kwh = state.source_depletion_kwh;
+              snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, warnings);
             } catch (error) {
               console.error("[ENERGY-OPTIMISATION] pool response state unavailable", describeThrown(error));
               snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning("pool_response_evidence", "pool",

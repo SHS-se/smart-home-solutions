@@ -1,5 +1,5 @@
 /** Independently specified synthetic plant; measurements come from the real HA exchange. */
-import { assert, assertAlmostEquals, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import { prepareActualUpload } from "../../supabase/functions/_shared/actual-upload.ts";
 import { capturedPoolResponseState } from "../../supabase/functions/_shared/pool-capture.ts";
 import { generateRulesPlan, prepareRulesPlanningInput, type PublishedCommandReference } from "../../supabase/functions/_shared/rules-planner.ts";
@@ -49,15 +49,24 @@ export async function qualifyPoolCapture(produced: { snapshot: OptimisationSnaps
   };
   assertEquals(produced.actuals.length, 2, "manual exchange must carry both completed quarters");
   assert(s.capabilities.pool && s.pool?.electrical_history?.counters.length);
-  const state = await capturedPoolResponseState(observationDatabase(produced.actuals, at), context.home_id, s, model);
+  const { state, warnings: captureWarnings } = await capturedPoolResponseState(observationDatabase(produced.actuals, at), context.home_id, s, model);
+  assertEquals(captureWarnings, []);
   const hours = (at - Date.parse(anchor)) / 3_600_000;
   // Analytic constant-input ODE solution, independent of production kernels.
   const decay = Math.exp(-hours / .5);
   const expected = 2 * decay + watts / 1000 * .08 * (40 * 1.163) * .5 * (1 - decay);
   assertAlmostEquals(state.pending_heat_kwh, expected, 1e-10);
   assertEquals(state.source_depletion_kwh, 0);
-  await assertRejects(() => capturedPoolResponseState(observationDatabase([], at), context.home_id, s, model),
-    Error, "missing compressor history", "negative control: the former manual upload omission cannot pass");
+  // Rows that have not arrived yet are bounded, never a reason to drop the pool.
+  const late = await capturedPoolResponseState(observationDatabase([], at), context.home_id, s, model);
+  assert(late.state.pending_heat_kwh <= expected + 1e-9, "unmetered time cannot add in-flight heat");
+  assertEquals(late.warnings.map(w => w.code), ["pool_history_late"]);
+  // Time the uploader has moved past is a visible warning, still thermal.
+  const older = new Date(boundary - 4 * 900_000).toISOString();
+  const hole = await capturedPoolResponseState(observationDatabase(produced.actuals, at), context.home_id, s,
+    { ...model, state: { ...model.state, at: older }, initial_state: { ...model.initial_state, at: older } });
+  assertEquals(hole.warnings.map(w => w.code), ["pool_history_missing"]);
+  assert(Number.isFinite(hole.state.pending_heat_kwh));
   s.comfort = { ev: { floor_soc: .3 }, pool: { target_c: 30 } };
   s.outdoor_temperature_c = s.slots.map(() => 10);
   s.pool_model = { thermal_dynamics: model, pending_heat_kwh: state.pending_heat_kwh, source_depletion_kwh: 0,

@@ -39,6 +39,21 @@ Deno.test('recommendations use four complete contiguous quarters and rolling sig
   assertEquals(keys(), []);
 });
 
+Deno.test('a late newest quarter judges the last window that is complete, never bridging a hole', () => {
+  const s = mixedModeSnapshot(), plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
+  const slots = plan.plans.priority.slots.slice(1, 7);
+  slots.forEach(s => s.load_w = 4000);
+  const actual = slots.map(s => ({start_ts: s.start, total_load_kwh: 3}));
+  const keys = (rows: typeof actual, quarters: number) => deviationRecommendations(plan, rows,
+    null, new Date(Date.parse(slots[0].start) + quarters * 900000)).map(r => r.key);
+  // Six quarters have elapsed, the newest two have not been uploaded yet.
+  assertEquals(keys(actual.slice(0, 4), 6), ['household_relative', 'household_energy']);
+  assertEquals(keys(actual.slice(0, 5), 6), ['household_relative', 'household_energy']);
+  // Three quarters late is beyond the tolerance, and a hole inside a window is never bridged.
+  assertEquals(keys(actual.slice(0, 4), 7), []);
+  assertEquals(keys([actual[0], actual[1], actual[3], actual[4], actual[5]], 6), []);
+});
+
 Deno.test('pack warning compares energy at the captured time, independent of mode', () => {
   const s = mixedModeSnapshot(), plan = runRulesPlanner({ snapshot: s, now: (new Date(s.captured_at)).toISOString(), price_archive: [] }).plan;
   const index = 4;
