@@ -50,11 +50,13 @@ export function poolPartialElectricity(
 }
 
 /** State evidence must precede the capture it describes. This selects a
- * checkpoint, rather than rejecting a household because a source is newer. */
+ * checkpoint, rather than rejecting a household because a source is newer.
+ * Null when both fitted checkpoints are newer than the capture (a re-sent or
+ * recaptured snapshot); the reconstruction then starts from a bounded state. */
 export function poolDynamicsAnchor(
   model: PoolDynamics,
   atMs: number,
-): PoolDynamics["state"] {
+): PoolDynamics["state"] | null {
   const valid = (s: PoolDynamics["state"]) =>
     s && Number.isFinite(Date.parse(s.at)) &&
     Number.isFinite(s.pending_heat_kwh) && s.pending_heat_kwh >= 0;
@@ -63,9 +65,20 @@ export function poolDynamicsAnchor(
   }
   if (Date.parse(model.state.at) <= atMs) return model.state;
   if (Date.parse(model.initial_state.at) <= atMs) return model.initial_state;
-  throw new Error(
-    "Pool response has no observed starting state for this capture",
-  );
+  return null;
+}
+
+/** Without a checkpoint, the replay starts this long before the capture from
+ * the bounded state (no in-flight heat, the most depletion any supported draw
+ * can sustain). Observed energy since then tightens both bounds. */
+export const UNANCHORED_REPLAY_HOURS = 24;
+
+/** Where the replay for a capture starts: its checkpoint, or a quarter-aligned
+ * bounded start when no checkpoint precedes the capture. */
+export function poolReplayStart(model: PoolDynamics, atMs: number): number {
+  const anchor = poolDynamicsAnchor(model, atMs);
+  return anchor ? Date.parse(anchor.at)
+    : Math.floor(atMs / SLOT_MS) * SLOT_MS - UNANCHORED_REPLAY_HOURS * 3_600_000;
 }
 
 /** Time the replay could not see electricity for. */
@@ -77,6 +90,8 @@ export interface PoolUnmeteredSpan {
 export interface PoolResponseReconstruction {
   state: PoolDynamics["state"];
   unmetered: PoolUnmeteredSpan[];
+  /** True when no fitted checkpoint preceded the capture. */
+  estimated_start: boolean;
 }
 
 /** Replay actual compressor energy from the calibration checkpoint.
@@ -104,9 +119,9 @@ export function reconstructPoolResponse(
   ) throw new Error("Invalid pool response state inputs");
   const anchor = poolDynamicsAnchor(model, atMs),
     tau = model.response_time_constant_h;
-  let at = Date.parse(anchor.at),
-    pending = anchor.pending_heat_kwh,
-    depletion = anchor.source_depletion_kwh;
+  let at = poolReplayStart(model, atMs),
+    pending = anchor?.pending_heat_kwh ?? 0,
+    depletion = anchor?.source_depletion_kwh ?? 0;
   const source = model.source
     ? {
       recovery_rate_per_h: model.source.recovery_rate_per_h,
@@ -144,6 +159,10 @@ export function reconstructPoolResponse(
     ceilingKw,
     ...intervals.map((s) => s.electrical_kwh / s.hours),
   );
+  if (!anchor && source) {
+    if (!(ceiling > 0)) throw new Error("Pool heater ON draw is unknown");
+    depletion = ceiling / source.recovery_rate_per_h;
+  }
   const unmetered: PoolUnmeteredSpan[] = [];
   const unobserved = (from: number, to: number) => {
     const hours = (to - from) / 3_600_000;
@@ -177,5 +196,6 @@ export function reconstructPoolResponse(
       source_depletion_kwh: depletion,
     },
     unmetered,
+    estimated_start: !anchor,
   };
 }

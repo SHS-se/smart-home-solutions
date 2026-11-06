@@ -25,3 +25,18 @@ Deno.test("invalid device energy does not discard the measured household quarter
   assertEquals(result.deviceSlotRows.length, 1);
   assertEquals(result.ignored.invalid_device_energy, 1);
 });
+Deno.test("a device quarter without household meter readings is stored and advances the watermark", () => {
+  const quality = { aggregation: "sum_of_recorder_5minute_changes", duration_seconds: 900 };
+  const devices = new Map([["pool", { id: "p" }]]);
+  const result = prepareActualUpload([row("2026-10-15T11:45:00Z"),
+    { start: "2026-10-15T12:00:00Z", quality, device_energy_kwh: { pool: .9 } }], devices, context, now);
+  assertEquals(result.actualRows.map(r => r.start_ts), ["2026-10-15T11:45:00.000Z"]);
+  assertEquals(result.deviceSlotRows.map(r => [r.start_ts, r.energy_kwh]), [["2026-10-15T12:00:00.000Z", .9]]);
+  assertEquals(result.accepted_until, "2026-10-15T12:00:00.000Z");
+  assertEquals(result.ignored, {});
+  // A quarter with neither is still empty, and unknown devices do not advance the watermark.
+  const empty = prepareActualUpload([{ start: "2026-10-15T12:00:00Z", quality },
+    { start: "2026-10-15T11:45:00Z", quality, device_energy_kwh: { unknown: .1 } }], devices, context, now);
+  assertEquals(empty.accepted_until, null);
+  assertEquals(empty.ignored, { empty_actual_slot: 1, invalid_device_energy: 1 });
+});

@@ -95,7 +95,11 @@ advances source depletion at the supported ON draw (an upper bound), and both
 bounds hold through the observed intervals that follow. The newest quarters still
 arriving are a routine note; a quarter the uploader has passed is a warning. Only
 a state that cannot be bounded (a malformed model, or a source heater with no
-known ON draw) retains accepted instructions. A later complete capture replays the
+known ON draw) retains accepted instructions. The ON draw bound is the highest
+measured operating point, not the selected setting. A capture older than both
+fitted checkpoints starts a day earlier from the bounded state (no in-flight
+heat, the most depletion that draw can sustain) and replays observed energy
+from there. A later complete capture replays the
 observed energy exactly and resumes thermal scheduling without relearning. Rooms
 with delayed heat treat unreported heat as none and report it the same way. One pool-owned operational
 note explains an unsuccessful reschedule; member devices do not duplicate it.

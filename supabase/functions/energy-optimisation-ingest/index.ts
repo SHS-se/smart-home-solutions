@@ -193,6 +193,15 @@ const round = (value: number, decimals = 6) => {
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
+/** An optional forecast series that cannot be built is left out, never fatal. */
+function optionalForecast<T>(label: string, homeId: string, build: () => T | null): T | null {
+  try { return build(); }
+  catch (error) {
+    console.error(`[ENERGY-OPTIMISATION] ${label} forecast unavailable`, { home_id: homeId, error: describeThrown(error) });
+    return null;
+  }
+}
+
 /** Forecast preparation is owned by telemetry; calibration is captured separately. */
 async function refreshPreparedForecasts(
   // deno-lint-ignore no-explicit-any
@@ -223,8 +232,17 @@ async function refreshPreparedForecasts(
   const priceZone = source.sources.import_price?.location?.market_area?.trim().toUpperCase() ?? null;
   const marketContext = await testPriceForecastContext(supabase, projectUrl, priceZone);
   const priceGeneratedAt = new Date().toISOString();
-  const outlook = buildPriceOutlook(forecastSlots, priceHistory, {
-    timeZone: source.timezone, asOf: Date.parse(source.captured_at), wind: wind.wind_outlook?.days });
+  // Optional history refines the price estimate; it never decides whether the
+  // home is planned. If it cannot be used, the published horizon alone is.
+  const outlookOptions = { timeZone: source.timezone, asOf: Date.parse(source.captured_at), wind: wind.wind_outlook?.days };
+  let outlook: ReturnType<typeof buildPriceOutlook>;
+  try { outlook = buildPriceOutlook(forecastSlots, priceHistory, outlookOptions); }
+  catch (error) {
+    console.error("[ENERGY-OPTIMISATION] price history could not shape the estimate", { home_id: homeId, error: describeThrown(error) });
+    source.planning_warnings = mergePlanningWarnings(source.planning_warnings, [planningWarning("price_history_unusable", "prices",
+      "Historical prices could not be used for the price estimate.", "Price estimates use the currently published horizon.")]);
+    outlook = buildPriceOutlook(forecastSlots, [], { ...outlookOptions, wind: undefined });
+  }
   if (marketContext && priceZone) EdgeRuntime.waitUntil(recordTestPriceForecastGeneration(supabase, projectUrl, {
     id: crypto.randomUUID(), home_id: homeId, generated_at: priceGeneratedAt,
     model_as_of: source.captured_at, timezone: source.timezone, zone: priceZone,
@@ -237,11 +255,16 @@ async function refreshPreparedForecasts(
     outlook: structuredClone(outlook),
   }));
   const location = homeLocation(source);
+  // Each optional forecast input fails on its own: the plan continues without it.
   const [solarPoints, houseResult] = await Promise.all([
-    location ? irradiancePoints({ supabase, latitude: location.latitude, longitude: location.longitude }) : null,
-    supabase.rpc("get_energy_house_temperature_profile", {
+    (async () => location ? await irradiancePoints({ supabase, latitude: location.latitude, longitude: location.longitude }) : null)()
+      .catch(error => {
+        console.error("[ENERGY-OPTIMISATION] solar irradiance unavailable", { home_id: homeId, error: describeThrown(error) });
+        return null;
+      }),
+    Promise.resolve(supabase.rpc("get_energy_house_temperature_profile", {
       p_customer_id: customerId, p_home_id: homeId, p_timezone: source.timezone, p_to: new Date().toISOString(),
-    }),
+    })).catch(error => ({ data: null, error })),
   ]);
   if (houseResult.error) {
     console.error("[ENERGY-OPTIMISATION] room evidence unavailable", houseResult.error);
@@ -253,8 +276,9 @@ async function refreshPreparedForecasts(
   const product = weather;
   const preparedSnapshot={ ...product,
     planning_warnings: mergePlanningWarnings(source.planning_warnings,product.planning_warnings),
-    solar_irradiance_w_per_m2: solarPoints ? irradianceOnto(solarPoints, starts) : null,
-    house_temperature_c: houseResult.error ? null : houseTemperatureForecast(starts, source.timezone, (houseResult.data ?? []) as HouseProfileRow[]) };
+    solar_irradiance_w_per_m2: optionalForecast("solar irradiance", homeId, () => solarPoints ? irradianceOnto(solarPoints, starts) : null),
+    house_temperature_c: houseResult.error ? null : optionalForecast("house temperature", homeId,
+      () => houseTemperatureForecast(starts, source.timezone, (houseResult.data ?? []) as HouseProfileRow[])) };
   const priceOutlook={shaped:outlook.shaped,observed_days:outlook.observedDays,effective_days:outlook.effectiveDays,
     level_sek_per_kwh:outlook.levelSekPerKwh,shadow_import_sek_per_kwh:outlook.shadowImportSekPerKwh.slice(0,product.slots.length),
     ...(outlook.levelBasis?{level_basis:outlook.levelBasis}:{})};
@@ -1206,7 +1230,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
               planning_warnings: uploadedActuals.warnings,
               actual_slots_ignored: uploadedActuals.ignored,
               actual_slots_accepted: actualRows.length,
-              actuals_accepted_until: actualRows.at(-1)?.start_ts ?? null,
+              actuals_accepted_until: uploadedActuals.accepted_until,
               thermal_slots_accepted: thermalRows.length,
               thermal_slots_accepted_until: thermalAcceptedUntil,
               price_slots_accepted: priceRows.length,
@@ -1261,9 +1285,7 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       planning_warnings: uploadedActuals.warnings,
       actual_slots_ignored: uploadedActuals.ignored,
       actual_slots_accepted: actualRows.length,
-      actuals_accepted_until: actualRows.length > 0
-        ? actualRows[actualRows.length - 1].start_ts
-        : null,
+      actuals_accepted_until: uploadedActuals.accepted_until,
       thermal_slots_accepted: thermalRows.length,
       thermal_slots_accepted_until: thermalAcceptedUntil,
       price_slots_accepted: priceRows.length,

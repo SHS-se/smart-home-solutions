@@ -255,7 +255,11 @@ Deno.test("an older capture uses its earlier fitted checkpoint, never a future h
   model.state = { at: "2026-10-13T13:00:00Z", pending_heat_kwh: 9, source_depletion_kwh: 0 };
   const at = Date.parse("2026-10-13T12:30:00Z");
   assertAlmostEquals(poolPendingHeatAt(model, CAPACITY, [], at), 3 * Math.exp(-.5 / model.response_time_constant_h), 1e-10);
-  assertThrows(() => poolPendingHeatAt(model, CAPACITY, [], at - 3_600_000), Error, "no observed starting state");
+  // Before both checkpoints there is no observed start: a bounded one, never a throw.
+  const early = reconstructPoolResponse(model, CAPACITY, [], at - 3_600_000, CEILING_KW);
+  assertEquals(early.estimated_start, true);
+  assertEquals(early.state.pending_heat_kwh, 0);
+  assertAlmostEquals(early.state.source_depletion_kwh, CEILING_KW / model.source!.recovery_rate_per_h, 1e-9);
   assertThrows(() => poolPendingHeatAt({ ...model, state: { at: model.state.at, pending_heat_kwh: NaN, source_depletion_kwh: 0 } }, CAPACITY, [], at), Error, "checkpoint");
 });
 
@@ -324,6 +328,21 @@ Deno.test("PROD incident shape: anchor 19:15, rows to 19:45, capture 20:15:06 wi
   // When the late row arrives the next capture is the exact observed replay.
   const arrived = reconstructPoolResponse(moved, CAPACITY, [...rows, { start_ms: anchor + 3 * 900_000, hours: .25, electrical_kwh: 0 }, partial], at, CEILING_KW);
   assertEquals(arrived.unmetered, []);
+  assertEquals(arrived.estimated_start, false);
+});
+
+Deno.test("an unanchored capture tightens its bounded start with the energy observed since", () => {
+  const model = fitted(synthetic(.7));
+  assert(model.source);
+  const first = Math.min(Date.parse(model.state.at), Date.parse(model.initial_state.at));
+  const at = first - 3_600_000, start = Math.floor(at / 900_000) * 900_000 - 24 * 3_600_000;
+  const idle = Array.from({ length: 96 }, (_, i) => ({ start_ms: start + i * 900_000, hours: .25, electrical_kwh: 0 }));
+  const blind = reconstructPoolResponse(model, CAPACITY, [], at, CEILING_KW);
+  const seen = reconstructPoolResponse(model, CAPACITY, idle, at, CEILING_KW);
+  assert(seen.estimated_start && blind.estimated_start);
+  assert(seen.state.source_depletion_kwh < blind.state.source_depletion_kwh, "a day of observed idling recovers the source bound");
+  assertEquals(seen.unmetered, [], "the observed day covers the whole replay");
+  assertEquals(blind.unmetered, [{ start_ms: start, end_ms: at }]);
 });
 
 Deno.test("bounded replay never over-states in-flight heat or under-states source depletion", () => {

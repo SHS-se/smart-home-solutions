@@ -20,3 +20,12 @@ export function poolElectricalDemand(snapshot: PoolElectricalInput): { compresso
   allocateDevicePower(deviceMembers(members.filter(m => !keys.has(m.key)), auxiliary), auxiliary, member_w);
   return { compressor_w: compressor, auxiliary_w: auxiliary, member_w };
 }
+
+/** The most a pool heater can draw on average at any supported setting, the
+ * upper bound on electricity during time it was not metered. Not the selected
+ * setting: the unmetered time may have run at another one. */
+export function poolElectricalCeilingW(snapshot: PoolElectricalInput): number {
+  const supplied = snapshot.device_physics?.pool?.heater;
+  if (supplied) return Math.max(...supplied.operating_points.map(point => point.electric_w));
+  return poolElectricalDemand(snapshot).compressor_w;
+}
