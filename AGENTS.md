@@ -46,8 +46,13 @@ Check the current branch before editing files and switch to `dev` if needed.
 # Environments and deploys
 
 All changes go to `dev` first so they can be tested before reaching production.
-Never commit feature work directly to `main`. Promote tested work with a normal
-`dev` → `main` merge once it has been verified on the test deploy.
+Never commit feature work directly to `main`. Promote tested work once it has
+been verified on the test deploy by fast-forwarding `main` to `dev`: on `main`,
+run `git merge --ff-only dev`, then push. Never create a merge commit on `main`
+(no `--no-ff`, no merge-commit button on a pull request). A merge commit on
+`main` that `dev` lacks stops every later promotion from fast-forwarding. If
+`--ff-only` refuses, `main` has a commit `dev` lacks: merge `main` into `dev`,
+push `dev`, and fast-forward again.
 
 - `dev` → test: TEST Supabase (`vxqpgbzseckgceopitpm`), Cloudflare Pages project
   `test-smart-home-solutions`, https://test-smart-home-solutions.pages.dev
