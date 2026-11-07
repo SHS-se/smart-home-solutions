@@ -897,6 +897,8 @@ fn charging_blocks(
     }
     let trials =
         crate::charging_blocks::proposals(p, &ordinary.commands, &ordinary.quarters, work)?;
+    let stretch =
+        crate::charging_blocks::stretch_ev(p, &ordinary.commands, &ordinary.quarters, work);
     let mut alternative: Option<Candidate> = None;
     let mut response = None;
     let mut fresh_tried = false;
@@ -905,7 +907,7 @@ fn charging_blocks(
     let ordered = (0..8)
         .flat_map(|_| [ev.next(), battery.next()])
         .flatten()
-        .take(8);
+        .take(8 - usize::from(stretch.is_some()));
     for trial in ordered {
         work.charging_block_trials += 1;
         let mut commands = vec![trial.commands.clone()];
@@ -955,6 +957,29 @@ fn charging_blocks(
                 }
                 Err(EvaluationIssue::GrantUnavailable) => return alternative,
                 _ => {}
+            }
+        }
+    }
+    if let Some(stretch) = stretch {
+        let stretched = stretch.apply(&ordinary.commands);
+        let best = alternative
+            .as_ref()
+            .filter(|c| c.better(ordinary))
+            .unwrap_or(ordinary);
+        // Keep an independent improvement elsewhere in the schedule when the
+        // stretched current can be applied without undoing that improvement.
+        let (commands, base) = match carry(&ordinary.commands, &stretched, &best.commands) {
+            Some(commands) => (commands, best),
+            None => (stretched, ordinary),
+        };
+        work.charging_block_trials += 1;
+        if let Ok(candidate) = scorer.score(commands, work, Some(base)) {
+            if stretch.needs_no_discharge(p, &candidate.quarters)
+                && candidate.better(ordinary)
+                && alternative.as_ref().is_none_or(|c| candidate.better(c))
+            {
+                work.charging_block_improvements += 1;
+                alternative = Some(candidate);
             }
         }
     }

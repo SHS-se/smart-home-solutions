@@ -27,6 +27,160 @@ impl Packing {
     }
 }
 
+fn balanced_current(total: u64, len: usize, charger: &crate::Charger) -> Option<(u32, u32, usize)> {
+    let slots = len as u64;
+    let min = u64::from(charger.min_current_a);
+    let step = u64::from(charger.current_step_a);
+    let extra = total.checked_sub(min * slots)?;
+    if !extra.is_multiple_of(step) {
+        return None;
+    }
+    let steps = extra / step;
+    let low = min + (steps / slots) * step;
+    let raised = (steps % slots) as usize;
+    let high = low + u64::from(raised > 0) * step;
+    (high <= u64::from(charger.max_current_a)).then_some((low as u32, high as u32, raised))
+}
+
+pub(crate) struct EvStretch {
+    from: usize,
+    amps: Vec<u32>,
+}
+
+impl EvStretch {
+    pub fn apply(&self, commands: &[Command]) -> Vec<Command> {
+        let mut next = commands.to_vec();
+        for (c, &amps) in next[self.from..].iter_mut().zip(&self.amps) {
+            c.ev_amps = amps;
+        }
+        next
+    }
+
+    pub fn needs_no_discharge(&self, p: &Problem, quarters: &[crate::Quarter]) -> bool {
+        quarters[self.from..self.from + self.amps.len()]
+            .iter()
+            .all(|q| q.net_w + q.discharge_w <= p.limits.import_w + 1e-7)
+    }
+}
+
+/// Stretch the session most reliant on battery support into its neighboring
+/// quarters. Keep its energy and the existing battery commands while looking
+/// for a lower native current that fits directly under the grid limit.
+pub(crate) fn stretch_ev(
+    p: &Problem,
+    commands: &[Command],
+    q: &[crate::Quarter],
+    work: &mut Work,
+) -> Option<EvStretch> {
+    const MAX_LOCAL_QUARTERS: usize = 32;
+    let charger = p.charger.as_ref()?;
+    p.battery.as_ref()?;
+    let n = commands.len();
+    if !work.spend(n as u64 * 16 + (MAX_LOCAL_QUARTERS as u64).pow(3) * 4) {
+        return None;
+    }
+    let movable = |i: usize| {
+        p.slots[i].ev_available
+            && !commitments::hold(p, i).has(commitments::Owner::Ev)
+            && !commitments::unavailable(p, i, commitments::Owner::Ev)
+    };
+    let peak_without_discharge =
+        |i: usize| q[i].net_w + q[i].discharge_w + (q[i].pool_command_w - q[i].pool_w).max(0.0);
+    let mut source = None;
+    let mut i = 0;
+    while i < n {
+        if !movable(i) || commands[i].ev_amps == 0 {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let hours = physics::projected_hours(&p.slots[i]);
+        let mut amp_quarters = 0;
+        let mut supported_wh = 0.0;
+        while i < n
+            && movable(i)
+            && commands[i].ev_amps > 0
+            && physics::projected_hours(&p.slots[i]) == hours
+        {
+            amp_quarters += u64::from(commands[i].ev_amps);
+            supported_wh += (peak_without_discharge(i) - p.limits.import_w)
+                .max(0.0)
+                .min(q[i].discharge_w)
+                * hours;
+            i += 1;
+        }
+        if i - start < MAX_LOCAL_QUARTERS
+            && supported_wh > 1e-7
+            && source.is_none_or(|(_, _, _, best)| supported_wh > best)
+        {
+            source = Some((start, i, amp_quarters, supported_wh));
+        }
+    }
+    let (start, end, total, _) = source?;
+    let hours = physics::projected_hours(&p.slots[start]);
+    let watt_per_amp = charger.voltage_v * f64::from(charger.phase_count);
+    let mut best: Option<(f64, EvStretch)> = None;
+    for len in end - start + 1..=n.min(MAX_LOCAL_QUARTERS) {
+        let Some((low, high, raised)) = balanced_current(total, len, charger) else {
+            continue;
+        };
+        for from in end.saturating_sub(len)..=start.min(n - len) {
+            let span = from..from + len;
+            if !span.clone().all(|i| {
+                movable(i)
+                    && physics::projected_hours(&p.slots[i]) == hours
+                    && ((start..end).contains(&i) || commands[i].ev_amps == 0)
+            }) {
+                continue;
+            }
+            for high_first in [true, false] {
+                if !high_first && raised == 0 {
+                    continue;
+                }
+                let amps = |j| {
+                    if (high_first && j < raised) || (!high_first && j >= len - raised) {
+                        high
+                    } else {
+                        low
+                    }
+                };
+                if !span.clone().enumerate().all(|(j, i)| {
+                    p.slots[i]
+                        .ev_current_ceiling_a
+                        .is_none_or(|cap| amps(j) <= cap)
+                        && peak_without_discharge(i) - q[i].ev_w + f64::from(amps(j)) * watt_per_amp
+                            <= p.limits.import_w + 1e-7
+                }) {
+                    continue;
+                }
+                let cost = span
+                    .clone()
+                    .enumerate()
+                    .map(|(j, i)| f64::from(amps(j)) * p.slots[i].import_price)
+                    .sum::<f64>()
+                    * hours
+                    * watt_per_amp
+                    / 1000.0
+                    + if raised > 0 {
+                        p.limits.ev_change_preference_sek
+                    } else {
+                        0.0
+                    };
+                if best.as_ref().is_none_or(|(old, _)| cost < *old) {
+                    best = Some((
+                        cost,
+                        EvStretch {
+                            from,
+                            amps: (0..len).map(amps).collect(),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    best.map(|(_, stretch)| stretch)
+}
+
 /// Spend two complete battery trials on the most fragmented active session.
 /// Equal-duration exchanges preserve EV energy. Other durations, availability
 /// and commitments partition this neighbourhood; they never reject a plan.
@@ -600,23 +754,9 @@ fn paired_trials(
             .collect();
         let watt_per_amp = charger.voltage_v * f64::from(charger.phase_count);
         for len in 1..=end - start {
-            let slots = len as u64;
-            let min = u64::from(charger.min_current_a);
-            let step = u64::from(charger.current_step_a);
-            let Some(extra) = total_amps.checked_sub(min * slots) else {
-                break;
+            let Some((low, high, raised)) = balanced_current(total_amps, len, charger) else {
+                continue;
             };
-            if !extra.is_multiple_of(step) {
-                continue;
-            }
-            let steps = extra / step;
-            let low = min + (steps / slots) * step;
-            let raised = (steps % slots) as usize;
-            let high = low + u64::from(raised > 0) * step;
-            if high > u64::from(charger.max_current_a) {
-                continue;
-            }
-            let (low, high) = (low as u32, high as u32);
             for high_first in [true, false] {
                 if !high_first && raised == 0 {
                     continue;
@@ -923,6 +1063,52 @@ mod tests {
         );
         assert!(after.iter().map(|q| q.cost).sum::<f64>() < q.iter().map(|q| q.cost).sum::<f64>());
     }
+    #[test]
+    fn stretched_ev_block_avoids_battery_discharge_and_refill() {
+        let mut p = crate::witnesses::tests::problem(8);
+        no_pool(&mut p);
+        p.initial.battery_kwh = Some(9.9);
+        p.limits.import_w = 15_000.0;
+        p.limits.wear_per_kwh = 0.05;
+        let charger = p.charger.as_mut().unwrap();
+        charger.phase_count = 3;
+        for s in &mut p.slots {
+            s.base_w = 6700.0;
+            s.solar_w = 0.0;
+            s.import_price = 1.0;
+        }
+        let mut before = vec![idle(); 8];
+        for c in &mut before[3..5] {
+            c.ev_amps = 16;
+            c.battery = Operation::ShaveImport;
+            c.discharge_limit_w = 4000.0;
+        }
+        for c in &mut before[5..7] {
+            c.battery = Operation::GridCharge;
+            c.charge_limit_w = 4000.0;
+        }
+        let q = physics::projection(&p, &before).unwrap();
+        assert!(q[3..5].iter().all(|q| q.discharge_w > 0.0));
+        let stretch =
+            stretch_ev(&p, &before, &q, &mut work()).expect("lower current can use four quarters");
+        let commands = stretch.apply(&before);
+        let after = physics::projection(&p, &commands).unwrap();
+        assert!(stretch.needs_no_discharge(&p, &after));
+        assert!(after.iter().all(|q| q.discharge_w == 0.0));
+        let energy = |qs: &[crate::Quarter], f: fn(&crate::Quarter) -> f64| {
+            qs.iter().map(f).sum::<f64>() * 0.25
+        };
+        assert_eq!(energy(&q, |q| q.ev_w), energy(&after, |q| q.ev_w));
+        assert!(energy(&after, |q| q.charge_w) < energy(&q, |q| q.charge_w));
+        assert_eq!(
+            q.last().unwrap().battery_kwh,
+            after.last().unwrap().battery_kwh
+        );
+        assert!(
+            crate::policy::account(&p, &after).score_sek > crate::policy::account(&p, &q).score_sek
+        );
+    }
+
     #[test]
     fn interleaved_sessions_can_become_two_continuous_blocks() {
         let mut p = crate::witnesses::tests::problem(20);
