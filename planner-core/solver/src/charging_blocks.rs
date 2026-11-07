@@ -399,8 +399,294 @@ pub(crate) fn proposals(
         }
     }
     relocations.extend(trials);
-    battery_trials(p, commands, q, &mut relocations, work);
-    Some(relocations)
+    let mut combined = paired_trials(p, commands, q, &sessions, work);
+    combined.extend(relocations);
+    battery_trials(p, commands, q, &mut combined, work);
+    Some(combined)
+}
+
+fn grid_charge(c: &Command) -> bool {
+    c.battery == crate::Operation::GridCharge
+}
+
+/// Lowest whole-watt request delivering the target at the proposal's headroom.
+fn level_charge(target: f64, room: f64, stored: impl Fn(f64) -> f64) -> Option<f64> {
+    if room <= 0.0 || stored(room) + 1e-9 < target {
+        return None;
+    }
+    let (mut low, mut high) = (0.0, room.ceil());
+    for _ in 0..64 {
+        let mid = ((low + high) / 2.0).floor();
+        if mid <= low || mid >= high {
+            break;
+        }
+        if stored(mid) < target {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    Some(high)
+}
+
+struct BatteryBlock {
+    from: usize,
+    to: usize,
+    power_w: f64,
+    cost: f64,
+}
+
+struct PairedBlock<'a> {
+    rank: f64,
+    ev_from: usize,
+    amps: Vec<u32>,
+    battery: &'a BatteryBlock,
+}
+
+/// Test a handoff in both orders when nearby EV sessions and grid charging
+/// compete. The neighborhood moves both energy allocations in one trial.
+/// Serial charging is a proposal shape, not a restriction on valid plans.
+fn paired_trials(
+    p: &Problem,
+    commands: &[Command],
+    q: &[crate::Quarter],
+    sessions: &[Vec<usize>],
+    work: &mut Work,
+) -> Vec<Trial> {
+    const MAX_WINDOW: usize = 32;
+    const MAX_WINDOWS: usize = 2;
+    let Some((battery, charger)) = p.battery.as_ref().zip(p.charger.as_ref()) else {
+        return Vec::new();
+    };
+    let n = commands.len();
+    if !work.spend(n as u64 * (MAX_WINDOW as u64 * 16 + work.unit_cost)) {
+        return Vec::new();
+    }
+    let editable = |i| {
+        !commitments::hold(p, i).has(commitments::Owner::Ev)
+            && !commitments::hold(p, i).has(commitments::Owner::Battery)
+            && !commitments::unavailable(p, i, commitments::Owner::Ev)
+            && !commitments::unavailable(p, i, commitments::Owner::Battery)
+            && p.slots[i].ev_available
+    };
+    let mut windows = Vec::new();
+    for count in [2, 3] {
+        for group in sessions.windows(count) {
+            let mut start = group[0][0];
+            let mut end = group[count - 1].last().unwrap() + 1;
+            // Include the full grid block at either boundary when it overlaps.
+            while start > 0
+                && end - start < MAX_WINDOW
+                && grid_charge(&commands[start])
+                && grid_charge(&commands[start - 1])
+            {
+                start -= 1;
+            }
+            while end < n
+                && end - start < MAX_WINDOW
+                && grid_charge(&commands[end - 1])
+                && grid_charge(&commands[end])
+            {
+                end += 1;
+            }
+            let span = start..end;
+            if span.len() > MAX_WINDOW
+                || (start > 0 && grid_charge(&commands[start]) && grid_charge(&commands[start - 1]))
+                || (end < n && grid_charge(&commands[end - 1]) && grid_charge(&commands[end]))
+                || !span.clone().any(|i| grid_charge(&commands[i]))
+                || !span.clone().all(|i| {
+                    editable(i)
+                        && physics::projected_hours(&p.slots[i])
+                            == physics::projected_hours(&p.slots[start])
+                })
+            {
+                continue;
+            }
+            let changes = commands[span.clone()]
+                .windows(2)
+                .map(|c| {
+                    let a = crate::charging::Settings::commanded(&c[0]);
+                    let b = crate::charging::Settings::commanded(&c[1]);
+                    usize::from(a.ev != b.ev) + usize::from(a.battery_grid != b.battery_grid)
+                })
+                .sum::<usize>();
+            windows.push((std::cmp::Reverse(changes), start, end));
+        }
+    }
+    windows.sort_unstable();
+    windows.dedup();
+    let mut trials = Vec::new();
+    for (_, start, end) in windows.into_iter().take(MAX_WINDOWS) {
+        let m = (end - start) as u64;
+        if !work.spend(64 * m.pow(3) + m * work.unit_cost) {
+            break;
+        }
+        let hours = physics::projected_hours(&p.slots[start]);
+        let total_amps = commands[start..end]
+            .iter()
+            .map(|c| u64::from(c.ev_amps))
+            .sum::<u64>();
+        let target_dc = (start..end)
+            .filter(|&i| grid_charge(&commands[i]))
+            .map(|i| q[i].charge_dc_w)
+            .sum::<f64>();
+        if target_dc <= 0.0 {
+            continue;
+        }
+        let house = |i: usize| p.slots[i].base_w + q[i].pool_w;
+        let headroom = |i: usize| p.limits.import_w + p.slots[i].solar_w - house(i);
+        let mut battery_blocks = Vec::new();
+        for from in start..end {
+            let mut room = battery.maximum_charge_ac_w();
+            let mut price = 0.0;
+            for to in from + 1..=end {
+                let i = to - 1;
+                // Leave useful solar capture and supply in place.
+                if !grid_charge(&commands[i])
+                    && (q[i].charge_dc_w > 0.0 || q[i].discharge_dc_w > 0.0)
+                    || commands[i].battery == crate::Operation::Export
+                {
+                    break;
+                }
+                let pv = p.slots[i].solar_w;
+                room = room
+                    .min(battery.charge_grid_room_w(headroom(i).max(0.0), pv, house(i)))
+                    .min(battery.charge_ac_w(battery.charge_max_w, pv, house(i)));
+                price += p.slots[i].import_price;
+                let stored = |w| {
+                    (from..to)
+                        .map(|j| battery.charge_dc_w(w, p.slots[j].solar_w, house(j)))
+                        .sum::<f64>()
+                };
+                if let Some(power) = level_charge(target_dc, room.floor(), stored) {
+                    battery_blocks.push(BatteryBlock {
+                        from,
+                        to,
+                        power_w: power,
+                        cost: power * price * hours / 1000.0,
+                    });
+                }
+            }
+        }
+        let ev_caps: Vec<_> = (start..end)
+            .map(|i| {
+                let room = (headroom(i)
+                    - (q[i].pool_command_w - q[i].pool_w).max(0.0)
+                    - battery.conversion.idle_loss_w)
+                    .max(0.0);
+                let cap = charger.fitting_amps(room);
+                p.slots[i].ev_current_ceiling_a.map_or(cap, |c| cap.min(c))
+            })
+            .collect();
+        let mut best: Option<PairedBlock<'_>> = None;
+        // The cheapest battery block that fits before or after each boundary
+        // is sufficient for ranking any disjoint pair.
+        let cheaper = |a: &BatteryBlock, b: &BatteryBlock| a.cost.total_cmp(&b.cost);
+        let before: Vec<_> = (start..=end)
+            .map(|i| {
+                battery_blocks
+                    .iter()
+                    .filter(|b| b.to <= i)
+                    .min_by(|a, b| cheaper(a, b))
+            })
+            .collect();
+        let after: Vec<_> = (start..=end)
+            .map(|i| {
+                battery_blocks
+                    .iter()
+                    .filter(|b| b.from >= i)
+                    .min_by(|a, b| cheaper(a, b))
+            })
+            .collect();
+        let watt_per_amp = charger.voltage_v * f64::from(charger.phase_count);
+        for len in 1..=end - start {
+            let slots = len as u64;
+            let min = u64::from(charger.min_current_a);
+            let step = u64::from(charger.current_step_a);
+            let Some(extra) = total_amps.checked_sub(min * slots) else {
+                break;
+            };
+            if !extra.is_multiple_of(step) {
+                continue;
+            }
+            let steps = extra / step;
+            let low = min + (steps / slots) * step;
+            let raised = (steps % slots) as usize;
+            let high = low + u64::from(raised > 0) * step;
+            if high > u64::from(charger.max_current_a) {
+                continue;
+            }
+            let (low, high) = (low as u32, high as u32);
+            for high_first in [true, false] {
+                if !high_first && raised == 0 {
+                    continue;
+                }
+                let amps = |j| {
+                    if (high_first && j < raised) || (!high_first && j >= len - raised) {
+                        high
+                    } else {
+                        low
+                    }
+                };
+                for from in start..=end - len {
+                    if (0..len).any(|j| amps(j) > ev_caps[from + j - start]) {
+                        continue;
+                    }
+                    let cost = (0..len)
+                        .map(|j| f64::from(amps(j)) * p.slots[from + j].import_price)
+                        .sum::<f64>()
+                        * watt_per_amp
+                        * hours
+                        / 1000.0
+                        + if raised > 0 {
+                            p.limits.ev_change_preference_sek
+                        } else {
+                            0.0
+                        };
+                    for battery in [before[from - start], after[from + len - start]]
+                        .into_iter()
+                        .flatten()
+                    {
+                        let rank = cost + battery.cost;
+                        if best.as_ref().is_none_or(|old| rank < old.rank) {
+                            best = Some(PairedBlock {
+                                rank,
+                                ev_from: from,
+                                amps: (0..len).map(amps).collect(),
+                                battery,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(block) = best {
+            let mut next = commands.to_vec();
+            for c in &mut next[start..end] {
+                c.ev_amps = 0;
+                if grid_charge(c) {
+                    c.battery = crate::Operation::Idle;
+                    c.charge_limit_w = 0.0;
+                    c.discharge_limit_w = 0.0;
+                }
+            }
+            for (i, a) in block.amps.into_iter().enumerate() {
+                next[block.ev_from + i].ev_amps = a;
+            }
+            for c in &mut next[block.battery.from..block.battery.to] {
+                c.battery = crate::Operation::GridCharge;
+                c.charge_limit_w = block.battery.power_w;
+                c.discharge_limit_w = 0.0;
+            }
+            if next != commands && !trials.iter().any(|t: &Trial| t.commands == next) {
+                trials.push(Trial {
+                    commands: next,
+                    battery_response: false,
+                });
+            }
+        }
+    }
+    trials
 }
 
 fn battery_trials(
@@ -492,19 +778,9 @@ fn battery_trials(
                     })
                     .sum::<f64>()
             };
-            if stored(room) + 1e-9 < target {
+            let Some(power) = level_charge(target, room, stored) else {
                 continue;
-            }
-            let (mut low, mut high) = (0.0, room);
-            for _ in 0..64 {
-                let mid = (low + high) / 2.0;
-                if stored(mid) < target {
-                    low = mid;
-                } else {
-                    high = mid;
-                }
-            }
-            let power = high.ceil();
+            };
             let excess = (stored(power) - target).max(0.0);
             let last = end - 1;
             let s = &p.slots[last];
@@ -647,6 +923,54 @@ mod tests {
         );
         assert!(after.iter().map(|q| q.cost).sum::<f64>() < q.iter().map(|q| q.cost).sum::<f64>());
     }
+    #[test]
+    fn interleaved_sessions_can_become_two_continuous_blocks() {
+        let mut p = crate::witnesses::tests::problem(20);
+        no_pool(&mut p);
+        p.initial.battery_kwh = Some(1.0);
+        p.limits.ev_change_preference_sek = 0.125;
+        p.limits.battery_change_preference_sek = 0.125;
+        for s in &mut p.slots {
+            s.base_w = 1800.0;
+            s.solar_w = 0.0;
+            s.import_price = 1.0;
+        }
+        let mut before = vec![idle(); 20];
+        for i in [2, 3, 6, 13] {
+            before[i].ev_amps = 10;
+        }
+        for i in [4, 5, 7, 8, 9, 10, 11] {
+            before[i].battery = Operation::GridCharge;
+            before[i].charge_limit_w = if i % 2 == 0 { 3000.0 } else { 2400.0 };
+        }
+        let q = physics::projection(&p, &before).unwrap();
+        let trials = proposals(&p, &before, &q, &mut work()).unwrap();
+        let starts = |commands: &[Command], active: fn(&Command) -> bool| {
+            commands
+                .windows(2)
+                .filter(|pair| !active(&pair[0]) && active(&pair[1]))
+                .count()
+        };
+        let paired = trials
+            .iter()
+            .find(|trial| {
+                starts(&trial.commands, |c| c.ev_amps > 0) == 1
+                    && starts(&trial.commands, grid_charge) == 1
+                    && trial
+                        .commands
+                        .iter()
+                        .all(|c| c.ev_amps == 0 || !grid_charge(c))
+            })
+            .expect("one non-overlapping block per device");
+        let after = physics::projection(&p, &paired.commands).unwrap();
+        let (previous, new) = (q.last().unwrap(), after.last().unwrap());
+        assert!((previous.ev_kwh.unwrap() - new.ev_kwh.unwrap()).abs() < 1e-9);
+        assert!((previous.battery_kwh.unwrap() - new.battery_kwh.unwrap()).abs() < 0.001);
+        assert!(
+            crate::policy::account(&p, &after).score_sek > crate::policy::account(&p, &q).score_sek
+        );
+    }
+
     #[test]
     fn battery_blocks_can_merge_across_an_off_gap_without_erasing_supply() {
         let mut p = crate::witnesses::tests::problem(3);
