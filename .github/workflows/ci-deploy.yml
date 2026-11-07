@@ -119,6 +119,12 @@ jobs:
       - name: Check isolated edge-function dependencies
         run: deno run --allow-read --allow-write --allow-run scripts/check-edge-function-dependencies.ts
 
+      - name: Audit dependencies (website lockfile and deployed edge functions)
+        # Dependabot reads only package-lock.json; this also audits what each edge
+        # function resolves at deploy time. Fails on high or critical advisories
+        # not in .github/dependency-audit-allowlist.json.
+        run: deno task audit:dependencies
+
   unit:
     name: Unit tests (${{ matrix.shard }}/4)
     needs: changes

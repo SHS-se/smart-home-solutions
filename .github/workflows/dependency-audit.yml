@@ -1,0 +1,35 @@
+name: Dependency audit
+
+# The same audit CI runs before every deploy, on a schedule, so an advisory
+# published between pushes fails a run (and notifies) without waiting for the
+# next deploy. It reads the committed lockfile and the edge functions' imports;
+# it deploys nothing.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit dependencies (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [main, dev]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.8
+
+      - name: Audit dependencies (website lockfile and deployed edge functions)
+        run: deno task audit:dependencies
