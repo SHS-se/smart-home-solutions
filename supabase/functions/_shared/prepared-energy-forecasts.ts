@@ -26,7 +26,7 @@ const forecastSchema = z.object({
   schema_version: z.literal(2),
   planner_location: z.object({latitude:finite,longitude:finite}).nullable(),
   planning_warnings: z.object({ code: z.string(), scope: z.string(), severity: z.enum(["warning", "error"]),
-    message: z.string(), consequence: z.string(), evidence: z.record(z.union([z.string(), finite, z.null()])).optional(),
+    message: z.string(), consequence: z.string(), evidence: z.record(z.string(), z.union([z.string(), finite, z.null()])).optional(),
     entity_id: z.string().optional() }).array(),
   slot_starts: timestamp.array().nonempty(),
   /** Published inputs, distinct from estimates that happen to have the same value. */

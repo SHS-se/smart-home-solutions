@@ -12,7 +12,7 @@
 // The message builder is pure so it can be unit-tested; sendSubscriptionStaffNotice
 // wraps it and never throws: an internal notice failing must not break a
 // completed billing operation.
-import { Resend } from "https://esm.sh/resend@2.0.0";
+import { Resend } from "npm:resend@6.37.0";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
 import { type AppEnvironment, getAppEnvironment } from "./app-env.ts";
 import { getPrimaryAppOrigin } from "./app-origin.ts";

@@ -91,7 +91,7 @@
     "tesseract.js": "^7.0.0",
     "unpdf": "1.9.1",
     "vaul": "^0.9.9",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.14",
@@ -107,11 +107,16 @@
     "fast-xml-parser": "5.11.2",
     "globals": "^15.15.0",
     "jscpd": "^5.4.2",
-    "resend": "2.0.0",
+    "resend": "6.37.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.38.0",
+    "typescript-eslint": "^8.72.1",
     "vite": "^6.4.5",
-    "wrangler": "^4.151.3"
+    "wrangler": "^4.158.0"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.5"
+    }
   }
 }

@@ -32,7 +32,6 @@
     "research:market:backfill-nucs": "deno run --allow-read --allow-write --allow-run=supabase --allow-net=vxqpgbzseckgceopitpm.supabase.co scripts/nucs-backfill.ts"
   },
   "imports": {
-    "https://esm.sh/resend@2.0.0": "npm:resend@2.0.0",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.90.1",
     "https://esm.sh/@supabase/supabase-js@2.57.2": "npm:@supabase/supabase-js@2.90.1",
     "@/": "./src/",

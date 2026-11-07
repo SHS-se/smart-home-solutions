@@ -240,7 +240,7 @@ const Contact = () => {
 
     if (!result.success) {
       const fieldErrors: Partial<Record<keyof ContactFormData, string>> = {};
-      result.error.errors.forEach((err) => {
+      result.error.issues.forEach((err) => {
         if (err.path[0]) {
           fieldErrors[err.path[0] as keyof ContactFormData] = err.message;
         }

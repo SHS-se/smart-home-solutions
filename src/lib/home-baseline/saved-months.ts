@@ -46,8 +46,8 @@ const service = z.object({ minimumPoolC: finite.nullable(), belowPoolStartHours:
 const modeled = z.object({ baselineBill: bill, schedulerBill: bill, baselineService: service, schedulerService: service }).strict();
 export const comparisonLedgerSchema = monthLedgerSchema.omit({ comparison: true, gridImportCostSek: true }).extend({ continuation: pool.nullable(), solar: z.object({ profileHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(), reconstructedKwh: finite.nonnegative(), reconstructedQuarters: count }).strict(), scheduler: ledger, modeled, replay: z.object({ engine: z.literal(REPLAY_ENGINE), protocol: z.literal(REPLAY_PROTOCOL), solves: count.positive(), lookaheadQuarters: count.max(288) }).strict() }).strict();
 const savedMonthSchema = z.object({ ledger: comparisonLedgerSchema, inputHash: z.string().regex(/^[a-f0-9]{64}$/), computedAt: z.string().datetime() }).strict();
-const reportSchema = z.object({ generation: count.positive(), version: z.literal(CALCULATION_VERSION), model: z.record(z.unknown()),
-  months: z.record(savedMonthSchema), checkpoints: z.record(simulationCheckpointSchema) }).strict();
+const reportSchema = z.object({ generation: count.positive(), version: z.literal(CALCULATION_VERSION), model: z.record(z.string(), z.unknown()),
+  months: z.record(z.string(), savedMonthSchema), checkpoints: z.record(z.string(), simulationCheckpointSchema) }).strict();
 export interface SavedMonth { ledger: MonthLedger; inputHash: string; computedAt: string }
 export interface SavedReport { generation: number; version: string; model: HomeModelCapture; months: Record<string, SavedMonth>; checkpoints: Record<string, SimulationCheckpoint> }
 export interface MonthStore {

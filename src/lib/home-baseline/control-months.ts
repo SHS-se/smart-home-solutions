@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { HomeRef } from './history';
 
 const row = z.object({ month_key: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/), runs: z.number().int().nonnegative(),
-  controlling: z.record(z.number().int().nonnegative()) }).strict();
+  controlling: z.record(z.string(), z.number().int().nonnegative()) }).strict();
 /** Planning runs in one local month, and how many of them each device was under SHS control in. */
 export interface ControlMonth { month: string; runs: number; controlling: Record<string, number> }
 

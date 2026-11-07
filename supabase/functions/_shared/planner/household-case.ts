@@ -153,7 +153,7 @@ export type Equipment = HouseholdPlant["equipment"][number];
 export const householdCandidateSchema = z.object({
   id,
   pv_curtail_w: nonnegativeSeries,
-  actions: z.record(z.array(z.discriminatedUnion("kind", [
+  actions: z.record(z.string(), z.array(z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("battery"),
       charge_w: nonnegative,

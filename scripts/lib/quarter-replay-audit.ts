@@ -23,7 +23,7 @@ const slot = z.object({
   duration_hours: number.positive().max(0.25),
   binding: z.boolean(),
   base_w: watts,
-  device_loads_w: z.record(watts),
+  device_loads_w: z.record(z.string(), watts),
   pool_w: watts,
   boiler_expected_w: watts,
   ev_w: watts,
@@ -86,7 +86,7 @@ const capsule = z.object({
       issued_at: timestamp,
       battery,
       grid,
-      plans: z.record(z.union([
+      plans: z.record(z.string(), z.union([
         z.object({ slots: z.array(slot).min(1), summary }),
         z.object({ key: z.literal("baseline"), status: z.literal("infeasible"),
           validation_errors: z.array(z.string()).min(1), slots: z.array(slot).length(0), summary: z.null() }),

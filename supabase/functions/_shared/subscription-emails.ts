@@ -1,7 +1,7 @@
 // White-label dunning emails sent in place of Stripe's. Stripe runs the billing
 // state machine (retries / grace period); we mirror the customer-facing emails
 // using Resend so no Stripe branding reaches the customer.
-import { Resend } from "https://esm.sh/resend@2.0.0";
+import { Resend } from "npm:resend@6.37.0";
 import { getPrimaryAppOrigin } from "./app-origin.ts";
 
 const FROM = "Smart Home Solutions <faktura@mail.smarthomesolutions.se>";

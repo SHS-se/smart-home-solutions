@@ -9,7 +9,7 @@ if (!file) throw new Error('Choose a prepared solar JSON file, home UUID and cus
 const homeId = uuid.parse(home), customerId = uuid.parse(customer);
 const prepared = z.object({ profile_hash: z.string().regex(/^[a-f0-9]{64}$/), start_ts: z.string().datetime(), end_ts: z.string().datetime(),
   hours: z.array(z.object({ start_ts: z.string().datetime(), raw_kwh: finite, modeled_kwh: finite }).strict()).min(1).max(9000),
-  provenance: z.record(z.unknown()),
+  provenance: z.record(z.string(), z.unknown()),
 }).strict().parse(JSON.parse(await Deno.readTextFile(file)));
 const from = Date.parse(prepared.start_ts), to = Date.parse(prepared.end_ts);
 if (from % 3_600_000 || to % 3_600_000 || prepared.hours.length !== (to-from)/3_600_000
