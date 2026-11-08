@@ -8,6 +8,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const energy = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100;
 const round = (value: number) => Math.round(value * 1_000_000) / 1_000_000;
+const powerSetting = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= 1_000_000;
 
 /** History is evidence, not admission authority. Ignore individual bad rows. */
 export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyMap<string, { id: string }>,
@@ -53,11 +54,21 @@ export function prepareActualUpload(rows: readonly unknown[], devices: ReadonlyM
       actualRows.push(row);
     }
     if (!record(deviceEnergy)) { ignore("invalid_device_energy"); continue; }
+    // A pool device's own power setting and metered heat ride on its quarter.
+    // An unusable one is not observed; it never costs the quarter's energy.
+    const settings = record(item.device_power_setting) ? item.device_power_setting : {};
+    const heat = record(item.device_heat_kwh) ? item.device_heat_kwh : {};
+    if (item.device_power_setting != null && !record(item.device_power_setting)) ignore("invalid_device_setting");
+    if (item.device_heat_kwh != null && !record(item.device_heat_kwh)) ignore("invalid_device_heat");
     let accepted = householdRow;
     for (const [key, value] of Object.entries(deviceEnergy)) {
       const device = devices.get(key);
       if (!device || !energy(value)) { ignore("invalid_device_energy"); continue; }
-      deviceSlotRows.push({ ...context, device_id: device.id, start_ts: startTs, energy_kwh: round(value), quality });
+      const setting = settings[key], metered = heat[key];
+      if (setting != null && !powerSetting(setting)) ignore("invalid_device_setting");
+      if (metered != null && !energy(metered)) ignore("invalid_device_heat");
+      deviceSlotRows.push({ ...context, device_id: device.id, start_ts: startTs, energy_kwh: round(value),
+        power_setting: powerSetting(setting) ? setting : null, heat_kwh: energy(metered) ? round(metered) : null, quality });
       accepted = true;
     }
     if (accepted && (latestAccepted === null || start > latestAccepted)) latestAccepted = start;

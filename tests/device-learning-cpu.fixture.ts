@@ -36,7 +36,7 @@ export function syntheticPoolLearningReplay(nowMs: number, recovery = true): Dev
     models: { rooms: [], pool: null },
     tables: {
       energy_optimisation_pool_model: null,
-      energy_optimisation_devices: [{ id: "synthetic-heater-id" }],
+      energy_optimisation_devices: [{ id: "synthetic-heater-id", device_key: "synthetic-heater" }],
       energy_optimisation_pool_slots: quarters.map((row, i) => ({ start_ts: at(i), water_temperature_c: row.c })),
       energy_optimisation_outdoor_slots: quarters.map((_, i) => ({ start_ts: at(i), temperature_c: 8 + Math.sin(i / 96) * 5 })),
       energy_optimisation_device_slots: quarters.map((row, i) => ({ start_ts: at(i), device_id: "synthetic-heater-id", energy_kwh: row.kwh })),

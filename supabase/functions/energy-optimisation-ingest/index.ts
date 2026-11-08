@@ -120,6 +120,8 @@ interface IncomingActualSlot {
   battery_soc?: number | null;
   ev_soc?: number | null;
   device_energy_kwh?: Record<string, number>;
+  device_power_setting?: Record<string, number>;
+  device_heat_kwh?: Record<string, number>;
   quality?: Record<string, unknown>;
 }
 

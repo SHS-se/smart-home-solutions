@@ -6,7 +6,7 @@ import { describeThrown } from "./ha-api-contract.ts";
 interface LearningClaim {
   id: string; home_id: string; customer_id: string; owner_kind: "room" | "pool"; owner_key: string;
   generation: number; fence: number;
-  input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[] };
+  input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[] };
 }
 /** One invocation fits exactly one owner; terminated workers are recovered by the database lease. */
 // deno-lint-ignore no-explicit-any
@@ -31,7 +31,7 @@ export async function handleDeviceLearning(request: Request, db: any, now: () =>
     const previous = claim.owner_kind === "room" ? models.rooms.find(row => row.room_key === claim!.owner_key) : models.pool;
     const row = claim.owner_kind === "room"
       ? await fitStoredRoom(db, claim.home_id, claim.customer_id, claim.owner_key, claim.input.location ?? null, now())
-      : await fitStoredPool(db, claim.customer_id, claim.home_id, claim.input.volume_m3!, claim.input.device_keys!, now());
+      : await fitStoredPool(db, claim.customer_id, claim.home_id, claim.input.volume_m3!, claim.input.device_keys!, now(), claim.input.auxiliary_keys ?? []);
     if (!row) throw new Error("Learning did not produce an attempt");
     const publication = await db.rpc("publish_energy_device_learning", {
       p_job_id: claim.id, p_generation: claim.generation, p_fence: claim.fence,

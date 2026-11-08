@@ -5,7 +5,7 @@ export interface DeviceLearningReplayInput {
   claim: {
     id: string; home_id: string; customer_id: string; owner_kind: "pool"; owner_key: string;
     generation: number; fence: number;
-    input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[] };
+    input: { location?: { latitude: number; longitude: number } | null; volume_m3?: number; device_keys?: string[]; auxiliary_keys?: string[] };
   };
   models: Pick<DeviceModelBundle, "rooms" | "pool">;
   /** Rows must already satisfy the captured owner's filters and ordering. */

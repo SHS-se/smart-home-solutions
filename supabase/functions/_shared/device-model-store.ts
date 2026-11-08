@@ -44,7 +44,11 @@ export function poolLearningOwner(pool: { volume_m3: number } | null | undefined
   devices: readonly (PoolDevice & { key: string })[]): LearningOwner | null {
   if (!pool) return null;
   const keys = poolHeaters(devices).map(device => device.key);
-  return keys.length ? { kind: "pool", key: "pool", input: { volume_m3: pool.volume_m3, device_keys: keys } } : null;
+  // The other pool members (a circulation pump) are learned alongside: their
+  // draw and settings belong to the pool's operating points, not its heat.
+  const auxiliary = devices.filter(device => device.planning_service === "pool" && !keys.includes(device.key)).map(device => device.key).sort();
+  return keys.length ? { kind: "pool", key: "pool", input: { volume_m3: pool.volume_m3, device_keys: keys,
+    ...(auxiliary.length ? { auxiliary_keys: auxiliary } : {}) } } : null;
 }
 export async function requestDeviceLearning(db: ModelDatabase, homeId: string, customerId: string, owners: LearningOwner[]): Promise<void> {
   const { error } = await db.rpc("request_energy_device_learning", {

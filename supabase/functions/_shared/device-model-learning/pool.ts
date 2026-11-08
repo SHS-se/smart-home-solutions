@@ -1,9 +1,12 @@
 /** Pool-only observation loading and fitting. Publication belongs to the fenced learning job. */
 import { fitPoolLoss, fitPoolModel, fitPoolResponse, type PoolLossSample, type PoolResponseSample, poolTrainingWindowStartMs } from "../device-learning/pool/thermal.ts";
 import { selectPoolDynamics } from "../device-learning/pool/selection.ts";
+import { learnPoolOperatingPoints, type PoolDeviceQuarter } from "../device-learning/pool/operating-points.ts";
 import { WATER_KWH_PER_M3_K } from "../planner/device-models.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
 const TRAINING_WINDOW_DAYS = 21;
+/** Operating points keep a setting's evidence for longer than the thermal fit's window. */
+const OPERATING_POINT_WINDOW_DAYS = 90;
 const SLOT_MS = 900_000;
 export async function fitStoredPool(
   // deno-lint-ignore no-explicit-any
@@ -13,6 +16,7 @@ export async function fitStoredPool(
   volumeM3: number,
   poolDeviceKeys: string[],
   now: number = Date.now(),
+  auxiliaryDeviceKeys: string[] = [],
 ): Promise<Record<string, unknown> | null> {
   const { data: existing, error: existingError } = await supabase
     .from("energy_optimisation_pool_model")
@@ -30,33 +34,35 @@ export async function fitStoredPool(
     : null;
 
 
-  const from = new Date(
-    poolTrainingWindowStartMs(now, epochStart, TRAINING_WINDOW_DAYS),
-  ).toISOString();
+  const fromMs = poolTrainingWindowStartMs(now, epochStart, TRAINING_WINDOW_DAYS);
+  const from = new Date(fromMs).toISOString();
+  const pointsFromMs = poolTrainingWindowStartMs(now, epochStart, OPERATING_POINT_WINDOW_DAYS);
   // The heater's energy is stored against `device_id`, so the pool's device
   // keys have to be resolved to ids before the slots can be filtered by them.
   // Without any, there is no heated quarter to find and no fit to attempt.
+  const auxiliaryKeys = auxiliaryDeviceKeys.filter(key => !poolDeviceKeys.includes(key));
   const { data: poolDevices, error: poolDeviceError } = await supabase
     .from("energy_optimisation_devices")
-    .select("id")
+    .select("id, device_key")
     .eq("home_id", homeId)
-    .in("device_key", poolDeviceKeys);
+    .in("device_key", [...poolDeviceKeys, ...auxiliaryKeys]);
   if (poolDeviceError) {
     throw new Error(poolDeviceError.message);
   }
-  const poolDeviceIds = (poolDevices ?? []).map((row: Record<string, unknown>) =>
-    String(row.id)
-  );
+  const keyById = new Map<string, string>((poolDevices ?? []).map((row: Record<string, unknown>) =>
+    [String(row.id), String(row.device_key)]));
+  const poolDeviceIds = [...keyById].filter(([, key]) => poolDeviceKeys.includes(key)).map(([id]) => id);
   if (poolDeviceIds.length === 0) throw new Error("Pool has no mapped electricity meters");
+  const heaterIds = new Set(poolDeviceIds);
 
   // Read in pages: three weeks of quarters is twice what one response
   // returns, and a heater quarter that is cut off reads as an idle one, which
   // turns the heating into the pool warming itself and the loss fit into a
   // refusal.
   type Row = Record<string, unknown>;
-  let waterRows: Row[], outdoorRows: Row[], deviceRows: Row[];
+  let waterRows: Row[], outdoorRows: Row[], memberRows: Row[];
   try {
-    [waterRows, outdoorRows, deviceRows] = await Promise.all([
+    [waterRows, outdoorRows, memberRows] = await Promise.all([
       readPagedRows<Row>((fromRow, toRow) => supabase.from("energy_optimisation_pool_slots")
         .select("start_ts, water_temperature_c")
         .eq("home_id", homeId).gte("start_ts", from)
@@ -65,10 +71,12 @@ export async function fitStoredPool(
         .select("start_ts, temperature_c")
         .eq("home_id", homeId).gte("start_ts", from)
         .order("start_ts").range(fromRow, toRow)),
+      // Every pool member over the operating-point window; the thermal fit
+      // below uses the heaters' quarters inside its own window, as before.
       readPagedRows<Row>((fromRow, toRow) => supabase.from("energy_optimisation_device_slots")
-        .select("start_ts, energy_kwh")
-        .eq("home_id", homeId).gte("start_ts", from)
-        .in("device_id", poolDeviceIds).order("start_ts").order("device_id")
+        .select("start_ts, device_id, energy_kwh, power_setting, heat_kwh")
+        .eq("home_id", homeId).gte("start_ts", new Date(pointsFromMs).toISOString())
+        .in("device_id", [...keyById.keys()]).order("start_ts").order("device_id")
         .range(fromRow, toRow)),
     ]);
   } catch (readError) {
@@ -78,6 +86,13 @@ export async function fitStoredPool(
     throw readError;
   }
 
+  const deviceRows = memberRows.filter(row => heaterIds.has(String(row.device_id)) && Date.parse(String(row.start_ts)) >= fromMs);
+  const numberOrNull = (value: unknown) => value == null ? null : Number(value);
+  const operatingPoints = learnPoolOperatingPoints(memberRows.flatMap((row): PoolDeviceQuarter[] => {
+    const key = keyById.get(String(row.device_id)), kwh = Number(row.energy_kwh);
+    return key && row.energy_kwh != null && Number.isFinite(kwh) ? [{ start_ms: Date.parse(String(row.start_ts)),
+      device_key: key, energy_kwh: kwh, power_setting: numberOrNull(row.power_setting), heat_kwh: numberOrNull(row.heat_kwh) }] : [];
+  }), poolDeviceKeys, auxiliaryKeys, pointsFromMs, Math.floor(now / SLOT_MS) * SLOT_MS);
   const outdoorByStart = new Map<number, number>(
     (outdoorRows ?? []).map((row: Record<string, unknown>) => [
       Date.parse(String(row.start_ts)),
@@ -179,5 +194,6 @@ export async function fitStoredPool(
     sample_count: dynamics.fitted.sample_count,
   } } : {}) };
   return { ...row, ...("fitted" in dynamics ? { thermal_dynamics: dynamics.fitted } : {}),
+    operating_points: operatingPoints,
     last_attempted_at: new Date(now).toISOString(), last_fit_attempt: attempt };
 }

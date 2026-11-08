@@ -40,3 +40,23 @@ Deno.test("a device quarter without household meter readings is stored and advan
   assertEquals(empty.accepted_until, null);
   assertEquals(empty.ignored, { empty_actual_slot: 1, invalid_device_energy: 1 });
 });
+Deno.test("a pool device's setting and metered heat are stored on its own quarter", () => {
+  const devices = new Map([["heater", { id: "h" }], ["pump", { id: "p" }]]);
+  const result = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75, pump: .1 },
+    device_power_setting: { heater: 12, pump: 80 }, device_heat_kwh: { heater: 2.9 } }], devices, context, now);
+  assertEquals(result.deviceSlotRows.map(r => [r.device_id, r.energy_kwh, r.power_setting, r.heat_kwh]),
+    [["h", .75, 12, 2.9], ["p", .1, 80, null]]);
+  assertEquals(result.ignored, {});
+});
+Deno.test("an unusable setting or heat reading is not observed and keeps the quarter's energy", () => {
+  const devices = new Map([["heater", { id: "h" }]]);
+  const result = prepareActualUpload([
+    { ...row(), device_energy_kwh: { heater: .75 }, device_power_setting: { heater: "12" }, device_heat_kwh: { heater: -1 } },
+    { ...row("2026-10-15T11:45:00Z"), device_energy_kwh: { heater: .5 }, device_power_setting: [12] },
+  ], devices, context, now);
+  assertEquals(result.deviceSlotRows.map(r => [r.energy_kwh, r.power_setting, r.heat_kwh]), [[.75, null, null], [.5, null, null]]);
+  assertEquals(result.ignored, { invalid_device_setting: 2, invalid_device_heat: 1 });
+  // An app that sends neither stores neither, as before.
+  const plain = prepareActualUpload([{ ...row(), device_energy_kwh: { heater: .75 } }], devices, context, now);
+  assertEquals([plain.deviceSlotRows[0].power_setting, plain.deviceSlotRows[0].heat_kwh], [null, null]);
+});

@@ -2059,8 +2059,10 @@ export type Database = {
           device_id: string
           device_token_id: string | null
           energy_kwh: number
+          heat_kwh: number | null
           home_id: string
           id: string
+          power_setting: number | null
           quality: Json
           received_at: string
           start_ts: string
@@ -2070,8 +2072,10 @@ export type Database = {
           device_id: string
           device_token_id?: string | null
           energy_kwh: number
+          heat_kwh?: number | null
           home_id: string
           id?: string
+          power_setting?: number | null
           quality?: Json
           received_at?: string
           start_ts: string
@@ -2081,8 +2085,10 @@ export type Database = {
           device_id?: string
           device_token_id?: string | null
           energy_kwh?: number
+          heat_kwh?: number | null
           home_id?: string
           id?: string
+          power_setting?: number | null
           quality?: Json
           received_at?: string
           start_ts?: string

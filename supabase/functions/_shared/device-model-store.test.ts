@@ -20,13 +20,16 @@ Deno.test("pool telemetry without a mapped heating meter omits only its learning
   assertEquals({ pool, devices }, before);
 });
 
-Deno.test("mapped heater electricity retains the existing pool learning request", () => {
+Deno.test("mapped heater electricity retains the pool learning request and adds its circulation pump", () => {
   const pool = { volume_m3: 25 };
   const devices = [
     { key: "synthetic-compressor", active_power_w: 3000, planning_service: "pool", pool_role: "heater" as const },
     { key: "synthetic-pump", active_power_w: 400, planning_service: "pool", pool_role: "circulation" as const },
   ];
   assertEquals(poolLearningOwner(pool, devices), { kind: "pool", key: "pool",
+    input: { volume_m3: 25, device_keys: ["synthetic-compressor"], auxiliary_keys: ["synthetic-pump"] } });
+  // Without other members the request is exactly what it was.
+  assertEquals(poolLearningOwner(pool, devices.slice(0, 1)), { kind: "pool", key: "pool",
     input: { volume_m3: 25, device_keys: ["synthetic-compressor"] } });
   assertEquals(poolLearningOwner(null, devices), null);
 });

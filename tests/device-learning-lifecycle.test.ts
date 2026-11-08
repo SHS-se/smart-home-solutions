@@ -27,6 +27,7 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261104150000_learn_joint_room_heat_exchange.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261108120100_publish_pool_operating_points.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -101,6 +102,15 @@ Deno.test("learning cannot overwrite newer calibration or cross electrical owner
     assert(await publish(db, j, 1, { home_id: home, customer_id: home, rated_cop: 5,
       last_attempted_at: new Date().toISOString(), last_fit_attempt: { issues: [] } }));
     assertEquals((await db.query<{ hardware: object }>("SELECT hardware FROM energy_optimisation_pool_model")).rows[0].hardware, { compressor_w: 3600 });
+    // Measured operating points are the fit's own output and publish with it.
+    await db.exec("UPDATE energy_optimisation_pool_model SET last_attempted_at=NULL");
+    await request(db, "pool", "pool"); const refit = await claim(db, "pool");
+    const points = { method: "pool_operating_points_v1", points: [{ settings: { "synthetic-heat-pump": 12 }, cop: 4 }] };
+    const revision = (await db.query<{ model_revision: number }>("SELECT model_revision FROM energy_optimisation_pool_model")).rows[0].model_revision;
+    assert(await publish(db, refit, revision, { home_id: home, customer_id: home, operating_points: points,
+      last_attempted_at: new Date().toISOString(), last_fit_attempt: { issues: [] } }));
+    assertEquals((await db.query<{ operating_points: object; hardware: object }>("SELECT operating_points,hardware FROM energy_optimisation_pool_model")).rows[0],
+      { operating_points: points, hardware: { compressor_w: 3600 } });
     await request(db); const room = await claim(db);
     await db.query("INSERT INTO energy_optimisation_zone_models(home_id,customer_id,room_key,trained,gain_c_per_wh) VALUES($1,$1,'synthetic-room',true,.003)", [home]);
     assertEquals(await publish(db, room, 0, fitted()), false);
