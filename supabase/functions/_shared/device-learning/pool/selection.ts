@@ -35,6 +35,12 @@ export interface SelectionEvidence {
   lower_mse_improvement: number | null;
 }
 export type SelectionFit = PoolDynamicsFit & { selection: SelectionEvidence };
+
+/** Boundary of the chronological training fold, shared with evidence preparation. */
+export function poolTrainingEnd(firstStart: number, lastStart: number): number {
+  return Math.floor((firstStart + (lastStart + SLOT - firstStart) * 2 / 3) / SLOT) * SLOT;
+}
+
 function projection(
   model: PoolDynamics,
   capacity: number,
@@ -137,10 +143,7 @@ export function selectPoolDynamics(
     return { ...fit, selection: e };
   };
   if (!usable.length) return constant();
-  const cut = Math.floor(
-    (usable[0].start_ms +
-      (usable.at(-1)!.start_ms + SLOT - usable[0].start_ms) * 2 / 3) / SLOT,
-  ) * SLOT;
+  const cut = poolTrainingEnd(usable[0].start_ms, usable.at(-1)!.start_ms);
   e.training_end = new Date(cut).toISOString();
   e.validation_end = new Date(usable.at(-1)!.start_ms + SLOT).toISOString();
   const train = usable.filter((s) => s.start_ms < cut),

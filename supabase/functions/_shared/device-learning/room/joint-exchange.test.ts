@@ -48,6 +48,18 @@ Deno.test("joint exchange retains heat-memory segments across unknown meter obse
   assertEquals(result.model.sample_count, 12 * 96 - 1 - 51);
 });
 
+Deno.test("joint exchange is stable when temperature spikes occur in training and validation", () => {
+  const rows = observations();
+  for (const i of [250, 950]) rows[i].room_c! += 18;
+  const result = fitRoomMeans(rows, 800);
+  assert(result.ok);
+  assertEquals(result.learning_evidence?.estimated_temperature_readings, 2);
+  assertEquals(result.model.heat_lag_h, 2);
+  assertAlmostEquals(result.model.gain_c_per_wh, .002, .00003);
+  assertAlmostEquals(result.model.house_coupling_per_h!, .14, .003);
+  assertAlmostEquals(result.model.cooling_constant_per_h, .06, .003);
+});
+
 Deno.test("zero exchange and zero solar gain are learned physical limits without negative coefficients", () => {
   for (const options of [{ house: 0, solar: 0 }, { outdoor: 0, solar: 0 }]) {
     const result = fitRoomMeans(observations(options), 800);

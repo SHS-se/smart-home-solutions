@@ -1,6 +1,7 @@
 /** Pool-only observation loading and fitting. Publication belongs to the fenced learning job. */
 import { fitPoolLoss, fitPoolModel, fitPoolResponse, type PoolLossSample, type PoolResponseSample, poolTrainingWindowStartMs } from "../device-learning/pool/thermal.ts";
-import { selectPoolDynamics } from "../device-learning/pool/selection.ts";
+import { poolTrainingEnd, selectPoolDynamics } from "../device-learning/pool/selection.ts";
+import { isolatedTemperatureCorrections } from "../device-learning/temperature-evidence.ts";
 import { learnOperatingPoints, type DeviceQuarter } from "../device-learning/operating-points.ts";
 import { WATER_KWH_PER_M3_K } from "../planner/device-models.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
@@ -110,7 +111,7 @@ export async function fitStoredPool(
 
   const water = (waterRows ?? []).map((row: Record<string, unknown>) => ({
     at: Date.parse(String(row.start_ts)),
-    c: Number(row.water_temperature_c),
+    c: numberOrNull(row.water_temperature_c),
   }));
   const samples: PoolLossSample[] = [];
   // The measured response needs no air temperature, so it keeps the quarters the fits below must drop.
@@ -120,7 +121,9 @@ export async function fitStoredPool(
     const next = water[index + 1];
     // Only consecutive quarters describe one slot's change. A gap would put an
     // hour of cooling into a fifteen-minute rate and bias the loss upward.
-    if (next.at - current.at !== SLOT_MS || !heaterByStart.has(current.at) || !heaterByStart.has(next.at)) continue;
+    if (next.at - current.at !== SLOT_MS || current.c === null || next.c === null ||
+      !Number.isFinite(current.c) || !Number.isFinite(next.c) ||
+      !heaterByStart.has(current.at) || !heaterByStart.has(next.at)) continue;
     responseSamples.push({
       start_ms: current.at,
       water_temperature_c: current.c,
@@ -139,6 +142,19 @@ export async function fitStoredPool(
       electrical_kwh: heaterByStart.get(current.at)!,
       next_electrical_kwh: heaterByStart.get(next.at)!,
     });
+  }
+
+  const trainingEnd = responseSamples.length
+    ? poolTrainingEnd(responseSamples[0].start_ms, responseSamples.at(-1)!.start_ms)
+    : Infinity;
+  // Keep holdout temperatures out of the estimates used for training.
+  const temperatureEstimates = new Map([
+    ...isolatedTemperatureCorrections(water.filter(row => row.at <= trainingEnd), SLOT_MS),
+    ...isolatedTemperatureCorrections(water.filter(row => row.at >= trainingEnd), SLOT_MS),
+  ]);
+  for (const sample of [...samples, ...responseSamples]) {
+    sample.water_temperature_c = temperatureEstimates.get(sample.start_ms) ?? sample.water_temperature_c;
+    sample.next_water_temperature_c = temperatureEstimates.get(sample.start_ms + SLOT_MS) ?? sample.next_water_temperature_c;
   }
 
   const result = fitPoolModel(samples, volumeM3, "quarter_mean");
@@ -180,7 +196,8 @@ export async function fitStoredPool(
       }),
       rejection: existing?.rated_cop != null ? null : result.rejected,
     };
-  const attempt = { learning: { method: "pool_interval_mean_v1", observation: "quarter_mean" }, recovery_selection: dynamics.selection, issues: [
+  const attempt = { learning: { method: "pool_interval_mean_v1", observation: "quarter_mean",
+    ...(temperatureEstimates.size ? { estimated_temperature_readings: temperatureEstimates.size } : {}) }, recovery_selection: dynamics.selection, issues: [
     ...("fitted" in result ? result.warnings ?? [] : [result.rejected]),
     ...("fitted" in idle ? idle.warnings ?? [] : [idle.rejected]),
     ...(response.some(bin => (bin.idle_hours > 0 && bin.idle_hours < 3) || (bin.heated_kwh > 0 && bin.heated_kwh < 3)) ? ["limited_response_observations"] : []),

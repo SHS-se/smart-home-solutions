@@ -18,13 +18,15 @@ Deno.test("production planning and captured state cannot reach device learning",
   assert([...reach(infected, [shared + "rules-planner.ts"])].some(p => p.startsWith(learning)));
 });
 
-Deno.test("each device learner sees only its own learning, numerical algebra and pure models", () => {
+Deno.test("each device learner sees only its own learning, pure numerical helpers and pure models", () => {
   const pure = new Set(["models/room/thermal.ts", "device-models.ts", "pool-response.ts", "battery-conversion.ts"]
     .map(p => `${shared}planner/${p}`));
+  const sharedMath = new Set(["linear-algebra.ts", "temperature-evidence.ts"].map(p => learning + p));
+  for (const path of sharedMath) assertEquals(specifiers(tree.read(path) ?? ""), []);
   for (const family of ["room", "pool"]) {
     const entries = files(`${learning}${family}/`).filter(p => p.endsWith(".ts") && !p.endsWith(".test.ts"));
     for (const p of reach(tree, entries)) {
-      assert(p.startsWith(`${learning}${family}/`) || p === `${learning}linear-algebra.ts` ||
+      assert(p.startsWith(`${learning}${family}/`) || sharedMath.has(p) ||
         pure.has(p), `Learning ${family} leaked into ${p}`);
     }
   }

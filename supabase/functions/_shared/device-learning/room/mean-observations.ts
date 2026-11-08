@@ -5,6 +5,7 @@
  * twelve-hour forecast remains a diagnostic, not an actuator-response oracle.
  */
 import { solveLinearSystem } from "../linear-algebra.ts";
+import { isolatedTemperatureCorrections } from "../temperature-evidence.ts";
 import { HEAT_LAG_GRID_H, MAX_PREDICTION_ERROR_C } from "./fit.ts";
 import { HEATED_SAMPLE_MIN_W, MIN_HEATED_SAMPLES, MIN_SOLAR_COVERAGE, MIN_TRAINING_SAMPLES,
   type ThermalFitRejection, type ThermalFitResult } from "./regression.ts";
@@ -32,6 +33,7 @@ export interface RoomLearningEvidence {
   validation_mse_c2: number | null;
   selected_boundary: "house_outdoor" | null;
   selected_lag_h: number | null;
+  estimated_temperature_readings?: number;
 }
 export type RoomMeanFitResult = ThermalFitResult & { learning_evidence?: RoomLearningEvidence };
 const finite = (v: number | null): v is number => typeof v === "number" && Number.isFinite(v);
@@ -237,20 +239,28 @@ function forecastError(fit: Fit, rows: RoomMeanQuarter[]): number | null {
 }
 
 export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | null = null): RoomMeanFitResult {
-  const rows = [...quarters].sort((a, b) => a.start_ms - b.start_ms);
+  const observed = [...quarters].sort((a, b) => a.start_ms - b.start_ms);
+  const correct = (rows: RoomMeanQuarter[]) => {
+    const estimates = isolatedTemperatureCorrections(rows.map(row => ({ at: row.start_ms, c: row.room_c })), 900_000);
+    return { count: estimates.size, rows: estimates.size ? rows.map(row =>
+      estimates.has(row.start_ms) ? { ...row, room_c: estimates.get(row.start_ms)! } : row) : rows };
+  };
+  const { rows, count } = correct(observed);
+  const evidence = count ? { estimated_temperature_readings: count } : {};
   const usable = rows.filter(r => finite(r.room_c) && finite(r.heat_w) && !r.cooling);
   const covered = usable.filter(r => finite(r.house_c) && finite(r.outdoor_c));
   const withSun = covered.filter(r => finite(r.solar_w_per_m2));
   const solar = withSun.length >= MIN_TRAINING_SAMPLES && withSun.length >= covered.length * MIN_SOLAR_COVERAGE &&
     withSun.some(row => row.solar_w_per_m2 !== withSun[0].solar_w_per_m2);
   const split = Math.floor(rows.length * 2 / 3);
+  const trainingRows = correct(observed.slice(0, split)).rows;
   const configurations = HEAT_LAG_GRID_H.map(lag => ({ lag, solar }));
   const candidates = configurations.map(c => ({ config: c,
-    training: fitCandidate(rows.slice(0, split), c.lag, c.solar),
+    training: fitCandidate(trainingRows, c.lag, c.solar),
     full: fitCandidate(rows, c.lag, c.solar) })).filter(c => c.full !== null);
   if (!candidates.length) return { ok: false, reason: usable.length ? "singular" : "insufficient_samples", sample_count: usable.length,
     learning_evidence: { method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation: "quarter_mean", selection: "chronological_transition_mse",
-      training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null } };
+      training_pairs: 0, validation_pairs: 0, validation_mse_c2: null, selected_boundary: null, selected_lag_h: null, ...evidence } };
   // Candidates are judged on the same observed validation transitions.
   const comparable = new Set<number>();
   for (let i = split - 1; i + 1 < rows.length; i++) {
@@ -285,5 +295,6 @@ export function fitRoomMeans(quarters: RoomMeanQuarter[], ratedPowerW: number | 
     method: ROOM_MEAN_LEARNING_METHOD, family: ROOM_EXCHANGE_FAMILY, observation: "quarter_mean", selection: "chronological_transition_mse",
     training_pairs: selected.training?.n ?? 0, validation_pairs: selected.validation.count,
     validation_mse_c2: selected.validation.mse, selected_boundary: "house_outdoor", selected_lag_h: fit.lag,
+    ...evidence,
   } };
 }
