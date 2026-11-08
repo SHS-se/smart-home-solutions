@@ -268,3 +268,48 @@ Deno.test("heat unavoidable at a native minimum stays visible instead of rejecti
   assert(rooms.power.floor[0] > 0);
   assert(rooms.commands.floor.every(c => c.type === "setpoint"));
 });
+
+Deno.test("planned room targets drive relays and native thermostats in a mixed room", () => {
+  const snapshot = bathroomWithRack();
+  snapshot.schema_version = 12;
+  snapshot.device_models[1].relay_on = false;
+  const legacy = { type: "switch_schedule", on_seconds: 900 } as const;
+  const result = prepareRoomServices(snapshot, [{device_commands: {rack: legacy}}], undefined, prices(nightTariff));
+
+  assertEquals(result.commands.rack[0], legacy);
+  assertAlmostEquals(result.power.rack[0], 150, 1e-8);
+  result.commands.rack.slice(1).forEach((relay, index) => {
+    const native = result.commands.floor[index + 1];
+    assert(relay.type === "room_relay" && native.type === "setpoint");
+    assertEquals(relay.room_key, "bathroom");
+    assertEquals(relay.target_c, native.room_target_c);
+  });
+  const held = result.commands.rack[1];
+  const replanned = prepareRoomServices(snapshot, [
+    {device_commands: {rack: legacy}},
+    {device_commands: {rack: held, floor: result.commands.floor[1]}},
+  ]);
+  assertEquals(replanned.commands.rack[1], held);
+  assertEquals(replanned.commands.floor[1], result.commands.floor[1]);
+});
+
+Deno.test("room relay targets forecast partial heating and fit a budget shared by two heaters", () => {
+  const snapshot = bathroomWithRack(undefined, 1000);
+  snapshot.schema_version = 12;
+  const relay = { ...snapshot.device_models[1], relay_on: false };
+  snapshot.device_models = [relay, { ...relay, key: "rack2" }];
+  const zone = snapshot.thermal_zones![0];
+  zone.device_keys = ["rack", "rack2"];
+  zone.maximum_power_w_by_slot.fill(1000);
+
+  const rooms = prepareRoomServices(snapshot);
+  assert(rooms.commands.rack.every(command => command.type === "room_relay"));
+  assert(rooms.room_power.bathroom.every(watts => watts <= 1000 + 1e-6));
+  assert(rooms.room_power.bathroom.some(watts => watts > 0 && watts < 1000 - 1e-6));
+  assert(rooms.power.rack2.every(watts => watts === 0), "equal new calls are admitted in stable owner order");
+
+  zone.model = null;
+  const estimated = prepareRoomServices(snapshot);
+  assertEquals(estimated.commands.rack[0], {type: "room_relay", room_key: "bathroom", target_c: SETBACK});
+  assert(estimated.warnings.some(warning => warning.code === "room_estimate"));
+});

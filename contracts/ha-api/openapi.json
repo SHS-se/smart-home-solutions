@@ -14,7 +14,8 @@
       8,
       9,
       10,
-      11
+      11,
+      12
     ],
     "supported_plan_schema_versions": [
       5,
@@ -23,7 +24,8 @@
       8,
       9,
       10,
-      11
+      11,
+      12
     ],
     "minimum_snapshot_schema_version": 5,
     "minimum_plan_schema_version": 5,
@@ -1421,6 +1423,9 @@
               },
               {
                 "$ref": "#/components/schemas/SnapshotV11"
+              },
+              {
+                "$ref": "#/components/schemas/SnapshotV12"
               }
             ]
           },
@@ -2156,6 +2161,10 @@
               "maximum_c": {
                 "type": "number",
                 "description": "Native actuator maximum supported temperature."
+              },
+              "room_target_c": {
+                "type": "number",
+                "description": "Common planned room target in Celsius."
               }
             },
             "additionalProperties": false
@@ -2240,6 +2249,27 @@
               },
               "unit": {
                 "const": "A"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "room_key",
+              "target_c"
+            ],
+            "properties": {
+              "type": {
+                "const": "room_relay"
+              },
+              "room_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "target_c": {
+                "type": "number"
               }
             },
             "additionalProperties": false
@@ -2393,6 +2423,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanV11"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV12"
               }
             ]
           },
@@ -3590,6 +3623,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanV11"
+              },
+              {
+                "$ref": "#/components/schemas/PlanV12"
               }
             ]
           },
@@ -4680,6 +4716,61 @@
           }
         },
         "description": "Observed positive EV current capacity in the named absolute opportunity; charging remains available."
+      },
+      "SnapshotV12": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SnapshotCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 12
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "battery_execution_feedback": {
+                "$ref": "#/components/schemas/BatteryExecutionFeedbackV1"
+              }
+            }
+          }
+        ]
+      },
+      "PlanV12": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlanCommon"
+          },
+          {
+            "type": "object",
+            "required": [
+              "operating_scope",
+              "execution_plan"
+            ],
+            "properties": {
+              "schema_version": {
+                "const": 12
+              },
+              "operating_scope": {
+                "$ref": "#/components/schemas/OperatingScopeV1"
+              },
+              "execution_plan": {
+                "$ref": "#/components/schemas/PlanV8"
+              },
+              "battery_execution": {
+                "$ref": "#/components/schemas/BatteryExecutionContractV3"
+              },
+              "battery_demand": {
+                "$ref": "#/components/schemas/BatteryDemandV1"
+              }
+            }
+          }
+        ]
       }
     }
   }

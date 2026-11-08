@@ -112,7 +112,7 @@ export function ownerHasAcceptedWork(owner: string, slot: PublishedCommandSlot, 
         case "switch_schedule": return command.on_seconds > 0;
         case "permit_inhibit": return command.permitted;
         case "variable_power": return command.value > 0;
-        case "setpoint": return true;
+        case "room_relay": case "setpoint": return true;
         case "unavailable": return false;
       }
     });

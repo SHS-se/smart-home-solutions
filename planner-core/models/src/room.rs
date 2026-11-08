@@ -17,12 +17,15 @@ pub struct Thermostat {
     pub power_w: f64,
     pub sensor_offset_c: f64,
     pub hvac_action: String,
+    #[serde(default)]
+    pub relay: bool,
 }
 #[derive(Clone, Copy, Deserialize)]
 pub struct Interval {
     pub hours: f64,
     pub steps: usize,
     pub step: Transition,
+    pub relay_budget_w: Option<f64>,
 }
 #[derive(Clone, Copy)]
 pub struct State {
@@ -66,7 +69,7 @@ impl TargetTrace {
             self.readings[group].min(own)
         };
     }
-    fn accepts(&self, target: f64) -> bool {
+    fn accepts(&self, target: f64, relay: bool) -> bool {
         if self.seen & 16 != 0 || target.is_nan() {
             return false;
         }
@@ -76,7 +79,7 @@ impl TargetTrace {
             }
             let own = self.readings[group];
             // Keep the original subtraction order and strict comparisons.
-            let on = thermostat_on(own, target, group >= 2);
+            let on = heating_on(own, target, group >= 2, relay);
             if on != (group % 2 == 1) {
                 return false;
             }
@@ -99,13 +102,14 @@ impl Projection {
     }
     /// Only valid after project_traced and for unchanged initial state,
     /// interval, thermostats and relay power. The caller owns that scope.
-    pub fn reproduces_targets(&self, targets: &[f64]) -> bool {
+    pub fn reproduces_targets(&self, targets: &[f64], thermostats: &[Thermostat]) -> bool {
         targets.len() == self.target_trace.len()
             && self
                 .target_trace
                 .iter()
                 .zip(targets)
-                .all(|(trace, target)| trace.accepts(*target))
+                .zip(thermostats)
+                .all(|((trace, target), thermostat)| trace.accepts(*target, thermostat.relay))
     }
 }
 fn thermostat_on(own: f64, target: f64, previous: bool) -> bool {
@@ -115,6 +119,13 @@ fn thermostat_on(own: f64, target: f64, previous: bool) -> bool {
         true
     } else {
         previous
+    }
+}
+fn heating_on(own: f64, target: f64, previous: bool, relay: bool) -> bool {
+    if relay {
+        own < target + if previous { 0.25 } else { 0. }
+    } else {
+        thermostat_on(own, target, previous)
     }
 }
 pub fn temperature(s: Transition, state: State, watts: f64) -> f64 {
@@ -182,17 +193,40 @@ fn project_kernel<'a, I, const TRACE: bool>(
     for _ in 0..q.steps {
         let mut mask = 0;
         let mut watts = relay;
+        let mut relay_calls = 0;
         for (j, t) in thermostats.clone().into_iter().enumerate() {
             let own = out.state.temperature + t.sensor_offset_c;
             let previous = out.state.mask & (1 << j) != 0;
-            let on = thermostat_on(own, targets[j], previous);
+            let on = heating_on(own, targets[j], previous, t.relay);
             if TRACE {
                 out.target_trace[j].observe(own, previous, on);
+            }
+            if t.relay && q.relay_budget_w.is_some() && targets[j] != f64::MAX {
+                if on {
+                    relay_calls |= 1 << j;
+                }
+                continue;
             }
             if on {
                 mask += 1 << j;
                 watts += t.power_w;
                 out.power[j] += t.power_w * hours;
+            }
+        }
+        if let Some(budget) = q.relay_budget_w {
+            // Keep running room relays before admitting new calls. Native
+            // thermostats and retained switch-on commands can draw on their own.
+            for calls in [relay_calls & out.state.mask, relay_calls & !out.state.mask] {
+                if calls == 0 {
+                    continue;
+                }
+                for (j, t) in thermostats.clone().into_iter().enumerate() {
+                    if calls & (1 << j) != 0 && watts + t.power_w <= budget + 1e-6 {
+                        mask |= 1 << j;
+                        watts += t.power_w;
+                        out.power[j] += t.power_w * hours;
+                    }
+                }
             }
         }
         out.peak = out.peak.max(watts);
@@ -234,7 +268,7 @@ mod tests {
                     trace.observe(own, previous, on);
                     for candidate in &targets {
                         assert_eq!(
-                            trace.accepts(*candidate),
+                            trace.accepts(*candidate, false),
                             original_latch(own, *candidate, previous) == on,
                             "own={own} previous={previous} target={target} candidate={candidate}"
                         );
@@ -254,6 +288,7 @@ mod tests {
                 power_w: 800.,
                 sensor_offset_c: 0.,
                 hvac_action: "idle".into(),
+                relay: false,
             },
             Thermostat {
                 minimum_c: 5.,
@@ -262,6 +297,7 @@ mod tests {
                 power_w: 400.,
                 sensor_offset_c: 0.5,
                 hvac_action: "idle".into(),
+                relay: false,
             },
         ];
         let targets = [19.5, 20. - 1e-9, 20., 20. + 1e-9, 20.5 - 1e-9, 20.5, 21.];
@@ -278,6 +314,7 @@ mod tests {
                             let q = Interval {
                                 hours: 0.25,
                                 steps: 15,
+                                relay_budget_w: None,
                                 step: Transition {
                                     decay: 0.999,
                                     offset_c: -0.004,
@@ -302,7 +339,8 @@ mod tests {
                                     &mut traced,
                                 );
                                 for candidate in &actions {
-                                    if !traced.reproduces_targets(&candidate[..count]) {
+                                    if !traced.reproduces_targets(&candidate[..count], &thermostats)
+                                    {
                                         continue;
                                     }
                                     reused += 1;

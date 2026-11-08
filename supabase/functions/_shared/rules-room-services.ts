@@ -29,12 +29,14 @@ export interface RoomPrices {
 export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], sharedHeadroom?: number[], prices?: RoomPrices, trace?: PlanningTrace): RoomServices {
   const result: RoomServices = { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, unplanned_power: {}, warnings: [] };
   const n = snapshot.slots.length;
+  const shared = snapshot.schema_version >= 12;
   const remaining=sharedHeadroom?.slice() ?? snapshot.slots.map(()=>Infinity);
   const surplus=prices?.surplus_w.map(w=>Math.max(0,w)) ?? snapshot.slots.map(()=>0);
   for (const zone of snapshot.thermal_zones ?? []) {
     const complete = trace?.start("room_scheduling", { room_key: zone.key, slots: n });
     const members = snapshot.device_models.filter(m => zone.device_keys.includes(m.key));
     const relays = members.filter(m => m.control_type === "switch_schedule");
+    if (shared) relays.sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
     const thermostats = members.filter(m => m.control_type === "setpoint");
     const temperature = zone.start_temperature_c;
     const cumulative = new Map<string, number>();
@@ -54,7 +56,7 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
       snapshot.house_temperature_c.every(v => typeof v === "number" && Number.isFinite(v)));
     const executionUnknown = members.some(m => snapshot.slots.some(slot => unavailableOwner(snapshot, commandOwner(snapshot, m), slot.start)));
     if (!executionUnknown && relays.length + thermostats.length && relays.length <= MAX_ROOM_RELAYS && zone.model && temperature !== null &&
-      outdoorKnown && houseKnown && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
+      outdoorKnown && houseKnown && (!shared || relays.every(m => m.category === "heating" && typeof m.relay_on === "boolean" && (m.active_power_w ?? 0) > 0)) && thermostats.every(m => isThermostat(m.thermostat) && (m.active_power_w ?? 0) > 0) && zone.model.gain_c_per_wh > 0 && zone.model.cooling_constant_per_h >= 0) {
       comfortMisses = scheduleRoom(snapshot, zone, thermostats, relays, retained, remaining, surplus, prices, result, trace);
       if (comfortMisses) result.warnings.push(shortfall(zone, comfortMisses));
       complete?.();
@@ -77,19 +79,30 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
         }
         if (m.control_type === "setpoint") {
           const t = isThermostat(m.thermostat) ? m.thermostat : null;
+          const target = shared ? retainedRoomTarget(retained[i], zone) ?? zone.target_c[i] : zone.target_c[i];
           const command = locked?.type === "setpoint" ? locked : { type: "setpoint" as const,
-            target_c: t ? supportedTarget(t, zone.target_c[i]) : zone.target_c[i],
-            minimum_c: t?.minimum_c ?? zone.comfort_min_c[i], maximum_c: t?.maximum_c ?? zone.comfort_max_c[i] };
+            target_c: t ? supportedTarget(t, target) : target,
+            minimum_c: t?.minimum_c ?? Math.min(zone.comfort_min_c[i], target),
+            maximum_c: t?.maximum_c ?? Math.max(zone.comfort_max_c[i], target),
+            ...(shared ? {room_target_c: target} : {}) };
           result.commands[m.key].push(command);
           const watts = Math.max(0, m.forecast_w_by_slot[i]);
           result.power[m.key].push(watts); total += watts;
         } else if (m.control_type === "switch_schedule") {
+          const held = locked?.type === "switch_schedule" || locked?.type === "room_relay" && locked.room_key === zone.key;
+          if (shared && m.category === "heating" && locked?.type !== "switch_schedule") {
+            const target = retainedRoomTarget(retained[i], zone) ?? zone.target_c[i];
+            result.commands[m.key].push(held ? locked : { type: "room_relay", room_key: zone.key, target_c: target });
+            const expected = m.forecast_w_by_slot[i];
+            result.power[m.key].push(expected); total += expected;
+            continue;
+          }
           const watts = m.active_power_w ?? 0;
           const debt = (cumulative.get(m.key) ?? 0) + (watts > 0 ? m.forecast_w_by_slot[i] / watts : 0);
           const requested = i === 0 && temperature !== null ? temperature < zone.target_c[i] : debt >= 1;
           const on = locked?.type === "switch_schedule" ? locked.on_seconds > 0 : requested && watts <= remaining[i] - total;
           cumulative.set(m.key, debt - (on ? 1 : 0));
-          result.commands[m.key].push(locked?.type === "switch_schedule" ? locked : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
+          result.commands[m.key].push(held ? locked : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
           result.power[m.key].push(on ? watts : 0); total += on ? watts : 0;
         }
       }
@@ -112,6 +125,15 @@ type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];
 type Member = OptimisationSnapshot["device_models"][number];
 type Retained = Array<{ device_commands?: Record<string, DeviceCommand>; device_loads_w?: Record<string, number> }>;
 
+function retainedRoomTarget(slot: Retained[number] | undefined, zone: Zone): number | null {
+  for (const key of zone.device_keys) {
+    const command = slot?.device_commands?.[key];
+    if (command?.type === "room_relay" && command.room_key === zone.key) return command.target_c;
+    if (command?.type === "setpoint" && command.room_target_c != null) return command.room_target_c;
+  }
+  return null;
+}
+
 const shortfall = (zone: Zone, quarters: number) => planningWarning("comfort_shortfall", zone.key,
   `${zone.name}: ${quarters} quarters may be outside the requested comfort band.`,
   "The best attainable room schedule is included and household planning continues.", { quarters });
@@ -121,26 +143,47 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
   retained: Retained, remaining: number[], surplus: number[],
   prices: RoomPrices | undefined, result: RoomServices, trace?: PlanningTrace): number {
   const model = zone.model!, n = snapshot.slots.length;
+  const shared = snapshot.schema_version >= 12;
   const thermostats: RoomThermostat[] = members.map(m => {
     if (!isThermostat(m.thermostat)) throw new Error("Native thermostat evidence was not prepared");
     return { ...m.thermostat, power_w: m.active_power_w!, sensor_offset_c: m.thermostat.current_temperature_c - zone.start_temperature_c! };
   });
+  const actuators = shared ? [...thermostats, ...relays.map(m => ({
+    relay: true, power_w: m.active_power_w!, sensor_offset_c: 0, current_temperature_c: zone.start_temperature_c!,
+    minimum_c: 0, maximum_c: 100, step_c: 0.1, target_temperature_c: zone.start_temperature_c!,
+    entity_id: m.key, hvac_action: m.relay_on ? "heating" as const : "idle" as const,
+  }))] : thermostats;
   const quarters: RoomQuarter[] = snapshot.slots.map((slot, i) => {
     const hours = Math.min(.25, Math.max(0, (Date.parse(slot.start) + 900_000 - Date.parse(snapshot.captured_at)) / 3_600_000));
     const steps = Math.ceil(hours * 60);
     const conditions = { hours, outdoor_c: snapshot.outdoor_temperature_c![i]!, house_c: snapshot.house_temperature_c?.[i],
       background_c_per_h: backgroundRateForSlot(model, i, snapshot.solar_irradiance_w_per_m2) };
+    const maximum_w = Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i]));
     return { hours, steps, transition: roomTransition(model, conditions),
       step: roomTransition(model, { ...conditions, hours: steps ? hours / steps : 0 }),
       required_c: Math.max(zone.comfort_min_c[i], zone.comfort_min_c[i + 1] ?? zone.comfort_min_c[i]),
-      maximum_c: zone.comfort_max_c[i], maximum_w: Math.max(0, Math.min(zone.maximum_power_w_by_slot[i], remaining[i])),
-      relay_w: relays.map(m => m.active_power_w ?? 0),
-      fixed_relays: relays.map(m => { const c = retained[i]?.device_commands?.[m.key]; return c?.type === "switch_schedule" ? c.on_seconds > 0 : null; }),
-      fixed_targets_c: members.map((m, j) => { const c = retained[i]?.device_commands?.[m.key]; return c?.type === "setpoint" ? nativeTarget(thermostats[j], c.target_c) : null; }),
+      maximum_c: zone.comfort_max_c[i], maximum_w,
+      ...(shared && relays.length ? {relay_budget_w: maximum_w} : {}),
+      relay_w: shared ? [] : relays.map(m => m.active_power_w ?? 0),
+      fixed_relays: shared ? [] : relays.map(m => { const c = retained[i]?.device_commands?.[m.key]; return c?.type === "switch_schedule" ? c.on_seconds > 0 : null; }),
+      fixed_targets_c: [
+        ...members.map((m, j) => { const c = retained[i]?.device_commands?.[m.key]; return c?.type === "setpoint" ? nativeTarget(thermostats[j], c.target_c) : null; }),
+        ...(shared ? relays.map(m => {
+          const c = retained[i]?.device_commands?.[m.key];
+          return c?.type === "room_relay" && c.room_key === zone.key ? c.target_c : null;
+        }) : []),
+      ],
+      ...(shared ? {room_target: {
+        preferred_c: zone.target_c[i], fixed_c: retainedRoomTarget(retained[i], zone),
+        fixed_switches: [...members.map(() => null), ...relays.map(m => {
+          const c = retained[i]?.device_commands?.[m.key];
+          return c?.type === "switch_schedule" ? c.on_seconds > 0 : null;
+        })],
+      }} : {}),
       import_sek_per_kwh: prices?.import_sek_per_kwh[i] ?? 1,
       export_sek_per_kwh: prices?.export_sek_per_kwh[i] ?? 1, surplus_w: surplus[i] };
   });
-  const plan = planRoomHeating(zone.start_temperature_c!, thermostats, quarters, zone.start_delivered_w ?? 0, trace);
+  const plan = planRoomHeating(zone.start_temperature_c!, actuators, quarters, zone.start_delivered_w ?? 0, trace);
   let misses = 0, previousC = zone.start_temperature_c!;
   let unplanned: ThermostatRoomState = { temperature_c: zone.start_temperature_c!, delivered_w: zone.start_delivered_w ?? 0, heating_mask: heatingMask(thermostats) };
   const debts = relays.map(() => 0);
@@ -148,13 +191,17 @@ function scheduleRoom(snapshot: OptimisationSnapshot, zone: Zone, members: Membe
     const q = quarters[i];
     relays.forEach((m, r) => {
       const on = plan.relays_on[i][r], command = retained[i]?.device_commands?.[m.key];
-      result.commands[m.key].push(command?.type === "switch_schedule" ? command : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
-      result.power[m.key].push(on ? q.relay_w[r] : 0);
+      const held = command?.type === "switch_schedule" || command?.type === "room_relay" && command.room_key === zone.key;
+      result.commands[m.key].push(held ? command : shared
+        ? { type: "room_relay", room_key: zone.key, target_c: plan.room_targets_c![i] }
+        : { type: "switch_schedule", on_seconds: on ? 900 : 0 });
+      result.power[m.key].push(shared ? plan.thermostat_w[i][members.length + r] : on ? q.relay_w[r] : 0);
     });
     members.forEach((m, j) => {
       const command = retained[i]?.device_commands?.[m.key];
       result.commands[m.key].push(command?.type === "setpoint" ? command : { type: "setpoint", target_c: plan.targets_c[i][j],
-        minimum_c: thermostats[j].minimum_c, maximum_c: thermostats[j].maximum_c });
+        minimum_c: thermostats[j].minimum_c, maximum_c: thermostats[j].maximum_c,
+        ...(shared ? {room_target_c: plan.room_targets_c![i]} : {}) });
       result.power[m.key].push(plan.thermostat_w[i][j]);
     });
     const baselineRelayW = relays.reduce((sum, m, r) => {

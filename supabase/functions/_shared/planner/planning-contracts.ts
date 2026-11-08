@@ -230,6 +230,8 @@ export interface EmpiricalDeviceModelInput {
   active_power_w: number | null;
   /** Native thermostat sensor, target, HVAC state and supported target grid. */
   thermostat?: ThermostatInput | null;
+  /** Current room relay observation captured from the existing actuator. */
+  relay_on?: boolean | null;
   /** Explicit membership resolved from the installation mapping, never category alone. */
   planning_service?: "pool";
   /**
@@ -282,7 +284,7 @@ export interface OptimisationSnapshot {
    * devices (see `isolateMeasurements`).
    */
   measurement_issues?: MeasurementIssue[];
-  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   // Only Home Assistant live snapshots cross the ingestion boundary. The
   // website's promotional demo is a client-side plan fixture, not a snapshot.
   mode: "live";
@@ -682,7 +684,7 @@ export interface OptimisationPlan {
   /** Daily curve evidence for the conditional battery verification branch. */
   battery_verification_value_curve?: BatteryValueCurveDiagnostic | null;
   fixed_plan?: { id: string; starts_at: string; ends_at: string };
-  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  schema_version: 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
   mode: PlanMode;
   capabilities: OptimisationCapabilities;
   model_version: string;

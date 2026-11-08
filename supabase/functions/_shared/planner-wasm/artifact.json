@@ -1,7 +1,7 @@
 {
   "abi": 18,
-  "wasm_sha256": "83cef7e2ae31153616b291b6006685c00cbcea5a67412693adae44dd55a69e37",
-  "source_sha256": "435a8529e715fae643d6fe136c83adc5be1ce5e145620c21aaac10fd1d9cc839",
+  "wasm_sha256": "3b95a5b1bd8971ead52394fb73439f90bf8f0d9bb640f9fc59f6b439a19f6df2",
+  "source_sha256": "21a2d1323df6bbfa1d0ad0db8d627c79e78fb6ae7b45f580abadc9f5546a0762",
   "rust": "1.99.0",
   "target": "wasm32-unknown-unknown",
   "profile": "release",

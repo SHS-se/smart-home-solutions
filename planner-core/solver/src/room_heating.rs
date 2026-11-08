@@ -19,6 +19,34 @@ pub struct Quarter {
     import_sek_per_kwh: f64,
     export_sek_per_kwh: f64,
     surplus_w: f64,
+    room_target: Option<RoomTarget>,
+}
+#[derive(Deserialize)]
+struct RoomTarget {
+    preferred_c: f64,
+    fixed_c: Option<f64>,
+    fixed_switches: Vec<Option<bool>>,
+}
+
+fn room_device_target(
+    room: &RoomTarget,
+    q: &Quarter,
+    i: usize,
+    t: &Thermostat,
+    target: f64,
+) -> f64 {
+    if let Some(on) = room.fixed_switches[i] {
+        return if on { f64::MAX } else { -f64::MAX };
+    }
+    if let Some(fixed) = q.fixed_targets_c[i] {
+        return fixed;
+    }
+    if t.relay {
+        return target;
+    }
+    let index = js_round((target + t.sensor_offset_c - t.minimum_c) / t.step_c + 1e-9);
+    let last = ((t.maximum_c - t.minimum_c) / t.step_c + 1e-9).floor();
+    js_round((t.minimum_c + index.clamp(0., last) * t.step_c) * 1e9) / 1e9
 }
 #[derive(Deserialize)]
 pub struct Input {
@@ -35,6 +63,8 @@ pub struct Plan {
     relays_on: Vec<Vec<bool>>,
     temperature_c: Vec<f64>,
     shortfall_c: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    room_targets_c: Vec<f64>,
 }
 // A kernel contains exact physical outcomes, not choices or scores. Only
 // adjacent, bit-identical quarter physics share it. The 32 MiB payload budget
@@ -111,6 +141,18 @@ fn physics_key(q: &Quarter) -> Vec<u64> {
             .iter()
             .map(|v| v.map_or(u64::MAX, f64::to_bits)),
     );
+    if let Some(room) = &q.room_target {
+        key.push(q.physics.relay_budget_w.map_or(u64::MAX, f64::to_bits));
+        key.extend([
+            room.preferred_c.to_bits(),
+            room.fixed_c.map_or(u64::MAX, f64::to_bits),
+        ]);
+        key.extend(room.fixed_switches.iter().map(|on| match on {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        }));
+    }
     key
 }
 impl ProjectionMemo {
@@ -196,6 +238,7 @@ struct RelayChoice {
     watts: f64,
 }
 struct Choice {
+    room_target_c: f64,
     score: f64,
     watts: f64,
     targets: Vec<f64>,
@@ -337,7 +380,23 @@ impl<'a> Search<'a> {
                 }
             })
             .sum();
-        let has_commitment = q.fixed_targets_c.iter().any(Option::is_some)
+        if let Some(room) = &q.room_target {
+            for (j, t) in self.thermostats.iter().enumerate() {
+                self.targets[j] = if room.fixed_c.is_some()
+                    || room.fixed_switches[j].is_some()
+                    || q.fixed_targets_c[j].is_some()
+                {
+                    room_device_target(room, q, j, t, room.fixed_c.unwrap_or(room.preferred_c))
+                } else if t.relay {
+                    -f64::MAX
+                } else {
+                    t.minimum_c
+                };
+            }
+        }
+        let has_commitment = q.room_target.as_ref().is_some_and(|room| {
+            room.fixed_c.is_some() || room.fixed_switches.iter().any(Option::is_some)
+        }) || q.fixed_targets_c.iter().any(Option::is_some)
             || q.fixed_relays.iter().any(Option::is_some);
         let minimum_can_heat = self
             .thermostats
@@ -358,26 +417,52 @@ impl<'a> Search<'a> {
         }
         let mut best_score = f64::INFINITY;
         let mut best_watts = f64::INFINITY;
+        let margin = self
+            .thermostats
+            .iter()
+            .filter(|t| !t.relay)
+            .map(|t| t.step_c)
+            .fold(0.5, f64::max);
+        let first_room = ((initial.temperature.min(passive) - margin) * 10.).floor() as i64;
+        let last_room = ((initial.temperature.max(full) + margin) * 10.).ceil() as i64;
         for relay in relays {
             // Only targets vary inside this loop. Reuse requires an exact
             // proof of every minute's latch decision, never similar outcomes.
             let mut projected = false;
             let mut evaluation: Option<(CachedAction, Option<f64>)> = None;
             self.indices.copy_from_slice(&self.first);
+            let mut room_index = first_room;
             loop {
+                let room_target = q.room_target.as_ref().map(|room| {
+                    room.fixed_c.unwrap_or(if room_index == first_room {
+                        room.preferred_c
+                    } else {
+                        (room_index - 1) as f64 / 10.
+                    })
+                });
                 for (j, t) in self.thermostats.iter().enumerate() {
                     // JavaScript Math.round rounds ties towards positive infinity.
-                    self.targets[j] = q.fixed_targets_c[j].unwrap_or_else(|| {
-                        self.native_targets[j]
-                            .get(self.indices[j] as usize)
-                            .copied()
-                            .unwrap_or_else(|| {
-                                js_round((t.minimum_c + self.indices[j] as f64 * t.step_c) * 1e9)
-                                    / 1e9
+                    self.targets[j] =
+                        if let (Some(room), Some(target)) = (&q.room_target, room_target) {
+                            room_device_target(room, q, j, t, target)
+                        } else {
+                            q.fixed_targets_c[j].unwrap_or_else(|| {
+                                self.native_targets[j]
+                                    .get(self.indices[j] as usize)
+                                    .copied()
+                                    .unwrap_or_else(|| {
+                                        js_round(
+                                            (t.minimum_c + self.indices[j] as f64 * t.step_c) * 1e9,
+                                        ) / 1e9
+                                    })
                             })
-                    });
+                        };
                 }
-                if !projected || !self.projection.reproduces_targets(&self.targets) {
+                if !projected
+                    || !self
+                        .projection
+                        .reproduces_targets(&self.targets, self.thermostats)
+                {
                     project_traced(
                         &q.physics,
                         self.thermostats,
@@ -428,6 +513,7 @@ impl<'a> Search<'a> {
                         best_score = value;
                         best_watts = watts;
                         if let Some(out) = output.as_deref_mut() {
+                            out.room_target_c = room_target.unwrap_or(0.);
                             out.score = value;
                             out.watts = watts;
                             out.state = self.projection.state;
@@ -436,6 +522,13 @@ impl<'a> Search<'a> {
                             out.thermostat_w.copy_from_slice(&self.projection.power);
                         }
                     }
+                }
+                if let Some(room) = &q.room_target {
+                    if room.fixed_c.is_some() || room_index > last_room {
+                        break;
+                    }
+                    room_index += 1;
+                    continue;
                 }
                 // Same lexicographic Cartesian product as the original action list.
                 let mut j = self.indices.len();
@@ -514,7 +607,11 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
         quarters,
     } = input;
     if quarters.iter().any(|q| {
-        q.fixed_targets_c.len() != thermostats.len() || q.fixed_relays.len() != q.relay_w.len()
+        q.fixed_targets_c.len() != thermostats.len()
+            || q.fixed_relays.len() != q.relay_w.len()
+            || q.room_target
+                .as_ref()
+                .is_some_and(|room| room.fixed_switches.len() != thermostats.len())
     }) {
         return Err("Room command arrays do not match their devices".into());
     }
@@ -596,6 +693,7 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
     };
     for (i, q) in quarters.iter().enumerate() {
         let mut out = Choice {
+            room_target_c: 0.,
             score: 0.,
             watts: 0.,
             targets: vec![0.; thermostats.len()],
@@ -612,6 +710,9 @@ fn plan_with_memo_budget(input: &Input, payload_limit: usize) -> Result<Plan, St
         result.power_w.push(out.watts);
         result.thermostat_w.push(out.thermostat_w);
         result.targets_c.push(out.targets);
+        if q.room_target.is_some() {
+            result.room_targets_c.push(out.room_target_c);
+        }
         result.relays_on.push(out.relays);
         result.temperature_c.push(out.state.temperature);
         result
@@ -686,6 +787,7 @@ mod tests {
             power_w: 800.,
             sensor_offset_c: 0.,
             hvac_action: "idle".into(),
+            relay: false,
         }];
         let search = Search::new(&thermostats, 128);
         assert_eq!(

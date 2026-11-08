@@ -144,6 +144,7 @@ const roomOutcome = z.discriminatedUnion("kind", [
     power_w: z.number().finite().array(), thermostat_w: z.number().finite().array().array(),
     targets_c: z.number().finite().array().array(), relays_on: z.boolean().array().array(),
     temperature_c: z.number().finite().array(), shortfall_c: z.number().finite().array(),
+    room_targets_c: z.number().finite().array().optional(),
   }) }),
 ]);
 // All fields in the validated wire schemas are required. Preserve that fact
@@ -260,7 +261,8 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
       const { outcome } = invoke(input, "planner_room", value => roomOutcome.parse(value), trace);
       if (outcome.kind === "failed") throw new Error(outcome.issue);
       const plan = outcome.plan as RoomHeatingPlan;
-      if (Object.values(plan).some(series => series.length !== input.quarters.length) ||
+      if (Object.values(plan).some(series => series?.length !== input.quarters.length) ||
+        Boolean(plan.room_targets_c) !== input.quarters.some(q => q.room_target != null) ||
         plan.targets_c.some(row => row.length !== input.thermostats.length) ||
         plan.thermostat_w.some(row => row.length !== input.thermostats.length) ||
         plan.relays_on.some((row, i) => row.length !== input.quarters[i].relay_w.length)) {

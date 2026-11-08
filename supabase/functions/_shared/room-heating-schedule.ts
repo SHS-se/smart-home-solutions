@@ -10,9 +10,11 @@ export interface RoomQuarter extends ThermostatQuarter {
   maximum_c: number;
   maximum_w: number;
   relay_w: number[];
+  relay_budget_w?: number;
   fixed_relays: (boolean | null)[];
   /** Native applied targets; the original retained command stays with its caller. */
   fixed_targets_c: (number | null)[];
+  room_target?: { preferred_c: number; fixed_c: number | null; fixed_switches: (boolean | null)[] };
   import_sek_per_kwh: number;
   export_sek_per_kwh: number;
   surplus_w: number;
@@ -24,6 +26,7 @@ export interface RoomHeatingPlan {
   relays_on: boolean[][];
   temperature_c: number[];
   shortfall_c: number[];
+  room_targets_c?: number[];
 }
 
 export const MAX_ROOM_RELAYS = 4;
