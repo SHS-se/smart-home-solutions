@@ -1,4 +1,4 @@
-import { cpuMixedRoomPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
+import { cpuMixedRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
 import { assertEquals, assertRejects } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
@@ -146,6 +146,31 @@ Deno.test("separate worker stages preserve mixed-room, household and hot-water o
   assertEquals(phases, ["prepare", "solve"]);
   assertEquals(result, JSON.parse(JSON.stringify(expected)));
   assertEquals(capture, before);
+});
+
+Deno.test("room preparation crosses request boundaries with exactly the same allocation and plan", async () => {
+  const source = cpuVaryingRoomTargetPlanningSource();
+  source.snapshot.thermal_zones = source.snapshot.thermal_zones!.slice(0, 2);
+  const capture = captureRulesPlanningInput(source, null, resolveRulePolicy());
+  const before = structuredClone(capture);
+  const calls: [string, number | null][] = [];
+  const fetcher: typeof fetch = (url, init) => {
+    const submitted = JSON.parse(String(init?.body));
+    calls.push([submitted.stage, submitted.room_progress?.next_room ?? null]);
+    return handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
+  };
+  const remote = await generateRemoteRulesPlan(capture, connection, fetcher);
+  assertEquals(calls, [["prepare", null], ["prepare", 1], ["solve", null]]);
+  assertEquals(remote, JSON.parse(JSON.stringify(executeRulesPlanning(capture))));
+  assertEquals(capture, before);
+
+  const corrupt: typeof fetch = async (url, init) => {
+    const response = await handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
+    const body = await response.json();
+    body.room_progress.snapshot_id = "a different capture";
+    return Response.json(body);
+  };
+  await assertRejects(() => generateRemoteRulesPlan(capture, connection, corrupt), Error, "invalid room progress");
 });
 
 Deno.test("worker failures preserve retry, recapture and terminal disposition across HTTP", async () => {

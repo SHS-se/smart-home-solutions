@@ -1,3 +1,4 @@
+import { PlanningInputError } from "./planning-errors.ts";
 import type { OptimisationSnapshot } from "./planner/planning-contracts.ts";
 import type { DeviceCommand } from "./planner/device-commands.ts";
 import { backgroundRateForSlot, roomTransition, usesHouse } from "./planner/models/room/thermal.ts";
@@ -25,14 +26,53 @@ export interface RoomPrices {
   surplus_w: number[];
 }
 
-/** Comfort service is authoritative even when its statistical model is weak. */
-export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], sharedHeadroom?: number[], prices?: RoomPrices, trace?: PlanningTrace): RoomServices {
-  const result: RoomServices = { commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, unplanned_power: {}, warnings: [] };
+export interface RoomPlanningInputs {
+  snapshot: OptimisationSnapshot;
+  retained: Retained;
+  headroom?: number[];
+  prices?: RoomPrices;
+}
+
+/** Intermediate state belongs to one immutable captured snapshot. */
+export interface RoomPreparationProgress {
+  snapshot_id: string;
+  next_room: number;
+  services: RoomServices;
+}
+
+export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Retained = [], headroom?: number[], prices?: RoomPrices, trace?: PlanningTrace): RoomServices {
+  return prepareRoomBatch({snapshot, retained, headroom, prices}, trace, null, Infinity).services;
+}
+
+/** Process the next room in the same order as local preparation. */
+export function prepareRoomBatch({ snapshot, retained, headroom, prices }: RoomPlanningInputs,
+  trace?: PlanningTrace, previous: RoomPreparationProgress | null = null, limit = 1): RoomPreparationProgress {
+  const zones = snapshot.thermal_zones ?? [];
+  const start = previous?.next_room ?? 0;
   const n = snapshot.slots.length;
+  if (previous && (previous.snapshot_id !== snapshot.snapshot_id || !Number.isInteger(start) || start <= 0 || start >= zones.length)) {
+    throw new PlanningInputError("Room preparation continuation does not match the captured snapshot");
+  }
+  const result: RoomServices = previous?.services ?? {
+    commands: {}, power: {}, room_power: {}, temperature: {}, unplanned_temperature: {}, unplanned_power: {}, warnings: [],
+  };
   const shared = snapshot.schema_version >= 12;
-  const remaining=sharedHeadroom?.slice() ?? snapshot.slots.map(()=>Infinity);
-  const surplus=prices?.surplus_w.map(w=>Math.max(0,w)) ?? snapshot.slots.map(()=>0);
-  for (const zone of snapshot.thermal_zones ?? []) {
+  const remaining = headroom?.slice() ?? snapshot.slots.map(() => Infinity);
+  const surplus = prices?.surplus_w.map(w => Math.max(0, w)) ?? snapshot.slots.map(() => 0);
+  // Reconstruct the budgets in the same subtraction order as a local solve.
+  // Carrying just completed service results avoids a second source of truth.
+  for (const zone of zones.slice(0, start)) {
+    const watts = result.room_power[zone.key];
+    if (!Array.isArray(watts) || watts.length !== n || !watts.every(Number.isFinite)) {
+      throw new PlanningInputError("Room preparation continuation is missing completed demand");
+    }
+    for (let i = 0; i < n; i++) {
+      remaining[i] = Math.max(0, remaining[i] - watts[i]);
+      surplus[i] = Math.max(0, surplus[i] - watts[i]);
+    }
+  }
+  const next_room = Math.min(start + limit, zones.length);
+  for (const zone of zones.slice(start, next_room)) {
     const complete = trace?.start("room_scheduling", { room_key: zone.key, slots: n });
     const members = snapshot.device_models.filter(m => zone.device_keys.includes(m.key));
     const relays = members.filter(m => m.control_type === "switch_schedule");
@@ -118,7 +158,7 @@ export function prepareRoomServices(snapshot: OptimisationSnapshot, retained: Re
       "Comfort setpoints and empirical relay schedules remain active; consumption is estimated from measured history."));
     complete?.();
   }
-  return result;
+  return {snapshot_id: snapshot.snapshot_id, next_room, services: result};
 }
 
 type Zone = NonNullable<OptimisationSnapshot["thermal_zones"]>[number];

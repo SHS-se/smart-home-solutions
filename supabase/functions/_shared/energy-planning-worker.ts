@@ -1,8 +1,9 @@
 import { classifyPlanningFailure, PlanningInputError, PlanningError } from "./planning-errors.ts";
 import { generateRulesPlan, type PreparedRulesInput } from "./rules-planner.ts";
 import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
-import { prepareCapturedRulesInput } from "./rules-planning-execution.ts";
+import { prepareCapturedRoomBatch } from "./rules-planning-execution.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
+import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { describeThrown } from "./ha-api-contract.ts";
 import { PlanningTrace } from "./planning-trace.ts";
 
@@ -22,7 +23,7 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
     read();
     if (new TextEncoder().encode(raw).byteLength > MAX_PLANNING_BODY_BYTES) return json({error:"request_too_large"},413);
     const body = trace.run("request_parse", () => {
-      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput} | {stage:"solve";input:PreparedRulesInput}); }
+      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput;room_progress?:RoomPreparationProgress} | {stage:"solve";input:PreparedRulesInput}); }
       catch (error) { if (error instanceof SyntaxError) throw new PlanningInputError(error.message); throw error; }
     });
     if (!body || typeof body !== "object") throw new PlanningInputError("Planning request must be an object");
@@ -36,10 +37,10 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
       throw new PlanningError(body.stage === "prepare" ? "Captured rules planner version changed" : "Prepared rules planner version changed", "planner_upgraded", 409, "recapture");
     }
     if (body.stage === "prepare") {
-      const prepared = trace.run("plan_preparation", () => prepareCapturedRulesInput(body.input, trace), {
+      const result = trace.run("plan_preparation", () => prepareCapturedRoomBatch(body.input, body.room_progress ?? null, trace), {
         model_version: body.input.model_version, slots: body.input.snapshot.slots.length,
       });
-      return trace.run("response_encode", () => json({stage:"prepare",prepared}));
+      return trace.run("response_encode", () => json({stage:"prepare",...result}));
     }
     const started = performance.now();
     const result = trace.run("plan_generation", () => generateRulesPlan(body.input, trace), {

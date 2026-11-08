@@ -62,3 +62,16 @@ bodies and downloaded 133 MB through batch-load RPCs. These are uncompressed
 application payload counts, not billed traffic or a fleet capacity guarantee.
 Final assembly also remains a synchronous Edge CPU section; the measured live
 assembly took 184ms, which does not guarantee the same margin for larger homes.
+
+## Room preparation within the hosted CPU limit
+
+The hosted planner prepares one room per request before solving the household.
+Each request uses the same frozen capture. It reconstructs the remaining import
+headroom and solar surplus by subtracting the completed rooms' forecast demand
+in the original planning order. The last preparation request assembles the
+household problem and the existing solve request consumes it.
+
+The caller checks the snapshot identity and requires the room cursor to advance
+by one on each response. All stages share a 25-second exchange deadline.
+Partial preparation results stay inside the planning attempt. A failed attempt
+can retry from the captured input while the accepted plan stays active.

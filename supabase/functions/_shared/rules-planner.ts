@@ -6,7 +6,7 @@ import { projectRulesBaseline } from "./rules-baseline.ts";
 import { POOL_START_COST_SEK, EV_CHANGE_PREFERENCE_SEK, BATTERY_CHANGE_PREFERENCE_SEK } from "./planner-wasm/cost-policy.ts";
 import { demandLevel } from "./planner/demand-outlook.ts";
 import { preparePoolService, type PoolService } from "./rules-pool-service.ts";
-import { prepareRoomServices, type RoomServices } from "./rules-room-services.ts";
+import { prepareRoomServices, type RoomServices, type RoomPlanningInputs } from "./rules-room-services.ts";
 import { roomProjectionControl } from "./planner/models/room/control.ts";
 import { mergePlanningWarnings, planningWarning } from "./planner/planning-warnings.ts";
 import { localDay, localMonths } from "./planner-wasm/calendar.ts";
@@ -122,9 +122,18 @@ function nativeCommand(slot: RetainedCommandSlot, snapshot: OptimisationSnapshot
     discharge_limit_w: stated?.discharge_limit_w ?? battery?.discharge_limit_w ?? 0 };
 }
 
-/** Freeze supplied forecasts/models and current published commands before admission. */
-export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "price_archive"> & { price_archive?: EnergyPlanningInput["price_archive"] }, reference: PublishedCommandReference | null,
-  approved: ReadyRulePolicy, trace?: PlanningTrace, independent?: {battery: PublishedCommandReference | null}): PreparedRulesInput {
+type RulesPlanningSource = Omit<EnergyPlanningInput, "price_archive"> & { price_archive?: EnergyPlanningInput["price_archive"] };
+type IndependentReferences = {battery: PublishedCommandReference | null};
+
+/** Local preparation and hosted preparation use the same captured basis. */
+export function prepareRulesPlanningInput(input: RulesPlanningSource, reference: PublishedCommandReference | null,
+  approved: ReadyRulePolicy, trace?: PlanningTrace, independent?: IndependentReferences): PreparedRulesInput {
+  const { roomInputs, finish } = prepareRulesPlanningBasis(input, reference, approved, independent);
+  return finish(prepareRoomServices(roomInputs.snapshot, roomInputs.retained, roomInputs.headroom, roomInputs.prices, trace));
+}
+
+export function prepareRulesPlanningBasis(input: RulesPlanningSource, reference: PublishedCommandReference | null,
+  approved: ReadyRulePolicy, independent?: IndependentReferences): { roomInputs: RoomPlanningInputs; finish(rooms: RoomServices): PreparedRulesInput } {
   if (!input.resolved_price_outlook) return fail("Rules planner requires an already resolved price outlook");
   if (!approved || !Array.isArray(approved.rules)) return fail("Rules planner requires the approved rule policy");
   // State and commitment belong to the immutable measurement capture, not the
@@ -318,80 +327,82 @@ export function prepareRulesPlanningInput(input: Omit<EnergyPlanningInput, "pric
       Math.max(0,Math.floor((Date.parse(slot.start)-effective)/86400000)))]-baseW[i]-boilerW[i]-
       sum(Object.entries(passive).filter(([key])=>!roomKeys.has(key)).map(([,values])=>values[i])));
   const headroom=spare.map(w=>Math.max(0,snapshot.grid.import_limit_w+w));
-  const rooms = prepareRoomServices(snapshot, retainedServices, headroom, {
+  return { roomInputs: { snapshot, retained: retainedServices, headroom, prices: {
     import_sek_per_kwh: outlook.shadow_import_sek_per_kwh,
     export_sek_per_kwh: exportValues,
-    surplus_w: spare }, trace);
-  Object.assign(passive, rooms.power);
-  snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
-  const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
-  const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
-  const previousIntent = (source: PublishedCommandReference | null) => source?.slots.find(slot =>
-    Date.parse(slot.start) <= effective && Date.parse(slot.start) + QUARTER_MS > effective);
-  const previousHousehold = previousIntent(reference);
-  const previousBattery = previousIntent(independent ? independent.battery : reference)?.battery_instruction;
-  const problem: ReadyProblem = {
-    abi: READY_ABI, charging_before: {
-      ev_amps: previousHousehold?.ev_target_current_a ?? null,
-      battery_grid_w: previousBattery ? previousBattery.kind === "grid_charge" ? previousBattery.charge_ac_w : 0 : null,
-    }, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
-    slots: snapshot.slots.map((s, i) => {
-      const start = Date.parse(s.start);
-      const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
-      const outdoor = snapshot.outdoor_temperature_c?.[i];
-      if (pool?.store.loss.kind === "linear" && pool.store.loss.surroundings_c === null && !finite(outdoor)) return fail(`Pool physical forecast requires outdoor temperature at ${s.start}`);
-      const exportAllowed = input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export;
-      return { battery_export_allowed: sellPrices[i] === null && !fixedSlots[i] && !locked[i]?.battery_command ? false : exportAllowed, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
-        base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
-        base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
-        solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
-        outdoor_c: finite(outdoor) ? outdoor : 0,
-        import_price: outlook.shadow_import_sek_per_kwh[i], export_price: exportValues[i],
-        published: s.import_price_sek_per_kwh !== null && s.export_price_sek_per_kwh !== null,
-        pool_auxiliary_dispatch: pool && members.auxiliary.some(member => {
-          const model = snapshot.device_models.find(m => m.key === member.key)!;
-          return unavailableOwner(snapshot, commandOwner(snapshot, model), s.start) ||
-            commandOwner(snapshot, model) !== "$pool" && !!commitments.retained[i]?.device_commands?.[member.key];
-        }) ? {fixed_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].fixed_w)),
-          on_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].on_w))} : null,
-        ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)),
-      };
-    }),
-    battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
-    pool_stop_c: pool ? Math.min(hardware!.stop_c, poolService.stop_c!) : null,
-    initial: { battery_kwh: battery && snapshot.battery ? snapshot.battery.soc * battery.capacity_kwh : null,
-      ev_kwh: ev && car ? ev.soc * car.capacity_kwh : null, pool_c: pool ? snapshot.pool!.water_temperature_c : null,
-      pool_pending_heat_kwh: pool ? poolService.pending_heat_kwh : null,
-      pool_source_depletion_kwh: pool ? poolService.source_depletion_kwh : null,
-      heater_state: pool ? snapshot.pool!.heating_running
-        ? finite(snapshot.pool!.heating_elapsed_seconds) ? { kind: "running", seconds: snapshot.pool!.heating_elapsed_seconds! } : { kind: "running", seconds: 0 }
-        : { kind: "off_unobserved" } : null },
-    targets: { pool_c: pool ? snapshot.comfort!.pool!.target_c : null },
-    car_policy: null,
-    limits: { import_w: snapshot.grid.import_limit_w, export_w: snapshot.grid.export_limit_w,
-      battery_export_enabled: !!battery && snapshot.policy.battery_export_enabled,
-      battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,
-      battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
-      wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
-      ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
-    rules: approved.rules,
-    // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
-    end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
-    accepted: locked.length ? commitments.original.map((slot, i) => nativeCommand(slot, snapshot, !!pool, commitments.released[i])) : null,
-    released: locked.length ? commitments.released : null,
-    unavailable: commitments.unavailable,
-    fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
-    locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
-  };
-  if (car && ev) problem.car_policy = carPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
-    floorSetting: snapshot.comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT, connection: connectionFromSnapshot(ev) }, problem.slots, effective);
-  problem.end_credit = problemEndCredit(problem);
-  return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
-    price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
-    members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
-    boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
-    boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
-    boiler_shortfall_minutes: {}, base_w: baseW };
+    surplus_w: spare,
+  }}, finish(rooms) {
+    Object.assign(passive, rooms.power);
+    snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, rooms.warnings);
+    const permitted = snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_permitted ?? false);
+    const months = localMonths(snapshot.slots.map(s => s.start), snapshot.timezone);
+    const previousIntent = (source: PublishedCommandReference | null) => source?.slots.find(slot =>
+      Date.parse(slot.start) <= effective && Date.parse(slot.start) + QUARTER_MS > effective);
+    const previousHousehold = previousIntent(reference);
+    const previousBattery = previousIntent(independent ? independent.battery : reference)?.battery_instruction;
+    const problem: ReadyProblem = {
+      abi: READY_ABI, charging_before: {
+        ev_amps: previousHousehold?.ev_target_current_a ?? null,
+        battery_grid_w: previousBattery ? previousBattery.kind === "grid_charge" ? previousBattery.charge_ac_w : 0 : null,
+      }, ev_battery_supply_allowed: false, work_grant: recipe.work_grant, recipe: builderRecipe(recipe),
+      slots: snapshot.slots.map((s, i) => {
+        const start = Date.parse(s.start);
+        const lead = Math.max(0, Math.min(snapshot.pv_calibration.correction_factor_by_lead_day.length - 1, Math.floor((start - Date.parse(snapshot.captured_at)) / 86_400_000)));
+        const outdoor = snapshot.outdoor_temperature_c?.[i];
+        if (pool?.store.loss.kind === "linear" && pool.store.loss.surroundings_c === null && !finite(outdoor)) return fail(`Pool physical forecast requires outdoor temperature at ${s.start}`);
+        const exportAllowed = input.fixed_plan?.slots.find(b=>Date.parse(b.start)===start)?.allow_export;
+        return { battery_export_allowed: sellPrices[i] === null && !fixedSlots[i] && !locked[i]?.battery_command ? false : exportAllowed, ev_current_ceiling_a: evCurrentCeiling(snapshot, s.start), local_month: months[i], start_seconds: (start - effective) / 1000, hours: 0.25,
+          base_w: baseW[i] + boilerW[i] + sum(Object.values(passive).map(values => values[i])),
+          base_ev_w: sum(snapshot.device_models.filter(m => m.category === "ev_charging" && passive[m.key]).map(m => passive[m.key][i])),
+          solar_w: s.pv_forecast_w * snapshot.pv_calibration.correction_factor_by_lead_day[lead],
+          outdoor_c: finite(outdoor) ? outdoor : 0,
+          import_price: outlook.shadow_import_sek_per_kwh[i], export_price: exportValues[i],
+          published: s.import_price_sek_per_kwh !== null && s.export_price_sek_per_kwh !== null,
+          pool_auxiliary_dispatch: pool && members.auxiliary.some(member => {
+            const model = snapshot.device_models.find(m => m.key === member.key)!;
+            return unavailableOwner(snapshot, commandOwner(snapshot, model), s.start) ||
+              commandOwner(snapshot, model) !== "$pool" && !!commitments.retained[i]?.device_commands?.[member.key];
+          }) ? {fixed_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].fixed_w)),
+            on_w: sum(Object.values(auxiliaryDispatch).map(series => series[i].on_w))} : null,
+          ev_available: !!ev && !unavailableOwner(snapshot, "$ev", s.start) && (ev.available_from === null || start + QUARTER_MS > Date.parse(ev.available_from)),
+        };
+      }),
+      battery, car, charger, pool_store: pool?.store ?? null, heater: pool?.heater ?? null,
+      pool_stop_c: pool ? Math.min(hardware!.stop_c, poolService.stop_c!) : null,
+      initial: { battery_kwh: battery && snapshot.battery ? snapshot.battery.soc * battery.capacity_kwh : null,
+        ev_kwh: ev && car ? ev.soc * car.capacity_kwh : null, pool_c: pool ? snapshot.pool!.water_temperature_c : null,
+        pool_pending_heat_kwh: pool ? poolService.pending_heat_kwh : null,
+        pool_source_depletion_kwh: pool ? poolService.source_depletion_kwh : null,
+        heater_state: pool ? snapshot.pool!.heating_running
+          ? finite(snapshot.pool!.heating_elapsed_seconds) ? { kind: "running", seconds: snapshot.pool!.heating_elapsed_seconds! } : { kind: "running", seconds: 0 }
+          : { kind: "off_unobserved" } : null },
+      targets: { pool_c: pool ? snapshot.comfort!.pool!.target_c : null },
+      car_policy: null,
+      limits: { import_w: snapshot.grid.import_limit_w, export_w: snapshot.grid.export_limit_w,
+        battery_export_enabled: !!battery && snapshot.policy.battery_export_enabled,
+        battery_export_reserve_kwh: battery ? snapshot.policy.battery_export_reserve_soc * battery.capacity_kwh : 0,
+        battery_export_min_price: snapshot.policy.battery_export_min_price_sek_per_kwh,
+        wear_per_kwh: snapshot.value_settings?.battery_degradation_sek_per_kwh ?? 0,
+        ev_change_preference_sek: EV_CHANGE_PREFERENCE_SEK, battery_change_preference_sek: BATTERY_CHANGE_PREFERENCE_SEK, pool_start_cost_sek: POOL_START_COST_SEK },
+      rules: approved.rules,
+      // Filled below from the finished problem: the credit's reference is the median of the prices in its slots.
+      end_credit: { reference_sek_per_kwh: 0, battery: null, pool: null, ev: null },
+      accepted: locked.length ? commitments.original.map((slot, i) => nativeCommand(slot, snapshot, !!pool, commitments.released[i])) : null,
+      released: locked.length ? commitments.released : null,
+      unavailable: commitments.unavailable,
+      fixed_commands: snapshot.slots.map((_s, i) => fixedSlots[i] ? nativeCommand(fixedSlots[i], snapshot, !!pool) : null),
+      locked_through_seconds: locked.length ? Math.min(3600,(Date.parse(locked.at(-1)!.start)+QUARTER_MS-effective)/1000) : 0,
+    };
+    if (car && ev) problem.car_policy = carPolicy({ battery: car, limitSoc: ev.charge_limit_soc,
+      floorSetting: snapshot.comfort?.ev?.floor_soc ?? CAR_FLOOR_SOC_DEFAULT, connection: connectionFromSnapshot(ev) }, problem.slots, effective);
+    problem.end_credit = problemEndCredit(problem);
+    return { snapshot, rooms, pool_service: poolService, now: new Date(input.now).toISOString(), model_version: RULES_MODEL_VERSION, problem,
+      price_outlook: outlook, locked_slots: locked, held_reference: commitments.original, released_owners_by_slot: commitments.owners_by_slot, execution_replan: input.execution_replan ?? null, fixed_slots: fixedSlots, reference_plan_id: reference?.plan_id ?? null,
+      members, passive_w: passive, auxiliary_dispatch: auxiliaryDispatch, boiler_services: boilerService, boiler_unavailable: faultedBoilers.length > 0 && !members.boiler.length, boiler_w: boilerW, boiler_rated_w: snapshot.slots.map(() => 0), boiler_permitted: permitted,
+      boiler_battery_allowed: snapshot.slots.map((_s, i) => retainedServices[i]?.boiler_battery_allowed ?? false),
+      boiler_permission_starts: [...new Set([...(reference?.hot_water_permissions ?? []), ...(reference?.slots.filter(s => s.boiler_permitted).map(s => s.start) ?? [])])],
+      boiler_shortfall_minutes: {}, base_w: baseW };
+  }};
 }
 
 function commandMap(input: PreparedRulesInput, command: NativeCommand, i: number): Record<string, DeviceCommand> {

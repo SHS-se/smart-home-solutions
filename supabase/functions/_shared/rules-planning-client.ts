@@ -1,3 +1,4 @@
+import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { PlanningError, type PlanningFailureDisposition } from "./planning-errors.ts";
 import type { OptimisationResult } from "./planner/planning-contracts.ts";
 import type { PreparedRulesInput } from "./rules-planner.ts";
@@ -6,7 +7,8 @@ import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-id
 import { describeThrown } from "./ha-api-contract.ts";
 
 export { RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
-export const RULES_PLANNING_TIMEOUT_MS = 8_000;
+// Room stages have separate CPU limits but share one network deadline.
+export const RULES_PLANNING_TIMEOUT_MS = 25_000;
 export class EnergyPlanningError extends PlanningError {
   constructor(message: string, status = 502, code = "planning_failed", disposition: PlanningFailureDisposition = "retry") {
     super(message, code, status, disposition); this.name = "EnergyPlanningError";
@@ -15,7 +17,7 @@ export class EnergyPlanningError extends PlanningError {
 type Stage = "prepare" | "solve";
 type WorkerResponse = {
   protocol?: number; stage?: Stage; request_id?: string; error?: string; detail?: string;
-  prepared?: PreparedRulesInput; result?: OptimisationResult;
+  prepared?: PreparedRulesInput; room_progress?: RoomPreparationProgress; result?: OptimisationResult;
 };
 /** One owner coordinates two isolated CPU requests over the same captured basis. */
 export async function generateRemoteRulesPlan(input: CapturedRulesInput,
@@ -23,7 +25,7 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
   fetcher: typeof fetch = fetch): Promise<OptimisationResult> {
   if (!connection.url || !connection.planningSecret) throw new EnergyPlanningError("Planning worker is not configured", 503, "planner_not_configured", "terminal");
   const deadline = connection.deadline ?? performance.now() + RULES_PLANNING_TIMEOUT_MS;
-  const call = async (stage: Stage, stageInput: CapturedRulesInput | PreparedRulesInput): Promise<WorkerResponse> => {
+  const call = async (stage: Stage, stageInput: CapturedRulesInput | PreparedRulesInput, roomProgress?: RoomPreparationProgress): Promise<WorkerResponse> => {
     const left = deadline - performance.now();
     if (left <= 0) throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");
     const signal = AbortSignal.timeout(Math.ceil(left));
@@ -32,7 +34,7 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
       response = await fetcher(`${connection.url}/functions/v1/energy-optimisation-plan-step`, {
         method:"POST",headers:{"x-shs-planning-secret":connection.planningSecret,
           "content-type":"application/json","x-request-id":connection.requestId},
-        body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage,input:stageInput}),signal,
+        body:JSON.stringify({protocol:RULES_PLANNING_PROTOCOL,stage,input:stageInput,room_progress:roomProgress}),signal,
       });
     } catch (error) {
       throw new EnergyPlanningError(signal.aborted ? "Replanning exceeded its request deadline"
@@ -56,7 +58,18 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
     }
     return body;
   };
-  const { prepared } = await call("prepare", input);
+  let preparation = await call("prepare", input);
+  let completedRooms = 0;
+  while (preparation.room_progress) {
+    const progress = preparation.room_progress;
+    if (preparation.prepared || progress.snapshot_id !== input.snapshot.snapshot_id
+      || progress.next_room !== completedRooms + 1 || progress.next_room >= (input.snapshot.thermal_zones?.length ?? 0)) {
+      throw new EnergyPlanningError("Planning worker returned invalid room progress", 502, "invalid_planning_response", "retry");
+    }
+    completedRooms = progress.next_room;
+    preparation = await call("prepare", input, progress);
+  }
+  const { prepared } = preparation;
   if (!prepared || prepared.snapshot?.snapshot_id !== input.snapshot.snapshot_id
     || prepared.model_version !== input.model_version || prepared.model_version !== RULES_MODEL_VERSION
     || !prepared.problem?.slots?.length) {

@@ -12,6 +12,7 @@
 import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
 import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import type { RoomPreparationProgress } from "../supabase/functions/_shared/rules-room-services.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
@@ -105,15 +106,24 @@ async function preparationSample(mode: "household" | "mixed" | "varying" | "room
     memory = Math.max(memory, event.wasm_memory_bytes ?? 0);
   };
   try {
-    const sample = await measure(async () => {
-      const response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
-        method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-preparation" },
-        body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "prepare", input: capture }),
-      }), "cpu-test");
-      const body = await response.json();
-      assertEquals(response.status, 200, JSON.stringify(body));
-      input = body.prepared;
-    });
+    let progress: RoomPreparationProgress | undefined;
+    let peak: Sample = { cpu_ms: 0, elapsed_ms: 0 };
+    let calls = 0;
+    do {
+      calls++;
+      const sample = await measure(async () => {
+        const response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
+          method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-preparation" },
+          body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "prepare", input: capture, room_progress: progress }),
+        }), "cpu-test");
+        const body = await response.json();
+        assertEquals(response.status, 200, JSON.stringify(body));
+        progress = body.room_progress;
+        input = body.prepared;
+      });
+      if (sample.cpu_ms > peak.cpu_ms) peak = sample;
+    } while (progress);
+    assertEquals(calls, mixed ? 1 : 9);
     assertEquals(Object.keys(input.rooms.commands).length, mixed ? 4 : 9);
     if (mode === "room-targets" || mode === "varying-room-targets") {
       assert(Object.values(input.rooms.commands).some(commands => commands.some(command => command.type === "room_relay")));
@@ -123,7 +133,7 @@ async function preparationSample(mode: "household" | "mixed" | "varying" | "room
     }
     assertEquals(input.problem.slots.length, 288);
     assert(memory > 0 && memory < 128 * 1024 * 1024, `Native room memory exceeded the preparation budget: ${memory}`);
-    return { ...sample, wasm_memory_bytes: memory };
+    return { ...peak, wasm_memory_bytes: memory };
   } finally {
     console.info = originalInfo;
   }

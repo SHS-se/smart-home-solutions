@@ -37,7 +37,7 @@ export function createPlannerProbe(
     if (body instanceof Response) return body;
     const raw = body.payload;
     if (raw && typeof raw === "object" && "mode" in raw && raw.mode === "handler") {
-      const payload = raw as { protocol?: number; stage?: "prepare" | "solve"; input?: unknown };
+      const payload = raw as { protocol?: number; stage?: "prepare" | "solve"; input?: unknown; room_progress?: unknown };
       if (payload.protocol !== RULES_PLANNING_PROTOCOL || !payload.input || !["prepare", "solve"].includes(payload.stage ?? "")) {
         return Response.json({ error: "invalid_handler_probe" }, { status: 400 });
       }
@@ -47,18 +47,23 @@ export function createPlannerProbe(
       const before = performance.now();
       const response = await handleEnergyPlanningStep(new Request("https://probe.test/plan", {
         method: "POST", headers: { "x-shs-planning-secret": secret, "x-request-id": "handler-probe" },
-        body: JSON.stringify({ protocol: payload.protocol, stage: payload.stage, input: payload.input }),
+        body: JSON.stringify({ protocol: payload.protocol, stage: payload.stage, input: payload.input, room_progress: payload.room_progress }),
       }), secret);
       const bytes = await response.arrayBuffer();
       const result = JSON.parse(new TextDecoder().decode(bytes));
       if (!response.ok) return Response.json(result, { status: response.status });
-      const product = payload.stage === "prepare" ? result.prepared : result.result;
+      const progress = result.room_progress;
+      const product = progress ?? (payload.stage === "prepare" ? result.prepared : result.result);
+      const slots = progress
+        ? Object.values(progress.services.room_power as Record<string, number[]>)[0].length
+        : payload.stage === "prepare" ? product.problem.slots.length : product.plan.plans.priority.slots.length;
+      const model_version = progress ? (payload.input as { model_version: string }).model_version
+        : payload.stage === "prepare" ? product.model_version : product.plan.model_version;
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(product)));
       return Response.json({ qualification: "test_live_candidate", build,
         handler_elapsed_ms: performance.now() - before, response_bytes: bytes.byteLength,
         stage: payload.stage,
-        slots: payload.stage === "prepare" ? product.problem.slots.length : product.plan.plans.priority.slots.length,
-        model_version: payload.stage === "prepare" ? product.model_version : product.plan.model_version,
+        slots, model_version, next_room: progress?.next_room ?? null,
         result_sha256: Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("") });
     }
     const parsed = readyProblemSchema.safeParse(raw);
