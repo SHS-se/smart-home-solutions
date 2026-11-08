@@ -36,12 +36,13 @@ Deno.test("only the exact TEST server origin completes on publication", () => {
   }
 });
 
-function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; planningInput?: typeof input; now?: () => number } = {}) {
+function memoryJobs(options: { lostPublication?: boolean; claimed?: boolean; supersededPublication?: boolean; obsolete?:boolean; retried?: boolean; planningInput?: typeof input; now?: () => number } = {}) {
   const job = options.planningInput ?? input;
   let fence = 0;
   let owned = options.claimed ?? false;
   let receipt: PlanningReceipt = { job_id: jobId, snapshot_id: job.snapshot.snapshot_id,
-    state: "pending", pending: true, retry_after_ms: 1 };
+    state: "pending", pending: true, retry_after_ms: 1,
+    ...(options.retried ? { last_error: { code: "planning_failed", detail: "Hot-water opportunities exceed equipment limits: shared_grid_limit" } } : {}) };
   const calls: { name: string; body: Record<string, unknown> }[] = [];
   let publication: Record<string, unknown> | undefined;
   const db = createClient("http://localhost:54321", "test-service", {
@@ -311,4 +312,25 @@ Deno.test('definite acceptance ownership race requests fresh capture instead of 
   assertEquals((error as {code:string}).code,'accepted_reference_changed');
   assertEquals((error as {status:number}).status,409);
   assertEquals((error as {disposition:string}).disposition,'recapture');
+});
+
+Deno.test("a retried job's error never travels into its later receipt", async () => {
+  // 8 Nov: a job retried after a hot-water failure was then refused as
+  // planner_upgraded. Its receipt kept the pending job's last_error, so HA
+  // rejected it as unreadable and planned nothing new.
+  const retried = { job_id: jobId, snapshot_id: input.snapshot.snapshot_id, state: "pending" as const, pending: true as const,
+    retry_after_ms: 5000, last_error: { code: "planning_failed", detail: "Hot-water opportunities exceed equipment limits: shared_grid_limit" },
+    device_configuration: [{ key: "ev", control_type: "amps" }] };
+  const { receiptIdentity } = await import("./energy-planning-jobs.ts");
+  const kept = receiptIdentity(retried as unknown as PlanningReceipt);
+  assertEquals(kept, { job_id: jobId, snapshot_id: input.snapshot.snapshot_id, device_configuration: [{ key: "ev", control_type: "amps" }] });
+  const failed = await memoryJobs({ obsolete: true, retried: true }).jobs.advanceForHome(jobId, { jobId }, connection,
+    () => { throw new Error("never solved"); });
+  assert(failed?.state === "failed");
+  assertEquals(failed.code, "planner_upgraded");
+  assert(!("last_error" in failed) && !("retry_after_ms" in failed));
+  // The same job solved after a retry publishes a receipt HA can read.
+  const published = await memoryJobs({ retried: true }).jobs.advanceForHome(jobId, { jobId }, connection, realWorker);
+  assert(published?.state === "published");
+  assert(!("last_error" in published) && !("retry_after_ms" in published));
 });

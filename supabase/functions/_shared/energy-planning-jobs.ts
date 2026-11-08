@@ -40,6 +40,21 @@ export type PlanningReceipt = ReceiptIdentity & (
   | { state: "superseded"; pending: false }
   | { state: "failed"; pending: false; code: string; detail: string; recapture?: { replaces_job_id: string } | null }
 );
+/** A receipt's state, which only the current read may state. */
+const RECEIPT_STATE_FIELDS = ["state", "pending", "retry_after_ms", "last_error", "recapture",
+  "plan", "plan_id", "code", "detail"] as const;
+
+/** What an advanced receipt keeps from the one it was read as: its identity and,
+ * for snapshot recovery, the original admission exchange HA needs to confirm
+ * configuration (job-only SQL receipts do not repeat it). Never its state: a
+ * retried job's `last_error` and `retry_after_ms` describe a pending job, and
+ * carried into its published or failed receipt they made it unreadable to HA,
+ * which then kept polling that job and captured nothing new. */
+export function receiptIdentity(receipt: PlanningReceipt): Record<string, unknown> {
+  const carried: Record<string, unknown> = { ...receipt };
+  for (const field of RECEIPT_STATE_FIELDS) delete carried[field];
+  return carried;
+}
 export interface PlanningContext {
   request_id: string;
   replaces_job_id?: string | null;
@@ -155,10 +170,8 @@ export class PlanningJobs {
       : await this.readSubmissionForHome(homeId, identity.snapshotId);
     const readAt = performance.now();
     if (!receipt || !receipt.pending) return receipt;
-    // Snapshot recovery carries the original admission exchange needed by HA to
-    // confirm configuration. Job-only SQL receipts do not repeat those fields.
     const deliver = (current: PlanningReceipt | null): PlanningReceipt | null =>
-      current ? { ...receipt, ...current } : null;
+      current ? { ...receiptIdentity(receipt), ...current } as PlanningReceipt : null;
     const job = await this.rpc<ClaimedJob | null>("claim_energy_planning_attempt", {
       p_home_id: homeId, p_job_id: receipt.job_id,
     });
