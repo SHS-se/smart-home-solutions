@@ -102,14 +102,23 @@ impl Projection {
     }
     /// Only valid after project_traced and for unchanged initial state,
     /// interval, thermostats and relay power. The caller owns that scope.
-    pub fn reproduces_targets(&self, targets: &[f64], thermostats: &[Thermostat]) -> bool {
-        targets.len() == self.target_trace.len()
-            && self
-                .target_trace
-                .iter()
-                .zip(targets)
+    pub fn reproduces_targets(
+        &self,
+        targets: &[f64],
+        thermostats: &[Thermostat],
+        room_relays: bool,
+    ) -> bool {
+        if targets.len() != self.target_trace.len() {
+            return false;
+        }
+        let mut traces = self.target_trace.iter().zip(targets);
+        if room_relays {
+            traces
                 .zip(thermostats)
                 .all(|((trace, target), thermostat)| trace.accepts(*target, thermostat.relay))
+        } else {
+            traces.all(|(trace, target)| trace.accepts(*target, false))
+        }
     }
 }
 fn thermostat_on(own: f64, target: f64, previous: bool) -> bool {
@@ -166,13 +175,32 @@ fn project_dispatch<const TRACE: bool>(
 ) {
     // The fixed-size iterator lets Wasm unroll the common single-thermostat
     // inner loop; both cases compile from the same minute physics below.
-    if let [single] = thermostats {
-        project_kernel::<_, TRACE>(q, [single], initial, targets, relay, out);
-    } else {
-        project_kernel::<_, TRACE>(q, thermostats.iter(), initial, targets, relay, out);
+    match (thermostats, q.relay_budget_w.is_some()) {
+        ([single], false) => {
+            project_kernel::<_, TRACE, false, true>(q, [single], initial, targets, relay, out)
+        }
+        ([single], true) => {
+            project_kernel::<_, TRACE, true, true>(q, [single], initial, targets, relay, out)
+        }
+        (_, false) => project_kernel::<_, TRACE, false, false>(
+            q,
+            thermostats.iter(),
+            initial,
+            targets,
+            relay,
+            out,
+        ),
+        (_, true) => project_kernel::<_, TRACE, true, false>(
+            q,
+            thermostats.iter(),
+            initial,
+            targets,
+            relay,
+            out,
+        ),
     }
 }
-fn project_kernel<'a, I, const TRACE: bool>(
+fn project_kernel<'a, I, const TRACE: bool, const ROOM_RELAYS: bool, const SINGLE: bool>(
     q: &Interval,
     thermostats: I,
     initial: State,
@@ -197,15 +225,21 @@ fn project_kernel<'a, I, const TRACE: bool>(
         for (j, t) in thermostats.clone().into_iter().enumerate() {
             let own = out.state.temperature + t.sensor_offset_c;
             let previous = out.state.mask & (1 << j) != 0;
-            let on = heating_on(own, targets[j], previous, t.relay);
+            let on = heating_on(own, targets[j], previous, ROOM_RELAYS && t.relay);
             if TRACE {
                 out.target_trace[j].observe(own, previous, on);
             }
-            if t.relay && q.relay_budget_w.is_some() && targets[j] != f64::MAX {
-                if on {
-                    relay_calls |= 1 << j;
+            if ROOM_RELAYS && t.relay && targets[j] != f64::MAX {
+                if SINGLE {
+                    if watts + t.power_w > q.relay_budget_w.unwrap() + 1e-6 {
+                        continue;
+                    }
+                } else {
+                    if on {
+                        relay_calls |= 1 << j;
+                    }
+                    continue;
                 }
-                continue;
             }
             if on {
                 mask += 1 << j;
@@ -213,7 +247,8 @@ fn project_kernel<'a, I, const TRACE: bool>(
                 out.power[j] += t.power_w * hours;
             }
         }
-        if let Some(budget) = q.relay_budget_w {
+        if ROOM_RELAYS && !SINGLE {
+            let budget = q.relay_budget_w.unwrap();
             // Keep running room relays before admitting new calls. Native
             // thermostats and retained switch-on commands can draw on their own.
             for calls in [relay_calls & out.state.mask, relay_calls & !out.state.mask] {
@@ -339,8 +374,11 @@ mod tests {
                                     &mut traced,
                                 );
                                 for candidate in &actions {
-                                    if !traced.reproduces_targets(&candidate[..count], &thermostats)
-                                    {
+                                    if !traced.reproduces_targets(
+                                        &candidate[..count],
+                                        &thermostats,
+                                        false,
+                                    ) {
                                         continue;
                                     }
                                     reused += 1;

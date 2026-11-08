@@ -41,14 +41,14 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
     }
     let body: WorkerResponse;
     try { body = await response.json(); }
-    catch { throw new EnergyPlanningError(`Planning worker returned HTTP ${response.status} without a planning response`,
+    catch { throw new EnergyPlanningError(`Planning worker returned HTTP ${response.status} during ${stage} without a planning response`,
       response.status, "planning_response_unreadable", response.status >= 500 || response.status === 429 || response.ok ? "retry" : "terminal"); }
     if (!response.ok) {
       const code = typeof body?.error === "string" ? body.error : "planning_failed";
       const disposition = code === "planner_upgraded" || code === "planning_protocol_mismatch" ? "recapture"
         : ["unauthorized", "planner_not_configured", "invalid_snapshot"].includes(code) ? "terminal"
         : response.status >= 500 || response.status === 429 ? "retry" : "terminal";
-      throw new EnergyPlanningError(body?.detail ?? `Planning worker returned HTTP ${response.status} (${code})`,
+      throw new EnergyPlanningError(body?.detail ?? `Planning worker returned HTTP ${response.status} during ${stage} (${code})`,
         response.status, disposition === "recapture" ? "planner_upgraded" : code, disposition);
     }
     if (!body || body.protocol !== RULES_PLANNING_PROTOCOL || body.request_id !== connection.requestId || body.stage !== stage) {

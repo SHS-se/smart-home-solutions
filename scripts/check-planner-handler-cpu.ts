@@ -11,7 +11,7 @@
  */
 import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
-import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
@@ -84,9 +84,10 @@ async function calibrationSample(): Promise<Sample> {
 }
 
 /** Cold preparation handler, including transport encoding, with nine rooms. */
-async function preparationSample(mode: "household" | "mixed" | "varying" | "room-targets" = "household"): Promise<Sample> {
+async function preparationSample(mode: "household" | "mixed" | "varying" | "room-targets" | "varying-room-targets" = "household"): Promise<Sample> {
   const mixed = mode === "mixed" || mode === "room-targets";
   const source = mixed ? cpuMixedRoomPlanningSource()
+    : mode === "varying-room-targets" ? cpuVaryingRoomTargetPlanningSource()
     : mode === "varying" ? cpuVaryingRoomPlanningSource() : cpuPlanningSource(true);
   if (mode === "room-targets") {
     source.snapshot.schema_version = 12;
@@ -114,8 +115,11 @@ async function preparationSample(mode: "household" | "mixed" | "varying" | "room
       input = body.prepared;
     });
     assertEquals(Object.keys(input.rooms.commands).length, mixed ? 4 : 9);
-    if (mode === "room-targets") {
+    if (mode === "room-targets" || mode === "varying-room-targets") {
       assert(Object.values(input.rooms.commands).some(commands => commands.some(command => command.type === "room_relay")));
+    }
+    if (mode === "varying-room-targets") {
+      assertEquals(Object.values(input.rooms.temperature).filter(series => series.every(value => value !== null)).length, 7);
     }
     assertEquals(input.problem.slots.length, 288);
     assert(memory > 0 && memory < 128 * 1024 * 1024, `Native room memory exceeded the preparation budget: ${memory}`);
@@ -150,7 +154,7 @@ async function referenceSample(): Promise<Sample> {
 }
 
 /** A fresh process, so every sample pays module loading and compilation. */
-async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "calibration"): Promise<Sample> {
+async function coldSample(kind: "plan" | "recovery" | "reference" | "preparation" | "mixed-room" | "varying-rooms" | "room-targets" | "varying-room-targets" | "calibration"): Promise<Sample> {
   const { code, stdout } = await new Deno.Command(Deno.execPath(), {
     // No V8 code cache: a later sample must not reuse an earlier one's compilation.
     args: ["run", "--no-check", "--sloppy-imports", "--allow-read", "--no-code-cache", import.meta.filename!, `--${kind}`],
@@ -193,12 +197,14 @@ if (Deno.args.includes("--plan")) {
   console.log(JSON.stringify(await preparationSample("varying")));
 } else if (Deno.args.includes("--room-targets")) {
   console.log(JSON.stringify(await preparationSample("room-targets")));
+} else if (Deno.args.includes("--varying-room-targets")) {
+  console.log(JSON.stringify(await preparationSample("varying-room-targets")));
 } else if (Deno.args.includes("--calibration")) {
   console.log(JSON.stringify(await calibrationSample()));
 } else {
   console.log(JSON.stringify({ cpu_model: await cpuModel() }));
   const plans: number[] = [], references: number[] = [], preparations: number[] = [], mixedRooms: number[] = [], varyingRooms: number[] = [], roomTargets: number[] = [], calibrations: number[] = [];
-  const recoveries: number[] = [];
+  const recoveries: number[] = [], varyingRoomTargets: number[] = [];
   // Interleave so a drifting machine affects both measurements alike.
   for (let run = 1; run <= RUNS; run++) {
     const ref = await coldSample("reference");
@@ -209,6 +215,7 @@ if (Deno.args.includes("--plan")) {
     const mixed = await coldSample("mixed-room");
     const varying = await coldSample("varying-rooms");
     const roomTarget = await coldSample("room-targets");
+    const varyingRoomTarget = await coldSample("varying-room-targets");
     const calibration = await coldSample("calibration");
     calibrations.push(calibration.cpu_ms);
     references.push(ref.cpu_ms);
@@ -217,9 +224,10 @@ if (Deno.args.includes("--plan")) {
     mixedRooms.push(mixed.cpu_ms);
     varyingRooms.push(varying.cpu_ms);
     roomTargets.push(roomTarget.cpu_ms);
+    varyingRoomTargets.push(varyingRoomTarget.cpu_ms);
     console.log(JSON.stringify({ run, reference_cpu_ms: ref.cpu_ms, plan_cpu_ms: plan.cpu_ms, recovery_cpu_ms: recovery.cpu_ms, plan_elapsed_ms: plan.elapsed_ms,
       preparation_cpu_ms: preparation.cpu_ms, preparation_elapsed_ms: preparation.elapsed_ms,
-      mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms, room_targets_cpu_ms: roomTarget.cpu_ms,
+      mixed_room_cpu_ms: mixed.cpu_ms, varying_rooms_cpu_ms: varying.cpu_ms, room_targets_cpu_ms: roomTarget.cpu_ms, varying_room_targets_cpu_ms: varyingRoomTarget.cpu_ms,
       preparation_wasm_memory_bytes: preparation.wasm_memory_bytes, mixed_room_wasm_memory_bytes: mixed.wasm_memory_bytes,
       varying_rooms_wasm_memory_bytes: varying.wasm_memory_bytes }));
   }
@@ -242,6 +250,9 @@ if (Deno.args.includes("--plan")) {
   const roomTarget = median(roomTargets) * speed;
   console.log(JSON.stringify({ median_room_targets_cpu_ms: median(roomTargets), baseline_room_targets_cpu_ms: roomTarget }));
   assert(roomTarget < PREPARATION_BUDGET_MS, `Cold shared-room target preparation used ${roomTarget.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
+  const varyingRoomTarget = median(varyingRoomTargets) * speed;
+  console.log(JSON.stringify({ median_varying_room_targets_cpu_ms: median(varyingRoomTargets), baseline_varying_room_targets_cpu_ms: varyingRoomTarget }));
+  assert(varyingRoomTarget < PREPARATION_BUDGET_MS, `Cold full-house room target preparation used ${varyingRoomTarget.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);
   const varying = median(varyingRooms) * speed;
   console.log(JSON.stringify({ median_varying_rooms_cpu_ms: median(varyingRooms), baseline_varying_rooms_cpu_ms: varying }));
   assert(varying < PREPARATION_BUDGET_MS, `Cold varying-physics room admission preparation used ${varying.toFixed(1)} baseline ms CPU; budget is ${PREPARATION_BUDGET_MS} ms`);

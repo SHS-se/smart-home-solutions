@@ -1,7 +1,7 @@
 /** Private TEST qualification of both complete workers. Never publishes a plan. */
 import { assertEquals } from "@std/assert";
 import { createHash } from "node:crypto";
-import { cpuPlanningInput, cpuVaryingRoomPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
+import { cpuPlanningInput, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
@@ -11,10 +11,11 @@ import { PROBE_PROJECT, testProbeServiceKey } from "./planner-probe-auth.ts";
 
 const secret = await testProbeServiceKey();
 const cases = [
-  { stage: "prepare", input: captureRulesPlanningInput(cpuVaryingRoomPlanningSource(), null, resolveRulePolicy()) },
-  { stage: "solve", input: cpuPlanningInput() },
+  { name: "native thermostats", stage: "prepare", input: captureRulesPlanningInput(cpuVaryingRoomPlanningSource(), null, resolveRulePolicy()) },
+  { name: "room relay targets", stage: "prepare", input: captureRulesPlanningInput(cpuVaryingRoomTargetPlanningSource(), null, resolveRulePolicy()) },
+  { name: "household solve", stage: "solve", input: cpuPlanningInput() },
 ] as const;
-for (const { stage, input } of cases) {
+for (const { name, stage, input } of cases) {
   const local = await handleEnergyPlanningStep(new Request("https://probe.test/plan", {
     method: "POST", headers: { "x-shs-planning-secret": "local", "x-request-id": "handler-probe" },
     body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage, input }),
@@ -28,15 +29,16 @@ for (const { stage, input } of cases) {
       body: JSON.stringify({ mode: "handler", protocol: RULES_PLANNING_PROTOCOL, stage, input }),
       signal: AbortSignal.timeout(8000),
     });
-    const result = await response.json();
-    assertEquals(response.status, 200, `TEST ${stage} handler failed: HTTP ${response.status}, ${JSON.stringify(result)}`);
+    const text = await response.text();
+    assertEquals(response.status, 200, `TEST ${name} handler failed: HTTP ${response.status}, ${text.slice(0, 500)}`);
+    const result = JSON.parse(text);
     assertEquals(result.build.wasm_sha256, artifact.wasm_sha256);
     assertEquals(result.build.source_sha256, artifact.source_sha256);
     assertEquals(result.stage, stage);
     assertEquals(result.slots, 288);
     assertEquals(result.model_version, input.model_version);
     assertEquals(result.result_sha256, expected, "Hosted complete handler must match local output exactly");
-    console.log(JSON.stringify({ repeat, stage, project: PROBE_PROJECT, handler_elapsed_ms: result.handler_elapsed_ms,
+    console.log(JSON.stringify({ repeat, name, stage, project: PROBE_PROJECT, handler_elapsed_ms: result.handler_elapsed_ms,
       response_bytes: result.response_bytes, slots: result.slots, parity: "exact" }));
   }
 }

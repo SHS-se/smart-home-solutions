@@ -80,3 +80,16 @@ export function cpuVaryingRoomPlanningSource() {
   source.snapshot.house_temperature_c = source.snapshot.slots.map((_, i) => 21 + .3 * Math.sin(i / 16));
   return source;
 }
+
+/** A full schema 12 household with varying room forcing and relay control. */
+export function cpuVaryingRoomTargetPlanningSource() {
+  const source = cpuVaryingRoomPlanningSource();
+  source.snapshot.schema_version = 12;
+  for (const model of source.snapshot.device_models) {
+    if (!model.key.startsWith("cpu_room_")) continue;
+    model.control_type = "switch_schedule";
+    model.relay_on = false;
+    delete model.thermostat;
+  }
+  return source;
+}
