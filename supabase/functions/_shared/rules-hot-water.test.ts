@@ -83,3 +83,41 @@ Deno.test('grid charging reserves the full allowed heater draw even when the the
     assertEquals(waterBatteryCommands(p, commands, q)[0].charge_limit_w, 1000);
   }
 });
+
+Deno.test('water headroom charges the pool start-up and the car at their full draw', async () => {
+  const { hotWaterHeadroomW } = await import('./rules-hot-water.ts');
+  const p = cpuPlanningInput();
+  const solved = core.solve(p.problem).outcome; assert(solved.kind === 'selected');
+  const selection = structuredClone(solved.selection);
+  const q = selection.quarters[20], limit = p.problem.limits.import_w;
+  // Quarter 20 starts the pool: its quarter average is below the full ON draw the grid check reserves.
+  assert(q.pool_command_w - q.pool_w > 400);
+  assertEquals(hotWaterHeadroomW(p, selection, 20),
+    limit - q.net_w + q.charge_w + p.boiler_w[20] - (q.pool_command_w - q.pool_w));
+  // A car limited by its charge level draws less than its commanded current is admitted at.
+  const car = selection.quarters[151], charger = p.problem.charger!;
+  const admitted = selection.commands[151].ev_amps * charger.voltage_v * charger.phase_count;
+  car.ev_w = admitted - 2000;
+  assertEquals(hotWaterHeadroomW(p, selection, 151),
+    limit - car.net_w + car.charge_w + p.boiler_w[151] - Math.max(0, car.pool_command_w - car.pool_w) - 2000);
+});
+
+Deno.test('water that does not fit keeps the household plan and says so', () => {
+  const p = cpuPlanningInput();
+  const solved = core.solve(p.problem).outcome; assert(solved.kind === 'selected');
+  // New opportunities conflict; the committed water alone fits.
+  let calls = 0;
+  const committedOnly = addHotWater({ complete(problem, commands) {
+    return ++calls === 1 ? { ...core.complete(problem, commands), outcome: { kind: 'failed', issue: 'shared_grid_limit' } } : core.complete(problem, commands);
+  } }, p, solved.selection);
+  assertEquals(calls, 2);
+  assert(committedOnly.input.snapshot.planning_warnings?.some(w => w.code === 'hot_water_exceeds_equipment_limits'));
+  // Nothing fits: the household plan is published as solved, never a failed job.
+  const unchanged = addHotWater({ complete(problem, commands) {
+    return { ...core.complete(problem, commands), outcome: { kind: 'failed', issue: 'shared_grid_limit' } };
+  } }, p, solved.selection);
+  assertEquals(unchanged.selection, solved.selection);
+  assertEquals(unchanged.input.boiler_permitted, p.boiler_permitted);
+  assert(unchanged.input.snapshot.planning_warnings?.some(w => w.code === 'hot_water_exceeds_equipment_limits' &&
+    w.message.includes('shared_grid_limit')));
+});
