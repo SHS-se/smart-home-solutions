@@ -69,7 +69,8 @@ The hosted planner prepares one room per request before solving the household.
 Each request uses the same frozen capture. It reconstructs the remaining import
 headroom and solar surplus by subtracting the completed rooms' forecast demand
 in the original planning order. The last preparation request assembles the
-household problem and the existing solve request consumes it.
+household problem. A separate request runs the native search, and a final
+request refines and assembles that selection for publication.
 
 The caller checks the snapshot identity and requires the room cursor to advance
 by one on each response. All stages share a 25-second exchange deadline.

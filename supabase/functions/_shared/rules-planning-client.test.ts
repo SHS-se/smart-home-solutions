@@ -2,6 +2,7 @@ import { cpuMixedRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "
 import { assertEquals, assertRejects } from "@std/assert";
 import { dispatchedEvSnapshot } from "../../../scripts/generate-ha-plan-fixture.ts";
 import { captureRulesPlanningInput } from "./rules-planning-capture.ts";
+import { solveRulesPlan } from "./rules-planner.ts";
 import { prepareCapturedRulesInput, executeRulesPlanning } from "./rules-planning-execution.ts";
 import { resolveRulePolicy } from "./planner-wasm/rule-policy.ts";
 import { EnergyPlanningError, generateRemoteRulesPlan, RULES_PLANNING_PROTOCOL } from "./rules-planning-client.ts";
@@ -22,7 +23,7 @@ function input() {
     resolved_price_outlook: { shaped: true, observed_days: 1, effective_days: 1,
       level_sek_per_kwh: 1, shadow_import_sek_per_kwh: snapshot.slots.map(() => 1) } }, null, resolveRulePolicy());
 }
-Deno.test("transport prepares and solves the same capture in separate authenticated worker calls", async () => {
+Deno.test("transport prepares, solves and assembles the same capture in separate authenticated worker calls", async () => {
   let calls = 0;
   const fetcher: typeof fetch = (url, init) => {
     calls++;
@@ -31,7 +32,7 @@ Deno.test("transport prepares and solves the same capture in separate authentica
   };
   const prepared = input();
   const result = await generateRemoteRulesPlan(prepared, connection, fetcher);
-  assertEquals(calls, 2);
+  assertEquals(calls, 3);
   assertEquals(result, JSON.parse(JSON.stringify(executeRulesPlanning(prepared))));
   assertEquals(result.plan.snapshot_id, prepared.snapshot.snapshot_id);
   assertEquals(result.plan.plans.priority.slots.length, 8);
@@ -64,16 +65,17 @@ Deno.test("one-shot worker requires its private secret and rejects auction proto
 
 Deno.test("private TEST probe executes the complete handler and returns an output digest", async () => {
   const probe = createPlannerProbe(SOLVER_BASE64, artifact, runtime.recipe, "private", "https://vxqpgbzseckgceopitpm.supabase.co");
+  const solved = solveRulesPlan(prepareCapturedRulesInput(input()));
   const response = await probe(new Request("https://probe.test", { method: "POST",
     headers: { authorization: "Bearer private" },
-    body: JSON.stringify({ mode: "handler", stage: "solve", protocol: RULES_PLANNING_PROTOCOL, input: prepareCapturedRulesInput(input()) }) }));
+    body: JSON.stringify({ mode: "handler", stage: "assemble", protocol: RULES_PLANNING_PROTOCOL, input: solved }) }));
   assertEquals(response.status, 200);
   const result = await response.json();
   assertEquals(result.slots, 8);
   assertEquals(result.build, artifact);
   const local = await handleEnergyPlanningStep(new Request("https://probe.test/plan", { method: "POST",
     headers: { "x-shs-planning-secret": "private", "x-request-id": "handler-probe" },
-    body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input: prepareCapturedRulesInput(input()) }) }), "private");
+    body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "assemble", input: solved }) }), "private");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify((await local.json()).result)));
   assertEquals(result.result_sha256, Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join(""));
 });
@@ -138,12 +140,13 @@ Deno.test("separate worker stages preserve mixed-room, household and hot-water o
       assertEquals("problem" in submitted.input, false);
       assertEquals("rooms" in submitted.input, false);
     } else {
-      assertEquals(Object.keys(submitted.input.rooms.commands).length, 4);
+      const prepared = submitted.stage === "solve" ? submitted.input : submitted.input.input;
+      assertEquals(Object.keys(prepared.rooms.commands).length, 4);
     }
     return await handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
   };
   const result = await generateRemoteRulesPlan(capture, connection, fetcher);
-  assertEquals(phases, ["prepare", "solve"]);
+  assertEquals(phases, ["prepare", "solve", "assemble"]);
   assertEquals(result, JSON.parse(JSON.stringify(expected)));
   assertEquals(capture, before);
 });
@@ -160,7 +163,7 @@ Deno.test("room preparation crosses request boundaries with exactly the same all
     return handleEnergyPlanningStep(new Request(url, init), connection.planningSecret);
   };
   const remote = await generateRemoteRulesPlan(capture, connection, fetcher);
-  assertEquals(calls, [["prepare", null], ["prepare", 1], ["solve", null]]);
+  assertEquals(calls, [["prepare", null], ["prepare", 1], ["solve", null], ["assemble", null]]);
   assertEquals(remote, JSON.parse(JSON.stringify(executeRulesPlanning(capture))));
   assertEquals(capture, before);
 

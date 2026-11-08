@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { cpuPlanningInput, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
+import { solveRulesPlan } from "../supabase/functions/_shared/rules-planner.ts";
 import { handleEnergyPlanningStep } from "../supabase/functions/_shared/energy-planning-worker.ts";
 import type { RoomPreparationProgress } from "../supabase/functions/_shared/rules-room-services.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
@@ -11,10 +12,12 @@ import artifact from "../supabase/functions/_shared/planner-wasm/artifact.json" 
 import { PROBE_PROJECT, testProbeServiceKey } from "./planner-probe-auth.ts";
 
 const secret = await testProbeServiceKey();
+const prepared = cpuPlanningInput();
 const cases = [
   { name: "native thermostats", stage: "prepare", input: captureRulesPlanningInput(cpuVaryingRoomPlanningSource(), null, resolveRulePolicy()) },
   { name: "room relay targets", stage: "prepare", input: captureRulesPlanningInput(cpuVaryingRoomTargetPlanningSource(), null, resolveRulePolicy()) },
-  { name: "household solve", stage: "solve", input: cpuPlanningInput() },
+  { name: "household solve", stage: "solve", input: prepared },
+  { name: "plan assembly", stage: "assemble", input: solveRulesPlan(prepared) },
 ] as const;
 for (const { name, stage, input } of cases) {
   let progress: RoomPreparationProgress | undefined;
@@ -26,7 +29,7 @@ for (const { name, stage, input } of cases) {
     }), "local");
     assertEquals(local.status, 200);
     const body = await local.json();
-    const product = body.room_progress ?? (stage === "prepare" ? body.prepared : body.result);
+    const product = body.room_progress ?? body.prepared ?? body.solved ?? body.result;
     const expected = createHash("sha256").update(JSON.stringify(product)).digest("hex");
     for (let repeat = 0; repeat < 3; repeat++) {
       const response = await fetch(`https://${PROBE_PROJECT}.supabase.co/functions/v1/energy-planner-probe`, {
@@ -41,7 +44,7 @@ for (const { name, stage, input } of cases) {
       assertEquals(result.build.source_sha256, artifact.source_sha256);
       assertEquals(result.stage, stage);
       assertEquals(result.slots, 288);
-      assertEquals(result.model_version, input.model_version);
+      assertEquals(result.model_version, stage === "assemble" ? input.input.model_version : input.model_version);
       assertEquals(result.next_room, body.room_progress?.next_room ?? null);
       assertEquals(result.result_sha256, expected, "Hosted complete handler must match local output exactly");
       console.log(JSON.stringify({ repeat, name, stage, next_room: result.next_room, project: PROBE_PROJECT,

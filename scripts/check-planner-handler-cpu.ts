@@ -13,7 +13,7 @@ import { cpuUsage } from "node:process";
 import { assert, assertEquals } from "@std/assert";
 import { cpuPlanningInput, cpuBatteryRecoveryInput, cpuPlanningSource, cpuMixedRoomPlanningSource, cpuVaryingRoomPlanningSource, cpuVaryingRoomTargetPlanningSource } from "../tests/planner-handler-cpu.fixture.ts";
 import type { RoomPreparationProgress } from "../supabase/functions/_shared/rules-room-services.ts";
-import type { PreparedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
+import type { PreparedRulesInput, SolvedRulesInput } from "../supabase/functions/_shared/rules-planner.ts";
 import { captureRulesPlanningInput } from "../supabase/functions/_shared/rules-planning-capture.ts";
 import { resolveRulePolicy } from "../supabase/functions/_shared/planner-wasm/rule-policy.ts";
 import { RULES_PLANNING_PROTOCOL } from "../supabase/functions/_shared/rules-planning-client.ts";
@@ -48,19 +48,27 @@ const measure = async (work: () => Promise<unknown> | unknown): Promise<Sample> 
 async function planSample(recovery = false): Promise<Sample> {
   const input = recovery ? cpuBatteryRecoveryInput() : cpuPlanningInput();
   assert(input.problem.heater?.source && input.problem.initial.pool_source_depletion_kwh !== null, "CPU gate must exercise measured source recovery");
-  let response!: Response, body!: { result: { plan: { status: string; planning_warnings?: {code: string}[]; plans: { priority: { slots: unknown[] } } } } };
-  const sample = await measure(async () => {
-    response = await handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
+  let solved!: SolvedRulesInput;
+  const call = (stage: string, input: PreparedRulesInput | SolvedRulesInput) =>
+    handleEnergyPlanningStep(new Request("https://cpu.test/plan", {
       method: "POST", headers: { "x-shs-planning-secret": "cpu-test", "x-request-id": "cpu-regression" },
-      body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "solve", input }),
+      body: JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage, input }),
     }), "cpu-test");
-    body = await response.json();
+  const search = await measure(async () => {
+    const response = await call("solve", input);
+    const body = await response.json();
+    assertEquals(response.status, 200, JSON.stringify(body));
+    solved = body.solved;
   });
-  assertEquals(response.status, 200, JSON.stringify(body));
-  assertEquals(body.result.plan.status, "ready");
-  assertEquals(body.result.plan.plans.priority.slots.length, 288);
-  if (recovery) assert(body.result.plan.planning_warnings?.some(w => w.code === 'battery_commitment_rescheduled'));
-  return sample;
+  const assembly = await measure(async () => {
+    const response = await call("assemble", solved);
+    const body = await response.json();
+    assertEquals(response.status, 200, JSON.stringify(body));
+    assertEquals(body.result.plan.status, "ready");
+    assertEquals(body.result.plan.plans.priority.slots.length, 288);
+    if (recovery) assert(body.result.plan.planning_warnings?.some((w: {code:string}) => w.code === 'battery_commitment_rescheduled'));
+  });
+  return search.cpu_ms >= assembly.cpu_ms ? search : assembly;
 }
 
 /** Full cold learning handler: paginated JSON, all fits, selection and publication. */

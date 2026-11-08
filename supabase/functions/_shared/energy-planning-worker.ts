@@ -1,5 +1,5 @@
 import { classifyPlanningFailure, PlanningInputError, PlanningError } from "./planning-errors.ts";
-import { generateRulesPlan, type PreparedRulesInput } from "./rules-planner.ts";
+import { assembleRulesPlan, solveRulesPlan, type PreparedRulesInput, type SolvedRulesInput } from "./rules-planner.ts";
 import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
 import { prepareCapturedRoomBatch } from "./rules-planning-execution.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
@@ -23,17 +23,21 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
     read();
     if (new TextEncoder().encode(raw).byteLength > MAX_PLANNING_BODY_BYTES) return json({error:"request_too_large"},413);
     const body = trace.run("request_parse", () => {
-      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput;room_progress?:RoomPreparationProgress} | {stage:"solve";input:PreparedRulesInput}); }
+      try { return JSON.parse(raw) as {protocol:number} & ({stage:"prepare";input:CapturedRulesInput;room_progress?:RoomPreparationProgress} | {stage:"solve";input:PreparedRulesInput} | {stage:"assemble";input:SolvedRulesInput}); }
       catch (error) { if (error instanceof SyntaxError) throw new PlanningInputError(error.message); throw error; }
     });
     if (!body || typeof body !== "object") throw new PlanningInputError("Planning request must be an object");
     if (body.protocol !== RULES_PLANNING_PROTOCOL) return json({error:"planning_protocol_mismatch"},409);
-    if (body.stage !== "prepare" && body.stage !== "solve") return json({error:"planning_stage_required"},400);
-    if (!body.input || typeof body.input.model_version !== "string" ||
-        !Array.isArray(body.stage === "prepare" ? body.input.snapshot?.slots : body.input.problem?.slots)) {
+    if (body.stage !== "prepare" && body.stage !== "solve" && body.stage !== "assemble") {
+      return json({error:"planning_stage_required"},400);
+    }
+    const model = body.stage === "assemble" ? body.input?.input : body.input;
+    const slots = body.stage === "prepare" ? body.input?.snapshot?.slots
+      : body.stage === "solve" ? body.input?.problem?.slots : body.input?.input?.problem?.slots;
+    if (!model || typeof model.model_version !== "string" || !Array.isArray(slots)) {
       throw new PlanningInputError("Planning stage requires its captured input and slots");
     }
-    if (body.input.model_version !== RULES_MODEL_VERSION) {
+    if (model.model_version !== RULES_MODEL_VERSION) {
       throw new PlanningError(body.stage === "prepare" ? "Captured rules planner version changed" : "Prepared rules planner version changed", "planner_upgraded", 409, "recapture");
     }
     if (body.stage === "prepare") {
@@ -42,15 +46,26 @@ export async function handleEnergyPlanningStep(request: Request, planningSecret:
       });
       return trace.run("response_encode", () => json({stage:"prepare",...result}));
     }
+    if (body.stage === "solve") {
+      const solved = trace.run("plan_search", () => solveRulesPlan(body.input, trace), {
+        model_version: model.model_version, slots: slots.length,
+      });
+      return trace.run("response_encode", () => json({stage:"solve",solved}));
+    }
+    const selection = body.input.selection;
+    if (!Array.isArray(selection?.commands) || selection.commands.length !== slots.length
+        || !Array.isArray(selection.quarters) || selection.quarters.length !== slots.length) {
+      throw new PlanningInputError("Plan assembly requires the native selection for every captured slot");
+    }
     const started = performance.now();
-    const result = trace.run("plan_generation", () => generateRulesPlan(body.input, trace), {
-      model_version: body.input.model_version, slots: body.input.problem.slots.length,
+    const result = trace.run("plan_generation", () => assembleRulesPlan(body.input, trace), {
+      model_version: model.model_version, slots: slots.length,
     });
     console.info("[ENERGY-PLANNING-STEP] rules plan completed", {
       request_id:requestId, model_version:result.plan.model_version,
       elapsed_ms:Math.round(performance.now()-started), slots:result.plan.plans.priority.slots.length,
     });
-    return trace.run("response_encode", () => json({stage:"solve",result}));
+    return trace.run("response_encode", () => json({stage:"assemble",result}));
   } catch (error) {
     const detail = describeThrown(error);
     trace.failed(detail);

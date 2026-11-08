@@ -104,13 +104,13 @@ const realWorker: typeof fetch = (url, init) => handleEnergyPlanningStep(new Req
 
 Deno.test("durable owner solves and atomically publishes in one fenced exchange without a ledger", async () => {
   const state = memoryJobs();
-  let workerCalls = 0;
+  const workerStages: string[] = [];
   const receipt = await state.jobs.advanceForHome(jobId, { jobId }, connection, (url, init) => {
-    workerCalls++;
+    workerStages.push(JSON.parse(String(init?.body)).stage);
     return realWorker(url, init);
   });
   assert(receipt?.state === "published");
-  assertEquals(workerCalls, 2);
+  assertEquals(workerStages, ["prepare", "solve", "assemble"]);
   const expected = executeRulesPlanning(input);
   assertEquals(wire(receipt.plan), wire(expected.plan));
   const current = state.publication()!.current as { plan: Parameters<typeof expandStoredPlan>[0]; ha_ack_status:string; generation_request_id:string };
@@ -148,7 +148,7 @@ Deno.test("lost atomic publication reply recovers exact receipt and does not rec
   assert(!state.calls.some(call => call.name === "fail_energy_planning_job"));
   const delivered = await state.jobs.advanceForHome(jobId, { jobId }, connection, fetcher);
   assert(delivered?.state === "published");
-  assertEquals(workers, 2);
+  assertEquals(workers, 3);
   assertEquals(state.calls.filter(call => call.name === "publish_energy_planning_job").length, 1);
   assertEquals(wire(delivered.plan), wire(executeRulesPlanning(input).plan));
 });
@@ -247,16 +247,16 @@ Deno.test("terminal worker input and configuration failures retain their exact c
 });
 
 Deno.test("bad worker replies are rejected while the same authorized capture retries to a complete plan", async () => {
-  for (const corruption of ["stage", "request_id", "protocol", "prepared", "result"] as const) {
+  for (const corruption of ["stage", "request_id", "protocol", "prepared", "solved", "result"] as const) {
     const state = memoryJobs();
     let corrupted = false;
     const badOnce: typeof fetch = async (url, init) => {
       const response = await realWorker(url, init);
       const body = await response.json();
-      const targetStage = corruption === "result" ? "solve" : "prepare";
+      const targetStage = corruption === "result" ? "assemble" : corruption === "solved" ? "solve" : "prepare";
       if (!corrupted && body.stage === targetStage) {
         corrupted = true;
-        if (corruption === "prepared" || corruption === "result") body[corruption] = {};
+        if (corruption === "prepared" || corruption === "solved" || corruption === "result") body[corruption] = {};
         else body[corruption] = "synthetic-crossed-reply";
       }
       return Response.json(body);

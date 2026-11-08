@@ -16,7 +16,7 @@ import { localDay, localMonths } from "./planner-wasm/calendar.ts";
 import runtime from "./planner-wasm/runtime-config.json" with { type: "json" };
 const { recipe } = runtime;
 import { nativePlanner } from "./planner-wasm/runtime.ts";
-import type { NativeQuarter } from "./planner-wasm/core.ts";
+import type { NativeQuarter, SolveOutcome } from "./planner-wasm/core.ts";
 import { READY_ABI, builderRecipe, type NativeCommand, type NativeOwnerMask, type ReadyProblem } from "./planner-wasm/ready-problem.ts";
 import { problemEndCredit } from "./planner-wasm/end-credit.ts";
 import { CAR_FLOOR_SOC_DEFAULT, carPolicy, connectionFromSnapshot } from "./planner-wasm/car-policy.ts";
@@ -545,8 +545,16 @@ function scenario(input: PreparedRulesInput, commands: NativeCommand[], quarters
     dispatched_devices: dispatched, store_diagnostics: [] } };
 }
 
-/** Native physics also owns the baseline projection. */
+export interface SolvedRulesInput {
+  input: PreparedRulesInput;
+  selection: Extract<SolveOutcome, { kind: "selected" }>["selection"];
+}
+
 export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): OptimisationResult {
+  return assembleRulesPlan(solveRulesPlan(input, trace), trace);
+}
+
+export function solveRulesPlan(input: PreparedRulesInput, trace?: PlanningTrace): SolvedRulesInput {
   if (input.model_version !== RULES_MODEL_VERSION) throw new PlanningError("Prepared rules planner version changed", "planner_upgraded", 409, "recapture");
   if (input.problem.work_grant !== recipe.work_grant || JSON.stringify(input.problem.recipe) !== JSON.stringify(builderRecipe(recipe))) return fail("Prepared planner work recipe differs from its model identity");
   input = { ...input, snapshot: { ...input.snapshot } };
@@ -581,7 +589,13 @@ export function generateRulesPlan(input: PreparedRulesInput, trace?: PlanningTra
     }
     return infeasible(solved.issue);
   }
-  const projections = core.projectionSession();
+  return { input, selection: solved.selection };
+}
+
+/** Finish and publish one native selection. The baseline uses the same physics. */
+export function assembleRulesPlan(solved: SolvedRulesInput, trace?: PlanningTrace): OptimisationResult {
+  let input = solved.input;
+  const projections = nativePlanner(trace).projectionSession();
   const refined = planningStage(trace, "hot_water_refinement", () => completeRulesCandidates(projections, input, solved.selection));
   input = refined.input;
   const selected = refined.selection;

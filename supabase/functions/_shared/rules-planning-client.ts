@@ -1,7 +1,7 @@
 import type { RoomPreparationProgress } from "./rules-room-services.ts";
 import { PlanningError, type PlanningFailureDisposition } from "./planning-errors.ts";
 import type { OptimisationResult } from "./planner/planning-contracts.ts";
-import type { PreparedRulesInput } from "./rules-planner.ts";
+import type { PreparedRulesInput, SolvedRulesInput } from "./rules-planner.ts";
 import type { CapturedRulesInput } from "./rules-planning-capture.ts";
 import { RULES_MODEL_VERSION, RULES_PLANNING_PROTOCOL } from "./rules-planner-identity.ts";
 import { describeThrown } from "./ha-api-contract.ts";
@@ -14,18 +14,18 @@ export class EnergyPlanningError extends PlanningError {
     super(message, code, status, disposition); this.name = "EnergyPlanningError";
   }
 }
-type Stage = "prepare" | "solve";
+type Stage = "prepare" | "solve" | "assemble";
 type WorkerResponse = {
   protocol?: number; stage?: Stage; request_id?: string; error?: string; detail?: string;
-  prepared?: PreparedRulesInput; room_progress?: RoomPreparationProgress; result?: OptimisationResult;
+  prepared?: PreparedRulesInput; room_progress?: RoomPreparationProgress; solved?: SolvedRulesInput; result?: OptimisationResult;
 };
-/** One owner coordinates two isolated CPU requests over the same captured basis. */
+/** Coordinate the isolated worker requests over the same captured basis. */
 export async function generateRemoteRulesPlan(input: CapturedRulesInput,
   connection: {url:string;planningSecret:string;requestId:string;deadline?:number},
   fetcher: typeof fetch = fetch): Promise<OptimisationResult> {
   if (!connection.url || !connection.planningSecret) throw new EnergyPlanningError("Planning worker is not configured", 503, "planner_not_configured", "terminal");
   const deadline = connection.deadline ?? performance.now() + RULES_PLANNING_TIMEOUT_MS;
-  const call = async (stage: Stage, stageInput: CapturedRulesInput | PreparedRulesInput, roomProgress?: RoomPreparationProgress): Promise<WorkerResponse> => {
+  const call = async (stage: Stage, stageInput: CapturedRulesInput | PreparedRulesInput | SolvedRulesInput, roomProgress?: RoomPreparationProgress): Promise<WorkerResponse> => {
     const left = deadline - performance.now();
     if (left <= 0) throw new EnergyPlanningError("Replanning exceeded its request deadline", 502, "planning_deadline_exceeded");
     const signal = AbortSignal.timeout(Math.ceil(left));
@@ -75,7 +75,13 @@ export async function generateRemoteRulesPlan(input: CapturedRulesInput,
     || !prepared.problem?.slots?.length) {
     throw new EnergyPlanningError("Planning worker returned an invalid prepared input", 502, "invalid_planning_response", "retry");
   }
-  const { result } = await call("solve", prepared);
+  const { solved } = await call("solve", prepared);
+  if (!solved || solved.input?.snapshot?.snapshot_id !== prepared.snapshot.snapshot_id
+      || solved.input?.model_version !== prepared.model_version
+      || solved.selection?.commands?.length !== prepared.problem.slots.length) {
+    throw new EnergyPlanningError("Planning worker returned an invalid native selection", 502, "invalid_planning_response", "retry");
+  }
+  const { result } = await call("assemble", solved);
   if (!result?.plan || result.plan.snapshot_id !== input.snapshot.snapshot_id
     || result.plan.plan_id !== input.snapshot.snapshot_id || result.plan.model_version !== RULES_MODEL_VERSION
     || !result.plan.plans?.priority?.slots?.length || !result.battery_projection) {

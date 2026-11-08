@@ -37,8 +37,8 @@ export function createPlannerProbe(
     if (body instanceof Response) return body;
     const raw = body.payload;
     if (raw && typeof raw === "object" && "mode" in raw && raw.mode === "handler") {
-      const payload = raw as { protocol?: number; stage?: "prepare" | "solve"; input?: unknown; room_progress?: unknown };
-      if (payload.protocol !== RULES_PLANNING_PROTOCOL || !payload.input || !["prepare", "solve"].includes(payload.stage ?? "")) {
+      const payload = raw as { protocol?: number; stage?: "prepare" | "solve" | "assemble"; input?: unknown; room_progress?: unknown };
+      if (payload.protocol !== RULES_PLANNING_PROTOCOL || !payload.input || !["prepare", "solve", "assemble"].includes(payload.stage ?? "")) {
         return Response.json({ error: "invalid_handler_probe" }, { status: 400 });
       }
       // Execute the production handler's complete path without database,
@@ -53,12 +53,13 @@ export function createPlannerProbe(
       const result = JSON.parse(new TextDecoder().decode(bytes));
       if (!response.ok) return Response.json(result, { status: response.status });
       const progress = result.room_progress;
-      const product = progress ?? (payload.stage === "prepare" ? result.prepared : result.result);
+      const product = progress ?? result.prepared ?? result.solved ?? result.result;
+      const prepared = result.solved?.input ?? result.prepared;
       const slots = progress
         ? Object.values(progress.services.room_power as Record<string, number[]>)[0].length
-        : payload.stage === "prepare" ? product.problem.slots.length : product.plan.plans.priority.slots.length;
+        : prepared?.problem.slots.length ?? result.result.plan.plans.priority.slots.length;
       const model_version = progress ? (payload.input as { model_version: string }).model_version
-        : payload.stage === "prepare" ? product.model_version : product.plan.model_version;
+        : prepared?.model_version ?? result.result.plan.model_version;
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(product)));
       return Response.json({ qualification: "test_live_candidate", build,
         handler_elapsed_ms: performance.now() - before, response_bytes: bytes.byteLength,

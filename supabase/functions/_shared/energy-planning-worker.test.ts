@@ -35,31 +35,39 @@ Deno.test("worker traces cold and warm Rust solves separately from surrounding w
   const cold = await captureWorker(body);
   const warm = await captureWorker(body);
   const expected = JSON.parse(JSON.stringify(generateRulesPlan(input)));
-  for (const { response, stages, messages } of [cold, warm]) {
-    assertEquals(response.status, 200);
-    assertEquals(await response.json(), { protocol: RULES_PLANNING_PROTOCOL, stage: "solve", request_id: "trace-request", result: expected });
-    const active: string[] = [];
-    for (const [i, event] of stages.entries()) {
-      assertEquals(event.request_id, "trace-request");
-      assertEquals(event.sequence, i + 1);
-      assert(event.elapsed_ms >= 0);
-      if (event.phase === "start") active.push(event.stage);
-      else {
-        assertEquals(event.phase, "complete");
-        assertEquals(active.pop(), event.stage);
-        assert(event.duration_ms! >= 0);
+  for (const search of [cold, warm]) {
+    assertEquals(search.response.status, 200);
+    const { solved } = await search.response.json();
+    const assembly = await captureWorker(JSON.stringify({ protocol: RULES_PLANNING_PROTOCOL, stage: "assemble", input: solved }));
+    assertEquals(assembly.response.status, 200);
+    assertEquals(await assembly.response.json(), { protocol: RULES_PLANNING_PROTOCOL, stage: "assemble", request_id: "trace-request", result: expected });
+    for (const { stages, messages } of [search, assembly]) {
+      const active: string[] = [];
+      for (const [i, event] of stages.entries()) {
+        assertEquals(event.request_id, "trace-request");
+        assertEquals(event.sequence, i + 1);
+        assert(event.elapsed_ms >= 0);
+        if (event.phase === "start") active.push(event.stage);
+        else {
+          assertEquals(event.phase, "complete");
+          assertEquals(active.pop(), event.stage);
+          assert(event.duration_ms! >= 0);
+        }
       }
+      assertEquals(active, []);
+      assert(messages.every(message => !message.includes("secret") && !message.includes("Contract EV") && !message.includes("source_entity_ids")));
     }
-    assertEquals(active, []);
-    const starts = stages.filter(event => event.phase === "start").map(event => event.stage);
-    for (const stage of ["request_read", "request_parse", "plan_generation", "wasm_initialise", "solve",
-      "wasm_instantiate", "wasm_input_encode", "wasm_input_allocate", "wasm_execute", "wasm_output_decode",
-      "hot_water_refinement", "selected_plan_materialize", "baseline_projection", "plan_assemble", "response_encode"]) {
-      assert(starts.includes(stage), `Missing ${stage}`);
+    const searchStarts = search.stages.filter(event => event.phase === "start").map(event => event.stage);
+    for (const stage of ["request_read", "request_parse", "plan_search", "wasm_initialise", "solve",
+      "wasm_instantiate", "wasm_input_encode", "wasm_input_allocate", "wasm_execute", "wasm_output_decode", "response_encode"]) {
+      assert(searchStarts.includes(stage), `Missing ${stage}`);
     }
-    assertEquals(stages.filter(event => event.stage === "wasm_execute" && event.phase === "start").length, 1,
-      "Baseline quarters must not flood the function log");
-    assert(messages.every(message => !message.includes("secret") && !message.includes("Contract EV") && !message.includes("source_entity_ids")));
+    const assemblyStarts = assembly.stages.filter(event => event.phase === "start").map(event => event.stage);
+    for (const stage of ["plan_generation", "hot_water_refinement", "selected_plan_materialize", "baseline_projection", "plan_assemble", "response_encode"]) {
+      assert(assemblyStarts.includes(stage), `Missing ${stage}`);
+    }
+    assertEquals(searchStarts.filter(stage => stage === "wasm_execute").length, 1);
+    assert(!assemblyStarts.includes("solve"), "Assembly cannot rerun native search");
   }
   assertEquals(cold.stages.find(event => event.stage === "wasm_initialise")?.cold, true);
   assert(cold.stages.some(event => event.stage === "wasm_compile"));
