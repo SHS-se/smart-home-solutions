@@ -22,12 +22,15 @@ async function database() {
       PRIMARY KEY(home_id,room_key),CHECK(NOT trained OR gain_c_per_wh IS NOT NULL));
     CREATE TABLE energy_optimisation_pool_model(home_id uuid PRIMARY KEY,customer_id uuid,last_attempted_at timestamptz,
       heat_pump_epoch_start timestamptz,last_fit_attempt jsonb,rated_cop numeric,loss_kw_per_k numeric,
-      rejection text,hardware jsonb,sample_count integer DEFAULT 0);
+      rejection text,hardware jsonb,sample_count integer DEFAULT 0,operating_points jsonb);
+    CREATE TABLE energy_optimisation_device_operating_points(home_id uuid,customer_id uuid,device_key text,fitted_at timestamptz,
+      operating_points jsonb,last_attempted_at timestamptz,last_fit_attempt jsonb,model_revision bigint NOT NULL DEFAULT 1,
+      PRIMARY KEY(home_id,device_key));
   `);
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026001000_device_learning_lifecycle.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261104150000_learn_joint_room_heat_exchange.sql"));
-  await db.exec(await Deno.readTextFile("supabase/migrations/20261108120100_publish_pool_operating_points.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261108120200_learn_variable_power_devices.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -194,5 +197,29 @@ Deno.test("joint exchange triggers one room refit and preserves cadence after a 
     assertEquals(Number(stored.gain_c_per_wh), .002);
     await db.exec("UPDATE energy_optimisation_zone_models SET last_attempted_at=now()-interval '25 hours'");
     assertEquals(await request(db), 1);
+  } finally { await db.close(); }
+});
+
+Deno.test("a variable-power device learns on its own cadence and publishes only its own operating points", async () => {
+  const db = await database();
+  try {
+    const owner = (key: string) => JSON.stringify([{ kind: "device", key, input: {} }]);
+    const ask = async (key: string) => (await db.query<{ n: number }>("SELECT request_energy_device_learning($1,$1,$2::jsonb) n", [home, owner(key)])).rows[0].n;
+    assertEquals(await ask("synthetic-charger"), 1);
+    assertEquals(await ask("synthetic-charger"), 0);
+    await assertRejects(() => db.query("SELECT request_energy_device_learning($1,$1,$2::jsonb)", [home,
+      JSON.stringify([{ kind: "device", key: "", input: {} }])]), Error, "Invalid learning owner");
+    const j = await claim(db, "synthetic-charger");
+    const points = { method: "operating_points_v1", points: [{ settings: { "synthetic-charger": 16 }, electric_w: { "synthetic-charger": 11040 } }] };
+    const row = { home_id: home, customer_id: home, device_key: "synthetic-charger", operating_points: points,
+      last_attempted_at: new Date().toISOString(), last_fit_attempt: { learning: { method: "device_operating_points_v1" }, issues: [] } };
+    await assertRejects(() => publish(db, j, 0, { ...row, device_key: "another-device" }), Error, "owner boundary");
+    await assertRejects(() => publish(db, j, 0, { ...row, hardware: {} }), Error, "owner boundary");
+    assert(await publish(db, j, 0, row));
+    const bundle = (await db.query<{ m: { devices: { device_key: string; operating_points: object; model_revision: number }[] } }>(
+      "SELECT capture_energy_device_models($1) m", [home])).rows[0].m;
+    assertEquals(bundle.devices.map(d => [d.device_key, d.operating_points, d.model_revision]), [["synthetic-charger", points, 1]]);
+    // Fitted today: not due again until tomorrow.
+    assertEquals(await ask("synthetic-charger"), 0);
   } finally { await db.close(); }
 });

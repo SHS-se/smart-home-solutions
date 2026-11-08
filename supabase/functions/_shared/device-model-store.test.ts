@@ -1,6 +1,6 @@
 // Independently generated synthetic equipment; no household replay data.
 import { assertEquals } from "@std/assert";
-import { poolLearningOwner, requestDeviceLearning, type LearningOwner } from "./device-model-store.ts";
+import { poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, type LearningOwner } from "./device-model-store.ts";
 
 Deno.test("pool telemetry without a mapped heating meter omits only its learning owner", async () => {
   const pool = { volume_m3: 25, water_temperature_c: 24 };
@@ -32,4 +32,18 @@ Deno.test("mapped heater electricity retains the pool learning request and adds 
   assertEquals(poolLearningOwner(pool, devices.slice(0, 1)), { kind: "pool", key: "pool",
     input: { volume_m3: 25, device_keys: ["synthetic-compressor"] } });
   assertEquals(poolLearningOwner(null, devices), null);
+});
+
+Deno.test("every variable-power device outside the pool is its own learning owner", () => {
+  const devices = [
+    { key: "synthetic-charger", control_type: "variable_power" },
+    { key: "synthetic-pool-pump", control_type: "variable_power" },
+    { key: "synthetic-heater", control_type: "variable_power" },
+    { key: "synthetic-boiler", control_type: "permit_inhibit" },
+    { key: "synthetic-unset", control_type: null },
+  ];
+  assertEquals(variablePowerLearningOwners(devices, new Set(["synthetic-pool-pump"])), [
+    { kind: "device", key: "synthetic-charger", input: {} },
+    { kind: "device", key: "synthetic-heater", input: {} },
+  ]);
 });

@@ -8,7 +8,7 @@ import { isolateMeasurements } from '../_shared/planner/measurement-isolation.ts
 import { deviceContractBreach, roomMapping, type IncomingDevice, type RoomMapping, type DeviceMappingStatus } from "./device-contract.ts";
 import { captureRulesPlanningInput } from "../_shared/rules-planning-capture.ts";
 import { RULES_MODEL_VERSION } from "../_shared/rules-planner-identity.ts";
-import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, type DeviceModelBundle } from "../_shared/device-model-store.ts";
+import { captureDeviceModels, poolLearningOwner, requestDeviceLearning, variablePowerLearningOwners, type DeviceModelBundle } from "../_shared/device-model-store.ts";
 import { recordTestPriceForecastGeneration, testPriceForecastContext } from "../_shared/price-estimate-evidence.ts";
 import { resolveRulePolicy } from "../_shared/planner-wasm/rule-policy.ts";
 import { readOrPrepareForecasts, storePreparedForecasts, type PreparedForecastDatabase } from "../_shared/prepared-energy-forecasts.ts";
@@ -1032,8 +1032,11 @@ serve(withTrafficMetrics("energy-optimisation-ingest", async (req, traffic) => {
       const unique = [...owners.values()].filter(owner => owner.requested).map(owner => ({ kind: owner.kind, key: owner.key,
         input: { ...owner.input, devices: owner.input.devices.sort((a, b) => a.key.localeCompare(b.key)) } }));
       const poolOwner = poolLearningOwner(snapshot.pool, snapshot.device_models);
+      const deviceOwners = variablePowerLearningOwners(
+        storedDevices.map(device => ({ key: device.key, control_type: device.control_type_override })),
+        new Set(poolOwner ? snapshot.device_models.filter(model => model.planning_service === "pool").map(model => model.key) : []));
       const learning = requestDeviceLearning(supabase, auth.homeId, auth.customerId, [
-        ...unique, ...(poolOwner ? [poolOwner] : []),
+        ...unique, ...(poolOwner ? [poolOwner] : []), ...deviceOwners,
       ]).catch(error => console.error("[ENERGY-LEARNING] enqueue failed", describeThrown(error)));
       // Enqueue is a small durable transaction, not an in-request fit.
       await learning;

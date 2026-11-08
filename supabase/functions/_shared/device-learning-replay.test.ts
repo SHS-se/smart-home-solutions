@@ -48,13 +48,13 @@ Deno.test("the refit publishes measured operating points for the pool's setting 
   }), replay.db, () => now);
   assertEquals(await response.json(), { published: true });
   const model = replay.publications[0].p_model as Record<string, unknown>;
-  const learned = model.operating_points as { points: Record<string, unknown>[]; unbounded_runs: number };
+  const learned = model.operating_points as { points: Record<string, unknown>[]; unbounded_sessions: number };
   // The first day's run starts before the window: it is not a whole session.
-  assertEquals(learned.unbounded_runs, 1);
+  assertEquals(learned.unbounded_sessions, 1);
   assertEquals(learned.points.length, 1);
   const [point] = learned.points;
   assertEquals(point.settings, { "synthetic-heater": 12, "synthetic-pump": 80 });
-  assertEquals(point.sessions, 20);
+  assertEquals(point.heat_sessions, 20);
   assertEquals(point.electric_w, { "synthetic-heater": 3000, "synthetic-pump": 410 });
   assertEquals(point.cop, 4.5);
   // The thermal fit still sees only the heater, as before.

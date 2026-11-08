@@ -1,7 +1,7 @@
 /** Pool-only observation loading and fitting. Publication belongs to the fenced learning job. */
 import { fitPoolLoss, fitPoolModel, fitPoolResponse, type PoolLossSample, type PoolResponseSample, poolTrainingWindowStartMs } from "../device-learning/pool/thermal.ts";
 import { selectPoolDynamics } from "../device-learning/pool/selection.ts";
-import { learnPoolOperatingPoints, type PoolDeviceQuarter } from "../device-learning/pool/operating-points.ts";
+import { learnOperatingPoints, type DeviceQuarter } from "../device-learning/operating-points.ts";
 import { WATER_KWH_PER_M3_K } from "../planner/device-models.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
 const TRAINING_WINDOW_DAYS = 21;
@@ -88,7 +88,7 @@ export async function fitStoredPool(
 
   const deviceRows = memberRows.filter(row => heaterIds.has(String(row.device_id)) && Date.parse(String(row.start_ts)) >= fromMs);
   const numberOrNull = (value: unknown) => value == null ? null : Number(value);
-  const operatingPoints = learnPoolOperatingPoints(memberRows.flatMap((row): PoolDeviceQuarter[] => {
+  const operatingPoints = learnOperatingPoints(memberRows.flatMap((row): DeviceQuarter[] => {
     const key = keyById.get(String(row.device_id)), kwh = Number(row.energy_kwh);
     return key && row.energy_kwh != null && Number.isFinite(kwh) ? [{ start_ms: Date.parse(String(row.start_ts)),
       device_key: key, energy_kwh: kwh, power_setting: numberOrNull(row.power_setting), heat_kwh: numberOrNull(row.heat_kwh) }] : [];

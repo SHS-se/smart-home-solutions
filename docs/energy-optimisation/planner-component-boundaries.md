@@ -17,7 +17,8 @@ refactor does not create a new priority or spending policy.
 | Owner | Knowledge and inputs | Must not own |
 | --- | --- | --- |
 | `device-learning/room` | Joint internal/external room exchange, solar and delayed-heater fitting, fit evidence | Prices, commands, device permissions, other devices' fits |
-| `device-learning/pool` | Water/electricity observations, pool loss and response fitting, prospective model-family selection, measured operating points per power-setting combination | Room coefficients, commitments, electrical permission |
+| `device-learning/pool` | Water/electricity observations, pool loss and response fitting, prospective model-family selection | Room coefficients, commitments, electrical permission |
+| `device-learning/operating-points.ts` | Measured draw and heat per kWh of variable-power equipment, per combination of its power settings | Planning, prices, commands or electrical permission |
 | `device-learning/linear-algebra.ts` | Numerical equation solving | Room or pool policy |
 | `planner/models/room/thermal.ts` | Room thermal response and delayed heat | Regression, prices, scheduling |
 | `planner/models/pool/state.ts` | Reconstruction of thermal memory from actual compressor energy | Parameter fitting or releasing commitments |
@@ -28,7 +29,7 @@ refactor does not create a new priority or spending policy.
 | `rules-planner.ts` | Existing ordered orchestration and publication | Fitting or mutating a caller's captured basis |
 | `rules-planning-capture.ts` | Detached unsolved observations, intent, accepted commands and policy | Search or fitting on admission |
 | `device-model-store.ts` | One atomic calibration bundle with per-model revisions | Weather caching or model selection |
-| `device-model-learning/{room,pool}.ts` | Per-owner database observations and fitting adapters | Planning, commitments or other owners' models |
+| `device-model-learning/{room,pool,device}.ts` | Per-owner database observations and fitting adapters | Planning, commitments or other owners' models |
 | `energy-device-learning` | One leased, fenced owner attempt | Whole-house learning or electrical capability writes |
 | `prepared-energy-forecasts.ts` | Prices, outdoor weather, irradiance and house temperature forecasts | Device inventory, calibration or comfort preferences |
 
@@ -104,18 +105,23 @@ observed energy exactly and resumes thermal scheduling without relearning. Rooms
 with delayed heat treat unreported heat as none and report it the same way. One pool-owned operational
 note explains an unsuccessful reschedule; member devices do not duplicate it.
 
-Pool operating points are learned, not yet planned on. Each pool device quarter
-carries the device's own power setting when it held one value throughout, and
-the heater's metered heat when it has a heat meter. Both are read in Home
-Assistant and never written. The daily refit groups whole heating sessions by
-the settings that held (heat pump output, pump capacity), and records each
-device's steady draw and the heat per kWh of heater electricity. The refit
-recomputes the points from the stored quarters over 90 days, clamped to the
-heat-pump epoch. A session next to a missing quarter, with heat still arriving,
-or with a setting that changed or was unknown is left out and counted, never
-read as idle; a later refit includes it once its quarters arrive. The planner
-does not read the points yet, and the snapshot's `pool_model` does not carry
-them.
+Operating points are learned, not yet planned on. Every variable-power device
+(a heat pump's output, a pump's capacity, a charger's current) sends with each
+quarter the setting that held throughout it: a pool device the Power setting it
+names, any other its own power or current control. A device that names a heat
+meter sends its metered heat. Both are read in Home Assistant and never written.
+The pool's members are one learning owner, keyed by every member's setting,
+because they change one another's efficiency. Every other variable-power device
+is a `device` owner of its own, with the same daily cadence, lease, fence and
+revision as a room or the pool. Draw is learned from quarters inside a run in
+which every setting held; heat per kWh from whole sessions at one combination,
+with the heat that arrives after them. Each refit recomputes the points from
+the stored quarters over 90 days (the pool's clamped to its heat-pump epoch). A
+quarter next to a missing one is not steady, and a session next to one, with
+heat still arriving, or with a setting that changed or was unknown is left out
+of the COP and counted, never read as idle; a later refit includes it once its
+quarters arrive. The planner does not read the points yet, and no snapshot
+carries them.
 
 Room projection metadata is derived from the actual member controls and load
 types. Mixed rooms are explicitly mixed. Graph power and temperature continue

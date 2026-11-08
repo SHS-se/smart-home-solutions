@@ -16,6 +16,8 @@ export interface StoredPoolModel extends StoredDeviceModel {
 export interface DeviceModelBundle {
   rooms: StoredDeviceModel[];
   pool: StoredPoolModel | null;
+  /** Variable-power devices' operating points. Learned only; planning does not read them. */
+  devices: StoredDeviceModel[];
   revisions: { rooms: Record<string, number>; pool: number | null };
 }
 export async function captureDeviceModels(db: ModelDatabase, homeId: string): Promise<DeviceModelBundle> {
@@ -26,16 +28,17 @@ export async function captureDeviceModels(db: ModelDatabase, homeId: string): Pr
   }
   const rooms: StoredDeviceModel[] = data.rooms;
   const pool: StoredPoolModel | null = data.pool;
-  for (const model of [...rooms, ...(pool ? [pool] : [])]) {
+  const devices: StoredDeviceModel[] = Array.isArray(data.devices) ? data.devices : [];
+  for (const model of [...rooms, ...(pool ? [pool] : []), ...devices]) {
     if (!Number.isSafeInteger(model.model_revision) || model.model_revision < 1) throw new Error("Missing device model revision");
   }
-  return { rooms, pool, revisions: {
+  return { rooms, pool, devices, revisions: {
     rooms: Object.fromEntries(rooms.map(model => [String(model.room_key), model.model_revision])),
     pool: pool?.model_revision ?? null,
   } };
 }
 export interface LearningOwner {
-  kind: "room" | "pool";
+  kind: "room" | "pool" | "device";
   key: string;
   input: Record<string, unknown>;
 }
@@ -55,4 +58,15 @@ export async function requestDeviceLearning(db: ModelDatabase, homeId: string, c
     p_home_id: homeId, p_customer_id: customerId, p_owners: owners,
   });
   if (error) throw new Error(error.message);
+}
+
+/** Every variable-power device outside the pool learns its own operating
+ * points. A pool member's are learned with the pool, keyed by every member's
+ * setting, because the members change one another's efficiency. */
+export function variablePowerLearningOwners(
+  devices: readonly { key: string; control_type: string | null }[],
+  poolMemberKeys: ReadonlySet<string>,
+): LearningOwner[] {
+  return devices.filter(device => device.control_type === "variable_power" && !poolMemberKeys.has(device.key))
+    .map(device => device.key).sort().map(key => ({ kind: "device" as const, key, input: {} }));
 }
