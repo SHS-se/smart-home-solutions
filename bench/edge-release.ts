@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitTree, plannerVersion, usesRulePlanner } from "./planner-version.ts";
 import { loadPlanner } from "./adapter.ts";
+import { bundleBenchFunction, BUNDLED_BENCH_FUNCTIONS } from "./edge-bundle.ts";
 import { BENCH_PROJECT, BENCH_TOKEN_HEADER, BENCH_URL, type VersionIdentity } from "./edge-version.ts";
 import { retainedCommit } from "./retention.ts";
 import { sha256 } from "../src/lib/planner-bench/case.ts";
@@ -39,11 +40,6 @@ async function request(path: string, init: RequestInit = {}, allowed: number[] =
 }
 
 type Artifact = VersionIdentity & { worker: string; bundle_hash: string; committed_at: string; subject: string };
-
-async function bundle(input: string, output: string) {
-  await command(join(root, "node_modules/.bin/esbuild"), [input, "--bundle", "--platform=node", "--format=esm",
-    "--minify", "--legal-comments=none", "--external:https://*", `--outfile=${output}`]);
-}
 
 async function deploy(work: string, worker: string, contents: string) {
   const directory = join(work, "supabase/functions", worker);
@@ -82,7 +78,7 @@ import { serveBenchVersion } from ${JSON.stringify(join(root, "bench/edge-versio
 serveBenchVersion(${JSON.stringify({ sha, planner_version, generation })},
   async () => adaptPlanner(candidate, await candidate.loadWasmCandidate("")));
 `);
-  await bundle(entry, output);
+  await bundleBenchFunction(root, entry, output);
   return { generation, contents: await Deno.readTextFile(output) };
 }
 
@@ -125,9 +121,9 @@ export async function releaseVersion(ref: string, restore = false): Promise<Arti
 async function releaseCoordinator() {
   const work = await Deno.makeTempDir({ prefix: "bench-edge-coordinator-" });
   try {
-    for (const worker of ["planner-bench-score", "planner-bench-edge"]) {
+    for (const worker of BUNDLED_BENCH_FUNCTIONS) {
       const output = join(work, "entry.js");
-      await bundle(join(root, "supabase/functions", worker, "index.ts"), output);
+      await bundleBenchFunction(root, join(root, "supabase/functions", worker, "index.ts"), output);
       await deploy(work, worker, await Deno.readTextFile(output));
     }
   } finally {

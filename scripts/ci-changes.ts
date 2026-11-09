@@ -88,6 +88,7 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     if (name === "planner-bench-edge" || name === "planner-bench-score") {
       graph.add("bench/edge-schema.sql");
       graph.add("bench/edge-release.ts");
+      graph.add("bench/edge-bundle.ts");
     }
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));
   });

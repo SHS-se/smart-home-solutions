@@ -14,6 +14,7 @@
  */
 import { cp, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { bundleBenchFunction, BUNDLED_BENCH_FUNCTIONS } from "../bench/edge-bundle.ts";
 import {
   addDenoLock,
   addPackageLock,
@@ -81,10 +82,19 @@ async function addEdgeFunctions(inventory: Inventory): Promise<string[]> {
 
     const plain: string[] = [];
     const configured: string[] = [];
+    const bundled: string[] = [];
     for await (const entry of Deno.readDir(join(staging, "supabase/functions"))) {
       if (!entry.isDirectory || entry.name.startsWith("_")) continue;
       const dir = join("supabase/functions", entry.name);
       if (!await exists(join(staging, dir, "index.ts"))) continue;
+      if (BUNDLED_BENCH_FUNCTIONS.includes(entry.name)) {
+        // npm dependencies compiled into the bundle are already in package-lock.json.
+        // Audit any remaining remote imports from the exact deployment entry point.
+        const output = join(staging, dir, "audit-entry.js");
+        await bundleBenchFunction(root, join(root, dir, "index.ts"), output);
+        bundled.push(output);
+        continue;
+      }
       (await exists(join(staging, dir, "deno.json")) ? configured : plain).push(entry.name);
     }
     plain.sort();
@@ -92,15 +102,15 @@ async function addEdgeFunctions(inventory: Inventory): Promise<string[]> {
 
     const unaudited = new Set<string>();
     const groups = [
-      { label: "edge functions", config: null as string | null, names: plain },
-      ...configured.map((name) => ({ label: `edge function ${name}`, config: name, names: [name] })),
+      { label: "edge functions", config: null, entries: [...plain.map(entryPoint), ...bundled] },
+      ...configured.map((name) => ({ label: `edge function ${name}`, config: name, entries: [entryPoint(name)] })),
     ];
     for (const [index, group] of groups.entries()) {
-      if (!group.names.length) continue;
+      if (!group.entries.length) continue;
       const lock = join(staging, `audit-${index}.lock`);
       const args = ["cache", `--lock=${lock}`, "--node-modules-dir=none", "--quiet"];
       if (group.config) args.push("--config", join("supabase/functions", group.config, "deno.json"));
-      args.push(...group.names.map((name) => join("supabase/functions", name, "index.ts")));
+      args.push(...group.entries);
       const output = await new Deno.Command(Deno.execPath(), { cwd: staging, args, stdout: "inherit", stderr: "inherit" }).output();
       if (!output.success) throw new Error(`Could not resolve dependencies for ${group.label}`);
       for (const module of addDenoLock(inventory, JSON.parse(await Deno.readTextFile(lock)), group.label)) {
@@ -111,6 +121,10 @@ async function addEdgeFunctions(inventory: Inventory): Promise<string[]> {
   } finally {
     await Deno.remove(staging, { recursive: true });
   }
+}
+
+function entryPoint(name: string): string {
+  return join("supabase/functions", name, "index.ts");
 }
 
 async function fetchAdvisories(body: Record<string, string[]>): Promise<Advisories> {
