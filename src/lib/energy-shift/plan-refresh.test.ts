@@ -19,6 +19,17 @@ Deno.test('the portal reads real producer plans including the battery schema upg
   }
 });
 
+Deno.test('the portal reads format 12 and checks its mixed-mode structure', async () => {
+  const fixture = JSON.parse(await Deno.readTextFile(new URL(
+    '../../../contracts/ha-api/fixtures/schema-10-mixed-mode-plan.json', import.meta.url,
+  )));
+  const plan = { ...fixture.plan, schema_version: 12 };
+  assertEquals(readPlanRefresh({ ...metadata, plan }).unsupported, false);
+  assertEquals(readPlanRefresh({ ...metadata, plan }).current?.plan, plan);
+  assertEquals(readPlanRefresh({ ...metadata, plan: { ...plan, operating_scope: undefined } }).unsupported, true);
+  assertEquals(readPlanRefresh({ ...metadata, plan: { ...plan, execution_plan: null } }).unsupported, true);
+});
+
 Deno.test('an unreadable replacement is rejected while preserving fresh HA readiness', () => {
   const result = readPlanRefresh({ ...metadata, plan: { schema_version: 99 } });
   assertEquals(result.current, null);

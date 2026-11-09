@@ -91,12 +91,14 @@ export const effectiveControlType = (
 export function isOptimisationPlan(value: unknown): value is PortalOptimisationPlan {
   if (!value || typeof value !== 'object') return false;
   const plan = value as Partial<OptimisationPlan>;
+  const version = plan.schema_version;
+  if (version !== 5 && version !== 6 && version !== 7 && version !== 8
+    && version !== 9 && version !== 10 && version !== 11 && version !== 12) return false;
   // Stored plans leave out an `execution_plan` identical to their top level
   // (see `storedPlan`); one that is present must still be a valid schema 8 plan.
-  if ((plan.schema_version === 9 || plan.schema_version === 10 || plan.schema_version === 11) && (!plan.operating_scope?.modes || (plan.execution_plan !== undefined
+  if (version >= 9 && (!plan.operating_scope?.modes || (plan.execution_plan !== undefined
     && (plan.execution_plan?.schema_version !== 8 || !isOptimisationPlan(plan.execution_plan))))) return false;
-  return (plan.schema_version === 5 || plan.schema_version === 6 || plan.schema_version === 7 || plan.schema_version === 8 || plan.schema_version === 9 || plan.schema_version === 10 || plan.schema_version === 11)
-    && plan.mode === 'live'
+  return plan.mode === 'live'
     && plan.slot_minutes === 15
     && typeof plan.issued_at === 'string'
     && typeof plan.valid_until === 'string'
