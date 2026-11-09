@@ -2,10 +2,10 @@ import { assert, assertEquals } from 'jsr:@std/assert@1';
 import {
   earnsOwnBand,
   consumptionGapDescription,
-  orderConsumptionStack,
   splitConsumption,
   type ConsumptionCandidate,
 } from './consumption-series.ts';
+import { orderConsumptionStack } from './consumption-stack-order.ts';
 
 /** Watts that draw exactly the given energy over one quarter. */
 const forKwh = (kwh: number) => kwh * 4_000;
@@ -45,6 +45,14 @@ Deno.test('equal duty cycles put a continuous run below repeated cycling regardl
   const ordered = orderConsumptionStack([
     stackSeries('cycling', [100, 0, 100, 0, 100, 0]),
     stackSeries('run', [8000, 8000, 8000, 0, 0, 0]),
+  ]);
+  assertEquals(ordered.map(s => s.key), ['run', 'cycling']);
+});
+
+Deno.test('repeated cycling can be more disruptive than a less frequent continuous run', () => {
+  const ordered = orderConsumptionStack([
+    stackSeries('cycling', [100, 0, 100, 0, 100, 0, 100, 0]),
+    stackSeries('run', [8000, 8000, 8000, 0, 0, 0, 0, 0]),
   ]);
   assertEquals(ordered.map(s => s.key), ['run', 'cycling']);
 });
@@ -142,14 +150,6 @@ Deno.test('a meter that did not run keeps its colour for the day it does', () =>
   const split = splitConsumption([idle, pool], flat(forKwh(0.5), 6));
   assertEquals(split.series.length, 1, 'the idle meter should not be drawn');
   assertEquals(split.series[0].colour, pool.colour);
-});
-
-Deno.test('bands are ordered largest first', () => {
-  const split = splitConsumption([
-    candidate({ key: 'small', values: flat(forKwh(0.15), 6) }),
-    candidate({ key: 'large', values: flat(forKwh(0.9), 6) }),
-  ], flat(forKwh(1.1), 6));
-  assertEquals(split.series.map(entry => entry.key), ['large', 'small']);
 });
 
 Deno.test('every planned device retains its own saved colour beyond the old eight-band limit', () => {

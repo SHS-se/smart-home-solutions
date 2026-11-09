@@ -2,7 +2,9 @@
 // This module converts display units and splits electrical meters; it contains no device physics.
 import { activeDeviceKeys, type TimelineRow, type TimelineRange } from './energy-timeline';
 import { splitConsumption } from './consumption-series';
+import { orderConsumptionStack } from './consumption-stack-order';
 import { formatHomeDayMonthTime } from './home-time';
+import type { PlannedSlot } from './contracts';
 import type { HotWaterQuarter } from './hot-water-gate';
 import type { BatteryInstruction } from '../../../supabase/functions/_shared/planner/battery-instruction';
 
@@ -72,8 +74,9 @@ const priced = (value: number | null, shadow: number | null) => quoted(value) ? 
 export function projectPlanChart(input: {
   rows: readonly TimelineRow[]; range: TimelineRange; timeZone: string;
   devices: readonly ChartDevice[]; prices: ChartPrices; hotWater?: ChartHotWater;
+  planSlots?: readonly Pick<PlannedSlot, 'start' | 'device_loads_w'>[];
 }) {
-  const { rows, range, timeZone, devices, prices, hotWater } = input;
+  const { rows, range, timeZone, devices, prices, hotWater, planSlots } = input;
   const view = rows.slice(range.from, range.to);
   let running: number | null = 0;
   const panelRows: PlanPanelRow[] = view.map((row, i) => {
@@ -98,10 +101,11 @@ export function projectPlanChart(input: {
   const catalogue = new Map(devices.map(d => [d.key, d]));
   const waterKeys = new Set(hotWater?.keys ?? []);
   const waterDevice = waterKeys.size === 1 ? catalogue.get([...waterKeys][0]) : undefined;
+  const waterKey = waterDevice?.key ?? HOT_WATER_SERIES_KEY;
   const active = new Set([...activeDeviceKeys(rows, range), ...devices.filter(d => d.schedulable).map(d => d.key)]
     .filter(key => !waterKeys.has(key)));
   const water = hotWater ? [{
-    key: waterDevice?.key ?? HOT_WATER_SERIES_KEY, name: waterDevice?.name ?? hotWater.name, schedulable: true, pinned: true, colour: waterDevice?.colour ?? hotWater.colour,
+    key: waterKey, name: waterDevice?.name ?? hotWater.name, schedulable: true, pinned: true, colour: waterDevice?.colour ?? hotWater.colour,
     values: view.map((row, i) => panelRows[i].hotWater?.expectedW
       ?? [...waterKeys].reduce((sum, key) => sum + (row.deviceW[key] ?? 0), 0)),
   }] : [];
@@ -109,5 +113,13 @@ export function projectPlanChart(input: {
     key, name: catalogue.get(key)!.name, colour: catalogue.get(key)!.colour,
     values: view.map(row => row.deviceW[key] ?? NaN), schedulable: catalogue.get(key)?.schedulable ?? false,
   })), ...water], view.map(row => row.loadW));
-  return { rows: panelRows, consumption, realPrices: prices.kind !== 'live' };
+  // Every view containing forecasts uses the same full plan as the app.
+  // Historical-only views rank the measured loads in that window.
+  const reference = planSlots && view.some(row => !row.measured && !row.missing) ? planSlots : undefined;
+  const series = orderConsumptionStack(consumption.series, entry => reference
+    ? reference.map(slot => hotWater && entry.key === waterKey
+      ? hotWater.byStart.get(Date.parse(slot.start))?.expectedW ?? slot.device_loads_w?.[entry.key]
+      : slot.device_loads_w?.[entry.key])
+    : entry.values);
+  return { rows: panelRows, consumption: { ...consumption, series }, realPrices: prices.kind !== 'live' };
 }

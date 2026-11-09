@@ -106,8 +106,8 @@ const PowerSection: React.FC<{
     devices: devices.map(device => ({
       key: device.device_key, name: device.name, colour: device.colour, schedulable: schedulableKeys.has(device.device_key),
     })),
-    hotWater,
-  }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater]);
+    hotWater, planSlots: model.active.slots,
+  }), [rows, range, homeTimeZone, devices, schedulableKeys, hotWater, model.active.slots]);
   const { rows: panelRows, consumption } = chart;
   // A room is drawn in its heater's band colour, so the line and the energy
   // that moved it read as one thing.

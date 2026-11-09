@@ -28,25 +28,6 @@ export interface ConsumptionIssue {
   missingDevices: string[];
 }
 
-/** Bottom-to-top device order; base load is kept separate by the chart. */
-export const orderConsumptionStack = (series: readonly ConsumptionSeries[]): ConsumptionSeries[] =>
-  series.map(entry => {
-    // Include off/missing quarters, so intermittent loads rise above continuous
-    // ones. Relative variance compares shape independently of a device's watts.
-    const values = entry.values.map(value => Number.isFinite(value) ? value : 0);
-    const total = values.reduce((sum, value) => sum + value, 0);
-    const variance = total > 0
-      ? values.length * values.reduce((sum, value) => sum + value ** 2, 0) / total ** 2 - 1
-      : Infinity;
-    // Equal distributions can still differ in fragmentation: a single run is
-    // steadier than repeated on/off cycling with the same energy and duty cycle.
-    const changes = total > 0
-      ? values.reduce((sum, value, i) => sum + (i ? Math.abs(value - values[i - 1]) : 0), 0) / total
-      : Infinity;
-    return { entry, variance, changes };
-  }).sort((a, b) => a.variance - b.variance || a.changes - b.changes || a.entry.key.localeCompare(b.entry.key))
-    .map(({ entry }) => entry);
-
 export const consumptionGapDescription = (
   issue: ConsumptionIssue,
   t: (sv: string, en: string) => string,
@@ -57,7 +38,7 @@ export const consumptionGapDescription = (
       'Household and device readings cannot be reconciled for this quarter.');
 
 export interface ConsumptionSplit {
-  /** Drawn bands, largest first. */
+  /** Device bands in input order. */
   series: ConsumptionSeries[];
   /** Gross house consumption minus every Planned meter, before solar. */
   baseValues: number[];
@@ -95,7 +76,7 @@ export const splitConsumption = (
     values: Array.from({ length }, (_, i) => Number.isFinite(candidate.values[i]) ? candidate.values[i] : 0),
   }));
 
-  const eligible = candidates
+  const series = candidates
     .filter(candidate => candidate.schedulable && (candidate.pinned || earnsOwnBand(candidate.values)))
     .map(candidate => ({
       key: candidate.key,
@@ -104,13 +85,8 @@ export const splitConsumption = (
       kwh: totalKwh(candidate.values),
       partial: candidate.values.map(() => false),
       colour: candidate.colour,
-      pinned: candidate.pinned ?? false,
-    }))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned)
-      || right.kwh - left.kwh || left.key.localeCompare(right.key))
-    .map(({ pinned: _pinned, ...entry }) => entry);
+    }));
 
-  const series = eligible;
   const planned = candidates.filter(c => c.schedulable);
   const invalidIndices: number[] = [];
   const issues: (ConsumptionIssue | null)[] = Array(length).fill(null);

@@ -1087,7 +1087,10 @@ test.describe('requesting a replan', () => {
     replan.publishedPlan = { ...PLAN,
       device_models: loads.map(load => ({ ...model, key: load.key, name: load.key, planning_service: undefined })),
       plans: { ...PLAN.plans, priority: { ...PLAN.plans.priority, slots: PLAN.plans.priority.slots.map((slot, i) => {
-        const deviceLoads = Object.fromEntries(loads.map(load => [load.key, load.values[i % 6]]));
+        // The first evening alone would rank the steady load above the smooth one.
+        const deviceLoads = Object.fromEntries(loads.map(load => [
+          load.key, load.key === 'steady' && i < 5 ? (i % 2 ? 290 : 110) : load.values[i % 6],
+        ]));
         return { ...slot, boiler_consumption_w: 0, device_loads_w: deviceLoads,
           load_w: 500 + Object.values(deviceLoads).reduce((sum, value) => sum + value, 0) };
       }) } },
@@ -1102,6 +1105,8 @@ test.describe('requesting a replan', () => {
     await expect.poll(drawnOrder).toEqual(['base', 'steady', 'smooth', 'charging', 'pulses']);
     await chart.locator('[data-series-control="load:smooth"] button').click();
     await page.mouse.move(0, 0);
+    await page.getByRole('button', { name: /^(Today|Idag)$/ }).click();
+    await expect.poll(drawnOrder).toEqual(['base', 'steady', 'smooth', 'charging', 'pulses']);
     await chart.screenshot({ path: testInfo.outputPath('consumption-stack-order.png') });
   });
 

@@ -29,7 +29,7 @@ import {
 import {
   PRICE_RAMP_STEPS, priceBands, priceGradientStops,
 } from '@/lib/energy-shift/price-bands';
-import { consumptionGapDescription, orderConsumptionStack, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
+import { consumptionGapDescription, type ConsumptionIssue, type ConsumptionSeries } from '@/lib/energy-shift/consumption-series';
 import { powerFlowMagnitudes } from '@/lib/energy-shift/power-flows';
 import { timelineGapDescription } from '@/lib/energy-shift/timeline-gap';
 import { PLAN_COLOURS } from './palette';
@@ -251,12 +251,11 @@ export interface EnergyChartProps {
 }
 
 const EnergyChart: React.FC<EnergyChartProps> = ({
-  colours, rows, series: consumptionSeries, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
+  colours, rows, series, baseValues, consumptionIssues, dividerIndex, dividerLabel, hasBattery, hasEvBattery,
   selectedIndex = -1, onQuarterClick, quarterScores, quarterAudit, scoreDetail, realPrices = false, poolTargetC = null,
   costLines, storeLines, timeZone, maxTimeLabels = 16, rooms = NO_ROOMS, relations = NO_RELATIONS,
 }) => {
   const { t } = useLanguage();
-  const series = useMemo(() => orderConsumptionStack(consumptionSeries), [consumptionSeries]);
   const contextTimeZone = useHomeTimeZone();
   const homeTimeZone = timeZone ?? contextTimeZone;
   const chartId = useId();
@@ -739,7 +738,7 @@ const EnergyChart: React.FC<EnergyChartProps> = ({
             strokeDasharray="1 3" strokeLinecap="round"
           />
 
-          {series.map((entry, index) => control(`load:${entry.key}`, entry.name, entry.colour, load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
+          {[...series].reverse().map((entry, index) => control(`load:${entry.key}`, entry.name, entry.colour, load.top + 12 + index * 18, `${entry.kwh.toFixed(1)} kWh`))}
           {control('base', t('Baslast', 'Base load'), PLAN_COLOURS.base, load.top + 12 + series.length * 18, energy(baseValues))}
           {control('solar:outline', t('Solproduktion', 'Solar production'), PLAN_COLOURS.solar, load.top + 30 + series.length * 18, energy(rows.map(row => row.solarW)))}
 
