@@ -1,4 +1,4 @@
-import { backgroundRateForSlot, projectZoneTemperature, type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { backgroundRateForSlot, projectZoneTemperature, type RoomProjectionContext, type RoomState, roomTransition, stepRoom, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 export const COMFORT_MODES = ["off", "low-temp", "high-temp"] as const;
 export type ComfortMode = (typeof COMFORT_MODES)[number];
@@ -182,7 +182,7 @@ export function buildComfortForecast(
   ratedPowerW: number,
   heatingLockout: boolean[],
   solarWPerM2?: (number | null)[] | null,
-  context: { house_c?: (number | null)[] | null; start_delivered_w?: number | null } = {},
+  context: RoomProjectionContext = {},
 ): ComfortForecast {
   if (
     starts.length === 0 || starts.length !== outdoorTemperatureC.length ||
@@ -216,7 +216,7 @@ export function buildComfortForecast(
 
   const transitions = starts.map((_start, index) => roomTransition(model, {
     hours: SLOT_HOURS, outdoor_c: outdoorTemperatureC[index], house_c: context.house_c?.[index],
-    background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2),
+    background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2, context.passive_heat_c_per_h),
   }));
 
   // Required temperature at the start of each quarter. Looking backwards

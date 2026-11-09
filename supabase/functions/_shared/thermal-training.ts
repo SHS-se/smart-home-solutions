@@ -6,8 +6,9 @@
 // REFIT_INTERVAL_HOURS, so each trained room refits about once a day.
 
 import { fitRoomMeans, type RoomMeanQuarter, type RoomLearningEvidence } from "./device-learning/room/mean-observations.ts";
+import { fitRoomWithPassiveHeat, type PassiveHeatScores } from "./device-learning/room/passive-heat.ts";
 import { fitThermalZoneFromMoments, type ThermalFitResult, type ThermalMoments } from "./device-learning/room/regression.ts";
-import { projectZoneTemperature, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import { projectZoneTemperature, type PassiveRoomHeat, type ThermalZoneModel } from "./planner/models/room/thermal.ts";
 
 export const REFIT_INTERVAL_HOURS = 24;
 /**
@@ -53,6 +54,9 @@ export interface ZoneFit {
   room_key: string;
   room_name: string;
   result: ThermalFitResult & { learning_evidence?: RoomLearningEvidence };
+  passive?: PassiveRoomHeat | null;
+  passiveScores?: PassiveHeatScores;
+  passiveAwaitingValidation?: boolean;
 }
 
 export const fitZones = (rows: ThermalMomentRow[]): ZoneFit[] =>
@@ -80,7 +84,10 @@ const reading = (value: unknown): number | null =>
   value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value);
 
 /** Recorder temperatures are interval means; select each room by held-out transitions. */
-export function fitRoomsFromQuarters(rows: ThermalQuarterRow[]): ZoneFit[] {
+export function fitRoomsFromQuarters(
+  rows: ThermalQuarterRow[],
+  passiveSources?: ReadonlyMap<string, { device_key: string; watts: ReadonlyMap<number, number> }>,
+): ZoneFit[] {
   const rooms = new Map<string, { name: string; power: number | null; quarters: RoomMeanQuarter[] }>();
   for (const row of rows) {
     const start = Date.parse(row.start_ts);
@@ -93,8 +100,13 @@ export function fitRoomsFromQuarters(rows: ThermalQuarterRow[]): ZoneFit[] {
       cooling: row.cooling === true });
     rooms.set(row.room_key, room);
   }
-  return [...rooms].map(([key, room]) => ({ room_key: key, room_name: room.name,
-    result: fitRoomMeans(room.quarters, room.power) }));
+  return [...rooms].map(([key, room]) => {
+    const source = passiveSources?.get(key);
+    const identity = { room_key: key, room_name: room.name };
+    if (!source) return { ...identity, result: fitRoomMeans(room.quarters, room.power), passive: null };
+    const { room: result, passive, scores } = fitRoomWithPassiveHeat(room.quarters, room.power, source);
+    return { ...identity, result, passive, passiveScores: scores, passiveAwaitingValidation: !passive };
+  });
 }
 
 /** Rows ready for `energy_optimisation_zone_models`. */
@@ -107,7 +119,10 @@ export const zoneModelRows = (
     trainingTo: string;
   },
 ): Record<string, unknown>[] =>
-  fits.map(({ room_key, room_name, result }) => {
+  fits.map(({ room_key, room_name, result, passive, passiveScores, passiveAwaitingValidation }) => {
+    const passiveAttempt = passiveAwaitingValidation || passiveScores ? {
+      passive_heat: { status: passiveAwaitingValidation ? "awaiting_validation" : "validated", ...passiveScores },
+    } : {};
     if (result.ok === false) {
       return {
         customer_id: context.customerId,
@@ -121,7 +136,7 @@ export const zoneModelRows = (
         trained: false,
         rejection_reason: result.reason,
         last_attempted_at: new Date().toISOString(),
-        last_fit_attempt: { status: "unidentified", issues: [result.reason],
+        last_fit_attempt: { status: "unidentified", issues: [result.reason], ...passiveAttempt,
           ...(result.learning_evidence ? { learning: result.learning_evidence } : {}) },
         gain_c_per_wh: null,
         cooling_constant_per_h: null,
@@ -151,7 +166,7 @@ export const zoneModelRows = (
       trained: true,
       rejection_reason: null,
       last_attempted_at: new Date().toISOString(),
-      last_fit_attempt: { status: result.warnings?.length ? "limited" : "fitted", issues: result.warnings ?? [],
+      last_fit_attempt: { status: result.warnings?.length ? "limited" : "fitted", issues: result.warnings ?? [], ...passiveAttempt,
         ...(result.learning_evidence ? { learning: result.learning_evidence } : {}) },
       gain_c_per_wh: result.model.gain_c_per_wh,
       cooling_constant_per_h: result.model.cooling_constant_per_h,
@@ -170,6 +185,7 @@ export const zoneModelRows = (
       heat_lag_h: result.model.heat_lag_h ?? null,
       house_coupling_per_h: result.model.house_coupling_per_h ?? null,
       prediction_error_c: result.model.prediction_error_c ?? null,
+      ...(passive !== undefined ? { passive_heat: passive } : {}),
     };
   });
 

@@ -22,6 +22,7 @@ export interface RoomEvidence {
   temperature_c: ReadonlyMap<string, number>;
   /** Mean heater power per quarter over the last day, oldest first. */
   recent_heat_w: ReadonlyMap<string, readonly number[]>;
+  passive_heat_c_per_h?: ReadonlyMap<string, number[]>;
 }
 
 const complete = (series: readonly (number | null)[] | null | undefined, length: number): series is number[] =>
@@ -55,6 +56,7 @@ export function roomPlanningZones(
       model = null;
     }
     const delivered = model ? deliveredHeat(model, evidence.recent_heat_w.get(room.key) ?? []) : null;
+    const passive = evidence.passive_heat_c_per_h?.get(room.key);
     const targets = comfortModesForStarts(starts, snapshot.timezone, routine).map(mode => temperatureForMode(routine, mode));
     const historical = starts.map((_start, i) => snapshot.device_models
       .filter(device => room.device_keys.includes(device.key))
@@ -65,7 +67,7 @@ export function roomPlanningZones(
     if (model && start !== null && outdoor && room.rated_power_w > 0) {
       try {
         forecast = buildComfortForecast(starts, snapshot.timezone, routine, model, start, outdoor, room.rated_power_w,
-          lockout, snapshot.solar_irradiance_w_per_m2, { house_c: house, start_delivered_w: delivered });
+          lockout, snapshot.solar_irradiance_w_per_m2, { house_c: house, start_delivered_w: delivered, passive_heat_c_per_h: passive });
       } catch (error) {
         usable = null;
         skipped.push({ key: room.key, message: `${room.name}: thermal estimate unavailable (${describe(error)}); using measured demand` });
@@ -78,6 +80,7 @@ export function roomPlanningZones(
     }
     zones.push({ key: room.key, name: room.name, device_keys: room.device_keys, model: usable,
       start_temperature_c: start, start_delivered_w: usable ? delivered : null, rated_power_w: room.rated_power_w,
+      ...(usable && passive ? { passive_heat_c_per_h: passive } : {}),
       comfort_min_c: forecast.comfort_min_c, target_c: forecast.target_c, comfort_max_c: forecast.comfort_max_c,
       maximum_power_w_by_slot: room.maximum_power_w_by_slot, unplanned_power_w: forecast.power_w });
   }

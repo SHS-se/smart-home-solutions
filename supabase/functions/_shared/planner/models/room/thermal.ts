@@ -1,6 +1,14 @@
 /** Room thermal response only. No fitting, electrical capabilities, prices or policy. */
 export const SLOT_HOURS = 0.25;
 
+/** Learned temperature response per electrical watt from an observed appliance. */
+export interface PassiveRoomHeat {
+  device_key: string;
+  direct_c_per_wh: number;
+  delayed_c_per_wh: number;
+  lag_h: number;
+}
+
 export interface ThermalZoneModel {
   /** Temperature rise per watt-hour delivered, °C/Wh. */
   gain_c_per_wh: number;
@@ -121,25 +129,54 @@ export const stepRoom = (transition: RoomTransition, state: RoomState, watts: nu
 export function deliveredHeat(model: ThermalZoneModel, recentQuarterW: readonly number[]): number {
   const lag = model.heat_lag_h ?? 0;
   if (!(lag > 0)) return 0;
+  return deliveredHeatAtLag(lag, recentQuarterW);
+}
+
+function deliveredHeatAtLag(lag: number, recentQuarterW: readonly number[]): number {
   const carry = Math.exp(-SLOT_HOURS / lag);
   return recentQuarterW.reduce((delivered, watts) =>
     carry * delivered + (1 - carry) * (Number.isFinite(watts) ? Math.max(0, watts) : 0), 0);
+}
+
+/** Only stored heat from measured electricity contributes to the future.
+ * Any immediate gain is already present in the starting room temperature. */
+export function passiveHeatRates(
+  model: PassiveRoomHeat, recentWatts: readonly number[], historyEndMs: number,
+  capturedMs: number, starts: readonly string[],
+): number[] {
+  const rate = model.delayed_c_per_wh * deliveredHeatAtLag(model.lag_h, recentWatts);
+  return starts.map(start => {
+    const begin = Date.parse(start);
+    const from = Math.max(begin, capturedMs, historyEndMs);
+    const hours = (begin + SLOT_HOURS * 3_600_000 - from) / 3_600_000;
+    if (!(hours > 0)) return 0;
+    const delay = (from - historyEndMs) / 3_600_000;
+    return rate * Math.exp(-delay / model.lag_h) * (-Math.expm1(-hours / model.lag_h)) * model.lag_h / hours;
+  });
+}
+
+export interface RoomProjectionContext {
+  house_c?: (number | null)[] | null;
+  start_delivered_w?: number | null;
+  passive_heat_c_per_h?: readonly number[];
 }
 
 export function backgroundRateForSlot(
   model: ThermalZoneModel,
   index: number,
   solarWPerM2?: (number | null)[] | null,
+  passiveHeatCPerH?: readonly number[],
 ): number {
+  const background = model.background_gain_c_per_h + (passiveHeatCPerH?.[index] ?? 0);
   const coefficient = model.solar_gain_c_per_h_per_wm2;
   if (typeof coefficient !== "number" || !Number.isFinite(coefficient)) {
-    return model.background_gain_c_per_h;
+    return background;
   }
   const forecast = solarWPerM2?.[index];
   const irradiance = typeof forecast === "number" && Number.isFinite(forecast)
     ? forecast
     : model.solar_mean_w_per_m2 ?? 0;
-  return model.background_gain_c_per_h + coefficient * irradiance;
+  return background + coefficient * irradiance;
 }
 
 export function projectZoneTemperature(
@@ -149,7 +186,7 @@ export function projectZoneTemperature(
   heatInputW: number[],
   solarWPerM2?: (number | null)[] | null,
   durationHours?: number[],
-  context: { house_c?: (number | null)[] | null; start_delivered_w?: number | null } = {},
+  context: RoomProjectionContext = {},
 ): number[] {
   const projection: number[] = [];
   let state: RoomState = { temperature_c: startTemperatureC, delivered_w: context.start_delivered_w ?? 0 };
@@ -157,7 +194,7 @@ export function projectZoneTemperature(
     projection.push(Math.round(state.temperature_c * 1000) / 1000);
     state = stepRoom(roomTransition(model, {
       hours: durationHours?.[index] ?? SLOT_HOURS, outdoor_c: outdoorC[index],
-      house_c: context.house_c?.[index], background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2),
+      house_c: context.house_c?.[index], background_c_per_h: backgroundRateForSlot(model, index, solarWPerM2, context.passive_heat_c_per_h),
     }), state, heatInputW[index] ?? 0);
   }
   return projection;

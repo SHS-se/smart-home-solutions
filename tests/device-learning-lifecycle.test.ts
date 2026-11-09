@@ -16,6 +16,10 @@ async function database() {
     CREATE FUNCTION net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer) RETURNS bigint LANGUAGE sql AS $$
       INSERT INTO net.wakes VALUES($1,$2,$3,$4); SELECT 1::bigint; $$;
     CREATE FUNCTION cron.schedule(text,text,text) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+    CREATE TABLE energy_optimisation_devices(id uuid PRIMARY KEY,home_id uuid,customer_id uuid,
+      device_key text,planning_role_override text,retired_at timestamptz,UNIQUE(id,home_id,customer_id));
+    CREATE TABLE energy_optimisation_device_slots(device_id uuid,home_id uuid,customer_id uuid,
+      start_ts timestamptz,energy_kwh numeric);
     CREATE TABLE energy_optimisation_zone_models(
       home_id uuid,customer_id uuid,room_key text,room_name text,trained boolean,last_attempted_at timestamptz,
       last_fit_attempt jsonb,gain_c_per_wh numeric,sample_count integer DEFAULT 0,
@@ -31,6 +35,7 @@ async function database() {
   await db.exec(await Deno.readTextFile("supabase/migrations/20261026003000_preserve_pool_learning_due_cadence.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261104150000_learn_joint_room_heat_exchange.sql"));
   await db.exec(await Deno.readTextFile("supabase/migrations/20261108120200_learn_variable_power_devices.sql"));
+  await db.exec(await Deno.readTextFile("supabase/migrations/20261109110000_learn_monitored_room_heat.sql"));
   await db.exec("SELECT configure_energy_device_learning('https://example.supabase.co')");
   return db;
 }
@@ -221,5 +226,30 @@ Deno.test("a variable-power device learns on its own cadence and publishes only 
     assertEquals(bundle.devices.map(d => [d.device_key, d.operating_points, d.model_revision]), [["synthetic-charger", points, 1]]);
     // Fitted today: not due again until tomorrow.
     assertEquals(await ask("synthetic-charger"), 0);
+  } finally { await db.close(); }
+});
+
+Deno.test("passive room evidence is isolated by home and requires an active Monitoring meter", async () => {
+  const db = await database();
+  try {
+    const meter = "22222222-2222-4222-8222-222222222222";
+    const model = { device_key: "synthetic-appliance", direct_c_per_wh: .001, delayed_c_per_wh: .002, lag_h: .5 };
+    await db.query("INSERT INTO energy_optimisation_devices VALUES($1,$2,$2,'synthetic-appliance','base_load',NULL)", [meter, home]);
+    await db.query("INSERT INTO private.energy_room_passive_heat_sources VALUES($1,$1,'synthetic-room',$2)", [home, meter]);
+    await db.query(`INSERT INTO energy_optimisation_device_slots VALUES
+      ($1,$2,$2,'2026-01-01T00:00:00Z',.125),($1,$2,$2,'2026-01-01T00:15:00Z',0)`, [meter, home]);
+    const read = (key = "synthetic-room", owner = home) => db.query(
+      "SELECT * FROM get_energy_room_passive_heat($1,$2,ARRAY[$3],'2026-01-01T00:00:00Z','2026-01-01T01:00:00Z')", [owner, home, key]);
+    assertEquals((await read()).rows, [{ room_key: "synthetic-room", device_key: "synthetic-appliance",
+      quarters: [[Date.UTC(2026, 0, 1), 500], [Date.UTC(2026, 0, 1, 0, 15), 0]] }]);
+    assertEquals((await read("other-room")).rows, []);
+    assertEquals((await read("synthetic-room", meter)).rows, []);
+    await request(db);
+    assert(await publish(db, await claim(db), 0, { ...fitted(), passive_heat: model }));
+    assertEquals((await db.query("SELECT passive_heat FROM energy_optimisation_zone_models")).rows, [{ passive_heat: model }]);
+    await db.exec("UPDATE energy_optimisation_devices SET planning_role_override='controllable'");
+    assertEquals((await read()).rows, []);
+    await db.exec("UPDATE energy_optimisation_devices SET planning_role_override='base_load', retired_at=now()");
+    assertEquals((await read()).rows, []);
   } finally { await db.close(); }
 });

@@ -1,6 +1,7 @@
 /** Room-only observation loading. Unknown meter coverage is never an OFF sample. */
 import { fitRoomsFromQuarters, TRAINING_WINDOW_DAYS, zoneModelRows, type ThermalQuarterRow } from "../thermal-training.ts";
 import { fitRoomMeans } from "../device-learning/room/mean-observations.ts";
+import { readRoomPassiveHeat } from "../room-passive-heat-evidence.ts";
 import { readPagedRows } from "../read-paged-rows.ts";
 import { irradiancePoints, irradianceOnto } from "../solar-irradiance.ts";
 
@@ -43,7 +44,8 @@ export async function fitStoredRoom(
       result: fitRoomMeans([], null) }],
     { homeId, customerId, trainingFrom, trainingTo })[0];
   }
-  const fits = fitRoomsFromQuarters(quarters);
+  const passive = await readRoomPassiveHeat(db, customerId, homeId, [roomKey], trainingFrom, trainingTo);
+  const fits = fitRoomsFromQuarters(quarters, passive);
   if (fits.length !== 1 || fits[0].room_key !== roomKey) throw new Error("Room observations crossed owner boundary");
   return zoneModelRows(fits, { homeId, customerId, trainingFrom, trainingTo })[0];
 }

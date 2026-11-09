@@ -4,6 +4,8 @@ import type { DeviceModelBundle } from "./device-model-store.ts";
 import type { PreparedRoom } from "./prepared-energy-forecasts.ts";
 import type { ThermalQuarterRow } from "./thermal-training.ts";
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.57.2";
+import { passiveHeatRates } from "./planner/models/room/thermal.ts";
+import { readPassiveHeatModel, readRoomPassiveHeat } from "./room-passive-heat-evidence.ts";
 import { readThermalModel } from "./planner/models/room/read-model.ts";
 import { roomPlanningZones } from "./room-planning-zones.ts";
 import { summerHeatingLockoutForStarts } from "./comfort-schedule.ts";
@@ -59,7 +61,7 @@ export function prepareRoomModels(
     storedDevices.map((device) => [device.key, device]),
   );
   const roomModels = snapshot.device_models.filter((model) => {
-    if (model.planning_service === "pool") return false;
+    if (model.planning_role !== "controllable" || model.planning_service === "pool") return false;
     if (model.control_type === "setpoint") return true;
     if (model.control_type !== "switch_schedule") return false;
     const stored = storedByKey.get(model.key);
@@ -141,12 +143,19 @@ export function prepareRoomModels(
     const fitted = trainedByRoom.get(room.key);
     const ratedPowerW = room.models.reduce((sum, model) => sum + Number(model.active_power_w ?? 0), 0);
     const historical = starts.map((_start, i) => room.models.reduce((sum, m) => sum + m.forecast_w_by_slot[i], 0));
-    const attempt = fitted?.last_fit_attempt as { issues?: string[] } | undefined;
+    const attempt = fitted?.last_fit_attempt as { issues?: string[]; passive_heat?: { status?: string } } | undefined;
+    const passive = readPassiveHeatModel(fitted?.passive_heat);
+    if (!passive && attempt?.passive_heat?.status === "awaiting_validation") {
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        "room_passive_heat_learning", room.key, `${room.name}: monitored appliance heat is still being learned.`,
+        "The room forecast uses the regular heater and temperature model until appliance heat is validated.")]);
+    }
     if (attempt?.issues?.length) snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
       "room_model_quality", room.key, `${room.name}: ${attempt.issues.join(", ")}.`,
       "The latest usable thermal parameters remain available; comfort service continues.")]);
     prepared.push({ key: room.key, name: room.name, device_keys: room.models.map(m => m.key),
       model: readThermalModel(fitted), rated_power_w: ratedPowerW,
+      ...(passive ? { passive_heat: passive } : {}),
       maximum_power_w_by_slot: summerLockout.map(locked => locked ? 0 : Math.max(ratedPowerW, ...historical)) });
   }
   return { snapshot, rooms: prepared };
@@ -163,7 +172,11 @@ export async function captureRoomPlanningState(
 ): Promise<OptimisationSnapshot> {
   if (rooms.length === 0) return { ...snapshot, thermal_zones: [] };
   const now = Date.now();
-  const [latestResult, scheduleResult, recentResult] = await Promise.all([
+  const captured = Date.parse(snapshot.captured_at);
+  const passiveEnd = Math.floor(captured / SLOT_MS) * SLOT_MS;
+  const passiveStart = passiveEnd - RECENT_HEAT_HOURS * 3_600_000;
+  const passiveRooms = rooms.filter(room => room.passive_heat);
+  const [latestResult, scheduleResult, recentResult, passiveSources] = await Promise.all([
     // Available observations remain evidence independently of their report age.
     supabase.rpc("get_energy_latest_room_temperatures", {
       p_customer_id: customerId, p_home_id: homeId, p_from: "1970-01-01T00:00:00.000Z",
@@ -179,6 +192,13 @@ export async function captureRoomPlanningState(
         p_from: new Date(now - RECENT_HEAT_HOURS * 3_600_000).toISOString(), p_to: new Date(now).toISOString(),
       })
       : Promise.resolve({ data: [], error: null }),
+    passiveRooms.length
+      ? readRoomPassiveHeat(supabase, customerId, homeId, passiveRooms.map(room => room.key),
+        new Date(passiveStart).toISOString(), new Date(passiveEnd).toISOString()).catch(error => {
+          console.error("[ENERGY-OPTIMISATION] monitored room heat unavailable", error);
+          return null;
+        })
+      : null,
   ]);
   for (const result of [latestResult, scheduleResult, recentResult]) {
     if (result.error) {
@@ -229,7 +249,27 @@ export async function captureRoomPlanningState(
       { rooms: group.map(room => room.key).sort().join(","), quarters: Math.max(...group.map(room => room.missing.length)) })]);
   }
   const recent = new Map(rooms.map(room => [room.key, quarters.map(start => heatByStart.get(room.key)?.get(start) ?? 0)]));
-  const { zones, warnings } = roomPlanningZones(snapshot, rooms, { schedules, temperature_c: temperature, recent_heat_w: recent });
+  const passiveRates = new Map<string, number[]>();
+  for (const room of passiveRooms) {
+    const source = passiveSources?.get(room.key);
+    const model = room.passive_heat!;
+    if (passiveSources && source?.device_key !== model.device_key) continue;
+    const starts = quarters.map((_, i) => passiveStart + i * SLOT_MS);
+    const missing = starts.filter(start => !source?.watts.has(start));
+    if (missing.length) {
+      const late = missing[0] >= passiveEnd - LATE_HEAT_QUARTERS * SLOT_MS;
+      snapshot.planning_warnings = mergePlanningWarnings(snapshot.planning_warnings, [planningWarning(
+        late ? "room_heat_history_late" : "room_passive_heat_history_missing", room.key,
+        late ? `${room.name}: the latest monitored appliance readings have not arrived yet.` :
+          `${room.name}: some monitored appliance readings are missing.`,
+        "The forecast only counts appliance heat supported by received readings.", { quarters: missing.length })]);
+    }
+    if (source) passiveRates.set(room.key, passiveHeatRates(model, starts.map(start => source.watts.get(start) ?? 0),
+      passiveEnd, captured, snapshot.slots.map(slot => slot.start)));
+  }
+  const { zones, warnings } = roomPlanningZones(snapshot, rooms, {
+    schedules, temperature_c: temperature, recent_heat_w: recent, passive_heat_c_per_h: passiveRates,
+  });
   // Silent degradation is worse than none, so what was skipped is said out loud.
   if (warnings.length > 0) {
     console.info(`[ENERGY-OPTIMISATION] ${warnings.length} of ${rooms.length} rooms not comfort-forecast: ` +

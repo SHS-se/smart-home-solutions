@@ -1,6 +1,6 @@
 /** Cached forecast products only. Device evidence is captured separately from the model store. */
 import { z } from "zod";
-import type { ThermalZoneModel } from "./planner/models/room/thermal.ts";
+import type { PassiveRoomHeat, ThermalZoneModel } from "./planner/models/room/thermal.ts";
 import { mergePlanningWarnings } from "./planner/planning-warnings.ts";
 import type {
   OptimisationPlan,
@@ -19,6 +19,7 @@ export interface PreparedRoom {
   name: string;
   device_keys: string[];
   model: ThermalZoneModel | null;
+  passive_heat?: PassiveRoomHeat;
   rated_power_w: number;
   maximum_power_w_by_slot: number[];
 }

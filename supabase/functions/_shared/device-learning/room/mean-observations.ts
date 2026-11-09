@@ -39,8 +39,8 @@ export type RoomMeanFitResult = ThermalFitResult & { learning_evidence?: RoomLea
 const finite = (v: number | null): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** Exact endpoint and interval-mean coefficients of T'=-kT+gD+F, D'=(P-D)/lag. */
-function observation(k: number, lag: number) {
-  const a = Math.exp(-k * H), effect = -Math.expm1(-k * H) / k;
+export function roomMeanObservation(k: number, lag: number) {
+  const a = Math.exp(-k * H), effect = k === 0 ? H : -Math.expm1(-k * H) / k;
   const E = effect / H;
   // Series avoids cancellation as k tends to zero; this is numerical accuracy,
   // not a bound on admissible thermal parameters.
@@ -55,13 +55,20 @@ function observation(k: number, lag: number) {
     : (lag * -Math.expm1(-r * H) - effect) / (H * (k - r));
   return { a, effect, E, V, C, B, U };
 }
+/** Heating input's contribution to the change between adjacent quarter means. */
+export function roomMeanHeat(op: ReturnType<typeof roomMeanObservation>, memory: number, current: number, next: number): number {
+  const { E, B, a, U, C, effect, V } = op;
+  return (E * B - a * U + U * C) * memory +
+    (E * (effect - B) - a * (V - U) + U * (1 - C)) * current + (V - U) * next;
+}
+
 interface Term { index: number; segment: number; x: number[]; z: number; y: number; delivered: number }
-interface Design { terms: Term[]; op: ReturnType<typeof observation> }
+interface Design { terms: Term[]; op: ReturnType<typeof roomMeanObservation> }
 interface Fit { k: number; lag: number; solar: boolean; beta: number[];
   initial: Map<number, number>; mse: number; n: number; design: Design }
 
 function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean): Design {
-  const op = observation(k, lag), { a, effect, E, V, C, B, U } = op;
+  const op = roomMeanObservation(k, lag), { a, effect, E, V, C, B, U } = op;
   const L = E * effect - a * V;
   const deliveredCoefficient = E * B - a * U + U * C;
   let delivered = 0, initialShare = 1, segment = 0;
@@ -74,8 +81,7 @@ function design(rows: RoomMeanQuarter[], k: number, lag: number, solar: boolean)
       finite(q.room_c) && finite(next.room_c) && !q.cooling && !next.cooling &&
       finite(q.house_c) && finite(next.house_c) && finite(q.outdoor_c) && finite(next.outdoor_c) &&
       (!solar || (finite(q.solar_w_per_m2) && finite(next.solar_w_per_m2)))) {
-      const heat = deliveredCoefficient * delivered +
-        (E * (effect - B) - a * (V - U) + U * (1 - C)) * q.heat_w! + (V - U) * next.heat_w!;
+      const heat = roomMeanHeat(op, delivered, q.heat_w!, next.heat_w!);
       terms.push({ index: i, segment, delivered, z: deliveredCoefficient * initialShare,
         // k = house + outdoor exchange. At fixed k, the outdoor share stays
         // linear: k*house + outdoor*(outdoorTemperature-houseTemperature).

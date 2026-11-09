@@ -11,7 +11,7 @@ export interface PlanningWarning {
 
 const ROUTINE_LEARNING_CODES = new Set([
   "profile_estimated", "device_history_estimated", "running_power_unknown",
-  "pool_model_quality", "room_model_quality", "room_estimate", "room_forecast_estimate",
+  "pool_model_quality", "room_model_quality", "room_passive_heat_learning", "room_estimate", "room_forecast_estimate",
   "limited_idle_observations", "limited_response_observations",
   "pool_empirical_service", "pool_history_late", "room_heat_history_late", "boiler_power_estimated", "baseline_ev_load_balanced",
 ]);

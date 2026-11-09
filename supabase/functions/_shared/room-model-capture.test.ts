@@ -1,7 +1,8 @@
-import { assertEquals } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { createClient } from "npm:@supabase/supabase-js@2.90.1";
 import { cpuPlanningSource } from "../../../tests/planner-handler-cpu.fixture.ts";
 import { prepareRoomModels, captureRoomPlanningState, type RoomDeviceMapping } from "./room-model-capture.ts";
+import { prepareRoomServices } from "./rules-room-services.ts";
 import type { DeviceModelBundle } from "./device-model-store.ts";
 
 function syntheticCapture() {
@@ -11,7 +12,7 @@ function syntheticCapture() {
     control_type_override: "setpoint", room: { key: room.key, name: room.name } }));
   const bundle: DeviceModelBundle = { rooms: rooms.filter(room => room.model).map((room, index) => ({
     ...room.model, model_revision: index + 1, room_key: room.key, trained: true,
-  })).reverse(), pool: null, revisions: { rooms: {}, pool: null } };
+  })).reverse(), pool: null, devices: [], revisions: { rooms: {}, pool: null } };
   snapshot.thermal_zones = [];
   return { snapshot, mappings, bundle };
 }
@@ -88,4 +89,64 @@ Deno.test("late or missing room heat is counted as none and said out loud, never
   assertEquals(await run(quarters.slice(0, -1)), ["room_heat_history_late"]);
   assertEquals(await run(quarters.filter((_, i) => i !== 40)), ["room_heat_history_missing"]);
   assertEquals(await run([]), [], "a room that never reports heat has no metering to wait for");
+});
+
+Deno.test("monitored heat warms the native room projection without creating appliance commands", async () => {
+  const { snapshot, mappings, bundle } = syntheticCapture();
+  const mapping = mappings[0];
+  const key = mapping.room!.key;
+  const source = "synthetic-observed-appliance";
+  const heater = snapshot.device_models.find(device => device.key === mapping.key)!;
+  const monitor = { ...heater, key: source, planning_role: "base_load" as const };
+  snapshot.device_models = [heater, monitor];
+  snapshot.slots = snapshot.slots.slice(0, 8);
+  snapshot.house_temperature_c = snapshot.house_temperature_c!.slice(0, 8);
+  snapshot.outdoor_temperature_c = snapshot.outdoor_temperature_c!.slice(0, 8);
+  snapshot.solar_irradiance_w_per_m2 = snapshot.solar_irradiance_w_per_m2?.slice(0, 8);
+  snapshot.captured_at = snapshot.slots[0].start;
+  bundle.rooms.find(room => room.room_key === key)!.passive_heat = {
+    device_key: source, direct_c_per_wh: .001, delayed_c_per_wh: .002, lag_h: 1,
+  };
+  const prepared = prepareRoomModels(snapshot, [mapping, { ...mapping, key: source }], bundle);
+  const start = Date.parse(snapshot.captured_at);
+  const quarters = Array.from({ length: 96 }, (_, i) => [start - (96 - i) * 900_000, i > 91 ? 700 : 0]);
+  const capture = (series: number[][], device = source) => captureRoomPlanningState(createClient(
+    "http://localhost:54321", "synthetic-service", {
+      auth: { persistSession: false }, global: { fetch: (url) => {
+        const endpoint = new URL(String(url)).pathname.split("/").at(-1);
+        if (endpoint === "get_energy_latest_room_temperatures") return Promise.resolve(Response.json(
+          [{ room_key: key, room_temperature_c: 21 }]));
+        if (endpoint === "energy_optimisation_comfort_schedules") return Promise.resolve(Response.json(
+          [{ room_key: key, weekday_modes: Array(96).fill("high-temp"), weekend_modes: Array(96).fill("high-temp"),
+            off_temperature_c: 15, low_temperature_c: 16, high_temperature_c: 17 }]));
+        if (endpoint === "get_energy_thermal_training_quarters") return Promise.resolve(Response.json([]));
+        if (endpoint === "get_energy_room_passive_heat") return Promise.resolve(Response.json(
+          [{ room_key: key, device_key: device, quarters: series }]));
+        throw new Error(`Unexpected capture dependency ${endpoint}`);
+      } },
+    },
+  ), "synthetic-customer", "synthetic-home", structuredClone(prepared.snapshot), prepared.rooms);
+
+  const complete = await capture(quarters);
+  const late = await capture(quarters.slice(0, -1));
+  const gap = await capture(quarters.filter((_, i) => i !== 92));
+  const unavailable = await capture([]);
+  const wrongOwner = await capture(quarters, "unrelated-meter");
+  const zone = complete.thermal_zones![0];
+  const rate = zone.passive_heat_c_per_h!;
+  assertEquals(zone.device_keys, [heater.key]);
+  assert(rate[0] > rate[1] && rate[1] > 0);
+  assert(late.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
+  assertEquals(late.planning_warnings?.some(w => w.code === "room_heat_history_late"), true);
+  assert(gap.thermal_zones![0].passive_heat_c_per_h![0] < rate[0]);
+  assertEquals(gap.planning_warnings?.some(w => w.code === "room_passive_heat_history_missing"), true);
+  assertEquals(unavailable.thermal_zones![0].passive_heat_c_per_h, Array(8).fill(0));
+  assertEquals(unavailable.thermal_zones![0].model, zone.model);
+  assertEquals(wrongOwner.thermal_zones![0].passive_heat_c_per_h, undefined);
+  assertEquals(complete.slots, wrongOwner.slots, "electricity is still accounted for in the original base load");
+  const observed = prepareRoomServices(complete);
+  const ordinary = prepareRoomServices(wrongOwner);
+  assert(observed.temperature[key][0]! > ordinary.temperature[key][0]!);
+  assertEquals(observed.commands[source], undefined);
+  assertEquals(observed.power[source], undefined);
 });

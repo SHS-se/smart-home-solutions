@@ -261,6 +261,8 @@ export interface ThermalZonePlanningInput {
   start_temperature_c: number | null;
   /** Heater heat still on its way through the room's delay at the start, W. */
   start_delivered_w?: number | null;
+  /** Remaining observed appliance heat, separate from heater power and base electricity. */
+  passive_heat_c_per_h?: number[];
   rated_power_w: number;
   comfort_min_c: number[];
   target_c: number[];
