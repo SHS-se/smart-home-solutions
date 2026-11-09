@@ -1,7 +1,7 @@
 //! Energy-preserving charging moves scored with the complete household plan.
 use crate::commitments;
 
-use crate::{physics, Command, Problem, Work};
+use crate::{physics, Command, Operation, Problem, Work};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Packing {
@@ -63,18 +63,24 @@ impl EvStretch {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BatteryHeadroom {
+    Fixed,
+    Reallocate,
+}
+
 /// Stretch the session most reliant on battery support into its neighboring
-/// quarters. Keep its energy and the existing battery commands while looking
-/// for a lower native current that fits directly under the grid limit.
+/// quarters. Reallocation may use space occupied by an unheld grid charge.
 pub(crate) fn stretch_ev(
     p: &Problem,
     commands: &[Command],
     q: &[crate::Quarter],
+    headroom: BatteryHeadroom,
     work: &mut Work,
 ) -> Option<EvStretch> {
     const MAX_LOCAL_QUARTERS: usize = 32;
     let charger = p.charger.as_ref()?;
-    p.battery.as_ref()?;
+    let battery = p.battery.as_ref()?;
     let n = commands.len();
     if !work.spend(n as u64 * 16 + (MAX_LOCAL_QUARTERS as u64).pow(3) * 4) {
         return None;
@@ -86,6 +92,19 @@ pub(crate) fn stretch_ev(
     };
     let peak_without_discharge =
         |i: usize| q[i].net_w + q[i].discharge_w + (q[i].pool_command_w - q[i].pool_w).max(0.0);
+    let stretch_peak = |i: usize| {
+        let peak = peak_without_discharge(i);
+        let movable_charge = headroom == BatteryHeadroom::Reallocate
+            && commands[i].battery == Operation::GridCharge
+            && !commitments::hold(p, i).has(commitments::Owner::Battery);
+        if movable_charge || q[i].discharge_w > 0.0 {
+            // Switching off conversion can expose the inverter's idle draw.
+            let charge = if movable_charge { q[i].charge_w } else { 0.0 };
+            peak - charge + (battery.conversion.idle_loss_w - q[i].battery_idle_w).max(0.0)
+        } else {
+            peak
+        }
+    };
     let mut source = None;
     let mut i = 0;
     while i < n {
@@ -148,7 +167,7 @@ pub(crate) fn stretch_ev(
                     p.slots[i]
                         .ev_current_ceiling_a
                         .is_none_or(|cap| amps(j) <= cap)
-                        && peak_without_discharge(i) - q[i].ev_w + f64::from(amps(j)) * watt_per_amp
+                        && stretch_peak(i) - q[i].ev_w + f64::from(amps(j)) * watt_per_amp
                             <= p.limits.import_w + 1e-7
                 }) {
                     continue;
@@ -952,7 +971,6 @@ fn battery_trials(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Operation, Work};
     fn idle() -> Command {
         Command {
             pool_on: false,
@@ -1089,8 +1107,8 @@ mod tests {
         }
         let q = physics::projection(&p, &before).unwrap();
         assert!(q[3..5].iter().all(|q| q.discharge_w > 0.0));
-        let stretch =
-            stretch_ev(&p, &before, &q, &mut work()).expect("lower current can use four quarters");
+        let stretch = stretch_ev(&p, &before, &q, BatteryHeadroom::Fixed, &mut work())
+            .expect("lower current can use four quarters");
         let commands = stretch.apply(&before);
         let after = physics::projection(&p, &commands).unwrap();
         assert!(stretch.needs_no_discharge(&p, &after));

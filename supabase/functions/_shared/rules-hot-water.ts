@@ -9,29 +9,41 @@ import { mergePlanningWarnings, planningWarning } from './planner/planning-warni
 
 type Selection = Extract<SolveOutcome, { kind: "selected" }>["selection"];
 
-/** Complete both bounded native finalists before selecting published commands.
+/** Complete the bounded native shortlist before selecting published commands.
  * A failed optional challenger cannot discard an already valid household plan. */
 export function completeRulesCandidates(core: Pick<ReturnType<typeof createWasmPlanner>, "complete">,
   input: PreparedRulesInput, native: Selection): { input: PreparedRulesInput; selection: Selection } {
-  const alternative = native.charging_alternative;
-  if (!alternative) return addHotWater(core, input, native);
-  const other = { ...native, commands: alternative.commands, quarters: alternative.quarters,
-    account: alternative.account, charging_alternative: null, economic: [], runs: [], witness_coverage: [] };
-  const [ordinary, block] = alternative.role === "ordinary" ? [other, native] : [native, other];
-  const incumbent = addHotWater(core, input, ordinary);
-  try {
-    const candidate = addHotWater(core, input, block, { fallback: false });
-    const waterNoWorse = Object.entries(incumbent.input.boiler_shortfall_minutes).every(([day, minutes]) =>
-      Object.prototype.hasOwnProperty.call(candidate.input.boiler_shortfall_minutes, day) && candidate.input.boiler_shortfall_minutes[day] <= minutes);
-    return waterNoWorse && candidate.selection.account.score_sek > incumbent.selection.account.score_sek + native.minimum_gain_sek
-      ? candidate : incumbent;
-  } catch (error) {
-    incumbent.input.snapshot = { ...incumbent.input.snapshot, planning_warnings: mergePlanningWarnings(
-      incumbent.input.snapshot.planning_warnings, [planningWarning("charging_alternative_unavailable", "charging",
-        `The optional charging-block comparison could not complete: ${String(error)}`,
-        "The completed household plan remains available and planning continues.")]) };
-    return incumbent;
+  const candidates = new Map<Selection["charging_role"], Selection>([[native.charging_role, native]]);
+  for (const { role, commands, quarters, account } of native.charging_alternatives) {
+    candidates.set(role, { ...native, commands, quarters, account, charging_role: role,
+      charging_alternatives: [], economic: [], runs: [], witness_coverage: [] });
   }
+  const ordinary = candidates.get("ordinary");
+  if (!ordinary) throw new Error("Native charging shortlist requires the ordinary candidate");
+  const incumbent = addHotWater(core, input, ordinary);
+  let best = incumbent;
+  const failures: string[] = [];
+  for (const role of ["block", "refinement"] as const) {
+    const alternative = candidates.get(role);
+    if (!alternative) continue;
+    try {
+      const candidate = addHotWater(core, input, alternative, { fallback: false });
+      const waterNoWorse = Object.entries(incumbent.input.boiler_shortfall_minutes).every(([day, minutes]) =>
+        Object.prototype.hasOwnProperty.call(candidate.input.boiler_shortfall_minutes, day) && candidate.input.boiler_shortfall_minutes[day] <= minutes);
+      if (waterNoWorse && candidate.selection.account.score_sek > best.selection.account.score_sek + native.minimum_gain_sek) {
+        best = candidate;
+      }
+    } catch (error) {
+      failures.push(String(error));
+    }
+  }
+  if (failures.length) {
+    best.input = { ...best.input, snapshot: { ...best.input.snapshot, planning_warnings: mergePlanningWarnings(
+      best.input.snapshot.planning_warnings, [planningWarning("charging_alternative_unavailable", "charging",
+        `An optional charging comparison could not complete: ${failures.join(", ")}`,
+        "The completed household plan remains available and planning continues.")]) } };
+  }
+  return best;
 }
 
 /** A finite allowance backed by otherwise exported solar at a future full

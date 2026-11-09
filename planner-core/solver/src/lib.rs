@@ -249,15 +249,23 @@ pub struct Selection {
     pub economic: Vec<EconomicHit>,
     pub runs: Vec<RunPurpose>,
     pub work: Work,
-    pub charging_alternative: Option<ChargingAlternative>,
+    pub charging_role: ChargingRole,
+    pub charging_alternatives: Vec<ChargingAlternative>,
     pub minimum_gain_sek: f64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct ChargingAlternative {
-    pub role: &'static str,
+    pub role: ChargingRole,
     pub commands: Vec<Command>,
     pub quarters: Vec<Quarter>,
     pub account: Account,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChargingRole {
+    Ordinary,
+    Block,
+    Refinement,
 }
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

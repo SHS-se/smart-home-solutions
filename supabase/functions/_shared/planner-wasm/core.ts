@@ -68,6 +68,7 @@ const account = z.object({
         credit_sek: z.number().finite(),
         contributions: z.number().finite().array().array(),
       });
+const chargingRole = z.enum(["ordinary", "block", "refinement"]);
 
 export const solveOutcome = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("failed"), issue: z.string() }),
@@ -77,7 +78,8 @@ export const solveOutcome = z.discriminatedUnion("kind", [
       commands: command.array(),
       quarters: quarter.array(),
       account,
-      charging_alternative: z.object({ role: z.enum(["ordinary", "block"]), commands: command.array(), quarters: quarter.array(), account }).nullable(),
+      charging_role: chargingRole,
+      charging_alternatives: z.object({ role: chargingRole, commands: command.array(), quarters: quarter.array(), account }).array().max(2),
       minimum_gain_sek: z.number().finite().nonnegative(),
       work_used: z.number().int().nonnegative(),
       evaluations: z.number().int().nonnegative(),
@@ -280,13 +282,13 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
       const { outcome } = result;
       if (outcome.kind === "selected") {
         const s = outcome.selection;
+        const roles = [s.charging_role, ...s.charging_alternatives.map(c => c.role)];
         if (
-          [s, ...(s.charging_alternative ? [s.charging_alternative] : [])].some(c =>
+          !roles.includes("ordinary") || new Set(roles).size !== roles.length ||
+          [s, ...s.charging_alternatives].some(c =>
             c.commands.length !== problem.slots.length || c.quarters.length !== problem.slots.length ||
-            c.account.contributions.length !== problem.slots.length) ||
-          s.commands.length !== problem.slots.length ||
-          s.quarters.length !== problem.slots.length ||
-          s.account.contributions.length !== problem.slots.length ||
+            c.account.contributions.length !== problem.slots.length ||
+            c.account.contributions.some(row => row.length !== problem.rules.length)) ||
           s.work_used > problem.work_grant || s.work.used !== s.work_used ||
           s.work.limit !== problem.work_grant || s.work.reserved !== 0 ||
           s.work.evaluations !== s.evaluations ||
@@ -295,9 +297,6 @@ function createPlanner(module: WebAssembly.Module, reuseProjections: boolean) {
           ) ||
           s.runs.some((run) =>
             run.from >= run.to || run.to > problem.slots.length
-          ) ||
-          s.account.contributions.some((row) =>
-            row.length !== problem.rules.length
           )
         ) {
           throw new Error(

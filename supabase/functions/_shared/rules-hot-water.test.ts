@@ -25,13 +25,33 @@ Deno.test('an unexecutable charging challenger leaves the completed ordinary pla
     const completed = core.complete(problem, commands);
     if (++attempts === 2) return { ...completed, outcome: { kind: 'failed', issue: 'synthetic rated reservation conflict' } };
     return completed;
-  } }, input, { ...outcome.selection, charging_alternative: {
+  } }, input, { ...outcome.selection, charging_role: 'block', charging_alternatives: [{
     role: 'ordinary', commands: outcome.selection.commands, quarters: outcome.selection.quarters, account: outcome.selection.account,
-  } });
+  }] });
   assertEquals(attempts, 2);
   assertEquals(result.selection.commands, ordinary.selection.commands);
   assertEquals(result.selection.account, ordinary.selection.account);
   assert(result.input.snapshot.planning_warnings?.some(w => w.code === 'charging_alternative_unavailable'));
+});
+Deno.test('the original charging block can beat its refinement after water completion', () => {
+  const input = cpuPlanningInput();
+  const outcome = core.solve(input.problem).outcome;
+  assert(outcome.kind === 'selected');
+  const { commands, quarters, account } = outcome.selection;
+  const completedScores = [0, 2, 1];
+  let calls = 0;
+  const result = completeRulesCandidates({ complete(problem, candidate) {
+    const completed = core.complete(problem, candidate);
+    assert(completed.outcome.kind === 'projected');
+    return { ...completed, outcome: { ...completed.outcome,
+      account: { ...completed.outcome.account, score_sek: completedScores[calls++] } } };
+  } }, input, { ...outcome.selection, charging_role: 'refinement', charging_alternatives: [
+    { role: 'ordinary', commands, quarters, account },
+    { role: 'block', commands, quarters, account },
+  ] });
+  assertEquals(calls, 3);
+  assertEquals(result.selection.charging_role, 'block');
+  assertEquals(result.selection.account.score_sek, 2);
 });
 Deno.test('published binary commands and watts use the same selected water schedule', () => {
   const s = hotWaterSnapshot(); s.captured_at = s.slots[0].start;

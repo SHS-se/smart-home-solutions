@@ -1,3 +1,4 @@
+use crate::charging_blocks::BatteryHeadroom;
 use crate::opportunity::Opportunity;
 use crate::physics::{self, State};
 use crate::policy::{self, Index};
@@ -897,8 +898,13 @@ fn charging_blocks(
     }
     let trials =
         crate::charging_blocks::proposals(p, &ordinary.commands, &ordinary.quarters, work)?;
-    let stretch =
-        crate::charging_blocks::stretch_ev(p, &ordinary.commands, &ordinary.quarters, work);
+    let stretch = crate::charging_blocks::stretch_ev(
+        p,
+        &ordinary.commands,
+        &ordinary.quarters,
+        BatteryHeadroom::Fixed,
+        work,
+    );
     let mut alternative: Option<Candidate> = None;
     let mut response = None;
     let mut fresh_tried = false;
@@ -984,6 +990,42 @@ fn charging_blocks(
         }
     }
     alternative
+}
+
+/// Compare a stretch within existing headroom with one that can move grid
+/// purchases. Only the latter gets a fresh battery allocation.
+fn refine_charging(
+    scorer: &mut CandidateScorer,
+    seed: &Candidate,
+    work: &mut Work,
+) -> Option<Candidate> {
+    let p = scorer.problem;
+    let mut best = None;
+    for headroom in [BatteryHeadroom::Fixed, BatteryHeadroom::Reallocate] {
+        let Some(stretch) =
+            crate::charging_blocks::stretch_ev(p, &seed.commands, &seed.quarters, headroom, work)
+        else {
+            continue;
+        };
+        let mut commands = stretch.apply(&seed.commands);
+        if headroom == BatteryHeadroom::Reallocate {
+            let Some(allocation) =
+                battery_schedule::allocate(p, scorer.index, &commands, &seed.quarters, work)
+            else {
+                continue;
+            };
+            commands = allocation.commands;
+        }
+        work.charging_block_trials += 1;
+        let Ok(candidate) = scorer.score(commands, work, Some(seed)) else {
+            continue;
+        };
+        if candidate.better(best.as_ref().unwrap_or(seed)) {
+            best = Some(candidate);
+        }
+    }
+    work.charging_block_improvements += u64::from(best.is_some());
+    best
 }
 
 pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
@@ -1113,30 +1155,38 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         report = None;
     }
     let challenger = charging_blocks(&mut scorer, &ordinary, &mut work);
-    let (best, charging_alternative, report) = match challenger.filter(|_| work.spend(n * unit * 5))
-    {
-        // One complete additional projection plus final accounting is prepaid.
-        Some(block) if block.better(&ordinary) => (
-            block,
-            Some(ChargingAlternative {
-                role: "ordinary",
-                account: policy::account(p, &ordinary.quarters),
-                commands: ordinary.commands,
-                quarters: ordinary.quarters,
-            }),
-            None,
-        ),
-        Some(block) => (
-            ordinary,
-            Some(ChargingAlternative {
-                role: "block",
-                account: policy::account(p, &block.quarters),
-                commands: block.commands,
-                quarters: block.quarters,
-            }),
-            report,
-        ),
-        None => (ordinary, None, report),
+    let mut candidates = vec![(ChargingRole::Ordinary, ordinary)];
+    let mut leader = 0;
+    // Prepay each alternate's complete account and projection in assembly.
+    if let Some(block) = challenger.filter(|_| work.spend(n * unit * 5)) {
+        if block.better(&candidates[leader].1) {
+            leader = 1;
+        }
+        candidates.push((ChargingRole::Block, block));
+    }
+    if p.recipe.repair_trials > 0 {
+        let seed = &candidates[leader].1;
+        if let Some(refined) =
+            refine_charging(&mut scorer, seed, &mut work).filter(|_| work.spend(n * unit * 5))
+        {
+            leader = candidates.len();
+            candidates.push((ChargingRole::Refinement, refined));
+        }
+    }
+    let (charging_role, best) = candidates.remove(leader);
+    let charging_alternatives = candidates
+        .into_iter()
+        .map(|(role, candidate)| ChargingAlternative {
+            role,
+            account: policy::account(p, &candidate.quarters),
+            commands: candidate.commands,
+            quarters: candidate.quarters,
+        })
+        .collect();
+    let report = if charging_role == ChargingRole::Ordinary {
+        report
+    } else {
+        None
     };
     work.reserved -= held;
     let report = report.unwrap_or_else(|| {
@@ -1186,7 +1236,8 @@ pub(crate) fn solve(p: &Problem) -> Result<Selection, String> {
         economic: report.economic,
         runs: run_purposes,
         work,
-        charging_alternative,
+        charging_role,
+        charging_alternatives,
         minimum_gain_sek: policy::MIN_GAIN_SEK,
     })
 }
@@ -1270,6 +1321,74 @@ mod move_resize_tests {
             discharge_limit_w: 4000.0,
         }
     }
+    #[test]
+    fn winning_block_opens_a_stretch_that_the_ordinary_schedule_cannot_make() {
+        // Synthetic house: the first EV block is hemmed in by full-rate
+        // battery purchases. A cheaper block opens an earlier quarter.
+        let mut p = witnesses::tests::problem(12);
+        p.work_grant = 1_520_000_000;
+        p.limits.import_w = 6000.0;
+        p.limits.battery_export_enabled = false;
+        p.limits.wear_per_kwh = 0.25;
+        p.battery.as_mut().unwrap().capacity_kwh = 8.0;
+        p.battery.as_mut().unwrap().charge_efficiency = 0.9;
+        p.end_credit.reference_sek_per_kwh = 3.0;
+        p.end_credit.battery = Some(StoreTerm {
+            cap: 8.0,
+            grid_kwh_per_unit: 1.0,
+        });
+        for (i, slot) in p.slots.iter_mut().enumerate() {
+            slot.base_w = 3500.0;
+            slot.import_price = if (2..=4).contains(&i) { 0.8 } else { 1.2 };
+        }
+        let ev = Command {
+            ev_amps: 14,
+            battery: Operation::ShaveImport,
+            ..idle()
+        };
+        let buy = Command {
+            battery: Operation::GridCharge,
+            charge_limit_w: 2500.0,
+            discharge_limit_w: 0.0,
+            ..idle()
+        };
+        let mut ordinary = vec![idle(); p.slots.len()];
+        ordinary[5] = buy.clone();
+        ordinary[6..8].fill(ev.clone());
+        ordinary[8..].fill(buy.clone());
+        let mut block = ordinary.clone();
+        block[3..5].fill(ev);
+        block[6..8].fill(buy);
+        let mut work = work(&p);
+        let index = policy::index(&p, &mut work).unwrap();
+        let mut scorer = CandidateScorer::new(&p, &index);
+        let ordinary = scorer.score(ordinary, &mut work, None).ok().unwrap();
+        assert!(crate::charging_blocks::stretch_ev(
+            &p,
+            &ordinary.commands,
+            &ordinary.quarters,
+            BatteryHeadroom::Fixed,
+            &mut work,
+        )
+        .is_none());
+        let block = scorer.score(block, &mut work, None).ok().unwrap();
+        assert!(block.better(&ordinary));
+        assert!(block.quarters[3..5].iter().all(|q| q.discharge_w > 0.0));
+        let refined = refine_charging(&mut scorer, &block, &mut work)
+            .expect("the cheaper block can spread its charge into newly open headroom");
+        assert!(refined.commands[2].ev_amps > 0);
+        assert!(refined.quarters[2..5].iter().all(|q| q.discharge_w == 0.0));
+        assert_eq!(
+            refined.quarters.last().unwrap().ev_kwh,
+            block.quarters.last().unwrap().ev_kwh
+        );
+        assert_eq!(
+            refined.quarters.last().unwrap().battery_kwh,
+            block.quarters.last().unwrap().battery_kwh
+        );
+        assert!(refined.better(&block));
+    }
+
     #[test]
     fn packing_preserves_energy_and_partitions_at_commitments_and_partial_quarters() {
         let mut p = witnesses::tests::problem(8);
