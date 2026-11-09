@@ -30,7 +30,6 @@ serve(async (request: Request): Promise<Response> => {
   const url = Deno.env.get("SUPABASE_URL"), serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const githubToken = Deno.env.get("PLANNER_BENCH_GITHUB_TOKEN");
   if (!url || !serviceKey) return json({ error: "Server configuration error" }, 500);
-  if (!githubToken) return json({ error: "not_configured", message: "PLANNER_BENCH_GITHUB_TOKEN is not set in this project." }, 503);
 
   const token = (request.headers.get("Authorization") ?? "").replace(/^bearer\s+/i, "").trim();
   if (!token) return json({ error: "Unauthorized" }, 401);
@@ -54,6 +53,19 @@ serve(async (request: Request): Promise<Response> => {
   } catch {
     return json({ error: "invalid_body" }, 400);
   }
+
+  if (url === "https://vxqpgbzseckgceopitpm.supabase.co") {
+    const { data: edgeActive, error } = await admin.rpc("bench_edge_active");
+    if (error) return json({ error: "bench_mode_unavailable" }, 503);
+    if (edgeActive === true) {
+      const response = await fetch(`${url}/functions/v1/planner-bench-edge`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return new Response(response.body, { status: response.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+  }
+  if (!githubToken) return json({ error: "not_configured", message: "PLANNER_BENCH_GITHUB_TOKEN is not set in this project." }, 503);
 
   if (body?.action === "status") {
     const runs = await fetch(`https://api.github.com/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}/runs?branch=dev&per_page=1`, { headers: github });

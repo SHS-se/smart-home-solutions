@@ -85,6 +85,10 @@ export function classify(root: string, changed: readonly string[] | "all"): Chan
     if (name === "energy-market-archive" || name === "energy-market-quality") {
       graph.add("scripts/deploy-market-archive.ts");
     }
+    if (name === "planner-bench-edge" || name === "planner-bench-score") {
+      graph.add("bench/edge-schema.sql");
+      graph.add("bench/edge-release.ts");
+    }
     return any(f => (f.startsWith(dir) && !isTest(f) && !isDoc(f)) || (graph.has(f) && !isTest(f)));
   });
 

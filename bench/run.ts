@@ -51,17 +51,15 @@
 // process, so versions never share module state and one version crashing
 // cannot take the others with it.
 
-import { ADAPTER_VERSION, loadPlanner } from "./adapter.ts";
-import { canonicalJson, caseTargets, hasMeasuredOutcome, loadCase, sha256, type BenchCase } from "../src/lib/planner-bench/case.ts";
-import { caseFromReplay, REPLAY_FORMAT } from "../src/lib/planner-bench/convert-replay.ts";
+import { loadPlanner } from "./adapter.ts";
+import { benchInputHash } from "./execution.ts";
+import { hasMeasuredOutcome, loadCase } from "../src/lib/planner-bench/case.ts";
 import { evaluate } from "../src/lib/planner-bench/evaluate.ts";
-import { HOUSEHOLD, caseHousehold } from "../src/lib/planner-bench/household.ts";
+import { caseHousehold } from "../src/lib/planner-bench/household.ts";
 import { plannerRuleInputsCurrent } from "../src/lib/planner-bench/score.ts";
-import { homeComfortTargets } from "./comfort.ts";
-import { homeImportLimitW } from "./grid-limit.ts";
 import { BASE_LANE, laneParts, toldCase, type LaneId } from "../src/lib/planner-bench/lanes.ts";
 import { completeScores, rescoreExisting, rescoreMarkdown, RescoreIncompleteError, type RescoreReport, type EvaluationScope } from "./rescore.ts";
-import { completeCase, recordedDemandDays, recordedWind, type HistorySource } from "./history.ts";
+import { historySource, preparation, prepareCase } from "./prepare.ts";
 import { type BenchStore, DbStore, laneKey, LocalStore, type StoredScenario } from "./store.ts";
 import { commitTree, plannerDir, plannerVersion } from "./planner-version.ts";
 import { refreshRequest, refreshTargets, requiredLanes } from "./scope.ts";
@@ -107,12 +105,6 @@ async function git(...argv: string[]): Promise<string> {
 const readyCases = (scenarios: StoredScenario[]) => scenarios.flatMap(scenario =>
   scenario.dataset && hasMeasuredOutcome(scenario.recorded) ? [{ scenario, c: loadCase(scenario.dataset, scenario.recorded) }] : []);
 
-/** Identity of everything a planner generation is given for a case under one lane. */
-function inputHash(c: BenchCase, generation: string, lane: LaneId, rules: Awaited<ReturnType<BenchStore["rules"]>>): Promise<string> {
-  const { origin: _origin, recorded: { recorded_at: _at, ...recorded }, ...dataset } = c;
-  return sha256(canonicalJson({ dataset, recorded, household: caseHousehold(c), adapter: ADAPTER_VERSION, generation, lane: laneParts(lane), ...(generation.startsWith("ready-wasm-") ? { planner_rules: rules } : {}) }));
-}
-
 /** Worker: run the planner at --root for commit --worker on every case whose result is missing or stale. */
 async function worker(sha: string, root: string) {
   if (!retainedCommit(await git("show", "-s", "--format=%cI", sha))) {
@@ -124,7 +116,7 @@ async function worker(sha: string, root: string) {
   let failures = 0;
   for (const { scenario, c } of readyCases(await bench.scenarios(args.scenario))) {
     for (const lane of requiredLanes(args.scope)) {
-      const hash = await inputHash(c, planner.generation, lane, rules);
+      const hash = await benchInputHash(c, planner.generation, lane, rules);
       const base = { sha, scenario_id: scenario.id, lane, input_hash: hash, case_revision: scenario.revision };
       const previous = done.get(laneKey(scenario.id, lane));
       const rulesVerified = plannerRuleInputsCurrent({ planner_generation: planner.generation, ...previous }, rules);
@@ -156,88 +148,14 @@ async function worker(sha: string, root: string) {
   if (failures) throw new Error(`${failures} planner/case/lanes failed; successful results were saved. Rerun to retry the errors.`);
 }
 
-/** Where the home's recorded history is read from, or null without a database. */
-async function historySource(): Promise<HistorySource | null> {
-  const url = Deno.env.get("BENCH_SUPABASE_URL"), key = Deno.env.get("BENCH_SERVICE_ROLE_KEY");
-  if (args.local || !url || !key) return null;
-  let homeId = Deno.env.get("BENCH_HOME_ID");
-  if (!homeId) {
-    const response = await fetch(`${url}/rest/v1/energy_optimisation_outdoor_slots?select=home_id&order=start_ts.desc&limit=1`,
-      { headers: { apikey: key, Authorization: `Bearer ${key}` } });
-    if (!response.ok) throw new Error(`Could not identify the bench home: ${response.status} ${await response.text()}`);
-    homeId = (await response.json())[0]?.home_id;
-  }
-  if (!homeId) throw new Error('No bench home found. Set BENCH_HOME_ID to the home whose history and comfort preferences the bench should use.');
-  return { url, key, homeId };
-}
-
-/** Convert scenarios still held as replays, and complete cases whose window has since been recorded. */
 async function prepareCases(bench: BenchStore) {
-  const source = await historySource();
-  const targets = source ? await homeComfortTargets(source) : null;
-  const importLimitW = source ? await homeImportLimitW(source) : null;
-  if (targets) console.log(`Home ${source!.homeId}: pool target ${targets.pool_c} °C, car target ${targets.ev_km} km.`);
-  if (importLimitW !== null) console.log(`Home ${source!.homeId}: grid import limit ${importLimitW / 1000} kW.`);
+  const url = Deno.env.get("BENCH_SUPABASE_URL"), key = Deno.env.get("BENCH_SERVICE_ROLE_KEY");
+  const source = !args.local && url && key ? await historySource(url, key, Deno.env.get("BENCH_HOME_ID")) : null;
+  const context = await preparation(source);
   for (const scenario of await bench.scenarios(args.scenario)) {
-    let dataset = scenario.dataset;
-    if (!dataset) {
-      const input = await bench.legacyReplayInput(scenario.id);
-      if (!input) { console.log(`${scenario.name}: has neither a test case nor a replay; skipped.`); continue; }
-      dataset = caseFromReplay({ format: REPLAY_FORMAT, entrypoint: { arguments: input } }, scenario.name).data;
-      await bench.saveDataset(scenario.id, dataset);
-      console.log(`${scenario.name}: converted from its replay.`);
-    }
-    if (targets && (canonicalJson(dataset.comfort) !== canonicalJson(targets) || dataset.grid_import_limit_w !== importLimitW)) {
-      dataset = { ...dataset, comfort: targets, grid_import_limit_w: importLimitW };
-      await bench.saveDataset(scenario.id, dataset);
-      console.log(`${scenario.name}: current home comfort preferences and grid import limit captured.`);
-    }
-    caseTargets(dataset);
-    caseHousehold(dataset);
-    if (scenario.recorded && (!hasMeasuredOutcome(scenario.recorded)
-      || (args.rerecord && dataset.origin?.kind !== "history"))) {
-      scenario.recorded = null;
-      await bench.saveRecorded(scenario.id, null, "awaiting complete measured outcome");
-      console.log(`${scenario.name}: recording cleared for measured completion.`);
-    }
-    if (scenario.recorded && source && !scenario.recorded.wind) {
-      // Wind was not kept when this case was recorded; it is added once it has been observed.
-      const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
-      if (wind) {
-        scenario.recorded = { ...scenario.recorded, wind };
-        await bench.saveRecorded(scenario.id, scenario.recorded, null);
-        console.log(`${scenario.name}: observed wind added.`);
-      }
-    }
-    if (scenario.recorded && source && !scenario.recorded.history.demand_days) {
-      const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
-      if (demand) {
-        scenario.recorded = { ...scenario.recorded, history: { ...scenario.recorded.history, demand_days: demand } };
-        await bench.saveRecorded(scenario.id, scenario.recorded, null);
-      }
-    }
-    if (scenario.recorded || !source) continue;
-    const done = await completeCase(source, dataset);
-    if (dataset.start_state_unread?.length && Object.keys(done.startState).length) {
-      // Readings the replay lacked come from recorded history, once.
-      const { ev_soc, ...read } = done.startState;
-      const remaining = dataset.start_state_unread.filter(field => !(field in done.startState));
-      const { start_state_unread: _unread, ...rest } = dataset;
-      dataset = { ...rest, ...(remaining.length ? { start_state_unread: remaining } : {}), start_state: { ...dataset.start_state, ...read, ev: { ...dataset.start_state.ev, ...(ev_soc !== undefined ? { soc: ev_soc } : {}) } } };
-      await bench.saveDataset(scenario.id, dataset);
-    }
-    if (dataset.start_state_unread?.length) {
-      done.recorded = null;
-      done.missing = `${done.missing ? done.missing + "; " : ""}missing measured start state: ${dataset.start_state_unread.join(", ")}`;
-    }
-    if (done.recorded) {
-      const wind = await recordedWind(source, HOUSEHOLD.site.market_area, dataset.start);
-      if (wind) done.recorded.wind = wind;
-      const demand = await recordedDemandDays(source, dataset.timezone, dataset.start);
-      if (demand) done.recorded.history.demand_days = demand;
-    }
-    await bench.saveRecorded(scenario.id, done.recorded, done.missing);
-    console.log(`${scenario.name}: ${done.recorded ? "complete, recorded data stored" : `waiting, ${done.missing}`}.`);
+    const update = await prepareCase(bench, scenario, context, Boolean(args.rerecord));
+    if (update.dataset) await bench.saveDataset(scenario.id, update.dataset);
+    if (update.recorded) await bench.saveRecorded(scenario.id, update.recorded.value, update.recorded.pendingReason);
   }
 }
 

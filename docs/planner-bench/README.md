@@ -36,10 +36,11 @@ Page: **Planner bench** in the staff menu, on the test site
 | Piece | Where | What it does |
 |---|---|---|
 | Test cases, runs, results, verdicts | `bench_*` tables in the **TEST** Supabase project | Schema in `bench/schema.sql` (idempotent). Deliberately not a migration, so household data never reaches production. |
-| Runner | `bench/run.ts`, `bench/adapter.ts`, `bench/history.ts`, `bench/store.ts`, `bench/planner-version.ts` | Converts and completes test cases, then checks each planner commit out as a git worktree and plans every case whose result is missing or stale, in a fresh Deno process. Stores what the planner decided and the referee's account of it. |
+| TEST Edge runner | `bench/edge-runner.ts`, `bench/edge-schema.sql`, `planner-bench-edge`, `planner-bench-score` | Claims one durable work item at a time. Each solve uses the exact version’s archived executable and scoring gets its own request. |
+| Independent reference | `bench/run.ts`, `.github/workflows/planner-bench.yml` | Checks each commit out and runs it in a fresh Deno process. The workflow is manual after the Edge cutover. |
 | Shared logic | `src/lib/planner-bench/` | Test case format, replay conversion, household, referee, totals, scoring. Used by both the runner and the page. |
-| CI | `.github/workflows/planner-bench.yml` | After successful main/dev deployments, benches the current branch heads and stale results, marking main as current and dev as test. Manual planning runs also refresh branch heads; rescore-only runs preserve identity. |
-| Rerun button | `supabase/functions/planner-bench-dispatch` | Lets the page start the workflow. Needs the `PLANNER_BENCH_GITHUB_TOKEN` secret (below). |
+| CI | `.github/workflows/ci-deploy.yml` | Registers the exact deployed planner and enqueues the main/dev comparison in TEST. |
+| Rerun button | `supabase/functions/planner-bench-dispatch` | Starts an authenticated TEST job and reports its status. |
 | Page | `src/pages/portal/PlannerBench.tsx` | Run picker, totals, case chips, plan charts, rule list, upload. |
 
 ## Test cases
@@ -249,16 +250,35 @@ replace the live planner. Tests are part of `deno task test`. Reproduction
 commands and measured limitations are in the report; eight to ten rounds have
 not yet demonstrated sufficient search quality.
 
-## One-time setup
+## TEST Edge setup and historical executables
 
-1. In GitHub, create a fine-grained personal access token for
-   `SHS-se/smart-home-solutions` with **Actions: Read and write**.
-2. Add it to the TEST Supabase project as the edge function secret
-   `PLANNER_BENCH_GITHUB_TOKEN`.
+Apply `bench/schema.sql` then `bench/edge-schema.sql` to TEST. Set the TEST Edge
+secret `PLANNER_BENCH_EDGE_TOKEN` to the generated `wake_token` from
+`bench_edge_settings`. The same credential authenticates Cron wakeups.
 
-Without the token, everything except the page's rerun button works; start runs
-from GitHub Actions instead. The workflow uses the existing
-`SUPABASE_ACCESS_TOKEN` and `SUPABASE_DB_PASSWORD_TEST` secrets.
+Run these commands from a checkout with the normal project dependencies and
+TEST deployment credentials. Set `BENCH_SERVICE_ROLE_KEY` from TEST.
+
+```bash
+deno run -A --no-check --sloppy-imports bench/edge-release.ts coordinator
+deno run -A --no-check --sloppy-imports bench/edge-release.ts register <sha>...
+deno run -A --no-check --sloppy-imports bench/edge-release.ts restore <sha>...
+```
+
+The registration tool verifies the committed historical loader before embedding
+its exact Wasm and matching input adapter in a static worker. The executable is
+archived in private TEST Storage. Restore redeploys those bytes after checking
+the digest. Register an older SHA from its Git commit if it has no archived
+executable. Removing a score from history leaves its executable available.
+Ranking removes old entries when the retained scores are comparable. Run all
+versions after a case or rule change to refresh stale history.
+
+Before enabling Edge dispatch, run `bench/verify-edge.ts` for the exact main,
+dev and older reference SHAs with both TEST credentials. It compares all 24
+ready cases to stored Actions results without rewriting them. The activation
+RPC checks the saved per-case proofs against the current references and rules.
+After activation, disable the legacy automatic GitHub workflow on the default
+branch. The CLI remains available for independent reference runs.
 
 Result lists use paginated, deterministic reads. Suite scores require every
 ready case; pending cases are excluded on both sides. A database-generated

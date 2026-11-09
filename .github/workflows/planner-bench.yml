@@ -3,15 +3,9 @@ name: Planner bench
 # Replays every bench test case through planner versions and stores the plans
 # in the TEST Supabase project (docs/planner-bench/README.md).
 #
-# Successful CI deployments trigger bench runs of the current main/dev heads.
-# The bench remains in TEST and historical comparisons remain available.
-# Manual planning runs also refresh branch identity; rescore-only runs preserve it.
+# Independent reference runner. Recurring deployment refreshes use TEST Edge Functions.
 
 on:
-  workflow_run:
-    workflows: ["CI & Deploy"]
-    types: [completed]
-    branches: [main, dev]
   workflow_dispatch:
     inputs:
       shas:
@@ -47,7 +41,6 @@ permissions:
 jobs:
   bench:
     name: Run planner bench
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -94,7 +87,7 @@ jobs:
           echo "BENCH_SERVICE_ROLE_KEY=$key" >> "$GITHUB_ENV"
 
       - name: Resolve main and dev branch heads
-        if: github.event_name == 'workflow_run' || inputs.shas != 'none'
+        if: inputs.shas != 'none'
         run: |
           set -euo pipefail
           git fetch origin +refs/heads/main:refs/remotes/origin/main +refs/heads/dev:refs/remotes/origin/dev
@@ -112,18 +105,13 @@ jobs:
           INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
-              --shas heads --scope base --current "$BRANCH_main" --test "$BRANCH_dev"
-          else
-            extra=()
-            if [ "$INPUT_SHAS" != "none" ]; then
-              extra+=(--current "$BRANCH_main" --test "$BRANCH_dev")
-            fi
-            [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")
-            [ "$INPUT_FORCE" = "true" ] && extra+=(--force)
-            [ "$INPUT_RERECORD" = "true" ] && extra+=(--rerecord)
-            extra+=(--scope "${INPUT_SCOPE:-base}")
-            deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
-              --shas "$INPUT_SHAS" "${extra[@]}"
+          extra=()
+          if [ "$INPUT_SHAS" != "none" ]; then
+            extra+=(--current "$BRANCH_main" --test "$BRANCH_dev")
           fi
+          [ -n "$INPUT_SCENARIO" ] && extra+=(--scenario "$INPUT_SCENARIO")
+          [ "$INPUT_FORCE" = "true" ] && extra+=(--force)
+          [ "$INPUT_RERECORD" = "true" ] && extra+=(--rerecord)
+          extra+=(--scope "${INPUT_SCOPE:-base}")
+          deno run -A --no-check --sloppy-imports --config deno.json bench/run.ts \
+            --shas "$INPUT_SHAS" "${extra[@]}"

@@ -213,12 +213,12 @@ const Bench: React.FC = () => {
     } else {
       toast({
         title: t('Bänkkörningen misslyckades', 'The bench run did not finish'),
-        description: t(`Öppna körningen på GitHub för att se varför: ${run.url}`, `Open the run on GitHub to see why: ${run.url}`),
+        description: run.error ?? (run.url ? t(`Öppna körningen på GitHub för att se varför: ${run.url}`, `Open the run on GitHub to see why: ${run.url}`) : undefined),
         variant: 'destructive',
       });
     }
   });
-  // The workflow reports no progress; what it has stored so far is the progress.
+  // Keep the results in view as the runner stores them.
   const jobActive = job.active;
   useEffect(() => {
     if (!jobActive) return;
@@ -236,12 +236,12 @@ const Bench: React.FC = () => {
         const detail = await (error as { context?: Response }).context?.json?.().catch(() => null);
         throw new Error(detail?.message ?? detail?.error ?? error.message);
       }
-      return data as { runs_url: string };
+      return data as { id?: number };
     },
-    onSuccess: (_data, body) => job.begin({ kind: body.shas === 'none' ? 'rescore' : 'run', staleAtStart: staleCount }),
+    onSuccess: (data, body) => job.begin({ kind: body.shas === 'none' ? 'rescore' : 'run', staleAtStart: staleCount, runId: data.id }),
     onError: (error: Error) => toast({
       title: t('Kunde inte starta körningen', 'Could not start the bench run'),
-      description: `${error.message}. ${t('Starta "Planner bench" manuellt i GitHub Actions.', 'Start the "Planner bench" workflow in GitHub Actions instead.')}`,
+      description: error.message,
       variant: 'destructive',
     }),
   });
@@ -330,11 +330,14 @@ const Bench: React.FC = () => {
   const minutes = Math.floor(job.elapsedMs / 60_000), seconds = Math.floor(job.elapsedMs / 1000) % 60;
   const elapsed = `${minutes}:${String(seconds).padStart(2, '0')}`;
   const left = job.task ? Math.max(0, job.task.staleAtStart - staleCount) : 0;
+  const onEdge = job.run?.executor === 'edge' || job.task?.runId !== undefined;
   const jobDetail = job.waiting
-    ? t(`Väntar på att GitHub Actions ska starta · ${elapsed}`, `Waiting for GitHub Actions to start · ${elapsed}`)
+    ? onEdge ? t(`I kö · ${elapsed}`, `Queued · ${elapsed}`)
+      : t(`Väntar på att GitHub Actions ska starta · ${elapsed}`, `Waiting for GitHub Actions to start · ${elapsed}`)
     : kind === 'rescore' && job.task!.staleAtStart > 0
       ? t(`${left} av ${job.task!.staleAtStart} poäng omräknade · ${elapsed}`, `${left} of ${job.task!.staleAtStart} scores recomputed · ${elapsed}`)
-      : t(`Körs på GitHub Actions · ${elapsed}`, `Running on GitHub Actions · ${elapsed}`);
+      : onEdge ? t(`Körs i testmiljön · ${elapsed}`, `Running in the test environment · ${elapsed}`)
+        : t(`Körs på GitHub Actions · ${elapsed}`, `Running on GitHub Actions · ${elapsed}`);
   // A rescore works through the planners one after another, and a run stores each one as it starts.
   const jobPlan = job.waiting ? null
     : shortRun(kind === 'rescore' ? rescoringSha : allRuns.find(r => r.status === 'running')?.sha ?? null);
@@ -386,7 +389,7 @@ const Bench: React.FC = () => {
                 {jobPlan && <div className="font-mono text-xs">{jobPlan}</div>}
               </div>
             </div>
-            {job.run && <a className="text-sm underline" href={job.run.url} target="_blank" rel="noreferrer">{t('Visa på GitHub', 'View on GitHub')}</a>}
+            {job.run?.url && <a className="text-sm underline" href={job.run.url} target="_blank" rel="noreferrer">{t('Visa på GitHub', 'View on GitHub')}</a>}
           </AlertDescription>
         </Alert>
       )}

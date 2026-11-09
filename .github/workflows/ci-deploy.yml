@@ -408,6 +408,7 @@ jobs:
         # latest schema/RPCs. Planning executors deploy before their callers.
         env:
           FUNCTIONS: ${{ needs.changes.outputs.functions }}
+          SUPABASE_DB_PASSWORD: ${{ github.ref_name == 'dev' && secrets.SUPABASE_DB_PASSWORD_TEST || '' }}
         run: |
           set -euo pipefail
           rest=()
@@ -429,12 +430,19 @@ jobs:
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" energy-market-archive "* ]] || [[ " $FUNCTIONS " == *" energy-market-quality "* ]]; }; then
             deno task deploy:market-archive
           fi
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" planner-bench-edge "* ]] || [[ " $FUNCTIONS " == *" planner-bench-score "* ]]; }; then
+            supabase link --project-ref "$SUPABASE_PROJECT_REF"
+            supabase db query --file bench/edge-schema.sql --yes --remote="$SUPABASE_PROJECT_REF"
+            deno run -A --no-check --sloppy-imports bench/edge-release.ts coordinator
+          fi
           for name in $FUNCTIONS; do
             if [ "$name" = energy-planner-probe ] || [ "$name" = energy-device-learning-probe ]; then
               continue
             elif [ "$name" = energy-market-research ]; then
               continue
             elif [ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ]; then
+              continue
+            elif [ "$name" = planner-bench-edge ] || [ "$name" = planner-bench-score ]; then
               continue
             elif [ "$name" = energy-optimisation-plan-step ] || [ "$name" = energy-device-learning ]; then
               if [ "$planning_deployed" = false ]; then
@@ -555,3 +563,17 @@ jobs:
           version: latest
       - name: Retry with the deployed parser
         run: node --experimental-strip-types scripts/retry-energy-invoices.ts
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.8
+      - name: Register deployed planner and queue TEST bench
+        env:
+          BENCH_PROJECT_REF: vxqpgbzseckgceopitpm
+          DEPLOYED_SHA: ${{ github.sha }}
+          DEPLOYED_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          BENCH_SERVICE_ROLE_KEY=$(supabase projects api-keys --project-ref "$BENCH_PROJECT_REF" -o json |
+            jq -er '.[] | select(.name == "service_role") | .api_key')
+          export BENCH_SERVICE_ROLE_KEY
+          deno run -A --no-check --sloppy-imports bench/edge-release.ts refresh "$DEPLOYED_SHA" "$DEPLOYED_BRANCH"
