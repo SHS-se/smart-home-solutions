@@ -11,11 +11,16 @@ Deno.test('archive deployment changes validate the pipeline and select only the 
   const workflow = '.github/workflows/ci-deploy.yml';
   const changes = classifyPipeline(new URL('..', import.meta.url).pathname, [workflow, 'scripts/ci-changes.ts',
     'scripts/deploy-market-archive.ts'], [workflow, 'scripts/ci-changes.ts']);
-  assertEquals(changes.functions, ['energy-market-archive', 'energy-market-quality']);
+  assertEquals(changes.functions, ['energy-market-archive', 'energy-market-quality', 'energy-price-weather-experiment']);
   assert(changes.planner && changes.frontend && changes.bench);
 });
 Deno.test('research collector is excluded from ordinary production deployment', async () => {
   const workflow = await Deno.readTextFile('.github/workflows/ci-deploy.yml');
-  assertStringIncludes(workflow, '[ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ]; then\n              continue');
+  assertStringIncludes(workflow, '[ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ] || [ "$name" = energy-price-weather-experiment ]; then\n              continue');
   assertStringIncludes(workflow, '[ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ]');
+});
+Deno.test('the weather price model reaches only its own TEST worker, never the planner or a household function', () => {
+  const changes = classify(new URL('..', import.meta.url).pathname, ['supabase/functions/_shared/price-weather.ts']);
+  assertEquals(changes.functions, ['energy-price-weather-experiment']);
+  assert(!changes.planner);
 });

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useLanguage } from '@/contexts/LanguageContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatHomeStamp } from '@/lib/energy-shift/home-time';
-import { pricePairChartRows, pricePairDays, type PricePairComparison, type PricePairScore } from '@/lib/planner-bench/price-pair-comparison';
+import { pricePairChartRows, pricePairDays, weatherPriceCriterion, type PricePairComparison, type PricePairScore } from '@/lib/planner-bench/price-pair-comparison';
 
 const db = supabase as unknown as SupabaseClient;
 const TZ = 'Europe/Stockholm';
@@ -23,11 +23,11 @@ const MIX_SERIES = [
 ] as const;
 
 interface ArmLabels { baseline: string; corrected: string; lowError: string; highError: string }
-const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: ArmLabels }> = ({ lead, score, labels }) => {
+const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: ArmLabels; id?: string }> = ({ lead, score, labels, id = 'mix-score' }) => {
   const { t } = useLanguage();
   const change = score ? score.reduced_mae - score.full_mae : null;
   const percent = score && score.reduced_mae > 0 ? Math.abs((change ?? 0) / score.reduced_mae) * 100 : null;
-  return <Card data-testid={`mix-score-${lead}`}>
+  return <Card data-testid={`${id}-${lead}`}>
     <CardHeader className="pb-3"><CardTitle className="text-base">{t(`${lead} dagar framåt`, `${lead} days ahead`)} · D+{lead}</CardTitle></CardHeader>
     <CardContent className="space-y-3">
       {!score ? <p role="status" className="text-sm text-muted-foreground">{t('Väntar på publicerade priser.', 'Waiting for published prices.')}</p> : <>
@@ -44,6 +44,9 @@ const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: Arm
         {change !== 0 && <p className="text-sm tabular-nums">{t('Skillnad', 'Difference')}: {price(Math.abs(change!))} kr/kWh{percent === null ? '' : ` · ${percent.toFixed(1)}% ${change! > 0 ? t('lägre fel', 'lower error') : t('högre fel', 'higher error')}`}</p>}
         <p className="text-sm text-muted-foreground">{t(`${score.scored_quarters} bedömda kvartar · ${score.target_day_count} unika måldagar · ${score.origin_count} prognospar`,
           `${score.scored_quarters} scored quarters · ${score.target_day_count} distinct target days · ${score.origin_count} forecast pairs`)}</p>
+        {score.day_wins !== undefined && score.baseline_quarters !== undefined && <p className="text-sm tabular-nums" data-testid={`${id}-days-${lead}`}>{t(
+          `Lägre fel ${score.day_wins} av ${score.target_day_count} leveransdagar · täcker ${score.scored_quarters} av ${score.baseline_quarters} kvartar (${(score.scored_quarters / score.baseline_quarters * 100).toFixed(0)}%)`,
+          `Lower error on ${score.day_wins} of ${score.target_day_count} delivery days · covers ${score.scored_quarters} of ${score.baseline_quarters} quarters (${(score.scored_quarters / score.baseline_quarters * 100).toFixed(0)}%)`)}</p>}
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer py-1 text-sm">{t('Nivå och riktning på felet', 'Price level and direction of error')}</summary>
           <p className="mt-2">{t('Dagens medelpris, absolut fel', 'Daily mean price, absolute error')} ({labels.baseline} / {labels.corrected}): {price(score.reduced_daily_mean_mae)} / {price(score.full_daily_mean_mae)} kr/kWh.</p>
@@ -58,11 +61,19 @@ const HorizonScore: React.FC<{ lead: number; score?: PricePairScore; labels: Arm
 const GenerationMixComparison: React.FC = () => {
   const { t, language } = useLanguage();
   const [params, setParams] = useSearchParams();
-  const study = params.get('study') === 'correction-v2' ? 'correction-v2' : params.get('study') === 'correction' ? 'correction' : 'mix';
-  const correction = study !== 'mix';
+  const requested = params.get('study');
+  const study = requested === 'correction-v2' || requested === 'correction' || requested === 'mix' ? requested : 'weather';
+  const weather = study === 'weather';
+  // The saved-forecast card shows live forecasts unless the validation cohort is chosen.
+  const cohort = weather && params.get('cohort') === 'validation' ? 'replay' : 'prospective';
+  const correction = study === 'correction' || study === 'correction-v2';
   const v2 = study === 'correction-v2';
   const algorithm = v2 ? 'se3-price-residual-v2' : 'se3-price-residual-v1';
-  const labels: ArmLabels = correction ? {
+  const labels: ArmLabels = weather ? {
+    baseline: t('Nuvarande prognos', 'Deployed forecast'), corrected: t('Vädermodell', 'Weather model'),
+    lowError: t('Vädermodellen har lägre fel hittills', 'Weather model has lower error so far'),
+    highError: t('Vädermodellen har högre fel hittills', 'Weather model has higher error so far'),
+  } : correction ? {
     baseline: t('Nuvarande prognos', 'Current forecast'), corrected: v2 ? t('Med korrigering v2', 'With correction v2') : t('Med korrigering', 'With correction'),
     lowError: t('Korrigeringen har lägre fel hittills', 'Correction has lower error so far'),
     highError: t('Korrigeringen har högre fel hittills', 'Correction has higher error so far'),
@@ -74,16 +85,30 @@ const GenerationMixComparison: React.FC = () => {
   const series = MIX_SERIES.map(item => ({ ...item, label: item.key === 'reduced' ? labels.baseline : item.key === 'full' ? labels.corrected : t(item.sv, item.en) }));
   const pairId = params.get('pair');
   const query = useQuery({
-    queryKey: ['test-price-pair-comparison', study, pairId],
+    queryKey: ['test-price-pair-comparison', study, cohort, pairId],
     queryFn: async () => {
-      const { data, error } = await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison',
-        correction ? { p_pair_id: pairId, p_algorithm: algorithm } : { p_pair_id: pairId });
+      const { data, error } = weather ? await db.rpc('get_test_weather_price_comparison', { p_run_id: pairId, p_kind: cohort })
+        : await db.rpc(correction ? 'get_test_price_correction_comparison' : 'get_test_price_pair_comparison',
+          correction ? { p_pair_id: pairId, p_algorithm: algorithm } : { p_pair_id: pairId });
       if (error) throw new Error(error.message);
       return data as PricePairComparison;
     },
     retry: false, staleTime: 30_000, refetchInterval: 60_000,
   });
+  // The weather study always shows both cohorts' scores; this fetches the one the card is not showing.
+  const otherQuery = useQuery({
+    queryKey: ['test-price-pair-comparison', study, cohort === 'replay' ? 'prospective' : 'replay', null],
+    queryFn: async () => {
+      const { data, error } = await db.rpc('get_test_weather_price_comparison', { p_run_id: null, p_kind: cohort === 'replay' ? 'prospective' : 'replay' });
+      if (error) throw new Error(error.message);
+      return data as PricePairComparison;
+    },
+    enabled: weather, retry: false, staleTime: 30_000, refetchInterval: 60_000,
+  });
   const data = query.data;
+  const validation = weather ? (cohort === 'replay' ? data : otherQuery.data) : undefined;
+  const live = weather ? (cohort === 'prospective' ? data : otherQuery.data) : undefined;
+  const criterion = useMemo(() => validation ? weatherPriceCriterion(validation.report.scores, validation.report.days ?? []) : null, [validation]);
   const targets = data?.targets;
   const days = useMemo(() => pricePairDays(targets ?? []), [targets]);
   const chart = useMemo(() => pricePairChartRows(targets ?? []), [targets]);
@@ -101,18 +126,19 @@ const GenerationMixComparison: React.FC = () => {
   return <section data-testid="generation-mix-comparison" className="space-y-5" aria-labelledby="mix-comparison-title">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="max-w-3xl space-y-2">
-        <h2 id="mix-comparison-title" className="text-xl font-semibold">{correction ? t('Kan marknadsdata förbättra den nuvarande prognosen?', 'Can market data improve the current forecast?') : t('Blir prisprognosen bättre med produktionsmixen?', 'Does the generation mix improve price forecasts?')}</h2>
-        <p className="text-sm text-muted-foreground">{correction ? t('Den sparade hushållsprognosen jämförs med samma prognos plus en inlärd korrigering från produktionsmix och veckans efterfrågeintervall. Experimentet ändrar inte priserna som planeraren använder.', 'The saved household forecast is compared with that same forecast plus a learned correction from generation mix and week-ahead demand ranges. The experiment does not change the prices used by the planner.') : t('Samma modell och historik, med eller utan prognoser för vind, sol, vattenkraft, kärnkraft, gas och övrig produktion. Båda bedöms på exakt samma kvartar när priserna publiceras.',
+        <h2 id="mix-comparison-title" className="text-xl font-semibold">{weather ? t('Slår en vädermodell den nuvarande prisprognosen två och tre dagar framåt?', 'Does a weather model beat the deployed price forecast two and three days ahead?') : correction ? t('Kan marknadsdata förbättra den nuvarande prognosen?', 'Can market data improve the current forecast?') : t('Blir prisprognosen bättre med produktionsmixen?', 'Does the generation mix improve price forecasts?')}</h2>
+        <p className="text-sm text-muted-foreground">{weather ? t('Hushållets sparade prognos jämförs med en separat modell som lär sig priset från ECMWF-prognoser för vind, temperatur och solinstrålning på tio platser i SE3. Båda bedöms på exakt samma kvartar, vars priser var okända när prognosen gjordes. Experimentet ändrar inte priserna som planeraren använder.',
+          'The saved household forecast is compared with a separate model that learns the price from ECMWF wind, temperature and solar radiation forecasts at ten SE3 sites. Both are scored on exactly the same quarters, whose prices were unknown when the forecast was made. The experiment does not change the prices used by the planner.') : correction ? t('Den sparade hushållsprognosen jämförs med samma prognos plus en inlärd korrigering från produktionsmix och veckans efterfrågeintervall. Experimentet ändrar inte priserna som planeraren använder.', 'The saved household forecast is compared with that same forecast plus a learned correction from generation mix and week-ahead demand ranges. The experiment does not change the prices used by the planner.') : t('Samma modell och historik, med eller utan prognoser för vind, sol, vattenkraft, kärnkraft, gas och övrig produktion. Båda bedöms på exakt samma kvartar när priserna publiceras.',
           'The same model and history, with or without forecasts for wind, solar, hydro, nuclear, gas and other generation. Both are scored on exactly the same quarters as prices are published.')}</p>
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label htmlFor="price-study-select" className="mb-1 block text-sm">{t('Avslutade experiment', 'Retired experiments')}</label>
+          <label htmlFor="price-study-select" className="mb-1 block text-sm">{t('Experiment', 'Experiment')}</label>
           <Select value={study} onValueChange={value => {
-            const next = new URLSearchParams(params); next.set('study', value); next.delete('pair'); setParams(next, { replace: true });
+            const next = new URLSearchParams(params); next.set('study', value); next.delete('pair'); next.delete('cohort'); setParams(next, { replace: true });
           }}>
             <SelectTrigger id="price-study-select" className="min-h-11 w-64"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="correction-v2">{t('Korrigering v2 · avslutad', 'Correction v2 · retired')}</SelectItem><SelectItem value="correction">{t('Korrigering v1', 'Correction v1')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell', 'Generation mix model')}</SelectItem></SelectContent>
+            <SelectContent><SelectItem value="weather">{t('Vädermodell · pågår', 'Weather model · running')}</SelectItem><SelectItem value="correction-v2">{t('Korrigering v2 · avslutad', 'Correction v2 · retired')}</SelectItem><SelectItem value="correction">{t('Korrigering v1 · avslutad', 'Correction v1 · retired')}</SelectItem><SelectItem value="mix">{t('Produktionsmixmodell · avslutad', 'Generation mix model · retired')}</SelectItem></SelectContent>
           </Select>
         </div>
       <Button variant="outline" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -120,17 +146,55 @@ const GenerationMixComparison: React.FC = () => {
       </Button>
       </div>
     </div>
-    <p className="max-w-3xl text-sm text-muted-foreground">{t('Studierna är avslutade. Inga nya experimentprognoser beräknas; sparade resultat finns kvar för granskning.',
-      'These studies are retired. No new experimental forecasts are calculated; saved results remain available for review.')}</p>
+    {!weather && <p className="max-w-3xl text-sm text-muted-foreground">{t('Studierna är avslutade. Inga nya experimentprognoser beräknas; sparade resultat finns kvar för granskning.',
+      'These studies are retired. No new experimental forecasts are calculated; saved results remain available for review.')}</p>}
     {query.isLoading && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t('Laddar jämförelser…', 'Loading comparisons…')}</p>}
     {query.isError && <Alert variant="destructive"><AlertDescription>{t('Kunde inte hämta jämförelsen. Försök uppdatera igen.', 'Could not load the comparison. Try refreshing again.')}</AlertDescription></Alert>}
     {data && <>
       {!data.enabled ? <Alert><AlertDescription>{t('Studien är inte aktiverad i TEST.', 'The study is not enabled in TEST.')}</AlertDescription></Alert> : <>
         <p className="text-xs text-muted-foreground">TEST · SE3 · {data.home_name} · {t('Senast hämtad', 'Last checked')} {stamp(data.updated_at)} · {t('Uppdateras varje minut', 'Refreshes every minute')}</p>
-        <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={data.report.scores.find(row => row.lead_day === lead)} />)}</div>
-        <p className="max-w-3xl text-sm text-muted-foreground">{t('Resultaten ovan gäller alla sparade prognospar. Tidiga resultat visar bara felet hittills. Kvartar från samma dag och överlappande prognoser är beroende av varandra; många unika dagar behövs för en säker slutsats. D+3 kan täcka en del av dagen.',
-          'The results above cover all saved forecast pairs. Early results show only the error so far. Quarters from the same day and overlapping forecasts are related; many distinct days are needed for a reliable conclusion. D+3 can cover part of a day.')}</p>
-        {!selected ? <p role="status" className="rounded-md border p-4 text-sm">{t('Inga prognospar sparades i denna studie.', 'No forecast pairs were saved in this study.')}</p> : <Card>
+        {weather && <>
+          <section className="space-y-3" aria-labelledby="weather-validation-title" data-testid="weather-validation">
+            <h3 id="weather-validation-title" className="text-lg font-semibold">{t('Validering: prognoser omräknade i efterhand', 'Validation: forecasts recomputed after the fact')}</h3>
+            <p className="max-w-3xl text-sm text-muted-foreground">{t(`Var sjätte timme från 31 oktober till 8 november räknades modellen om med enbart de versioner av väder och priser som TEST hade sparat vid den tidpunkten. Leveransdagarna ${validation?.holdout ? `${dayLabel(validation.holdout.from)}–${dayLabel(validation.holdout.to)}` : ''} valdes som test innan någon av dem bedömdes; tidigare dagar användes för att välja modellen och ingår inte.`,
+              `Every six hours from 31 October to 8 November the model was recomputed using only the versions of weather and prices TEST had saved by that time. Delivery days ${validation?.holdout ? `${dayLabel(validation.holdout.from)}–${dayLabel(validation.holdout.to)}` : ''} were set aside as the test before any of them was scored; earlier days were used to choose the model and are not included.`)}</p>
+            <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} id="weather-validation-score" lead={lead} labels={labels} score={validation?.report.scores.find(row => row.lead_day === lead)} />)}</div>
+            {criterion && <div className="rounded-md border p-4 text-sm" data-testid="weather-criterion">
+              <p className="font-medium">{criterion.every(rule => rule.met) ? t('Det förutbestämda kriteriet är uppfyllt', 'The criterion set in advance is met') : t('Det förutbestämda kriteriet är inte uppfyllt', 'The criterion set in advance is not met')}</p>
+              <ul className="mt-2 space-y-1 tabular-nums">{criterion.map(rule => <li key={rule.key} className="flex gap-2"><span aria-hidden="true">{rule.met ? '✓' : '✗'}</span><span><span className="sr-only">{rule.met ? t('Uppfyllt: ', 'Met: ') : t('Inte uppfyllt: ', 'Not met: ')}</span>{
+                rule.key === 'mae' ? t(`Minst 5 % lägre fel vid varje framförhållning: ${(rule.values[0] * 100).toFixed(1)} % (D+2), ${(rule.values[1] * 100).toFixed(1)} % (D+3)`, `At least 5% lower error at each lead: ${(rule.values[0] * 100).toFixed(1)}% (D+2), ${(rule.values[1] * 100).toFixed(1)}% (D+3)`)
+                  : rule.key === 'days' ? t(`Lägre fel minst tre av fyra leveransdagar: ${rule.values[0]} av ${rule.values[1]} (D+2), ${rule.values[2]} av ${rule.values[3]} (D+3)`, `Lower error on at least three in four delivery days: ${rule.values[0]} of ${rule.values[1]} (D+2), ${rule.values[2]} of ${rule.values[3]} (D+3)`)
+                    : rule.key === 'interval' ? t(`Skillnaden i fel ligger under noll när hela dagar dras om (90 %-intervall): ${rule.values[0].toFixed(3)} till ${rule.values[1].toFixed(3)} kr/kWh`, `The error difference stays below zero when whole days are resampled (90% interval): ${rule.values[0].toFixed(3)} to ${rule.values[1].toFixed(3)} SEK/kWh`)
+                      : t(`Täcker minst 98 % av kvartarna: ${(rule.values[0] * 100).toFixed(0)} % (D+2), ${(rule.values[1] * 100).toFixed(0)} % (D+3)`, `Covers at least 98% of the quarters: ${(rule.values[0] * 100).toFixed(0)}% (D+2), ${(rule.values[1] * 100).toFixed(0)}% (D+3)`)}</span></li>)}</ul>
+              <p className="mt-2 text-muted-foreground">{t('Åtta leveransdagar är få, och priserna steg under perioden. Resultatet visar att modellen var bättre under dessa dagar, inte att den alltid är det.', 'Eight delivery days are few, and prices rose over the period. The result shows the model was better on these days, not that it always is.')}</p>
+            </div>}
+            {validation && (validation.report.days?.length ?? 0) > 0 && <div className="overflow-x-auto">
+              <table className="w-full text-sm tabular-nums" data-testid="weather-validation-days">
+                <caption className="sr-only">{t('Fel per leveransdag i valideringen', 'Error per delivery day in the validation')}</caption>
+                <thead className="text-muted-foreground"><tr>{[t('Leveransdag', 'Delivery day'), t('Prognoser', 'Forecasts'), `${labels.baseline}, MAE`, `${labels.corrected}, MAE`].map(title => <th scope="col" key={title} className="whitespace-nowrap px-2 py-2 text-left font-medium first:pl-0">{title}</th>)}</tr></thead>
+                <tbody>{validation.report.days!.map(day => <tr key={`${day.target_day}-${day.lead_day}`} className="border-t"><th scope="row" className="py-2 pr-2 text-left font-normal">{dayLabel(day.target_day)} · D+{day.lead_day}</th><td className="px-2 py-2">{day.origin_count}</td><td className="px-2 py-2">{price(day.reduced_mae)}</td><td className="px-2 py-2">{price(day.full_mae)}</td></tr>)}</tbody>
+              </table>
+            </div>}
+          </section>
+          <h3 className="text-lg font-semibold">{t('Löpande prognoser, sparade innan priserna var kända', 'Live forecasts, saved before the prices were known')}</h3>
+          <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={live?.report.scores.find(row => row.lead_day === lead)} />)}</div>
+          <p className="max-w-3xl text-sm text-muted-foreground">{t('En ny prognos sparas var sjätte timme bredvid hushållets prognos från samma tidpunkt. Den bedöms när priserna publiceras, två till tre dagar senare.', 'A new forecast is saved every six hours beside the household forecast from the same time. It is scored when the prices are published, two to three days later.')}</p>
+        </>}
+        {!weather && <div className="grid gap-4 md:grid-cols-2">{[2, 3].map(lead => <HorizonScore key={lead} lead={lead} labels={labels} score={data.report.scores.find(row => row.lead_day === lead)} />)}</div>}
+        {!weather && <p className="max-w-3xl text-sm text-muted-foreground">{t('Resultaten ovan gäller alla sparade prognospar. Tidiga resultat visar bara felet hittills. Kvartar från samma dag och överlappande prognoser är beroende av varandra; många unika dagar behövs för en säker slutsats. D+3 kan täcka en del av dagen.',
+          'The results above cover all saved forecast pairs. Early results show only the error so far. Quarters from the same day and overlapping forecasts are related; many distinct days are needed for a reliable conclusion. D+3 can cover part of a day.')}</p>}
+        {weather && <div className="w-full sm:w-56">
+          <label htmlFor="weather-cohort-select" className="mb-1 block text-sm">{t('Visa prognoser från', 'Show forecasts from')}</label>
+          <Select value={cohort} onValueChange={value => {
+            const next = new URLSearchParams(params); next.delete('pair');
+            if (value === 'replay') next.set('cohort', 'validation'); else next.delete('cohort');
+            setParams(next, { replace: true });
+          }}>
+            <SelectTrigger id="weather-cohort-select" className="min-h-11"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="prospective">{t('Löpande', 'Live')}</SelectItem><SelectItem value="replay">{t('Valideringen', 'The validation')}</SelectItem></SelectContent>
+          </Select>
+        </div>}
+        {!selected ? <p role="status" className="rounded-md border p-4 text-sm">{weather ? t('Inga prognoser har sparats här ännu.', 'No forecasts have been saved here yet.') : t('Inga prognospar sparades i denna studie.', 'No forecast pairs were saved in this study.')}</p> : <Card>
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <CardTitle className="text-lg">{t('Ett sparat prognospar', 'One saved forecast pair')}</CardTitle>

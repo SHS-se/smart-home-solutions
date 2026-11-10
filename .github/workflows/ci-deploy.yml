@@ -427,7 +427,7 @@ jobs:
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && [[ " $FUNCTIONS " == *" energy-market-research "* ]]; then
             supabase functions deploy energy-market-research --project-ref "$SUPABASE_PROJECT_REF" --yes
           fi
-          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" energy-market-archive "* ]] || [[ " $FUNCTIONS " == *" energy-market-quality "* ]]; }; then
+          if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" energy-market-archive "* ]] || [[ " $FUNCTIONS " == *" energy-market-quality "* ]] || [[ " $FUNCTIONS " == *" energy-price-weather-experiment "* ]]; }; then
             deno task deploy:market-archive
           fi
           if [ "$SUPABASE_PROJECT_REF" = vxqpgbzseckgceopitpm ] && { [[ " $FUNCTIONS " == *" planner-bench-edge "* ]] || [[ " $FUNCTIONS " == *" planner-bench-score "* ]]; }; then
@@ -440,7 +440,7 @@ jobs:
               continue
             elif [ "$name" = energy-market-research ]; then
               continue
-            elif [ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ]; then
+            elif [ "$name" = energy-market-archive ] || [ "$name" = energy-market-quality ] || [ "$name" = energy-price-weather-experiment ]; then
               continue
             elif [ "$name" = planner-bench-edge ] || [ "$name" = planner-bench-score ]; then
               continue

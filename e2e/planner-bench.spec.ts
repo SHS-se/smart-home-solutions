@@ -426,6 +426,9 @@ test.describe('planner bench', () => {
     await page.locator('#bench-tab-generation-mix').click();
     await expect(page).toHaveURL(/tab=generation-mix/);
     const view = page.getByTestId('generation-mix-comparison');
+    // The running weather study is the default; the retired mix study is one selection away.
+    await view.locator('#price-study-select').click(); await page.getByRole('option', { name: /Generation mix model|Produktionsmixmodell/ }).click();
+    await expect(page).toHaveURL(/study=mix/);
     await expect(view.getByTestId('mix-coverage')).toContainText(/0 (of|av) 184/);
     await expect(view.getByTestId('mix-score-2')).toContainText(/Waiting|Väntar/);
     await expect(view.getByTestId('mix-score-3')).toContainText(/Waiting|Väntar/);
@@ -465,6 +468,48 @@ test.describe('planner bench', () => {
     await view.screenshot({ path: test.info().outputPath('generation-mix-mobile.png') });
   });
 
+  test('TEST weather model study is the default: validation results, the criterion and live forecasts beside the deployed forecast', async ({ context, page }) => {
+    await mockBackend(context);
+    const kinds: string[] = [];
+    await context.route('**/rest/v1/rpc/get_test_weather_price_comparison', async route => {
+      const body = route.request().postDataJSON(); kinds.push(`${body.p_kind}:${body.p_run_id}`);
+      const data = mixComparison(body.p_kind === 'replay');
+      const score = (lead: number, wins: number) => ({ lead_day: lead, scored_quarters: 768, origin_count: 8, target_day_count: 8, reduced_mae: .8, full_mae: .6,
+        reduced_bias: -.5, full_bias: -.3, mae_improvement: .2, reduced_daily_mean_mae: .7, full_daily_mean_mae: .5, complete_day_origins: 8, scored_day_origins: 8,
+        day_wins: wins, baseline_quarters: 768 });
+      await route.fulfill({ json: { ...data, kind: body.p_kind, holdout: body.p_kind === 'replay' ? { from: '2026-11-03', to: '2026-11-10' } : null,
+        report: { ...data.report, scores: body.p_kind === 'replay' ? [score(2, 6), score(3, 7)] : [],
+          days: body.p_kind === 'replay' ? [2, 3].flatMap(lead => Array.from({ length: 8 }, (_, day) => ({ target_day: `2026-11-${String(day + 3).padStart(2, '0')}`,
+            lead_day: lead, scored_quarters: 96, origin_count: 4, reduced_mae: .8, full_mae: day === 2 ? .9 : .55 }))) : [] } } });
+    });
+    await login(page);
+    await page.goto('/portal/planner-bench');
+    if (!await expectGenerationMixAvailability(page)) { expect(kinds).toEqual([]); return; }
+    await page.locator('#bench-tab-generation-mix').click();
+    const view = page.getByTestId('generation-mix-comparison');
+    await expect(view).toContainText(/Does a weather model beat|Slår en vädermodell/);
+    await expect(view.getByTestId('weather-validation-score-2')).toContainText(/Weather model has lower|Vädermodellen har lägre/);
+    await expect(view.getByTestId('weather-validation-score-days-2')).toContainText(/6 (of|av) 8/);
+    await expect(view.getByTestId('weather-validation-score-days-3')).toContainText(/768 (of|av) 768/);
+    await expect(view.getByTestId('weather-criterion')).toContainText(/criterion set in advance is met|förutbestämda kriteriet är uppfyllt/);
+    await expect(view.getByTestId('weather-criterion').locator('li')).toHaveCount(4);
+    await expect(view.getByTestId('weather-validation-days').locator('tbody tr')).toHaveCount(16);
+    // Live forecasts have no published prices yet: waiting, never a zero error.
+    await expect(view.getByTestId('mix-score-2')).toContainText(/Waiting|Väntar/);
+    await expect(view.getByTestId('mix-coverage')).toContainText(/0 (of|av) 184/);
+    await expect(view.getByTestId('mix-price-chart').locator('.recharts-line-curve')).toHaveCount(3);
+    expect(kinds).toContain('prospective:null'); expect(kinds).toContain('replay:null');
+    await view.locator('#weather-cohort-select').click(); await page.getByRole('option', { name: /The validation|Valideringen/ }).click();
+    await expect(page).toHaveURL(/cohort=validation/);
+    await expect(view.getByTestId('mix-coverage')).toContainText(/96 (of|av) 184/);
+    await view.locator('#mix-pair-select').click(); await page.getByRole('option').last().click();
+    await expect(page).toHaveURL(new RegExp(`pair=${OLDER_PRICE_PAIR_ID}`));
+    await expect.poll(() => kinds).toContain(`replay:${OLDER_PRICE_PAIR_ID}`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await view.screenshot({ path: test.info().outputPath('weather-price-mobile.png') });
+  });
+
   test('TEST generation mix handles a study without pairs and a pair with missing inputs without showing zero error', async ({ context, page }) => {
     await mockBackend(context);
     let empty = true, studyRequests = 0;
@@ -477,7 +522,7 @@ test.describe('planner bench', () => {
       await route.fulfill({ json: data });
     });
     await login(page);
-    await page.goto('/portal/planner-bench?tab=generation-mix');
+    await page.goto('/portal/planner-bench?tab=generation-mix&study=mix');
     if (!await expectGenerationMixAvailability(page)) {
       expect(studyRequests).toBe(0);
       return;

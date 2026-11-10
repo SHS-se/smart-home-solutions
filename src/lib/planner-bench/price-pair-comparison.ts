@@ -13,6 +13,18 @@ export interface PricePairScore {
   full_daily_mean_mae: number;
   complete_day_origins: number;
   scored_day_origins: number;
+  /** Weather study only: distinct delivery days on which the candidate had the lower error. */
+  day_wins?: number;
+  /** Weather study only: scored deployed quarters, including those the candidate did not cover. */
+  baseline_quarters?: number;
+}
+export interface PricePairDayScore {
+  target_day: string;
+  lead_day: number;
+  scored_quarters: number;
+  origin_count: number;
+  reduced_mae: number;
+  full_mae: number;
 }
 export interface PricePairSummary {
   id: string;
@@ -36,7 +48,9 @@ export interface PricePairComparison {
   enabled: boolean;
   updated_at: string;
   home_name?: string;
-  report: { truth_cutoff: number; pair_count: number; scores: PricePairScore[]; pairs: PricePairSummary[] };
+  report: { truth_cutoff: number; pair_count: number; scores: PricePairScore[]; pairs: PricePairSummary[]; days?: PricePairDayScore[] };
+  /** Weather study replay only: the delivery days fixed as holdout before any of them was scored. */
+  holdout?: { from: string; to: string } | null;
   selected: (Omit<PricePairSummary, 'scored_count'> & { reason: string | null; training_quarters: number | null; baseline_generated_at?: string }) | null;
   targets: PricePairTarget[];
 }
@@ -85,4 +99,45 @@ export function pricePairChartRows(targets: readonly PricePairTarget[]) {
     result.push({ at, reduced: row?.reduced ?? null, full: row?.full ?? null, actual: row?.actual ?? null });
   }
   return result;
+}
+
+export interface WeatherPriceRule { key: 'mae' | 'days' | 'interval' | 'coverage'; met: boolean; values: number[] }
+/**
+ * The success criterion fixed before the holdout was scored: at each lead the candidate's error is at
+ * least 5% lower and lower on at least three quarters of the delivery days, the day-resampled 90%
+ * interval of the combined error difference lies below zero, and it covers at least 98% of the quarters.
+ */
+export function weatherPriceCriterion(scores: readonly PricePairScore[], days: readonly PricePairDayScore[]): WeatherPriceRule[] | null {
+  const leads = [2, 3].map(lead => scores.find(score => score.lead_day === lead));
+  if (leads.some(score => !score || score.day_wins === undefined || !score.baseline_quarters)) return null;
+  const both = leads as (PricePairScore & { day_wins: number; baseline_quarters: number })[];
+  const reduction = both.map(score => score.reduced_mae > 0 ? 1 - score.full_mae / score.reduced_mae : 0);
+  const coverage = both.map(score => score.scored_quarters / score.baseline_quarters);
+  // Quarters within a delivery day move together, so whole days are resampled.
+  const byDay = new Map<string, { difference: number; quarters: number }>();
+  for (const day of days) {
+    const entry = byDay.get(day.target_day) ?? { difference: 0, quarters: 0 };
+    entry.difference += (day.full_mae - day.reduced_mae) * day.scored_quarters; entry.quarters += day.scored_quarters;
+    byDay.set(day.target_day, entry);
+  }
+  const blocks = [...byDay.keys()].sort().map(day => byDay.get(day)!);
+  let seed = 12345;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const draws: number[] = [];
+  for (let draw = 0; draw < 4000 && blocks.length; draw++) {
+    let difference = 0, quarters = 0;
+    for (let pick = 0; pick < blocks.length; pick++) {
+      const block = blocks[Math.floor(random() * blocks.length)];
+      difference += block.difference; quarters += block.quarters;
+    }
+    draws.push(difference / quarters);
+  }
+  draws.sort((left, right) => left - right);
+  const interval = draws.length ? [draws[Math.floor(draws.length * 0.05)], draws[Math.floor(draws.length * 0.95)]] : [0, 0];
+  return [
+    { key: 'mae', met: reduction.every(value => value >= 0.05), values: reduction },
+    { key: 'days', met: both.every(score => score.day_wins >= 0.75 * score.target_day_count), values: both.flatMap(score => [score.day_wins, score.target_day_count]) },
+    { key: 'interval', met: draws.length > 0 && interval[1] < 0, values: interval },
+    { key: 'coverage', met: coverage.every(value => value >= 0.98), values: coverage },
+  ];
 }
